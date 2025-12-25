@@ -76,12 +76,10 @@ class KPIDashboard:
     
     # Cash Flow
     savings_rate: Decimal
-    savings_rate_target: Decimal = Decimal('0.20')
     free_cash_flow_monthly: Decimal
     
     # Runway
     runway_months: int
-    runway_target: int = 6
     
     # Goals
     goal_achievement_rate: Decimal
@@ -89,6 +87,10 @@ class KPIDashboard:
     
     # Health Indicators
     is_healthy: bool
+    
+    # Optional fields with defaults
+    savings_rate_target: Decimal = Decimal('0.20')
+    runway_target: int = 6
 
 
 class CashFlowAnalyzer:
