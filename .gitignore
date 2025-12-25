@@ -1,0 +1,23 @@
+# Data files (keep structure, ignore content)
+data/*.db
+data/raw_csv/*.csv
+
+# Environment
+.env
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test
+.pytest_cache/
+.coverage
+htmlcov/
