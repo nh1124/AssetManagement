@@ -1,0 +1,28 @@
+# Asset Management System Settings
+
+# Database
+database:
+  url: "sqlite:///data/assets.db"
+  echo: false  # SQLAlchemy echo mode
+
+# Asset Recognition Threshold (資産計上基準)
+thresholds:
+  asset_recognition_price: 30000  # 3万円以上を資産として計上
+  asset_recognition_lifespan_days: 365  # 1年以上の耐用年数
+
+# Target KPIs
+kpi_targets:
+  savings_rate: 0.20  # 貯蓄率 > 20%
+  goal_probability: 0.85  # ゴール達成確率 > 85%
+  liquidity_coverage: 1.0  # 流動性カバレッジ > 100%
+  idle_money_rate: 0.0  # アイドルマネー率 = 0%
+
+# Tax Rates (課税計算用)
+tax_rates:
+  capital_gains: 0.20315  # 譲渡益課税 (所得税15.315% + 住民税5%)
+  dividend: 0.20315  # 配当課税
+
+# Default Values
+defaults:
+  base_currency: "JPY"
+  burn_rate_months: 3  # 流動性計算の基準月数

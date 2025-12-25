@@ -1,0 +1,50 @@
+# 生活標準原価 (Unit Economics)
+# ユーザーが編集し、システムがDBにインポートするためのファイル
+
+# 食費
+FOOD_DAILY:
+  unit_cost: 1500
+  unit: PER_DAY
+  description: "1日あたりの食費"
+
+# 住居費
+RENT_MONTHLY:
+  unit_cost: 80000
+  unit: PER_MONTH
+  description: "月額家賃"
+
+# 光熱費
+UTILITIES_MONTHLY:
+  unit_cost: 15000
+  unit: PER_MONTH
+  description: "電気・ガス・水道"
+
+# 通信費
+COMMUNICATION_MONTHLY:
+  unit_cost: 10000
+  unit: PER_MONTH
+  description: "携帯・インターネット"
+
+# 交通費
+TRANSPORT_MONTHLY:
+  unit_cost: 12000
+  unit: PER_MONTH
+  description: "通勤・移動費"
+
+# 日用品
+DAILY_GOODS_MONTHLY:
+  unit_cost: 5000
+  unit: PER_MONTH
+  description: "洗剤・シャンプー等"
+
+# 娯楽費
+ENTERTAINMENT_MONTHLY:
+  unit_cost: 20000
+  unit: PER_MONTH
+  description: "趣味・娯楽"
+
+# 保険
+INSURANCE_MONTHLY:
+  unit_cost: 15000
+  unit: PER_MONTH
+  description: "生命保険・医療保険"
