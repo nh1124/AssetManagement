@@ -28,7 +28,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Modern CSS with glassmorphism and gradients
+# Modern CSS - Clean button-style navigation like LBS Control
 st.markdown("""
 <style>
     /* Import modern font */
@@ -39,169 +39,124 @@ st.markdown("""
         font-family: 'Inter', sans-serif;
     }
     
+    /* Dark sidebar */
+    [data-testid="stSidebar"] {
+        background-color: #0f172a;
+    }
+    
+    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
+        color: #e2e8f0;
+    }
+    
+    /* Hide default radio button styling */
+    [data-testid="stSidebar"] .stRadio {
+        display: none;
+    }
+    
+    /* App branding header */
+    .sidebar-header {
+        display: flex;
+        align-items: center;
+        padding: 1.25rem 1rem;
+        gap: 0.75rem;
+        border-bottom: 1px solid #1e293b;
+        margin-bottom: 1.5rem;
+    }
+    
+    .sidebar-header .logo {
+        width: 36px;
+        height: 36px;
+        background: linear-gradient(135deg, #6366f1, #8b5cf6);
+        border-radius: 0.5rem;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.25rem;
+    }
+    
+    .sidebar-header .title {
+        font-size: 1.125rem;
+        font-weight: 600;
+        color: #f1f5f9;
+    }
+    
+    /* Navigation items */
+    .nav-item {
+        display: flex;
+        align-items: center;
+        padding: 0.75rem 1rem;
+        margin: 0.125rem 0.5rem;
+        border-radius: 0.5rem;
+        color: #94a3b8;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        font-size: 0.9rem;
+        font-weight: 500;
+        text-decoration: none;
+    }
+    
+    .nav-item:hover {
+        background-color: #1e293b;
+        color: #f1f5f9;
+    }
+    
+    .nav-item.active {
+        background-color: #1e293b;
+        color: #ffffff;
+    }
+    
+    .nav-item .icon {
+        width: 20px;
+        margin-right: 0.75rem;
+        font-size: 1rem;
+        opacity: 0.8;
+    }
+    
     /* Main header styles */
     .main-header {
-        font-size: 2.5rem;
+        font-size: 2rem;
         font-weight: 700;
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-        margin-bottom: 0.5rem;
+        color: #1e293b;
+        margin-bottom: 0.25rem;
     }
     
     .sub-header {
         color: #64748b;
-        font-size: 1.1rem;
-        margin-bottom: 2rem;
-        font-weight: 400;
+        font-size: 1rem;
+        margin-bottom: 1.5rem;
     }
     
-    /* Sidebar styling */
-    [data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #1e1b4b 0%, #312e81 50%, #4338ca 100%);
-    }
-    
-    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
-        color: #e0e7ff;
-    }
-    
-    [data-testid="stSidebar"] .stRadio > label {
-        color: #c7d2fe !important;
-    }
-    
-    [data-testid="stSidebar"] hr {
-        border-color: rgba(255,255,255,0.1);
-    }
-    
-    /* Sidebar navigation buttons */
-    .nav-link {
-        display: flex;
-        align-items: center;
-        padding: 0.875rem 1rem;
-        margin: 0.25rem 0;
-        border-radius: 0.75rem;
-        color: #c7d2fe;
-        text-decoration: none;
-        transition: all 0.2s ease;
-        font-weight: 500;
-        cursor: pointer;
-    }
-    
-    .nav-link:hover {
-        background: rgba(255,255,255,0.1);
-        color: #ffffff;
-    }
-    
-    .nav-link.active {
-        background: rgba(255,255,255,0.15);
-        color: #ffffff;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-    }
-    
-    .nav-icon {
-        font-size: 1.25rem;
-        margin-right: 0.75rem;
-    }
-    
-    /* App branding */
-    .app-brand {
-        padding: 1.5rem 1rem;
-        text-align: center;
-        border-bottom: 1px solid rgba(255,255,255,0.1);
-        margin-bottom: 1rem;
-    }
-    
-    .app-brand h1 {
-        font-size: 1.5rem;
-        font-weight: 700;
-        color: #ffffff;
-        margin: 0;
-        text-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
-    
-    .app-brand p {
-        font-size: 0.75rem;
-        color: #a5b4fc;
-        margin: 0.25rem 0 0 0;
-        text-transform: uppercase;
-        letter-spacing: 0.1em;
-    }
-    
-    /* Metric cards */
+    /* Metric cards with subtle styling */
     .stMetric {
-        background: linear-gradient(135deg, #ffffff 0%, #f8fafc 100%);
-        padding: 1.25rem;
-        border-radius: 1rem;
-        box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06);
-        border: 1px solid #e2e8f0;
-    }
-    
-    .stMetric:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -2px rgba(0,0,0,0.05);
-        transition: all 0.2s ease;
-    }
-    
-    /* Status colors */
-    .positive {
-        color: #10b981;
-    }
-    
-    .negative {
-        color: #ef4444;
-    }
-    
-    /* Progress bars */
-    .stProgress > div > div {
-        background: linear-gradient(90deg, #6366f1 0%, #8b5cf6 100%);
-        border-radius: 9999px;
-    }
-    
-    /* Expander styling */
-    .streamlit-expanderHeader {
-        background: #f8fafc;
-        border-radius: 0.5rem;
-    }
-    
-    /* Form styling */
-    .stForm {
         background: #ffffff;
-        padding: 1.5rem;
-        border-radius: 1rem;
-        box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1);
+        padding: 1rem;
+        border-radius: 0.75rem;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
         border: 1px solid #e2e8f0;
     }
     
     /* Button styling */
-    .stButton > button[kind="primary"] {
-        background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
-        border: none;
+    .stButton > button {
         border-radius: 0.5rem;
-        font-weight: 600;
-        transition: all 0.2s ease;
-    }
-    
-    .stButton > button[kind="primary"]:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4);
+        font-weight: 500;
+        transition: all 0.15s ease;
     }
     
     /* Footer */
     .sidebar-footer {
-        position: absolute;
-        bottom: 1rem;
-        left: 0;
-        right: 0;
-        text-align: center;
+        position: fixed;
+        bottom: 0;
+        width: inherit;
         padding: 1rem;
-        border-top: 1px solid rgba(255,255,255,0.1);
+        border-top: 1px solid #1e293b;
+        background: #0f172a;
     }
     
     .sidebar-footer p {
-        color: #818cf8;
-        font-size: 0.75rem;
-        margin: 0.25rem 0;
+        color: #475569;
+        font-size: 0.7rem;
+        text-align: center;
+        margin: 0;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -217,51 +172,42 @@ def main():
     if 'current_page' not in st.session_state:
         st.session_state.current_page = "Dashboard"
     
-    # Sidebar navigation
+    # Navigation configuration
+    nav_items = [
+        ("grid", "Dashboard", "Dashboard"),
+        ("briefcase", "Assets", "Assets"),
+        ("target", "Goals", "Goals"),
+        ("download", "Import", "Import"),
+        ("search", "Purchase Audit", "Audit"),
+        ("settings", "Settings", "Settings"),
+    ]
+    
+    # Sidebar
     with st.sidebar:
-        # App branding
+        # Header with logo
         st.markdown("""
-        <div class="app-brand">
-            <h1>💰 Asset Mgmt</h1>
-            <p>Personal Finance System</p>
+        <div class="sidebar-header">
+            <div class="logo">💰</div>
+            <span class="title">Asset Mgmt</span>
         </div>
         """, unsafe_allow_html=True)
         
-        # Navigation menu
-        pages = {
-            "📊 Dashboard": "Dashboard",
-            "💼 Assets": "Assets", 
-            "🎯 Goals": "Goals",
-            "📥 Import": "Import",
-            "🔍 Purchase Audit": "Audit",
-            "⚙️ Settings": "Settings",
-        }
+        # Navigation buttons
+        for icon, label, page_key in nav_items:
+            is_active = st.session_state.current_page == page_key
+            
+            if st.button(
+                f"{'📊' if icon == 'grid' else '💼' if icon == 'briefcase' else '🎯' if icon == 'target' else '📥' if icon == 'download' else '🔍' if icon == 'search' else '⚙️'}  {label}",
+                key=f"nav_{page_key}",
+                use_container_width=True,
+                type="primary" if is_active else "secondary",
+            ):
+                st.session_state.current_page = page_key
+                st.rerun()
         
-        # Use selectbox for cleaner look
-        st.markdown("##### Navigation")
-        selected = st.radio(
-            "Navigation",
-            options=list(pages.keys()),
-            label_visibility="collapsed",
-            key="main_nav"
-        )
-        st.session_state.current_page = pages[selected]
-        
-        # Spacer
-        st.markdown("<br>" * 5, unsafe_allow_html=True)
-        
-        # Footer info
-        st.markdown("---")
-        st.markdown("""
-        <div style="text-align: center; padding: 0.5rem;">
-            <p style="color: #a5b4fc; font-size: 0.75rem; margin: 0;">
-                Asset Management v2.0
-            </p>
-            <p style="color: #6366f1; font-size: 0.65rem; margin: 0.25rem 0 0 0;">
-                Python-Native • Local-First
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
+        # Spacer and footer
+        st.markdown("<br>" * 10, unsafe_allow_html=True)
+        st.caption("Asset Management v2.0")
     
     # Main content area
     page = st.session_state.current_page
