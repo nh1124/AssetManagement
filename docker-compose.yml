@@ -1,16 +1,31 @@
-version: '3.8'
-
 services:
-  app:
-    build: .
-    container_name: asset_management
+  backend:
+    build:
+      context: ./backend
+      args:
+        - BACKEND_PORT=${BACKEND_PORT:-8000}
+    container_name: asset-backend
     ports:
-      - "8501:8501"
+      - "${BACKEND_PORT:-8000}:${BACKEND_PORT:-8000}"
     volumes:
-      - ./data:/app/data
-      - ./config:/app/config
-      - ./src:/app/src
+      - ./backend/app:/app/app
+      - sqlite_data:/app/data
     environment:
-      - STREAMLIT_SERVER_HEADLESS=true
-      - STREAMLIT_SERVER_ENABLE_CORS=false
+      - DATABASE_URL=sqlite:///./data/asset_management.db
+      - BACKEND_PORT=${BACKEND_PORT:-8000}
     restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        - VITE_API_URL=/api
+    container_name: asset-frontend
+    ports:
+      - "${FRONTEND_PORT:-5173}:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  sqlite_data:
