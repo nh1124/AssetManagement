@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, ArrowUpCircle, ArrowDownCircle, RefreshCw, CreditCard, Package } from 'lucide-react';
+import { Plus, ArrowUpCircle, ArrowDownCircle, RefreshCw, CreditCard } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import SplitView from '../components/SplitView';
 import TabPanel from '../components/TabPanel';
@@ -26,30 +26,13 @@ const mockBuckets = [
     { asset: 'Individual Stocks', event: 'House Down Payment', allocation: 60 },
 ];
 
-const mockBudget = [
-    { category: 'Food', proposed: 50000, current: 42000, suggestion: 'On track' },
-    { category: 'Transport', proposed: 15000, current: 18500, suggestion: 'Consider reducing by ¥3,500' },
-    { category: 'Entertainment', proposed: 20000, current: 12000, suggestion: 'Surplus available' },
-    { category: 'Utilities', proposed: 12000, current: 11200, suggestion: 'On track' },
-];
-
-const mockProducts = [
-    { id: 1, name: 'Milk', category: 'Groceries', lastPrice: 198, frequency: 7 },
-    { id: 2, name: 'Detergent', category: 'Household', lastPrice: 498, frequency: 30 },
-    { id: 3, name: 'Rice 5kg', category: 'Groceries', lastPrice: 1980, frequency: 45 },
-];
-
 const TABS = [
     { id: 'summary', label: 'Summary' },
     { id: 'bs', label: 'B/S' },
     { id: 'pl', label: 'P/L' },
     { id: 'debt', label: 'Debt' },
     { id: 'buckets', label: 'Buckets' },
-    { id: 'budget', label: 'Budget' },
-    { id: 'products', label: 'Products' },
 ];
-
-
 
 export default function TheLab() {
     const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -138,7 +121,7 @@ export default function TheLab() {
             {/* Transaction List */}
             <div className="border-t border-slate-800 pt-3">
                 <h3 className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">Recent Transactions</h3>
-                <div className="space-y-0.5 max-h-[400px] overflow-auto">
+                <div className="space-y-0.5">
                     {transactions.length === 0 ? (
                         <p className="text-slate-600 text-xs py-4 text-center">No transactions yet</p>
                     ) : (
@@ -229,49 +212,6 @@ export default function TheLab() {
                                 <span>{b.asset}</span>
                                 <span className="text-amber-400">{b.event}</span>
                                 <span className="text-right font-mono-nums">{b.allocation}%</span>
-                            </div>
-                        ))}
-                    </div>
-                );
-            case 'budget':
-                return (
-                    <div className="space-y-2">
-                        <div className="grid grid-cols-4 text-[10px] text-slate-500 uppercase tracking-wider border-b border-slate-800 pb-1">
-                            <span>Category</span>
-                            <span className="text-right">Proposed</span>
-                            <span className="text-right">Current</span>
-                            <span>AI Suggestion</span>
-                        </div>
-                        {mockBudget.map((b, i) => (
-                            <div key={i} className="grid grid-cols-4 text-xs py-1.5 border-b border-slate-800/50">
-                                <span>{b.category}</span>
-                                <span className="text-right font-mono-nums text-slate-400">¥{b.proposed.toLocaleString()}</span>
-                                <span className={`text-right font-mono-nums ${b.current > b.proposed ? 'text-rose-400' : 'text-emerald-400'}`}>
-                                    ¥{b.current.toLocaleString()}
-                                </span>
-                                <span className="text-[10px] text-cyan-400">{b.suggestion}</span>
-                            </div>
-                        ))}
-                    </div>
-                );
-            case 'products':
-                return (
-                    <div className="space-y-2">
-                        <div className="grid grid-cols-4 text-[10px] text-slate-500 uppercase tracking-wider border-b border-slate-800 pb-1">
-                            <span>Product</span>
-                            <span>Category</span>
-                            <span className="text-right">Last Price</span>
-                            <span className="text-right">Freq (days)</span>
-                        </div>
-                        {mockProducts.map((p) => (
-                            <div key={p.id} className="grid grid-cols-4 text-xs py-1.5 border-b border-slate-800/50">
-                                <span className="flex items-center gap-1">
-                                    <Package size={12} className="text-cyan-400" />
-                                    {p.name}
-                                </span>
-                                <span className="text-slate-400">{p.category}</span>
-                                <span className="text-right font-mono-nums">¥{p.lastPrice.toLocaleString()}</span>
-                                <span className="text-right font-mono-nums text-slate-400">{p.frequency}</span>
                             </div>
                         ))}
                     </div>
