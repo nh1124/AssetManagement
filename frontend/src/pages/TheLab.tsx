@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Plus, ArrowUpCircle, ArrowDownCircle, RefreshCw } from 'lucide-react';
+import { Plus, ArrowUpCircle, ArrowDownCircle, RefreshCw, CreditCard, Package } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import SplitView from '../components/SplitView';
+import TabPanel from '../components/TabPanel';
 import type { Transaction } from '../types';
 import { getTransactions, createTransaction } from '../api';
 
@@ -14,14 +15,51 @@ const mockChartData = [
     { month: 'Jun', income: 460000, expense: 300000 },
 ];
 
+const mockLiabilities = [
+    { id: 1, name: 'Credit Card A', lender: 'MUFG', total: 100000, repaid: 55000, balance: 45000, category: 'CreditCard' },
+    { id: 2, name: 'Student Loan', lender: 'JASSO', total: 2000000, repaid: 800000, balance: 1200000, category: 'Loan' },
+];
+
+const mockBuckets = [
+    { asset: 'eMAXIS Slim S&P500', event: 'Retirement', allocation: 40 },
+    { asset: 'Cash Savings', event: 'Emergency Fund', allocation: 100 },
+    { asset: 'Individual Stocks', event: 'House Down Payment', allocation: 60 },
+];
+
+const mockBudget = [
+    { category: 'Food', proposed: 50000, current: 42000, suggestion: 'On track' },
+    { category: 'Transport', proposed: 15000, current: 18500, suggestion: 'Consider reducing by ¥3,500' },
+    { category: 'Entertainment', proposed: 20000, current: 12000, suggestion: 'Surplus available' },
+    { category: 'Utilities', proposed: 12000, current: 11200, suggestion: 'On track' },
+];
+
+const mockProducts = [
+    { id: 1, name: 'Milk', category: 'Groceries', lastPrice: 198, frequency: 7 },
+    { id: 2, name: 'Detergent', category: 'Household', lastPrice: 498, frequency: 30 },
+    { id: 3, name: 'Rice 5kg', category: 'Groceries', lastPrice: 1980, frequency: 45 },
+];
+
+const TABS = [
+    { id: 'summary', label: 'Summary' },
+    { id: 'bs', label: 'B/S' },
+    { id: 'pl', label: 'P/L' },
+    { id: 'debt', label: 'Debt' },
+    { id: 'buckets', label: 'Buckets' },
+    { id: 'budget', label: 'Budget' },
+    { id: 'products', label: 'Products' },
+];
+
+
+
 export default function TheLab() {
     const [transactions, setTransactions] = useState<Transaction[]>([]);
-    const [activeTab, setActiveTab] = useState<'summary' | 'bs' | 'pl'>('summary');
+    const [activeTab, setActiveTab] = useState('summary');
     const [formData, setFormData] = useState({
         date: new Date().toISOString().split('T')[0],
         description: '',
         amount: '',
         type: 'Expense' as 'Income' | 'Expense' | 'Transfer',
+        category: '',
     });
 
     useEffect(() => {
@@ -36,29 +74,30 @@ export default function TheLab() {
                 description: formData.description,
                 amount: parseFloat(formData.amount),
                 type: formData.type,
+                category: formData.category,
             });
             setTransactions([newTransaction, ...transactions]);
-            setFormData({ ...formData, description: '', amount: '' });
+            setFormData({ ...formData, description: '', amount: '', category: '' });
         } catch (error) {
             console.error('Failed to create transaction:', error);
         }
     };
 
     const leftPane = (
-        <div className="space-y-6">
+        <div className="space-y-4">
             {/* Transaction Form */}
-            <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="grid grid-cols-2 gap-3">
+            <form onSubmit={handleSubmit} className="space-y-2">
+                <div className="grid grid-cols-2 gap-2">
                     <input
                         type="date"
                         value={formData.date}
                         onChange={(e) => setFormData({ ...formData, date: e.target.value })}
-                        className="bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
                     />
                     <select
                         value={formData.type}
                         onChange={(e) => setFormData({ ...formData, type: e.target.value as any })}
-                        className="bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
                     >
                         <option value="Expense">Expense</option>
                         <option value="Income">Income</option>
@@ -70,51 +109,58 @@ export default function TheLab() {
                     placeholder="Description"
                     value={formData.description}
                     onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                    className="w-full bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                    className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
                 />
-                <div className="flex gap-3">
+                <div className="grid grid-cols-3 gap-2">
+                    <input
+                        type="text"
+                        placeholder="Category"
+                        value={formData.category}
+                        onChange={(e) => setFormData({ ...formData, category: e.target.value })}
+                        className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
+                    />
                     <input
                         type="number"
                         placeholder="Amount"
                         value={formData.amount}
                         onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
-                        className="flex-1 bg-slate-700 border border-slate-600 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                        className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500 font-mono-nums"
                     />
                     <button
                         type="submit"
-                        className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg flex items-center gap-2 text-sm font-medium transition-colors"
+                        className="bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 flex items-center justify-center gap-1 text-xs font-medium transition-colors"
                     >
-                        <Plus size={16} /> Add
+                        <Plus size={14} /> Add
                     </button>
                 </div>
             </form>
 
             {/* Transaction List */}
-            <div className="space-y-2">
-                <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider">Recent Transactions</h3>
-                <div className="space-y-1 max-h-[400px] overflow-auto">
+            <div className="border-t border-slate-800 pt-3">
+                <h3 className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">Recent Transactions</h3>
+                <div className="space-y-0.5 max-h-[400px] overflow-auto">
                     {transactions.length === 0 ? (
-                        <p className="text-slate-500 text-sm py-4 text-center">No transactions yet</p>
+                        <p className="text-slate-600 text-xs py-4 text-center">No transactions yet</p>
                     ) : (
                         transactions.map((tx) => (
                             <div
                                 key={tx.id}
-                                className="flex items-center justify-between p-3 bg-slate-700/50 rounded-lg hover:bg-slate-700 transition-colors"
+                                className="flex items-center justify-between py-1.5 px-2 hover:bg-slate-800/50 transition-colors border-l-2 border-transparent hover:border-slate-600"
                             >
-                                <div className="flex items-center gap-3">
+                                <div className="flex items-center gap-2">
                                     {tx.type === 'Income' ? (
-                                        <ArrowUpCircle className="text-emerald-400" size={18} />
+                                        <ArrowUpCircle className="text-emerald-500" size={14} />
                                     ) : tx.type === 'Expense' ? (
-                                        <ArrowDownCircle className="text-rose-400" size={18} />
+                                        <ArrowDownCircle className="text-rose-500" size={14} />
                                     ) : (
-                                        <RefreshCw className="text-cyan-400" size={18} />
+                                        <RefreshCw className="text-cyan-500" size={14} />
                                     )}
                                     <div>
-                                        <p className="text-sm font-medium">{tx.description}</p>
-                                        <p className="text-xs text-slate-500">{tx.date}</p>
+                                        <p className="text-xs">{tx.description}</p>
+                                        <p className="text-[10px] text-slate-600">{tx.date}</p>
                                     </div>
                                 </div>
-                                <span className={`text-sm font-medium ${tx.type === 'Income' ? 'text-emerald-400' : tx.type === 'Expense' ? 'text-rose-400' : 'text-cyan-400'}`}>
+                                <span className={`text-xs font-mono-nums ${tx.type === 'Income' ? 'text-emerald-500' : tx.type === 'Expense' ? 'text-rose-500' : 'text-cyan-500'}`}>
                                     {tx.type === 'Income' ? '+' : tx.type === 'Expense' ? '-' : ''}¥{tx.amount.toLocaleString()}
                                 </span>
                             </div>
@@ -125,56 +171,120 @@ export default function TheLab() {
         </div>
     );
 
+    const renderTabContent = () => {
+        switch (activeTab) {
+            case 'summary':
+                return (
+                    <div className="space-y-4">
+                        <div className="h-48">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={mockChartData}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                                    <XAxis dataKey="month" stroke="#64748b" fontSize={10} />
+                                    <YAxis stroke="#64748b" fontSize={10} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
+                                    <Tooltip
+                                        contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', fontSize: '11px' }}
+                                    />
+                                    <Bar dataKey="income" fill="#34d399" />
+                                    <Bar dataKey="expense" fill="#f87171" />
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
+                );
+            case 'debt':
+                return (
+                    <div className="space-y-2">
+                        <div className="grid grid-cols-5 text-[10px] text-slate-500 uppercase tracking-wider border-b border-slate-800 pb-1">
+                            <span>Name</span>
+                            <span>Lender</span>
+                            <span className="text-right">Total</span>
+                            <span className="text-right">Repaid</span>
+                            <span className="text-right">Balance</span>
+                        </div>
+                        {mockLiabilities.map((l) => (
+                            <div key={l.id} className="grid grid-cols-5 text-xs py-1.5 border-b border-slate-800/50">
+                                <span className="flex items-center gap-1">
+                                    <CreditCard size={12} className="text-rose-400" />
+                                    {l.name}
+                                </span>
+                                <span className="text-slate-400">{l.lender}</span>
+                                <span className="text-right font-mono-nums">¥{l.total.toLocaleString()}</span>
+                                <span className="text-right font-mono-nums text-emerald-500">¥{l.repaid.toLocaleString()}</span>
+                                <span className="text-right font-mono-nums text-rose-400">¥{l.balance.toLocaleString()}</span>
+                            </div>
+                        ))}
+                    </div>
+                );
+            case 'buckets':
+                return (
+                    <div className="space-y-2">
+                        <div className="grid grid-cols-3 text-[10px] text-slate-500 uppercase tracking-wider border-b border-slate-800 pb-1">
+                            <span>Asset</span>
+                            <span>Life Event</span>
+                            <span className="text-right">Allocation</span>
+                        </div>
+                        {mockBuckets.map((b, i) => (
+                            <div key={i} className="grid grid-cols-3 text-xs py-1.5 border-b border-slate-800/50">
+                                <span>{b.asset}</span>
+                                <span className="text-amber-400">{b.event}</span>
+                                <span className="text-right font-mono-nums">{b.allocation}%</span>
+                            </div>
+                        ))}
+                    </div>
+                );
+            case 'budget':
+                return (
+                    <div className="space-y-2">
+                        <div className="grid grid-cols-4 text-[10px] text-slate-500 uppercase tracking-wider border-b border-slate-800 pb-1">
+                            <span>Category</span>
+                            <span className="text-right">Proposed</span>
+                            <span className="text-right">Current</span>
+                            <span>AI Suggestion</span>
+                        </div>
+                        {mockBudget.map((b, i) => (
+                            <div key={i} className="grid grid-cols-4 text-xs py-1.5 border-b border-slate-800/50">
+                                <span>{b.category}</span>
+                                <span className="text-right font-mono-nums text-slate-400">¥{b.proposed.toLocaleString()}</span>
+                                <span className={`text-right font-mono-nums ${b.current > b.proposed ? 'text-rose-400' : 'text-emerald-400'}`}>
+                                    ¥{b.current.toLocaleString()}
+                                </span>
+                                <span className="text-[10px] text-cyan-400">{b.suggestion}</span>
+                            </div>
+                        ))}
+                    </div>
+                );
+            case 'products':
+                return (
+                    <div className="space-y-2">
+                        <div className="grid grid-cols-4 text-[10px] text-slate-500 uppercase tracking-wider border-b border-slate-800 pb-1">
+                            <span>Product</span>
+                            <span>Category</span>
+                            <span className="text-right">Last Price</span>
+                            <span className="text-right">Freq (days)</span>
+                        </div>
+                        {mockProducts.map((p) => (
+                            <div key={p.id} className="grid grid-cols-4 text-xs py-1.5 border-b border-slate-800/50">
+                                <span className="flex items-center gap-1">
+                                    <Package size={12} className="text-cyan-400" />
+                                    {p.name}
+                                </span>
+                                <span className="text-slate-400">{p.category}</span>
+                                <span className="text-right font-mono-nums">¥{p.lastPrice.toLocaleString()}</span>
+                                <span className="text-right font-mono-nums text-slate-400">{p.frequency}</span>
+                            </div>
+                        ))}
+                    </div>
+                );
+            default:
+                return <div className="text-xs text-slate-500">Tab content coming soon...</div>;
+        }
+    };
+
     const rightPane = (
-        <div className="space-y-4">
-            {/* Tab Navigation */}
-            <div className="flex space-x-1 bg-slate-800 rounded-lg p-1">
-                {(['summary', 'bs', 'pl'] as const).map((tab) => (
-                    <button
-                        key={tab}
-                        onClick={() => setActiveTab(tab)}
-                        className={`flex-1 py-2 px-3 rounded-md text-sm font-medium transition-colors ${activeTab === tab
-                            ? 'bg-slate-700 text-emerald-400'
-                            : 'text-slate-400 hover:text-slate-200'
-                            }`}
-                    >
-                        {tab === 'summary' ? 'Summary' : tab === 'bs' ? 'B/S' : 'P/L'}
-                    </button>
-                ))}
-            </div>
-
-            {/* Chart */}
-            <div className="h-64">
-                <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={mockChartData}>
-                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                        <XAxis dataKey="month" stroke="#94a3b8" fontSize={12} />
-                        <YAxis stroke="#94a3b8" fontSize={12} tickFormatter={(v) => `¥${(v / 1000).toFixed(0)}k`} />
-                        <Tooltip
-                            contentStyle={{ backgroundColor: '#1e293b', border: '1px solid #334155', borderRadius: '8px' }}
-                            labelStyle={{ color: '#f1f5f9' }}
-                        />
-                        <Bar dataKey="income" fill="#34d399" radius={[4, 4, 0, 0]} />
-                        <Bar dataKey="expense" fill="#f87171" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                </ResponsiveContainer>
-            </div>
-
-            {/* Liability Watch */}
-            <div className="bg-slate-700/50 rounded-lg p-4">
-                <h3 className="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-3">Liability Watch</h3>
-                <div className="space-y-2">
-                    <div className="flex justify-between items-center">
-                        <span className="text-sm text-slate-300">Credit Card A</span>
-                        <span className="text-sm font-medium text-rose-400">¥45,000</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                        <span className="text-sm text-slate-300">Student Loan</span>
-                        <span className="text-sm font-medium text-amber-400">¥1,200,000</span>
-                    </div>
-                </div>
-            </div>
-        </div>
+        <TabPanel tabs={TABS} activeTab={activeTab} onTabChange={setActiveTab}>
+            {renderTabContent()}
+        </TabPanel>
     );
 
     return <SplitView left={leftPane} right={rightPane} leftTitle="Input & Records" rightTitle="Analytics" />;

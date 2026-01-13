@@ -9,27 +9,27 @@ interface SplitViewProps {
 
 export default function SplitView({ left, right, leftTitle, rightTitle }: SplitViewProps) {
     return (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-[calc(100vh-8rem)]">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-0 h-[calc(100vh-7rem)] border border-slate-800">
             {/* Left Pane */}
-            <div className="bg-slate-800/50 rounded-xl border border-slate-700 overflow-hidden flex flex-col">
+            <div className="border-r border-slate-800 overflow-hidden flex flex-col bg-slate-900/50">
                 {leftTitle && (
-                    <div className="px-4 py-3 border-b border-slate-700 bg-slate-800/50">
-                        <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">{leftTitle}</h2>
+                    <div className="px-3 py-2 border-b border-slate-800 bg-slate-900">
+                        <h2 className="text-xs font-medium text-slate-400 uppercase tracking-wider">{leftTitle}</h2>
                     </div>
                 )}
-                <div className="flex-1 overflow-auto p-4">
+                <div className="flex-1 overflow-auto p-3">
                     {left}
                 </div>
             </div>
 
             {/* Right Pane */}
-            <div className="bg-slate-800/50 rounded-xl border border-slate-700 overflow-hidden flex flex-col">
+            <div className="overflow-hidden flex flex-col bg-slate-900/50">
                 {rightTitle && (
-                    <div className="px-4 py-3 border-b border-slate-700 bg-slate-800/50">
-                        <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">{rightTitle}</h2>
+                    <div className="px-3 py-2 border-b border-slate-800 bg-slate-900">
+                        <h2 className="text-xs font-medium text-slate-400 uppercase tracking-wider">{rightTitle}</h2>
                     </div>
                 )}
-                <div className="flex-1 overflow-auto p-4">
+                <div className="flex-1 overflow-auto p-3">
                     {right}
                 </div>
             </div>
