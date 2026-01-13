@@ -9,11 +9,11 @@ interface SplitViewProps {
 
 export default function SplitView({ left, right, leftTitle, rightTitle }: SplitViewProps) {
     return (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-0 h-[calc(100vh-7rem)] border border-slate-800">
-            {/* Left Pane */}
-            <div className="border-r border-slate-800 overflow-hidden flex flex-col bg-slate-900/50">
+        <div className="grid grid-cols-1 lg:grid-cols-2 h-full">
+            {/* Left Pane - Independent scroll */}
+            <div className="border-r border-slate-800 flex flex-col h-full overflow-hidden">
                 {leftTitle && (
-                    <div className="px-3 py-2 border-b border-slate-800 bg-slate-900">
+                    <div className="px-3 py-2 border-b border-slate-800 bg-slate-900 flex-shrink-0">
                         <h2 className="text-xs font-medium text-slate-400 uppercase tracking-wider">{leftTitle}</h2>
                     </div>
                 )}
@@ -22,10 +22,10 @@ export default function SplitView({ left, right, leftTitle, rightTitle }: SplitV
                 </div>
             </div>
 
-            {/* Right Pane */}
-            <div className="overflow-hidden flex flex-col bg-slate-900/50">
+            {/* Right Pane - Independent scroll */}
+            <div className="flex flex-col h-full overflow-hidden">
                 {rightTitle && (
-                    <div className="px-3 py-2 border-b border-slate-800 bg-slate-900">
+                    <div className="px-3 py-2 border-b border-slate-800 bg-slate-900 flex-shrink-0">
                         <h2 className="text-xs font-medium text-slate-400 uppercase tracking-wider">{rightTitle}</h2>
                     </div>
                 )}
