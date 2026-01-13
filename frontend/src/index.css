@@ -1,8 +1,11 @@
 @import "tailwindcss";
 
+/* Import monospaced font for numbers */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap');
+
 :root {
   font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
+  line-height: 1.4;
   font-weight: 400;
   color-scheme: dark;
   color: rgba(248, 250, 252, 0.95);
@@ -17,4 +20,35 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
+}
+
+/* Monospaced numbers for alignment */
+.font-mono-nums {
+  font-family: 'JetBrains Mono', monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* VS Code style borders */
+.border-panel {
+  border: 1px solid #1e293b;
+}
+
+/* High density utilities */
+.compact {
+  padding: 0.375rem 0.5rem;
+}
+
+/* Tab styles */
+.tab-active {
+  border-bottom: 2px solid #34d399;
+  color: #34d399;
+}
+
+.tab-inactive {
+  border-bottom: 2px solid transparent;
+  color: #64748b;
+}
+
+.tab-inactive:hover {
+  color: #94a3b8;
 }
