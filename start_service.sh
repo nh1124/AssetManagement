@@ -9,5 +9,5 @@ echo "Services started!"
 echo "  Backend:  http://localhost:${BACKEND_PORT:-8000}"
 echo "  Frontend: http://localhost:${FRONTEND_PORT:-5173}"
 echo ""
-echo "To view logs: docker-compose logs -f"
-echo "To stop: docker-compose down"
+echo "Following logs (Press Ctrl+C to stop)..."
+docker-compose logs -f

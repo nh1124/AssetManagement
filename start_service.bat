@@ -9,6 +9,5 @@ echo Services started!
 echo   Backend:  http://localhost:%BACKEND_PORT%
 echo   Frontend: http://localhost:%FRONTEND_PORT%
 echo.
-echo To view logs: docker-compose logs -f
-echo To stop: docker-compose down
-pause
+echo Following logs (Press Ctrl+C to stop)...
+docker-compose logs -f

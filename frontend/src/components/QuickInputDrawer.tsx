@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { X, ArrowRightLeft, CreditCard, Sparkles, Loader2, ImagePlus, Send } from 'lucide-react';
-import { getAccountsByType, createTransaction, seedDefaultAccounts } from '../api';
+import { getAccountsByType, createTransaction, seedDefaultAccounts, analyzeWithBackend } from '../api';
 import { useToast } from './Toast';
 
 interface QuickInputDrawerProps {
@@ -125,13 +125,6 @@ export default function QuickInputDrawer({ isOpen, onClose }: QuickInputDrawerPr
         if (!aiInput.trim() && !selectedImage) return;
 
         setIsProcessing(true);
-        const apiKey = localStorage.getItem('gemini_api_key');
-
-        if (!apiKey) {
-            showToast('Set Gemini API key in Settings', 'warning');
-            setIsProcessing(false);
-            return;
-        }
 
         try {
             const parts: any[] = [{
@@ -142,16 +135,16 @@ Input: "${aiInput || 'Analyze receipt image'}"`
             if (selectedImage) {
                 const base64Data = selectedImage.split(',')[1];
                 const mimeType = selectedImage.split(';')[0].split(':')[1];
-                parts.push({ inline_data: { mime_type: mimeType, data: base64Data } });
+                parts.push({
+                    inline_data: {
+                        mime_type: mimeType,
+                        data: base64Data
+                    }
+                });
             }
 
-            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ contents: [{ parts }], generationConfig: { temperature: 0.1 } })
-            });
-
-            const data = await response.json();
+            // Call backend instead of direct Gemini
+            const data = await analyzeWithBackend({ parts });
             const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
             const jsonMatch = text.match(/\{[\s\S]*\}/);
@@ -166,8 +159,9 @@ Input: "${aiInput || 'Analyze receipt image'}"`
                 }));
                 showToast(`Parsed: ¥${parsed.amount} → ${parsed.to_account}`, 'success');
             }
-        } catch (error) {
-            showToast('AI parsing failed', 'error');
+        } catch (error: any) {
+            const detail = error.response?.data?.detail || 'AI parsing failed';
+            showToast(detail, 'error');
         } finally {
             setIsProcessing(false);
             setAiInput('');

@@ -9,8 +9,6 @@ const CURRENCIES = ['JPY', 'USD', 'EUR', 'GBP', 'CNY'];
 
 const INPUT_TABS = [
     { id: 'transaction', label: 'Transaction' },
-    { id: 'debt', label: 'Debt Repayment' },
-    { id: 'product', label: 'Product' },
     { id: 'ai', label: 'AI' },
 ];
 
@@ -24,7 +22,7 @@ export default function RecordPage() {
         date: new Date().toISOString().split('T')[0],
         description: '',
         amount: '',
-        type: 'Expense' as 'Income' | 'Expense' | 'Transfer',
+        type: 'Expense' as 'Income' | 'Expense' | 'Transfer' | 'Debt',
         category: '',
         currency: 'JPY',
         fromAccount: '',
@@ -190,6 +188,7 @@ Return format (JSON only, no markdown):
                                 <option value="Expense">Expense</option>
                                 <option value="Income">Income</option>
                                 <option value="Transfer">Transfer</option>
+                                <option value="Debt">Debt Repayment</option>
                             </select>
                         </div>
                     </div>
@@ -205,7 +204,7 @@ Return format (JSON only, no markdown):
                         />
                     </div>
 
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-2 gap-2">
                         <div>
                             <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Amount</label>
                             <input
@@ -227,16 +226,6 @@ Return format (JSON only, no markdown):
                                     <option key={c} value={c}>{c}</option>
                                 ))}
                             </select>
-                        </div>
-                        <div>
-                            <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Category</label>
-                            <input
-                                type="text"
-                                placeholder="e.g., Food"
-                                value={formData.category}
-                                onChange={(e) => setFormData({ ...formData, category: e.target.value })}
-                                className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
-                            />
                         </div>
                     </div>
 

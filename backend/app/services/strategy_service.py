@@ -52,13 +52,13 @@ def calculate_goal_progress(
     }
 
 
-def get_life_events_with_progress(db: Session, simulation_config: dict = None) -> List[dict]:
-    """Get all life events with calculated progress and probability."""
-    life_events = db.query(models.LifeEvent).all()
+def get_life_events_with_progress(db: Session, client_id: int, simulation_config: dict = None) -> List[dict]:
+    """Get all life events with calculated progress for current client."""
+    life_events = db.query(models.LifeEvent).filter(models.LifeEvent.client_id == client_id).all()
     
-    # Get simulation config
+    # Get simulation config for current client
     if simulation_config is None:
-        config = db.query(models.SimulationConfig).first()
+        config = db.query(models.SimulationConfig).filter(models.SimulationConfig.client_id == client_id).first()
         simulation_config = {
             "annual_return": config.annual_return if config else 5.0,
             "monthly_savings": config.monthly_savings if config else 100000
@@ -95,9 +95,9 @@ def get_life_events_with_progress(db: Session, simulation_config: dict = None) -
     return result
 
 
-def calculate_overall_goal_probability(db: Session) -> dict:
-    """Calculate overall probability of achieving all goals."""
-    events_with_progress = get_life_events_with_progress(db)
+def calculate_overall_goal_probability(db: Session, client_id: int) -> dict:
+    """Calculate overall probability of achieving all goals for current client."""
+    events_with_progress = get_life_events_with_progress(db, client_id=client_id)
     
     if not events_with_progress:
         return {
@@ -125,12 +125,12 @@ def calculate_overall_goal_probability(db: Session) -> dict:
     }
 
 
-def generate_budget_from_goals(db: Session, month: str) -> List[dict]:
-    """Generate a budget template derived from life event goals."""
-    life_events = db.query(models.LifeEvent).all()
+def generate_budget_from_goals(db: Session, month: str, client_id: int) -> List[dict]:
+    """Generate a budget template derived from life event goals for current client."""
+    life_events = db.query(models.LifeEvent).filter(models.LifeEvent.client_id == client_id).all()
     
     # Get simulation config for monthly savings
-    config = db.query(models.SimulationConfig).first()
+    config = db.query(models.SimulationConfig).filter(models.SimulationConfig.client_id == client_id).first()
     total_monthly_savings = config.monthly_savings if config else 100000
     
     budget_items = []
