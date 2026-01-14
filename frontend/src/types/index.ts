@@ -22,10 +22,9 @@ export interface Transaction {
     amount: number;
     type: 'Income' | 'Expense' | 'Transfer';
     category?: string;
-    source_account_id?: number;
-    destination_account_id?: number;
-    asset_id?: number;
-    liability_id?: number;
+    currency: string;
+    from_account?: string;
+    to_account?: string;
 }
 
 export interface LifeEvent {
@@ -33,22 +32,21 @@ export interface LifeEvent {
     name: string;
     target_date: string;
     target_amount: number;
-}
-
-export interface AssetGoalMapping {
-    id: number;
-    asset_id: number;
-    life_event_id: number;
-    allocation_pct: number;
+    funded_amount: number;
+    priority: 'high' | 'medium' | 'low';
+    allocated_asset_id?: number;
 }
 
 export interface Product {
     id: number;
     name: string;
     category: string;
-    last_price: number;
+    location?: string;
+    last_unit_price: number;
     frequency_days: number;
     last_purchase_date?: string;
+    is_asset: boolean;
+    lifespan_months?: number;
 }
 
 export interface Budget {
@@ -57,12 +55,15 @@ export interface Budget {
     proposed_amount: number;
     current_spending: number;
     month: string;
-    ai_suggestion?: string;
+    derived_from?: string;
 }
 
 export interface AnalysisSummary {
     net_worth: number;
     monthly_pl: number;
     liability_total: number;
-    cfo_briefing?: string;
+    goal_probability: number;
+    total_goal_amount: number;
+    total_funded: number;
+    effective_cash?: number;
 }

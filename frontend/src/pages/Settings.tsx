@@ -1,13 +1,32 @@
-import { useState } from 'react';
-import { Save, User, Database, Bell } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Save, User, Database, Bell, Key, Eye, EyeOff } from 'lucide-react';
 
 export default function SettingsPage() {
     const [settings, setSettings] = useState({
         currency: 'JPY',
         language: 'ja',
         notifications: true,
-        darkMode: true,
+        geminiApiKey: '',
     });
+    const [showApiKey, setShowApiKey] = useState(false);
+    const [saved, setSaved] = useState(false);
+
+    // Load saved API key from localStorage
+    useEffect(() => {
+        const savedKey = localStorage.getItem('gemini_api_key');
+        if (savedKey) {
+            setSettings(prev => ({ ...prev, geminiApiKey: savedKey }));
+        }
+    }, []);
+
+    const handleSave = () => {
+        // Save API key to localStorage
+        if (settings.geminiApiKey) {
+            localStorage.setItem('gemini_api_key', settings.geminiApiKey);
+        }
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2000);
+    };
 
     return (
         <div className="h-full overflow-auto p-4">
@@ -22,7 +41,7 @@ export default function SettingsPage() {
                     </div>
                     <div className="grid grid-cols-2 gap-3">
                         <div>
-                            <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Currency</label>
+                            <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Default Currency</label>
                             <select
                                 value={settings.currency}
                                 onChange={(e) => setSettings({ ...settings, currency: e.target.value })}
@@ -31,6 +50,8 @@ export default function SettingsPage() {
                                 <option value="JPY">¥ JPY</option>
                                 <option value="USD">$ USD</option>
                                 <option value="EUR">€ EUR</option>
+                                <option value="GBP">£ GBP</option>
+                                <option value="CNY">¥ CNY</option>
                             </select>
                         </div>
                         <div>
@@ -45,6 +66,34 @@ export default function SettingsPage() {
                             </select>
                         </div>
                     </div>
+                </div>
+
+                {/* Gemini API Key */}
+                <div className="border border-slate-800 p-4">
+                    <div className="flex items-center gap-2 mb-3">
+                        <Key size={16} className="text-amber-400" />
+                        <h2 className="text-sm font-medium">Gemini API Key</h2>
+                    </div>
+                    <p className="text-[10px] text-slate-500 mb-2">Used for AI-powered analysis and insights</p>
+                    <div className="relative">
+                        <input
+                            type={showApiKey ? 'text' : 'password'}
+                            value={settings.geminiApiKey}
+                            onChange={(e) => setSettings({ ...settings, geminiApiKey: e.target.value })}
+                            placeholder="Enter your Gemini API key..."
+                            className="w-full bg-slate-800 border border-slate-700 px-3 py-2 pr-10 text-sm font-mono focus:outline-none focus:border-emerald-500"
+                        />
+                        <button
+                            type="button"
+                            onClick={() => setShowApiKey(!showApiKey)}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-500 hover:text-slate-300"
+                        >
+                            {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                        </button>
+                    </div>
+                    <p className="text-[10px] text-slate-600 mt-1">
+                        Get your API key from <a href="https://aistudio.google.com/" target="_blank" rel="noopener noreferrer" className="text-cyan-500 hover:underline">Google AI Studio</a>
+                    </p>
                 </div>
 
                 {/* Notifications */}
@@ -81,9 +130,15 @@ export default function SettingsPage() {
                 </div>
 
                 {/* Save Button */}
-                <button className="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-2.5 text-sm font-medium flex items-center justify-center gap-2 transition-colors">
+                <button
+                    onClick={handleSave}
+                    className={`w-full py-2.5 text-sm font-medium flex items-center justify-center gap-2 transition-colors ${saved
+                            ? 'bg-emerald-700 text-white'
+                            : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                        }`}
+                >
                     <Save size={16} />
-                    Save Settings
+                    {saved ? 'Saved!' : 'Save Settings'}
                 </button>
             </div>
         </div>

@@ -43,8 +43,7 @@ class Transaction(Base):
     amount = Column(Float)
     type = Column(String)
     category = Column(String, nullable=True)
-    
-    # Double-entry support
+    currency = Column(String, default='JPY')
     from_account = Column(String, nullable=True)
     to_account = Column(String, nullable=True)
     
@@ -53,7 +52,6 @@ class Transaction(Base):
     liability_id = Column(Integer, ForeignKey("liabilities.id"), nullable=True)
 
 class LifeEvent(Base):
-    """Life Events = Future Liabilities"""
     __tablename__ = "life_events"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -61,7 +59,7 @@ class LifeEvent(Base):
     target_date = Column(Date)
     target_amount = Column(Float)
     funded_amount = Column(Float, default=0)
-    priority = Column(String, default="medium")  # high, medium, low
+    priority = Column(String, default="medium")
     allocated_asset_id = Column(Integer, ForeignKey("assets.id"), nullable=True)
     
     asset_mappings = relationship("AssetGoalMapping", back_populates="life_event")
@@ -99,7 +97,7 @@ class Budget(Base):
     proposed_amount = Column(Float)
     current_spending = Column(Float, default=0)
     month = Column(String)
-    derived_from = Column(String, nullable=True)  # Life Event source
+    derived_from = Column(String, nullable=True)
 
 class SimulationConfig(Base):
     __tablename__ = "simulation_configs"
@@ -109,3 +107,13 @@ class SimulationConfig(Base):
     annual_return = Column(Float, default=5.0)
     tax_rate = Column(Float, default=20.0)
     is_nisa = Column(Boolean, default=True)
+
+class Settings(Base):
+    """User settings including API keys"""
+    __tablename__ = "settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, default=1)
+    gemini_api_key = Column(String, nullable=True)
+    default_currency = Column(String, default='JPY')
+    language = Column(String, default='ja')

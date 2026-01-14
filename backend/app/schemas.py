@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from datetime import date
-from typing import Optional, List, Literal
+from typing import Optional, Literal
 
 # Asset Schemas
 class AssetBase(BaseModel):
@@ -35,13 +35,14 @@ class Liability(LiabilityBase):
     class Config:
         from_attributes = True
 
-# Transaction Schemas (Double-Entry)
+# Transaction Schemas (Double-Entry with Currency)
 class TransactionBase(BaseModel):
     date: date
     description: str
     amount: float
     type: str
     category: Optional[str] = None
+    currency: str = 'JPY'
     from_account: Optional[str] = None
     to_account: Optional[str] = None
 
@@ -54,7 +55,7 @@ class Transaction(TransactionBase):
     class Config:
         from_attributes = True
 
-# Life Event Schemas (Future Liabilities)
+# Life Event Schemas
 class LifeEventBase(BaseModel):
     name: str
     target_date: date
