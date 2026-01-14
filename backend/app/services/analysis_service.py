@@ -4,34 +4,41 @@ from datetime import date
 from .. import models
 
 
-def get_summary(db: Session) -> dict:
-    """Calculate financial summary with CFO logic."""
+def get_summary(db: Session, client_id: int) -> dict:
+    """Calculate financial summary for a specific client."""
     from .accounting_service import get_balance_sheet, get_profit_loss
     from .strategy_service import calculate_overall_goal_probability
     
     # Get current B/S
-    bs = get_balance_sheet(db)
+    bs = get_balance_sheet(db, client_id=client_id)
     
     # Get current month P/L
     today = date.today()
-    pl = get_profit_loss(db, today.year, today.month)
+    pl = get_profit_loss(db, today.year, today.month, client_id=client_id)
     
     # Get goal probability
-    goal_data = calculate_overall_goal_probability(db)
+    goal_data = calculate_overall_goal_probability(db, client_id=client_id)
     
     # CFO Effective Cash calculation
     cash_accounts = db.query(models.Account).filter(
+        models.Account.client_id == client_id,
         models.Account.name.in_(["cash", "bank", "savings"])
     ).all()
     total_cash = sum(a.balance for a in cash_accounts) if cash_accounts else 0
     
     # Get credit card balance (liability)
-    cc_account = db.query(models.Account).filter(models.Account.name == "credit").first()
+    cc_account = db.query(models.Account).filter(
+        models.Account.client_id == client_id,
+        models.Account.name == "credit"
+    ).first()
     cc_unpaid = abs(cc_account.balance) if cc_account else 0
     
     # Get next month's essential budget
-    next_month = f"{today.year}-{today.month:02d}"
-    budgets = db.query(models.Budget).filter(models.Budget.month == next_month).all()
+    month_str = f"{today.year}-{today.month:02d}"
+    budgets = db.query(models.Budget).filter(
+        models.Budget.client_id == client_id,
+        models.Budget.month == month_str
+    ).all()
     next_month_budget = sum(b.proposed_amount for b in budgets) if budgets else 0
     
     effective_cash = total_cash - cc_unpaid - next_month_budget
@@ -78,9 +85,10 @@ def calculate_depreciation(product: models.Product) -> dict | None:
     }
 
 
-def get_depreciation_summary(db: Session) -> dict:
-    """Get total depreciation for all asset products."""
+def get_depreciation_summary(db: Session, client_id: int) -> dict:
+    """Get total depreciation for all asset products belonging to current client."""
     products = db.query(models.Product).filter(
+        models.Product.client_id == client_id,
         models.Product.is_asset == True,
         models.Product.lifespan_months != None
     ).all()
@@ -112,13 +120,13 @@ def get_depreciation_summary(db: Session) -> dict:
     }
 
 
-def get_net_position(db: Session) -> dict:
-    """Calculate Net Position = Assets - Current Debt - Future Life Event Costs."""
+def get_net_position(db: Session, client_id: int) -> dict:
+    """Calculate Net Position = Assets - Current Debt - Future Life Event Costs for current client."""
     from .accounting_service import get_balance_sheet
     from .strategy_service import calculate_overall_goal_probability
     
-    bs = get_balance_sheet(db)
-    goal_data = calculate_overall_goal_probability(db)
+    bs = get_balance_sheet(db, client_id=client_id)
+    goal_data = calculate_overall_goal_probability(db, client_id=client_id)
     
     # Future costs = target amounts - projected funded
     future_costs = max(0, goal_data["total_target"] - goal_data["total_projected"])

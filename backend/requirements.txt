@@ -7,3 +7,7 @@ pydantic-settings
 python-multipart
 alembic
 python-dateutil
+cryptography
+python-jose[cryptography]
+bcrypt
+httpx

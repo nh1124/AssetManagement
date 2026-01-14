@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
-import { BarChart3, Target, Package, Settings, PlusCircle, Plus } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
+import { BarChart3, Target, Package, Settings, PlusCircle, Plus, LogOut, User as UserIcon } from 'lucide-react';
 
 interface LayoutProps {
     children: ReactNode;
@@ -17,6 +18,8 @@ const navItems = [
 ];
 
 export default function Layout({ children, currentPage, onNavigate, onOpenQuickInput }: LayoutProps) {
+    const { user, logout } = useAuth();
+
     return (
         <div className="min-h-screen bg-slate-900 text-slate-50 flex flex-col">
             {/* Top Navigation */}
@@ -30,7 +33,8 @@ export default function Layout({ children, currentPage, onNavigate, onOpenQuickI
                             <span className="font-medium text-sm">Finance IDE</span>
                             <span className="text-[10px] text-slate-600 ml-1">v3.0</span>
                         </div>
-                        <div className="flex">
+
+                        <div className="flex flex-1 justify-center">
                             {navItems.map((item) => {
                                 const Icon = item.icon;
                                 const isActive = currentPage === item.id;
@@ -49,9 +53,24 @@ export default function Layout({ children, currentPage, onNavigate, onOpenQuickI
                                 );
                             })}
                         </div>
+
+                        <div className="flex items-center space-x-2">
+                            <div className="flex items-center text-[10px] text-slate-500 bg-slate-800/50 px-2 py-0.5 rounded border border-slate-700">
+                                <UserIcon size={10} className="mr-1" />
+                                <span>{user?.name || 'Guest'}</span>
+                            </div>
+                            <button
+                                onClick={logout}
+                                className="p-1.5 text-slate-400 hover:text-red-400 hover:bg-red-950/20 transition-all rounded"
+                                title="Sign Out"
+                            >
+                                <LogOut size={14} />
+                            </button>
+                        </div>
                     </div>
                 </div>
             </nav>
+
 
             {/* Main Content */}
             <main className="flex-1 overflow-hidden relative">

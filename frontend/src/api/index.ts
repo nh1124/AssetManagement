@@ -8,7 +8,57 @@ const api = axios.create({
     headers: { 'Content-Type': 'application/json' },
 });
 
+// Interceptor to add Auth and X-Client-Id headers
+api.interceptors.request.use((config) => {
+    const token = localStorage.getItem('finance_access_token');
+    if (token) {
+        config.headers['Authorization'] = `Bearer ${token}`;
+    }
+    const clientId = localStorage.getItem('finance_client_id') || '1';
+    config.headers['X-Client-Id'] = clientId;
+    return config;
+});
+
+// Interceptor to handle 401 Unauthorized responses
+api.interceptors.response.use(
+    (response) => response,
+    (error) => {
+        if (error.response?.status === 401) {
+            localStorage.removeItem('finance_access_token');
+            // We don't necessarily want to remove client_id if we want to remember the last tenant,
+            // but for security it's often better to clear it or let the user re-select/default to 1.
+            window.location.reload(); // Force App to re-evaluate auth status
+        }
+        return Promise.reject(error);
+    }
+);
+
+
+// Auth endpoints
+export const login = async (credentials: any) => {
+    const response = await api.post('/auth/login', credentials);
+    return response.data;
+};
+
+export const register = async (userData: any) => {
+    const response = await api.post('/auth/register', userData);
+    return response.data;
+};
+
+export const updateProfile = async (profileData: any) => {
+
+    const response = await api.patch('/auth/me', profileData);
+    return response.data;
+};
+
+export const getMe = async () => {
+    const response = await api.get('/me');
+    return response.data;
+};
+
+
 // Analysis endpoints
+
 export const getAnalysisSummary = async (): Promise<AnalysisSummary> => {
     const response = await api.get('/analysis/summary');
     return response.data;
@@ -151,6 +201,23 @@ export const createProduct = async (product: any) => {
 
 export const updateProduct = async (id: number, product: any) => {
     const response = await api.put(`/products/${id}`, product);
+    return response.data;
+};
+
+// AI/Analysis backend-side
+export const analyzeWithBackend = async (payload: { parts: any[] }) => {
+    const response = await api.post('/api/analyze/', payload);
+    return response.data;
+};
+
+// Client management
+export const getClients = async () => {
+    const response = await api.get('/clients/');
+    return response.data;
+};
+
+export const updateClientKey = async (clientId: number, gemini_api_key: string) => {
+    const response = await api.put(`/clients/${clientId}/key`, { gemini_api_key });
     return response.data;
 };
 

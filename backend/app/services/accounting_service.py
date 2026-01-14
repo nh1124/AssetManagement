@@ -30,20 +30,26 @@ DEFAULT_ACCOUNTS = [
 ]
 
 
-def ensure_default_accounts(db: Session):
-    """Create default accounts if they don't exist."""
+def ensure_default_accounts(db: Session, client_id: int):
+    """Create default accounts for a client if they don't exist."""
     for acc in DEFAULT_ACCOUNTS:
-        existing = db.query(models.Account).filter(models.Account.name == acc["name"]).first()
+        existing = db.query(models.Account).filter(
+            models.Account.name == acc["name"],
+            models.Account.client_id == client_id
+        ).first()
         if not existing:
-            db.add(models.Account(**acc))
+            db.add(models.Account(**acc, client_id=client_id))
     db.commit()
 
 
-def get_or_create_account(db: Session, name: str, account_type: str = "expense") -> models.Account:
-    """Get account by name or create it."""
-    account = db.query(models.Account).filter(models.Account.name == name.lower()).first()
+def get_or_create_account(db: Session, name: str, client_id: int, account_type: str = "expense") -> models.Account:
+    """Get account by name or create it for a specific client."""
+    account = db.query(models.Account).filter(
+        models.Account.name == name.lower(),
+        models.Account.client_id == client_id
+    ).first()
     if not account:
-        account = models.Account(name=name.lower(), account_type=account_type)
+        account = models.Account(name=name.lower(), account_type=account_type, client_id=client_id)
         db.add(account)
         db.commit()
         db.refresh(account)
@@ -53,12 +59,8 @@ def get_or_create_account(db: Session, name: str, account_type: str = "expense")
 def process_transaction(db: Session, transaction: models.Transaction):
     """
     Process a transaction with double-entry bookkeeping.
-    
-    Rules:
-    - Income: Debit Asset (from_account), Credit Income (category)
-    - Expense: Debit Expense (category), Credit Asset (from_account)
-    - Transfer: Debit to_account, Credit from_account
     """
+    client_id = transaction.client_id
     from_acc_name = transaction.from_account or "cash"
     to_acc_name = transaction.to_account or "expense"
     category = transaction.category or "expense"
@@ -66,8 +68,8 @@ def process_transaction(db: Session, transaction: models.Transaction):
     # Determine account types and get/create accounts
     if transaction.type == "Income":
         # Money comes IN: Debit Asset, Credit Income
-        from_account = get_or_create_account(db, from_acc_name, "asset")
-        to_account = get_or_create_account(db, category, "income")
+        from_account = get_or_create_account(db, from_acc_name, client_id, "asset")
+        to_account = get_or_create_account(db, category, client_id, "income")
         
         # Debit the asset (increase asset)
         debit_entry = models.JournalEntry(
@@ -83,14 +85,12 @@ def process_transaction(db: Session, transaction: models.Transaction):
             debit=0,
             credit=transaction.amount
         )
-        
-        # Update balances
-        from_account.balance += transaction.amount  # Asset increases
+        from_account.balance += transaction.amount
         
     elif transaction.type == "Expense":
         # Money goes OUT: Debit Expense, Credit Asset
-        from_account = get_or_create_account(db, from_acc_name, "asset")
-        to_account = get_or_create_account(db, category, "expense")
+        from_account = get_or_create_account(db, from_acc_name, client_id, "asset")
+        to_account = get_or_create_account(db, category, client_id, "expense")
         
         # Debit the expense (increase expense)
         debit_entry = models.JournalEntry(
@@ -106,13 +106,33 @@ def process_transaction(db: Session, transaction: models.Transaction):
             debit=0,
             credit=transaction.amount
         )
+        from_account.balance -= transaction.amount
         
-        # Update balances
-        from_account.balance -= transaction.amount  # Asset decreases
+    elif transaction.type == "Debt":
+        # Debt Repayment: Debit Liability, Credit Asset
+        from_account = get_or_create_account(db, from_acc_name, client_id, "asset")
+        to_account = get_or_create_account(db, to_acc_name, client_id, "liability")
+        
+        # Debit the liability (decrease debt)
+        debit_entry = models.JournalEntry(
+            transaction_id=transaction.id,
+            account_id=to_account.id,
+            debit=transaction.amount,
+            credit=0
+        )
+        # Credit the asset (decrease money)
+        credit_entry = models.JournalEntry(
+            transaction_id=transaction.id,
+            account_id=from_account.id,
+            debit=0,
+            credit=transaction.amount
+        )
+        from_account.balance -= transaction.amount
+        to_account.balance += transaction.amount # Liability balance + means less debt in this model logic for simplicity or logic check
         
     else:  # Transfer
-        from_account = get_or_create_account(db, from_acc_name, "asset")
-        to_account = get_or_create_account(db, to_acc_name, "asset")
+        from_account = get_or_create_account(db, from_acc_name, client_id, "asset")
+        to_account = get_or_create_account(db, to_acc_name, client_id, "asset")
         
         # Debit to_account (increase), Credit from_account (decrease)
         debit_entry = models.JournalEntry(
@@ -127,8 +147,6 @@ def process_transaction(db: Session, transaction: models.Transaction):
             debit=0,
             credit=transaction.amount
         )
-        
-        # Update balances
         from_account.balance -= transaction.amount
         to_account.balance += transaction.amount
     
@@ -137,16 +155,15 @@ def process_transaction(db: Session, transaction: models.Transaction):
     db.commit()
 
 
-def get_balance_sheet(db: Session, as_of_date: Optional[date] = None) -> dict:
+def get_balance_sheet(db: Session, as_of_date: Optional[date] = None, client_id: int = None) -> dict:
     """
-    Generate Balance Sheet snapshot.
-    B/S = Assets - Liabilities = Equity
+    Generate Balance Sheet snapshot for current client.
     """
     if as_of_date is None:
         as_of_date = date.today()
     
-    # Get all accounts
-    accounts = db.query(models.Account).all()
+    # Get all accounts for client
+    accounts = db.query(models.Account).filter(models.Account.client_id == client_id).all()
     
     assets = []
     liabilities = []
@@ -171,10 +188,9 @@ def get_balance_sheet(db: Session, as_of_date: Optional[date] = None) -> dict:
     }
 
 
-def get_profit_loss(db: Session, year: int, month: int) -> dict:
+def get_profit_loss(db: Session, year: int, month: int, client_id: int = None) -> dict:
     """
-    Generate Profit & Loss statement for a specific month.
-    P/L = Income - Expenses
+    Generate Profit & Loss statement for a specific month and client.
     """
     start_date = date(year, month, 1)
     if month == 12:
@@ -182,9 +198,10 @@ def get_profit_loss(db: Session, year: int, month: int) -> dict:
     else:
         end_date = date(year, month + 1, 1)
     
-    # Get transactions for the period
+    # Get transactions for the period and client
     transactions = db.query(models.Transaction).filter(
         and_(
+            models.Transaction.client_id == client_id,
             models.Transaction.date >= start_date,
             models.Transaction.date < end_date
         )
@@ -214,16 +231,19 @@ def get_profit_loss(db: Session, year: int, month: int) -> dict:
     }
 
 
-def get_variance_analysis(db: Session, year: int, month: int) -> dict:
+def get_variance_analysis(db: Session, year: int, month: int, client_id: int = None) -> dict:
     """
-    Compare actual spending vs budget for a specific month.
+    Compare actual spending vs budget for a specific month and client.
     """
     month_str = f"{year}-{month:02d}"
     
-    # Get budgets for the month
-    budgets = db.query(models.Budget).filter(models.Budget.month == month_str).all()
+    # Get budgets for the month and client
+    budgets = db.query(models.Budget).filter(
+        models.Budget.client_id == client_id,
+        models.Budget.month == month_str
+    ).all()
     
-    # Get actual spending for the month
+    # Get actual spending for the month and client
     start_date = date(year, month, 1)
     if month == 12:
         end_date = date(year + 1, 1, 1)
@@ -232,6 +252,7 @@ def get_variance_analysis(db: Session, year: int, month: int) -> dict:
     
     transactions = db.query(models.Transaction).filter(
         and_(
+            models.Transaction.client_id == client_id,
             models.Transaction.date >= start_date,
             models.Transaction.date < end_date,
             models.Transaction.type == "Expense"

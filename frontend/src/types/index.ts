@@ -20,7 +20,7 @@ export interface Transaction {
     date: string;
     description: string;
     amount: number;
-    type: 'Income' | 'Expense' | 'Transfer';
+    type: 'Income' | 'Expense' | 'Transfer' | 'Debt';
     category?: string;
     currency: string;
     from_account?: string;
