@@ -1,122 +1,154 @@
-import { useState, useRef } from 'react';
-import { X, ArrowRightLeft, CreditCard, Package, Sparkles, Loader2, ImagePlus } from 'lucide-react';
-import TabPanel from './TabPanel';
+import { useState, useRef, useEffect } from 'react';
+import { X, ArrowRightLeft, CreditCard, Sparkles, Loader2, ImagePlus, Send } from 'lucide-react';
+import { getAccountsByType, createTransaction, seedDefaultAccounts } from '../api';
+import { useToast } from './Toast';
 
 interface QuickInputDrawerProps {
     isOpen: boolean;
     onClose: () => void;
 }
 
-const CURRENCIES = ['JPY', 'USD', 'EUR', 'GBP', 'CNY'];
-
-const TABS = [
-    { id: 'transaction', label: 'Tx' },
-    { id: 'debt', label: 'Debt' },
-    { id: 'product', label: 'Product' },
-    { id: 'ai', label: 'AI' },
+const TRANSACTION_TYPES = [
+    { value: 'Expense', label: 'Expense', fromType: 'asset', toType: 'expense' },
+    { value: 'Income', label: 'Income', fromType: 'income', toType: 'asset' },
+    { value: 'Transfer', label: 'Transfer', fromType: 'asset', toType: 'asset' },
+    { value: 'Debt Repayment', label: 'Debt Pay', fromType: 'asset', toType: 'liability' },
 ];
 
 export default function QuickInputDrawer({ isOpen, onClose }: QuickInputDrawerProps) {
-    const [activeTab, setActiveTab] = useState('transaction');
+    const [activeType, setActiveType] = useState('Expense');
     const [isProcessing, setIsProcessing] = useState(false);
+    const [accountsByType, setAccountsByType] = useState<any>({ asset: [], liability: [], income: [], expense: [] });
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const { showToast } = useToast();
 
-    // Transaction form
-    const [txForm, setTxForm] = useState({
+    const [formData, setFormData] = useState({
+        date: new Date().toISOString().split('T')[0],
+        description: '',
         amount: '',
-        category: '',
         currency: 'JPY',
         fromAccount: '',
         toAccount: '',
     });
 
-    // Debt form
-    const [debtForm, setDebtForm] = useState({
-        amount: '',
-        debtAccount: '',
-        currency: 'JPY',
-    });
-
-    // Product form
-    const [productForm, setProductForm] = useState({
-        name: '',
-        price: '',
-        location: '',
-        category: '',
-    });
-
-    // AI form
+    // AI state
     const [aiInput, setAiInput] = useState('');
-    const [aiResult, setAiResult] = useState<string | null>(null);
     const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
-    const handleTransactionSubmit = () => {
-        console.log('Transaction:', txForm);
-        setTxForm({ amount: '', category: '', currency: 'JPY', fromAccount: '', toAccount: '' });
-        onClose();
+    useEffect(() => {
+        if (isOpen) {
+            fetchAccounts();
+        }
+    }, [isOpen]);
+
+    const fetchAccounts = async () => {
+        try {
+            const data = await getAccountsByType();
+            setAccountsByType(data);
+
+            // Set defaults based on type
+            const typeConfig = TRANSACTION_TYPES.find(t => t.value === activeType);
+            if (typeConfig) {
+                const fromAccounts = data[typeConfig.fromType] || [];
+                const toAccounts = data[typeConfig.toType] || [];
+                setFormData(prev => ({
+                    ...prev,
+                    fromAccount: fromAccounts[0]?.name || '',
+                    toAccount: toAccounts[0]?.name || ''
+                }));
+            }
+        } catch (error) {
+            // Seed defaults and retry
+            await seedDefaultAccounts();
+            const data = await getAccountsByType();
+            setAccountsByType(data);
+        }
     };
 
-    const handleDebtSubmit = () => {
-        console.log('Debt Payment:', debtForm);
-        setDebtForm({ amount: '', debtAccount: '', currency: 'JPY' });
-        onClose();
+    const currentTypeConfig = TRANSACTION_TYPES.find(t => t.value === activeType);
+    const fromAccounts = currentTypeConfig ? accountsByType[currentTypeConfig.fromType] || [] : [];
+    const toAccounts = currentTypeConfig ? accountsByType[currentTypeConfig.toType] || [] : [];
+
+    const handleTypeChange = (type: string) => {
+        setActiveType(type);
+        const typeConfig = TRANSACTION_TYPES.find(t => t.value === type);
+        if (typeConfig) {
+            const from = accountsByType[typeConfig.fromType] || [];
+            const to = accountsByType[typeConfig.toType] || [];
+            setFormData(prev => ({
+                ...prev,
+                fromAccount: from[0]?.name || '',
+                toAccount: to[0]?.name || ''
+            }));
+        }
     };
 
-    const handleProductSubmit = () => {
-        console.log('Product:', productForm);
-        setProductForm({ name: '', price: '', location: '', category: '' });
-        onClose();
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!formData.amount || !formData.fromAccount || !formData.toAccount) {
+            showToast('Please fill all required fields', 'warning');
+            return;
+        }
+
+        try {
+            await createTransaction({
+                date: formData.date,
+                description: formData.description || `${activeType} transaction`,
+                amount: parseFloat(formData.amount),
+                type: (activeType === 'Debt Repayment' ? 'Transfer' : activeType) as 'Income' | 'Expense' | 'Transfer',
+                category: formData.toAccount,
+                currency: formData.currency,
+                from_account: formData.fromAccount,
+                to_account: formData.toAccount,
+            });
+
+            const symbol = formData.currency === 'JPY' ? '¥' : '$';
+            showToast(`Saved: ${activeType === 'Income' ? '+' : '-'}${symbol}${parseFloat(formData.amount).toLocaleString()} from ${formData.fromAccount}`, 'success');
+
+            setFormData(prev => ({ ...prev, description: '', amount: '' }));
+            onClose();
+        } catch (error) {
+            showToast('Failed to save transaction', 'error');
+        }
     };
 
     const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (file) {
             const reader = new FileReader();
-            reader.onloadend = () => {
-                setSelectedImage(reader.result as string);
-            };
+            reader.onloadend = () => setSelectedImage(reader.result as string);
             reader.readAsDataURL(file);
         }
     };
 
-    const handleAiSubmit = async () => {
+    const handleAiParse = async () => {
         if (!aiInput.trim() && !selectedImage) return;
 
         setIsProcessing(true);
-        setAiResult(null);
-
         const apiKey = localStorage.getItem('gemini_api_key');
 
         if (!apiKey) {
-            setAiResult('⚠️ Set Gemini API key in Settings first.');
+            showToast('Set Gemini API key in Settings', 'warning');
             setIsProcessing(false);
             return;
         }
 
         try {
             const parts: any[] = [{
-                text: `Parse this expense/transaction and extract structured data. Return JSON only.
-${aiInput ? `Text: "${aiInput}"` : 'Analyze the receipt/image.'}
-
-Return format:
-{"type": "transaction" | "debt_payment" | "product", "amount": number, "currency": "JPY" | "USD" | "EUR", "category": string, "description": string, "product_name": string (optional), "location": string (optional)}`
+                text: `Parse this expense. Return JSON only with: amount (number), currency (JPY/USD), to_account (one of: ${toAccounts.map((a: any) => a.name).join(', ')}), description (string).
+Input: "${aiInput || 'Analyze receipt image'}"`
             }];
 
             if (selectedImage) {
                 const base64Data = selectedImage.split(',')[1];
                 const mimeType = selectedImage.split(';')[0].split(':')[1];
-                parts.push({
-                    inline_data: { mime_type: mimeType, data: base64Data }
-                });
+                parts.push({ inline_data: { mime_type: mimeType, data: base64Data } });
             }
 
             const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    contents: [{ parts }],
-                    generationConfig: { temperature: 0.1 }
-                })
+                body: JSON.stringify({ contents: [{ parts }], generationConfig: { temperature: 0.1 } })
             });
 
             const data = await response.json();
@@ -125,247 +157,170 @@ Return format:
             const jsonMatch = text.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
                 const parsed = JSON.parse(jsonMatch[0]);
-                setAiResult(`✅ ${parsed.type}\n💰 ${parsed.currency} ${parsed.amount}\n📁 ${parsed.category}`);
-
-                if (parsed.type === 'transaction') {
-                    setTxForm({
-                        amount: String(parsed.amount),
-                        category: parsed.category || '',
-                        currency: parsed.currency || 'JPY',
-                        fromAccount: '',
-                        toAccount: 'expense',
-                    });
-                    setActiveTab('transaction');
-                } else if (parsed.type === 'product') {
-                    setProductForm({
-                        name: parsed.product_name || parsed.description,
-                        price: String(parsed.amount),
-                        location: parsed.location || '',
-                        category: parsed.category || '',
-                    });
-                    setActiveTab('product');
-                }
-            } else {
-                setAiResult(`📝 ${text.substring(0, 100)}`);
+                setFormData(prev => ({
+                    ...prev,
+                    amount: String(parsed.amount || ''),
+                    currency: parsed.currency || 'JPY',
+                    description: parsed.description || '',
+                    toAccount: parsed.to_account || prev.toAccount
+                }));
+                showToast(`Parsed: ¥${parsed.amount} → ${parsed.to_account}`, 'success');
             }
         } catch (error) {
-            setAiResult(`❌ ${error instanceof Error ? error.message : 'Failed'}`);
+            showToast('AI parsing failed', 'error');
         } finally {
             setIsProcessing(false);
+            setAiInput('');
+            setSelectedImage(null);
         }
     };
 
     if (!isOpen) return null;
 
-    const renderTabContent = () => {
-        switch (activeTab) {
-            case 'transaction':
-                return (
-                    <div className="space-y-2">
-                        <div className="flex gap-1">
-                            <input
-                                type="number"
-                                placeholder="0"
-                                value={txForm.amount}
-                                onChange={(e) => setTxForm({ ...txForm, amount: e.target.value })}
-                                className="flex-1 min-w-0 bg-slate-800 border border-slate-700 px-2 py-1.5 text-base font-mono-nums focus:outline-none focus:border-emerald-500"
-                                autoFocus
-                            />
-                            <select
-                                value={txForm.currency}
-                                onChange={(e) => setTxForm({ ...txForm, currency: e.target.value })}
-                                className="w-16 bg-slate-800 border border-slate-700 px-1 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
-                            >
-                                {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
-                            </select>
-                        </div>
-                        <input
-                            type="text"
-                            placeholder="Category"
-                            value={txForm.category}
-                            onChange={(e) => setTxForm({ ...txForm, category: e.target.value })}
-                            className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
-                        />
-                        <div className="flex gap-1">
-                            <select
-                                value={txForm.fromAccount}
-                                onChange={(e) => setTxForm({ ...txForm, fromAccount: e.target.value })}
-                                className="flex-1 min-w-0 bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
-                            >
-                                <option value="">From...</option>
-                                <option value="cash">Cash</option>
-                                <option value="bank">Bank</option>
-                                <option value="credit">Credit</option>
-                            </select>
-                            <select
-                                value={txForm.toAccount}
-                                onChange={(e) => setTxForm({ ...txForm, toAccount: e.target.value })}
-                                className="flex-1 min-w-0 bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
-                            >
-                                <option value="">To...</option>
-                                <option value="expense">Expense</option>
-                                <option value="savings">Savings</option>
-                                <option value="invest">Invest</option>
-                            </select>
-                        </div>
-                        <button onClick={handleTransactionSubmit} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-2 text-xs font-medium flex items-center justify-center gap-1">
-                            <ArrowRightLeft size={12} /> Save
-                        </button>
-                    </div>
-                );
-
-            case 'debt':
-                return (
-                    <div className="space-y-2">
-                        <div className="flex gap-1">
-                            <input
-                                type="number"
-                                placeholder="0"
-                                value={debtForm.amount}
-                                onChange={(e) => setDebtForm({ ...debtForm, amount: e.target.value })}
-                                className="flex-1 min-w-0 bg-slate-800 border border-slate-700 px-2 py-1.5 text-base font-mono-nums focus:outline-none focus:border-emerald-500"
-                            />
-                            <select
-                                value={debtForm.currency}
-                                onChange={(e) => setDebtForm({ ...debtForm, currency: e.target.value })}
-                                className="w-16 bg-slate-800 border border-slate-700 px-1 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
-                            >
-                                {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}
-                            </select>
-                        </div>
-                        <select
-                            value={debtForm.debtAccount}
-                            onChange={(e) => setDebtForm({ ...debtForm, debtAccount: e.target.value })}
-                            className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
-                        >
-                            <option value="">Select debt...</option>
-                            <option value="cc-mufg">CC (MUFG)</option>
-                            <option value="cc-smbc">CC (SMBC)</option>
-                            <option value="loan">Loan</option>
-                        </select>
-                        <button onClick={handleDebtSubmit} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-2 text-xs font-medium flex items-center justify-center gap-1">
-                            <CreditCard size={12} /> Pay
-                        </button>
-                    </div>
-                );
-
-            case 'product':
-                return (
-                    <div className="space-y-2">
-                        <input
-                            type="text"
-                            placeholder="Product name"
-                            value={productForm.name}
-                            onChange={(e) => setProductForm({ ...productForm, name: e.target.value })}
-                            className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
-                        />
-                        <div className="flex gap-1">
-                            <input
-                                type="number"
-                                placeholder="Price"
-                                value={productForm.price}
-                                onChange={(e) => setProductForm({ ...productForm, price: e.target.value })}
-                                className="flex-1 min-w-0 bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums focus:outline-none focus:border-emerald-500"
-                            />
-                            <input
-                                type="text"
-                                placeholder="Category"
-                                value={productForm.category}
-                                onChange={(e) => setProductForm({ ...productForm, category: e.target.value })}
-                                className="flex-1 min-w-0 bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
-                            />
-                        </div>
-                        <input
-                            type="text"
-                            placeholder="Location (store)"
-                            value={productForm.location}
-                            onChange={(e) => setProductForm({ ...productForm, location: e.target.value })}
-                            className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
-                        />
-                        <button onClick={handleProductSubmit} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-2 text-xs font-medium flex items-center justify-center gap-1">
-                            <Package size={12} /> Save
-                        </button>
-                    </div>
-                );
-
-            case 'ai':
-                return (
-                    <div className="space-y-2">
-                        <div className="flex gap-1">
-                            <textarea
-                                placeholder="Describe expense or upload receipt..."
-                                value={aiInput}
-                                onChange={(e) => setAiInput(e.target.value)}
-                                className="flex-1 min-w-0 bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500 h-16 resize-none"
-                            />
-                            <button
-                                onClick={() => fileInputRef.current?.click()}
-                                className="w-10 h-16 bg-slate-800 border border-slate-700 hover:border-amber-500 flex items-center justify-center text-slate-400 hover:text-amber-400"
-                            >
-                                <ImagePlus size={16} />
-                            </button>
-                            <input
-                                ref={fileInputRef}
-                                type="file"
-                                accept="image/*"
-                                onChange={handleImageSelect}
-                                className="hidden"
-                            />
-                        </div>
-                        {selectedImage && (
-                            <div className="relative">
-                                <img src={selectedImage} alt="Receipt" className="w-full h-20 object-cover border border-slate-700" />
-                                <button
-                                    onClick={() => setSelectedImage(null)}
-                                    className="absolute top-1 right-1 bg-slate-900/80 p-0.5 text-slate-400 hover:text-white"
-                                >
-                                    <X size={12} />
-                                </button>
-                            </div>
-                        )}
-                        {aiResult && (
-                            <div className="border border-slate-700 bg-slate-800/50 p-2 text-[10px] whitespace-pre-wrap">
-                                {aiResult}
-                            </div>
-                        )}
-                        <button
-                            onClick={handleAiSubmit}
-                            disabled={isProcessing || (!aiInput.trim() && !selectedImage)}
-                            className="w-full bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 disabled:opacity-50 text-white py-2 text-xs font-medium flex items-center justify-center gap-1"
-                        >
-                            {isProcessing ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-                            {isProcessing ? 'Processing...' : 'Parse'}
-                        </button>
-                    </div>
-                );
-
-            default:
-                return null;
-        }
-    };
-
     return (
-        <>
-            <div className="fixed inset-0 bg-black/50 z-40" onClick={onClose} />
+        <div className="fixed inset-0 z-50 flex justify-end">
+            <div className="absolute inset-0 bg-black/50" onClick={onClose} />
 
-            <div className="fixed right-0 top-0 h-full w-72 bg-slate-900 border-l border-slate-800 z-50 flex flex-col shadow-2xl overflow-hidden">
-                {/* Header */}
-                <div className="flex items-center justify-between px-3 py-2 border-b border-slate-800 flex-shrink-0">
-                    <h2 className="text-xs font-semibold">Quick Record</h2>
-                    <button onClick={onClose} className="p-1 hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors">
-                        <X size={16} />
+            <div className="relative w-80 bg-slate-900 border-l border-slate-800 h-full overflow-auto">
+                <div className="sticky top-0 bg-slate-900 border-b border-slate-800 px-3 py-2 flex items-center justify-between z-10">
+                    <span className="text-xs font-medium">Quick Record</span>
+                    <button onClick={onClose} className="p-1 hover:bg-slate-800 text-slate-400">
+                        <X size={14} />
                     </button>
                 </div>
 
-                {/* Tabs & Content */}
-                <div className="flex-1 overflow-y-auto overflow-x-hidden">
-                    <TabPanel tabs={TABS} activeTab={activeTab} onTabChange={setActiveTab}>
-                        <div className="p-3">
-                            {renderTabContent()}
+                <div className="p-3 space-y-3">
+                    {/* Type Selector */}
+                    <div className="grid grid-cols-4 gap-1">
+                        {TRANSACTION_TYPES.map((type) => (
+                            <button
+                                key={type.value}
+                                onClick={() => handleTypeChange(type.value)}
+                                className={`py-1.5 text-[10px] transition-colors ${activeType === type.value
+                                    ? 'bg-emerald-600 text-white'
+                                    : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
+                                    }`}
+                            >
+                                {type.label}
+                            </button>
+                        ))}
+                    </div>
+
+                    {/* AI Quick Parse */}
+                    <div className="border border-slate-700 bg-slate-800/30 p-2 space-y-2">
+                        <div className="flex items-center gap-1 text-[10px] text-amber-400">
+                            <Sparkles size={10} /> AI Parse
                         </div>
-                    </TabPanel>
+                        <div className="flex gap-1">
+                            <input
+                                type="text"
+                                placeholder="e.g., Lunch 1200 yen"
+                                value={aiInput}
+                                onChange={(e) => setAiInput(e.target.value)}
+                                className="flex-1 bg-slate-900 border border-slate-700 px-2 py-1 text-[10px]"
+                            />
+                            <button
+                                onClick={() => fileInputRef.current?.click()}
+                                className="px-2 bg-slate-800 border border-slate-700 text-slate-400 hover:text-amber-400"
+                            >
+                                <ImagePlus size={12} />
+                            </button>
+                            <button
+                                onClick={handleAiParse}
+                                disabled={isProcessing || (!aiInput.trim() && !selectedImage)}
+                                className="px-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white"
+                            >
+                                {isProcessing ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+                            </button>
+                        </div>
+                        <input ref={fileInputRef} type="file" accept="image/*" onChange={handleImageSelect} className="hidden" />
+                        {selectedImage && (
+                            <div className="relative">
+                                <img src={selectedImage} alt="Receipt" className="w-full h-16 object-cover" />
+                                <button onClick={() => setSelectedImage(null)} className="absolute top-0 right-0 bg-slate-900/80 p-0.5">
+                                    <X size={10} />
+                                </button>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Transaction Form */}
+                    <form onSubmit={handleSubmit} className="space-y-2">
+                        <div className="grid grid-cols-2 gap-2">
+                            <div>
+                                <label className="block text-[9px] text-slate-500 uppercase mb-0.5">Date</label>
+                                <input
+                                    type="date"
+                                    value={formData.date}
+                                    onChange={(e) => setFormData({ ...formData, date: e.target.value })}
+                                    className="w-full bg-slate-800 border border-slate-700 px-2 py-1 text-[10px]"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-[9px] text-slate-500 uppercase mb-0.5">Amount</label>
+                                <input
+                                    type="number"
+                                    placeholder="0"
+                                    value={formData.amount}
+                                    onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
+                                    className="w-full bg-slate-800 border border-slate-700 px-2 py-1 text-[10px] font-mono-nums"
+                                />
+                            </div>
+                        </div>
+
+                        <div>
+                            <label className="block text-[9px] text-slate-500 uppercase mb-0.5">Description</label>
+                            <input
+                                type="text"
+                                placeholder="What for?"
+                                value={formData.description}
+                                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                                className="w-full bg-slate-800 border border-slate-700 px-2 py-1 text-[10px]"
+                            />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                            <div>
+                                <label className="block text-[9px] text-slate-500 uppercase mb-0.5">From</label>
+                                <select
+                                    value={formData.fromAccount}
+                                    onChange={(e) => setFormData({ ...formData, fromAccount: e.target.value })}
+                                    className="w-full bg-slate-800 border border-slate-700 px-2 py-1 text-[10px] capitalize"
+                                >
+                                    {fromAccounts.map((acc: any) => (
+                                        <option key={acc.id} value={acc.name}>{acc.name.replace(/_/g, ' ')}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-[9px] text-slate-500 uppercase mb-0.5">To</label>
+                                <select
+                                    value={formData.toAccount}
+                                    onChange={(e) => setFormData({ ...formData, toAccount: e.target.value })}
+                                    className="w-full bg-slate-800 border border-slate-700 px-2 py-1 text-[10px] capitalize"
+                                >
+                                    {toAccounts.map((acc: any) => (
+                                        <option key={acc.id} value={acc.name}>{acc.name.replace(/_/g, ' ')}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+
+                        <button
+                            type="submit"
+                            className="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-2 flex items-center justify-center gap-1 text-xs font-medium"
+                        >
+                            <ArrowRightLeft size={12} /> Save
+                        </button>
+                    </form>
+
+                    {activeType === 'Debt Repayment' && (
+                        <div className="flex items-center gap-1 text-[9px] text-slate-500 border-t border-slate-800 pt-2">
+                            <CreditCard size={10} /> Paying off liability account
+                        </div>
+                    )}
                 </div>
             </div>
-        </>
+        </div>
     );
 }

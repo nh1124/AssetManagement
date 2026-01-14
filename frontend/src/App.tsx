@@ -2,10 +2,11 @@ import { useState } from 'react';
 import './index.css';
 import Layout from './components/Layout';
 import QuickInputDrawer from './components/QuickInputDrawer';
+import { ToastProvider } from './components/Toast';
 import RecordPage from './pages/Record';
 import TheLab from './pages/TheLab';
 import Strategy from './pages/Strategy';
-import Products from './pages/Products';
+import Inventory from './pages/Inventory';
 import SettingsPage from './pages/Settings';
 
 function App() {
@@ -20,8 +21,8 @@ function App() {
         return <TheLab />;
       case 'strategy':
         return <Strategy />;
-      case 'products':
-        return <Products />;
+      case 'inventory':
+        return <Inventory />;
       case 'settings':
         return <SettingsPage />;
       default:
@@ -30,7 +31,7 @@ function App() {
   };
 
   return (
-    <>
+    <ToastProvider>
       <Layout
         currentPage={currentPage}
         onNavigate={setCurrentPage}
@@ -42,7 +43,7 @@ function App() {
         isOpen={isQuickInputOpen}
         onClose={() => setIsQuickInputOpen(false)}
       />
-    </>
+    </ToastProvider>
   );
 }
 

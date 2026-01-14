@@ -5,9 +5,7 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8100';
 
 const api = axios.create({
     baseURL: API_BASE_URL,
-    headers: {
-        'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
 });
 
 // Analysis endpoints
@@ -42,6 +40,38 @@ export const getVarianceAnalysis = async (year?: number, month?: number) => {
 
 export const getDepreciation = async () => {
     const response = await api.get('/analysis/depreciation');
+    return response.data;
+};
+
+// Accounts endpoints
+export const getAccounts = async (accountType?: string) => {
+    const params = accountType ? `?account_type=${accountType}` : '';
+    const response = await api.get(`/accounts/${params}`);
+    return response.data;
+};
+
+export const getAccountsByType = async () => {
+    const response = await api.get('/accounts/by-type');
+    return response.data;
+};
+
+export const createAccount = async (account: { name: string; account_type: string; budget_limit?: number }) => {
+    const response = await api.post('/accounts/', account);
+    return response.data;
+};
+
+export const updateAccount = async (id: number, data: { name?: string; budget_limit?: number; is_active?: boolean }) => {
+    const response = await api.put(`/accounts/${id}`, data);
+    return response.data;
+};
+
+export const deleteAccount = async (id: number) => {
+    const response = await api.delete(`/accounts/${id}`);
+    return response.data;
+};
+
+export const seedDefaultAccounts = async () => {
+    const response = await api.post('/accounts/seed-defaults');
     return response.data;
 };
 
@@ -108,7 +138,7 @@ export const createBudget = async (budget: any) => {
     return response.data;
 };
 
-// Products endpoints
+// Products/Inventory endpoints
 export const getProducts = async () => {
     const response = await api.get('/products/');
     return response.data;
@@ -116,6 +146,11 @@ export const getProducts = async () => {
 
 export const createProduct = async (product: any) => {
     const response = await api.post('/products/', product);
+    return response.data;
+};
+
+export const updateProduct = async (id: number, product: any) => {
+    const response = await api.put(`/products/${id}`, product);
     return response.data;
 };
 
