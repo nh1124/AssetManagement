@@ -1,10 +1,11 @@
 import type { ReactNode } from 'react';
-import { BarChart3, Target, Package, Settings, PlusCircle } from 'lucide-react';
+import { BarChart3, Target, Package, Settings, PlusCircle, Plus } from 'lucide-react';
 
 interface LayoutProps {
     children: ReactNode;
     currentPage: string;
     onNavigate: (page: string) => void;
+    onOpenQuickInput: () => void;
 }
 
 const navItems = [
@@ -15,7 +16,7 @@ const navItems = [
     { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
-export default function Layout({ children, currentPage, onNavigate }: LayoutProps) {
+export default function Layout({ children, currentPage, onNavigate, onOpenQuickInput }: LayoutProps) {
     return (
         <div className="min-h-screen bg-slate-900 text-slate-50 flex flex-col">
             {/* Top Navigation */}
@@ -53,8 +54,17 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
             </nav>
 
             {/* Main Content */}
-            <main className="flex-1 overflow-hidden">
+            <main className="flex-1 overflow-hidden relative">
                 {children}
+
+                {/* Floating Action Button for Quick Input */}
+                <button
+                    onClick={onOpenQuickInput}
+                    className="fixed bottom-6 right-6 w-14 h-14 bg-gradient-to-br from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 rounded-full shadow-lg shadow-emerald-500/25 flex items-center justify-center transition-all hover:scale-105 z-40"
+                    title="Quick Record"
+                >
+                    <Plus size={24} className="text-white" />
+                </button>
             </main>
         </div>
     );
