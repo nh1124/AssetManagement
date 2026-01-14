@@ -2,15 +2,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from . import models
 from .database import engine
-from .routers import transactions, products, budgets, life_events, simulation, analysis
+from .routers import transactions, products, budgets, life_events, simulation, analysis, accounts
 
 # Create tables
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="Finance IDE API",
-    version="2.2.0",
-    description="Personal Finance Management API with CFO Logic"
+    version="3.0.0",
+    description="Personal Finance Management API - Minimalist Double-Entry"
 )
 
 # CORS for frontend
@@ -29,6 +29,7 @@ app.include_router(products.router)
 app.include_router(budgets.router)
 app.include_router(life_events.router)
 app.include_router(simulation.router)
+app.include_router(accounts.router)
 
 @app.get("/")
 def root():

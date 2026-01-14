@@ -29,6 +29,8 @@ class Account(Base):
     account_type = Column(String)  # asset, liability, income, expense
     balance = Column(Float, default=0)
     parent_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
+    budget_limit = Column(Float, nullable=True)  # Monthly budget for expense accounts
+    is_active = Column(Boolean, default=True)
     
     entries = relationship("JournalEntry", back_populates="account")
 

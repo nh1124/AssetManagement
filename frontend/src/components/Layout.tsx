@@ -12,7 +12,7 @@ const navItems = [
     { id: 'record', label: 'Record', icon: PlusCircle },
     { id: 'analytics', label: 'Analytics', icon: BarChart3 },
     { id: 'strategy', label: 'Strategy', icon: Target },
-    { id: 'products', label: 'Products', icon: Package },
+    { id: 'inventory', label: 'Inventory', icon: Package },
     { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
@@ -39,8 +39,8 @@ export default function Layout({ children, currentPage, onNavigate, onOpenQuickI
                                         key={item.id}
                                         onClick={() => onNavigate(item.id)}
                                         className={`flex items-center space-x-1.5 px-4 py-1.5 text-xs transition-colors border-b-2 ${isActive
-                                                ? 'border-emerald-400 text-emerald-400 bg-slate-800/50'
-                                                : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/30'
+                                            ? 'border-emerald-400 text-emerald-400 bg-slate-800/50'
+                                            : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/30'
                                             }`}
                                     >
                                         <Icon size={14} />
