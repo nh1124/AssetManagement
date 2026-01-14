@@ -1,18 +1,38 @@
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: finance-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: finance_ide
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   backend:
     build:
       context: ./backend
       args:
         - BACKEND_PORT=${BACKEND_PORT:-8000}
-    container_name: asset-backend
+    container_name: finance-backend
     ports:
       - "${BACKEND_PORT:-8000}:${BACKEND_PORT:-8000}"
     volumes:
       - ./backend/app:/app/app
-      - sqlite_data:/app/data
     environment:
-      - DATABASE_URL=sqlite:///./data/asset_management.db
+      - DATABASE_URL=postgresql://postgres:postgres@db:5432/finance_ide
       - BACKEND_PORT=${BACKEND_PORT:-8000}
+    depends_on:
+      db:
+        condition: service_healthy
     restart: unless-stopped
 
   frontend:
@@ -20,7 +40,7 @@ services:
       context: ./frontend
       args:
         - VITE_API_URL=/api
-    container_name: asset-frontend
+    container_name: finance-frontend
     ports:
       - "${FRONTEND_PORT:-5173}:80"
     depends_on:
@@ -28,4 +48,4 @@ services:
     restart: unless-stopped
 
 volumes:
-  sqlite_data:
+  postgres_data:
