@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from datetime import date
-from typing import Optional, List
+from typing import Optional, List, Literal
 
 # Asset Schemas
 class AssetBase(BaseModel):
@@ -35,17 +35,15 @@ class Liability(LiabilityBase):
     class Config:
         from_attributes = True
 
-# Transaction Schemas
+# Transaction Schemas (Double-Entry)
 class TransactionBase(BaseModel):
     date: date
     description: str
     amount: float
     type: str
     category: Optional[str] = None
-    source_account_id: Optional[int] = None
-    destination_account_id: Optional[int] = None
-    asset_id: Optional[int] = None
-    liability_id: Optional[int] = None
+    from_account: Optional[str] = None
+    to_account: Optional[str] = None
 
 class TransactionCreate(TransactionBase):
     pass
@@ -56,12 +54,14 @@ class Transaction(TransactionBase):
     class Config:
         from_attributes = True
 
-# Life Event Schemas
+# Life Event Schemas (Future Liabilities)
 class LifeEventBase(BaseModel):
     name: str
     target_date: date
     target_amount: float
     funded_amount: float = 0
+    priority: Literal['high', 'medium', 'low'] = 'medium'
+    allocated_asset_id: Optional[int] = None
 
 class LifeEventCreate(LifeEventBase):
     pass
@@ -72,28 +72,13 @@ class LifeEvent(LifeEventBase):
     class Config:
         from_attributes = True
 
-# Asset-Goal Mapping (Buckets)
-class AssetGoalMappingBase(BaseModel):
-    asset_id: int
-    life_event_id: int
-    allocation_pct: float
-
-class AssetGoalMappingCreate(AssetGoalMappingBase):
-    pass
-
-class AssetGoalMapping(AssetGoalMappingBase):
-    id: int
-
-    class Config:
-        from_attributes = True
-
 # Product Schemas
 class ProductBase(BaseModel):
     name: str
     category: str
     location: Optional[str] = None
-    last_price: float
-    frequency_days: int
+    last_unit_price: float
+    frequency_days: int = 0
     last_purchase_date: Optional[date] = None
     is_asset: bool = False
     lifespan_months: Optional[int] = None
@@ -113,7 +98,7 @@ class BudgetBase(BaseModel):
     proposed_amount: float
     current_spending: float = 0
     month: str
-    ai_suggestion: Optional[str] = None
+    derived_from: Optional[str] = None
 
 class BudgetCreate(BudgetBase):
     pass
@@ -124,10 +109,9 @@ class Budget(BudgetBase):
     class Config:
         from_attributes = True
 
-# Simulation Config Schemas
+# Simulation Config
 class SimulationConfigBase(BaseModel):
     annual_return: float = 5.0
-    monthly_savings: float = 100000
     tax_rate: float = 20.0
     is_nisa: bool = True
 
@@ -140,15 +124,12 @@ class SimulationConfig(SimulationConfigBase):
     class Config:
         from_attributes = True
 
-# Analysis Schemas
+# Analysis Summary
 class AnalysisSummary(BaseModel):
     net_worth: float
     monthly_pl: float
     liability_total: float
+    goal_probability: float
+    total_goal_amount: float
+    total_funded: float
     effective_cash: Optional[float] = None
-    cfo_briefing: Optional[str] = None
-
-# Date Filter Schema
-class DateRange(BaseModel):
-    start_date: Optional[date] = None
-    end_date: Optional[date] = None

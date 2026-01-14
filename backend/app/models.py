@@ -8,15 +8,19 @@ class TransactionType(str, enum.Enum):
     EXPENSE = "Expense"
     TRANSFER = "Transfer"
 
+class Priority(str, enum.Enum):
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
 class Asset(Base):
     __tablename__ = "assets"
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)
-    category = Column(String)  # Cash, Stock, etc.
+    category = Column(String)
     value = Column(Float)
     
-    # Asset-Goal mappings
     goal_mappings = relationship("AssetGoalMapping", back_populates="asset")
 
 class Liability(Base):
@@ -24,11 +28,11 @@ class Liability(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)
-    category = Column(String)  # CreditCard, Loan, etc.
+    category = Column(String)
     lender = Column(String, nullable=True)
     total_borrowed = Column(Float, default=0)
     amount_repaid = Column(Float, default=0)
-    balance = Column(Float)  # Remaining balance
+    balance = Column(Float)
 
 class Transaction(Base):
     __tablename__ = "transactions"
@@ -37,18 +41,19 @@ class Transaction(Base):
     date = Column(Date)
     description = Column(String)
     amount = Column(Float)
-    type = Column(String)  # INCOME, EXPENSE, TRANSFER
+    type = Column(String)
     category = Column(String, nullable=True)
     
     # Double-entry support
-    source_account_id = Column(Integer, nullable=True)
-    destination_account_id = Column(Integer, nullable=True)
+    from_account = Column(String, nullable=True)
+    to_account = Column(String, nullable=True)
     
-    # Legacy fields (for backward compatibility)
+    # Legacy fields
     asset_id = Column(Integer, ForeignKey("assets.id"), nullable=True)
     liability_id = Column(Integer, ForeignKey("liabilities.id"), nullable=True)
 
 class LifeEvent(Base):
+    """Life Events = Future Liabilities"""
     __tablename__ = "life_events"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -56,54 +61,51 @@ class LifeEvent(Base):
     target_date = Column(Date)
     target_amount = Column(Float)
     funded_amount = Column(Float, default=0)
+    priority = Column(String, default="medium")  # high, medium, low
+    allocated_asset_id = Column(Integer, ForeignKey("assets.id"), nullable=True)
     
-    # Goal mappings
     asset_mappings = relationship("AssetGoalMapping", back_populates="life_event")
+    allocated_asset = relationship("Asset", foreign_keys=[allocated_asset_id])
 
 class AssetGoalMapping(Base):
-    """Maps assets to life events (buckets) with allocation percentage"""
     __tablename__ = "asset_goal_mappings"
 
     id = Column(Integer, primary_key=True, index=True)
     asset_id = Column(Integer, ForeignKey("assets.id"))
     life_event_id = Column(Integer, ForeignKey("life_events.id"))
-    allocation_pct = Column(Float)  # 0-100
+    allocation_pct = Column(Float)
     
     asset = relationship("Asset", back_populates="goal_mappings")
     life_event = relationship("LifeEvent", back_populates="asset_mappings")
 
 class Product(Base):
-    """Product inventory for unit economics tracking"""
     __tablename__ = "products"
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)
     category = Column(String)
-    location = Column(String, nullable=True)  # Store name
-    last_price = Column(Float)
-    frequency_days = Column(Integer)  # How often purchased (0 for one-time)
+    location = Column(String, nullable=True)
+    last_unit_price = Column(Float)
+    frequency_days = Column(Integer, default=0)
     last_purchase_date = Column(Date, nullable=True)
-    is_asset = Column(Boolean, default=False)  # Treat as depreciating asset
-    lifespan_months = Column(Integer, nullable=True)  # For depreciation calculation
+    is_asset = Column(Boolean, default=False)
+    lifespan_months = Column(Integer, nullable=True)
 
 class Budget(Base):
-    """Budget categories with proposed vs actual spending"""
     __tablename__ = "budgets"
 
     id = Column(Integer, primary_key=True, index=True)
     category = Column(String, index=True)
     proposed_amount = Column(Float)
     current_spending = Column(Float, default=0)
-    month = Column(String)  # YYYY-MM format
-    ai_suggestion = Column(Text, nullable=True)
+    month = Column(String)
+    derived_from = Column(String, nullable=True)  # Life Event source
 
 class SimulationConfig(Base):
-    """User's simulation parameters"""
     __tablename__ = "simulation_configs"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, default=1)  # For future multi-user support
+    user_id = Column(Integer, default=1)
     annual_return = Column(Float, default=5.0)
-    monthly_savings = Column(Float, default=100000)
     tax_rate = Column(Float, default=20.0)
     is_nisa = Column(Boolean, default=True)
