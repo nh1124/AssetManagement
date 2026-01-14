@@ -1,20 +1,21 @@
 import type { ReactNode } from 'react';
-import { BarChart3, Target, Activity, Package } from 'lucide-react';
+import { BarChart3, Target, Package, Settings, Plus } from 'lucide-react';
 
 interface LayoutProps {
     children: ReactNode;
     currentPage: string;
     onNavigate: (page: string) => void;
+    onOpenRecord: () => void;
 }
 
 const navItems = [
-    { id: 'analytics', label: 'Analytics', icon: BarChart3, subtitle: "What happened?" },
-    { id: 'strategy', label: 'Strategy', icon: Target, subtitle: "What's next?" },
-    { id: 'status', label: 'Status', icon: Activity, subtitle: "How are we doing?" },
-    { id: 'products', label: 'Products', icon: Package, subtitle: "Inventory" },
+    { id: 'analytics', label: 'Analytics', icon: BarChart3 },
+    { id: 'strategy', label: 'Strategy', icon: Target },
+    { id: 'products', label: 'Products', icon: Package },
+    { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
-export default function Layout({ children, currentPage, onNavigate }: LayoutProps) {
+export default function Layout({ children, currentPage, onNavigate, onOpenRecord }: LayoutProps) {
     return (
         <div className="min-h-screen bg-slate-900 text-slate-50 flex flex-col">
             {/* Top Navigation */}
@@ -26,6 +27,7 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
                                 <span className="text-white font-bold text-[10px]">FI</span>
                             </div>
                             <span className="font-medium text-sm">Finance IDE</span>
+                            <span className="text-[10px] text-slate-600 ml-1">v3.0</span>
                         </div>
                         <div className="flex">
                             {navItems.map((item) => {
@@ -50,9 +52,18 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
                 </div>
             </nav>
 
-            {/* Main Content - Full Height */}
-            <main className="flex-1 overflow-hidden">
+            {/* Main Content */}
+            <main className="flex-1 overflow-hidden relative">
                 {children}
+
+                {/* Floating Action Button for Record */}
+                <button
+                    onClick={onOpenRecord}
+                    className="fixed bottom-6 right-6 w-14 h-14 bg-gradient-to-br from-emerald-500 to-cyan-500 hover:from-emerald-400 hover:to-cyan-400 rounded-full shadow-lg shadow-emerald-500/25 flex items-center justify-center transition-all hover:scale-105 z-40"
+                    title="Record Transaction"
+                >
+                    <Plus size={24} className="text-white" />
+                </button>
             </main>
         </div>
     );
