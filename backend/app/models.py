@@ -1,5 +1,6 @@
-from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, Text, Boolean
+from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, Boolean, DateTime
 from sqlalchemy.orm import relationship
+from datetime import datetime
 import enum
 from .database import Base
 
@@ -8,10 +9,41 @@ class TransactionType(str, enum.Enum):
     EXPENSE = "Expense"
     TRANSFER = "Transfer"
 
+class AccountType(str, enum.Enum):
+    ASSET = "asset"
+    LIABILITY = "liability"
+    INCOME = "income"
+    EXPENSE = "expense"
+
 class Priority(str, enum.Enum):
     HIGH = "high"
     MEDIUM = "medium"
     LOW = "low"
+
+class Account(Base):
+    """Double-entry accounting: Each account has a type and balance."""
+    __tablename__ = "accounts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
+    account_type = Column(String)  # asset, liability, income, expense
+    balance = Column(Float, default=0)
+    parent_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
+    
+    entries = relationship("JournalEntry", back_populates="account")
+
+class JournalEntry(Base):
+    """Double-entry: Each transaction creates debit and credit entries."""
+    __tablename__ = "journal_entries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    transaction_id = Column(Integer, ForeignKey("transactions.id"))
+    account_id = Column(Integer, ForeignKey("accounts.id"))
+    debit = Column(Float, default=0)
+    credit = Column(Float, default=0)
+    
+    account = relationship("Account", back_populates="entries")
+    transaction = relationship("Transaction", back_populates="journal_entries")
 
 class Asset(Base):
     __tablename__ = "assets"
@@ -20,6 +52,7 @@ class Asset(Base):
     name = Column(String, index=True)
     category = Column(String)
     value = Column(Float)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     
     goal_mappings = relationship("AssetGoalMapping", back_populates="asset")
 
@@ -33,6 +66,7 @@ class Liability(Base):
     total_borrowed = Column(Float, default=0)
     amount_repaid = Column(Float, default=0)
     balance = Column(Float)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
 
 class Transaction(Base):
     __tablename__ = "transactions"
@@ -46,12 +80,12 @@ class Transaction(Base):
     currency = Column(String, default='JPY')
     from_account = Column(String, nullable=True)
     to_account = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
     
-    # Legacy fields
-    asset_id = Column(Integer, ForeignKey("assets.id"), nullable=True)
-    liability_id = Column(Integer, ForeignKey("liabilities.id"), nullable=True)
+    journal_entries = relationship("JournalEntry", back_populates="transaction")
 
 class LifeEvent(Base):
+    """Life Events = Future Liabilities (Goals)"""
     __tablename__ = "life_events"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -61,6 +95,7 @@ class LifeEvent(Base):
     funded_amount = Column(Float, default=0)
     priority = Column(String, default="medium")
     allocated_asset_id = Column(Integer, ForeignKey("assets.id"), nullable=True)
+    monthly_contribution = Column(Float, default=0)
     
     asset_mappings = relationship("AssetGoalMapping", back_populates="life_event")
     allocated_asset = relationship("Asset", foreign_keys=[allocated_asset_id])
@@ -88,6 +123,9 @@ class Product(Base):
     last_purchase_date = Column(Date, nullable=True)
     is_asset = Column(Boolean, default=False)
     lifespan_months = Column(Integer, nullable=True)
+    # Depreciation tracking
+    purchase_price = Column(Float, nullable=True)
+    purchase_date = Column(Date, nullable=True)
 
 class Budget(Base):
     __tablename__ = "budgets"
@@ -96,7 +134,7 @@ class Budget(Base):
     category = Column(String, index=True)
     proposed_amount = Column(Float)
     current_spending = Column(Float, default=0)
-    month = Column(String)
+    month = Column(String)  # Format: YYYY-MM
     derived_from = Column(String, nullable=True)
 
 class SimulationConfig(Base):
@@ -107,9 +145,9 @@ class SimulationConfig(Base):
     annual_return = Column(Float, default=5.0)
     tax_rate = Column(Float, default=20.0)
     is_nisa = Column(Boolean, default=True)
+    monthly_savings = Column(Float, default=100000)
 
 class Settings(Base):
-    """User settings including API keys"""
     __tablename__ = "settings"
 
     id = Column(Integer, primary_key=True, index=True)

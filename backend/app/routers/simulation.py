@@ -18,8 +18,8 @@ def get_simulation_config(db: Session = Depends(get_db)):
         )
     return config
 
-@router.put("/config", response_model=schemas.SimulationConfig)
-def update_simulation_config(config: schemas.SimulationConfigCreate, db: Session = Depends(get_db)):
+@router.post("/config", response_model=schemas.SimulationConfig)
+def create_or_update_simulation_config(config: schemas.SimulationConfigCreate, db: Session = Depends(get_db)):
     db_config = db.query(models.SimulationConfig).first()
     if db_config:
         for key, value in config.model_dump().items():
@@ -31,3 +31,7 @@ def update_simulation_config(config: schemas.SimulationConfigCreate, db: Session
     db.commit()
     db.refresh(db_config)
     return db_config
+
+@router.put("/config", response_model=schemas.SimulationConfig)
+def update_simulation_config(config: schemas.SimulationConfigCreate, db: Session = Depends(get_db)):
+    return create_or_update_simulation_config(config, db)

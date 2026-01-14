@@ -1,88 +1,133 @@
 """Analysis service - CFO logic and financial calculations."""
 from sqlalchemy.orm import Session
+from datetime import date
 from .. import models
+
 
 def get_summary(db: Session) -> dict:
     """Calculate financial summary with CFO logic."""
+    from .accounting_service import get_balance_sheet, get_profit_loss
+    from .strategy_service import calculate_overall_goal_probability
     
-    # Get total assets
-    assets = db.query(models.Asset).all()
-    total_assets = sum(a.value for a in assets) if assets else 4800000  # Mock default
+    # Get current B/S
+    bs = get_balance_sheet(db)
     
-    # Get total liabilities
-    liabilities = db.query(models.Liability).all()
-    total_liabilities = sum(l.balance for l in liabilities) if liabilities else 1245000  # Mock default
+    # Get current month P/L
+    today = date.today()
+    pl = get_profit_loss(db, today.year, today.month)
     
-    # CFO Logic: Effective Cash Calculation
-    # Effective Cash = Total Cash - CC Unpaid - Next Month's Essential Budget
-    total_cash = 1500000  # TODO: Calculate from assets where category = 'Cash'
-    cc_unpaid = 45000  # TODO: Get from liabilities where category = 'CreditCard'
+    # Get goal probability
+    goal_data = calculate_overall_goal_probability(db)
     
-    # Get next month's budget
-    budgets = db.query(models.Budget).all()
-    next_month_budget = sum(b.proposed_amount for b in budgets) if budgets else 137000
+    # CFO Effective Cash calculation
+    cash_accounts = db.query(models.Account).filter(
+        models.Account.name.in_(["cash", "bank", "savings"])
+    ).all()
+    total_cash = sum(a.balance for a in cash_accounts) if cash_accounts else 0
+    
+    # Get credit card balance (liability)
+    cc_account = db.query(models.Account).filter(models.Account.name == "credit").first()
+    cc_unpaid = abs(cc_account.balance) if cc_account else 0
+    
+    # Get next month's essential budget
+    next_month = f"{today.year}-{today.month:02d}"
+    budgets = db.query(models.Budget).filter(models.Budget.month == next_month).all()
+    next_month_budget = sum(b.proposed_amount for b in budgets) if budgets else 0
     
     effective_cash = total_cash - cc_unpaid - next_month_budget
     
-    # Net Worth = Assets - Liabilities
-    net_worth = total_assets - total_liabilities
-    
-    # Monthly P/L (simplified: sum of this month's income - expenses)
-    # TODO: Calculate from actual transactions
-    monthly_pl = 150000
-    
     return {
-        "net_worth": net_worth,
-        "monthly_pl": monthly_pl,
-        "liability_total": total_liabilities,
+        "net_worth": bs["net_worth"],
+        "monthly_pl": pl["net_profit_loss"],
+        "liability_total": bs["total_liabilities"],
         "effective_cash": effective_cash,
-        "cfo_briefing": f"Financial health stable. Net worth: ¥{net_worth:,.0f}. Effective cash reserves: ¥{effective_cash:,.0f}."
+        "goal_probability": goal_data["overall_probability"],
+        "total_goal_amount": goal_data["total_target"],
+        "total_funded": goal_data["total_projected"],
+        "cfo_briefing": f"Net worth: ¥{bs['net_worth']:,.0f}. Monthly P/L: ¥{pl['net_profit_loss']:,.0f}. Goal probability: {goal_data['overall_probability']:.0f}%."
     }
 
 
 def calculate_depreciation(product: models.Product) -> dict | None:
     """Calculate depreciation for assets > 30k JPY."""
-    if not product.is_asset or not product.lifespan_months or product.last_price < 30000:
+    purchase_price = product.purchase_price or product.last_unit_price
+    
+    if not product.is_asset or not product.lifespan_months or purchase_price < 30000:
         return None
     
-    from datetime import date
+    purchase_date = product.purchase_date or product.last_purchase_date
     
-    daily_rate = product.last_price / (product.lifespan_months * 30)
+    if not purchase_date:
+        return {
+            "current_value": purchase_price,
+            "total_depreciation": 0,
+            "daily_rate": purchase_price / (product.lifespan_months * 30),
+            "monthly_depreciation": purchase_price / product.lifespan_months
+        }
     
-    if product.last_purchase_date:
-        days_since_purchase = (date.today() - product.last_purchase_date).days
-        total_depreciation = daily_rate * days_since_purchase
-        current_value = max(0, product.last_price - total_depreciation)
-    else:
-        current_value = product.last_price
-        total_depreciation = 0
+    daily_rate = purchase_price / (product.lifespan_months * 30)
+    days_since_purchase = (date.today() - purchase_date).days
+    total_depreciation = daily_rate * days_since_purchase
+    current_value = max(0, purchase_price - total_depreciation)
     
     return {
         "current_value": current_value,
         "total_depreciation": total_depreciation,
-        "daily_rate": daily_rate
+        "daily_rate": daily_rate,
+        "monthly_depreciation": purchase_price / product.lifespan_months
+    }
+
+
+def get_depreciation_summary(db: Session) -> dict:
+    """Get total depreciation for all asset products."""
+    products = db.query(models.Product).filter(
+        models.Product.is_asset == True,
+        models.Product.lifespan_months != None
+    ).all()
+    
+    items = []
+    total_book_value = 0
+    total_depreciation = 0
+    monthly_expense = 0
+    
+    for product in products:
+        dep = calculate_depreciation(product)
+        if dep:
+            items.append({
+                "name": product.name,
+                "purchase_price": product.purchase_price or product.last_unit_price,
+                "current_value": dep["current_value"],
+                "total_depreciation": dep["total_depreciation"],
+                "monthly_depreciation": dep["monthly_depreciation"]
+            })
+            total_book_value += dep["current_value"]
+            total_depreciation += dep["total_depreciation"]
+            monthly_expense += dep["monthly_depreciation"]
+    
+    return {
+        "items": items,
+        "total_book_value": total_book_value,
+        "total_depreciation": total_depreciation,
+        "monthly_expense": monthly_expense
     }
 
 
 def get_net_position(db: Session) -> dict:
     """Calculate Net Position = Assets - Current Debt - Future Life Event Costs."""
-    assets = db.query(models.Asset).all()
-    total_assets = sum(a.value for a in assets) if assets else 4800000
+    from .accounting_service import get_balance_sheet
+    from .strategy_service import calculate_overall_goal_probability
     
-    liabilities = db.query(models.Liability).all()
-    current_debt = sum(l.balance for l in liabilities) if liabilities else 1245000
+    bs = get_balance_sheet(db)
+    goal_data = calculate_overall_goal_probability(db)
     
-    life_events = db.query(models.LifeEvent).all()
-    future_costs = sum(
-        max(0, e.target_amount - (e.funded_amount or 0)) 
-        for e in life_events
-    ) if life_events else 0
+    # Future costs = target amounts - projected funded
+    future_costs = max(0, goal_data["total_target"] - goal_data["total_projected"])
     
-    net_position = total_assets - current_debt - future_costs
+    net_position = bs["net_worth"] - future_costs
     
     return {
-        "total_assets": total_assets,
-        "current_debt": current_debt,
+        "total_assets": bs["total_assets"],
+        "current_debt": bs["total_liabilities"],
         "future_life_event_costs": future_costs,
         "net_position": net_position
     }
