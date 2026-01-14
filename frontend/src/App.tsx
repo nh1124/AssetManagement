@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import './index.css';
 import Layout from './components/Layout';
+import QuickInputDrawer from './components/QuickInputDrawer';
 import RecordPage from './pages/Record';
 import TheLab from './pages/TheLab';
 import Strategy from './pages/Strategy';
@@ -9,6 +10,7 @@ import SettingsPage from './pages/Settings';
 
 function App() {
   const [currentPage, setCurrentPage] = useState('record');
+  const [isQuickInputOpen, setIsQuickInputOpen] = useState(false);
 
   const renderPage = () => {
     switch (currentPage) {
@@ -28,9 +30,19 @@ function App() {
   };
 
   return (
-    <Layout currentPage={currentPage} onNavigate={setCurrentPage}>
-      {renderPage()}
-    </Layout>
+    <>
+      <Layout
+        currentPage={currentPage}
+        onNavigate={setCurrentPage}
+        onOpenQuickInput={() => setIsQuickInputOpen(true)}
+      >
+        {renderPage()}
+      </Layout>
+      <QuickInputDrawer
+        isOpen={isQuickInputOpen}
+        onClose={() => setIsQuickInputOpen(false)}
+      />
+    </>
   );
 }
 
