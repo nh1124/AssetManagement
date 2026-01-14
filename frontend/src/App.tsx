@@ -1,29 +1,26 @@
 import { useState } from 'react';
 import './index.css';
 import Layout from './components/Layout';
-import Home from './pages/Home';
 import TheLab from './pages/TheLab';
 import Strategy from './pages/Strategy';
-import Budget from './pages/Budget';
+import Status from './pages/Status';
 import Products from './pages/Products';
 
 function App() {
-  const [currentPage, setCurrentPage] = useState('home');
+  const [currentPage, setCurrentPage] = useState('analytics');
 
   const renderPage = () => {
     switch (currentPage) {
-      case 'home':
-        return <Home />;
-      case 'lab':
+      case 'analytics':
         return <TheLab />;
-      case 'budget':
-        return <Budget />;
-      case 'products':
-        return <Products />;
       case 'strategy':
         return <Strategy />;
+      case 'status':
+        return <Status />;
+      case 'products':
+        return <Products />;
       default:
-        return <Home />;
+        return <TheLab />;
     }
   };
 

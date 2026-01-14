@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { Home, FlaskConical, Target, Wallet, Package } from 'lucide-react';
+import { BarChart3, Target, Activity, Package } from 'lucide-react';
 
 interface LayoutProps {
     children: ReactNode;
@@ -8,11 +8,10 @@ interface LayoutProps {
 }
 
 const navItems = [
-    { id: 'home', label: 'Home', icon: Home },
-    { id: 'lab', label: 'The Lab', icon: FlaskConical },
-    { id: 'budget', label: 'Budget', icon: Wallet },
-    { id: 'products', label: 'Products', icon: Package },
-    { id: 'strategy', label: 'Strategy', icon: Target },
+    { id: 'analytics', label: 'Analytics', icon: BarChart3, subtitle: "What happened?" },
+    { id: 'strategy', label: 'Strategy', icon: Target, subtitle: "What's next?" },
+    { id: 'status', label: 'Status', icon: Activity, subtitle: "How are we doing?" },
+    { id: 'products', label: 'Products', icon: Package, subtitle: "Inventory" },
 ];
 
 export default function Layout({ children, currentPage, onNavigate }: LayoutProps) {
@@ -24,9 +23,9 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
                     <div className="flex items-center justify-between h-10">
                         <div className="flex items-center space-x-2">
                             <div className="w-6 h-6 bg-gradient-to-br from-emerald-400 to-cyan-500 flex items-center justify-center">
-                                <span className="text-white font-bold text-[10px]">AM</span>
+                                <span className="text-white font-bold text-[10px]">FI</span>
                             </div>
-                            <span className="font-medium text-sm">Asset Manager</span>
+                            <span className="font-medium text-sm">Finance IDE</span>
                         </div>
                         <div className="flex">
                             {navItems.map((item) => {
@@ -36,7 +35,7 @@ export default function Layout({ children, currentPage, onNavigate }: LayoutProp
                                     <button
                                         key={item.id}
                                         onClick={() => onNavigate(item.id)}
-                                        className={`flex items-center space-x-1.5 px-3 py-1.5 text-xs transition-colors border-b-2 ${isActive
+                                        className={`flex items-center space-x-1.5 px-4 py-1.5 text-xs transition-colors border-b-2 ${isActive
                                                 ? 'border-emerald-400 text-emerald-400 bg-slate-800/50'
                                                 : 'border-transparent text-slate-400 hover:text-slate-200 hover:bg-slate-800/30'
                                             }`}

@@ -61,6 +61,7 @@ class LifeEventBase(BaseModel):
     name: str
     target_date: date
     target_amount: float
+    funded_amount: float = 0
 
 class LifeEventCreate(LifeEventBase):
     pass
@@ -90,9 +91,12 @@ class AssetGoalMapping(AssetGoalMappingBase):
 class ProductBase(BaseModel):
     name: str
     category: str
+    location: Optional[str] = None
     last_price: float
     frequency_days: int
     last_purchase_date: Optional[date] = None
+    is_asset: bool = False
+    lifespan_months: Optional[int] = None
 
 class ProductCreate(ProductBase):
     pass
@@ -120,9 +124,31 @@ class Budget(BudgetBase):
     class Config:
         from_attributes = True
 
+# Simulation Config Schemas
+class SimulationConfigBase(BaseModel):
+    annual_return: float = 5.0
+    monthly_savings: float = 100000
+    tax_rate: float = 20.0
+    is_nisa: bool = True
+
+class SimulationConfigCreate(SimulationConfigBase):
+    pass
+
+class SimulationConfig(SimulationConfigBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
 # Analysis Schemas
 class AnalysisSummary(BaseModel):
     net_worth: float
     monthly_pl: float
     liability_total: float
+    effective_cash: Optional[float] = None
     cfo_briefing: Optional[str] = None
+
+# Date Filter Schema
+class DateRange(BaseModel):
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
