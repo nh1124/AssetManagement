@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Plus, ArrowUpCircle, ArrowDownCircle, RefreshCw, Edit, Trash2, CreditCard, Package, Sparkles, Send, Loader2, ImagePlus, X } from 'lucide-react';
+import { Plus, ArrowUpCircle, ArrowDownCircle, RefreshCw, Edit, Trash2, Sparkles, Send, Loader2, ImagePlus, X } from 'lucide-react';
 import SplitView from '../components/SplitView';
 import TabPanel from '../components/TabPanel';
 import type { Transaction } from '../types';
@@ -31,8 +31,8 @@ export default function RecordPage() {
 
     // AI state
     const [aiInput, setAiInput] = useState('');
-    const [aiResult, setAiResult] = useState<string | null>(null);
     const [selectedImage, setSelectedImage] = useState<string | null>(null);
+    const [suggestedTransactions, setSuggestedTransactions] = useState<any[]>([]);
 
     useEffect(() => {
         getTransactions().then(setTransactions).catch(console.error);
@@ -58,6 +58,39 @@ export default function RecordPage() {
         }
     };
 
+    const handleConfirmSuggestions = async () => {
+        setIsProcessing(true);
+        try {
+            const savedTransactions = [];
+            for (const suggestion of suggestedTransactions) {
+                const newTx = await createTransaction({
+                    date: suggestion.date || formData.date,
+                    description: suggestion.description,
+                    amount: suggestion.amount,
+                    type: suggestion.type as any || 'Expense',
+                    category: suggestion.category || '',
+                    currency: suggestion.currency || 'JPY',
+                    from_account: suggestion.from_account || 'cash',
+                    to_account: suggestion.to_account || 'expense',
+                });
+                savedTransactions.push(newTx);
+            }
+            setTransactions([...savedTransactions, ...transactions]);
+            setSuggestedTransactions([]);
+            setAiInput('');
+            setSelectedImage(null);
+            setActiveTab('transaction');
+        } catch (error) {
+            console.error('Failed to confirm suggestions:', error);
+        } finally {
+            setIsProcessing(false);
+        }
+    };
+
+    const removeSuggestion = (index: number) => {
+        setSuggestedTransactions(suggestedTransactions.filter((_, i) => i !== index));
+    };
+
     const getCurrencySymbol = (currency: string) => {
         const symbols: Record<string, string> = { JPY: '¥', USD: '$', EUR: '€', GBP: '£', CNY: '¥' };
         return symbols[currency] || currency;
@@ -78,34 +111,11 @@ export default function RecordPage() {
         if (!aiInput.trim() && !selectedImage) return;
 
         setIsProcessing(true);
-        setAiResult(null);
-
-        const apiKey = localStorage.getItem('gemini_api_key');
-
-        if (!apiKey) {
-            setAiResult('⚠️ Please set your Gemini API key in Settings first.');
-            setIsProcessing(false);
-            return;
-        }
+        setSuggestedTransactions([]);
 
         try {
-            const parts: any[] = [{
-                text: `Analyze this expense/transaction and extract structured data. If there's an image, analyze the receipt/document. Return JSON only.
-${aiInput ? `Text input: "${aiInput}"` : 'Analyze the uploaded receipt/image.'}
-
-Return format (JSON only, no markdown):
-{
-  "type": "transaction" | "debt_payment" | "product",
-  "amount": number,
-  "currency": "JPY" | "USD" | "EUR",
-  "category": string,
-  "description": string,
-  "date": "YYYY-MM-DD" (optional),
-  "product_name": string (optional, for product type),
-  "location": string (optional),
-  "items": [{"name": string, "price": number}] (optional, for receipts with multiple items)
-}`
-            }];
+            const parts: any[] = [];
+            if (aiInput) parts.push({ text: aiInput });
 
             if (selectedImage) {
                 const base64Data = selectedImage.split(',')[1];
@@ -115,50 +125,14 @@ Return format (JSON only, no markdown):
                 });
             }
 
-            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    contents: [{ parts }],
-                    generationConfig: { temperature: 0.1 }
-                })
-            });
+            const importApi = await import('../api');
+            const results = await importApi.analyzeWithBackend({ parts });
 
-            const data = await response.json();
-            const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-
-            const jsonMatch = text.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-                const parsed = JSON.parse(jsonMatch[0]);
-
-                let resultText = `✅ Type: ${parsed.type}\n💰 Amount: ${parsed.currency} ${parsed.amount}\n📁 Category: ${parsed.category}\n📝 ${parsed.description}`;
-
-                if (parsed.items && parsed.items.length > 0) {
-                    resultText += '\n\n📋 Items:';
-                    parsed.items.forEach((item: any) => {
-                        resultText += `\n  • ${item.name}: ¥${item.price}`;
-                    });
-                }
-
-                setAiResult(resultText);
-
-                // Auto-fill the transaction form
-                if (parsed.type === 'transaction' || parsed.type === 'product') {
-                    setFormData({
-                        ...formData,
-                        amount: String(parsed.amount),
-                        category: parsed.category || '',
-                        currency: parsed.currency || 'JPY',
-                        description: parsed.description || '',
-                        date: parsed.date || formData.date,
-                    });
-                    setActiveTab('transaction');
-                }
-            } else {
-                setAiResult(`📝 ${text}`);
+            if (Array.isArray(results)) {
+                setSuggestedTransactions(results);
             }
         } catch (error) {
-            setAiResult(`❌ Error: ${error instanceof Error ? error.message : 'Failed to process'}`);
+            console.error('AI Processing error:', error);
         } finally {
             setIsProcessing(false);
         }
@@ -267,136 +241,111 @@ Return format (JSON only, no markdown):
                 </form>
             )}
 
-            {activeTab === 'debt' && (
-                <form className="space-y-3">
-                    <div>
-                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Date</label>
-                        <input
-                            type="date"
-                            defaultValue={new Date().toISOString().split('T')[0]}
-                            className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
-                        />
-                    </div>
-                    <div>
-                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Debt Account</label>
-                        <select className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500">
-                            <option value="">Select debt...</option>
-                            <option value="cc-mufg">Credit Card (MUFG)</option>
-                            <option value="loan">Student Loan</option>
-                        </select>
-                    </div>
-                    <div>
-                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Repayment Amount</label>
-                        <input
-                            type="number"
-                            placeholder="0"
-                            className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums focus:outline-none focus:border-emerald-500"
-                        />
-                    </div>
-                    <button className="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-2 flex items-center justify-center gap-1 text-xs font-medium transition-colors">
-                        <CreditCard size={14} /> Record Repayment
-                    </button>
-                </form>
-            )}
-
-            {activeTab === 'product' && (
-                <form className="space-y-3">
-                    <div>
-                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Product Name</label>
-                        <input
-                            type="text"
-                            placeholder="e.g., Milk"
-                            className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
-                        />
-                    </div>
-                    <div className="grid grid-cols-2 gap-2">
-                        <div>
-                            <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Price</label>
-                            <input
-                                type="number"
-                                placeholder="0"
-                                className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums focus:outline-none focus:border-emerald-500"
-                            />
-                        </div>
-                        <div>
-                            <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Location</label>
-                            <input
-                                type="text"
-                                placeholder="Store name"
-                                className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
-                            />
-                        </div>
-                    </div>
-                    <button className="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-2 flex items-center justify-center gap-1 text-xs font-medium transition-colors">
-                        <Package size={14} /> Save Product
-                    </button>
-                </form>
-            )}
-
             {activeTab === 'ai' && (
-                <div className="space-y-3">
+                <div className="space-y-4">
                     <div className="border border-amber-800/50 bg-amber-900/10 p-2 text-xs">
                         <p className="flex items-center gap-1 text-amber-400">
-                            <Sparkles size={12} /> Describe expense or upload receipt image
+                            <Sparkles size={12} /> Extract multiple records from text or images
                         </p>
                     </div>
 
-                    <div>
-                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Description or instruction</label>
-                        <textarea
-                            placeholder="e.g., Spent 1500 yen on lunch at Yoshinoya today"
-                            value={aiInput}
-                            onChange={(e) => setAiInput(e.target.value)}
-                            className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500 h-20 resize-none"
-                        />
-                    </div>
+                    {!suggestedTransactions.length ? (
+                        <>
+                            <div>
+                                <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Description or instruction</label>
+                                <textarea
+                                    placeholder="e.g., Spent 1500 yen on lunch and 2000 yen on a movie today"
+                                    value={aiInput}
+                                    onChange={(e) => setAiInput(e.target.value)}
+                                    className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500 h-24 resize-none"
+                                />
+                            </div>
 
-                    <div>
-                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Receipt / Document Image</label>
-                        <div className="flex gap-2">
+                            <div>
+                                <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Receipt / Document Image</label>
+                                <div className="flex gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => fileInputRef.current?.click()}
+                                        className="flex-1 bg-slate-800 border border-dashed border-slate-600 hover:border-amber-500 py-3 flex items-center justify-center gap-1 text-xs text-slate-400 hover:text-amber-400"
+                                    >
+                                        <ImagePlus size={16} /> {selectedImage ? 'Change Image' : 'Upload Image'}
+                                    </button>
+                                    <input
+                                        ref={fileInputRef}
+                                        type="file"
+                                        accept="image/*"
+                                        onChange={handleImageSelect}
+                                        className="hidden"
+                                    />
+                                </div>
+                            </div>
+
+                            {selectedImage && (
+                                <div className="relative">
+                                    <img src={selectedImage} alt="Receipt" className="w-full h-32 object-cover border border-slate-700" />
+                                    <button
+                                        onClick={() => setSelectedImage(null)}
+                                        className="absolute top-1 right-1 bg-slate-900/80 p-1 text-slate-400 hover:text-white"
+                                    >
+                                        <X size={14} />
+                                    </button>
+                                </div>
+                            )}
+
                             <button
-                                type="button"
-                                onClick={() => fileInputRef.current?.click()}
-                                className="flex-1 bg-slate-800 border border-dashed border-slate-600 hover:border-amber-500 py-3 flex items-center justify-center gap-1 text-xs text-slate-400 hover:text-amber-400"
+                                onClick={handleAiSubmit}
+                                disabled={isProcessing || (!aiInput.trim() && !selectedImage)}
+                                className="w-full bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 disabled:opacity-50 text-white py-2.5 flex items-center justify-center gap-1 text-xs font-medium transition-colors"
                             >
-                                <ImagePlus size={16} /> {selectedImage ? 'Change Image' : 'Upload Image'}
+                                {isProcessing ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                                {isProcessing ? 'Thinking...' : 'Extract Records'}
                             </button>
-                            <input
-                                ref={fileInputRef}
-                                type="file"
-                                accept="image/*"
-                                onChange={handleImageSelect}
-                                className="hidden"
-                            />
-                        </div>
-                    </div>
+                        </>
+                    ) : (
+                        <div className="space-y-3 animate-in fade-in slide-in-from-bottom-2">
+                            <div className="flex items-center justify-between">
+                                <h3 className="text-[10px] text-amber-500 font-bold uppercase tracking-widest">Suggested Records</h3>
+                                <button
+                                    onClick={() => setSuggestedTransactions([])}
+                                    className="text-[10px] text-slate-500 hover:text-white transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                            </div>
 
-                    {selectedImage && (
-                        <div className="relative">
-                            <img src={selectedImage} alt="Receipt" className="w-full h-32 object-cover border border-slate-700" />
+                            <div className="space-y-2 max-h-[400px] overflow-auto pr-1">
+                                {suggestedTransactions.map((st, idx) => (
+                                    <div key={idx} className="bg-slate-800/50 border border-slate-700 p-3 relative group">
+                                        <div className="flex justify-between items-start mb-2">
+                                            <div>
+                                                <p className="text-xs font-medium text-white">{st.description}</p>
+                                                <p className="text-[10px] text-slate-500">{st.date} • {st.category}</p>
+                                            </div>
+                                            <p className="text-xs font-mono font-bold text-amber-400">
+                                                {getCurrencySymbol(st.currency)}{st.amount.toLocaleString()}
+                                            </p>
+                                        </div>
+                                        <button
+                                            onClick={() => removeSuggestion(idx)}
+                                            className="absolute -top-2 -right-2 bg-rose-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                                        >
+                                            <X size={10} />
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+
                             <button
-                                onClick={() => setSelectedImage(null)}
-                                className="absolute top-1 right-1 bg-slate-900/80 p-1 text-slate-400 hover:text-white"
+                                onClick={handleConfirmSuggestions}
+                                disabled={isProcessing}
+                                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-2.5 flex items-center justify-center gap-2 text-xs font-bold transition-all active:scale-[0.98]"
                             >
-                                <X size={14} />
+                                {isProcessing ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                                Confirm & Save All ({suggestedTransactions.length})
                             </button>
                         </div>
                     )}
-
-                    {aiResult && (
-                        <div className="border border-slate-700 bg-slate-800/50 p-3 text-xs whitespace-pre-wrap max-h-40 overflow-auto">
-                            {aiResult}
-                        </div>
-                    )}
-
-                    <button
-                        onClick={handleAiSubmit}
-                        disabled={isProcessing || (!aiInput.trim() && !selectedImage)}
-                        className="w-full bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 disabled:opacity-50 text-white py-2 flex items-center justify-center gap-1 text-xs font-medium transition-colors"
-                    >
-                        {isProcessing ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
-                        {isProcessing ? 'Processing with AI...' : 'Parse with Gemini'}
-                    </button>
                 </div>
             )}
         </TabPanel>
