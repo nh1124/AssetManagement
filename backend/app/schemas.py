@@ -2,6 +2,21 @@ from pydantic import BaseModel
 from datetime import date
 from typing import Optional, Literal
 
+# Account Schemas
+class AccountBase(BaseModel):
+    name: str
+    account_type: str
+    balance: float = 0
+
+class AccountCreate(AccountBase):
+    pass
+
+class Account(AccountBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
 # Asset Schemas
 class AssetBase(BaseModel):
     name: str
@@ -35,7 +50,7 @@ class Liability(LiabilityBase):
     class Config:
         from_attributes = True
 
-# Transaction Schemas (Double-Entry with Currency)
+# Transaction Schemas
 class TransactionBase(BaseModel):
     date: date
     description: str
@@ -63,6 +78,7 @@ class LifeEventBase(BaseModel):
     funded_amount: float = 0
     priority: Literal['high', 'medium', 'low'] = 'medium'
     allocated_asset_id: Optional[int] = None
+    monthly_contribution: float = 0
 
 class LifeEventCreate(LifeEventBase):
     pass
@@ -83,6 +99,8 @@ class ProductBase(BaseModel):
     last_purchase_date: Optional[date] = None
     is_asset: bool = False
     lifespan_months: Optional[int] = None
+    purchase_price: Optional[float] = None
+    purchase_date: Optional[date] = None
 
 class ProductCreate(ProductBase):
     pass
@@ -115,6 +133,7 @@ class SimulationConfigBase(BaseModel):
     annual_return: float = 5.0
     tax_rate: float = 20.0
     is_nisa: bool = True
+    monthly_savings: float = 100000
 
 class SimulationConfigCreate(SimulationConfigBase):
     pass
@@ -125,7 +144,7 @@ class SimulationConfig(SimulationConfigBase):
     class Config:
         from_attributes = True
 
-# Analysis Summary
+# Analysis Response
 class AnalysisSummary(BaseModel):
     net_worth: float
     monthly_pl: float
@@ -134,3 +153,4 @@ class AnalysisSummary(BaseModel):
     total_goal_amount: float
     total_funded: float
     effective_cash: Optional[float] = None
+    cfo_briefing: Optional[str] = None
