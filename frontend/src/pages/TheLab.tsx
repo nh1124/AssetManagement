@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Plus, ArrowUpCircle, ArrowDownCircle, RefreshCw, CreditCard } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { Plus, ArrowUpCircle, ArrowDownCircle, RefreshCw, CreditCard, ChevronLeft, ChevronRight } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import SplitView from '../components/SplitView';
 import TabPanel from '../components/TabPanel';
 import type { Transaction } from '../types';
@@ -15,15 +15,39 @@ const mockChartData = [
     { month: 'Jun', income: 460000, expense: 300000 },
 ];
 
+const mockCategoryData = [
+    { name: 'Food', value: 85000, color: '#34d399' },
+    { name: 'Transport', value: 35000, color: '#60a5fa' },
+    { name: 'Entertainment', value: 25000, color: '#fbbf24' },
+    { name: 'Utilities', value: 20000, color: '#f87171' },
+    { name: 'Shopping', value: 45000, color: '#a78bfa' },
+];
+
 const mockLiabilities = [
-    { id: 1, name: 'Credit Card A', lender: 'MUFG', total: 100000, repaid: 55000, balance: 45000, category: 'CreditCard' },
-    { id: 2, name: 'Student Loan', lender: 'JASSO', total: 2000000, repaid: 800000, balance: 1200000, category: 'Loan' },
+    { id: 1, name: 'Credit Card A', lender: 'MUFG', total: 100000, repaid: 55000, balance: 45000 },
+    { id: 2, name: 'Student Loan', lender: 'JASSO', total: 2000000, repaid: 800000, balance: 1200000 },
 ];
 
 const mockBuckets = [
-    { asset: 'eMAXIS Slim S&P500', event: 'Retirement', allocation: 40 },
-    { asset: 'Cash Savings', event: 'Emergency Fund', allocation: 100 },
-    { asset: 'Individual Stocks', event: 'House Down Payment', allocation: 60 },
+    { asset: 'eMAXIS Slim S&P500', event: 'Retirement', allocation: 40, value: 2000000 },
+    { asset: 'Cash Savings', event: 'Emergency Fund', allocation: 100, value: 1500000 },
+    { asset: 'Individual Stocks', event: 'House Down Payment', allocation: 60, value: 800000 },
+];
+
+const mockBalanceSheet = [
+    {
+        category: 'Assets', items: [
+            { name: 'Cash & Deposits', value: 1500000 },
+            { name: 'Investment Securities', value: 2800000 },
+            { name: 'Fixed Assets', value: 500000 },
+        ]
+    },
+    {
+        category: 'Liabilities', items: [
+            { name: 'Credit Card', value: -45000 },
+            { name: 'Loans', value: -1200000 },
+        ]
+    },
 ];
 
 const TABS = [
@@ -37,6 +61,10 @@ const TABS = [
 export default function TheLab() {
     const [transactions, setTransactions] = useState<Transaction[]>([]);
     const [activeTab, setActiveTab] = useState('summary');
+    const [selectedMonth, setSelectedMonth] = useState(() => {
+        const now = new Date();
+        return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    });
     const [formData, setFormData] = useState({
         date: new Date().toISOString().split('T')[0],
         description: '',
@@ -48,6 +76,12 @@ export default function TheLab() {
     useEffect(() => {
         getTransactions().then(setTransactions).catch(console.error);
     }, []);
+
+    const handleMonthChange = (delta: number) => {
+        const [year, month] = selectedMonth.split('-').map(Number);
+        const date = new Date(year, month - 1 + delta, 1);
+        setSelectedMonth(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`);
+    };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -159,19 +193,102 @@ export default function TheLab() {
             case 'summary':
                 return (
                     <div className="space-y-4">
-                        <div className="h-48">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <BarChart data={mockChartData}>
-                                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                                    <XAxis dataKey="month" stroke="#64748b" fontSize={10} />
-                                    <YAxis stroke="#64748b" fontSize={10} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
-                                    <Tooltip
-                                        contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', fontSize: '11px' }}
-                                    />
-                                    <Bar dataKey="income" fill="#34d399" />
-                                    <Bar dataKey="expense" fill="#f87171" />
-                                </BarChart>
-                            </ResponsiveContainer>
+                        {/* Income vs Expense Bar Chart */}
+                        <div>
+                            <h4 className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Income vs Expense</h4>
+                            <div className="h-36">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <BarChart data={mockChartData}>
+                                        <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                                        <XAxis dataKey="month" stroke="#64748b" fontSize={10} />
+                                        <YAxis stroke="#64748b" fontSize={10} tickFormatter={(v) => `${(v / 1000).toFixed(0)}k`} />
+                                        <Tooltip contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', fontSize: '11px' }} />
+                                        <Bar dataKey="income" fill="#34d399" />
+                                        <Bar dataKey="expense" fill="#f87171" />
+                                    </BarChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+
+                        {/* Category Pie Chart */}
+                        <div>
+                            <h4 className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Expense by Category</h4>
+                            <div className="flex items-center gap-4">
+                                <div className="h-32 w-32">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <PieChart>
+                                            <Pie data={mockCategoryData} cx="50%" cy="50%" innerRadius={25} outerRadius={50} dataKey="value" stroke="none">
+                                                {mockCategoryData.map((entry, index) => (
+                                                    <Cell key={`cell-${index}`} fill={entry.color} />
+                                                ))}
+                                            </Pie>
+                                        </PieChart>
+                                    </ResponsiveContainer>
+                                </div>
+                                <div className="flex-1 space-y-1">
+                                    {mockCategoryData.map((cat) => (
+                                        <div key={cat.name} className="flex justify-between text-xs">
+                                            <span className="flex items-center gap-1">
+                                                <span className="w-2 h-2" style={{ backgroundColor: cat.color }}></span>
+                                                {cat.name}
+                                            </span>
+                                            <span className="font-mono-nums text-slate-400">¥{cat.value.toLocaleString()}</span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
+            case 'bs':
+                return (
+                    <div className="space-y-4">
+                        {mockBalanceSheet.map((section) => (
+                            <div key={section.category}>
+                                <h4 className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">{section.category}</h4>
+                                <div className="space-y-1">
+                                    {section.items.map((item) => (
+                                        <div key={item.name} className="flex justify-between text-xs py-1 border-b border-slate-800/50">
+                                            <span>{item.name}</span>
+                                            <span className={`font-mono-nums ${item.value >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                                ¥{Math.abs(item.value).toLocaleString()}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
+                        <div className="border-t border-slate-700 pt-2">
+                            <div className="flex justify-between text-sm font-medium">
+                                <span>Net Position</span>
+                                <span className="font-mono-nums text-emerald-400">¥3,555,000</span>
+                            </div>
+                        </div>
+                    </div>
+                );
+            case 'pl':
+                return (
+                    <div className="space-y-2">
+                        <div className="grid grid-cols-3 text-[10px] text-slate-500 uppercase tracking-wider border-b border-slate-800 pb-1">
+                            <span>Category</span>
+                            <span className="text-right">Income</span>
+                            <span className="text-right">Expense</span>
+                        </div>
+                        <div className="flex justify-between text-xs py-1.5 border-b border-slate-800/50">
+                            <span>Salary</span>
+                            <span className="text-right font-mono-nums text-emerald-400">¥450,000</span>
+                            <span className="text-right font-mono-nums text-slate-600">-</span>
+                        </div>
+                        <div className="flex justify-between text-xs py-1.5 border-b border-slate-800/50">
+                            <span>Living Expenses</span>
+                            <span className="text-right font-mono-nums text-slate-600">-</span>
+                            <span className="text-right font-mono-nums text-rose-400">¥210,000</span>
+                        </div>
+                        <div className="border-t border-slate-700 pt-2 mt-2">
+                            <div className="flex justify-between text-sm font-medium">
+                                <span>Net P/L</span>
+                                <span className="font-mono-nums text-emerald-400">+¥240,000</span>
+                            </div>
                         </div>
                     </div>
                 );
@@ -202,16 +319,18 @@ export default function TheLab() {
             case 'buckets':
                 return (
                     <div className="space-y-2">
-                        <div className="grid grid-cols-3 text-[10px] text-slate-500 uppercase tracking-wider border-b border-slate-800 pb-1">
+                        <div className="grid grid-cols-4 text-[10px] text-slate-500 uppercase tracking-wider border-b border-slate-800 pb-1">
                             <span>Asset</span>
                             <span>Life Event</span>
                             <span className="text-right">Allocation</span>
+                            <span className="text-right">Value</span>
                         </div>
                         {mockBuckets.map((b, i) => (
-                            <div key={i} className="grid grid-cols-3 text-xs py-1.5 border-b border-slate-800/50">
+                            <div key={i} className="grid grid-cols-4 text-xs py-1.5 border-b border-slate-800/50">
                                 <span>{b.asset}</span>
                                 <span className="text-amber-400">{b.event}</span>
                                 <span className="text-right font-mono-nums">{b.allocation}%</span>
+                                <span className="text-right font-mono-nums text-emerald-400">¥{b.value.toLocaleString()}</span>
                             </div>
                         ))}
                     </div>
@@ -222,9 +341,28 @@ export default function TheLab() {
     };
 
     const rightPane = (
-        <TabPanel tabs={TABS} activeTab={activeTab} onTabChange={setActiveTab}>
-            {renderTabContent()}
-        </TabPanel>
+        <div className="flex flex-col h-full">
+            {/* Period Control */}
+            <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800 flex-shrink-0">
+                <span className="text-[10px] text-slate-500 uppercase tracking-wider">Period</span>
+                <div className="flex items-center gap-2">
+                    <button onClick={() => handleMonthChange(-1)} className="p-1 hover:bg-slate-800 text-slate-400 hover:text-slate-200">
+                        <ChevronLeft size={14} />
+                    </button>
+                    <span className="text-xs font-mono-nums text-slate-300 min-w-[70px] text-center">{selectedMonth}</span>
+                    <button onClick={() => handleMonthChange(1)} className="p-1 hover:bg-slate-800 text-slate-400 hover:text-slate-200">
+                        <ChevronRight size={14} />
+                    </button>
+                </div>
+            </div>
+
+            {/* Tabs */}
+            <div className="flex-1 overflow-hidden">
+                <TabPanel tabs={TABS} activeTab={activeTab} onTabChange={setActiveTab}>
+                    {renderTabContent()}
+                </TabPanel>
+            </div>
+        </div>
     );
 
     return <SplitView left={leftPane} right={rightPane} leftTitle="Input & Records" rightTitle="Analytics" />;

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, Text
+from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, Text, Boolean
 from sqlalchemy.orm import relationship
 import enum
 from .database import Base
@@ -55,6 +55,7 @@ class LifeEvent(Base):
     name = Column(String, index=True)
     target_date = Column(Date)
     target_amount = Column(Float)
+    funded_amount = Column(Float, default=0)
     
     # Goal mappings
     asset_mappings = relationship("AssetGoalMapping", back_populates="life_event")
@@ -78,9 +79,12 @@ class Product(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)
     category = Column(String)
+    location = Column(String, nullable=True)  # Store name
     last_price = Column(Float)
-    frequency_days = Column(Integer)  # How often purchased
+    frequency_days = Column(Integer)  # How often purchased (0 for one-time)
     last_purchase_date = Column(Date, nullable=True)
+    is_asset = Column(Boolean, default=False)  # Treat as depreciating asset
+    lifespan_months = Column(Integer, nullable=True)  # For depreciation calculation
 
 class Budget(Base):
     """Budget categories with proposed vs actual spending"""
@@ -92,3 +96,14 @@ class Budget(Base):
     current_spending = Column(Float, default=0)
     month = Column(String)  # YYYY-MM format
     ai_suggestion = Column(Text, nullable=True)
+
+class SimulationConfig(Base):
+    """User's simulation parameters"""
+    __tablename__ = "simulation_configs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, default=1)  # For future multi-user support
+    annual_return = Column(Float, default=5.0)
+    monthly_savings = Column(Float, default=100000)
+    tax_rate = Column(Float, default=20.0)
+    is_nisa = Column(Boolean, default=True)
