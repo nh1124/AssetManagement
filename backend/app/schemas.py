@@ -154,3 +154,25 @@ class AnalysisSummary(BaseModel):
     total_funded: float
     effective_cash: Optional[float] = None
     cfo_briefing: Optional[str] = None
+
+# Recurring Transaction Schemas
+class RecurringTransactionBase(BaseModel):
+    name: str
+    amount: float
+    type: Literal['Income', 'Expense', 'Transfer', 'Debt']
+    from_account_id: Optional[int] = None
+    to_account_id: Optional[int] = None
+    frequency: Literal['Monthly', 'Yearly']
+    day_of_month: int = 1
+    month_of_year: Optional[int] = None  # Used for Yearly frequency
+    next_due_date: Optional[date] = None  # Calculated by system
+    is_active: bool = True
+
+class RecurringTransactionCreate(RecurringTransactionBase):
+    pass
+
+class RecurringTransaction(RecurringTransactionBase):
+    id: int
+
+    class Config:
+        from_attributes = True

@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from . import models
 from .database import engine
-from .routers import transactions, products, budgets, life_events, simulation, analysis, accounts, ai, clients, auth
+from .routers import transactions, products, budgets, life_events, simulation, analysis, accounts, ai, clients, auth, recurring
 from .dependencies import get_current_client
 
 # Create tables
@@ -85,6 +85,7 @@ app.include_router(accounts.router)
 app.include_router(ai.router)
 app.include_router(clients.router)
 app.include_router(auth.router)
+app.include_router(recurring.router, dependencies=[Depends(get_current_client)])
 
 @app.get("/me")
 def get_me(current_client: models.Client = Depends(get_current_client)):

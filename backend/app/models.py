@@ -53,6 +53,7 @@ class Client(Base):
     life_events = relationship("LifeEvent", back_populates="client")
     budgets = relationship("Budget", back_populates="client")
     simulation_configs = relationship("SimulationConfig", back_populates="client")
+    recurring_transactions = relationship("RecurringTransaction", back_populates="client")
 
 class Account(Base):
     """Double-entry accounting: Each account has a type and balance."""
@@ -206,3 +207,24 @@ class Settings(Base):
     gemini_api_key = Column(String, nullable=True)
     default_currency = Column(String, default='JPY')
     language = Column(String, default='ja')
+
+class RecurringTransaction(Base):
+    __tablename__ = "recurring_transactions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
+    name = Column(String, index=True)
+    amount = Column(Float)
+    type = Column(String)  # Income, Expense, Transfer, Debt
+    from_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
+    to_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
+    frequency = Column(String)  # Monthly, Yearly
+    day_of_month = Column(Integer, default=1)
+    month_of_year = Column(Integer, nullable=True)  # For Yearly frequency
+    next_due_date = Column(Date, nullable=True)  # Calculated by system
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    client = relationship("Client", back_populates="recurring_transactions")
+    from_account = relationship("Account", foreign_keys=[from_account_id])
+    to_account = relationship("Account", foreign_keys=[to_account_id])

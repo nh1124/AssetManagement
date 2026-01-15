@@ -221,4 +221,35 @@ export const updateClientKey = async (clientId: number, gemini_api_key: string) 
     return response.data;
 };
 
+// Recurring Transactions endpoints
+export const getRecurringTransactions = async () => {
+    const response = await api.get('/recurring/');
+    return response.data;
+};
+
+export const createRecurringTransaction = async (recurring: any) => {
+    const response = await api.post('/recurring/', recurring);
+    return response.data;
+};
+
+export const updateRecurringTransaction = async (id: number, data: any) => {
+    const response = await api.put(`/recurring/${id}`, data);
+    return response.data;
+};
+
+export const deleteRecurringTransaction = async (id: number) => {
+    const response = await api.delete(`/recurring/${id}`);
+    return response.data;
+};
+
+export const getDueRecurringTransactions = async () => {
+    const response = await api.get('/recurring/due');
+    return response.data;
+};
+
+export const processRecurringTransaction = async (id: number) => {
+    const response = await api.post(`/recurring/${id}/process`);
+    return response.data;
+};
+
 export default api;

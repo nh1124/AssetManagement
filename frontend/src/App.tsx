@@ -5,16 +5,16 @@ import QuickInputDrawer from './components/QuickInputDrawer';
 import { ToastProvider } from './components/Toast';
 import { ClientProvider } from './context/ClientContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import RecordPage from './pages/Record';
+import Journal from './pages/Journal';
 import TheLab from './pages/TheLab';
 import Strategy from './pages/Strategy';
-import Inventory from './pages/Inventory';
+import Registry from './pages/Registry';
 import SettingsPage from './pages/Settings';
 import LoginPage from './pages/Login';
 
 function AppContent() {
   const { isAuthenticated, isLoading } = useAuth();
-  const [currentPage, setCurrentPage] = useState('record');
+  const [currentPage, setCurrentPage] = useState('journal');
   const [isQuickInputOpen, setIsQuickInputOpen] = useState(false);
 
   if (isLoading) {
@@ -31,18 +31,18 @@ function AppContent() {
 
   const renderPage = () => {
     switch (currentPage) {
-      case 'record':
-        return <RecordPage />;
+      case 'journal':
+        return <Journal />;
       case 'analytics':
         return <TheLab />;
       case 'strategy':
         return <Strategy />;
-      case 'inventory':
-        return <Inventory />;
+      case 'registry':
+        return <Registry />;
       case 'settings':
         return <SettingsPage />;
       default:
-        return <RecordPage />;
+        return <Journal />;
     }
   };
 
