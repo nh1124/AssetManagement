@@ -1,19 +1,45 @@
 import { useEffect, useState } from 'react';
-import { TrendingUp, Wallet, CreditCard, AlertCircle } from 'lucide-react';
+import { TrendingUp, Wallet, CreditCard, AlertCircle, Check, Calendar } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
 import type { AnalysisSummary } from '../types';
-import { getAnalysisSummary } from '../api';
+import { getAnalysisSummary, getDueRecurringTransactions, processRecurringTransaction } from '../api';
+import { useToast } from '../components/Toast';
 
 export default function Home() {
     const [summary, setSummary] = useState<AnalysisSummary | null>(null);
+    const [duePayments, setDuePayments] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
+    const { showToast } = useToast();
 
     useEffect(() => {
-        getAnalysisSummary()
-            .then(setSummary)
-            .catch(console.error)
-            .finally(() => setLoading(false));
+        fetchData();
     }, []);
+
+    const fetchData = async () => {
+        setLoading(true);
+        try {
+            const [summaryData, dueData] = await Promise.all([
+                getAnalysisSummary(),
+                getDueRecurringTransactions()
+            ]);
+            setSummary(summaryData);
+            setDuePayments(dueData);
+        } catch (err) {
+            console.error(err);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleApprove = async (id: number) => {
+        try {
+            await processRecurringTransaction(id);
+            showToast('Transaction processed', 'success');
+            fetchData();
+        } catch (err) {
+            showToast('Failed to process', 'error');
+        }
+    };
 
     const goalProbability = 72;
     const runwayMonths = 18;
@@ -133,6 +159,43 @@ export default function Home() {
                     <p className="text-[10px] text-slate-500 uppercase">Goals Tracked</p>
                 </div>
             </div>
+
+            {/* Due Payments Section */}
+            {duePayments.length > 0 && (
+                <div className="border border-slate-800 bg-slate-900/50 p-4">
+                    <h2 className="text-[10px] font-medium text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+                        <Calendar size={12} className="text-cyan-400" /> Action Required: Due Payments
+                    </h2>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        {duePayments.map((payment) => (
+                            <div key={payment.id} className="bg-slate-800/30 border border-slate-700 p-3 flex justify-between items-center group">
+                                <div className="flex items-center gap-3">
+                                    <div className="p-2 bg-slate-900 border border-slate-700">
+                                        <Calendar size={14} className="text-slate-400" />
+                                    </div>
+                                    <div>
+                                        <p className="text-xs font-medium">{payment.name}</p>
+                                        <p className="text-[10px] text-slate-500">Scheduled: {payment.next_due_date}</p>
+                                    </div>
+                                </div>
+                                <div className="flex items-center gap-4">
+                                    <div className="text-right mr-2">
+                                        <p className="text-sm font-bold font-mono-nums text-slate-200">¥{payment.amount.toLocaleString()}</p>
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <button
+                                            onClick={() => handleApprove(payment.id)}
+                                            className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-[10px] font-bold uppercase tracking-wider flex items-center gap-1"
+                                        >
+                                            <Check size={12} /> Approve
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { BarChart3, Target, Package, Settings, PlusCircle, Plus, LogOut, User as UserIcon } from 'lucide-react';
+import { BarChart3, Target, Package, Settings, Plus, LogOut, User as UserIcon, List } from 'lucide-react';
 
 interface LayoutProps {
     children: ReactNode;
@@ -10,10 +10,10 @@ interface LayoutProps {
 }
 
 const navItems = [
-    { id: 'record', label: 'Record', icon: PlusCircle },
+    { id: 'journal', label: 'Journal', icon: List },
     { id: 'analytics', label: 'Analytics', icon: BarChart3 },
     { id: 'strategy', label: 'Strategy', icon: Target },
-    { id: 'inventory', label: 'Inventory', icon: Package },
+    { id: 'registry', label: 'Registry', icon: Package },
     { id: 'settings', label: 'Settings', icon: Settings },
 ];
 

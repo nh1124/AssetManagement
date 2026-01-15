@@ -1,13 +1,16 @@
 import { useState, useEffect } from 'react';
 import { Package, Cpu, Wallet, Plus, Edit, Trash2, Save, X } from 'lucide-react';
 import TabPanel from '../components/TabPanel';
-import { getProducts, getAccounts, createAccount, updateAccount, deleteAccount, updateProduct, seedDefaultAccounts } from '../api';
+import {
+    getProducts, getAccounts, createAccount, updateAccount, deleteAccount,
+    updateProduct, seedDefaultAccounts
+} from '../api';
 import { useToast } from '../components/Toast';
 
 const TABS = [
-    { id: 'items', label: 'Items' },
-    { id: 'assets', label: 'Assets' },
     { id: 'accounts', label: 'Accounts' },
+    { id: 'assets', label: 'Assets' },
+    { id: 'items', label: 'Items' },
 ];
 
 const ACCOUNT_TYPES = [
@@ -17,8 +20,8 @@ const ACCOUNT_TYPES = [
     { value: 'expense', label: 'Expense', color: 'text-amber-400' },
 ];
 
-export default function Inventory() {
-    const [activeTab, setActiveTab] = useState('items');
+export default function Registry() {
+    const [activeTab, setActiveTab] = useState('accounts');
     const [products, setProducts] = useState<any[]>([]);
     const [accounts, setAccounts] = useState<any[]>([]);
     const [editingId, setEditingId] = useState<number | null>(null);
