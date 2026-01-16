@@ -160,8 +160,62 @@ export const getGoalProbability = async () => {
     return response.data;
 };
 
+export const getStrategyDashboard = async (annual_return: number = 5.0, inflation: number = 2.0, monthly_savings: number = 50000) => {
+    const response = await api.get('/life-events/dashboard', {
+        params: { annual_return, inflation, monthly_savings }
+    });
+    return response.data;
+};
+
 export const createLifeEvent = async (event: any) => {
     const response = await api.post('/life-events/', event);
+    return response.data;
+};
+
+export const updateLifeEvent = async (id: number, event: any) => {
+    const response = await api.put(`/life-events/${id}`, event);
+    return response.data;
+};
+
+export const deleteLifeEvent = async (id: number) => {
+    const response = await api.delete(`/life-events/${id}`);
+    return response.data;
+};
+
+// Goal Allocations
+export const getAllocations = async (eventId: number) => {
+    const response = await api.get(`/life-events/${eventId}/allocations`);
+    return response.data;
+};
+
+export const addAllocation = async (eventId: number, allocation: { account_id: number; allocation_percentage: number }) => {
+    const response = await api.post(`/life-events/${eventId}/allocations`, allocation);
+    return response.data;
+};
+
+export const updateAllocation = async (allocationId: number, allocation: { account_id: number; allocation_percentage: number }) => {
+    const response = await api.put(`/life-events/allocations/${allocationId}`, allocation);
+    return response.data;
+};
+
+export const deleteAllocation = async (allocationId: number) => {
+    const response = await api.delete(`/life-events/allocations/${allocationId}`);
+    return response.data;
+};
+
+// Budget Builder
+export const getBudgetSummary = async (period?: string) => {
+    const response = await api.get('/life-events/budget-summary', { params: { period } });
+    return response.data;
+};
+
+export const saveMonthlyBudgets = async (budgets: Array<{ account_id: number; target_period: string; amount: number }>) => {
+    const response = await api.post('/life-events/monthly-budget/batch', budgets);
+    return response.data;
+};
+
+export const updateAccountExpectedReturn = async (id: number, expected_return: number) => {
+    const response = await api.put(`/accounts/${id}`, { expected_return });
     return response.data;
 };
 

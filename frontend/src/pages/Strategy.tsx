@@ -1,280 +1,786 @@
 import { useState, useEffect } from 'react';
-import { Target, TrendingUp, Wallet, Plus, ChevronRight } from 'lucide-react';
+import { Target, TrendingUp, Plus, Trash2, X, AlertTriangle, CheckCircle, Clock, Link, Wallet, Edit2, Save, ChevronLeft, ChevronRight, Copy } from 'lucide-react';
+import SplitView from '../components/SplitView';
 import TabPanel from '../components/TabPanel';
-import { getLifeEventsWithProgress, getGoalProbability, getSimulationConfig, saveSimulationConfig } from '../api';
+import { useToast } from '../components/Toast';
+import {
+    getStrategyDashboard,
+    createLifeEvent,
+    updateLifeEvent,
+    deleteLifeEvent,
+    addAllocation,
+    deleteAllocation,
+    getAccounts,
+    getBudgetSummary,
+    saveMonthlyBudgets
+} from '../api';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+
+interface RoadmapItem {
+    year: number;
+    start_balance: number;
+    contribution: number;
+    investment_gain: number;
+    end_balance: number;
+    goal_coverage: number;
+}
+
+interface LifeEvent {
+    id: number;
+    name: string;
+    target_date: string;
+    target_amount: number;
+    priority: number;
+    note: string | null;
+    allocations: Allocation[];
+    current_funded: number;
+    projected_amount: number;
+    gap: number;
+    status: string;
+    progress_percentage: number;
+    years_remaining: number;
+    weighted_return?: number;
+    roadmap?: RoadmapItem[];
+}
+
+interface Allocation {
+    id: number;
+    life_event_id: number;
+    account_id: number;
+    allocation_percentage: number;
+    account_name: string;
+    account_balance: number;
+    expected_return?: number;
+}
+
+interface DashboardData {
+    events: LifeEvent[];
+    unallocated_assets: Array<{ id: number; name: string; balance: number }>;
+    total_allocated: number;
+    total_unallocated: number;
+    simulation_params: {
+        annual_return: number;
+        inflation: number;
+        monthly_savings: number;
+    };
+}
+
+interface BudgetAccount {
+    id: number;
+    name: string;
+    budget_limit: number;
+    balance: number;
+    is_custom: boolean;
+}
+
+interface BudgetSummary {
+    period: string;
+    required_monthly_savings: number;
+    monthly_fixed_costs: number;
+    monthly_income: number;
+    total_variable_budget: number;
+    remaining_balance: number;
+    expense_accounts: BudgetAccount[];
+    goals_count: number;
+    total_goal_gap: number;
+}
 
 const TABS = [
-    { id: 'life-events', label: 'Life Events' },
     { id: 'simulation', label: 'Simulation' },
-    { id: 'budget', label: 'Budget Builder' },
+    { id: 'budgeting', label: 'Budgeting' },
 ];
 
 export default function Strategy() {
-    const [activeTab, setActiveTab] = useState('life-events');
-    const [lifeEvents, setLifeEvents] = useState<any[]>([]);
-    const [goalData, setGoalData] = useState<any>(null);
-    const [simConfig, setSimConfig] = useState({
+    const [dashboardData, setDashboardData] = useState<DashboardData | null>(null);
+    const [selectedEvent, setSelectedEvent] = useState<LifeEvent | null>(null);
+    const [showEventModal, setShowEventModal] = useState(false);
+    const [editingEvent, setEditingEvent] = useState<LifeEvent | null>(null);
+    const [activeTab, setActiveTab] = useState('simulation');
+    const [budgetSummary, setBudgetSummary] = useState<BudgetSummary | null>(null);
+    const [budgetEdits, setBudgetEdits] = useState<Record<number, number>>({});
+    const [currentPeriod, setCurrentPeriod] = useState<string>(new Date().toISOString().slice(0, 7)); // YYYY-MM
+    const { showToast } = useToast();
+
+    // Simulation parameters
+    const [simParams, setSimParams] = useState({
         annual_return: 5.0,
-        tax_rate: 20.0,
-        is_nisa: true,
-        monthly_savings: 100000
+        inflation: 2.0,
+        monthly_savings: 50000
     });
-    const [, setLoading] = useState(false);
+
+    // Event form
+    const [eventForm, setEventForm] = useState({
+        name: '',
+        target_date: '',
+        target_amount: '',
+        priority: 2,
+        note: ''
+    });
+
+    // Allocation form
+    const [allocationForm, setAllocationForm] = useState({
+        account_id: '',
+        allocation_percentage: '100'
+    });
 
     useEffect(() => {
         fetchData();
     }, []);
 
+    useEffect(() => {
+        if (activeTab === 'budgeting') {
+            fetchBudgetSummary();
+        }
+    }, [activeTab, currentPeriod]);
+
     const fetchData = async () => {
-        setLoading(true);
         try {
-            const [eventsData, probData, configData] = await Promise.all([
-                getLifeEventsWithProgress(),
-                getGoalProbability(),
-                getSimulationConfig().catch(() => null)
+            const [dashboard] = await Promise.all([
+                getStrategyDashboard(simParams.annual_return, simParams.inflation, simParams.monthly_savings),
+                getAccounts()
             ]);
-            setLifeEvents(eventsData);
-            setGoalData(probData);
-            if (configData) setSimConfig(configData);
+            setDashboardData(dashboard);
+            if (dashboard.events.length > 0 && !selectedEvent) {
+                setSelectedEvent(dashboard.events[0]);
+            } else if (selectedEvent) {
+                const updated = dashboard.events.find((e: LifeEvent) => e.id === selectedEvent.id);
+                if (updated) setSelectedEvent(updated);
+            }
         } catch (error) {
             console.error('Failed to fetch strategy data:', error);
-        } finally {
-            setLoading(false);
+            showToast('Failed to load strategy data', 'error');
         }
     };
 
-    const handleSaveConfig = async () => {
+    const fetchBudgetSummary = async () => {
         try {
-            await saveSimulationConfig(simConfig);
-            fetchData(); // Refresh to recalculate probabilities
+            const summary = await getBudgetSummary(currentPeriod);
+            setBudgetSummary(summary);
+            // Initialize edits with values from response
+            const edits: Record<number, number> = {};
+            summary.expense_accounts.forEach((acc: BudgetAccount) => {
+                edits[acc.id] = acc.budget_limit;
+            });
+            setBudgetEdits(edits);
         } catch (error) {
-            console.error('Failed to save config:', error);
+            console.error('Failed to fetch budget summary:', error);
         }
     };
 
-    const formatCurrency = (value: number) => `¥${value.toLocaleString()}`;
+    const handleOpenEditModal = (event: LifeEvent) => {
+        setEditingEvent(event);
+        setEventForm({
+            name: event.name,
+            target_date: event.target_date,
+            target_amount: String(event.target_amount),
+            priority: event.priority,
+            note: event.note || ''
+        });
+        setShowEventModal(true);
+    };
 
-    const getPriorityColor = (priority: string) => {
-        switch (priority) {
-            case 'high': return 'text-rose-400 border-rose-600';
-            case 'medium': return 'text-amber-400 border-amber-600';
-            case 'low': return 'text-slate-400 border-slate-600';
-            default: return 'text-slate-400 border-slate-600';
+    const handleOpenCreateModal = () => {
+        setEditingEvent(null);
+        setEventForm({ name: '', target_date: '', target_amount: '', priority: 2, note: '' });
+        setShowEventModal(true);
+    };
+
+    const handleSaveEvent = async () => {
+        if (!eventForm.name || !eventForm.target_date || !eventForm.target_amount) return;
+        try {
+            const payload = {
+                name: eventForm.name,
+                target_date: eventForm.target_date,
+                target_amount: parseFloat(eventForm.target_amount),
+                priority: eventForm.priority,
+                note: eventForm.note || null
+            };
+            if (editingEvent) {
+                await updateLifeEvent(editingEvent.id, payload);
+                showToast('Life event updated', 'success');
+            } else {
+                await createLifeEvent(payload);
+                showToast('Life event created', 'success');
+            }
+            setShowEventModal(false);
+            fetchData();
+        } catch (error) {
+            showToast('Failed to save event', 'error');
         }
     };
 
-    const renderTabContent = () => {
-        switch (activeTab) {
-            case 'life-events':
-                return (
-                    <div className="space-y-4">
-                        {/* Overall Goal Probability */}
-                        <div className="bg-gradient-to-r from-emerald-900/20 to-cyan-900/20 border border-emerald-800/50 p-4">
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <p className="text-[10px] text-slate-500 uppercase">Overall Goal Probability</p>
-                                    <p className="text-2xl font-mono-nums text-emerald-400">{goalData?.overall_probability || 0}%</p>
+    const handleDeleteEvent = async (id: number) => {
+        if (!confirm('Delete this life event?')) return;
+        try {
+            await deleteLifeEvent(id);
+            showToast('Life event deleted', 'info');
+            if (selectedEvent?.id === id) setSelectedEvent(null);
+            fetchData();
+        } catch (error) {
+            showToast('Failed to delete event', 'error');
+        }
+    };
+
+    const handleAddAllocation = async () => {
+        if (!selectedEvent || !allocationForm.account_id) return;
+        try {
+            await addAllocation(selectedEvent.id, {
+                account_id: parseInt(allocationForm.account_id),
+                allocation_percentage: parseFloat(allocationForm.allocation_percentage)
+            });
+            showToast('Allocation added', 'success');
+            setAllocationForm({ account_id: '', allocation_percentage: '100' });
+            fetchData();
+        } catch (error) {
+            showToast('Failed to add allocation', 'error');
+        }
+    };
+
+    const handleDeleteAllocation = async (allocId: number) => {
+        try {
+            await deleteAllocation(allocId);
+            showToast('Allocation removed', 'info');
+            fetchData();
+        } catch (error) {
+            showToast('Failed to remove allocation', 'error');
+        }
+    };
+
+
+    const handleSaveBudget = async () => {
+        try {
+            const budgets = Object.entries(budgetEdits).map(([id, limit]) => ({
+                account_id: parseInt(id),
+                target_period: currentPeriod,
+                amount: limit
+            }));
+            await saveMonthlyBudgets(budgets);
+            showToast('Monthly budget saved', 'success');
+            fetchBudgetSummary();
+        } catch (error) {
+            showToast('Failed to save budget', 'error');
+        }
+    };
+
+    const changePeriod = (delta: number) => {
+        const [year, month] = currentPeriod.split('-').map(Number);
+        const date = new Date(year, month - 1 + delta, 1);
+        setCurrentPeriod(date.toISOString().slice(0, 7));
+    };
+
+    const handleCopyPrevious = async () => {
+        const [year, month] = currentPeriod.split('-').map(Number);
+        const prevDate = new Date(year, month - 2, 1);
+        const prevPeriod = prevDate.toISOString().slice(0, 7);
+        try {
+            const prevSummary = await getBudgetSummary(prevPeriod);
+            const edits: Record<number, number> = {};
+            prevSummary.expense_accounts.forEach((acc: BudgetAccount) => {
+                edits[acc.id] = acc.budget_limit;
+            });
+            setBudgetEdits(edits);
+            showToast(`Copied from ${prevPeriod}`, 'info');
+        } catch (error) {
+            showToast('Failed to fetch previous budget', 'error');
+        }
+    };
+
+    const formatCurrency = (val: number) => `¥${Math.round(val).toLocaleString()}`;
+
+    const getStatusIcon = (status: string) => {
+        switch (status) {
+            case 'On Track': return <CheckCircle size={12} className="text-emerald-400" />;
+            case 'At Risk': return <AlertTriangle size={12} className="text-amber-400" />;
+            case 'Off Track': return <AlertTriangle size={12} className="text-rose-400" />;
+            default: return <Clock size={12} className="text-slate-400" />;
+        }
+    };
+
+    const getStatusColor = (status: string) => {
+        switch (status) {
+            case 'On Track': return 'text-emerald-400 bg-emerald-900/20 border-emerald-800';
+            case 'At Risk': return 'text-amber-400 bg-amber-900/20 border-amber-800';
+            case 'Off Track': return 'text-rose-400 bg-rose-900/20 border-rose-800';
+            default: return 'text-slate-400 bg-slate-800 border-slate-700';
+        }
+    };
+
+    const getPriorityLabel = (p: number) => {
+        switch (p) {
+            case 1: return { label: 'HIGH', color: 'text-rose-400' };
+            case 2: return { label: 'MED', color: 'text-amber-400' };
+            case 3: return { label: 'LOW', color: 'text-slate-400' };
+            default: return { label: 'MED', color: 'text-amber-400' };
+        }
+    };
+
+    // Left Pane: Event Manager
+    const leftPane = (
+        <div className="space-y-4 h-full flex flex-col">
+            <div className="grid grid-cols-2 gap-2">
+                <div className="bg-emerald-900/20 border border-emerald-800/50 p-3">
+                    <p className="text-[10px] text-slate-500 uppercase">Allocated</p>
+                    <p className="text-lg font-mono-nums text-emerald-400">{formatCurrency(dashboardData?.total_allocated || 0)}</p>
+                </div>
+                <div className="bg-slate-800/50 border border-slate-700 p-3">
+                    <p className="text-[10px] text-slate-500 uppercase">Unallocated</p>
+                    <p className="text-lg font-mono-nums text-slate-300">{formatCurrency(dashboardData?.total_unallocated || 0)}</p>
+                </div>
+            </div>
+
+            <div className="flex-1 overflow-auto space-y-2">
+                {dashboardData?.events.length === 0 ? (
+                    <div className="text-center py-8 text-slate-600 text-xs">No life events. Add your first goal!</div>
+                ) : (
+                    dashboardData?.events.map((event) => (
+                        <div
+                            key={event.id}
+                            onClick={() => setSelectedEvent(event)}
+                            className={`p-3 border cursor-pointer transition-all group ${selectedEvent?.id === event.id
+                                ? 'border-cyan-500 bg-cyan-900/10'
+                                : 'border-slate-700 bg-slate-800/30 hover:border-slate-600'
+                                }`}
+                        >
+                            <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center gap-2">
+                                    <Target size={14} className="text-cyan-400" />
+                                    <span className="text-sm font-medium">{event.name}</span>
+                                    <span className={`text-[9px] px-1 ${getPriorityLabel(event.priority).color}`}>
+                                        {getPriorityLabel(event.priority).label}
+                                    </span>
                                 </div>
-                                <div className="text-right text-xs text-slate-400">
-                                    <p>{goalData?.total_goals || 0} goals</p>
-                                    <p>Target: {formatCurrency(goalData?.total_target || 0)}</p>
+                                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); handleOpenEditModal(event); }}
+                                        className="p-1 text-slate-400 hover:text-cyan-400"
+                                    >
+                                        <Edit2 size={12} />
+                                    </button>
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); handleDeleteEvent(event.id); }}
+                                        className="p-1 text-slate-500 hover:text-rose-400"
+                                    >
+                                        <Trash2 size={12} />
+                                    </button>
                                 </div>
                             </div>
+
+                            <div className="h-1.5 bg-slate-700 rounded-full overflow-hidden mb-2">
+                                <div
+                                    className={`h-full rounded-full transition-all ${event.status === 'On Track' ? 'bg-emerald-500' :
+                                        event.status === 'At Risk' ? 'bg-amber-500' : 'bg-rose-500'
+                                        }`}
+                                    style={{ width: `${Math.min(100, event.progress_percentage)}%` }}
+                                />
+                            </div>
+
+                            <div className="flex items-center justify-between text-[10px]">
+                                <span className="text-slate-500">{event.target_date}</span>
+                                <span className={`px-1.5 py-0.5 border flex items-center gap-1 ${getStatusColor(event.status)}`}>
+                                    {getStatusIcon(event.status)} {event.status}
+                                </span>
+                            </div>
+                            <div className="flex justify-between text-[10px] text-slate-500 mt-1">
+                                <span>Funded: {formatCurrency(event.current_funded)}</span>
+                                <span>Target: {formatCurrency(event.target_amount)}</span>
+                            </div>
                         </div>
+                    ))
+                )}
+            </div>
 
-                        {/* Life Events List */}
-                        <div className="space-y-2">
-                            {lifeEvents.length === 0 ? (
-                                <div className="text-center py-8 text-slate-600 text-sm">
-                                    No life events defined. Add your first goal!
-                                </div>
-                            ) : (
-                                lifeEvents.map((event) => (
-                                    <div key={event.id} className="bg-slate-800/30 border border-slate-700 p-3 hover:border-slate-600 transition-colors">
-                                        <div className="flex items-start justify-between mb-2">
-                                            <div className="flex items-center gap-2">
-                                                <Target size={14} className={getPriorityColor(event.priority)} />
-                                                <span className="text-sm font-medium">{event.name}</span>
-                                                <span className={`text-[10px] px-1.5 py-0.5 border ${getPriorityColor(event.priority)}`}>
-                                                    {event.priority}
-                                                </span>
-                                            </div>
-                                            <div className="text-right">
-                                                <p className="text-xs font-mono-nums">{formatCurrency(event.target_amount)}</p>
-                                                <p className="text-[10px] text-slate-500">{event.target_date}</p>
-                                            </div>
-                                        </div>
+            <button
+                onClick={handleOpenCreateModal}
+                className="w-full border border-dashed border-slate-700 hover:border-cyan-600 p-3 text-xs text-slate-500 hover:text-cyan-400 flex items-center justify-center gap-1 transition-colors"
+            >
+                <Plus size={14} /> Add Life Event
+            </button>
+        </div>
+    );
 
-                                        {/* Progress Bar */}
-                                        <div className="space-y-1">
-                                            <div className="h-2 bg-slate-700 rounded-full overflow-hidden">
-                                                <div
-                                                    className="h-full bg-gradient-to-r from-emerald-500 to-cyan-500 rounded-full transition-all"
-                                                    style={{ width: `${Math.min(100, event.progress_pct)}%` }}
-                                                />
-                                            </div>
-                                            <div className="flex justify-between text-[10px] text-slate-500">
-                                                <span>Funded: {formatCurrency(event.funded_amount)}</span>
-                                                <span>Projected: {formatCurrency(event.projected_amount)} ({event.probability.toFixed(0)}%)</span>
-                                            </div>
-                                            <div className="flex justify-between text-[10px] text-slate-600">
-                                                <span>{event.months_remaining} months remaining</span>
-                                                <span>Monthly: {formatCurrency(event.monthly_contribution)}</span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                ))
-                            )}
-                        </div>
-
-                        {/* Add Life Event Button */}
-                        <button className="w-full border border-dashed border-slate-700 hover:border-emerald-600 p-3 text-xs text-slate-500 hover:text-emerald-400 flex items-center justify-center gap-1 transition-colors">
-                            <Plus size={14} /> Add Life Event
+    const renderRightPane = () => {
+        if (activeTab === 'budgeting') {
+            return (
+                <div className="space-y-4 h-full flex flex-col">
+                    {/* Month Selector */}
+                    <div className="flex items-center justify-between bg-slate-800/30 border border-slate-700 px-4 py-2">
+                        <button onClick={() => changePeriod(-1)} className="p-1 hover:bg-slate-700 text-slate-400"><ChevronLeft size={16} /></button>
+                        <span className="text-sm font-medium font-mono-nums">{currentPeriod}</span>
+                        <button onClick={() => changePeriod(1)} className="p-1 hover:bg-slate-700 text-slate-400"><ChevronRight size={16} /></button>
+                        <button
+                            onClick={handleCopyPrevious}
+                            className="ml-4 flex items-center gap-1 text-[10px] text-cyan-400 hover:text-cyan-300"
+                            title="Copy from previous month"
+                        >
+                            <Copy size={12} /> Copy Prev
                         </button>
                     </div>
-                );
 
-            case 'simulation':
-                return (
-                    <div className="space-y-4">
-                        {/* Goal Probability Gauge */}
-                        <div className="bg-slate-800/30 border border-slate-700 p-6 flex flex-col items-center">
-                            <div className="relative w-40 h-40">
-                                <svg className="transform -rotate-90" viewBox="0 0 100 100">
-                                    {/* Background circle */}
-                                    <circle
-                                        cx="50" cy="50" r="40"
-                                        fill="none"
-                                        stroke="#334155"
-                                        strokeWidth="8"
-                                    />
-                                    {/* Progress circle */}
-                                    <circle
-                                        cx="50" cy="50" r="40"
-                                        fill="none"
-                                        stroke={goalData?.overall_probability >= 80 ? '#10b981' : goalData?.overall_probability >= 50 ? '#f59e0b' : '#ef4444'}
-                                        strokeWidth="8"
-                                        strokeDasharray={`${(goalData?.overall_probability || 0) * 2.51} 251`}
-                                        strokeLinecap="round"
-                                    />
-                                </svg>
-                                <div className="absolute inset-0 flex flex-col items-center justify-center">
-                                    <span className="text-3xl font-mono-nums">{goalData?.overall_probability || 0}%</span>
-                                    <span className="text-[10px] text-slate-500">Goal Probability</span>
-                                </div>
+                    <div className="bg-gradient-to-r from-cyan-900/20 to-emerald-900/20 border border-cyan-800/50 p-4">
+                        <h3 className="text-[10px] text-slate-400 uppercase tracking-wider mb-3">THE TARGET</h3>
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <p className="text-[10px] text-slate-500">Required Monthly Savings</p>
+                                <p className="text-xl font-mono-nums text-cyan-400">
+                                    {formatCurrency(budgetSummary?.required_monthly_savings || 0)}
+                                </p>
                             </div>
-                        </div>
-
-                        {/* Simulation Parameters */}
-                        <div className="bg-slate-800/30 border border-slate-700 p-4 space-y-3">
-                            <h3 className="text-xs font-medium text-slate-400 flex items-center gap-1">
-                                <TrendingUp size={12} /> Simulation Parameters
-                            </h3>
-
-                            <div className="grid grid-cols-2 gap-3">
-                                <div>
-                                    <label className="block text-[10px] text-slate-500 uppercase mb-1">Annual Return (%)</label>
-                                    <input
-                                        type="number"
-                                        step="0.1"
-                                        value={simConfig.annual_return}
-                                        onChange={(e) => setSimConfig({ ...simConfig, annual_return: parseFloat(e.target.value) })}
-                                        className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums focus:outline-none focus:border-emerald-500"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-[10px] text-slate-500 uppercase mb-1">Tax Rate (%)</label>
-                                    <input
-                                        type="number"
-                                        step="1"
-                                        value={simConfig.tax_rate}
-                                        onChange={(e) => setSimConfig({ ...simConfig, tax_rate: parseFloat(e.target.value) })}
-                                        className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums focus:outline-none focus:border-emerald-500"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-[10px] text-slate-500 uppercase mb-1">Monthly Savings</label>
-                                    <input
-                                        type="number"
-                                        step="10000"
-                                        value={simConfig.monthly_savings}
-                                        onChange={(e) => setSimConfig({ ...simConfig, monthly_savings: parseFloat(e.target.value) })}
-                                        className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums focus:outline-none focus:border-emerald-500"
-                                    />
-                                </div>
-                                <div className="flex items-end">
-                                    <label className="flex items-center gap-2 cursor-pointer">
-                                        <input
-                                            type="checkbox"
-                                            checked={simConfig.is_nisa}
-                                            onChange={(e) => setSimConfig({ ...simConfig, is_nisa: e.target.checked })}
-                                            className="w-4 h-4 bg-slate-800 border border-slate-700"
-                                        />
-                                        <span className="text-xs">NISA Account</span>
-                                    </label>
-                                </div>
+                            <div>
+                                <p className="text-[10px] text-slate-500">Fixed Costs (Recurring)</p>
+                                <p className="text-xl font-mono-nums text-amber-400">
+                                    {formatCurrency(budgetSummary?.monthly_fixed_costs || 0)}
+                                </p>
                             </div>
-
-                            <button
-                                onClick={handleSaveConfig}
-                                className="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-2 text-xs font-medium transition-colors"
-                            >
-                                Recalculate Probability
-                            </button>
                         </div>
                     </div>
-                );
 
-            case 'budget':
-                return (
-                    <div className="space-y-4">
+                    <div className="flex-1 bg-slate-800/30 border border-slate-700 p-4 overflow-auto">
+                        <h3 className="text-[10px] text-slate-400 uppercase tracking-wider mb-3 flex items-center justify-between">
+                            <span className="flex items-center gap-1"><Wallet size={10} /> Variable Budget</span>
+                        </h3>
+                        <div className="space-y-2">
+                            {budgetSummary?.expense_accounts.map(acc => (
+                                <div key={acc.id} className="flex items-center justify-between py-2 border-b border-slate-800 group">
+                                    <span className={`text-xs flex-1 ${acc.is_custom ? 'text-cyan-400' : 'text-slate-300'}`}>
+                                        {acc.name} {acc.is_custom && <span className="text-[9px] bg-cyan-900/50 px-1 ml-1 rounded">Custom</span>}
+                                    </span>
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-[10px] text-slate-500">¥</span>
+                                        <input
+                                            type="number"
+                                            step="1000"
+                                            value={budgetEdits[acc.id] ?? 0}
+                                            onChange={(e) => setBudgetEdits({ ...budgetEdits, [acc.id]: parseFloat(e.target.value) || 0 })}
+                                            className="w-24 bg-slate-900 border border-slate-700 px-2 py-1 text-xs font-mono-nums text-right focus:border-cyan-500"
+                                        />
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="bg-slate-800/50 border border-slate-700 p-4">
+                        <div className="grid grid-cols-2 gap-2 text-xs mb-3">
+                            <div className="flex justify-between">
+                                <span className="text-slate-500">Income</span>
+                                <span className="font-mono-nums text-emerald-400">{formatCurrency(budgetSummary?.monthly_income || 0)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-slate-500">- Savings</span>
+                                <span className="font-mono-nums text-cyan-400">{formatCurrency(budgetSummary?.required_monthly_savings || 0)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-slate-500">- Fixed</span>
+                                <span className="font-mono-nums text-amber-400">{formatCurrency(budgetSummary?.monthly_fixed_costs || 0)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span className="text-slate-500">- Variable</span>
+                                <span className="font-mono-nums">{formatCurrency(Object.values(budgetEdits).reduce((a, b) => a + b, 0))}</span>
+                            </div>
+                        </div>
+                        <div className="border-t border-slate-700 pt-2 flex justify-between items-center">
+                            <span className="text-sm font-medium">Remaining</span>
+                            <span className={`text-lg font-mono-nums ${(budgetSummary?.monthly_income || 0) -
+                                (budgetSummary?.required_monthly_savings || 0) -
+                                (budgetSummary?.monthly_fixed_costs || 0) -
+                                Object.values(budgetEdits).reduce((a, b) => a + b, 0) >= 0
+                                ? 'text-emerald-400' : 'text-rose-400'
+                                }`}>
+                                {formatCurrency(
+                                    (budgetSummary?.monthly_income || 0) -
+                                    (budgetSummary?.required_monthly_savings || 0) -
+                                    (budgetSummary?.monthly_fixed_costs || 0) -
+                                    Object.values(budgetEdits).reduce((a, b) => a + b, 0)
+                                )}
+                            </span>
+                        </div>
+                    </div>
+
+                    <button
+                        onClick={handleSaveBudget}
+                        className="w-full bg-cyan-600 hover:bg-cyan-500 text-white py-2.5 text-xs font-medium flex items-center justify-center gap-2"
+                    >
+                        <Save size={14} /> Save {currentPeriod} Budget
+                    </button>
+                </div>
+            );
+        }
+
+        return (
+            <div className="space-y-4 h-full flex flex-col overflow-auto">
+                {/* Simulation Parameters */}
+                <div className="bg-slate-800/30 border border-slate-700 p-3">
+                    <h3 className="text-[10px] text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-1">
+                        <TrendingUp size={10} /> Default Simulation Settings
+                    </h3>
+                    <div className="grid grid-cols-3 gap-2">
+                        <div>
+                            <label className="block text-[9px] text-slate-600 mb-0.5">Return %</label>
+                            <input
+                                type="number"
+                                step="0.5"
+                                value={simParams.annual_return}
+                                onChange={(e) => setSimParams({ ...simParams, annual_return: parseFloat(e.target.value) })}
+                                className="w-full bg-slate-900 border border-slate-700 px-2 py-1 text-xs font-mono-nums"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-[9px] text-slate-600 mb-0.5">Inflation %</label>
+                            <input
+                                type="number"
+                                step="0.5"
+                                value={simParams.inflation}
+                                onChange={(e) => setSimParams({ ...simParams, inflation: parseFloat(e.target.value) })}
+                                className="w-full bg-slate-900 border border-slate-700 px-2 py-1 text-xs font-mono-nums"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-[9px] text-slate-600 mb-0.5">Monthly Save</label>
+                            <input
+                                type="number"
+                                step="10000"
+                                value={simParams.monthly_savings}
+                                onChange={(e) => setSimParams({ ...simParams, monthly_savings: parseFloat(e.target.value) })}
+                                className="w-full bg-slate-900 border border-slate-700 px-2 py-1 text-xs font-mono-nums"
+                            />
+                        </div>
+                    </div>
+                </div>
+
+                {selectedEvent && (
+                    <div className="grid grid-cols-1 gap-4">
+                        {/* Projection Chart */}
+                        <div className="bg-slate-800/30 border border-slate-700 p-3">
+                            <h3 className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">
+                                {selectedEvent.name} Projection ({selectedEvent.weighted_return?.toFixed(1) || simParams.annual_return}% Return)
+                            </h3>
+                            <div className="h-48">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <LineChart data={selectedEvent.roadmap || []}>
+                                        <XAxis dataKey="year" tick={{ fontSize: 10 }} stroke="#64748b" label={{ value: 'Years', position: 'bottom', fontSize: 10 }} />
+                                        <YAxis tick={{ fontSize: 10 }} stroke="#64748b" tickFormatter={(v) => `¥${(v / 10000).toFixed(0)}万`} />
+                                        <Tooltip
+                                            contentStyle={{ background: '#1e293b', border: '1px solid #334155', fontSize: 11 }}
+                                            formatter={(value) => [`¥${(value as number || 0).toLocaleString()}`, '']}
+                                        />
+                                        <Legend wrapperStyle={{ fontSize: 10 }} />
+                                        <Line type="monotone" dataKey="end_balance" stroke="#10b981" name="Balance" strokeWidth={2} dot={false} />
+                                        <Line type="monotone" dataKey={() => selectedEvent.target_amount} stroke="#f97316" strokeDasharray="5 5" name="Target" dot={false} />
+                                    </LineChart>
+                                </ResponsiveContainer>
+                            </div>
+                        </div>
+
+                        {/* Roadmap Roadmap Table */}
+                        <div className="bg-slate-800/30 border border-slate-700 overflow-hidden">
+                            <h3 className="text-[10px] text-slate-500 uppercase tracking-wider p-3 bg-slate-800/50 border-b border-slate-700">Annual Roadmap</h3>
+                            <div className="overflow-x-auto">
+                                <table className="w-full text-left text-[10px]">
+                                    <thead className="bg-slate-800 text-slate-500 uppercase">
+                                        <tr>
+                                            <th className="px-3 py-2 font-normal">Year</th>
+                                            <th className="px-3 py-2 font-normal">Start Bal</th>
+                                            <th className="px-3 py-2 font-normal">Contribution</th>
+                                            <th className="px-3 py-2 font-normal">Gain</th>
+                                            <th className="px-3 py-2 font-normal">End Bal</th>
+                                            <th className="px-3 py-2 font-normal text-right">Coverage</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="divide-y divide-slate-800">
+                                        {selectedEvent.roadmap?.map(row => (
+                                            <tr key={row.year} className="hover:bg-slate-700/30">
+                                                <td className="px-3 py-2 text-slate-400">{row.year === 0 ? 'Current' : `Year ${row.year}`}</td>
+                                                <td className="px-3 py-2 font-mono-nums">{formatCurrency(row.start_balance)}</td>
+                                                <td className="px-3 py-2 font-mono-nums text-cyan-400">+{formatCurrency(row.contribution)}</td>
+                                                <td className="px-3 py-2 font-mono-nums text-emerald-400">+{formatCurrency(row.investment_gain)}</td>
+                                                <td className="px-3 py-2 font-mono-nums font-bold text-slate-200">{formatCurrency(row.end_balance)}</td>
+                                                <td className="px-3 py-2 text-right">
+                                                    <span className={`px-1.5 py-0.5 rounded ${row.goal_coverage >= 100 ? 'bg-emerald-900/40 text-emerald-400' : 'bg-slate-800 text-slate-500'}`}>
+                                                        {row.goal_coverage}%
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        {/* Asset Allocations Section (Restored) */}
                         <div className="bg-slate-800/30 border border-slate-700 p-4">
-                            <h3 className="text-xs font-medium text-slate-400 flex items-center gap-1 mb-3">
-                                <Wallet size={12} /> Monthly Budget Template
+                            <h3 className="text-[10px] text-slate-500 uppercase tracking-wider mb-3 flex items-center justify-between">
+                                <span className="flex items-center gap-1"><Link size={10} className="text-cyan-400" /> Allocated Assets</span>
+                                <span className="text-slate-600 font-mono-nums">
+                                    Total: {formatCurrency(selectedEvent.current_funded)}
+                                </span>
                             </h3>
 
-                            <div className="space-y-2">
-                                {lifeEvents.map((event) => (
-                                    <div key={event.id} className="flex items-center justify-between py-2 border-b border-slate-800">
-                                        <div className="flex items-center gap-2">
-                                            <ChevronRight size={12} className="text-slate-600" />
-                                            <span className="text-xs">Savings: {event.name}</span>
+                            <div className="space-y-2 mb-4">
+                                {selectedEvent.allocations.length === 0 ? (
+                                    <p className="text-[10px] text-slate-600 italic">No assets allocated to this goal.</p>
+                                ) : (
+                                    selectedEvent.allocations.map(alloc => (
+                                        <div key={alloc.id} className="flex items-center justify-between p-2 bg-slate-900/50 border border-slate-700 group">
+                                            <div className="flex-1">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-xs font-medium">{alloc.account_name}</span>
+                                                    <span className="text-[9px] text-slate-500 font-mono-nums">({alloc.expected_return}% Return)</span>
+                                                </div>
+                                                <div className="flex items-center gap-2 text-[10px] text-slate-500">
+                                                    <span>{alloc.allocation_percentage}% from account</span>
+                                                    <span>•</span>
+                                                    <span>{formatCurrency(alloc.account_balance * (alloc.allocation_percentage / 100))}</span>
+                                                </div>
+                                            </div>
+                                            <button
+                                                onClick={() => handleDeleteAllocation(alloc.id)}
+                                                className="p-1 text-slate-600 hover:text-rose-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                                            >
+                                                <Trash2 size={12} />
+                                            </button>
                                         </div>
-                                        <span className="text-xs font-mono-nums text-emerald-400">
-                                            {formatCurrency(event.monthly_contribution)}
-                                        </span>
-                                    </div>
-                                ))}
-
-                                {lifeEvents.length === 0 && (
-                                    <p className="text-xs text-slate-600 py-4 text-center">
-                                        Add life events to generate a budget template
-                                    </p>
+                                    ))
                                 )}
                             </div>
 
-                            <div className="border-t border-slate-700 mt-3 pt-3 flex justify-between text-sm font-medium">
-                                <span>Total Monthly Savings</span>
-                                <span className="text-emerald-400 font-mono-nums">
-                                    {formatCurrency(simConfig.monthly_savings)}
-                                </span>
+                            {/* Add Allocation Form */}
+                            <div className="grid grid-cols-12 gap-2 pt-3 border-t border-slate-800">
+                                <div className="col-span-6">
+                                    <select
+                                        value={allocationForm.account_id}
+                                        onChange={(e) => setAllocationForm({ ...allocationForm, account_id: e.target.value })}
+                                        className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-[10px] text-slate-300"
+                                    >
+                                        <option value="">Select Asset Account...</option>
+                                        {dashboardData?.unallocated_assets.map(acc => (
+                                            <option key={acc.id} value={acc.id}>{acc.name} ({formatCurrency(acc.balance)})</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <div className="col-span-4 relative">
+                                    <input
+                                        type="number"
+                                        placeholder="%"
+                                        value={allocationForm.allocation_percentage}
+                                        onChange={(e) => setAllocationForm({ ...allocationForm, allocation_percentage: e.target.value })}
+                                        className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-[10px] pr-5 font-mono-nums"
+                                    />
+                                    <span className="absolute right-2 top-1.5 text-[9px] text-slate-600">%</span>
+                                </div>
+                                <button
+                                    onClick={handleAddAllocation}
+                                    disabled={!allocationForm.account_id}
+                                    className="col-span-2 bg-cyan-900/40 hover:bg-cyan-900/60 text-cyan-400 border border-cyan-800 flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed"
+                                >
+                                    <Plus size={14} />
+                                </button>
                             </div>
                         </div>
                     </div>
-                );
-
-            default:
-                return null;
-        }
+                )}
+            </div>
+        );
     };
 
     return (
-        <div className="h-full p-4 overflow-auto">
-            <TabPanel tabs={TABS} activeTab={activeTab} onTabChange={setActiveTab}>
-                <div className="p-4">
-                    {renderTabContent()}
+        <>
+            <div className="h-full p-4">
+                <SplitView
+                    left={leftPane}
+                    right={
+                        <div className="h-full flex flex-col">
+                            <TabPanel tabs={TABS} activeTab={activeTab} onTabChange={setActiveTab}>
+                                <div className="p-2 flex-1 overflow-hidden">
+                                    {renderRightPane()}
+                                </div>
+                            </TabPanel>
+                        </div>
+                    }
+                    leftTitle="LIFE EVENTS"
+                    rightTitle=""
+                />
+            </div>
+
+            {showEventModal && (
+                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+                    <div className="bg-slate-900 border border-slate-700 p-6 w-full max-w-md">
+                        <div className="flex justify-between items-center mb-4">
+                            <h2 className="text-sm font-medium">{editingEvent ? 'Edit Life Event' : 'New Life Event'}</h2>
+                            <button onClick={() => setShowEventModal(false)}><X size={16} /></button>
+                        </div>
+
+                        <div className="space-y-3">
+                            <div>
+                                <label className="block text-[10px] text-slate-500 uppercase mb-1">Event Name</label>
+                                <input
+                                    type="text"
+                                    placeholder="e.g., Retirement, House, Education"
+                                    value={eventForm.name}
+                                    onChange={(e) => setEventForm({ ...eventForm, name: e.target.value })}
+                                    className="w-full bg-slate-800 border border-slate-700 px-3 py-2 text-sm"
+                                />
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block text-[10px] text-slate-500 uppercase mb-1">Target Date</label>
+                                    <input
+                                        type="date"
+                                        value={eventForm.target_date}
+                                        onChange={(e) => setEventForm({ ...eventForm, target_date: e.target.value })}
+                                        className="w-full bg-slate-800 border border-slate-700 px-3 py-2 text-sm"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-[10px] text-slate-500 uppercase mb-1">Target Amount</label>
+                                    <input
+                                        type="number"
+                                        placeholder="¥"
+                                        value={eventForm.target_amount}
+                                        onChange={(e) => setEventForm({ ...eventForm, target_amount: e.target.value })}
+                                        className="w-full bg-slate-800 border border-slate-700 px-3 py-2 text-sm font-mono-nums"
+                                    />
+                                </div>
+                            </div>
+                            <div>
+                                <label className="block text-[10px] text-slate-500 uppercase mb-1">Priority</label>
+                                <select
+                                    value={eventForm.priority}
+                                    onChange={(e) => setEventForm({ ...eventForm, priority: parseInt(e.target.value) })}
+                                    className="w-full bg-slate-800 border border-slate-700 px-3 py-2 text-sm"
+                                >
+                                    <option value={1}>High Priority</option>
+                                    <option value={2}>Medium Priority</option>
+                                    <option value={3}>Low Priority</option>
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-[10px] text-slate-500 uppercase mb-1">Note (Optional)</label>
+                                <textarea
+                                    placeholder="Additional details..."
+                                    value={eventForm.note}
+                                    onChange={(e) => setEventForm({ ...eventForm, note: e.target.value })}
+                                    className="w-full bg-slate-800 border border-slate-700 px-3 py-2 text-sm h-20 resize-none"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="flex gap-2 mt-4">
+                            <button
+                                onClick={handleSaveEvent}
+                                className="flex-1 bg-cyan-600 hover:bg-cyan-500 text-white py-2 text-xs font-medium"
+                            >
+                                {editingEvent ? 'Update Event' : 'Create Event'}
+                            </button>
+                            <button
+                                onClick={() => setShowEventModal(false)}
+                                className="px-4 bg-slate-800 hover:bg-slate-700 text-white py-2 text-xs"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
                 </div>
-            </TabPanel>
-        </div>
+            )}
+        </>
     );
 }

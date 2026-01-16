@@ -1,5 +1,7 @@
-from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, Boolean, DateTime, JSON
+from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, Boolean, DateTime, JSON, UniqueConstraint
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
+import uuid
 from datetime import datetime
 import enum
 from .database import Base
@@ -58,6 +60,7 @@ class Client(Base):
 class Account(Base):
     """Double-entry accounting: Each account has a type and balance."""
     __tablename__ = "accounts"
+    __table_args__ = (UniqueConstraint('client_id', 'name', name='_client_account_uc'),)
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
@@ -66,6 +69,7 @@ class Account(Base):
     balance = Column(Float, default=0)
     parent_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     budget_limit = Column(Float, nullable=True)  # Monthly budget for expense accounts
+    expected_return = Column(Float, default=0.0)  # Annual return rate % for asset accounts
     is_active = Column(Boolean, default=True)
     
     client = relationship("Client", back_populates="accounts")
@@ -92,8 +96,7 @@ class Asset(Base):
     category = Column(String)
     value = Column(Float)
     account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
-    
-    goal_mappings = relationship("AssetGoalMapping", back_populates="asset")
+
 
 class Liability(Base):
     __tablename__ = "liabilities"
@@ -125,34 +128,6 @@ class Transaction(Base):
     client = relationship("Client", back_populates="transactions")
     journal_entries = relationship("JournalEntry", back_populates="transaction")
 
-class LifeEvent(Base):
-    """Life Events = Future Liabilities (Goals)"""
-    __tablename__ = "life_events"
-
-    id = Column(Integer, primary_key=True, index=True)
-    client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
-    name = Column(String, index=True)
-    target_date = Column(Date)
-    target_amount = Column(Float)
-    funded_amount = Column(Float, default=0)
-    priority = Column(String, default="medium")
-    allocated_asset_id = Column(Integer, ForeignKey("assets.id"), nullable=True)
-    monthly_contribution = Column(Float, default=0)
-    
-    client = relationship("Client", back_populates="life_events")
-    asset_mappings = relationship("AssetGoalMapping", back_populates="life_event")
-    allocated_asset = relationship("Asset", foreign_keys=[allocated_asset_id])
-
-class AssetGoalMapping(Base):
-    __tablename__ = "asset_goal_mappings"
-
-    id = Column(Integer, primary_key=True, index=True)
-    asset_id = Column(Integer, ForeignKey("assets.id"))
-    life_event_id = Column(Integer, ForeignKey("life_events.id"))
-    allocation_pct = Column(Float)
-    
-    asset = relationship("Asset", back_populates="goal_mappings")
-    life_event = relationship("LifeEvent", back_populates="asset_mappings")
 
 class Product(Base):
     __tablename__ = "products"
@@ -228,3 +203,46 @@ class RecurringTransaction(Base):
     client = relationship("Client", back_populates="recurring_transactions")
     from_account = relationship("Account", foreign_keys=[from_account_id])
     to_account = relationship("Account", foreign_keys=[to_account_id])
+
+class LifeEvent(Base):
+    """Future liabilities/goals for Personal ALM (Asset Liability Management)."""
+    __tablename__ = "life_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
+    name = Column(String, index=True)  # e.g., "Retirement", "House"
+    target_date = Column(Date)
+    target_amount = Column(Float)
+    priority = Column(Integer, default=2)  # 1=High, 2=Medium, 3=Low
+    note = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    client = relationship("Client", back_populates="life_events")
+    allocations = relationship("GoalAllocation", back_populates="life_event", cascade="all, delete-orphan")
+
+class GoalAllocation(Base):
+    """Links assets to life events (the 'buckets' for funding goals)."""
+    __tablename__ = "goal_allocations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    life_event_id = Column(Integer, ForeignKey("life_events.id", ondelete="CASCADE"))
+    account_id = Column(Integer, ForeignKey("accounts.id"))
+    allocation_percentage = Column(Float)  # 0.0 - 100.0
+
+    life_event = relationship("LifeEvent", back_populates="allocations")
+    account = relationship("Account")
+
+class MonthlyBudget(Base):
+    """Tracks budgets per month for expense accounts."""
+    __tablename__ = "monthly_budgets"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    client_id = Column(Integer, ForeignKey("clients.id"))
+    account_id = Column(Integer, ForeignKey("accounts.id"))
+    target_period = Column(String)  # Format: "YYYY-MM"
+    amount = Column(Float)
+
+    __table_args__ = (UniqueConstraint('account_id', 'target_period', name='_account_period_uc'),)
+
+    client = relationship("Client")
+    account = relationship("Account")

@@ -1,5 +1,6 @@
 from pydantic import BaseModel
-from datetime import date
+from uuid import UUID
+from datetime import date, datetime
 from typing import Optional, Literal
 
 # Account Schemas
@@ -7,12 +8,21 @@ class AccountBase(BaseModel):
     name: str
     account_type: str
     balance: float = 0
+    budget_limit: Optional[float] = None
+    expected_return: float = 0.0  # Annual return rate %
 
 class AccountCreate(AccountBase):
     pass
 
+class AccountUpdate(BaseModel):
+    name: Optional[str] = None
+    budget_limit: Optional[float] = None
+    expected_return: Optional[float] = None
+    is_active: Optional[bool] = None
+
 class Account(AccountBase):
     id: int
+    is_active: bool = True
 
     class Config:
         from_attributes = True
@@ -176,3 +186,78 @@ class RecurringTransaction(RecurringTransactionBase):
 
     class Config:
         from_attributes = True
+
+# ========== Life Events & Allocations ==========
+
+class GoalAllocationBase(BaseModel):
+    account_id: int
+    allocation_percentage: float  # 0.0 - 100.0
+
+class GoalAllocationCreate(GoalAllocationBase):
+    pass
+
+class GoalAllocation(GoalAllocationBase):
+    id: int
+    life_event_id: int
+    account_name: Optional[str] = None  # Populated when returning
+    account_balance: Optional[float] = None
+
+    class Config:
+        from_attributes = True
+
+class MonthlyBudgetBase(BaseModel):
+    account_id: int
+    target_period: str  # "YYYY-MM"
+    amount: float
+
+class MonthlyBudgetCreate(MonthlyBudgetBase):
+    pass
+
+class MonthlyBudget(MonthlyBudgetBase):
+    id: UUID
+
+    class Config:
+        from_attributes = True
+
+class LifeEventBase(BaseModel):
+    name: str
+    target_date: date
+    target_amount: float
+    priority: int = 2  # 1=High, 2=Medium, 3=Low
+    note: Optional[str] = None
+
+class LifeEventCreate(LifeEventBase):
+    pass
+
+class LifeEventUpdate(BaseModel):
+    name: Optional[str] = None
+    target_date: Optional[date] = None
+    target_amount: Optional[float] = None
+    priority: Optional[int] = None
+    note: Optional[str] = None
+
+class LifeEvent(LifeEventBase):
+    id: int
+    created_at: Optional[datetime] = None
+    allocations: list[GoalAllocation] = []
+
+    class Config:
+        from_attributes = True
+
+# ========== Strategy Dashboard ==========
+
+class LifeEventWithProgress(LifeEvent):
+    """Extended LifeEvent with calculated progress fields."""
+    current_funded: float = 0.0
+    projected_amount: float = 0.0
+    gap: float = 0.0
+    status: str = "Not Started"  # "On Track", "At Risk", "Off Track"
+    progress_percentage: float = 0.0
+    years_remaining: float = 0.0
+
+class StrategyDashboard(BaseModel):
+    events: list[LifeEventWithProgress]
+    unallocated_assets: list[dict]
+    total_allocated: float
+    total_unallocated: float
+    simulation_params: dict

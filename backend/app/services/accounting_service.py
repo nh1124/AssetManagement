@@ -233,22 +233,35 @@ def get_profit_loss(db: Session, year: int, month: int, client_id: int = None) -
 
 def get_variance_analysis(db: Session, year: int, month: int, client_id: int = None) -> dict:
     """
-    Compare actual spending vs budget for a specific month and client.
+    Compare actual spending vs monthly budgets for a specific month and client.
+    Uses models.MonthlyBudget (per account) joined with actual transactions.
     """
     month_str = f"{year}-{month:02d}"
     
-    # Get budgets for the month and client
-    budgets = db.query(models.Budget).filter(
-        models.Budget.client_id == client_id,
-        models.Budget.month == month_str
+    # Get all expense accounts for this client
+    accounts = db.query(models.Account).filter(
+        models.Account.client_id == client_id,
+        models.Account.account_type == "expense",
+        models.Account.is_active == True
     ).all()
     
-    # Get actual spending for the month and client
+    # Get monthly budgets for this period
+    monthly_budgets = db.query(models.MonthlyBudget).filter(
+        models.MonthlyBudget.client_id == client_id,
+        models.MonthlyBudget.target_period == month_str
+    ).all()
+    budget_map = {mb.account_id: mb.amount for mb in monthly_budgets}
+    
+    # Get actual spending for the month
     start_date = date(year, month, 1)
     if month == 12:
         end_date = date(year + 1, 1, 1)
     else:
         end_date = date(year, month + 1, 1)
+        
+    # We sum transactions by category, but wait, if we are doing account-based budgets,
+    # we should probably look at transactions targeting those accounts.
+    # In this system, 'category' in Transaction often matches account name.
     
     transactions = db.query(models.Transaction).filter(
         and_(
@@ -263,23 +276,29 @@ def get_variance_analysis(db: Session, year: int, month: int, client_id: int = N
     for tx in transactions:
         cat = tx.category or "Other"
         actual_by_category[cat] = actual_by_category.get(cat, 0) + tx.amount
-    
-    # Build variance report
+        
     variance_items = []
-    for budget in budgets:
-        actual = actual_by_category.get(budget.category, 0)
-        variance = budget.proposed_amount - actual
+    
+    for acc in accounts:
+        actual = actual_by_category.get(acc.name, 0)
+        # Fallback logic for budget: MonthlyBudget -> Account.budget_limit -> 0
+        budget = budget_map.get(acc.id)
+        if budget is None:
+            budget = acc.budget_limit or 0.0
+            
+        variance = budget - actual
         variance_items.append({
-            "category": budget.category,
-            "budget": budget.proposed_amount,
+            "category": acc.name,
+            "budget": budget,
             "actual": actual,
             "variance": variance,
-            "percentage": (actual / budget.proposed_amount * 100) if budget.proposed_amount > 0 else 0
+            "percentage": (actual / budget * 100) if budget > 0 else 0
         })
-    
-    # Add categories with spending but no budget
+        
+    # Add any categories that have spending but no corresponding expense account (rare in this model but safe)
+    existing_cats = {acc.name for acc in accounts}
     for cat, amount in actual_by_category.items():
-        if not any(v["category"] == cat for v in variance_items):
+        if cat not in existing_cats:
             variance_items.append({
                 "category": cat,
                 "budget": 0,
@@ -287,7 +306,7 @@ def get_variance_analysis(db: Session, year: int, month: int, client_id: int = N
                 "variance": -amount,
                 "percentage": 100
             })
-    
+            
     total_budget = sum(v["budget"] for v in variance_items)
     total_actual = sum(v["actual"] for v in variance_items)
     
