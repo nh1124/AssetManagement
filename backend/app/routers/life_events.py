@@ -308,6 +308,20 @@ def add_allocation(
     if account.account_type != "asset":
         raise HTTPException(status_code=400, detail="Only asset accounts can be allocated to goals")
     
+    # Validation: Ensure total allocation for this account across ALL goals does not exceed 100%
+    # 1. Sum existing allocations for this account
+    existing_allocations = db.query(models.GoalAllocation).filter(
+        models.GoalAllocation.account_id == allocation.account_id
+    ).all()
+    current_total = sum(a.allocation_percentage for a in existing_allocations)
+    
+    if current_total + allocation.allocation_percentage > 100.0:
+        remaining = 100.0 - current_total
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Asset is over-allocated. Current total: {current_total}%. Remaining: {remaining}%. Requested: {allocation.allocation_percentage}%"
+        )
+    
     db_alloc = models.GoalAllocation(
         life_event_id=event_id,
         account_id=allocation.account_id,
@@ -340,6 +354,22 @@ def update_allocation(
     ).first()
     if not db_alloc:
         raise HTTPException(status_code=404, detail="Allocation not found")
+    
+    # Validation: Ensure total allocation for this account (excluding current record) + new value <= 100%
+    other_allocations = db.query(models.GoalAllocation).filter(
+        models.GoalAllocation.account_id == db_alloc.account_id,
+        models.GoalAllocation.id != allocation_id,
+        models.GoalAllocation.life_event_id != db_alloc.life_event_id # ensure we look at other allocations broadly, though id check is enough
+    ).all()
+    
+    current_total_others = sum(a.allocation_percentage for a in other_allocations)
+    
+    if current_total_others + allocation.allocation_percentage > 100.0:
+         remaining = 100.0 - current_total_others
+         raise HTTPException(
+            status_code=400,
+            detail=f"Asset is over-allocated. Total others: {current_total_others}%. Remaining: {remaining}%. Requested: {allocation.allocation_percentage}%"
+        )
     
     db_alloc.allocation_percentage = allocation.allocation_percentage
     db.commit()

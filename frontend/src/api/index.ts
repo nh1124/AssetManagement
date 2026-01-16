@@ -264,6 +264,16 @@ export const analyzeWithBackend = async (payload: { parts: any[] }) => {
     return response.data;
 };
 
+export const suggestBudget = async () => {
+    const response = await api.post('/api/analyze/suggest-budget');
+    return response.data;
+};
+
+export const optimizeAllocations = async () => {
+    const response = await api.post('/api/analyze/optimize-allocations');
+    return response.data;
+};
+
 // Client management
 export const getClients = async () => {
     const response = await api.get('/clients/');

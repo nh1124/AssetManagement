@@ -276,27 +276,37 @@ def get_strategy_dashboard(
         models.Account.account_type == "asset"
     ).all()
     
-    # Find allocated account IDs
-    allocated_account_ids = set()
+    # Calculate total allocation percentage per account
+    account_allocation_map = {}
     for event in events:
         for alloc in event.get("allocations", []):
-            allocated_account_ids.add(alloc["account_id"])
+            acc_id = alloc["account_id"]
+            account_allocation_map[acc_id] = account_allocation_map.get(acc_id, 0) + alloc["allocation_percentage"]
     
-    # Build unallocated assets list
+    # Build available assets list (any account with < 100% allocated)
     unallocated_assets = []
     total_unallocated = 0.0
     total_allocated = 0.0
     
     for acc in asset_accounts:
-        if acc.id in allocated_account_ids:
-            total_allocated += acc.balance or 0
-        else:
+        used_pct = account_allocation_map.get(acc.id, 0)
+        remaining_pct = max(0, 100 - used_pct)
+        
+        # Calculate unallocated balance portion
+        balance = acc.balance or 0
+        unallocated_balance = balance * (remaining_pct / 100.0)
+        
+        total_allocated += (balance - unallocated_balance)
+        total_unallocated += unallocated_balance
+        
+        if remaining_pct > 0.01: # Threshold to avoid floating point issues
             unallocated_assets.append({
                 "id": acc.id,
                 "name": acc.name,
-                "balance": acc.balance or 0
+                "balance": balance,
+                "remaining_percentage": remaining_pct,
+                "available_balance": unallocated_balance
             })
-            total_unallocated += acc.balance or 0
     
     return {
         "events": events,

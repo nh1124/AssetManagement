@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Target, TrendingUp, Plus, Trash2, X, AlertTriangle, CheckCircle, Clock, Link, Wallet, Edit2, Save, ChevronLeft, ChevronRight, Copy } from 'lucide-react';
+import { TrendingUp, Plus, Trash2, X, Link, Wallet, Edit2, Save, ChevronLeft, ChevronRight, Copy } from 'lucide-react';
 import SplitView from '../components/SplitView';
 import TabPanel from '../components/TabPanel';
 import { useToast } from '../components/Toast';
@@ -12,9 +12,12 @@ import {
     deleteAllocation,
     getAccounts,
     getBudgetSummary,
-    saveMonthlyBudgets
+    saveMonthlyBudgets,
+    suggestBudget,
+    optimizeAllocations
 } from '../api';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts';
+import { Sparkles } from 'lucide-react';
 
 interface RoadmapItem {
     year: number;
@@ -55,7 +58,7 @@ interface Allocation {
 
 interface DashboardData {
     events: LifeEvent[];
-    unallocated_assets: Array<{ id: number; name: string; balance: number }>;
+    unallocated_assets: Array<{ id: number; name: string; balance: number; remaining_percentage?: number }>;
     total_allocated: number;
     total_unallocated: number;
     simulation_params: {
@@ -122,16 +125,83 @@ export default function Strategy() {
         account_id: '',
         allocation_percentage: '100'
     });
+    const [analyzing, setAnalyzing] = useState(false);
 
     useEffect(() => {
-        fetchData();
-    }, []);
+        const timer = setTimeout(() => {
+            fetchData();
+        }, 500); // Debounce API calls
+        return () => clearTimeout(timer);
+    }, [simParams.annual_return, simParams.inflation, simParams.monthly_savings]);
 
     useEffect(() => {
         if (activeTab === 'budgeting') {
             fetchBudgetSummary();
         }
     }, [activeTab, currentPeriod]);
+
+    const handleAISuggestBudget = async () => {
+        if (!budgetSummary) return;
+        setAnalyzing(true);
+        try {
+            const suggestions = await suggestBudget();
+            const newEdits = { ...budgetEdits };
+            let appliedCount = 0;
+
+            suggestions.forEach((s: any) => {
+                const account = budgetSummary.expense_accounts.find(
+                    a => a.name.toLowerCase().includes(s.category.toLowerCase()) ||
+                        s.category.toLowerCase().includes(a.name.toLowerCase())
+                );
+                if (account) {
+                    newEdits[account.id] = s.suggested_limit;
+                    appliedCount++;
+                }
+            });
+
+            setBudgetEdits(newEdits);
+            if (appliedCount > 0) showToast(`Applied ${appliedCount} AI budget suggestions`, 'success');
+            else showToast('No matching categories found for suggestions', 'info');
+
+        } catch (e) {
+            console.error(e);
+            showToast('Failed to get AI suggestions', 'error');
+        } finally {
+            setAnalyzing(false);
+        }
+    };
+
+    const handleAIOptimize = async () => {
+        if (!dashboardData) return;
+        setAnalyzing(true);
+        try {
+            const suggestions = await optimizeAllocations();
+            if (!suggestions || suggestions.length === 0) {
+                showToast('AI found no optimizations', 'info');
+                return;
+            }
+
+            if (confirm(`AI found ${suggestions.length} optimal allocations. Apply them?`)) {
+                for (const s of suggestions) {
+                    try {
+                        await addAllocation(s.life_event_id, {
+                            account_id: s.account_id,
+                            allocation_percentage: s.percentage
+                        });
+                    } catch (err) {
+                        console.error('Failed to apply allocation', s, err);
+                    }
+                }
+                fetchData();
+                showToast('Optimized allocations applied', 'success');
+            }
+        } catch (e) {
+            console.error(e);
+            showToast('Failed to optimize allocations', 'error');
+        } finally {
+            setAnalyzing(false);
+        }
+    };
 
     const fetchData = async () => {
         try {
@@ -151,6 +221,8 @@ export default function Strategy() {
             showToast('Failed to load strategy data', 'error');
         }
     };
+
+
 
     const fetchBudgetSummary = async () => {
         try {
@@ -265,13 +337,18 @@ export default function Strategy() {
     const changePeriod = (delta: number) => {
         const [year, month] = currentPeriod.split('-').map(Number);
         const date = new Date(year, month - 1 + delta, 1);
-        setCurrentPeriod(date.toISOString().slice(0, 7));
+        const y = date.getFullYear();
+        const m = String(date.getMonth() + 1).padStart(2, '0');
+        setCurrentPeriod(`${y}-${m}`);
     };
 
     const handleCopyPrevious = async () => {
         const [year, month] = currentPeriod.split('-').map(Number);
         const prevDate = new Date(year, month - 2, 1);
-        const prevPeriod = prevDate.toISOString().slice(0, 7);
+        const y = prevDate.getFullYear();
+        const m = String(prevDate.getMonth() + 1).padStart(2, '0');
+        const prevPeriod = `${y}-${m}`;
+
         try {
             const prevSummary = await getBudgetSummary(prevPeriod);
             const edits: Record<number, number> = {};
@@ -287,32 +364,7 @@ export default function Strategy() {
 
     const formatCurrency = (val: number) => `¥${Math.round(val).toLocaleString()}`;
 
-    const getStatusIcon = (status: string) => {
-        switch (status) {
-            case 'On Track': return <CheckCircle size={12} className="text-emerald-400" />;
-            case 'At Risk': return <AlertTriangle size={12} className="text-amber-400" />;
-            case 'Off Track': return <AlertTriangle size={12} className="text-rose-400" />;
-            default: return <Clock size={12} className="text-slate-400" />;
-        }
-    };
 
-    const getStatusColor = (status: string) => {
-        switch (status) {
-            case 'On Track': return 'text-emerald-400 bg-emerald-900/20 border-emerald-800';
-            case 'At Risk': return 'text-amber-400 bg-amber-900/20 border-amber-800';
-            case 'Off Track': return 'text-rose-400 bg-rose-900/20 border-rose-800';
-            default: return 'text-slate-400 bg-slate-800 border-slate-700';
-        }
-    };
-
-    const getPriorityLabel = (p: number) => {
-        switch (p) {
-            case 1: return { label: 'HIGH', color: 'text-rose-400' };
-            case 2: return { label: 'MED', color: 'text-amber-400' };
-            case 3: return { label: 'LOW', color: 'text-slate-400' };
-            default: return { label: 'MED', color: 'text-amber-400' };
-        }
-    };
 
     // Left Pane: Event Manager
     const leftPane = (
@@ -336,53 +388,40 @@ export default function Strategy() {
                         <div
                             key={event.id}
                             onClick={() => setSelectedEvent(event)}
-                            className={`p-3 border cursor-pointer transition-all group ${selectedEvent?.id === event.id
-                                ? 'border-cyan-500 bg-cyan-900/10'
-                                : 'border-slate-700 bg-slate-800/30 hover:border-slate-600'
-                                }`}
+                            className={`
+                                group px-3 py-2 cursor-pointer border-b border-white/5 transition-colors
+                                ${selectedEvent?.id === event.id
+                                    ? 'bg-white/10'
+                                    : 'hover:bg-white/5'
+                                }
+                            `}
                         >
-                            <div className="flex items-center justify-between mb-2">
-                                <div className="flex items-center gap-2">
-                                    <Target size={14} className="text-cyan-400" />
-                                    <span className="text-sm font-medium">{event.name}</span>
-                                    <span className={`text-[9px] px-1 ${getPriorityLabel(event.priority).color}`}>
-                                        {getPriorityLabel(event.priority).label}
-                                    </span>
-                                </div>
-                                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                    <button
-                                        onClick={(e) => { e.stopPropagation(); handleOpenEditModal(event); }}
-                                        className="p-1 text-slate-400 hover:text-cyan-400"
-                                    >
-                                        <Edit2 size={12} />
-                                    </button>
-                                    <button
-                                        onClick={(e) => { e.stopPropagation(); handleDeleteEvent(event.id); }}
-                                        className="p-1 text-slate-500 hover:text-rose-400"
-                                    >
-                                        <Trash2 size={12} />
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div className="h-1.5 bg-slate-700 rounded-full overflow-hidden mb-2">
-                                <div
-                                    className={`h-full rounded-full transition-all ${event.status === 'On Track' ? 'bg-emerald-500' :
+                            <div className="flex items-center justify-between gap-3">
+                                <div className="flex items-center gap-2 min-w-0">
+                                    <div className={`w-2 h-2 rounded-full flex-shrink-0 ${event.status === 'On Track' ? 'bg-emerald-500' :
                                         event.status === 'At Risk' ? 'bg-amber-500' : 'bg-rose-500'
-                                        }`}
-                                    style={{ width: `${Math.min(100, event.progress_percentage)}%` }}
-                                />
-                            </div>
+                                        }`} />
+                                    <span className="text-xs text-slate-200 truncate">{event.name}</span>
+                                </div>
 
-                            <div className="flex items-center justify-between text-[10px]">
-                                <span className="text-slate-500">{event.target_date}</span>
-                                <span className={`px-1.5 py-0.5 border flex items-center gap-1 ${getStatusColor(event.status)}`}>
-                                    {getStatusIcon(event.status)} {event.status}
+                                <span className="text-[10px] text-slate-500 font-mono-nums flex-shrink-0">
+                                    {event.target_date.substring(0, 4)}
                                 </span>
                             </div>
-                            <div className="flex justify-between text-[10px] text-slate-500 mt-1">
-                                <span>Funded: {formatCurrency(event.current_funded)}</span>
-                                <span>Target: {formatCurrency(event.target_amount)}</span>
+
+                            <div className="mt-1 flex items-center justify-between gap-4">
+                                <div className="flex-1 h-0.5 bg-slate-700/50 rounded-full overflow-hidden">
+                                    <div
+                                        className={`h-full ${event.status === 'On Track' ? 'bg-emerald-500/70' :
+                                            event.status === 'At Risk' ? 'bg-amber-500/70' : 'bg-rose-500/70'
+                                            }`}
+                                        style={{ width: `${Math.min(100, event.progress_percentage)}%` }}
+                                    />
+                                </div>
+                                <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <Edit2 size={10} className="text-slate-400 hover:text-cyan-400" onClick={(e) => { e.stopPropagation(); handleOpenEditModal(event); }} />
+                                    <Trash2 size={10} className="text-slate-500 hover:text-rose-400" onClick={(e) => { e.stopPropagation(); handleDeleteEvent(event.id); }} />
+                                </div>
                             </div>
                         </div>
                     ))
@@ -437,25 +476,56 @@ export default function Strategy() {
                     <div className="flex-1 bg-slate-800/30 border border-slate-700 p-4 overflow-auto">
                         <h3 className="text-[10px] text-slate-400 uppercase tracking-wider mb-3 flex items-center justify-between">
                             <span className="flex items-center gap-1"><Wallet size={10} /> Variable Budget</span>
+                            <button
+                                onClick={handleAISuggestBudget}
+                                disabled={analyzing}
+                                className="flex items-center gap-1 text-[9px] text-cyan-400 hover:text-cyan-300 disabled:opacity-50"
+                            >
+                                <Sparkles size={10} /> {analyzing ? 'Thinking...' : 'AI Suggest'}
+                            </button>
                         </h3>
-                        <div className="space-y-2">
-                            {budgetSummary?.expense_accounts.map(acc => (
-                                <div key={acc.id} className="flex items-center justify-between py-2 border-b border-slate-800 group">
-                                    <span className={`text-xs flex-1 ${acc.is_custom ? 'text-cyan-400' : 'text-slate-300'}`}>
-                                        {acc.name} {acc.is_custom && <span className="text-[9px] bg-cyan-900/50 px-1 ml-1 rounded">Custom</span>}
-                                    </span>
-                                    <div className="flex items-center gap-2">
-                                        <span className="text-[10px] text-slate-500">¥</span>
-                                        <input
-                                            type="number"
-                                            step="1000"
-                                            value={budgetEdits[acc.id] ?? 0}
-                                            onChange={(e) => setBudgetEdits({ ...budgetEdits, [acc.id]: parseFloat(e.target.value) || 0 })}
-                                            className="w-24 bg-slate-900 border border-slate-700 px-2 py-1 text-xs font-mono-nums text-right focus:border-cyan-500"
-                                        />
-                                    </div>
-                                </div>
-                            ))}
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-[10px]">
+                                <thead className="text-slate-500 uppercase border-b border-slate-700 bg-slate-800/50">
+                                    <tr>
+                                        <th className="px-2 py-1.5 text-left font-normal w-1/3">Category</th>
+                                        <th className="px-2 py-1.5 text-right font-normal text-slate-600">Actual</th>
+                                        <th className="px-2 py-1.5 text-right font-normal">Limit</th>
+                                        <th className="px-2 py-1.5 text-right font-normal">Var</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-800/50">
+                                    {budgetSummary?.expense_accounts.map(acc => {
+                                        const limit = budgetEdits[acc.id] ?? 0;
+                                        const actual = acc.balance || 0;
+                                        const variance = limit - actual;
+
+                                        return (
+                                            <tr key={acc.id} className="hover:bg-slate-800/30 transition-colors group">
+                                                <td className="px-2 py-1.5 text-slate-300 truncate max-w-[120px]" title={acc.name}>
+                                                    {acc.name}
+                                                    {acc.is_custom && <span className="ml-1 text-[8px] text-cyan-500 bg-cyan-900/30 px-1 rounded">Cust</span>}
+                                                </td>
+                                                <td className="px-2 py-1.5 text-right font-mono-nums text-slate-500">
+                                                    {formatCurrency(actual)}
+                                                </td>
+                                                <td className="px-2 py-1.5 text-right">
+                                                    <input
+                                                        type="number"
+                                                        step="1000"
+                                                        value={limit}
+                                                        onChange={(e) => setBudgetEdits({ ...budgetEdits, [acc.id]: parseFloat(e.target.value) || 0 })}
+                                                        className="w-20 bg-transparent border-b border-slate-700 focus:border-cyan-500 text-right font-mono-nums text-slate-200 focus:bg-slate-800/50 outline-none px-1 py-0.5"
+                                                    />
+                                                </td>
+                                                <td className={`px-2 py-1.5 text-right font-mono-nums ${variance >= 0 ? 'text-emerald-500/70' : 'text-rose-500'}`}>
+                                                    {formatCurrency(variance)}
+                                                </td>
+                                            </tr>
+                                        );
+                                    })}
+                                </tbody>
+                            </table>
                         </div>
                     </div>
 
@@ -610,9 +680,18 @@ export default function Strategy() {
                         <div className="bg-slate-800/30 border border-slate-700 p-4">
                             <h3 className="text-[10px] text-slate-500 uppercase tracking-wider mb-3 flex items-center justify-between">
                                 <span className="flex items-center gap-1"><Link size={10} className="text-cyan-400" /> Allocated Assets</span>
-                                <span className="text-slate-600 font-mono-nums">
-                                    Total: {formatCurrency(selectedEvent.current_funded)}
-                                </span>
+                                <div className="flex items-center gap-3">
+                                    <button
+                                        onClick={handleAIOptimize}
+                                        disabled={analyzing}
+                                        className="flex items-center gap-1 text-[9px] text-purple-400 hover:text-purple-300 disabled:opacity-50"
+                                    >
+                                        <Sparkles size={10} /> {analyzing ? 'Optimizing...' : 'AI Optimize'}
+                                    </button>
+                                    <span className="text-slate-600 font-mono-nums">
+                                        Total: {formatCurrency(selectedEvent.current_funded)}
+                                    </span>
+                                </div>
                             </h3>
 
                             <div className="space-y-2 mb-4">
@@ -648,12 +727,22 @@ export default function Strategy() {
                                 <div className="col-span-6">
                                     <select
                                         value={allocationForm.account_id}
-                                        onChange={(e) => setAllocationForm({ ...allocationForm, account_id: e.target.value })}
+                                        onChange={(e) => {
+                                            const accId = parseInt(e.target.value);
+                                            const asset = dashboardData?.unallocated_assets.find(a => a.id === accId);
+                                            setAllocationForm({
+                                                ...allocationForm,
+                                                account_id: e.target.value,
+                                                allocation_percentage: asset?.remaining_percentage ? asset.remaining_percentage.toString() : '0'
+                                            });
+                                        }}
                                         className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-[10px] text-slate-300"
                                     >
                                         <option value="">Select Asset Account...</option>
                                         {dashboardData?.unallocated_assets.map(acc => (
-                                            <option key={acc.id} value={acc.id}>{acc.name} ({formatCurrency(acc.balance)})</option>
+                                            <option key={acc.id} value={acc.id}>
+                                                {acc.name} ({formatCurrency(acc.balance)}) - {Math.round(acc.remaining_percentage || 0)}% left
+                                            </option>
                                         ))}
                                     </select>
                                 </div>
@@ -663,6 +752,7 @@ export default function Strategy() {
                                         placeholder="%"
                                         value={allocationForm.allocation_percentage}
                                         onChange={(e) => setAllocationForm({ ...allocationForm, allocation_percentage: e.target.value })}
+                                        max={100}
                                         className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-[10px] pr-5 font-mono-nums"
                                     />
                                     <span className="absolute right-2 top-1.5 text-[9px] text-slate-600">%</span>

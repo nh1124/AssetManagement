@@ -8,7 +8,7 @@ import SplitView from '../components/SplitView';
 import {
     getTransactions, getRecurringTransactions,
     createRecurringTransaction, deleteRecurringTransaction,
-    getAccounts, createTransaction
+    getAccounts, createTransaction, deleteTransaction
 } from '../api';
 import { useToast } from '../components/Toast';
 import type { Transaction } from '../types';
@@ -164,6 +164,16 @@ export default function Journal() {
             showToast('Failed to confirm some records', 'error');
         } finally {
             setIsProcessing(false);
+        }
+    };
+
+    const handleDeleteTransaction = async (id: number) => {
+        try {
+            await deleteTransaction(id);
+            showToast('Transaction deleted', 'info');
+            fetchTransactionsOnly();
+        } catch (error) {
+            showToast('Failed to delete transaction', 'error');
         }
     };
 
@@ -574,7 +584,12 @@ export default function Journal() {
                                 </span>
                                 <div className="flex gap-1 opacity-0 group-hover:opacity-100">
                                     <button className="p-1 hover:text-slate-300"><Edit size={12} /></button>
-                                    <button className="p-1 hover:text-rose-400"><Trash2 size={12} /></button>
+                                    <button
+                                        className="p-1 hover:text-rose-400"
+                                        onClick={() => handleDeleteTransaction(tx.id)}
+                                    >
+                                        <Trash2 size={12} />
+                                    </button>
                                 </div>
                             </div>
                         </div>

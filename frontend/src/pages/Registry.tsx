@@ -3,7 +3,7 @@ import { Package, Cpu, Wallet, Plus, Edit, Trash2, Save, X } from 'lucide-react'
 import TabPanel from '../components/TabPanel';
 import {
     getProducts, getAccounts, createAccount, updateAccount, deleteAccount,
-    updateProduct, seedDefaultAccounts
+    updateProduct, seedDefaultAccounts, createProduct
 } from '../api';
 import { useToast } from '../components/Toast';
 
@@ -103,12 +103,118 @@ export default function Registry() {
 
     const assetProducts = products.filter(p => p.is_asset && p.last_unit_price >= 30000);
 
+    const [newProduct, setNewProduct] = useState({ name: '', category: '', location: '', last_unit_price: '', purchase_date: '', lifespan_months: '' });
+    const [showAddProduct, setShowAddProduct] = useState(false);
+
+    // ... existing functions ...
+
+    const handleAddProduct = async (isAsset: boolean) => {
+        if (!newProduct.name.trim()) return;
+        try {
+            await createProduct({
+                name: newProduct.name,
+                category: newProduct.category || 'Uncategorized',
+                location: newProduct.location || 'Manual Entry',
+                last_unit_price: parseFloat(newProduct.last_unit_price) || 0,
+                purchase_date: newProduct.purchase_date || null,
+                lifespan_months: newProduct.lifespan_months ? parseInt(newProduct.lifespan_months) : null,
+                is_asset: isAsset,
+                client_id: 1 // TODO: get from context
+            });
+            showToast(`${isAsset ? 'Asset' : 'Item'} "${newProduct.name}" added`, 'success');
+            setNewProduct({ name: '', category: '', location: '', last_unit_price: '', purchase_date: '', lifespan_months: '' });
+            setShowAddProduct(false);
+            fetchData();
+        } catch (error) {
+            showToast('Failed to add item', 'error');
+        }
+    };
+
+    const renderAddProductForm = (isAsset: boolean) => (
+        <div className="border border-dashed border-emerald-700 p-3 space-y-2 mt-2">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                <input
+                    type="text"
+                    placeholder="Name"
+                    value={newProduct.name}
+                    onChange={(e) => setNewProduct({ ...newProduct, name: e.target.value })}
+                    className="bg-slate-900 border border-slate-700 px-2 py-1 text-xs"
+                />
+                <input
+                    type="text"
+                    placeholder="Category"
+                    value={newProduct.category}
+                    onChange={(e) => setNewProduct({ ...newProduct, category: e.target.value })}
+                    className="bg-slate-900 border border-slate-700 px-2 py-1 text-xs"
+                />
+                <input
+                    type="number"
+                    placeholder="Price (JPY)"
+                    value={newProduct.last_unit_price}
+                    onChange={(e) => setNewProduct({ ...newProduct, last_unit_price: e.target.value })}
+                    className="bg-slate-900 border border-slate-700 px-2 py-1 text-xs font-mono-nums"
+                />
+                <input
+                    type="date"
+                    value={newProduct.purchase_date}
+                    onChange={(e) => setNewProduct({ ...newProduct, purchase_date: e.target.value })}
+                    className="bg-slate-900 border border-slate-700 px-2 py-1 text-xs"
+                />
+                {isAsset && (
+                    <input
+                        type="number"
+                        placeholder="Lifespan (months)"
+                        value={newProduct.lifespan_months}
+                        onChange={(e) => setNewProduct({ ...newProduct, lifespan_months: e.target.value })}
+                        className="bg-slate-900 border border-slate-700 px-2 py-1 text-xs font-mono-nums"
+                    />
+                )}
+                {!isAsset && (
+                    <input
+                        type="text"
+                        placeholder="Location/Store"
+                        value={newProduct.location}
+                        onChange={(e) => setNewProduct({ ...newProduct, location: e.target.value })}
+                        className="bg-slate-900 border border-slate-700 px-2 py-1 text-xs"
+                    />
+                )}
+            </div>
+            <div className="flex gap-2">
+                <button
+                    onClick={() => handleAddProduct(isAsset)}
+                    className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-1.5 text-xs"
+                >
+                    Add {isAsset ? 'Asset' : 'Item'}
+                </button>
+                <button
+                    onClick={() => setShowAddProduct(false)}
+                    className="px-3 bg-slate-700 hover:bg-slate-600 text-white py-1.5 text-xs"
+                >
+                    Cancel
+                </button>
+            </div>
+        </div>
+    );
+
     const renderTabContent = () => {
         switch (activeTab) {
             case 'items':
                 return (
                     <div className="space-y-2">
-                        <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">AI-Extracted Products</p>
+                        <div className="flex items-center justify-between mb-2">
+                            <p className="text-[10px] text-slate-500 uppercase tracking-wider">AI-Extracted Products & Items</p>
+                        </div>
+
+                        {/* Add Item Button/Form */}
+                        {showAddProduct ? renderAddProductForm(false) : (
+                            <button
+                                onClick={() => setShowAddProduct(true)}
+                                className="w-full border border-dashed border-slate-700 hover:border-emerald-600 p-2 text-xs text-slate-500 hover:text-emerald-400 flex items-center justify-center gap-1 mb-2"
+                            >
+                                <Plus size={12} /> Add Item Manually
+                            </button>
+                        )}
+
                         {products.length === 0 ? (
                             <div className="text-center py-8 text-slate-600 text-xs">
                                 No items yet. AI will extract products from receipts.
@@ -125,7 +231,7 @@ export default function Registry() {
                                     </div>
                                     <div className="text-right">
                                         <p className="text-xs font-mono-nums">{formatCurrency(product.last_unit_price)}</p>
-                                        <p className="text-[10px] text-slate-600">{product.last_purchase_date || 'No date'}</p>
+                                        <p className="text-[10px] text-slate-600">{product.last_purchase_date || product.purchase_date || 'No date'}</p>
                                     </div>
                                 </div>
                             ))
@@ -136,7 +242,20 @@ export default function Registry() {
             case 'assets':
                 return (
                     <div className="space-y-2">
-                        <p className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">High-Value Items (≥¥30,000)</p>
+                        <div className="flex items-center justify-between mb-2">
+                            <p className="text-[10px] text-slate-500 uppercase tracking-wider">High-Value Items (≥¥30,000)</p>
+                        </div>
+
+                        {/* Add Asset Button/Form */}
+                        {showAddProduct ? renderAddProductForm(true) : (
+                            <button
+                                onClick={() => setShowAddProduct(true)}
+                                className="w-full border border-dashed border-slate-700 hover:border-emerald-600 p-2 text-xs text-slate-500 hover:text-emerald-400 flex items-center justify-center gap-1 mb-2"
+                            >
+                                <Plus size={12} /> Add Asset Manually
+                            </button>
+                        )}
+
                         {assetProducts.length === 0 ? (
                             <div className="text-center py-8 text-slate-600 text-xs">
                                 No assets tracked. Items over ¥30,000 appear here.
