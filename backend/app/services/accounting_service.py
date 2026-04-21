@@ -89,16 +89,12 @@ def _resolve_account(
     db: Session,
     client_id: int,
     account_id: Optional[int],
-    account_name: Optional[str],
     fallback_name: str,
     fallback_type: str,
 ) -> models.Account:
     by_id = _get_account_by_id(db, account_id, client_id)
     if by_id:
         return by_id
-
-    if account_name:
-        return get_or_create_account(db, account_name, client_id, fallback_type)
 
     return get_or_create_account(db, fallback_name, client_id, fallback_type)
 
@@ -118,7 +114,6 @@ def process_transaction(db: Session, transaction: models.Transaction) -> None:
             db=db,
             client_id=client_id,
             account_id=transaction.from_account_id,
-            account_name=transaction.from_account,
             fallback_name="cash",
             fallback_type="asset",
         )
@@ -126,7 +121,6 @@ def process_transaction(db: Session, transaction: models.Transaction) -> None:
             db=db,
             client_id=client_id,
             account_id=transaction.to_account_id,
-            account_name=transaction.to_account or category,
             fallback_name=category,
             fallback_type="income",
         )
@@ -137,7 +131,6 @@ def process_transaction(db: Session, transaction: models.Transaction) -> None:
             db=db,
             client_id=client_id,
             account_id=transaction.from_account_id,
-            account_name=transaction.from_account,
             fallback_name="cash",
             fallback_type="asset",
         )
@@ -145,7 +138,6 @@ def process_transaction(db: Session, transaction: models.Transaction) -> None:
             db=db,
             client_id=client_id,
             account_id=transaction.to_account_id,
-            account_name=transaction.to_account or category,
             fallback_name=category,
             fallback_type="expense",
         )
@@ -156,7 +148,6 @@ def process_transaction(db: Session, transaction: models.Transaction) -> None:
             db=db,
             client_id=client_id,
             account_id=transaction.from_account_id,
-            account_name=transaction.from_account,
             fallback_name="cash",
             fallback_type="asset",
         )
@@ -164,7 +155,6 @@ def process_transaction(db: Session, transaction: models.Transaction) -> None:
             db=db,
             client_id=client_id,
             account_id=transaction.to_account_id,
-            account_name=transaction.to_account,
             fallback_name="loan",
             fallback_type="liability",
         )
@@ -177,7 +167,6 @@ def process_transaction(db: Session, transaction: models.Transaction) -> None:
             db=db,
             client_id=client_id,
             account_id=transaction.from_account_id,
-            account_name=transaction.from_account,
             fallback_name="cash",
             fallback_type="asset",
         )
@@ -185,7 +174,6 @@ def process_transaction(db: Session, transaction: models.Transaction) -> None:
             db=db,
             client_id=client_id,
             account_id=transaction.to_account_id,
-            account_name=transaction.to_account,
             fallback_name="savings",
             fallback_type="asset",
         )
@@ -195,8 +183,6 @@ def process_transaction(db: Session, transaction: models.Transaction) -> None:
     # Persist resolved account linkage for read APIs.
     transaction.from_account_id = from_account.id
     transaction.to_account_id = to_account.id
-    transaction.from_account = from_account.name
-    transaction.to_account = to_account.name
 
     debit_entry = models.JournalEntry(
         transaction_id=transaction.id,
@@ -236,17 +222,6 @@ def revert_transaction(db: Session, transaction: models.Transaction) -> None:
 
     from_account = _get_account_by_id(db, transaction.from_account_id, client_id)
     to_account = _get_account_by_id(db, transaction.to_account_id, client_id)
-
-    if not from_account and transaction.from_account:
-        from_account = db.query(models.Account).filter(
-            models.Account.client_id == client_id,
-            models.Account.name == transaction.from_account,
-        ).first()
-    if not to_account and transaction.to_account:
-        to_account = db.query(models.Account).filter(
-            models.Account.client_id == client_id,
-            models.Account.name == transaction.to_account,
-        ).first()
 
     if transaction.type == "Income":
         if from_account:

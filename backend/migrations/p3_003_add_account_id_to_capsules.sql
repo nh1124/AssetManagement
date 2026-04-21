@@ -1,2 +1,0 @@
-ALTER TABLE capsules
-ADD COLUMN IF NOT EXISTS account_id INTEGER REFERENCES accounts(id);

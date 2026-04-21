@@ -18,11 +18,6 @@ class AccountType(str, enum.Enum):
     INCOME = "income"
     EXPENSE = "expense"
 
-class Priority(str, enum.Enum):
-    HIGH = "high"
-    MEDIUM = "medium"
-    LOW = "low"
-
 class Client(Base):
     """SaaS Client/User: Owns a subset of data. Matches VisionArk's User + UserSettings pattern."""
     __tablename__ = "clients"
@@ -90,28 +85,6 @@ class JournalEntry(Base):
     account = relationship("Account", back_populates="entries")
     transaction = relationship("Transaction", back_populates="journal_entries")
 
-class Asset(Base):
-    __tablename__ = "assets"
-
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, index=True)
-    category = Column(String)
-    value = Column(Float)
-    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
-
-
-class Liability(Base):
-    __tablename__ = "liabilities"
-
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, index=True)
-    category = Column(String)
-    lender = Column(String, nullable=True)
-    total_borrowed = Column(Float, default=0)
-    amount_repaid = Column(Float, default=0)
-    balance = Column(Float)
-    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
-
 class Transaction(Base):
     __tablename__ = "transactions"
 
@@ -123,9 +96,6 @@ class Transaction(Base):
     type = Column(String)
     category = Column(String, nullable=True)
     currency = Column(String, default='JPY')
-    # Legacy name columns kept during transition period.
-    from_account = Column(String, nullable=True)
-    to_account = Column(String, nullable=True)
     from_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     to_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)

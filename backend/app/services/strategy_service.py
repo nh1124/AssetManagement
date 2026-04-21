@@ -228,7 +228,8 @@ def get_life_events_with_progress(
     db: Session, 
     client_id: int, 
     annual_return: float = 5.0,
-    monthly_savings: float = 50000.0
+    monthly_savings: float = 50000.0,
+    reference_date: Optional[date] = None,
 ) -> List[dict]:
     """Get all life events with calculated progress for current client."""
     life_events = db.query(models.LifeEvent).filter(
@@ -249,12 +250,12 @@ def get_life_events_with_progress(
     if total_weight == 0:
         total_weight = 1
     
-    today = date.today()
+    evaluation_date = reference_date or date.today()
     result = []
     
     for event in life_events:
         # Calculate years remaining
-        days_remaining = (event.target_date - today).days
+        days_remaining = (event.target_date - evaluation_date).days
         years_remaining = max(0, days_remaining / 365.25)
         
         # Calculate current funded AND weighted return from allocations

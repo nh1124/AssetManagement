@@ -1,11 +1,8 @@
-from pathlib import Path
-
-from alembic import command
-from alembic.config import Config
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from . import models
+from .database import engine
 from .routers import (
     accounts,
     ai,
@@ -39,10 +36,7 @@ def startup_event():
     from .utils.password import hash_password
     from .services.accounting_service import ensure_default_accounts
 
-    project_root = Path(__file__).resolve().parents[1]
-    alembic_ini = project_root / "alembic.ini"
-    alembic_cfg = Config(str(alembic_ini))
-    command.upgrade(alembic_cfg, "head")
+    models.Base.metadata.create_all(bind=engine)
 
     db = SessionLocal()
     try:

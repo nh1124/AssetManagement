@@ -17,7 +17,10 @@ def generate_monthly_report(db: Session, client_id: int, year: int, month: int) 
         next_month_start = date(year + 1, 1, 1)
     else:
         next_month_start = date(year, month + 1, 1)
+
     prev_day = date(year, month, 1) - relativedelta(days=1)
+    current_period_end = next_month_start - relativedelta(days=1)
+    previous_period_end = prev_day
 
     bs_current = get_balance_sheet(db, next_month_start, client_id)
     bs_prev = get_balance_sheet(db, prev_day, client_id)
@@ -43,28 +46,47 @@ def generate_monthly_report(db: Session, client_id: int, year: int, month: int) 
                     }
                 )
 
-    events = get_life_events_with_progress(db, client_id)
-    goal_progress = [
-        {
-            "id": e["id"],
-            "name": e["name"],
-            "probability_current": e["progress_percentage"],
-            "probability_last_month": max(0.0, round(e["progress_percentage"] - 1.5, 1)),
-            "delta": 1.5,
-            "status": e["status"],
-        }
-        for e in events
-    ]
+    current_events = get_life_events_with_progress(
+        db,
+        client_id,
+        reference_date=current_period_end,
+    )
+    previous_events = get_life_events_with_progress(
+        db,
+        client_id,
+        reference_date=previous_period_end,
+    )
+    previous_by_id = {event["id"]: event for event in previous_events}
+
+    goal_progress = []
+    for event in current_events:
+        previous_probability = previous_by_id.get(event["id"], {}).get(
+            "progress_percentage",
+            event["progress_percentage"],
+        )
+        current_probability = event["progress_percentage"]
+        delta = round(current_probability - previous_probability, 1)
+
+        goal_progress.append(
+            {
+                "id": event["id"],
+                "name": event["name"],
+                "probability_current": round(current_probability, 1),
+                "probability_last_month": round(previous_probability, 1),
+                "delta": delta,
+                "status": event["status"],
+            }
+        )
 
     action_proposals = []
     surplus = pl["net_profit_loss"]
-    if surplus > 0 and events:
-        worst_event = min(events, key=lambda e: e["progress_percentage"])
+    if surplus > 0 and current_events:
+        worst_event = min(current_events, key=lambda e: e["progress_percentage"])
         action_proposals.append(
             {
                 "type": "invest_surplus",
                 "description": (
-                    f"Monthly surplus ¥{surplus:,.0f} can be allocated to "
+                    f"Monthly surplus JPY {surplus:,.0f} can be allocated to "
                     f"{worst_event['name']} to improve success probability."
                 ),
                 "amount": round(surplus, 0),
@@ -79,7 +101,7 @@ def generate_monthly_report(db: Session, client_id: int, year: int, month: int) 
                 "type": "reduce_spending",
                 "description": (
                     f"{anomaly['category']} spending is {anomaly['overage_pct']:.0f}% of budget. "
-                    f"Reduce by ¥{overage:,.0f} next month."
+                    f"Reduce by JPY {overage:,.0f} next month."
                 ),
                 "amount": round(overage, 0),
                 "target_life_event_id": None,

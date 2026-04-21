@@ -1,20 +1,3 @@
-export interface Asset {
-    id: number;
-    name: string;
-    category: string;
-    value: number;
-}
-
-export interface Liability {
-    id: number;
-    name: string;
-    category: string;
-    lender?: string;
-    total_borrowed: number;
-    amount_repaid: number;
-    balance: number;
-}
-
 export interface Transaction {
     id: number;
     date: string;
@@ -25,8 +8,6 @@ export interface Transaction {
     currency: string;
     from_account_id?: number;
     to_account_id?: number;
-    from_account?: string;
-    to_account?: string;
     from_account_name?: string;
     to_account_name?: string;
 }

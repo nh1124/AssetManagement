@@ -27,39 +27,6 @@ class Account(AccountBase):
     class Config:
         from_attributes = True
 
-# Asset Schemas
-class AssetBase(BaseModel):
-    name: str
-    category: str
-    value: float
-
-class AssetCreate(AssetBase):
-    pass
-
-class Asset(AssetBase):
-    id: int
-
-    class Config:
-        from_attributes = True
-
-# Liability Schemas
-class LiabilityBase(BaseModel):
-    name: str
-    category: str
-    lender: Optional[str] = None
-    total_borrowed: float = 0
-    amount_repaid: float = 0
-    balance: float
-
-class LiabilityCreate(LiabilityBase):
-    pass
-
-class Liability(LiabilityBase):
-    id: int
-
-    class Config:
-        from_attributes = True
-
 # Transaction Schemas
 class TransactionBase(BaseModel):
     date: date
@@ -70,8 +37,6 @@ class TransactionBase(BaseModel):
     currency: str = 'JPY'
     from_account_id: Optional[int] = None
     to_account_id: Optional[int] = None
-    from_account: Optional[str] = None
-    to_account: Optional[str] = None
 
 class TransactionCreate(TransactionBase):
     pass

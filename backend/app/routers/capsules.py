@@ -177,8 +177,6 @@ def contribute_to_capsule(
         type="Transfer",
         from_account_id=from_account.id,
         to_account_id=capsule.account_id,
-        from_account=from_account.name,
-        to_account=capsule.account.name if capsule.account else None,
         currency="JPY",
         category="capsule_contribution",
     )
@@ -218,8 +216,6 @@ def process_monthly_contributions(
             type="Transfer",
             from_account_id=cash_account.id,
             to_account_id=capsule.account_id,
-            from_account=cash_account.name,
-            to_account=capsule.account.name if capsule.account else None,
             currency="JPY",
             category="capsule_contribution",
         )
