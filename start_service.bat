@@ -19,10 +19,20 @@ if not defined BACKEND_PORT set "BACKEND_PORT=8000"
 if not defined FRONTEND_PORT set "FRONTEND_PORT=5173"
 if not defined DB_PORT set "DB_PORT=5432"
 
+docker info >nul 2>&1
+if errorlevel 1 (
+  echo [ERROR] Docker engine is not available. Please start Docker Desktop first.
+  exit /b 1
+)
+
 echo Starting Asset Management System with Docker...
 echo.
 
 docker compose --env-file .env up --build -d
+if errorlevel 1 (
+  echo [ERROR] Failed to start services. Check network/Docker logs and retry.
+  exit /b 1
+)
 
 echo.
 echo Services started!
