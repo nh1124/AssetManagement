@@ -3,6 +3,7 @@ uvicorn[standard]
 sqlalchemy
 psycopg2-binary
 pydantic
+email-validator
 pydantic-settings
 python-multipart
 alembic
@@ -11,3 +12,4 @@ cryptography
 python-jose[cryptography]
 bcrypt
 httpx
+numpy>=1.24.0

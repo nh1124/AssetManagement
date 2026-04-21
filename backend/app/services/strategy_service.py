@@ -1,7 +1,10 @@
 """Strategy Service - Life Event calculations, projections, and goal probability."""
+from __future__ import annotations
+
 from sqlalchemy.orm import Session
 from datetime import date
 from typing import List, Optional, Tuple
+import numpy as np
 from .. import models
 
 
@@ -70,6 +73,96 @@ def calculate_projection(
         balance = (balance + annual_contribution * partial_year) * (1 + r * partial_year)
         
     return balance
+
+
+def run_monte_carlo(
+    current_funded: float,
+    monthly_savings: float,
+    years_remaining: float,
+    annual_return: float = 5.0,
+    volatility: float = 15.0,
+    inflation_rate: float = 2.0,
+    n_simulations: int = 1000,
+) -> dict:
+    """
+    Monte Carlo simulation for goal projection.
+    """
+    if years_remaining <= 0:
+        return {
+            "simulated_end_values": [current_funded] * n_simulations,
+            "percentiles": {"p10": current_funded, "p50": current_funded, "p90": current_funded},
+            "year_by_year": {"p10": [], "p50": [], "p90": []},
+        }
+
+    r_mean = (annual_return - inflation_rate) / 100.0
+    r_std = max(volatility, 0.0) / 100.0
+    full_years = int(years_remaining)
+    partial_year = years_remaining - full_years
+    n_years = full_years + (1 if partial_year > 0 else 0)
+
+    all_year_balances = np.zeros((n_simulations, n_years + 1))
+    all_year_balances[:, 0] = current_funded
+
+    annual_contribution = monthly_savings * 12
+    for t in range(1, n_years + 1):
+        returns = np.random.normal(r_mean, r_std, n_simulations)
+        year_contribution = annual_contribution
+        year_return_scale = 1.0
+        if t == n_years and partial_year > 0:
+            year_contribution = annual_contribution * partial_year
+            year_return_scale = partial_year
+        all_year_balances[:, t] = (
+            all_year_balances[:, t - 1] + year_contribution
+        ) * (1 + returns * year_return_scale)
+
+    end_values = all_year_balances[:, -1]
+    p10, p50, p90 = np.percentile(end_values, [10, 50, 90])
+    year_p10 = [float(np.percentile(all_year_balances[:, t], 10)) for t in range(n_years + 1)]
+    year_p50 = [float(np.percentile(all_year_balances[:, t], 50)) for t in range(n_years + 1)]
+    year_p90 = [float(np.percentile(all_year_balances[:, t], 90)) for t in range(n_years + 1)]
+
+    return {
+        "simulated_end_values": end_values.tolist(),
+        "percentiles": {
+            "p10": round(float(p10), 0),
+            "p50": round(float(p50), 0),
+            "p90": round(float(p90), 0),
+        },
+        "year_by_year": {
+            "p10": [round(v, 0) for v in year_p10],
+            "p50": [round(v, 0) for v in year_p50],
+            "p90": [round(v, 0) for v in year_p90],
+        },
+    }
+
+
+def calculate_goal_probability_monte_carlo(
+    current_funded: float,
+    monthly_savings: float,
+    years_remaining: float,
+    target_amount: float,
+    annual_return: float = 5.0,
+    volatility: float = 15.0,
+    inflation_rate: float = 2.0,
+    n_simulations: int = 1000,
+) -> float:
+    """
+    Estimate goal success probability (0.0-100.0) via Monte Carlo.
+    """
+    mc = run_monte_carlo(
+        current_funded=current_funded,
+        monthly_savings=monthly_savings,
+        years_remaining=years_remaining,
+        annual_return=annual_return,
+        volatility=volatility,
+        inflation_rate=inflation_rate,
+        n_simulations=n_simulations,
+    )
+    end_values = mc["simulated_end_values"]
+    if not end_values:
+        return 0.0
+    success_count = sum(1 for value in end_values if value >= target_amount)
+    return round(success_count / len(end_values) * 100, 1)
 
 
 def generate_roadmap(
@@ -150,6 +243,11 @@ def get_life_events_with_progress(
     if config:
         annual_return = config.annual_return or annual_return
         monthly_savings = config.monthly_savings or monthly_savings
+
+    priority_weight_map = {1: 3, 2: 2, 3: 1}
+    total_weight = sum(priority_weight_map.get(event.priority, 1) for event in life_events)
+    if total_weight == 0:
+        total_weight = 1
     
     today = date.today()
     result = []
@@ -166,9 +264,8 @@ def get_life_events_with_progress(
         effective_return = weighted_return if event.allocations else annual_return
         
         # Calculate projected amount
-        # Distribute monthly savings by priority weight
-        priority_weight = {1: 3, 2: 2, 3: 1}.get(event.priority, 1)
-        allocated_savings = monthly_savings * (priority_weight / 6.0)  # Simple weighting
+        weight = priority_weight_map.get(event.priority, 1)
+        allocated_savings = monthly_savings * (weight / total_weight)
         
         projected = calculate_projection(
             current_funded=current_funded,

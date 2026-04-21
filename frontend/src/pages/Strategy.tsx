@@ -14,10 +14,16 @@ import {
     getBudgetSummary,
     saveMonthlyBudgets,
     suggestBudget,
-    optimizeAllocations
+    optimizeAllocations,
+    getMilestones,
+    createMilestone,
+    deleteMilestone,
+    runMonteCarloSimulation,
 } from '../api';
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { Sparkles } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, ComposedChart } from 'recharts';
+import { Sparkles, Flag, Calendar } from 'lucide-react';
+import { PRIORITY_COLORS, priorityLabel } from '../utils/priority';
+import type { Milestone, MonteCarloResult } from '../types';
 
 interface RoadmapItem {
     year: number;
@@ -33,7 +39,7 @@ interface LifeEvent {
     name: string;
     target_date: string;
     target_amount: number;
-    priority: number;
+    priority: 1 | 2 | 3;
     note: string | null;
     allocations: Allocation[];
     current_funded: number;
@@ -90,6 +96,7 @@ interface BudgetSummary {
 
 const TABS = [
     { id: 'simulation', label: 'Simulation' },
+    { id: 'roadmap', label: 'Roadmap' },
     { id: 'budgeting', label: 'Budgeting' },
 ];
 
@@ -102,7 +109,13 @@ export default function Strategy() {
     const [budgetSummary, setBudgetSummary] = useState<BudgetSummary | null>(null);
     const [budgetEdits, setBudgetEdits] = useState<Record<number, number>>({});
     const [currentPeriod, setCurrentPeriod] = useState<string>(new Date().toISOString().slice(0, 7)); // YYYY-MM
+    const [monteCarlo, setMonteCarlo] = useState<MonteCarloResult | null>(null);
+    const [monteCarloLoading, setMonteCarloLoading] = useState(false);
     const { showToast } = useToast();
+
+    // Roadmap state
+    const [milestones, setMilestones] = useState<Milestone[]>([]);
+    const [milestoneForm, setMilestoneForm] = useState({ date: '', target_amount: '', note: '' });
 
     // Simulation parameters
     const [simParams, setSimParams] = useState({
@@ -137,8 +150,18 @@ export default function Strategy() {
     useEffect(() => {
         if (activeTab === 'budgeting') {
             fetchBudgetSummary();
+        } else if (activeTab === 'roadmap') {
+            fetchMilestones();
         }
     }, [activeTab, currentPeriod]);
+
+    useEffect(() => {
+        if (activeTab === 'simulation' && selectedEvent) {
+            fetchMonteCarlo(selectedEvent.id);
+        } else if (activeTab !== 'simulation') {
+            setMonteCarlo(null);
+        }
+    }, [activeTab, selectedEvent?.id]);
 
     const handleAISuggestBudget = async () => {
         if (!budgetSummary) return;
@@ -236,6 +259,55 @@ export default function Strategy() {
             setBudgetEdits(edits);
         } catch (error) {
             console.error('Failed to fetch budget summary:', error);
+        }
+    };
+
+    const fetchMilestones = async () => {
+        try {
+            const data = await getMilestones();
+            setMilestones(data);
+        } catch (error) {
+            console.error('Failed to fetch milestones:', error);
+        }
+    };
+
+    const fetchMonteCarlo = async (eventId: number) => {
+        setMonteCarloLoading(true);
+        try {
+            const result = await runMonteCarloSimulation(eventId, 1000);
+            setMonteCarlo(result);
+        } catch (error) {
+            console.error('Failed to fetch Monte Carlo simulation:', error);
+            setMonteCarlo(null);
+        } finally {
+            setMonteCarloLoading(false);
+        }
+    };
+
+    const handleCreateMilestone = async () => {
+        if (!milestoneForm.date || !milestoneForm.target_amount) return;
+        try {
+            await createMilestone({
+                date: milestoneForm.date,
+                target_amount: parseFloat(milestoneForm.target_amount),
+                note: milestoneForm.note
+            });
+            showToast('Milestone created', 'success');
+            setMilestoneForm({ date: '', target_amount: '', note: '' });
+            fetchMilestones();
+        } catch (error) {
+            showToast('Failed to create milestone', 'error');
+        }
+    };
+
+    const handleDeleteMilestone = async (id: number) => {
+        if (!confirm('Delete this milestone?')) return;
+        try {
+            await deleteMilestone(id);
+            showToast('Milestone deleted', 'info');
+            fetchMilestones();
+        } catch (error) {
+            showToast('Failed to delete milestone', 'error');
         }
     };
 
@@ -405,7 +477,7 @@ export default function Strategy() {
                                 </div>
 
                                 <span className="text-[10px] text-slate-500 font-mono-nums flex-shrink-0">
-                                    {event.target_date.substring(0, 4)}
+                                    {event.target_date.substring(0, 4)} · <span className={PRIORITY_COLORS[event.priority]}>{priorityLabel(event.priority)}</span>
                                 </span>
                             </div>
 
@@ -576,6 +648,96 @@ export default function Strategy() {
             );
         }
 
+        if (activeTab === 'roadmap') {
+            const chartData = [
+                // Assuming current net worth is somewhat available or we start from 0/first milestone
+                // We should ideally fetch historical net worth. For now let's plot milestones.
+                ...milestones.map(m => ({
+                    date: m.date,
+                    timestamp: new Date(m.date).getTime(),
+                    target: m.target_amount,
+                    note: m.note
+                }))
+            ].sort((a, b) => a.timestamp - b.timestamp);
+
+            return (
+                <div className="space-y-4 h-full flex flex-col">
+                    <div className="bg-slate-800/30 border border-slate-700 p-4">
+                        <h3 className="text-[10px] text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-1">
+                            <Flag size={10} /> Milestones
+                        </h3>
+                        <div className="grid grid-cols-4 gap-2 mb-4">
+                            <input
+                                type="date"
+                                className="bg-slate-900 border border-slate-700 px-2 py-1 text-xs"
+                                value={milestoneForm.date}
+                                onChange={e => setMilestoneForm({ ...milestoneForm, date: e.target.value })}
+                            />
+                            <input
+                                type="number"
+                                placeholder="Target Amount"
+                                className="bg-slate-900 border border-slate-700 px-2 py-1 text-xs"
+                                value={milestoneForm.target_amount}
+                                onChange={e => setMilestoneForm({ ...milestoneForm, target_amount: e.target.value })}
+                            />
+                            <input
+                                type="text"
+                                placeholder="Note (Optional)"
+                                className="bg-slate-900 border border-slate-700 px-2 py-1 text-xs"
+                                value={milestoneForm.note}
+                                onChange={e => setMilestoneForm({ ...milestoneForm, note: e.target.value })}
+                            />
+                            <button onClick={handleCreateMilestone} className="bg-emerald-900/40 text-emerald-400 border border-emerald-800 text-xs hover:bg-emerald-900/60">
+                                Add
+                            </button>
+                        </div>
+                        <div className="space-y-2 max-h-40 overflow-auto">
+                            {milestones.map(m => (
+                                <div key={m.id} className="flex items-center justify-between p-2 bg-slate-900/50 border border-slate-700">
+                                    <div className="flex items-center gap-3">
+                                        <Calendar size={12} className="text-slate-500" />
+                                        <span className="text-xs font-mono-nums">{m.date}</span>
+                                        <span className="text-xs font-bold text-emerald-400 font-mono-nums">{formatCurrency(m.target_amount)}</span>
+                                        <span className="text-xs text-slate-500">{m.note}</span>
+                                    </div>
+                                    <button onClick={() => handleDeleteMilestone(m.id)} className="text-slate-600 hover:text-rose-400">
+                                        <Trash2 size={12} />
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="flex-1 bg-slate-800/30 border border-slate-700 p-4 min-h-0">
+                        <h3 className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">Gap Chart</h3>
+                        <div className="h-full">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <ComposedChart data={chartData}>
+                                    <XAxis
+                                        dataKey="date"
+                                        tick={{ fontSize: 10 }}
+                                        stroke="#64748b"
+                                    />
+                                    <YAxis
+                                        tick={{ fontSize: 10 }}
+                                        stroke="#64748b"
+                                        tickFormatter={(v) => `¥${(v / 10000).toFixed(0)}万`}
+                                    />
+                                    <Tooltip
+                                        contentStyle={{ background: '#1e293b', border: '1px solid #334155', fontSize: 11 }}
+                                        formatter={(value) => [`¥${(value as number).toLocaleString()}`, 'Target']}
+                                    />
+                                    <Legend wrapperStyle={{ fontSize: 10 }} />
+                                    <Line type="stepAfter" dataKey="target" stroke="#f97316" strokeDasharray="5 5" name="Roadmap Target" dot={{ r: 4 }} />
+                                    {/* Actual Net Worth Line would go here if we had history loaded */}
+                                </ComposedChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
         return (
             <div className="space-y-4 h-full flex flex-col overflow-auto">
                 {/* Simulation Parameters */}
@@ -639,6 +801,65 @@ export default function Strategy() {
                                     </LineChart>
                                 </ResponsiveContainer>
                             </div>
+                        </div>
+
+                        <div className="bg-slate-800/30 border border-slate-700 p-3">
+                            <h3 className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">
+                                Monte Carlo (1000 runs)
+                            </h3>
+                            {monteCarloLoading ? (
+                                <p className="text-xs text-slate-500">Calculating...</p>
+                            ) : monteCarlo ? (
+                                <>
+                                    <div className="grid grid-cols-4 gap-2 mb-3 text-xs">
+                                        <div className="bg-slate-900/50 border border-slate-700 p-2">
+                                            <p className="text-slate-500">Success</p>
+                                            <p className="font-mono-nums text-emerald-400">{monteCarlo.probability}%</p>
+                                        </div>
+                                        <div className="bg-slate-900/50 border border-slate-700 p-2">
+                                            <p className="text-slate-500">P10</p>
+                                            <p className="font-mono-nums">{formatCurrency(monteCarlo.percentiles.p10)}</p>
+                                        </div>
+                                        <div className="bg-slate-900/50 border border-slate-700 p-2">
+                                            <p className="text-slate-500">P50</p>
+                                            <p className="font-mono-nums text-cyan-400">{formatCurrency(monteCarlo.percentiles.p50)}</p>
+                                        </div>
+                                        <div className="bg-slate-900/50 border border-slate-700 p-2">
+                                            <p className="text-slate-500">P90</p>
+                                            <p className="font-mono-nums text-emerald-400">{formatCurrency(monteCarlo.percentiles.p90)}</p>
+                                        </div>
+                                    </div>
+                                    <div className="h-52">
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <LineChart
+                                                data={monteCarlo.year_by_year.p50.map((p50, idx) => ({
+                                                    year: idx,
+                                                    p10: monteCarlo.year_by_year.p10[idx] ?? p50,
+                                                    p50,
+                                                    p90: monteCarlo.year_by_year.p90[idx] ?? p50,
+                                                }))}
+                                            >
+                                                <XAxis dataKey="year" tick={{ fontSize: 10 }} stroke="#64748b" />
+                                                <YAxis
+                                                    tick={{ fontSize: 10 }}
+                                                    stroke="#64748b"
+                                                    tickFormatter={(v) => `¥${(v / 10000).toFixed(0)}万`}
+                                                />
+                                                <Tooltip
+                                                    contentStyle={{ background: '#1e293b', border: '1px solid #334155', fontSize: 11 }}
+                                                    formatter={(value) => [`¥${(value as number || 0).toLocaleString()}`, '']}
+                                                />
+                                                <Legend wrapperStyle={{ fontSize: 10 }} />
+                                                <Line type="monotone" dataKey="p10" stroke="#f59e0b" name="P10" dot={false} />
+                                                <Line type="monotone" dataKey="p50" stroke="#22d3ee" name="P50" dot={false} />
+                                                <Line type="monotone" dataKey="p90" stroke="#10b981" name="P90" dot={false} />
+                                            </LineChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                </>
+                            ) : (
+                                <p className="text-xs text-slate-500">No simulation result yet.</p>
+                            )}
                         </div>
 
                         {/* Roadmap Roadmap Table */}
@@ -835,7 +1056,7 @@ export default function Strategy() {
                                 <label className="block text-[10px] text-slate-500 uppercase mb-1">Priority</label>
                                 <select
                                     value={eventForm.priority}
-                                    onChange={(e) => setEventForm({ ...eventForm, priority: parseInt(e.target.value) })}
+                                    onChange={(e) => setEventForm({ ...eventForm, priority: parseInt(e.target.value, 10) as 1 | 2 | 3 })}
                                     className="w-full bg-slate-800 border border-slate-700 px-3 py-2 text-sm"
                                 >
                                     <option value={1}>High Priority</option>

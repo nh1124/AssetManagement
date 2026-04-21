@@ -1,8 +1,8 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
-import os
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-class Settings(BaseSettings):
+
+class AppConfig(BaseSettings):
     """Application settings using Pydantic Settings and .env. Pattern from VisionArk."""
     
     # Auth Settings
@@ -24,6 +24,6 @@ class Settings(BaseSettings):
 
 @lru_cache()
 def get_settings():
-    return Settings()
+    return AppConfig()
 
 settings = get_settings()

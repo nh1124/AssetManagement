@@ -8,17 +8,47 @@ interface QuickInputDrawerProps {
     onClose: () => void;
 }
 
-const TRANSACTION_TYPES = [
+type TransactionKind = 'Expense' | 'Income' | 'Transfer' | 'LiabilityPayment';
+type AccountGroup = 'asset' | 'liability' | 'income' | 'expense';
+
+interface AccountOption {
+    id: number;
+    name: string;
+}
+
+const TRANSACTION_TYPES: Array<{
+    value: TransactionKind;
+    label: string;
+    fromType: AccountGroup;
+    toType: AccountGroup;
+}> = [
     { value: 'Expense', label: 'Expense', fromType: 'asset', toType: 'expense' },
     { value: 'Income', label: 'Income', fromType: 'income', toType: 'asset' },
     { value: 'Transfer', label: 'Transfer', fromType: 'asset', toType: 'asset' },
-    { value: 'Debt Repayment', label: 'Debt Pay', fromType: 'asset', toType: 'liability' },
+    { value: 'LiabilityPayment', label: 'Debt Pay', fromType: 'asset', toType: 'liability' },
 ];
 
+const EMPTY_ACCOUNTS: Record<AccountGroup, AccountOption[]> = {
+    asset: [],
+    liability: [],
+    income: [],
+    expense: [],
+};
+
+function normalizeAccountsByType(raw: unknown): Record<AccountGroup, AccountOption[]> {
+    const data = (raw ?? {}) as Record<string, Array<{ id: number; name: string }>>;
+    return {
+        asset: data.asset ?? [],
+        liability: data.liability ?? [],
+        income: data.income ?? [],
+        expense: data.expense ?? [],
+    };
+}
+
 export default function QuickInputDrawer({ isOpen, onClose }: QuickInputDrawerProps) {
-    const [activeType, setActiveType] = useState('Expense');
+    const [activeType, setActiveType] = useState<TransactionKind>('Expense');
     const [isProcessing, setIsProcessing] = useState(false);
-    const [accountsByType, setAccountsByType] = useState<any>({ asset: [], liability: [], income: [], expense: [] });
+    const [accountsByType, setAccountsByType] = useState<Record<AccountGroup, AccountOption[]>>(EMPTY_ACCOUNTS);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const { showToast } = useToast();
 
@@ -27,13 +57,43 @@ export default function QuickInputDrawer({ isOpen, onClose }: QuickInputDrawerPr
         description: '',
         amount: '',
         currency: 'JPY',
-        fromAccount: '',
-        toAccount: '',
+        fromAccountId: '',
+        toAccountId: '',
     });
 
-    // AI state
     const [aiInput, setAiInput] = useState('');
     const [selectedImage, setSelectedImage] = useState<string | null>(null);
+
+    const currentTypeConfig = TRANSACTION_TYPES.find((t) => t.value === activeType) ?? TRANSACTION_TYPES[0];
+    const fromAccounts = accountsByType[currentTypeConfig.fromType] ?? [];
+    const toAccounts = accountsByType[currentTypeConfig.toType] ?? [];
+
+    const resetAccountSelection = (type: TransactionKind, groupedAccounts: Record<AccountGroup, AccountOption[]>) => {
+        const typeConfig = TRANSACTION_TYPES.find((t) => t.value === type) ?? TRANSACTION_TYPES[0];
+        const from = groupedAccounts[typeConfig.fromType] ?? [];
+        const to = groupedAccounts[typeConfig.toType] ?? [];
+
+        setFormData((prev) => ({
+            ...prev,
+            fromAccountId: from[0] ? String(from[0].id) : '',
+            toAccountId: to[0] ? String(to[0].id) : '',
+        }));
+    };
+
+    const fetchAccounts = async () => {
+        try {
+            const response = await getAccountsByType();
+            const normalized = normalizeAccountsByType(response);
+            setAccountsByType(normalized);
+            resetAccountSelection(activeType, normalized);
+        } catch {
+            await seedDefaultAccounts();
+            const response = await getAccountsByType();
+            const normalized = normalizeAccountsByType(response);
+            setAccountsByType(normalized);
+            resetAccountSelection(activeType, normalized);
+        }
+    };
 
     useEffect(() => {
         if (isOpen) {
@@ -41,73 +101,43 @@ export default function QuickInputDrawer({ isOpen, onClose }: QuickInputDrawerPr
         }
     }, [isOpen]);
 
-    const fetchAccounts = async () => {
-        try {
-            const data = await getAccountsByType();
-            setAccountsByType(data);
-
-            // Set defaults based on type
-            const typeConfig = TRANSACTION_TYPES.find(t => t.value === activeType);
-            if (typeConfig) {
-                const fromAccounts = data[typeConfig.fromType] || [];
-                const toAccounts = data[typeConfig.toType] || [];
-                setFormData(prev => ({
-                    ...prev,
-                    fromAccount: fromAccounts[0]?.name || '',
-                    toAccount: toAccounts[0]?.name || ''
-                }));
-            }
-        } catch (error) {
-            // Seed defaults and retry
-            await seedDefaultAccounts();
-            const data = await getAccountsByType();
-            setAccountsByType(data);
-        }
-    };
-
-    const currentTypeConfig = TRANSACTION_TYPES.find(t => t.value === activeType);
-    const fromAccounts = currentTypeConfig ? accountsByType[currentTypeConfig.fromType] || [] : [];
-    const toAccounts = currentTypeConfig ? accountsByType[currentTypeConfig.toType] || [] : [];
-
-    const handleTypeChange = (type: string) => {
+    const handleTypeChange = (type: TransactionKind) => {
         setActiveType(type);
-        const typeConfig = TRANSACTION_TYPES.find(t => t.value === type);
-        if (typeConfig) {
-            const from = accountsByType[typeConfig.fromType] || [];
-            const to = accountsByType[typeConfig.toType] || [];
-            setFormData(prev => ({
-                ...prev,
-                fromAccount: from[0]?.name || '',
-                toAccount: to[0]?.name || ''
-            }));
-        }
+        resetAccountSelection(type, accountsByType);
     };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!formData.amount || !formData.fromAccount || !formData.toAccount) {
+        if (!formData.amount || !formData.fromAccountId || !formData.toAccountId) {
             showToast('Please fill all required fields', 'warning');
             return;
         }
+
+        const fromAccountId = parseInt(formData.fromAccountId, 10);
+        const toAccountId = parseInt(formData.toAccountId, 10);
+        const fromAccount = fromAccounts.find((acc) => acc.id === fromAccountId);
+        const toAccount = toAccounts.find((acc) => acc.id === toAccountId);
 
         try {
             await createTransaction({
                 date: formData.date,
                 description: formData.description || `${activeType} transaction`,
                 amount: parseFloat(formData.amount),
-                type: (activeType === 'Debt Repayment' ? 'Transfer' : activeType) as 'Income' | 'Expense' | 'Transfer',
-                category: formData.toAccount,
+                type: activeType,
+                category: toAccount?.name || '',
                 currency: formData.currency,
-                from_account: formData.fromAccount,
-                to_account: formData.toAccount,
+                from_account_id: fromAccountId,
+                to_account_id: toAccountId,
             });
 
-            const symbol = formData.currency === 'JPY' ? '¥' : '$';
-            showToast(`Saved: ${activeType === 'Income' ? '+' : '-'}${symbol}${parseFloat(formData.amount).toLocaleString()} from ${formData.fromAccount}`, 'success');
+            showToast(
+                `Saved: ${activeType === 'Income' ? '+' : '-'} ${formData.currency} ${parseFloat(formData.amount).toLocaleString()} from ${fromAccount?.name ?? 'account'}`,
+                'success'
+            );
 
-            setFormData(prev => ({ ...prev, description: '', amount: '' }));
+            setFormData((prev) => ({ ...prev, description: '', amount: '' }));
             onClose();
-        } catch (error) {
+        } catch {
             showToast('Failed to save transaction', 'error');
         }
     };
@@ -128,8 +158,7 @@ export default function QuickInputDrawer({ isOpen, onClose }: QuickInputDrawerPr
 
         try {
             const parts: any[] = [{
-                text: `Parse this expense. Return JSON only with: amount (number), currency (JPY/USD), to_account (one of: ${toAccounts.map((a: any) => a.name).join(', ')}), description (string).
-Input: "${aiInput || 'Analyze receipt image'}"`
+                text: `Parse this expense. Return JSON only with: amount (number), currency (JPY/USD), to_account (one of: ${toAccounts.map((a) => a.name).join(', ')}), description (string).\nInput: "${aiInput || 'Analyze receipt image'}"`
             }];
 
             if (selectedImage) {
@@ -138,26 +167,36 @@ Input: "${aiInput || 'Analyze receipt image'}"`
                 parts.push({
                     inline_data: {
                         mime_type: mimeType,
-                        data: base64Data
-                    }
+                        data: base64Data,
+                    },
                 });
             }
 
-            // Call backend instead of direct Gemini
             const data = await analyzeWithBackend({ parts });
             const text = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
             const jsonMatch = text.match(/\{[\s\S]*\}/);
             if (jsonMatch) {
-                const parsed = JSON.parse(jsonMatch[0]);
-                setFormData(prev => ({
+                const parsed = JSON.parse(jsonMatch[0]) as {
+                    amount?: number;
+                    currency?: string;
+                    description?: string;
+                    to_account?: string;
+                };
+
+                const parsedToAccount = toAccounts.find(
+                    (acc) => acc.name.toLowerCase() === String(parsed.to_account || '').toLowerCase()
+                );
+
+                setFormData((prev) => ({
                     ...prev,
-                    amount: String(parsed.amount || ''),
+                    amount: String(parsed.amount ?? ''),
                     currency: parsed.currency || 'JPY',
                     description: parsed.description || '',
-                    toAccount: parsed.to_account || prev.toAccount
+                    toAccountId: parsedToAccount ? String(parsedToAccount.id) : prev.toAccountId,
                 }));
-                showToast(`Parsed: ¥${parsed.amount} → ${parsed.to_account}`, 'success');
+
+                showToast(`Parsed: ${parsed.currency || 'JPY'} ${parsed.amount ?? ''}`, 'success');
             }
         } catch (error: any) {
             const detail = error.response?.data?.detail || 'AI parsing failed';
@@ -184,7 +223,6 @@ Input: "${aiInput || 'Analyze receipt image'}"`
                 </div>
 
                 <div className="p-3 space-y-3">
-                    {/* Type Selector */}
                     <div className="grid grid-cols-4 gap-1">
                         {TRANSACTION_TYPES.map((type) => (
                             <button
@@ -200,7 +238,6 @@ Input: "${aiInput || 'Analyze receipt image'}"`
                         ))}
                     </div>
 
-                    {/* AI Quick Parse */}
                     <div className="border border-slate-700 bg-slate-800/30 p-2 space-y-2">
                         <div className="flex items-center gap-1 text-[10px] text-amber-400">
                             <Sparkles size={10} /> AI Parse
@@ -238,7 +275,6 @@ Input: "${aiInput || 'Analyze receipt image'}"`
                         )}
                     </div>
 
-                    {/* Transaction Form */}
                     <form onSubmit={handleSubmit} className="space-y-2">
                         <div className="grid grid-cols-2 gap-2">
                             <div>
@@ -277,24 +313,26 @@ Input: "${aiInput || 'Analyze receipt image'}"`
                             <div>
                                 <label className="block text-[9px] text-slate-500 uppercase mb-0.5">From</label>
                                 <select
-                                    value={formData.fromAccount}
-                                    onChange={(e) => setFormData({ ...formData, fromAccount: e.target.value })}
+                                    value={formData.fromAccountId}
+                                    onChange={(e) => setFormData({ ...formData, fromAccountId: e.target.value })}
                                     className="w-full bg-slate-800 border border-slate-700 px-2 py-1 text-[10px] capitalize"
                                 >
-                                    {fromAccounts.map((acc: any) => (
-                                        <option key={acc.id} value={acc.name}>{acc.name.replace(/_/g, ' ')}</option>
+                                    <option value="">Select...</option>
+                                    {fromAccounts.map((acc) => (
+                                        <option key={acc.id} value={acc.id}>{acc.name.replace(/_/g, ' ')}</option>
                                     ))}
                                 </select>
                             </div>
                             <div>
                                 <label className="block text-[9px] text-slate-500 uppercase mb-0.5">To</label>
                                 <select
-                                    value={formData.toAccount}
-                                    onChange={(e) => setFormData({ ...formData, toAccount: e.target.value })}
+                                    value={formData.toAccountId}
+                                    onChange={(e) => setFormData({ ...formData, toAccountId: e.target.value })}
                                     className="w-full bg-slate-800 border border-slate-700 px-2 py-1 text-[10px] capitalize"
                                 >
-                                    {toAccounts.map((acc: any) => (
-                                        <option key={acc.id} value={acc.name}>{acc.name.replace(/_/g, ' ')}</option>
+                                    <option value="">Select...</option>
+                                    {toAccounts.map((acc) => (
+                                        <option key={acc.id} value={acc.id}>{acc.name.replace(/_/g, ' ')}</option>
                                     ))}
                                 </select>
                             </div>
@@ -308,7 +346,7 @@ Input: "${aiInput || 'Analyze receipt image'}"`
                         </button>
                     </form>
 
-                    {activeType === 'Debt Repayment' && (
+                    {activeType === 'LiabilityPayment' && (
                         <div className="flex items-center gap-1 text-[9px] text-slate-500 border-t border-slate-800 pt-2">
                             <CreditCard size={10} /> Paying off liability account
                         </div>
@@ -318,3 +356,4 @@ Input: "${aiInput || 'Analyze receipt image'}"`
         </div>
     );
 }
+

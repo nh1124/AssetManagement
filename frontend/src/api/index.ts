@@ -1,5 +1,10 @@
 import axios from 'axios';
-import type { AnalysisSummary, Transaction } from '../types';
+import type {
+    AnalysisSummary,
+    MonteCarloResult,
+    MonthlyBudget,
+    Transaction,
+} from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8100';
 
@@ -230,21 +235,47 @@ export const saveSimulationConfig = async (config: any) => {
     return response.data;
 };
 
-// Budget endpoints
-export const getBudgets = async (month?: string) => {
-    const params = month ? `?month=${month}` : '';
-    const response = await api.get(`/budgets/${params}`);
+export const runMonteCarloSimulation = async (lifeEventId: number, nSimulations: number = 1000): Promise<MonteCarloResult> => {
+    const response = await api.post(`/simulation/monte-carlo/${lifeEventId}`, null, {
+        params: { n_simulations: nSimulations }
+    });
     return response.data;
 };
 
-export const createBudget = async (budget: any) => {
+// Budget endpoints
+export const getBudgets = async (period?: string): Promise<MonthlyBudget[]> => {
+    const response = await api.get('/budgets/', { params: { period } });
+    return response.data;
+};
+
+export const createBudget = async (budget: { account_id: number; target_period: string; amount: number }) => {
     const response = await api.post('/budgets/', budget);
+    return response.data;
+};
+
+export const deleteBudget = async (id: string) => {
+    const response = await api.delete(`/budgets/${id}`);
+    return response.data;
+};
+
+export const getBudgetDefaults = async () => {
+    const response = await api.get('/budgets/defaults');
+    return response.data;
+};
+
+export const updateBudgetDefault = async (accountId: number, budget_limit: number | null) => {
+    const response = await api.put(`/budgets/defaults/${accountId}`, { budget_limit });
     return response.data;
 };
 
 // Products/Inventory endpoints
 export const getProducts = async () => {
     const response = await api.get('/products/');
+    return response.data;
+};
+
+export const getUnitEconomicsSummary = async () => {
+    const response = await api.get('/products/unit-economics-summary');
     return response.data;
 };
 
@@ -313,6 +344,81 @@ export const getDueRecurringTransactions = async () => {
 
 export const processRecurringTransaction = async (id: number) => {
     const response = await api.post(`/recurring/${id}/process`);
+    return response.data;
+};
+
+// Roadmap endpoints
+export const getMilestones = async () => {
+    const response = await api.get('/roadmap/milestones');
+    return response.data;
+};
+
+export const createMilestone = async (milestone: any) => {
+    const response = await api.post('/roadmap/milestones', milestone);
+    return response.data;
+};
+
+export const deleteMilestone = async (id: number) => {
+    const response = await api.delete(`/roadmap/milestones/${id}`);
+    return response.data;
+};
+
+// Capsules endpoints
+export const getCapsules = async () => {
+    const response = await api.get('/capsules/');
+    return response.data;
+};
+
+export const createCapsule = async (capsule: any) => {
+    const response = await api.post('/capsules/', capsule);
+    return response.data;
+};
+
+export const updateCapsule = async (id: number, capsule: any) => {
+    const response = await api.put(`/capsules/${id}`, capsule);
+    return response.data;
+};
+
+export const deleteCapsule = async (id: number) => {
+    const response = await api.delete(`/capsules/${id}`);
+    return response.data;
+};
+
+export const processCapsuleContributions = async () => {
+    const response = await api.post('/capsules/process_contributions');
+    return response.data;
+};
+
+export const contributeToCapsule = async (
+    capsuleId: number,
+    payload: { amount: number; from_account_id: number; contribution_date?: string }
+) => {
+    const response = await api.post(`/capsules/${capsuleId}/contribute`, payload);
+    return response.data;
+};
+
+export const getReconcileStatus = async () => {
+    const response = await api.get('/analysis/reconcile');
+    return response.data;
+};
+
+export const fixReconcile = async () => {
+    const response = await api.post('/analysis/reconcile/fix');
+    return response.data;
+};
+
+export const getMonthlyReport = async (year?: number, month?: number) => {
+    const response = await api.get('/reports/monthly', { params: { year, month } });
+    return response.data;
+};
+
+export const runPurchaseAudit = async (payload: {
+    name: string;
+    price: number;
+    lifespan_months: number;
+    category?: string;
+}) => {
+    const response = await api.post('/purchase-audit', payload);
     return response.data;
 };
 

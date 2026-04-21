@@ -102,7 +102,6 @@ def process_recurring_transaction(
         raise HTTPException(status_code=404, detail="Recurring transaction not found")
 
     # 1. Create a real record in the transactions table
-    # We need to map from_account_id/to_account_id to names if the transactions table uses names
     from_account = db.query(models.Account).filter(models.Account.id == db_recurring.from_account_id).first()
     to_account = db.query(models.Account).filter(models.Account.id == db_recurring.to_account_id).first()
     
@@ -112,8 +111,10 @@ def process_recurring_transaction(
         description=db_recurring.name,
         amount=db_recurring.amount,
         type=db_recurring.type,
+        from_account_id=db_recurring.from_account_id,
+        to_account_id=db_recurring.to_account_id,
         from_account=from_account.name if from_account else "cash",
-        to_account=to_account.name if to_account else "expense",
+        to_account=to_account.name if to_account else "savings",
         category=db_recurring.name # Use name as category or default
     )
     db.add(db_transaction)

@@ -68,6 +68,8 @@ class TransactionBase(BaseModel):
     type: str
     category: Optional[str] = None
     currency: str = 'JPY'
+    from_account_id: Optional[int] = None
+    to_account_id: Optional[int] = None
     from_account: Optional[str] = None
     to_account: Optional[str] = None
 
@@ -76,25 +78,8 @@ class TransactionCreate(TransactionBase):
 
 class Transaction(TransactionBase):
     id: int
-
-    class Config:
-        from_attributes = True
-
-# Life Event Schemas
-class LifeEventBase(BaseModel):
-    name: str
-    target_date: date
-    target_amount: float
-    funded_amount: float = 0
-    priority: Literal['high', 'medium', 'low'] = 'medium'
-    allocated_asset_id: Optional[int] = None
-    monthly_contribution: float = 0
-
-class LifeEventCreate(LifeEventBase):
-    pass
-
-class LifeEvent(LifeEventBase):
-    id: int
+    from_account_name: Optional[str] = None
+    to_account_name: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -105,6 +90,7 @@ class ProductBase(BaseModel):
     category: str
     location: Optional[str] = None
     last_unit_price: float
+    units_per_purchase: int = 1
     frequency_days: int = 0
     last_purchase_date: Optional[date] = None
     is_asset: bool = False
@@ -117,23 +103,9 @@ class ProductCreate(ProductBase):
 
 class Product(ProductBase):
     id: int
-
-    class Config:
-        from_attributes = True
-
-# Budget Schemas
-class BudgetBase(BaseModel):
-    category: str
-    proposed_amount: float
-    current_spending: float = 0
-    month: str
-    derived_from: Optional[str] = None
-
-class BudgetCreate(BudgetBase):
-    pass
-
-class Budget(BudgetBase):
-    id: int
+    unit_cost: float = 0.0
+    monthly_cost: float = 0.0
+    next_purchase_date: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -144,6 +116,8 @@ class SimulationConfigBase(BaseModel):
     tax_rate: float = 20.0
     is_nisa: bool = True
     monthly_savings: float = 100000
+    volatility: float = 15.0
+    inflation_rate: float = 2.0
 
 class SimulationConfigCreate(SimulationConfigBase):
     pass
@@ -164,12 +138,19 @@ class AnalysisSummary(BaseModel):
     total_funded: float
     effective_cash: Optional[float] = None
     cfo_briefing: Optional[str] = None
+    savings_rate: Optional[float] = None
+    idle_money_rate: Optional[float] = None
+    liquidity_coverage_ratio: Optional[float] = None
+    runway_months: Optional[float] = None
+    monthly_transaction_count: Optional[int] = None
+    total_goal_count: Optional[int] = None
+    budget_usage_rate: Optional[float] = None
 
 # Recurring Transaction Schemas
 class RecurringTransactionBase(BaseModel):
     name: str
     amount: float
-    type: Literal['Income', 'Expense', 'Transfer', 'Debt']
+    type: Literal['Income', 'Expense', 'Transfer', 'LiabilityPayment']
     from_account_id: Optional[int] = None
     to_account_id: Optional[int] = None
     frequency: Literal['Monthly', 'Yearly']
@@ -219,11 +200,18 @@ class MonthlyBudget(MonthlyBudgetBase):
     class Config:
         from_attributes = True
 
+
+class MonthlyBudgetWithAccount(MonthlyBudget):
+    account_name: str
+    account_type: str
+    actual_spending: float = 0.0
+    variance: float = 0.0
+
 class LifeEventBase(BaseModel):
     name: str
     target_date: date
     target_amount: float
-    priority: int = 2  # 1=High, 2=Medium, 3=Low
+    priority: Literal[1, 2, 3] = 2
     note: Optional[str] = None
 
 class LifeEventCreate(LifeEventBase):
@@ -233,7 +221,7 @@ class LifeEventUpdate(BaseModel):
     name: Optional[str] = None
     target_date: Optional[date] = None
     target_amount: Optional[float] = None
-    priority: Optional[int] = None
+    priority: Optional[Literal[1, 2, 3]] = None
     note: Optional[str] = None
 
 class LifeEvent(LifeEventBase):
@@ -261,3 +249,66 @@ class StrategyDashboard(BaseModel):
     total_allocated: float
     total_unallocated: float
     simulation_params: dict
+
+
+class MonteCarloPercentiles(BaseModel):
+    p10: float
+    p50: float
+    p90: float
+
+
+class MonteCarloYearByYear(BaseModel):
+    p10: list[float]
+    p50: list[float]
+    p90: list[float]
+
+
+class MonteCarloResult(BaseModel):
+    life_event_id: int
+    life_event_name: str
+    target_amount: float
+    years_remaining: float
+    probability: float
+    percentiles: MonteCarloPercentiles
+    year_by_year: MonteCarloYearByYear
+    n_simulations: int
+
+# ========== Roadmap & Capsules ==========
+
+class MilestoneBase(BaseModel):
+    date: date
+    target_amount: float
+    note: Optional[str] = None
+
+class MilestoneCreate(MilestoneBase):
+    pass
+
+class Milestone(MilestoneBase):
+    id: int
+    created_at: datetime
+    
+    class Config:
+        from_attributes = True
+
+class CapsuleBase(BaseModel):
+    name: str
+    target_amount: float
+    monthly_contribution: float
+    current_balance: float = 0.0
+
+class CapsuleCreate(CapsuleBase):
+    pass
+
+class CapsuleUpdate(BaseModel):
+    name: Optional[str] = None
+    target_amount: Optional[float] = None
+    monthly_contribution: Optional[float] = None
+    current_balance: Optional[float] = None
+
+class Capsule(CapsuleBase):
+    id: int
+    account_id: Optional[int] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

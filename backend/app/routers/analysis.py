@@ -7,6 +7,7 @@ from ..dependencies import get_current_client
 from .. import models
 from ..services import analysis_service
 from ..services.accounting_service import get_balance_sheet, get_profit_loss, get_variance_analysis, ensure_default_accounts
+from ..services.reconcile_service import run_reconcile
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
@@ -86,4 +87,32 @@ def get_net_position(
     """Get net position for current client."""
     ensure_default_accounts(db, client_id=current_client.id)
     return analysis_service.get_net_position(db, client_id=current_client.id)
+
+
+@router.get("/reconcile")
+def check_reconcile(
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    """Check discrepancies between journal-based and stored account balances."""
+    discrepancies = run_reconcile(db, client_id=current_client.id, fix=False)
+    return {
+        "status": "ok" if not discrepancies else "discrepancies_found",
+        "discrepancy_count": len(discrepancies),
+        "discrepancies": discrepancies,
+    }
+
+
+@router.post("/reconcile/fix")
+def fix_reconcile(
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    """Fix account balances using journal-entry truth values."""
+    fixed = run_reconcile(db, client_id=current_client.id, fix=True)
+    return {
+        "status": "fixed",
+        "fixed_count": len(fixed),
+        "fixed_accounts": fixed,
+    }
 

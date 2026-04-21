@@ -77,7 +77,7 @@ def get_budget_summary(
     recurring = db.query(models.RecurringTransaction).filter(
         models.RecurringTransaction.client_id == current_client.id,
         models.RecurringTransaction.is_active == True,
-        models.RecurringTransaction.type.in_(["Expense", "expense", "Debt", "debt"])
+        models.RecurringTransaction.type.in_(["Expense", "expense", "LiabilityPayment", "liabilitypayment"])
     ).all()
     
     monthly_fixed_costs = 0.0
@@ -210,7 +210,7 @@ def create_life_event(
 @router.put("/{event_id}")
 def update_life_event(
     event_id: int, 
-    life_event: schemas.LifeEventCreate, 
+    life_event: schemas.LifeEventUpdate, 
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
@@ -223,7 +223,7 @@ def update_life_event(
     if not db_event:
         raise HTTPException(status_code=404, detail="Life event not found")
         
-    for key, value in life_event.model_dump().items():
+    for key, value in life_event.model_dump(exclude_unset=True).items():
         setattr(db_event, key, value)
     db.commit()
     db.refresh(db_event)

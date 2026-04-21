@@ -6,7 +6,6 @@ export default function LoginPage() {
     const [mode, setMode] = useState<'login' | 'register'>('login');
     const [username, setUsername] = useState('admin');
     const [password, setPassword] = useState('adminadmin');
-    const [name, setName] = useState('');
     const [email, setEmail] = useState('');
     const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(false);
@@ -20,10 +19,19 @@ export default function LoginPage() {
             if (mode === 'login') {
                 await login({ username, password });
             } else {
-                await register({ name, username, password, email: email || undefined });
+                await register({ username, password, email: email || undefined });
             }
         } catch (err: any) {
-            setError(err.response?.data?.detail || (mode === 'login' ? 'Login failed' : 'Registration failed'));
+            const detail = err?.response?.data?.detail;
+            if (typeof detail === 'string') {
+                setError(detail);
+            } else if (Array.isArray(detail)) {
+                setError(detail.map((d: any) => d?.msg || String(d)).join(', '));
+            } else if (!err?.response) {
+                setError('Cannot reach backend service. Please ensure API server is running.');
+            } else {
+                setError(mode === 'login' ? 'Login failed' : 'Registration failed');
+            }
         } finally {
             setIsLoading(false);
         }
@@ -48,23 +56,6 @@ export default function LoginPage() {
                     )}
 
                     <div className="space-y-4">
-                        {mode === 'register' && (
-                            <div>
-                                <label className="block text-[10px] text-slate-500 uppercase tracking-widest mb-1">Company/Full Name</label>
-                                <div className="relative">
-                                    <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
-                                    <input
-                                        type="text"
-                                        value={name}
-                                        onChange={(e) => setName(e.target.value)}
-                                        className="w-full bg-slate-800/50 border border-slate-700 pl-10 pr-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 transition-all placeholder:text-slate-600"
-                                        placeholder="Tenant Name"
-                                        required
-                                    />
-                                </div>
-                            </div>
-                        )}
-
                         <div>
                             <label className="block text-[10px] text-slate-500 uppercase tracking-widest mb-1">Username</label>
                             <div className="relative">

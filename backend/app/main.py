@@ -1,13 +1,29 @@
-from fastapi import FastAPI, Depends
+from pathlib import Path
+
+from alembic import command
+from alembic.config import Config
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from . import models
-from .database import engine
-from .routers import transactions, products, budgets, life_events, simulation, analysis, accounts, ai, clients, auth, recurring
+from .routers import (
+    accounts,
+    ai,
+    analysis,
+    auth,
+    budgets,
+    capsules,
+    clients,
+    life_events,
+    products,
+    purchase_audit,
+    recurring,
+    reports,
+    roadmap,
+    simulation,
+    transactions,
+)
 from .dependencies import get_current_client
-
-# Create tables
-models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="Finance IDE API",
@@ -21,6 +37,12 @@ def startup_event():
     from .database import SessionLocal
     from . import models
     from .utils.password import hash_password
+    from .services.accounting_service import ensure_default_accounts
+
+    project_root = Path(__file__).resolve().parents[1]
+    alembic_ini = project_root / "alembic.ini"
+    alembic_cfg = Config(str(alembic_ini))
+    command.upgrade(alembic_cfg, "head")
 
     db = SessionLocal()
     try:
@@ -55,12 +77,23 @@ def startup_event():
 
         # 2. Cleanup: Assign any orphan data to Default Client
         # This is safe even after a reset, as it just ensures data integrity.
-        for table in ["accounts", "transactions", "products", "life_events", "budgets", "simulation_configs"]:
+        for table in [
+            "accounts",
+            "transactions",
+            "products",
+            "life_events",
+            "simulation_configs",
+            "recurring_transactions",
+            "monthly_budgets",
+            "milestones",
+            "capsules",
+        ]:
             try:
                 db.execute(text(f"UPDATE {table} SET client_id = 1 WHERE client_id IS NULL"))
             except Exception:
                 pass
         db.commit()
+        ensure_default_accounts(db, client_id=1)
 
     finally:
         db.close()
@@ -86,6 +119,10 @@ app.include_router(ai.router)
 app.include_router(clients.router)
 app.include_router(auth.router)
 app.include_router(recurring.router, dependencies=[Depends(get_current_client)])
+app.include_router(roadmap.router, dependencies=[Depends(get_current_client)])
+app.include_router(capsules.router, dependencies=[Depends(get_current_client)])
+app.include_router(reports.router, dependencies=[Depends(get_current_client)])
+app.include_router(purchase_audit.router, dependencies=[Depends(get_current_client)])
 
 @app.get("/me")
 def get_me(current_client: models.Client = Depends(get_current_client)):

@@ -3,7 +3,7 @@ import { Plus, ArrowUpCircle, ArrowDownCircle, RefreshCw, Edit, Trash2, Sparkles
 import SplitView from '../components/SplitView';
 import TabPanel from '../components/TabPanel';
 import type { Transaction } from '../types';
-import { getTransactions, createTransaction } from '../api';
+import { getTransactions, createTransaction, getAccounts } from '../api';
 
 const CURRENCIES = ['JPY', 'USD', 'EUR', 'GBP', 'CNY'];
 
@@ -12,8 +12,24 @@ const INPUT_TABS = [
     { id: 'ai', label: 'AI' },
 ];
 
+type TransactionKind = 'Income' | 'Expense' | 'Transfer' | 'LiabilityPayment';
+
+interface AccountItem {
+    id: number;
+    name: string;
+    account_type: string;
+}
+
+const ACCOUNT_RULES: Record<TransactionKind, { fromTypes: string[]; toTypes: string[] }> = {
+    Expense: { fromTypes: ['asset'], toTypes: ['expense'] },
+    Income: { fromTypes: ['income'], toTypes: ['asset'] },
+    Transfer: { fromTypes: ['asset'], toTypes: ['asset'] },
+    LiabilityPayment: { fromTypes: ['asset'], toTypes: ['liability'] },
+};
+
 export default function RecordPage() {
     const [transactions, setTransactions] = useState<Transaction[]>([]);
+    const [accounts, setAccounts] = useState<AccountItem[]>([]);
     const [activeTab, setActiveTab] = useState('transaction');
     const [isProcessing, setIsProcessing] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -22,11 +38,11 @@ export default function RecordPage() {
         date: new Date().toISOString().split('T')[0],
         description: '',
         amount: '',
-        type: 'Expense' as 'Income' | 'Expense' | 'Transfer' | 'Debt',
+        type: 'Expense' as TransactionKind,
         category: '',
         currency: 'JPY',
-        fromAccount: '',
-        toAccount: '',
+        fromAccountId: '',
+        toAccountId: '',
     });
 
     // AI state
@@ -34,22 +50,52 @@ export default function RecordPage() {
     const [selectedImage, setSelectedImage] = useState<string | null>(null);
     const [suggestedTransactions, setSuggestedTransactions] = useState<any[]>([]);
 
+    const fromAccounts = accounts.filter((a) => ACCOUNT_RULES[formData.type].fromTypes.includes(a.account_type));
+    const toAccounts = accounts.filter((a) => ACCOUNT_RULES[formData.type].toTypes.includes(a.account_type));
+
     useEffect(() => {
         getTransactions().then(setTransactions).catch(console.error);
+        getAccounts()
+            .then((rows) => setAccounts(rows))
+            .catch(console.error);
     }, []);
+
+    useEffect(() => {
+        setFormData((prev) => {
+            const nextFrom = fromAccounts.find((acc) => String(acc.id) === prev.fromAccountId)
+                ? prev.fromAccountId
+                : (fromAccounts[0] ? String(fromAccounts[0].id) : '');
+            const nextTo = toAccounts.find((acc) => String(acc.id) === prev.toAccountId)
+                ? prev.toAccountId
+                : (toAccounts[0] ? String(toAccounts[0].id) : '');
+
+            if (nextFrom === prev.fromAccountId && nextTo === prev.toAccountId) {
+                return prev;
+            }
+            return {
+                ...prev,
+                fromAccountId: nextFrom,
+                toAccountId: nextTo,
+            };
+        });
+    }, [formData.type, accounts.length]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         try {
+            const fromAccountId = formData.fromAccountId ? parseInt(formData.fromAccountId, 10) : undefined;
+            const toAccountId = formData.toAccountId ? parseInt(formData.toAccountId, 10) : undefined;
+            const toAccount = toAccounts.find((acc) => acc.id === toAccountId);
+
             const newTransaction = await createTransaction({
                 date: formData.date,
                 description: formData.description,
                 amount: parseFloat(formData.amount),
                 type: formData.type,
-                category: formData.category,
+                category: toAccount?.name || formData.category,
                 currency: formData.currency,
-                from_account: formData.fromAccount,
-                to_account: formData.toAccount,
+                from_account_id: fromAccountId,
+                to_account_id: toAccountId,
             });
             setTransactions([newTransaction, ...transactions]);
             setFormData({ ...formData, description: '', amount: '', category: '' });
@@ -61,17 +107,41 @@ export default function RecordPage() {
     const handleConfirmSuggestions = async () => {
         setIsProcessing(true);
         try {
-            const savedTransactions = [];
+            const savedTransactions: Transaction[] = [];
+            const resolveAccountId = (
+                accountName: string | undefined,
+                candidateTypes: string[],
+                fallbackToFirst: boolean
+            ): number | undefined => {
+                if (accountName) {
+                    const matched = accounts.find(
+                        (acc) =>
+                            candidateTypes.includes(acc.account_type) &&
+                            acc.name.toLowerCase() === accountName.toLowerCase()
+                    );
+                    if (matched) return matched.id;
+                }
+                if (!fallbackToFirst) return undefined;
+                const first = accounts.find((acc) => candidateTypes.includes(acc.account_type));
+                return first?.id;
+            };
+
             for (const suggestion of suggestedTransactions) {
+                const txType = (suggestion.type as TransactionKind) || 'Expense';
+                const rules = ACCOUNT_RULES[txType];
+                const fromAccountId = resolveAccountId(suggestion.from_account, rules.fromTypes, true);
+                const toAccountId = resolveAccountId(suggestion.to_account, rules.toTypes, true);
+                const toAccount = accounts.find((acc) => acc.id === toAccountId);
+
                 const newTx = await createTransaction({
                     date: suggestion.date || formData.date,
                     description: suggestion.description,
                     amount: suggestion.amount,
-                    type: suggestion.type as any || 'Expense',
-                    category: suggestion.category || '',
+                    type: txType,
+                    category: suggestion.category || toAccount?.name || '',
                     currency: suggestion.currency || 'JPY',
-                    from_account: suggestion.from_account || 'cash',
-                    to_account: suggestion.to_account || 'expense',
+                    from_account_id: fromAccountId,
+                    to_account_id: toAccountId,
                 });
                 savedTransactions.push(newTx);
             }
@@ -156,13 +226,13 @@ export default function RecordPage() {
                             <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Type</label>
                             <select
                                 value={formData.type}
-                                onChange={(e) => setFormData({ ...formData, type: e.target.value as any })}
+                                onChange={(e) => setFormData({ ...formData, type: e.target.value as TransactionKind })}
                                 className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
                             >
                                 <option value="Expense">Expense</option>
                                 <option value="Income">Income</option>
                                 <option value="Transfer">Transfer</option>
-                                <option value="Debt">Debt Repayment</option>
+                                <option value="LiabilityPayment">Debt Repayment</option>
                             </select>
                         </div>
                     </div>
@@ -207,27 +277,27 @@ export default function RecordPage() {
                         <div>
                             <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">From Account</label>
                             <select
-                                value={formData.fromAccount}
-                                onChange={(e) => setFormData({ ...formData, fromAccount: e.target.value })}
+                                value={formData.fromAccountId}
+                                onChange={(e) => setFormData({ ...formData, fromAccountId: e.target.value })}
                                 className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
                             >
                                 <option value="">Select...</option>
-                                <option value="cash">Cash</option>
-                                <option value="bank">Bank Account</option>
-                                <option value="credit">Credit Card</option>
+                                {fromAccounts.map((acc) => (
+                                    <option key={acc.id} value={acc.id}>{acc.name}</option>
+                                ))}
                             </select>
                         </div>
                         <div>
                             <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">To Account</label>
                             <select
-                                value={formData.toAccount}
-                                onChange={(e) => setFormData({ ...formData, toAccount: e.target.value })}
+                                value={formData.toAccountId}
+                                onChange={(e) => setFormData({ ...formData, toAccountId: e.target.value })}
                                 className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
                             >
                                 <option value="">Select...</option>
-                                <option value="expense">Expense</option>
-                                <option value="savings">Savings</option>
-                                <option value="investment">Investment</option>
+                                {toAccounts.map((acc) => (
+                                    <option key={acc.id} value={acc.id}>{acc.name}</option>
+                                ))}
                             </select>
                         </div>
                     </div>
@@ -366,7 +436,7 @@ export default function RecordPage() {
                             <div className="flex items-center gap-2">
                                 {tx.type === 'Income' ? (
                                     <ArrowUpCircle className="text-emerald-500" size={14} />
-                                ) : tx.type === 'Expense' ? (
+                                ) : tx.type === 'Expense' || tx.type === 'LiabilityPayment' ? (
                                     <ArrowDownCircle className="text-rose-500" size={14} />
                                 ) : (
                                     <RefreshCw className="text-cyan-500" size={14} />
@@ -377,8 +447,8 @@ export default function RecordPage() {
                                 </div>
                             </div>
                             <div className="flex items-center gap-2">
-                                <span className={`text-xs font-mono-nums ${tx.type === 'Income' ? 'text-emerald-500' : tx.type === 'Expense' ? 'text-rose-500' : 'text-cyan-500'}`}>
-                                    {tx.type === 'Income' ? '+' : tx.type === 'Expense' ? '-' : ''}{getCurrencySymbol(tx.currency || 'JPY')}{tx.amount.toLocaleString()}
+                                <span className={`text-xs font-mono-nums ${tx.type === 'Income' ? 'text-emerald-500' : tx.type === 'Expense' || tx.type === 'LiabilityPayment' ? 'text-rose-500' : 'text-cyan-500'}`}>
+                                    {tx.type === 'Income' ? '+' : tx.type === 'Expense' || tx.type === 'LiabilityPayment' ? '-' : ''}{getCurrencySymbol(tx.currency || 'JPY')}{tx.amount.toLocaleString()}
                                 </span>
                                 <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                     <button className="p-1 hover:bg-slate-700 text-slate-500 hover:text-slate-300">

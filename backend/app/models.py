@@ -10,6 +10,7 @@ class TransactionType(str, enum.Enum):
     INCOME = "Income"
     EXPENSE = "Expense"
     TRANSFER = "Transfer"
+    LIABILITY_PAYMENT = "LiabilityPayment"
 
 class AccountType(str, enum.Enum):
     ASSET = "asset"
@@ -53,9 +54,10 @@ class Client(Base):
     transactions = relationship("Transaction", back_populates="client")
     products = relationship("Product", back_populates="client")
     life_events = relationship("LifeEvent", back_populates="client")
-    budgets = relationship("Budget", back_populates="client")
     simulation_configs = relationship("SimulationConfig", back_populates="client")
     recurring_transactions = relationship("RecurringTransaction", back_populates="client")
+    milestones = relationship("Milestone", back_populates="client")
+    capsules = relationship("Capsule", back_populates="client")
 
 class Account(Base):
     """Double-entry accounting: Each account has a type and balance."""
@@ -121,12 +123,17 @@ class Transaction(Base):
     type = Column(String)
     category = Column(String, nullable=True)
     currency = Column(String, default='JPY')
+    # Legacy name columns kept during transition period.
     from_account = Column(String, nullable=True)
     to_account = Column(String, nullable=True)
+    from_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
+    to_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     
     client = relationship("Client", back_populates="transactions")
     journal_entries = relationship("JournalEntry", back_populates="transaction")
+    from_account_rel = relationship("Account", foreign_keys=[from_account_id])
+    to_account_rel = relationship("Account", foreign_keys=[to_account_id])
 
 
 class Product(Base):
@@ -138,6 +145,7 @@ class Product(Base):
     category = Column(String)
     location = Column(String, nullable=True)
     last_unit_price = Column(Float)
+    units_per_purchase = Column(Integer, nullable=True, default=1)
     frequency_days = Column(Integer, default=0)
     last_purchase_date = Column(Date, nullable=True)
     is_asset = Column(Boolean, default=False)
@@ -147,19 +155,6 @@ class Product(Base):
     purchase_date = Column(Date, nullable=True)
 
     client = relationship("Client", back_populates="products")
-
-class Budget(Base):
-    __tablename__ = "budgets"
-
-    id = Column(Integer, primary_key=True, index=True)
-    client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
-    category = Column(String, index=True)
-    proposed_amount = Column(Float)
-    current_spending = Column(Float, default=0)
-    month = Column(String)  # Format: YYYY-MM
-    derived_from = Column(String, nullable=True)
-
-    client = relationship("Client", back_populates="budgets")
 
 class SimulationConfig(Base):
     __tablename__ = "simulation_configs"
@@ -171,17 +166,10 @@ class SimulationConfig(Base):
     tax_rate = Column(Float, default=20.0)
     is_nisa = Column(Boolean, default=True)
     monthly_savings = Column(Float, default=100000)
+    volatility = Column(Float, default=15.0)
+    inflation_rate = Column(Float, default=2.0)
 
     client = relationship("Client", back_populates="simulation_configs")
-
-class Settings(Base):
-    __tablename__ = "settings"
-
-    id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, default=1)
-    gemini_api_key = Column(String, nullable=True)
-    default_currency = Column(String, default='JPY')
-    language = Column(String, default='ja')
 
 class RecurringTransaction(Base):
     __tablename__ = "recurring_transactions"
@@ -190,7 +178,7 @@ class RecurringTransaction(Base):
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
     name = Column(String, index=True)
     amount = Column(Float)
-    type = Column(String)  # Income, Expense, Transfer, Debt
+    type = Column(String)  # Income, Expense, Transfer, LiabilityPayment
     from_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     to_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     frequency = Column(String)  # Monthly, Yearly
@@ -246,3 +234,30 @@ class MonthlyBudget(Base):
 
     client = relationship("Client")
     account = relationship("Account")
+
+class Milestone(Base):
+    __tablename__ = "milestones"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
+    date = Column(Date)
+    target_amount = Column(Float)
+    note = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    client = relationship("Client", back_populates="milestones")
+
+class Capsule(Base):
+    __tablename__ = "capsules"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
+    name = Column(String, index=True)
+    target_amount = Column(Float)
+    monthly_contribution = Column(Float)
+    current_balance = Column(Float, default=0.0)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    client = relationship("Client", back_populates="capsules")
+    account = relationship("Account", foreign_keys=[account_id])

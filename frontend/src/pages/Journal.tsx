@@ -8,24 +8,43 @@ import SplitView from '../components/SplitView';
 import {
     getTransactions, getRecurringTransactions,
     createRecurringTransaction, deleteRecurringTransaction,
-    getAccounts, createTransaction, deleteTransaction
+    getAccounts, createTransaction, deleteTransaction,
+    getCapsules, createCapsule, updateCapsule, deleteCapsule,
+    processCapsuleContributions
 } from '../api';
 import { useToast } from '../components/Toast';
-import type { Transaction } from '../types';
+import type { Transaction, Capsule } from '../types';
+import { Archive } from 'lucide-react';
 
 const MAIN_TABS = [
     { id: 'transaction', label: 'Transaction' },
     { id: 'recurring', label: 'Recurring' },
+    { id: 'capsules', label: 'Capsules' },
     { id: 'ai', label: 'AI' },
 ];
 
 const CURRENCIES = ['JPY', 'USD', 'EUR', 'GBP', 'CNY'];
+type TransactionKind = 'Income' | 'Expense' | 'Transfer' | 'LiabilityPayment';
+
+interface AccountItem {
+    id: number;
+    name: string;
+    account_type: string;
+    balance?: number;
+}
+
+const ACCOUNT_RULES: Record<TransactionKind, { fromTypes: string[]; toTypes: string[] }> = {
+    Expense: { fromTypes: ['asset', 'item'], toTypes: ['expense', 'item'] },
+    Income: { fromTypes: ['income'], toTypes: ['asset', 'item'] },
+    Transfer: { fromTypes: ['asset', 'item'], toTypes: ['asset', 'item'] },
+    LiabilityPayment: { fromTypes: ['asset', 'item'], toTypes: ['liability'] },
+};
 
 export default function Journal() {
     const [activeTab, setActiveTab] = useState('transaction');
     const [transactions, setTransactions] = useState<Transaction[]>([]);
     const [recurringItems, setRecurringItems] = useState<any[]>([]);
-    const [accounts, setAccounts] = useState<any[]>([]);
+    const [accounts, setAccounts] = useState<AccountItem[]>([]);
     const [isProcessing, setIsProcessing] = useState(false);
     const { showToast } = useToast();
 
@@ -34,11 +53,11 @@ export default function Journal() {
         date: new Date().toISOString().split('T')[0],
         description: '',
         amount: '',
-        type: 'Expense' as 'Income' | 'Expense' | 'Transfer' | 'Debt',
+        type: 'Expense' as TransactionKind,
         category: '',
         currency: 'JPY',
-        fromAccount: '',
-        toAccount: '',
+        fromAccountId: '',
+        toAccountId: '',
     });
 
     // AI State
@@ -60,20 +79,55 @@ export default function Journal() {
         month_of_year: '1',
     });
 
+    // Capsules State
+    const [capsules, setCapsules] = useState<Capsule[]>([]);
+    const [showAddCapsule, setShowAddCapsule] = useState(false);
+    const [capsuleForm, setCapsuleForm] = useState({
+        name: '',
+        target_amount: '',
+        monthly_contribution: '',
+        current_balance: '0'
+    });
+    const [editingCapsuleId, setEditingCapsuleId] = useState<number | null>(null);
+    const fromAccounts = accounts.filter((a) => ACCOUNT_RULES[formData.type].fromTypes.includes(a.account_type));
+    const toAccounts = accounts.filter((a) => ACCOUNT_RULES[formData.type].toTypes.includes(a.account_type));
+
     useEffect(() => {
         fetchInitialData();
     }, []);
 
+    useEffect(() => {
+        setFormData((prev) => {
+            const nextFrom = fromAccounts.find((acc) => String(acc.id) === prev.fromAccountId)
+                ? prev.fromAccountId
+                : (fromAccounts[0] ? String(fromAccounts[0].id) : '');
+            const nextTo = toAccounts.find((acc) => String(acc.id) === prev.toAccountId)
+                ? prev.toAccountId
+                : (toAccounts[0] ? String(toAccounts[0].id) : '');
+
+            if (nextFrom === prev.fromAccountId && nextTo === prev.toAccountId) {
+                return prev;
+            }
+            return {
+                ...prev,
+                fromAccountId: nextFrom,
+                toAccountId: nextTo,
+            };
+        });
+    }, [formData.type, accounts.length]);
+
     const fetchInitialData = async () => {
         try {
-            const [txs, recs, accs] = await Promise.all([
+            const [txs, recs, accs, caps] = await Promise.all([
                 getTransactions(),
                 getRecurringTransactions(),
-                getAccounts()
+                getAccounts(),
+                getCapsules()
             ]);
             setTransactions(txs);
             setRecurringItems(recs);
             setAccounts(accs);
+            setCapsules(caps);
         } catch (error) {
             console.error('Failed to fetch journal data:', error);
             showToast('Failed to load data', 'error');
@@ -99,15 +153,19 @@ export default function Journal() {
         if (!formData.description || !formData.amount) return;
         setIsProcessing(true);
         try {
+            const fromAccountId = formData.fromAccountId ? parseInt(formData.fromAccountId, 10) : undefined;
+            const toAccountId = formData.toAccountId ? parseInt(formData.toAccountId, 10) : undefined;
+            const toAccount = toAccounts.find((acc) => acc.id === toAccountId);
+
             await createTransaction({
                 date: formData.date,
                 description: formData.description,
                 amount: parseFloat(formData.amount),
                 type: formData.type,
-                category: formData.category,
+                category: formData.category || toAccount?.name || '',
                 currency: formData.currency,
-                from_account: formData.fromAccount,
-                to_account: formData.toAccount,
+                from_account_id: fromAccountId,
+                to_account_id: toAccountId,
             });
             showToast('Record saved', 'success');
             setFormData({ ...formData, description: '', amount: '', category: '' });
@@ -143,24 +201,71 @@ export default function Journal() {
     const handleConfirmSuggestions = async () => {
         setIsProcessing(true);
         try {
+            let processedCount = 0;
+            const resolveAccountId = (
+                accountName: string | undefined,
+                candidateTypes: string[],
+                fallbackToFirst: boolean
+            ): number | undefined => {
+                if (accountName) {
+                    const matched = accounts.find(
+                        (acc) =>
+                            candidateTypes.includes(acc.account_type) &&
+                            acc.name.toLowerCase() === accountName.toLowerCase()
+                    );
+                    if (matched) return matched.id;
+                }
+                if (!fallbackToFirst) return undefined;
+                const first = accounts.find((acc) => candidateTypes.includes(acc.account_type));
+                return first?.id;
+            };
+
             for (const suggestion of suggestedTransactions) {
-                await createTransaction({
-                    date: suggestion.date || formData.date,
-                    description: suggestion.description,
-                    amount: suggestion.amount,
-                    type: suggestion.type as any || 'Expense',
-                    category: suggestion.category || '',
-                    currency: suggestion.currency || 'JPY',
-                    from_account: suggestion.from_account || 'cash',
-                    to_account: suggestion.to_account || 'expense',
-                });
+                const txType = (suggestion.type as TransactionKind) || 'Expense';
+                const rules = ACCOUNT_RULES[txType];
+                if (suggestion.is_recurring) {
+                    // Map account names to IDs for recurring transaction
+                    const fromAccountId = resolveAccountId(suggestion.from_account, rules.fromTypes, true);
+                    const toAccountId = resolveAccountId(suggestion.to_account, rules.toTypes, true);
+
+                    await createRecurringTransaction({
+                        name: suggestion.description,
+                        amount: suggestion.amount,
+                        type: txType,
+                        from_account_id: fromAccountId ?? null,
+                        to_account_id: toAccountId ?? null,
+                        frequency: suggestion.frequency || 'Monthly',
+                        day_of_month: suggestion.day_of_month || 1,
+                        month_of_year: suggestion.frequency === 'Yearly' ? (suggestion.month_of_year || 1) : null,
+                    });
+                } else {
+                    const fromAccountId = resolveAccountId(suggestion.from_account, rules.fromTypes, true);
+                    const toAccountId = resolveAccountId(suggestion.to_account, rules.toTypes, true);
+                    const toAccount = accounts.find((acc) => acc.id === toAccountId);
+
+                    await createTransaction({
+                        date: suggestion.date || formData.date,
+                        description: suggestion.description,
+                        amount: suggestion.amount,
+                        type: txType,
+                        category: suggestion.category || toAccount?.name || '',
+                        currency: suggestion.currency || 'JPY',
+                        from_account_id: fromAccountId,
+                        to_account_id: toAccountId,
+                    });
+                }
+                processedCount++;
             }
-            showToast(`Saved ${suggestedTransactions.length} records`, 'success');
+            showToast(`Saved ${processedCount} records`, 'success');
             setSuggestedTransactions([]);
             setAiInput('');
             setSelectedImage(null);
             fetchTransactionsOnly();
+            // Refresh recurring items as well
+            const recs = await getRecurringTransactions();
+            setRecurringItems(recs);
         } catch (error) {
+            console.error(error);
             showToast('Failed to confirm some records', 'error');
         } finally {
             setIsProcessing(false);
@@ -177,10 +282,12 @@ export default function Journal() {
         }
     };
 
+    const [editingRecurringId, setEditingRecurringId] = useState<number | null>(null); // State for editing
+
     const handleAddRecurring = async () => {
         if (!newRecurring.name || !newRecurring.amount) return;
         try {
-            await createRecurringTransaction({
+            const payload = {
                 name: newRecurring.name,
                 amount: parseFloat(newRecurring.amount),
                 type: newRecurring.type,
@@ -189,9 +296,21 @@ export default function Journal() {
                 frequency: newRecurring.frequency,
                 day_of_month: parseInt(newRecurring.day_of_month),
                 month_of_year: newRecurring.frequency === 'Yearly' ? parseInt(newRecurring.month_of_year) : null,
-            });
-            showToast('Recurring payment added', 'success');
+            };
+
+            if (editingRecurringId) {
+                // Update existing rule
+                const { updateRecurringTransaction } = await import('../api');
+                await updateRecurringTransaction(editingRecurringId, payload);
+                showToast('Recurring payment updated', 'success');
+            } else {
+                // Create new rule
+                await createRecurringTransaction(payload);
+                showToast('Recurring payment added', 'success');
+            }
+
             setShowAddRecurring(false);
+            setEditingRecurringId(null);
             setNewRecurring({
                 name: '', amount: '', type: 'Expense', from_account_id: '',
                 to_account_id: '', frequency: 'Monthly', day_of_month: '1', month_of_year: '1',
@@ -199,8 +318,23 @@ export default function Journal() {
             const recs = await getRecurringTransactions();
             setRecurringItems(recs);
         } catch (err) {
-            showToast('Failed to add rule', 'error');
+            showToast('Failed to save rule', 'error');
         }
+    };
+
+    const handleEditRecurring = (item: any) => {
+        setNewRecurring({
+            name: item.name,
+            amount: item.amount.toString(),
+            type: item.type,
+            from_account_id: item.from_account_id ? item.from_account_id.toString() : '',
+            to_account_id: item.to_account_id ? item.to_account_id.toString() : '',
+            frequency: item.frequency,
+            day_of_month: item.day_of_month.toString(),
+            month_of_year: item.month_of_year ? item.month_of_year.toString() : '1',
+        });
+        setEditingRecurringId(item.id);
+        setShowAddRecurring(true);
     };
 
     const handleDeleteRecurring = async (id: number) => {
@@ -233,13 +367,13 @@ export default function Journal() {
                                 <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Type</label>
                                 <select
                                     value={formData.type}
-                                    onChange={(e) => setFormData({ ...formData, type: e.target.value as any })}
+                                    onChange={(e) => setFormData({ ...formData, type: e.target.value as TransactionKind })}
                                     className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
                                 >
                                     <option value="Expense">Expense</option>
                                     <option value="Income">Income</option>
                                     <option value="Transfer">Transfer</option>
-                                    <option value="Debt">Debt Repayment</option>
+                                    <option value="LiabilityPayment">Debt Repayment</option>
                                 </select>
                             </div>
                         </div>
@@ -284,27 +418,26 @@ export default function Journal() {
                             <div>
                                 <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">From Account</label>
                                 <select
-                                    value={formData.fromAccount}
-                                    onChange={(e) => setFormData({ ...formData, fromAccount: e.target.value })}
+                                    value={formData.fromAccountId}
+                                    onChange={(e) => setFormData({ ...formData, fromAccountId: e.target.value })}
                                     className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
                                 >
                                     <option value="">Select...</option>
-                                    <option value="cash">Cash</option>
-                                    {accounts.filter(a => a.account_type === 'asset' || a.account_type === 'item').map(a => (
-                                        <option key={a.id} value={a.name}>{a.name}</option>
+                                    {fromAccounts.map((a) => (
+                                        <option key={a.id} value={a.id}>{a.name}</option>
                                     ))}
                                 </select>
                             </div>
                             <div>
                                 <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">To Account</label>
                                 <select
-                                    value={formData.toAccount}
-                                    onChange={(e) => setFormData({ ...formData, toAccount: e.target.value })}
+                                    value={formData.toAccountId}
+                                    onChange={(e) => setFormData({ ...formData, toAccountId: e.target.value })}
                                     className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
                                 >
                                     <option value="">Select...</option>
-                                    {accounts.filter(a => a.account_type === 'expense' || a.account_type === 'income' || a.account_type === 'item').map(a => (
-                                        <option key={a.id} value={a.name}>{a.name}</option>
+                                    {toAccounts.map((a) => (
+                                        <option key={a.id} value={a.id}>{a.name}</option>
                                     ))}
                                 </select>
                             </div>
@@ -383,8 +516,18 @@ export default function Journal() {
                                 <div className="space-y-2 max-h-60 overflow-auto pr-1">
                                     {suggestedTransactions.map((st, idx) => (
                                         <div key={idx} className="bg-slate-800/50 border border-slate-700 p-2 relative group">
-                                            <p className="text-xs font-medium text-white">{st.description}</p>
-                                            <p className="text-[10px] text-slate-500">{st.date} • {st.category} • ¥{st.amount.toLocaleString()}</p>
+                                            <div className="flex justify-between items-start">
+                                                <p className="text-xs font-medium text-white">{st.description}</p>
+                                                {st.is_recurring && (
+                                                    <span className="text-[8px] bg-cyan-900/50 text-cyan-400 px-1 rounded border border-cyan-800/50">Recurring</span>
+                                                )}
+                                            </div>
+                                            <p className="text-[10px] text-slate-500">
+                                                {st.is_recurring
+                                                    ? `${st.frequency} (Day ${st.day_of_month})`
+                                                    : st.date}
+                                                • {st.category} • ¥{st.amount.toLocaleString()}
+                                            </p>
                                             <button onClick={() => setSuggestedTransactions(prev => prev.filter((_, i) => i !== idx))} className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-rose-500"><X size={10} /></button>
                                         </div>
                                     ))}
@@ -402,7 +545,14 @@ export default function Journal() {
                     <div className="space-y-3 pt-2">
                         <div className="flex items-center justify-between">
                             <h3 className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Automation Rules</h3>
-                            <button onClick={() => setShowAddRecurring(true)} className="p-1 bg-cyan-600 hover:bg-cyan-500 text-white rounded"><Plus size={14} /></button>
+                            <button onClick={() => {
+                                setShowAddRecurring(true);
+                                setEditingRecurringId(null);
+                                setNewRecurring({
+                                    name: '', amount: '', type: 'Expense', from_account_id: '',
+                                    to_account_id: '', frequency: 'Monthly', day_of_month: '1', month_of_year: '1',
+                                });
+                            }} className="p-1 bg-cyan-600 hover:bg-cyan-500 text-white rounded"><Plus size={14} /></button>
                         </div>
                         <div className="space-y-2">
                             {recurringItems.map((item) => (
@@ -411,14 +561,21 @@ export default function Journal() {
                                         <p className="text-xs font-medium">{item.name}</p>
                                         <p className="text-[10px] text-slate-500">{item.frequency} • ¥{item.amount.toLocaleString()}</p>
                                     </div>
-                                    <button onClick={() => handleDeleteRecurring(item.id)} className="p-1 text-slate-500 hover:text-rose-400 opacity-0 group-hover:opacity-100"><Trash2 size={12} /></button>
+                                    <div className="flex gap-1 opacity-0 group-hover:opacity-100">
+                                        <button onClick={() => handleEditRecurring(item)} className="p-1 text-slate-500 hover:text-cyan-400">
+                                            <Edit size={12} />
+                                        </button>
+                                        <button onClick={() => handleDeleteRecurring(item.id)} className="p-1 text-slate-500 hover:text-rose-400">
+                                            <Trash2 size={12} />
+                                        </button>
+                                    </div>
                                 </div>
                             ))}
                         </div>
                         {showAddRecurring && (
                             <div className="border border-cyan-800/50 bg-cyan-900/10 p-4 space-y-4 animate-in fade-in slide-in-from-top-2">
                                 <div className="flex justify-between items-center border-b border-cyan-800/30 pb-2">
-                                    <span className="text-[10px] font-bold text-cyan-500 uppercase">New Recurring Rule</span>
+                                    <span className="text-[10px] font-bold text-cyan-500 uppercase">{editingRecurringId ? 'Edit Recurring Rule' : 'New Recurring Rule'}</span>
                                     <button onClick={() => setShowAddRecurring(false)} className="text-slate-500 hover:text-white"><X size={14} /></button>
                                 </div>
 
@@ -457,7 +614,7 @@ export default function Journal() {
                                             <option value="Expense">Expense</option>
                                             <option value="Income">Income</option>
                                             <option value="Transfer">Transfer</option>
-                                            <option value="Debt">Debt Repayment</option>
+                                            <option value="LiabilityPayment">Debt Repayment</option>
                                         </select>
                                     </div>
 
@@ -552,8 +709,152 @@ export default function Journal() {
                                 </div>
 
                                 <div className="flex gap-2 pt-2">
-                                    <button onClick={handleAddRecurring} className="flex-1 bg-cyan-600 hover:bg-cyan-500 py-2 text-xs font-bold text-white uppercase tracking-wider">Create Rule</button>
+                                    <button onClick={handleAddRecurring} className="flex-1 bg-cyan-600 hover:bg-cyan-500 py-2 text-xs font-bold text-white uppercase tracking-wider">
+                                        {editingRecurringId ? 'Update Rule' : 'Create Rule'}
+                                    </button>
                                     <button onClick={() => setShowAddRecurring(false)} className="px-4 bg-slate-800 hover:bg-slate-700 py-2 text-xs font-bold text-slate-400 uppercase">Cancel</button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {activeTab === 'capsules' && (
+                    <div className="space-y-4 pt-2">
+                        <div className="flex items-center justify-between">
+                            <h3 className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Sinking Funds</h3>
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={async () => {
+                                        if (!confirm('Process monthly contributions for all capsules?')) return;
+                                        try {
+                                            const res = await processCapsuleContributions();
+                                            showToast(res.message, 'success');
+                                            setCapsules(await getCapsules());
+                                        } catch (e) {
+                                            showToast('Failed to process contributions', 'error');
+                                        }
+                                    }}
+                                    className="p-1 px-2 bg-slate-800 border border-slate-700 hover:bg-slate-700 text-[10px] text-slate-300 rounded flex items-center gap-1"
+                                >
+                                    <Sparkles size={10} className="text-amber-400" /> Auto-Process
+                                </button>
+                                <button onClick={() => {
+                                    setShowAddCapsule(true);
+                                    setEditingCapsuleId(null);
+                                    setCapsuleForm({ name: '', target_amount: '', monthly_contribution: '', current_balance: '0' });
+                                }} className="p-1 bg-purple-600 hover:bg-purple-500 text-white rounded"><Plus size={14} /></button>
+                            </div>
+                        </div>
+
+                        <div className="space-y-2">
+                            {capsules.map(cap => (
+                                <div key={cap.id} className="bg-slate-800/30 border border-slate-700 p-3 flex flex-col gap-2">
+                                    <div className="flex justify-between items-start">
+                                        <div>
+                                            <p className="text-sm font-medium text-slate-200 flex items-center gap-2">
+                                                <Archive size={14} className="text-purple-400" /> {cap.name}
+                                            </p>
+                                            <p className="text-[10px] text-slate-500">Target: ¥{cap.target_amount.toLocaleString()}</p>
+                                        </div>
+                                        <div className="text-right">
+                                            <p className="text-lg font-mono-nums text-purple-400">¥{cap.current_balance.toLocaleString()}</p>
+                                            <p className="text-[10px] text-slate-500">Monthly: +¥{cap.monthly_contribution.toLocaleString()}</p>
+                                        </div>
+                                    </div>
+
+                                    {/* Progress Bar */}
+                                    <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden">
+                                        <div
+                                            className="h-full bg-purple-500"
+                                            style={{ width: `${Math.min(100, (cap.current_balance / cap.target_amount) * 100)}%` }}
+                                        />
+                                    </div>
+
+                                    <div className="flex justify-end gap-2 pt-2 border-t border-slate-800/50">
+                                        <button
+                                            onClick={() => {
+                                                setEditingCapsuleId(cap.id);
+                                                setCapsuleForm({
+                                                    name: cap.name,
+                                                    target_amount: String(cap.target_amount),
+                                                    monthly_contribution: String(cap.monthly_contribution),
+                                                    current_balance: String(cap.current_balance)
+                                                });
+                                                setShowAddCapsule(true);
+                                            }}
+                                            className="text-[10px] text-slate-400 hover:text-white flex items-center gap-1"
+                                        >
+                                            <Edit size={10} /> Edit
+                                        </button>
+                                        <button
+                                            onClick={async () => {
+                                                if (!confirm('Delete this capsule?')) return;
+                                                await deleteCapsule(cap.id);
+                                                setCapsules(await getCapsules());
+                                            }}
+                                            className="text-[10px] text-slate-400 hover:text-rose-400 flex items-center gap-1"
+                                        >
+                                            <Trash2 size={10} /> Delete
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+
+                        {showAddCapsule && (
+                            <div className="border border-purple-800/50 bg-purple-900/10 p-4 space-y-3 animate-in fade-in slide-in-from-top-2">
+                                <h3 className="text-[10px] font-bold text-purple-500 uppercase">{editingCapsuleId ? 'Edit Capsule' : 'New Capsule'}</h3>
+                                <input
+                                    placeholder="Capsule Name (e.g. Travel Fund)"
+                                    className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
+                                    value={capsuleForm.name}
+                                    onChange={e => setCapsuleForm({ ...capsuleForm, name: e.target.value })}
+                                />
+                                <div className="grid grid-cols-2 gap-2">
+                                    <input
+                                        type="number"
+                                        placeholder="Target Amount"
+                                        className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums"
+                                        value={capsuleForm.target_amount}
+                                        onChange={e => setCapsuleForm({ ...capsuleForm, target_amount: e.target.value })}
+                                    />
+                                    <input
+                                        type="number"
+                                        placeholder="Monthly Contrib."
+                                        className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums"
+                                        value={capsuleForm.monthly_contribution}
+                                        onChange={e => setCapsuleForm({ ...capsuleForm, monthly_contribution: e.target.value })}
+                                    />
+                                </div>
+                                <div className="flex gap-2">
+                                    <button
+                                        onClick={async () => {
+                                            if (!capsuleForm.name || !capsuleForm.target_amount) return;
+                                            try {
+                                                const payload = {
+                                                    name: capsuleForm.name,
+                                                    target_amount: parseFloat(capsuleForm.target_amount),
+                                                    monthly_contribution: parseFloat(capsuleForm.monthly_contribution || '0'),
+                                                    current_balance: parseFloat(capsuleForm.current_balance || '0')
+                                                };
+                                                if (editingCapsuleId) {
+                                                    await updateCapsule(editingCapsuleId, payload);
+                                                } else {
+                                                    await createCapsule(payload);
+                                                }
+                                                showToast('Capsule saved', 'success');
+                                                setShowAddCapsule(false);
+                                                setCapsules(await getCapsules());
+                                            } catch (e) {
+                                                showToast('Failed to save capsule', 'error');
+                                            }
+                                        }}
+                                        className="flex-1 bg-purple-600 hover:bg-purple-500 text-white py-2 text-xs font-bold"
+                                    >
+                                        Save
+                                    </button>
+                                    <button onClick={() => setShowAddCapsule(false)} className="px-3 bg-slate-800 text-slate-400 text-xs">Cancel</button>
                                 </div>
                             </div>
                         )}
@@ -572,15 +873,15 @@ export default function Journal() {
                     transactions.map((tx) => (
                         <div key={tx.id} className="flex items-center justify-between py-2 px-2 hover:bg-slate-800/50 transition-colors group">
                             <div className="flex items-center gap-2">
-                                {tx.type === 'Income' ? <ArrowUpCircle className="text-emerald-500" size={14} /> : tx.type === 'Expense' ? <ArrowDownCircle className="text-rose-500" size={14} /> : <RefreshCw className="text-cyan-500" size={14} />}
+                                {tx.type === 'Income' ? <ArrowUpCircle className="text-emerald-500" size={14} /> : tx.type === 'Expense' || tx.type === 'LiabilityPayment' ? <ArrowDownCircle className="text-rose-500" size={14} /> : <RefreshCw className="text-cyan-500" size={14} />}
                                 <div>
                                     <p className="text-xs">{tx.description}</p>
                                     <p className="text-[10px] text-slate-600">{tx.date} • {tx.category || 'Other'}</p>
                                 </div>
                             </div>
                             <div className="flex items-center gap-2">
-                                <span className={`text-xs font-mono-nums ${tx.type === 'Income' ? 'text-emerald-500' : tx.type === 'Expense' ? 'text-rose-500' : 'text-cyan-500'}`}>
-                                    {tx.type === 'Income' ? '+' : tx.type === 'Expense' ? '-' : ''}{getCurrencySymbol(tx.currency || 'JPY')}{tx.amount.toLocaleString()}
+                                <span className={`text-xs font-mono-nums ${tx.type === 'Income' ? 'text-emerald-500' : tx.type === 'Expense' || tx.type === 'LiabilityPayment' ? 'text-rose-500' : 'text-cyan-500'}`}>
+                                    {tx.type === 'Income' ? '+' : tx.type === 'Expense' || tx.type === 'LiabilityPayment' ? '-' : ''}{getCurrencySymbol(tx.currency || 'JPY')}{tx.amount.toLocaleString()}
                                 </span>
                                 <div className="flex gap-1 opacity-0 group-hover:opacity-100">
                                     <button className="p-1 hover:text-slate-300"><Edit size={12} /></button>

@@ -1,13 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
-from typing import Optional, List
+from typing import Optional
+from sqlalchemy.exc import IntegrityError
 from .. import models
 from ..database import get_db
 from ..utils.jwt import create_access_token
 from ..utils.password import verify_password, hash_password
 from ..dependencies import get_current_client
-from datetime import timedelta
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -16,10 +16,10 @@ class LoginRequest(BaseModel):
     password: str
 
 class RegisterRequest(BaseModel):
-    name: str  # Client name
+    name: Optional[str] = None  # Optional display name
     username: str
     password: str
-    email: Optional[str] = None
+    email: Optional[EmailStr] = None
 
 class ProfileUpdate(BaseModel):
     name: Optional[str] = None
@@ -31,6 +31,16 @@ class AuthResponse(BaseModel):
     token_type: str = "bearer"
     client_id: int
     name: str
+
+
+def _generate_unique_client_name(db: Session, base_name: str) -> str:
+    seed = (base_name or "user").strip() or "user"
+    candidate = seed
+    suffix = 2
+    while db.query(models.Client).filter(models.Client.name == candidate).first():
+        candidate = f"{seed}-{suffix}"
+        suffix += 1
+    return candidate
 
 @router.post("/login", response_model=AuthResponse)
 def login(req: LoginRequest, db: Session = Depends(get_db)):
@@ -58,21 +68,40 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
 @router.post("/register")
 def register(req: RegisterRequest, db: Session = Depends(get_db)):
     """Create a new client with login credentials."""
-    existing = db.query(models.Client).filter(models.Client.username == req.username.lower()).first()
+    username = req.username.strip().lower()
+    if not username:
+        raise HTTPException(status_code=400, detail="Username is required")
+    if len(req.password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+
+    existing = db.query(models.Client).filter(models.Client.username == username).first()
     if existing:
         raise HTTPException(status_code=400, detail="Username already taken")
-    
+
+    email = req.email.lower() if req.email else None
+    if email:
+        email_existing = db.query(models.Client).filter(models.Client.email == email).first()
+        if email_existing:
+            raise HTTPException(status_code=400, detail="Email already registered")
+
+    client_name = _generate_unique_client_name(db, req.name or username)
+
     new_client = models.Client(
-        name=req.name,
-        username=req.username.lower(),
-        email=req.email,
+        name=client_name,
+        username=username,
+        email=email,
         password_hash=hash_password(req.password),
         ai_config={},
         general_settings={}
     )
-    db.add(new_client)
-    db.commit()
-    db.refresh(new_client)
+    try:
+        db.add(new_client)
+        db.commit()
+        db.refresh(new_client)
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="Unable to register with provided credentials")
+
     return {"message": "User registered successfully", "client_id": new_client.id}
 
 @router.patch("/me")
