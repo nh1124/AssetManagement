@@ -22,7 +22,7 @@ services:
       context: ./backend
     container_name: finance-backend
     ports:
-      - "${BACKEND_PORT:-8000}:8000"
+      - "${BACKEND_PORT:-18100}:8000"
     volumes:
       - ./backend/app:/app/app
     environment:
@@ -41,7 +41,7 @@ services:
         - VITE_API_URL=/api
     container_name: finance-frontend
     ports:
-      - "${FRONTEND_PORT:-5173}:80"
+      - "${FRONTEND_PORT:-15173}:80"
     depends_on:
       - backend
     restart: unless-stopped

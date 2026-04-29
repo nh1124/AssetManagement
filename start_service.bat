@@ -15,8 +15,8 @@ if exist ".env" (
   )
 )
 
-if not defined BACKEND_PORT set "BACKEND_PORT=8000"
-if not defined FRONTEND_PORT set "FRONTEND_PORT=5173"
+if not defined BACKEND_PORT set "BACKEND_PORT=18100"
+if not defined FRONTEND_PORT set "FRONTEND_PORT=15173"
 if not defined DB_PORT set "DB_PORT=5432"
 
 docker info >nul 2>&1

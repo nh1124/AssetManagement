@@ -101,6 +101,24 @@ def update_product(
     return enrich_product(db_product)
 
 
+@router.delete("/{product_id}", status_code=204)
+def delete_product(
+    product_id: int,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    db_product = db.query(models.Product).filter(
+        models.Product.id == product_id,
+        models.Product.client_id == current_client.id,
+    ).first()
+
+    if not db_product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    db.delete(db_product)
+    db.commit()
+
+
 @router.get("/unit-economics-summary")
 def get_unit_economics_summary(
     db: Session = Depends(get_db),

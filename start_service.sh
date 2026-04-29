@@ -6,8 +6,8 @@ if [ -f ".env" ]; then
   ENV_DB_PORT=$(grep -E '^DB_PORT=' .env | head -n1 | cut -d'=' -f2-)
 fi
 
-BACKEND_PORT=${BACKEND_PORT:-${ENV_BACKEND_PORT:-8000}}
-FRONTEND_PORT=${FRONTEND_PORT:-${ENV_FRONTEND_PORT:-5173}}
+BACKEND_PORT=${BACKEND_PORT:-${ENV_BACKEND_PORT:-18100}}
+FRONTEND_PORT=${FRONTEND_PORT:-${ENV_FRONTEND_PORT:-15173}}
 DB_PORT=${DB_PORT:-${ENV_DB_PORT:-5432}}
 
 echo "Starting Asset Management System with Docker..."

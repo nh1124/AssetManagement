@@ -1,0 +1,57 @@
+{
+  "as_of": "2026-04-28",
+  "profile": {
+    "name": "hayato",
+    "age": 27,
+    "employer": "NTT西日本",
+    "joined_date": "2026-04-01",
+    "take_home": 210000
+  },
+  "investments": {
+    "nisa": {
+      "type": "積立NISA",
+      "account": "楽天証券（つみたて投資枠）",
+      "monthly_amount": 100000,
+      "fund": "eMAXIS Slim 全世界株式（オール・カントリー）",
+      "expense_ratio": 0.05775,
+      "payment_method": "楽天カード（1%還元）",
+      "role": "ライフプラン資金予備 / 長期では老後資産",
+      "notes": "生涯非課税枠1,800万円・年間上限120万円。原則売却せず、ライフイベントは預貯金+非NISA資産で対応。オルカン100%に決定（2026-04-19）。",
+      "lifetime_cap": 18000000,
+      "annual_cap": 1200000
+    },
+    "dc": {
+      "type": "企業型DC（マッチング拠出）",
+      "account": "NTT企業型DC",
+      "monthly_amount": 25000,
+      "fund": "たわらノーロード S&P500",
+      "expense_ratio": 0.09372,
+      "payment_method": "給与天引き（全額所得控除）",
+      "role": "老後資金（60歳まで引き出し不可）",
+      "notes": "会社拠出額に上乗せしてマッチング拠出。S&P500でNISAのオルカンと補完的な分散。節税効果が最大の口座。"
+    },
+    "holdings": {
+      "type": "NTT持株会",
+      "account": "NTT持株会",
+      "monthly_amount": 50000,
+      "stock": "NTT（日本電信電話）",
+      "bonus_rate": 10,
+      "effective_monthly": 55000,
+      "payment_method": "給与天引き",
+      "role": "会社奨励金（10%）を活用した福利厚生投資",
+      "notes": "奨励金10%付き。集中リスクに注意。段階的に売却・分散も検討余地あり。"
+    }
+  },
+  "emergency_fund": {
+    "target": 270000,
+    "current": 0,
+    "monthly_contribution": 0,
+    "target_date": "2026-09-30",
+    "account": "楽天銀行（普通預金）"
+  },
+  "summary": {
+    "total_monthly_investment": 175000,
+    "total_monthly_allocation": 175000,
+    "us_equity_ratio": 62.9
+  }
+}

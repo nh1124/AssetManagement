@@ -6,7 +6,7 @@ import type {
     Transaction,
 } from '../types';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8100';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:18100';
 
 const api = axios.create({
     baseURL: API_BASE_URL,
@@ -287,6 +287,10 @@ export const createProduct = async (product: any) => {
 export const updateProduct = async (id: number, product: any) => {
     const response = await api.put(`/products/${id}`, product);
     return response.data;
+};
+
+export const deleteProduct = async (id: number) => {
+    await api.delete(`/products/${id}`);
 };
 
 // AI/Analysis backend-side
