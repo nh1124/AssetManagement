@@ -9,17 +9,13 @@ import {
     getTransactions, getRecurringTransactions,
     createRecurringTransaction, deleteRecurringTransaction,
     getAccounts, createTransaction, deleteTransaction,
-    getCapsules, createCapsule, updateCapsule, deleteCapsule,
-    processCapsuleContributions
 } from '../api';
 import { useToast } from '../components/Toast';
-import type { Transaction, Capsule } from '../types';
-import { Archive } from 'lucide-react';
+import type { Transaction } from '../types';
 
 const MAIN_TABS = [
     { id: 'transaction', label: 'Transaction' },
     { id: 'recurring', label: 'Recurring' },
-    { id: 'capsules', label: 'Capsules' },
     { id: 'ai', label: 'AI' },
 ];
 
@@ -79,16 +75,6 @@ export default function Journal() {
         month_of_year: '1',
     });
 
-    // Capsules State
-    const [capsules, setCapsules] = useState<Capsule[]>([]);
-    const [showAddCapsule, setShowAddCapsule] = useState(false);
-    const [capsuleForm, setCapsuleForm] = useState({
-        name: '',
-        target_amount: '',
-        monthly_contribution: '',
-        current_balance: '0'
-    });
-    const [editingCapsuleId, setEditingCapsuleId] = useState<number | null>(null);
     const fromAccounts = accounts.filter((a) => ACCOUNT_RULES[formData.type].fromTypes.includes(a.account_type));
     const toAccounts = accounts.filter((a) => ACCOUNT_RULES[formData.type].toTypes.includes(a.account_type));
 
@@ -118,16 +104,14 @@ export default function Journal() {
 
     const fetchInitialData = async () => {
         try {
-            const [txs, recs, accs, caps] = await Promise.all([
+            const [txs, recs, accs] = await Promise.all([
                 getTransactions(),
                 getRecurringTransactions(),
                 getAccounts(),
-                getCapsules()
             ]);
             setTransactions(txs);
             setRecurringItems(recs);
             setAccounts(accs);
-            setCapsules(caps);
         } catch (error) {
             console.error('Failed to fetch journal data:', error);
             showToast('Failed to load data', 'error');
@@ -493,7 +477,13 @@ export default function Journal() {
                                 {selectedImage && (
                                     <div className="relative">
                                         <img src={selectedImage} alt="Preview" className="w-full h-32 object-cover border border-slate-700" />
-                                        <button onClick={() => setSelectedImage(null)} className="absolute top-1 right-1 bg-slate-900/80 p-1 text-slate-400 hover:text-white">
+                                        <button
+                                            type="button"
+                                            onClick={() => setSelectedImage(null)}
+                                            className="absolute top-1 right-1 bg-slate-900/80 p-1 text-slate-400 hover:text-white"
+                                            aria-label="Remove selected image"
+                                            title="Remove selected image"
+                                        >
                                             <X size={14} />
                                         </button>
                                     </div>
@@ -528,7 +518,15 @@ export default function Journal() {
                                                     : st.date}
                                                 • {st.category} • ¥{st.amount.toLocaleString()}
                                             </p>
-                                            <button onClick={() => setSuggestedTransactions(prev => prev.filter((_, i) => i !== idx))} className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-rose-500"><X size={10} /></button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setSuggestedTransactions(prev => prev.filter((_, i) => i !== idx))}
+                                                className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-rose-500"
+                                                aria-label="Remove suggestion"
+                                                title="Remove suggestion"
+                                            >
+                                                <X size={10} />
+                                            </button>
                                         </div>
                                     ))}
                                 </div>
@@ -545,14 +543,22 @@ export default function Journal() {
                     <div className="space-y-3 pt-2">
                         <div className="flex items-center justify-between">
                             <h3 className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Automation Rules</h3>
-                            <button onClick={() => {
-                                setShowAddRecurring(true);
-                                setEditingRecurringId(null);
-                                setNewRecurring({
-                                    name: '', amount: '', type: 'Expense', from_account_id: '',
-                                    to_account_id: '', frequency: 'Monthly', day_of_month: '1', month_of_year: '1',
-                                });
-                            }} className="p-1 bg-cyan-600 hover:bg-cyan-500 text-white rounded"><Plus size={14} /></button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setShowAddRecurring(true);
+                                    setEditingRecurringId(null);
+                                    setNewRecurring({
+                                        name: '', amount: '', type: 'Expense', from_account_id: '',
+                                        to_account_id: '', frequency: 'Monthly', day_of_month: '1', month_of_year: '1',
+                                    });
+                                }}
+                                className="p-1 bg-cyan-600 hover:bg-cyan-500 text-white rounded"
+                                aria-label="Add recurring rule"
+                                title="Add recurring rule"
+                            >
+                                <Plus size={14} />
+                            </button>
                         </div>
                         <div className="space-y-2">
                             {recurringItems.map((item) => (
@@ -562,10 +568,22 @@ export default function Journal() {
                                         <p className="text-[10px] text-slate-500">{item.frequency} • ¥{item.amount.toLocaleString()}</p>
                                     </div>
                                     <div className="flex gap-1 opacity-0 group-hover:opacity-100">
-                                        <button onClick={() => handleEditRecurring(item)} className="p-1 text-slate-500 hover:text-cyan-400">
+                                        <button
+                                            type="button"
+                                            onClick={() => handleEditRecurring(item)}
+                                            className="p-1 text-slate-500 hover:text-cyan-400"
+                                            aria-label="Edit recurring rule"
+                                            title="Edit recurring rule"
+                                        >
                                             <Edit size={12} />
                                         </button>
-                                        <button onClick={() => handleDeleteRecurring(item.id)} className="p-1 text-slate-500 hover:text-rose-400">
+                                        <button
+                                            type="button"
+                                            onClick={() => handleDeleteRecurring(item.id)}
+                                            className="p-1 text-slate-500 hover:text-rose-400"
+                                            aria-label="Delete recurring rule"
+                                            title="Delete recurring rule"
+                                        >
                                             <Trash2 size={12} />
                                         </button>
                                     </div>
@@ -576,7 +594,15 @@ export default function Journal() {
                             <div className="border border-cyan-800/50 bg-cyan-900/10 p-4 space-y-4 animate-in fade-in slide-in-from-top-2">
                                 <div className="flex justify-between items-center border-b border-cyan-800/30 pb-2">
                                     <span className="text-[10px] font-bold text-cyan-500 uppercase">{editingRecurringId ? 'Edit Recurring Rule' : 'New Recurring Rule'}</span>
-                                    <button onClick={() => setShowAddRecurring(false)} className="text-slate-500 hover:text-white"><X size={14} /></button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowAddRecurring(false)}
+                                        className="text-slate-500 hover:text-white"
+                                        aria-label="Close recurring modal"
+                                        title="Close recurring modal"
+                                    >
+                                        <X size={14} />
+                                    </button>
                                 </div>
 
                                 <div className="grid grid-cols-2 gap-3">
@@ -719,147 +745,6 @@ export default function Journal() {
                     </div>
                 )}
 
-                {activeTab === 'capsules' && (
-                    <div className="space-y-4 pt-2">
-                        <div className="flex items-center justify-between">
-                            <h3 className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Sinking Funds</h3>
-                            <div className="flex gap-2">
-                                <button
-                                    onClick={async () => {
-                                        if (!confirm('Process monthly contributions for all capsules?')) return;
-                                        try {
-                                            const res = await processCapsuleContributions();
-                                            showToast(res.message, 'success');
-                                            setCapsules(await getCapsules());
-                                        } catch (e) {
-                                            showToast('Failed to process contributions', 'error');
-                                        }
-                                    }}
-                                    className="p-1 px-2 bg-slate-800 border border-slate-700 hover:bg-slate-700 text-[10px] text-slate-300 rounded flex items-center gap-1"
-                                >
-                                    <Sparkles size={10} className="text-amber-400" /> Auto-Process
-                                </button>
-                                <button onClick={() => {
-                                    setShowAddCapsule(true);
-                                    setEditingCapsuleId(null);
-                                    setCapsuleForm({ name: '', target_amount: '', monthly_contribution: '', current_balance: '0' });
-                                }} className="p-1 bg-purple-600 hover:bg-purple-500 text-white rounded"><Plus size={14} /></button>
-                            </div>
-                        </div>
-
-                        <div className="space-y-2">
-                            {capsules.map(cap => (
-                                <div key={cap.id} className="bg-slate-800/30 border border-slate-700 p-3 flex flex-col gap-2">
-                                    <div className="flex justify-between items-start">
-                                        <div>
-                                            <p className="text-sm font-medium text-slate-200 flex items-center gap-2">
-                                                <Archive size={14} className="text-purple-400" /> {cap.name}
-                                            </p>
-                                            <p className="text-[10px] text-slate-500">Target: ¥{cap.target_amount.toLocaleString()}</p>
-                                        </div>
-                                        <div className="text-right">
-                                            <p className="text-lg font-mono-nums text-purple-400">¥{cap.current_balance.toLocaleString()}</p>
-                                            <p className="text-[10px] text-slate-500">Monthly: +¥{cap.monthly_contribution.toLocaleString()}</p>
-                                        </div>
-                                    </div>
-
-                                    {/* Progress Bar */}
-                                    <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden">
-                                        <div
-                                            className="h-full bg-purple-500"
-                                            style={{ width: `${Math.min(100, (cap.current_balance / cap.target_amount) * 100)}%` }}
-                                        />
-                                    </div>
-
-                                    <div className="flex justify-end gap-2 pt-2 border-t border-slate-800/50">
-                                        <button
-                                            onClick={() => {
-                                                setEditingCapsuleId(cap.id);
-                                                setCapsuleForm({
-                                                    name: cap.name,
-                                                    target_amount: String(cap.target_amount),
-                                                    monthly_contribution: String(cap.monthly_contribution),
-                                                    current_balance: String(cap.current_balance)
-                                                });
-                                                setShowAddCapsule(true);
-                                            }}
-                                            className="text-[10px] text-slate-400 hover:text-white flex items-center gap-1"
-                                        >
-                                            <Edit size={10} /> Edit
-                                        </button>
-                                        <button
-                                            onClick={async () => {
-                                                if (!confirm('Delete this capsule?')) return;
-                                                await deleteCapsule(cap.id);
-                                                setCapsules(await getCapsules());
-                                            }}
-                                            className="text-[10px] text-slate-400 hover:text-rose-400 flex items-center gap-1"
-                                        >
-                                            <Trash2 size={10} /> Delete
-                                        </button>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-
-                        {showAddCapsule && (
-                            <div className="border border-purple-800/50 bg-purple-900/10 p-4 space-y-3 animate-in fade-in slide-in-from-top-2">
-                                <h3 className="text-[10px] font-bold text-purple-500 uppercase">{editingCapsuleId ? 'Edit Capsule' : 'New Capsule'}</h3>
-                                <input
-                                    placeholder="Capsule Name (e.g. Travel Fund)"
-                                    className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
-                                    value={capsuleForm.name}
-                                    onChange={e => setCapsuleForm({ ...capsuleForm, name: e.target.value })}
-                                />
-                                <div className="grid grid-cols-2 gap-2">
-                                    <input
-                                        type="number"
-                                        placeholder="Target Amount"
-                                        className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums"
-                                        value={capsuleForm.target_amount}
-                                        onChange={e => setCapsuleForm({ ...capsuleForm, target_amount: e.target.value })}
-                                    />
-                                    <input
-                                        type="number"
-                                        placeholder="Monthly Contrib."
-                                        className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums"
-                                        value={capsuleForm.monthly_contribution}
-                                        onChange={e => setCapsuleForm({ ...capsuleForm, monthly_contribution: e.target.value })}
-                                    />
-                                </div>
-                                <div className="flex gap-2">
-                                    <button
-                                        onClick={async () => {
-                                            if (!capsuleForm.name || !capsuleForm.target_amount) return;
-                                            try {
-                                                const payload = {
-                                                    name: capsuleForm.name,
-                                                    target_amount: parseFloat(capsuleForm.target_amount),
-                                                    monthly_contribution: parseFloat(capsuleForm.monthly_contribution || '0'),
-                                                    current_balance: parseFloat(capsuleForm.current_balance || '0')
-                                                };
-                                                if (editingCapsuleId) {
-                                                    await updateCapsule(editingCapsuleId, payload);
-                                                } else {
-                                                    await createCapsule(payload);
-                                                }
-                                                showToast('Capsule saved', 'success');
-                                                setShowAddCapsule(false);
-                                                setCapsules(await getCapsules());
-                                            } catch (e) {
-                                                showToast('Failed to save capsule', 'error');
-                                            }
-                                        }}
-                                        className="flex-1 bg-purple-600 hover:bg-purple-500 text-white py-2 text-xs font-bold"
-                                    >
-                                        Save
-                                    </button>
-                                    <button onClick={() => setShowAddCapsule(false)} className="px-3 bg-slate-800 text-slate-400 text-xs">Cancel</button>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                )}
             </div>
         </TabPanel>
     );
@@ -884,10 +769,20 @@ export default function Journal() {
                                     {tx.type === 'Income' ? '+' : tx.type === 'Expense' || tx.type === 'LiabilityPayment' ? '-' : ''}{getCurrencySymbol(tx.currency || 'JPY')}{tx.amount.toLocaleString()}
                                 </span>
                                 <div className="flex gap-1 opacity-0 group-hover:opacity-100">
-                                    <button className="p-1 hover:text-slate-300"><Edit size={12} /></button>
                                     <button
+                                        type="button"
+                                        className="p-1 hover:text-slate-300"
+                                        aria-label="Edit transaction"
+                                        title="Edit transaction"
+                                    >
+                                        <Edit size={12} />
+                                    </button>
+                                    <button
+                                        type="button"
                                         className="p-1 hover:text-rose-400"
                                         onClick={() => handleDeleteTransaction(tx.id)}
+                                        aria-label="Delete transaction"
+                                        title="Delete transaction"
                                     >
                                         <Trash2 size={12} />
                                     </button>

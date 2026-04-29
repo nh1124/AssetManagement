@@ -10,7 +10,6 @@ import {
     deleteLifeEvent,
     addAllocation,
     deleteAllocation,
-    getAccounts,
     getBudgetSummary,
     saveMonthlyBudgets,
     suggestBudget,
@@ -19,11 +18,17 @@ import {
     createMilestone,
     deleteMilestone,
     runMonteCarloSimulation,
+    getCapsules,
+    createCapsule,
+    updateCapsule,
+    deleteCapsule,
+    processCapsuleContributions,
+    runPurchaseAudit,
 } from '../api';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, ComposedChart } from 'recharts';
-import { Sparkles, Flag, Calendar } from 'lucide-react';
+import { Sparkles, Flag, Calendar, Archive } from 'lucide-react';
 import { PRIORITY_COLORS, priorityLabel } from '../utils/priority';
-import type { Milestone, MonteCarloResult } from '../types';
+import type { Capsule, Milestone, MonteCarloResult } from '../types';
 
 interface RoadmapItem {
     year: number;
@@ -98,6 +103,8 @@ const TABS = [
     { id: 'simulation', label: 'Simulation' },
     { id: 'roadmap', label: 'Roadmap' },
     { id: 'budgeting', label: 'Budgeting' },
+    { id: 'capsules', label: 'Capsules' },
+    { id: 'purchase_audit', label: 'Purchase Audit' },
 ];
 
 export default function Strategy() {
@@ -139,6 +146,26 @@ export default function Strategy() {
         allocation_percentage: '100'
     });
     const [analyzing, setAnalyzing] = useState(false);
+
+    // Capsules
+    const [capsules, setCapsules] = useState<Capsule[]>([]);
+    const [showAddCapsule, setShowAddCapsule] = useState(false);
+    const [capsuleForm, setCapsuleForm] = useState({
+        name: '',
+        target_amount: '',
+        monthly_contribution: '',
+        current_balance: '0'
+    });
+    const [editingCapsuleId, setEditingCapsuleId] = useState<number | null>(null);
+
+    // Purchase Audit
+    const [auditForm, setAuditForm] = useState({
+        name: '',
+        price: '',
+        lifespan_months: '24',
+        category: 'Other',
+    });
+    const [auditResult, setAuditResult] = useState<any>(null);
 
     useEffect(() => {
         const timer = setTimeout(() => {
@@ -228,11 +255,12 @@ export default function Strategy() {
 
     const fetchData = async () => {
         try {
-            const [dashboard] = await Promise.all([
+            const [dashboard, caps] = await Promise.all([
                 getStrategyDashboard(simParams.annual_return, simParams.inflation, simParams.monthly_savings),
-                getAccounts()
+                getCapsules()
             ]);
             setDashboardData(dashboard);
+            setCapsules(caps);
             if (dashboard.events.length > 0 && !selectedEvent) {
                 setSelectedEvent(dashboard.events[0]);
             } else if (selectedEvent) {
@@ -436,7 +464,20 @@ export default function Strategy() {
 
     const formatCurrency = (val: number) => `¥${Math.round(val).toLocaleString()}`;
 
-
+    const handleAudit = async () => {
+        if (!auditForm.name || !auditForm.price) return;
+        try {
+            const result = await runPurchaseAudit({
+                name: auditForm.name,
+                price: parseFloat(auditForm.price),
+                lifespan_months: parseInt(auditForm.lifespan_months, 10),
+                category: auditForm.category,
+            });
+            setAuditResult(result);
+        } catch (error) {
+            showToast('Failed to run purchase audit', 'error');
+        }
+    };
 
     // Left Pane: Event Manager
     const leftPane = (
@@ -644,6 +685,236 @@ export default function Strategy() {
                     >
                         <Save size={14} /> Save {currentPeriod} Budget
                     </button>
+                </div>
+            );
+        }
+
+        if (activeTab === 'capsules') {
+            return (
+                <div className="space-y-4 h-full overflow-auto pt-2">
+                    <div className="flex items-center justify-between">
+                        <h3 className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Sinking Funds</h3>
+                        <div className="flex gap-2">
+                            <button
+                                onClick={async () => {
+                                    if (!confirm('Process monthly contributions for all capsules?')) return;
+                                    try {
+                                        const res = await processCapsuleContributions();
+                                        showToast(res.message, 'success');
+                                        setCapsules(await getCapsules());
+                                    } catch (error) {
+                                        showToast('Failed to process contributions', 'error');
+                                    }
+                                }}
+                                className="p-1 px-2 bg-slate-800 border border-slate-700 hover:bg-slate-700 text-[10px] text-slate-300 rounded flex items-center gap-1"
+                            >
+                                <Sparkles size={10} className="text-amber-400" /> Auto-Process
+                            </button>
+                            <button
+                                onClick={() => {
+                                    setShowAddCapsule(true);
+                                    setEditingCapsuleId(null);
+                                    setCapsuleForm({ name: '', target_amount: '', monthly_contribution: '', current_balance: '0' });
+                                }}
+                                className="p-1 bg-purple-600 hover:bg-purple-500 text-white rounded"
+                            >
+                                <Plus size={14} />
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="space-y-2">
+                        {capsules.length === 0 ? (
+                            <div className="text-center py-8 text-slate-600 text-xs">No capsules yet.</div>
+                        ) : (
+                            capsules.map(cap => {
+                                const progress = cap.target_amount > 0 ? Math.min(100, (cap.current_balance / cap.target_amount) * 100) : 0;
+                                return (
+                                    <div key={cap.id} className="bg-slate-800/30 border border-slate-700 p-3 flex flex-col gap-2">
+                                        <div className="flex justify-between items-start">
+                                            <div>
+                                                <p className="text-sm font-medium text-slate-200 flex items-center gap-2">
+                                                    <Archive size={14} className="text-purple-400" /> {cap.name}
+                                                </p>
+                                                <p className="text-[10px] text-slate-500">Target: {formatCurrency(cap.target_amount)}</p>
+                                            </div>
+                                            <div className="text-right">
+                                                <p className="text-lg font-mono-nums text-purple-400">{formatCurrency(cap.current_balance)}</p>
+                                                <p className="text-[10px] text-slate-500">Monthly: +{formatCurrency(cap.monthly_contribution)}</p>
+                                            </div>
+                                        </div>
+
+                                        <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden">
+                                            <div className="h-full bg-purple-500" style={{ width: `${progress}%` }} />
+                                        </div>
+
+                                        <div className="flex justify-end gap-2 pt-2 border-t border-slate-800/50">
+                                            <button
+                                                onClick={() => {
+                                                    setEditingCapsuleId(cap.id);
+                                                    setCapsuleForm({
+                                                        name: cap.name,
+                                                        target_amount: String(cap.target_amount),
+                                                        monthly_contribution: String(cap.monthly_contribution),
+                                                        current_balance: String(cap.current_balance)
+                                                    });
+                                                    setShowAddCapsule(true);
+                                                }}
+                                                className="text-[10px] text-slate-400 hover:text-white flex items-center gap-1"
+                                            >
+                                                <Edit2 size={10} /> Edit
+                                            </button>
+                                            <button
+                                                onClick={async () => {
+                                                    if (!confirm('Delete this capsule?')) return;
+                                                    await deleteCapsule(cap.id);
+                                                    setCapsules(await getCapsules());
+                                                }}
+                                                className="text-[10px] text-slate-400 hover:text-rose-400 flex items-center gap-1"
+                                            >
+                                                <Trash2 size={10} /> Delete
+                                            </button>
+                                        </div>
+                                    </div>
+                                );
+                            })
+                        )}
+                    </div>
+
+                    {showAddCapsule && (
+                        <div className="border border-purple-800/50 bg-purple-900/10 p-4 space-y-3 animate-in fade-in slide-in-from-top-2">
+                            <h3 className="text-[10px] font-bold text-purple-500 uppercase">
+                                {editingCapsuleId ? 'Edit Capsule' : 'New Capsule'}
+                            </h3>
+                            <input
+                                placeholder="Capsule Name (e.g. Travel Fund)"
+                                className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
+                                value={capsuleForm.name}
+                                onChange={e => setCapsuleForm({ ...capsuleForm, name: e.target.value })}
+                            />
+                            <div className="grid grid-cols-2 gap-2">
+                                <input
+                                    type="number"
+                                    placeholder="Target Amount"
+                                    className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums"
+                                    value={capsuleForm.target_amount}
+                                    onChange={e => setCapsuleForm({ ...capsuleForm, target_amount: e.target.value })}
+                                />
+                                <input
+                                    type="number"
+                                    placeholder="Monthly Contrib."
+                                    className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums"
+                                    value={capsuleForm.monthly_contribution}
+                                    onChange={e => setCapsuleForm({ ...capsuleForm, monthly_contribution: e.target.value })}
+                                />
+                            </div>
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={async () => {
+                                        if (!capsuleForm.name || !capsuleForm.target_amount) return;
+                                        try {
+                                            const payload = {
+                                                name: capsuleForm.name,
+                                                target_amount: parseFloat(capsuleForm.target_amount),
+                                                monthly_contribution: parseFloat(capsuleForm.monthly_contribution || '0'),
+                                                current_balance: parseFloat(capsuleForm.current_balance || '0')
+                                            };
+                                            if (editingCapsuleId) {
+                                                await updateCapsule(editingCapsuleId, payload);
+                                            } else {
+                                                await createCapsule(payload);
+                                            }
+                                            showToast('Capsule saved', 'success');
+                                            setShowAddCapsule(false);
+                                            setCapsules(await getCapsules());
+                                        } catch (error) {
+                                            showToast('Failed to save capsule', 'error');
+                                        }
+                                    }}
+                                    className="flex-1 bg-purple-600 hover:bg-purple-500 text-white py-2 text-xs font-bold"
+                                >
+                                    Save
+                                </button>
+                                <button
+                                    onClick={() => setShowAddCapsule(false)}
+                                    className="px-3 bg-slate-800 text-slate-400 text-xs"
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        }
+
+        if (activeTab === 'purchase_audit') {
+            return (
+                <div className="space-y-4">
+                    <div className="bg-slate-800/30 border border-slate-700 p-4 grid grid-cols-2 gap-3">
+                        <input
+                            type="text"
+                            placeholder="Item name"
+                            value={auditForm.name}
+                            onChange={(e) => setAuditForm({ ...auditForm, name: e.target.value })}
+                            className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
+                        />
+                        <input
+                            type="number"
+                            placeholder="Price"
+                            value={auditForm.price}
+                            onChange={(e) => setAuditForm({ ...auditForm, price: e.target.value })}
+                            className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums"
+                        />
+                        <input
+                            type="number"
+                            placeholder="Lifespan months"
+                            value={auditForm.lifespan_months}
+                            onChange={(e) => setAuditForm({ ...auditForm, lifespan_months: e.target.value })}
+                            className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums"
+                        />
+                        <input
+                            type="text"
+                            placeholder="Category"
+                            value={auditForm.category}
+                            onChange={(e) => setAuditForm({ ...auditForm, category: e.target.value })}
+                            className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
+                        />
+                        <button
+                            onClick={handleAudit}
+                            className="col-span-2 bg-cyan-600 hover:bg-cyan-500 text-white py-2 text-xs"
+                        >
+                            Run Purchase Audit
+                        </button>
+                    </div>
+
+                    {auditResult && (
+                        <div className="bg-slate-800/30 border border-slate-700 p-4 space-y-2 text-xs">
+                            <p className="text-slate-400">Verdict</p>
+                            <p className={`text-lg font-bold ${
+                                auditResult.verdict === 'Go' ? 'text-emerald-400' :
+                                auditResult.verdict === 'Wait' ? 'text-amber-400' : 'text-rose-400'
+                            }`}>
+                                {auditResult.verdict}
+                            </p>
+                            <p className="text-slate-300">{auditResult.verdict_reason}</p>
+                            <p>TCO Monthly: <span className="font-mono-nums text-cyan-400">{formatCurrency(auditResult.tco_analysis?.monthly_cost ?? 0)}</span></p>
+                            <p>Logical Balance After: <span className="font-mono-nums">{formatCurrency(auditResult.logical_balance_after ?? 0)}</span></p>
+                            {(auditResult.goal_impact ?? []).length > 0 && (
+                                <div className="space-y-1">
+                                    <p className="text-slate-400">Goal Impact</p>
+                                    {(auditResult.goal_impact ?? []).map((g: any, idx: number) => (
+                                        <div key={idx} className="flex justify-between">
+                                            <span>{g.life_event_name}</span>
+                                            <span className={`font-mono-nums ${g.delta < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                                                {g.delta}%
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
             );
         }

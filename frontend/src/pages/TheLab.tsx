@@ -9,7 +9,6 @@ import {
     getMonthlyReview,
     getProfitLoss,
     getVarianceAnalysis,
-    runPurchaseAudit,
     saveMonthlyReview,
 } from '../api';
 import { useToast } from '../components/Toast';
@@ -21,7 +20,6 @@ const TABS = [
     { id: 'bs', label: 'B/S' },
     { id: 'pl', label: 'P/L' },
     { id: 'capsules', label: 'Capsules' },
-    { id: 'purchase_audit', label: 'Purchase Audit' },
     { id: 'report', label: 'Monthly Report' },
     { id: 'review', label: 'Monthly Review' },
 ];
@@ -42,14 +40,6 @@ export default function TheLab() {
     const [reviewDraft, setReviewDraft] = useState({ reflection: '', next_actions: '' });
     const [reviewSaving, setReviewSaving] = useState(false);
     const { showToast } = useToast();
-
-    const [auditForm, setAuditForm] = useState({
-        name: '',
-        price: '',
-        lifespan_months: '24',
-        category: 'Other',
-    });
-    const [auditResult, setAuditResult] = useState<any>(null);
 
     const fetchData = async () => {
         setLoading(true);
@@ -105,17 +95,6 @@ export default function TheLab() {
     };
 
     const formatCurrency = (value: number) => `¥${Math.round(value).toLocaleString()}`;
-
-    const handleAudit = async () => {
-        if (!auditForm.name || !auditForm.price) return;
-        const result = await runPurchaseAudit({
-            name: auditForm.name,
-            price: parseFloat(auditForm.price),
-            lifespan_months: parseInt(auditForm.lifespan_months, 10),
-            category: auditForm.category,
-        });
-        setAuditResult(result);
-    };
 
     const handleSaveReview = async () => {
         const period = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
@@ -230,64 +209,6 @@ export default function TheLab() {
                                 <span className="font-mono-nums text-purple-400">{formatCurrency(c.current_balance)}</span>
                             </div>
                         ))}
-                    </div>
-                );
-            case 'purchase_audit':
-                return (
-                    <div className="space-y-4">
-                        <div className="bg-slate-800/30 border border-slate-700 p-4 grid grid-cols-2 gap-3">
-                            <input
-                                type="text"
-                                placeholder="Item name"
-                                value={auditForm.name}
-                                onChange={(e) => setAuditForm({ ...auditForm, name: e.target.value })}
-                                className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
-                            />
-                            <input
-                                type="number"
-                                placeholder="Price"
-                                value={auditForm.price}
-                                onChange={(e) => setAuditForm({ ...auditForm, price: e.target.value })}
-                                className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums"
-                            />
-                            <input
-                                type="number"
-                                placeholder="Lifespan months"
-                                value={auditForm.lifespan_months}
-                                onChange={(e) => setAuditForm({ ...auditForm, lifespan_months: e.target.value })}
-                                className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums"
-                            />
-                            <input
-                                type="text"
-                                placeholder="Category"
-                                value={auditForm.category}
-                                onChange={(e) => setAuditForm({ ...auditForm, category: e.target.value })}
-                                className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
-                            />
-                            <button onClick={handleAudit} className="col-span-2 bg-cyan-600 hover:bg-cyan-500 text-white py-2 text-xs">
-                                Run Purchase Audit
-                            </button>
-                        </div>
-                        {auditResult && (
-                            <div className="bg-slate-800/30 border border-slate-700 p-4 space-y-2 text-xs">
-                                <p className="text-slate-400">Verdict</p>
-                                <p className={`text-lg font-bold ${auditResult.verdict === 'Go' ? 'text-emerald-400' : auditResult.verdict === 'Wait' ? 'text-amber-400' : 'text-rose-400'}`}>
-                                    {auditResult.verdict}
-                                </p>
-                                <p className="text-slate-300">{auditResult.verdict_reason}</p>
-                                <p>TCO Monthly: <span className="font-mono-nums text-cyan-400">{formatCurrency(auditResult.tco_analysis.monthly_cost)}</span></p>
-                                <p>Logical Balance After: <span className="font-mono-nums">{formatCurrency(auditResult.logical_balance_after)}</span></p>
-                                <div className="space-y-1">
-                                    <p className="text-slate-400">Goal Impact</p>
-                                    {(auditResult.goal_impact ?? []).map((g: any, idx: number) => (
-                                        <div key={idx} className="flex justify-between">
-                                            <span>{g.life_event_name}</span>
-                                            <span className={`font-mono-nums ${g.delta < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>{g.delta}%</span>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        )}
                     </div>
                 );
             case 'report':
