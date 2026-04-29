@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, Boolean, DateTime, JSON, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, Boolean, DateTime, JSON, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 import uuid
@@ -53,6 +53,7 @@ class Client(Base):
     recurring_transactions = relationship("RecurringTransaction", back_populates="client")
     milestones = relationship("Milestone", back_populates="client")
     capsules = relationship("Capsule", back_populates="client")
+    monthly_reviews = relationship("MonthlyReview", back_populates="client")
 
 class Account(Base):
     """Double-entry accounting: Each account has a type and balance."""
@@ -204,6 +205,22 @@ class MonthlyBudget(Base):
 
     client = relationship("Client")
     account = relationship("Account")
+
+class MonthlyReview(Base):
+    """PDCA review notes for a specific month."""
+    __tablename__ = "monthly_reviews"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
+    target_period = Column(String, nullable=False)  # Format: "YYYY-MM"
+    reflection = Column(Text, default="")
+    next_actions = Column(Text, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("client_id", "target_period", name="_client_review_period_uc"),)
+
+    client = relationship("Client", back_populates="monthly_reviews")
 
 class Milestone(Base):
     __tablename__ = "milestones"

@@ -234,6 +234,23 @@ def export_client_data(
                 .order_by(models.MonthlyBudget.target_period, models.MonthlyBudget.account_id)
                 .all()
             ],
+            "monthly_reviews": [
+                _row(
+                    review,
+                    [
+                        "id",
+                        "target_period",
+                        "reflection",
+                        "next_actions",
+                        "created_at",
+                        "updated_at",
+                    ],
+                )
+                for review in db.query(models.MonthlyReview)
+                .filter(models.MonthlyReview.client_id == current_client.id)
+                .order_by(models.MonthlyReview.target_period)
+                .all()
+            ],
             "milestones": [
                 _row(milestone, ["id", "date", "target_amount", "note", "created_at"])
                 for milestone in db.query(models.Milestone)
@@ -299,6 +316,7 @@ def import_client_data(
 
         for model in [
             models.MonthlyBudget,
+            models.MonthlyReview,
             models.Capsule,
             models.Milestone,
             models.RecurringTransaction,
@@ -455,6 +473,18 @@ def import_client_data(
                         amount=item.get("amount") or 0,
                     )
                 )
+
+        for item in data.get("monthly_reviews", []):
+            db.add(
+                models.MonthlyReview(
+                    client_id=current_client.id,
+                    target_period=item["target_period"],
+                    reflection=item.get("reflection") or "",
+                    next_actions=item.get("next_actions") or "",
+                    created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
+                    updated_at=_parse_datetime(item.get("updated_at")),
+                )
+            )
 
         for item in data.get("milestones", []):
             db.add(

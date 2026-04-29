@@ -79,6 +79,15 @@ export interface MonthlyBudget {
     variance: number;
 }
 
+export interface MonthlyReview {
+    id: number;
+    target_period: string;
+    reflection: string;
+    next_actions: string;
+    created_at: string;
+    updated_at?: string | null;
+}
+
 export interface AnalysisSummary {
     net_worth: number;
     monthly_pl: number;

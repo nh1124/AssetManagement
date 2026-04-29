@@ -172,6 +172,25 @@ class MonthlyBudgetWithAccount(MonthlyBudget):
     actual_spending: float = 0.0
     variance: float = 0.0
 
+
+class MonthlyReviewBase(BaseModel):
+    target_period: str
+    reflection: str = ""
+    next_actions: str = ""
+
+
+class MonthlyReviewCreate(MonthlyReviewBase):
+    pass
+
+
+class MonthlyReview(MonthlyReviewBase):
+    id: int
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
 class LifeEventBase(BaseModel):
     name: str
     target_date: date

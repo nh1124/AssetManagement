@@ -3,6 +3,7 @@ import type {
     AnalysisSummary,
     MonteCarloResult,
     MonthlyBudget,
+    MonthlyReview,
     Transaction,
 } from '../types';
 
@@ -95,6 +96,20 @@ export const getVarianceAnalysis = async (year?: number, month?: number) => {
 
 export const getDepreciation = async () => {
     const response = await api.get('/analysis/depreciation');
+    return response.data;
+};
+
+export const getMonthlyReview = async (period?: string): Promise<MonthlyReview> => {
+    const response = await api.get('/monthly-reviews/', { params: { period } });
+    return response.data;
+};
+
+export const saveMonthlyReview = async (review: {
+    target_period: string;
+    reflection: string;
+    next_actions: string;
+}): Promise<MonthlyReview> => {
+    const response = await api.put('/monthly-reviews/', review);
     return response.data;
 };
 

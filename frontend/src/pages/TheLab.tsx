@@ -1,15 +1,19 @@
 import { useEffect, useState } from 'react';
-import { ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react';
+import { ChevronLeft, ChevronRight, RefreshCw, Save } from 'lucide-react';
 import TabPanel from '../components/TabPanel';
 import {
     getAnalysisSummary,
     getBalanceSheet,
     getCapsules,
     getMonthlyReport,
+    getMonthlyReview,
     getProfitLoss,
     getVarianceAnalysis,
     runPurchaseAudit,
+    saveMonthlyReview,
 } from '../api';
+import { useToast } from '../components/Toast';
+import type { MonthlyReview } from '../types';
 
 const TABS = [
     { id: 'trends', label: 'Trends' },
@@ -19,6 +23,7 @@ const TABS = [
     { id: 'capsules', label: 'Capsules' },
     { id: 'purchase_audit', label: 'Purchase Audit' },
     { id: 'report', label: 'Monthly Report' },
+    { id: 'review', label: 'Monthly Review' },
 ];
 
 export default function TheLab() {
@@ -33,6 +38,10 @@ export default function TheLab() {
     const [variance, setVariance] = useState<any>(null);
     const [capsules, setCapsules] = useState<any[]>([]);
     const [monthlyReport, setMonthlyReport] = useState<any>(null);
+    const [monthlyReview, setMonthlyReview] = useState<MonthlyReview | null>(null);
+    const [reviewDraft, setReviewDraft] = useState({ reflection: '', next_actions: '' });
+    const [reviewSaving, setReviewSaving] = useState(false);
+    const { showToast } = useToast();
 
     const [auditForm, setAuditForm] = useState({
         name: '',
@@ -45,13 +54,15 @@ export default function TheLab() {
     const fetchData = async () => {
         setLoading(true);
         try {
-            const [summaryData, bsData, plData, varianceData, capsuleData, reportData] = await Promise.all([
+            const period = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
+            const [summaryData, bsData, plData, varianceData, capsuleData, reportData, reviewData] = await Promise.all([
                 getAnalysisSummary(),
                 getBalanceSheet(selectedYear, selectedMonth),
                 getProfitLoss(selectedYear, selectedMonth),
                 getVarianceAnalysis(selectedYear, selectedMonth),
                 getCapsules(),
                 getMonthlyReport(selectedYear, selectedMonth),
+                getMonthlyReview(period),
             ]);
             setSummary(summaryData);
             setBalanceSheet(bsData);
@@ -59,6 +70,11 @@ export default function TheLab() {
             setVariance(varianceData);
             setCapsules(capsuleData);
             setMonthlyReport(reportData);
+            setMonthlyReview(reviewData);
+            setReviewDraft({
+                reflection: reviewData.reflection || '',
+                next_actions: reviewData.next_actions || '',
+            });
         } catch (error) {
             console.error('Failed to fetch analytics data:', error);
         } finally {
@@ -99,6 +115,24 @@ export default function TheLab() {
             category: auditForm.category,
         });
         setAuditResult(result);
+    };
+
+    const handleSaveReview = async () => {
+        const period = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
+        setReviewSaving(true);
+        try {
+            const saved = await saveMonthlyReview({
+                target_period: period,
+                reflection: reviewDraft.reflection,
+                next_actions: reviewDraft.next_actions,
+            });
+            setMonthlyReview(saved);
+            showToast('Monthly review saved', 'success');
+        } catch (error) {
+            showToast('Failed to save monthly review', 'error');
+        } finally {
+            setReviewSaving(false);
+        }
     };
 
     const renderTabContent = () => {
@@ -274,6 +308,82 @@ export default function TheLab() {
                                 </div>
                             ))}
                         </div>
+                    </div>
+                );
+            case 'review':
+                return (
+                    <div className="space-y-4">
+                        <div className="grid grid-cols-3 gap-3">
+                            <div className="bg-slate-800/50 border border-slate-700 p-3">
+                                <p className="text-[10px] text-slate-500 uppercase">Monthly P/L</p>
+                                <p className={`text-lg font-mono-nums ${(monthlyReport?.summary?.monthly_pl ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                    {formatCurrency(monthlyReport?.summary?.monthly_pl ?? 0)}
+                                </p>
+                            </div>
+                            <div className="bg-slate-800/50 border border-slate-700 p-3">
+                                <p className="text-[10px] text-slate-500 uppercase">Savings Rate</p>
+                                <p className="text-lg font-mono-nums text-cyan-400">{monthlyReport?.summary?.savings_rate ?? 0}%</p>
+                            </div>
+                            <div className="bg-slate-800/50 border border-slate-700 p-3">
+                                <p className="text-[10px] text-slate-500 uppercase">Anomalies</p>
+                                <p className="text-lg font-mono-nums text-amber-400">{monthlyReport?.anomalies?.length ?? 0}</p>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="bg-slate-800/30 border border-slate-700 p-4">
+                                <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-2">
+                                    Reflection
+                                </label>
+                                <textarea
+                                    value={reviewDraft.reflection}
+                                    onChange={(e) => setReviewDraft({ ...reviewDraft, reflection: e.target.value })}
+                                    placeholder="What happened this month? What should be kept or corrected?"
+                                    className="w-full min-h-48 bg-slate-900 border border-slate-700 px-3 py-2 text-xs text-slate-200 resize-y focus:outline-none focus:border-emerald-500"
+                                />
+                            </div>
+                            <div className="bg-slate-800/30 border border-slate-700 p-4">
+                                <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-2">
+                                    Next Month Actions
+                                </label>
+                                <textarea
+                                    value={reviewDraft.next_actions}
+                                    onChange={(e) => setReviewDraft({ ...reviewDraft, next_actions: e.target.value })}
+                                    placeholder="Budget changes, spending rules, transfers, or follow-up actions for next month."
+                                    className="w-full min-h-48 bg-slate-900 border border-slate-700 px-3 py-2 text-xs text-slate-200 resize-y focus:outline-none focus:border-emerald-500"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="bg-slate-800/30 border border-slate-700 p-4">
+                            <div className="flex items-center justify-between mb-3">
+                                <p className="text-xs text-slate-400">Report Signals</p>
+                                <span className="text-[10px] text-slate-600">
+                                    Last saved: {monthlyReview?.updated_at || monthlyReview?.created_at || 'Not saved yet'}
+                                </span>
+                            </div>
+                            <div className="space-y-2">
+                                {(monthlyReport?.action_proposals ?? []).length === 0 ? (
+                                    <p className="text-xs text-slate-500">No automatic action proposals for this month.</p>
+                                ) : (
+                                    monthlyReport.action_proposals.map((proposal: any, idx: number) => (
+                                        <div key={idx} className="flex justify-between gap-3 text-xs border-b border-slate-800 pb-2">
+                                            <span className="text-slate-300">{proposal.description}</span>
+                                            <span className="font-mono-nums text-cyan-400 whitespace-nowrap">{formatCurrency(proposal.amount ?? 0)}</span>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        </div>
+
+                        <button
+                            onClick={handleSaveReview}
+                            disabled={reviewSaving}
+                            className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white py-2 text-xs font-bold flex items-center justify-center gap-2"
+                        >
+                            <Save size={14} />
+                            {reviewSaving ? 'Saving...' : 'Save Monthly Review'}
+                        </button>
                     </div>
                 );
             default:

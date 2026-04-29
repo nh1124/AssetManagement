@@ -13,6 +13,7 @@ from .routers import (
     clients,
     data_transfer,
     life_events,
+    monthly_reviews,
     products,
     purchase_audit,
     recurring,
@@ -80,6 +81,7 @@ def startup_event():
             "simulation_configs",
             "recurring_transactions",
             "monthly_budgets",
+            "monthly_reviews",
             "milestones",
             "capsules",
         ]:
@@ -108,6 +110,7 @@ app.include_router(transactions.router)
 app.include_router(products.router)
 app.include_router(budgets.router)
 app.include_router(life_events.router)
+app.include_router(monthly_reviews.router)
 app.include_router(simulation.router)
 app.include_router(accounts.router)
 app.include_router(ai.router)
