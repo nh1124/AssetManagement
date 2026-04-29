@@ -11,6 +11,7 @@ from .routers import (
     budgets,
     capsules,
     clients,
+    data_transfer,
     life_events,
     products,
     purchase_audit,
@@ -111,6 +112,7 @@ app.include_router(simulation.router)
 app.include_router(accounts.router)
 app.include_router(ai.router)
 app.include_router(clients.router)
+app.include_router(data_transfer.router)
 app.include_router(auth.router)
 app.include_router(recurring.router, dependencies=[Depends(get_current_client)])
 app.include_router(roadmap.router, dependencies=[Depends(get_current_client)])

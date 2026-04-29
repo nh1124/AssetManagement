@@ -1,8 +1,8 @@
-import { useState } from 'react';
-import { Save, User, Key, Eye, EyeOff, Users, Plus, Settings, PlusCircle } from 'lucide-react';
+import { useRef, useState } from 'react';
+import { Save, User, Key, Eye, EyeOff, Users, Plus, Settings, PlusCircle, Database, Download, Upload } from 'lucide-react';
 import { useClient } from '../context/ClientContext';
 import { useAuth } from '../context/AuthContext';
-import { updateClientKey, updateProfile } from '../api';
+import { exportData, importData, updateClientKey, updateProfile } from '../api';
 import { useToast } from '../components/Toast';
 
 export default function SettingsPage() {
@@ -22,6 +22,9 @@ export default function SettingsPage() {
     const [showPassword, setShowPassword] = useState(false);
     const [saved, setSaved] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
+    const [isExporting, setIsExporting] = useState(false);
+    const [isImporting, setIsImporting] = useState(false);
+    const importInputRef = useRef<HTMLInputElement>(null);
 
     const handleSave = async () => {
         setIsSaving(true);
@@ -51,6 +54,76 @@ export default function SettingsPage() {
     };
 
     const currentClient = clients.find(c => c.id === clientId);
+
+    const handleExport = async () => {
+        setIsExporting(true);
+        try {
+            const snapshot = await exportData();
+            const datePart = new Date().toISOString().slice(0, 10);
+            const fileName = `asset-management-client-${clientId}-${datePart}.json`;
+            const blob = new Blob([JSON.stringify(snapshot, null, 2)], {
+                type: 'application/json',
+            });
+
+            if ('showSaveFilePicker' in window) {
+                try {
+                    const handle = await (window as any).showSaveFilePicker({
+                        suggestedName: fileName,
+                        types: [
+                            {
+                                description: 'JSON backup',
+                                accept: { 'application/json': ['.json'] },
+                            },
+                        ],
+                    });
+                    const writable = await handle.createWritable();
+                    await writable.write(blob);
+                    await writable.close();
+                    showToast('Export saved', 'success');
+                    return;
+                } catch (error: any) {
+                    if (error?.name === 'AbortError') return;
+                    throw error;
+                }
+            }
+
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = fileName;
+            link.click();
+            URL.revokeObjectURL(url);
+            showToast('Export downloaded', 'success');
+        } catch (error: any) {
+            showToast(error.response?.data?.detail || 'Failed to export data', 'error');
+        } finally {
+            setIsExporting(false);
+        }
+    };
+
+    const handleImportFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        event.target.value = '';
+        if (!file) return;
+
+        const confirmed = window.confirm(
+            'Importing this file will replace all data for the active client. Continue?'
+        );
+        if (!confirmed) return;
+
+        setIsImporting(true);
+        try {
+            const text = await file.text();
+            const payload = JSON.parse(text);
+            await importData(payload);
+            showToast('Import completed', 'success');
+            refreshClients();
+        } catch (error: any) {
+            showToast(error.response?.data?.detail || 'Failed to import data', 'error');
+        } finally {
+            setIsImporting(false);
+        }
+    };
 
     return (
         <div className="h-full overflow-auto p-4 max-w-4xl mx-auto">
@@ -213,6 +286,44 @@ export default function SettingsPage() {
                                     <option value="en">English</option>
                                 </select>
                             </div>
+                        </div>
+                    </div>
+
+                    {/* Data Transfer */}
+                    <div className="border border-slate-800 p-5 bg-slate-900/30 rounded-lg">
+                        <div className="flex items-center gap-2 mb-2">
+                            <Database size={18} className="text-purple-400" />
+                            <h2 className="text-sm font-semibold">Data Transfer</h2>
+                        </div>
+                        <p className="text-[10px] text-slate-500 mb-4 leading-relaxed">
+                            Export or restore the active tenant's accounts, transactions, goals, budgets, products, and capsules.
+                        </p>
+                        <input
+                            ref={importInputRef}
+                            type="file"
+                            accept="application/json,.json"
+                            className="hidden"
+                            onChange={handleImportFile}
+                        />
+                        <div className="grid grid-cols-2 gap-3">
+                            <button
+                                type="button"
+                                onClick={handleExport}
+                                disabled={isExporting || isImporting}
+                                className="bg-slate-800/60 border border-slate-700 hover:border-purple-500 hover:text-purple-300 px-3 py-2 text-xs font-medium flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+                            >
+                                <Download size={14} />
+                                {isExporting ? 'Exporting...' : 'Export JSON'}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => importInputRef.current?.click()}
+                                disabled={isExporting || isImporting}
+                                className="bg-slate-800/60 border border-slate-700 hover:border-amber-500 hover:text-amber-300 px-3 py-2 text-xs font-medium flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
+                            >
+                                <Upload size={14} />
+                                {isImporting ? 'Importing...' : 'Import JSON'}
+                            </button>
                         </div>
                     </div>
 

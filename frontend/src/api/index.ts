@@ -320,6 +320,17 @@ export const updateClientKey = async (clientId: number, gemini_api_key: string) 
     return response.data;
 };
 
+// Data transfer endpoints
+export const exportData = async () => {
+    const response = await api.get('/data/export');
+    return response.data;
+};
+
+export const importData = async (payload: any) => {
+    const response = await api.post('/data/import', payload);
+    return response.data;
+};
+
 // Recurring Transactions endpoints
 export const getRecurringTransactions = async () => {
     const response = await api.get('/recurring/');
