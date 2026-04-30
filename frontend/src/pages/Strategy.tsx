@@ -1178,16 +1178,16 @@ export default function Strategy() {
                             <h3 className="text-[10px] text-slate-500 uppercase tracking-wider mb-2">
                                 {selectedEvent.name} Projection ({selectedEvent.weighted_return?.toFixed(1) || simParams.annual_return}% Return)
                             </h3>
-                            <div className="h-48">
+                            <div className="h-56">
                                 <ResponsiveContainer width="100%" height="100%">
-                                    <LineChart data={selectedEvent.roadmap || []}>
-                                        <XAxis dataKey="year" tick={{ fontSize: 10 }} stroke="#64748b" label={{ value: 'Years', position: 'bottom', fontSize: 10 }} />
+                                    <LineChart data={selectedEvent.roadmap || []} margin={{ top: 8, right: 16, bottom: 34, left: 8 }}>
+                                        <XAxis dataKey="year" tick={{ fontSize: 10 }} stroke="#64748b" label={{ value: 'Years', position: 'insideBottom', offset: -8, fontSize: 10 }} />
                                         <YAxis tick={{ fontSize: 10 }} stroke="#64748b" tickFormatter={(v) => `¥${(v / 10000).toFixed(0)}万`} />
                                         <Tooltip
                                             contentStyle={{ background: '#1e293b', border: '1px solid #334155', fontSize: 11 }}
                                             formatter={(value) => [`¥${(value as number || 0).toLocaleString()}`, '']}
                                         />
-                                        <Legend wrapperStyle={{ fontSize: 10 }} />
+                                        <Legend verticalAlign="bottom" align="center" wrapperStyle={{ fontSize: 10, paddingTop: 14 }} />
                                         <Line type="monotone" dataKey="end_balance" stroke="#10b981" name="Balance" strokeWidth={2} dot={false} />
                                         <Line type="monotone" dataKey={() => selectedEvent.target_amount} stroke="#f97316" strokeDasharray="5 5" name="Target" dot={false} />
                                     </LineChart>
