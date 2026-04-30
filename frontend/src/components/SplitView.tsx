@@ -9,7 +9,7 @@ interface SplitViewProps {
 
 export default function SplitView({ left, right, leftTitle, rightTitle }: SplitViewProps) {
     return (
-        <div className="grid grid-cols-1 lg:grid-cols-2 h-full">
+        <div className="grid grid-cols-1 min-[900px]:grid-cols-2 h-full">
             {/* Left Pane - Independent scroll */}
             <div className="border-r border-slate-800 flex flex-col h-full overflow-hidden">
                 {leftTitle && (

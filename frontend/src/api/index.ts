@@ -202,6 +202,13 @@ export const deleteLifeEvent = async (id: number) => {
     return response.data;
 };
 
+// Goal-domain aliases. Backend routes remain compatible with the original
+// /life-events paths, while new UI code can depend on the Goal vocabulary.
+export const getGoalDashboard = getStrategyDashboard;
+export const createGoal = createLifeEvent;
+export const updateGoal = updateLifeEvent;
+export const deleteGoal = deleteLifeEvent;
+
 // Goal Allocations
 export const getAllocations = async (eventId: number) => {
     const response = await api.get(`/life-events/${eventId}/allocations`);

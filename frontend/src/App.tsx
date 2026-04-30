@@ -6,7 +6,8 @@ import { ToastProvider } from './components/Toast';
 import { ClientProvider } from './context/ClientContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Journal from './pages/Journal';
-import TheLab from './pages/TheLab';
+import Goal from './pages/Goal';
+import Analytics from './pages/Analytics';
 import Strategy from './pages/Strategy';
 import Registry from './pages/Registry';
 import SettingsPage from './pages/Settings';
@@ -33,8 +34,10 @@ function AppContent() {
     switch (currentPage) {
       case 'journal':
         return <Journal />;
+      case 'goal':
+        return <Goal />;
       case 'analytics':
-        return <TheLab />;
+        return <Analytics />;
       case 'strategy':
         return <Strategy />;
       case 'registry':

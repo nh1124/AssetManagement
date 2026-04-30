@@ -4,7 +4,7 @@ from typing import List, Optional
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
-from ..services.strategy_service import (
+from ..services.goal_service import (
     get_life_events_with_progress, 
     calculate_overall_goal_probability, 
     generate_budget_from_goals,

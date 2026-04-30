@@ -17,7 +17,7 @@ def get_summary(db: Session, client_id: int) -> dict:
         get_profit_loss,
         get_variance_analysis,
     )
-    from .strategy_service import calculate_overall_goal_probability
+    from .goal_service import calculate_overall_goal_probability
 
     bs = get_balance_sheet(db, client_id=client_id)
     today = date.today()
@@ -190,7 +190,7 @@ def get_depreciation_summary(db: Session, client_id: int) -> dict:
 def get_net_position(db: Session, client_id: int) -> dict:
     """Calculate Net Position = Assets - Current Debt - Future Life Event Costs for current client."""
     from .accounting_service import get_balance_sheet
-    from .strategy_service import calculate_overall_goal_probability
+    from .goal_service import calculate_overall_goal_probability
 
     bs = get_balance_sheet(db, client_id=client_id)
     goal_data = calculate_overall_goal_probability(db, client_id=client_id)

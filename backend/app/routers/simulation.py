@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
-from ..services.strategy_service import (
+from ..services.simulation_service import (
     calculate_current_funded_and_weighted_return,
     calculate_goal_probability_monte_carlo,
     run_monte_carlo,

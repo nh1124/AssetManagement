@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from .analysis_service import get_summary
-from .strategy_service import (
+from .simulation_service import (
     calculate_current_funded_and_weighted_return,
     calculate_goal_probability_monte_carlo,
 )

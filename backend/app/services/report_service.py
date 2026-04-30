@@ -6,7 +6,7 @@ from dateutil.relativedelta import relativedelta
 from sqlalchemy.orm import Session
 
 from .accounting_service import get_balance_sheet, get_profit_loss, get_variance_analysis
-from .strategy_service import get_life_events_with_progress
+from .goal_service import get_life_events_with_progress
 
 ANOMALY_THRESHOLD_PCT = 150
 HIGH_SEVERITY_PCT = 200

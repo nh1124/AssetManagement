@@ -1,4 +1,9 @@
-"""Strategy Service - Life Event calculations, projections, and goal probability."""
+"""Shared goal calculation primitives.
+
+This module is retained as the implementation home for projection math during the
+transition from the old all-in-one Strategy workspace. Domain callers should prefer
+goal_service or simulation_service so UI responsibilities stay decoupled.
+"""
 from __future__ import annotations
 
 from sqlalchemy.orm import Session
