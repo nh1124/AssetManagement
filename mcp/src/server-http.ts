@@ -5,10 +5,12 @@
 import express, { type Request, type Response, type NextFunction } from "express";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { registerPortfolioTools } from "./tools/portfolio.js";
-import { registerBudgetTools } from "./tools/budget.js";
+import { registerAccountTools } from "./tools/accounts.js";
+import { registerCapsuleTools } from "./tools/capsules.js";
+import { registerLifeEventTools } from "./tools/life-events.js";
+import { registerAnalysisTools } from "./tools/analysis.js";
+import { registerTransactionTools } from "./tools/transactions.js";
 import { registerCalculatorTools } from "./tools/calculator.js";
-import { registerDecisionTools } from "./tools/decisions.js";
 import {
   BASE_URL, getDiscoveryMetadata, registerClient, getClient,
   createAuthCode, exchangeCodeForTokens, refreshAccessToken, validateAccessToken,
@@ -155,10 +157,12 @@ function requireBearer(req: Request, res: Response, next: NextFunction): void {
 
 function buildMcpServer(): McpServer {
   const server = new McpServer({ name: "asset-management", version: "1.0.0" });
-  registerPortfolioTools(server);
-  registerBudgetTools(server);
+  registerAccountTools(server);
+  registerCapsuleTools(server);
+  registerLifeEventTools(server);
+  registerAnalysisTools(server);
+  registerTransactionTools(server);
   registerCalculatorTools(server);
-  registerDecisionTools(server);
   return server;
 }
 
