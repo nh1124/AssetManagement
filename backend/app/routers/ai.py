@@ -17,7 +17,7 @@ You can also extract RECURRING payment rules if the input implies a repeating in
 Return a JSON array of objects.
 
 Field definitions:
-- type: "Expense" | "Income" | "Transfer" | "LiabilityPayment" | "Product"
+- type: "Expense" | "Income" | "Transfer" | "LiabilityPayment" | "Borrowing" | "CreditExpense" | "CreditAssetPurchase" | "Product"
 - date: "YYYY-MM-DD" (Default to today if not found)
 - amount: number
 - currency: "JPY" | "USD" | "EUR" (Default to JPY)

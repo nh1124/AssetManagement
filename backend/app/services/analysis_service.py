@@ -71,7 +71,7 @@ def get_summary(db: Session, client_id: int) -> dict:
     three_months_ago = today - relativedelta(months=3)
     recent_expenses = db.query(func.sum(models.Transaction.amount)).filter(
         models.Transaction.client_id == client_id,
-        models.Transaction.type.in_(["Expense", "LiabilityPayment"]),
+        models.Transaction.type.in_(["Expense", "CreditExpense"]),
         models.Transaction.date >= three_months_ago,
     ).scalar() or 0.0
     avg_monthly_expense = recent_expenses / 3 if recent_expenses > 0 else 1.0

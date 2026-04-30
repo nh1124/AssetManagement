@@ -12,7 +12,7 @@ from .. import models
 def calculate_true_balance(db: Session, account: models.Account) -> float:
     """
     Calculate account balance from journal entries only.
-    - asset / expense: debit - credit
+    - asset / expense / item: debit - credit
     - liability / income: credit - debit
     """
     result = db.query(
@@ -23,7 +23,7 @@ def calculate_true_balance(db: Session, account: models.Account) -> float:
     total_debit = result.total_debit or 0.0
     total_credit = result.total_credit or 0.0
 
-    if account.account_type in ("asset", "expense"):
+    if account.account_type in ("asset", "expense", "item"):
         return total_debit - total_credit
     return total_credit - total_debit
 

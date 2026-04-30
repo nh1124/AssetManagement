@@ -99,86 +99,103 @@ def _resolve_account(
     return get_or_create_account(db, fallback_name, client_id, fallback_type)
 
 
+DEBIT_NORMAL_TYPES = {"asset", "expense", "item"}
+
+
+TRANSACTION_ACCOUNT_DEFAULTS = {
+    "Income": {
+        "from_name": "salary",
+        "from_type": "income",
+        "to_name": "cash",
+        "to_type": "asset",
+    },
+    "Expense": {
+        "from_name": "cash",
+        "from_type": "asset",
+        "to_name": "expense",
+        "to_type": "expense",
+    },
+    "Transfer": {
+        "from_name": "cash",
+        "from_type": "asset",
+        "to_name": "savings",
+        "to_type": "asset",
+    },
+    "LiabilityPayment": {
+        "from_name": "cash",
+        "from_type": "asset",
+        "to_name": "loan",
+        "to_type": "liability",
+    },
+    "Borrowing": {
+        "from_name": "loan",
+        "from_type": "liability",
+        "to_name": "cash",
+        "to_type": "asset",
+    },
+    "CreditExpense": {
+        "from_name": "credit",
+        "from_type": "liability",
+        "to_name": "expense",
+        "to_type": "expense",
+    },
+    "CreditAssetPurchase": {
+        "from_name": "credit",
+        "from_type": "liability",
+        "to_name": "savings",
+        "to_type": "asset",
+    },
+}
+
+
+def _apply_debit(account: models.Account, amount: float) -> None:
+    if account.account_type in DEBIT_NORMAL_TYPES:
+        account.balance += amount
+    else:
+        account.balance -= amount
+
+
+def _apply_credit(account: models.Account, amount: float) -> None:
+    if account.account_type in DEBIT_NORMAL_TYPES:
+        account.balance -= amount
+    else:
+        account.balance += amount
+
+
 def process_transaction(db: Session, transaction: models.Transaction) -> None:
     """
     Process a transaction with double-entry bookkeeping.
+    The UI uses from_account as the credit side and to_account as the debit side.
     """
     client_id = transaction.client_id
     if client_id is None:
         raise ValueError("transaction.client_id is required")
 
     category = transaction.category or "expense"
+    defaults = TRANSACTION_ACCOUNT_DEFAULTS.get(transaction.type)
+    if not defaults:
+        raise ValueError(f"Unsupported transaction type: {transaction.type}")
 
-    if transaction.type == "Income":
-        from_account = _resolve_account(
-            db=db,
-            client_id=client_id,
-            account_id=transaction.from_account_id,
-            fallback_name="cash",
-            fallback_type="asset",
-        )
-        to_account = _resolve_account(
-            db=db,
-            client_id=client_id,
-            account_id=transaction.to_account_id,
-            fallback_name=category,
-            fallback_type="income",
-        )
-        from_account.balance += transaction.amount
+    from_fallback_name = category if transaction.type == "Income" else defaults["from_name"]
+    to_fallback_name = category if transaction.type in ("Expense", "CreditExpense") else defaults["to_name"]
 
-    elif transaction.type == "Expense":
-        from_account = _resolve_account(
-            db=db,
-            client_id=client_id,
-            account_id=transaction.from_account_id,
-            fallback_name="cash",
-            fallback_type="asset",
-        )
-        to_account = _resolve_account(
-            db=db,
-            client_id=client_id,
-            account_id=transaction.to_account_id,
-            fallback_name=category,
-            fallback_type="expense",
-        )
-        from_account.balance -= transaction.amount
+    from_account = _resolve_account(
+        db=db,
+        client_id=client_id,
+        account_id=transaction.from_account_id,
+        fallback_name=from_fallback_name,
+        fallback_type=defaults["from_type"],
+    )
+    to_account = _resolve_account(
+        db=db,
+        client_id=client_id,
+        account_id=transaction.to_account_id,
+        fallback_name=to_fallback_name,
+        fallback_type=defaults["to_type"],
+    )
 
-    elif transaction.type == "LiabilityPayment":
-        from_account = _resolve_account(
-            db=db,
-            client_id=client_id,
-            account_id=transaction.from_account_id,
-            fallback_name="cash",
-            fallback_type="asset",
-        )
-        to_account = _resolve_account(
-            db=db,
-            client_id=client_id,
-            account_id=transaction.to_account_id,
-            fallback_name="loan",
-            fallback_type="liability",
-        )
-        from_account.balance -= transaction.amount
-        # In this app model, liability account balance increases on repayment.
-        to_account.balance += transaction.amount
-
-    else:  # Transfer
-        from_account = _resolve_account(
-            db=db,
-            client_id=client_id,
-            account_id=transaction.from_account_id,
-            fallback_name="cash",
-            fallback_type="asset",
-        )
-        to_account = _resolve_account(
-            db=db,
-            client_id=client_id,
-            account_id=transaction.to_account_id,
-            fallback_name="savings",
-            fallback_type="asset",
-        )
-        from_account.balance -= transaction.amount
-        to_account.balance += transaction.amount
+    _apply_credit(from_account, transaction.amount)
+    _apply_debit(to_account, transaction.amount)
 
     # Persist resolved account linkage for read APIs.
     transaction.from_account_id = from_account.id
@@ -186,26 +203,16 @@ def process_transaction(db: Session, transaction: models.Transaction) -> None:
 
     debit_entry = models.JournalEntry(
         transaction_id=transaction.id,
-        account_id=to_account.id if transaction.type == "Expense" else from_account.id,
+        account_id=to_account.id,
         debit=transaction.amount,
         credit=0,
     )
     credit_entry = models.JournalEntry(
         transaction_id=transaction.id,
-        account_id=from_account.id if transaction.type == "Expense" else to_account.id,
+        account_id=from_account.id,
         debit=0,
         credit=transaction.amount,
     )
-
-    if transaction.type == "Transfer":
-        debit_entry.account_id = to_account.id
-        credit_entry.account_id = from_account.id
-    elif transaction.type == "LiabilityPayment":
-        debit_entry.account_id = to_account.id
-        credit_entry.account_id = from_account.id
-    elif transaction.type == "Income":
-        debit_entry.account_id = from_account.id
-        credit_entry.account_id = to_account.id
 
     db.add(debit_entry)
     db.add(credit_entry)
@@ -223,22 +230,10 @@ def revert_transaction(db: Session, transaction: models.Transaction) -> None:
     from_account = _get_account_by_id(db, transaction.from_account_id, client_id)
     to_account = _get_account_by_id(db, transaction.to_account_id, client_id)
 
-    if transaction.type == "Income":
-        if from_account:
-            from_account.balance -= transaction.amount
-    elif transaction.type == "Expense":
-        if from_account:
-            from_account.balance += transaction.amount
-    elif transaction.type == "LiabilityPayment":
-        if from_account:
-            from_account.balance += transaction.amount
-        if to_account:
-            to_account.balance -= transaction.amount
-    else:  # Transfer
-        if from_account:
-            from_account.balance += transaction.amount
-        if to_account:
-            to_account.balance -= transaction.amount
+    if from_account:
+        _apply_debit(from_account, transaction.amount)
+    if to_account:
+        _apply_credit(to_account, transaction.amount)
 
     db.commit()
 
@@ -259,7 +254,7 @@ def get_balance_sheet(
     assets = []
     liabilities = []
     for acc in accounts:
-        if acc.account_type == "asset":
+        if acc.account_type in ("asset", "item"):
             assets.append({"name": acc.name, "balance": acc.balance})
         elif acc.account_type == "liability":
             liabilities.append({"name": acc.name, "balance": abs(acc.balance)})
@@ -303,7 +298,7 @@ def get_profit_loss(db: Session, year: int, month: int, client_id: int | None = 
         cat = tx.category or "Other"
         if tx.type == "Income":
             income_by_category[cat] = income_by_category.get(cat, 0) + tx.amount
-        elif tx.type in ("Expense", "LiabilityPayment"):
+        elif tx.type in ("Expense", "CreditExpense"):
             expense_by_category[cat] = expense_by_category.get(cat, 0) + tx.amount
 
     total_income = sum(income_by_category.values())
@@ -356,7 +351,7 @@ def get_variance_analysis(
             models.Transaction.client_id == client_id,
             models.Transaction.date >= start_date,
             models.Transaction.date < end_date,
-            models.Transaction.type.in_(["Expense", "LiabilityPayment"]),
+            models.Transaction.type.in_(["Expense", "CreditExpense"]),
         )
     ).all()
 

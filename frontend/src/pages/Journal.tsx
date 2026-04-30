@@ -20,7 +20,14 @@ const MAIN_TABS = [
 ];
 
 const CURRENCIES = ['JPY', 'USD', 'EUR', 'GBP', 'CNY'];
-type TransactionKind = 'Income' | 'Expense' | 'Transfer' | 'LiabilityPayment';
+type TransactionKind =
+    | 'Income'
+    | 'Expense'
+    | 'Transfer'
+    | 'LiabilityPayment'
+    | 'Borrowing'
+    | 'CreditExpense'
+    | 'CreditAssetPurchase';
 
 interface AccountItem {
     id: number;
@@ -29,12 +36,70 @@ interface AccountItem {
     balance?: number;
 }
 
-const ACCOUNT_RULES: Record<TransactionKind, { fromTypes: string[]; toTypes: string[] }> = {
-    Expense: { fromTypes: ['asset', 'item'], toTypes: ['expense', 'item'] },
-    Income: { fromTypes: ['income'], toTypes: ['asset', 'item'] },
-    Transfer: { fromTypes: ['asset', 'item'], toTypes: ['asset', 'item'] },
-    LiabilityPayment: { fromTypes: ['asset', 'item'], toTypes: ['liability'] },
-};
+const TRANSACTION_TYPES: Array<{
+    value: TransactionKind;
+    label: string;
+    description: string;
+    fromTypes: string[];
+    toTypes: string[];
+}> = [
+    {
+        value: 'Expense',
+        label: 'Expense',
+        description: 'Pay cash/bank/card asset now. Dr expense or item, Cr asset.',
+        fromTypes: ['asset', 'item'],
+        toTypes: ['expense', 'item'],
+    },
+    {
+        value: 'Income',
+        label: 'Income',
+        description: 'Receive income into cash/bank. Dr asset, Cr income.',
+        fromTypes: ['income'],
+        toTypes: ['asset', 'item'],
+    },
+    {
+        value: 'Transfer',
+        label: 'Transfer',
+        description: 'Move value between asset accounts. Dr destination asset, Cr source asset.',
+        fromTypes: ['asset', 'item'],
+        toTypes: ['asset', 'item'],
+    },
+    {
+        value: 'Borrowing',
+        label: 'Borrowing',
+        description: 'Borrow loan/cash advance and increase assets. Dr asset, Cr liability.',
+        fromTypes: ['liability'],
+        toTypes: ['asset', 'item'],
+    },
+    {
+        value: 'CreditExpense',
+        label: 'Credit Expense',
+        description: 'Buy expenses on credit. Dr expense, Cr liability.',
+        fromTypes: ['liability'],
+        toTypes: ['expense', 'item'],
+    },
+    {
+        value: 'CreditAssetPurchase',
+        label: 'Credit Asset Purchase',
+        description: 'Buy an asset/item with credit or a loan. Dr asset or item, Cr liability.',
+        fromTypes: ['liability'],
+        toTypes: ['asset', 'item'],
+    },
+    {
+        value: 'LiabilityPayment',
+        label: 'Debt Repayment',
+        description: 'Repay debt from cash/bank. Dr liability, Cr asset.',
+        fromTypes: ['asset', 'item'],
+        toTypes: ['liability'],
+    },
+];
+
+const ACCOUNT_RULES = Object.fromEntries(
+    TRANSACTION_TYPES.map(({ value, fromTypes, toTypes }) => [value, { fromTypes, toTypes }])
+) as Record<TransactionKind, { fromTypes: string[]; toTypes: string[] }>;
+
+const typeDescription = (type: string) =>
+    TRANSACTION_TYPES.find((option) => option.value === type)?.description ?? '';
 
 export default function Journal() {
     const [activeTab, setActiveTab] = useState('transaction');
@@ -67,7 +132,7 @@ export default function Journal() {
     const [newRecurring, setNewRecurring] = useState({
         name: '',
         amount: '',
-        type: 'Expense',
+        type: 'Expense' as TransactionKind,
         from_account_id: '',
         to_account_id: '',
         frequency: 'Monthly',
@@ -77,6 +142,8 @@ export default function Journal() {
 
     const fromAccounts = accounts.filter((a) => ACCOUNT_RULES[formData.type].fromTypes.includes(a.account_type));
     const toAccounts = accounts.filter((a) => ACCOUNT_RULES[formData.type].toTypes.includes(a.account_type));
+    const recurringFromAccounts = accounts.filter((a) => ACCOUNT_RULES[newRecurring.type].fromTypes.includes(a.account_type));
+    const recurringToAccounts = accounts.filter((a) => ACCOUNT_RULES[newRecurring.type].toTypes.includes(a.account_type));
 
     useEffect(() => {
         fetchInitialData();
@@ -310,7 +377,7 @@ export default function Journal() {
         setNewRecurring({
             name: item.name,
             amount: item.amount.toString(),
-            type: item.type,
+            type: item.type as TransactionKind,
             from_account_id: item.from_account_id ? item.from_account_id.toString() : '',
             to_account_id: item.to_account_id ? item.to_account_id.toString() : '',
             frequency: item.frequency,
@@ -352,12 +419,14 @@ export default function Journal() {
                                 <select
                                     value={formData.type}
                                     onChange={(e) => setFormData({ ...formData, type: e.target.value as TransactionKind })}
+                                    title={typeDescription(formData.type)}
                                     className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
                                 >
-                                    <option value="Expense">Expense</option>
-                                    <option value="Income">Income</option>
-                                    <option value="Transfer">Transfer</option>
-                                    <option value="LiabilityPayment">Debt Repayment</option>
+                                    {TRANSACTION_TYPES.map((option) => (
+                                        <option key={option.value} value={option.value} title={option.description}>
+                                            {option.label}
+                                        </option>
+                                    ))}
                                 </select>
                             </div>
                         </div>
@@ -634,13 +703,18 @@ export default function Journal() {
                                         <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Type</label>
                                         <select
                                             value={newRecurring.type}
-                                            onChange={e => setNewRecurring({ ...newRecurring, type: e.target.value })}
+                                            onChange={e => {
+                                                const nextType = e.target.value as TransactionKind;
+                                                setNewRecurring({ ...newRecurring, type: nextType, from_account_id: '', to_account_id: '' });
+                                            }}
+                                            title={typeDescription(newRecurring.type)}
                                             className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs focus:border-cyan-500 focus:outline-none"
                                         >
-                                            <option value="Expense">Expense</option>
-                                            <option value="Income">Income</option>
-                                            <option value="Transfer">Transfer</option>
-                                            <option value="LiabilityPayment">Debt Repayment</option>
+                                            {TRANSACTION_TYPES.map((option) => (
+                                                <option key={option.value} value={option.value} title={option.description}>
+                                                    {option.label}
+                                                </option>
+                                            ))}
                                         </select>
                                     </div>
 
@@ -652,7 +726,7 @@ export default function Journal() {
                                             className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs focus:border-cyan-500 focus:outline-none"
                                         >
                                             <option value="">Select...</option>
-                                            {accounts.filter(a => a.account_type === 'asset' || a.account_type === 'item').map(a => (
+                                            {recurringFromAccounts.map(a => (
                                                 <option key={a.id} value={a.id}>{a.name}</option>
                                             ))}
                                         </select>
@@ -666,7 +740,7 @@ export default function Journal() {
                                             className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs focus:border-cyan-500 focus:outline-none"
                                         >
                                             <option value="">Select...</option>
-                                            {accounts.filter(a => a.account_type === 'expense' || a.account_type === 'income' || a.account_type === 'item').map(a => (
+                                            {recurringToAccounts.map(a => (
                                                 <option key={a.id} value={a.id}>{a.name}</option>
                                             ))}
                                         </select>

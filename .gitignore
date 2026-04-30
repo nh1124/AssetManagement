@@ -1,40 +1,42 @@
-# Data files (keep structure, ignore content)
+# ============================================================
+# Personal / Sensitive Data — DO NOT COMMIT
+# ============================================================
+
+# MCP server personal data files
+mcp/data/portfolio.json
+mcp/data/budget.json
+mcp/data/decisions.json
+mcp/data/
+
+# Backend database files
 data/*.db
 data/raw_csv/*.csv
 
-# Environment
+# Environment / secrets
 .env
 .env.local
 .env.*.local
+*.env
+
+# Setup guides containing personal info
+INITIAL_SETUP.md
+REFACTOR_*.md
+
+# ============================================================
+# Python
+# ============================================================
 .venv/
 venv/
 __pycache__/
 *.pyc
+*.pyo
 
+# ============================================================
 # Node / TypeScript
+# ============================================================
 node_modules/
 **/node_modules/
 dist/
 **/dist/
 *.tsbuildinfo
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-
-# MCP local runtime artifacts
-mcp/.env
-mcp/.env.local
-
-# IDE
-.vscode/
-.idea/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Test
-.pytest_cache/
-.coverage
-htmlcov/
+npm-d

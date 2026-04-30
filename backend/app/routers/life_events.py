@@ -77,7 +77,14 @@ def get_budget_summary(
     recurring = db.query(models.RecurringTransaction).filter(
         models.RecurringTransaction.client_id == current_client.id,
         models.RecurringTransaction.is_active == True,
-        models.RecurringTransaction.type.in_(["Expense", "expense", "LiabilityPayment", "liabilitypayment"])
+        models.RecurringTransaction.type.in_([
+            "Expense",
+            "expense",
+            "CreditExpense",
+            "creditexpense",
+            "LiabilityPayment",
+            "liabilitypayment",
+        ])
     ).all()
     
     monthly_fixed_costs = 0.0

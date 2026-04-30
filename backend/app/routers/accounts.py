@@ -14,11 +14,13 @@ class AccountCreate(BaseModel):
     account_type: str
     balance: float = 0
     budget_limit: Optional[float] = None
+    expected_return: float = 0.0
 
 class AccountUpdate(BaseModel):
     name: Optional[str] = None
     balance: Optional[float] = None
     budget_limit: Optional[float] = None
+    expected_return: Optional[float] = None
     is_active: Optional[bool] = None
 
 class AccountResponse(BaseModel):
@@ -27,6 +29,7 @@ class AccountResponse(BaseModel):
     account_type: str
     balance: float
     budget_limit: Optional[float] = None
+    expected_return: float = 0.0
     is_active: bool = True
 
     class Config:

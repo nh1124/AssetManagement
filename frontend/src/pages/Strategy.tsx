@@ -10,6 +10,8 @@ import {
     deleteLifeEvent,
     addAllocation,
     deleteAllocation,
+    createAccount,
+    updateAccount,
     getBudgetSummary,
     saveMonthlyBudgets,
     suggestBudget,
@@ -115,6 +117,9 @@ export default function Strategy() {
     const [activeTab, setActiveTab] = useState('simulation');
     const [budgetSummary, setBudgetSummary] = useState<BudgetSummary | null>(null);
     const [budgetEdits, setBudgetEdits] = useState<Record<number, number>>({});
+    const [showBudgetCategoryForm, setShowBudgetCategoryForm] = useState(false);
+    const [editingBudgetAccount, setEditingBudgetAccount] = useState<BudgetAccount | null>(null);
+    const [budgetCategoryForm, setBudgetCategoryForm] = useState({ name: '', budget_limit: '' });
     const [currentPeriod, setCurrentPeriod] = useState<string>(new Date().toISOString().slice(0, 7)); // YYYY-MM
     const [monteCarlo, setMonteCarlo] = useState<MonteCarloResult | null>(null);
     const [monteCarloLoading, setMonteCarloLoading] = useState(false);
@@ -434,6 +439,52 @@ export default function Strategy() {
         }
     };
 
+    const openBudgetCategoryForm = (account?: BudgetAccount) => {
+        if (account) {
+            setEditingBudgetAccount(account);
+            setBudgetCategoryForm({
+                name: account.name,
+                budget_limit: String(budgetEdits[account.id] ?? account.budget_limit ?? 0),
+            });
+        } else {
+            setEditingBudgetAccount(null);
+            setBudgetCategoryForm({ name: '', budget_limit: '' });
+        }
+        setShowBudgetCategoryForm(true);
+    };
+
+    const handleSaveBudgetCategory = async () => {
+        const name = budgetCategoryForm.name.trim();
+        if (!name) return;
+
+        const budgetLimit = parseFloat(budgetCategoryForm.budget_limit || '0') || 0;
+        try {
+            if (editingBudgetAccount) {
+                await updateAccount(editingBudgetAccount.id, {
+                    name,
+                    budget_limit: budgetLimit,
+                });
+                setBudgetEdits({ ...budgetEdits, [editingBudgetAccount.id]: budgetLimit });
+                showToast('Budget category updated', 'success');
+            } else {
+                const created = await createAccount({
+                    name,
+                    account_type: 'expense',
+                    balance: 0,
+                    budget_limit: budgetLimit,
+                });
+                setBudgetEdits({ ...budgetEdits, [created.id]: budgetLimit });
+                showToast('Budget category added', 'success');
+            }
+            setShowBudgetCategoryForm(false);
+            setEditingBudgetAccount(null);
+            setBudgetCategoryForm({ name: '', budget_limit: '' });
+            fetchBudgetSummary();
+        } catch (error) {
+            showToast('Failed to save budget category', 'error');
+        }
+    };
+
     const changePeriod = (delta: number) => {
         const [year, month] = currentPeriod.split('-').map(Number);
         const date = new Date(year, month - 1 + delta, 1);
@@ -589,14 +640,65 @@ export default function Strategy() {
                     <div className="flex-1 bg-slate-800/30 border border-slate-700 p-4 overflow-auto">
                         <h3 className="text-[10px] text-slate-400 uppercase tracking-wider mb-3 flex items-center justify-between">
                             <span className="flex items-center gap-1"><Wallet size={10} /> Variable Budget</span>
-                            <button
-                                onClick={handleAISuggestBudget}
-                                disabled={analyzing}
-                                className="flex items-center gap-1 text-[9px] text-cyan-400 hover:text-cyan-300 disabled:opacity-50"
-                            >
-                                <Sparkles size={10} /> {analyzing ? 'Thinking...' : 'AI Suggest'}
-                            </button>
+                            <span className="flex items-center gap-3">
+                                <button
+                                    onClick={() => openBudgetCategoryForm()}
+                                    className="flex items-center gap-1 text-[9px] text-emerald-400 hover:text-emerald-300"
+                                    title="Add budget category"
+                                >
+                                    <Plus size={10} /> Add
+                                </button>
+                                <button
+                                    onClick={handleAISuggestBudget}
+                                    disabled={analyzing}
+                                    className="flex items-center gap-1 text-[9px] text-cyan-400 hover:text-cyan-300 disabled:opacity-50"
+                                >
+                                    <Sparkles size={10} /> {analyzing ? 'Thinking...' : 'AI Suggest'}
+                                </button>
+                            </span>
                         </h3>
+                        {showBudgetCategoryForm && (
+                            <div className="mb-3 border border-emerald-800/40 bg-emerald-900/10 p-3 grid grid-cols-12 gap-2 items-end">
+                                <div className="col-span-5">
+                                    <label className="block text-[9px] text-slate-500 uppercase mb-1">Category</label>
+                                    <input
+                                        value={budgetCategoryForm.name}
+                                        onChange={(e) => setBudgetCategoryForm({ ...budgetCategoryForm, name: e.target.value })}
+                                        placeholder="e.g., Books"
+                                        className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
+                                    />
+                                </div>
+                                <div className="col-span-3">
+                                    <label className="block text-[9px] text-slate-500 uppercase mb-1">Default Limit</label>
+                                    <input
+                                        type="number"
+                                        step="1000"
+                                        value={budgetCategoryForm.budget_limit}
+                                        onChange={(e) => setBudgetCategoryForm({ ...budgetCategoryForm, budget_limit: e.target.value })}
+                                        placeholder="0"
+                                        className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums text-right focus:outline-none focus:border-emerald-500"
+                                    />
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={handleSaveBudgetCategory}
+                                    className="col-span-2 bg-emerald-600 hover:bg-emerald-500 text-white py-1.5 text-xs font-medium"
+                                >
+                                    {editingBudgetAccount ? 'Update' : 'Add'}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setShowBudgetCategoryForm(false);
+                                        setEditingBudgetAccount(null);
+                                        setBudgetCategoryForm({ name: '', budget_limit: '' });
+                                    }}
+                                    className="col-span-2 bg-slate-800 hover:bg-slate-700 text-slate-300 py-1.5 text-xs"
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        )}
                         <div className="overflow-x-auto">
                             <table className="w-full text-[10px]">
                                 <thead className="text-slate-500 uppercase border-b border-slate-700 bg-slate-800/50">
@@ -605,6 +707,7 @@ export default function Strategy() {
                                         <th className="px-2 py-1.5 text-right font-normal text-slate-600">Actual</th>
                                         <th className="px-2 py-1.5 text-right font-normal">Limit</th>
                                         <th className="px-2 py-1.5 text-right font-normal">Var</th>
+                                        <th className="px-2 py-1.5 text-right font-normal">Edit</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-800/50">
@@ -633,6 +736,16 @@ export default function Strategy() {
                                                 </td>
                                                 <td className={`px-2 py-1.5 text-right font-mono-nums ${variance >= 0 ? 'text-emerald-500/70' : 'text-rose-500'}`}>
                                                     {formatCurrency(variance)}
+                                                </td>
+                                                <td className="px-2 py-1.5 text-right">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => openBudgetCategoryForm(acc)}
+                                                        className="p-1 text-slate-500 hover:text-cyan-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                                                        title={`Edit ${acc.name}`}
+                                                    >
+                                                        <Edit2 size={11} />
+                                                    </button>
                                                 </td>
                                             </tr>
                                         );

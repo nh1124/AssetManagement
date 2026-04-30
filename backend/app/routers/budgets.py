@@ -60,7 +60,7 @@ def get_budgets(
             models.Transaction.client_id == current_client.id,
             models.Transaction.date >= start_date,
             models.Transaction.date < end_date,
-            models.Transaction.type.in_(["Expense", "LiabilityPayment"]),
+            models.Transaction.type.in_(["Expense", "CreditExpense"]),
         )
     ).all()
 

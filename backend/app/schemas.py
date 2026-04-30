@@ -3,6 +3,16 @@ from uuid import UUID
 from datetime import date, datetime
 from typing import Optional, Literal
 
+TransactionTypeLiteral = Literal[
+    'Income',
+    'Expense',
+    'Transfer',
+    'LiabilityPayment',
+    'Borrowing',
+    'CreditExpense',
+    'CreditAssetPurchase',
+]
+
 # Account Schemas
 class AccountBase(BaseModel):
     name: str
@@ -32,7 +42,7 @@ class TransactionBase(BaseModel):
     date: date
     description: str
     amount: float
-    type: str
+    type: TransactionTypeLiteral
     category: Optional[str] = None
     currency: str = 'JPY'
     from_account_id: Optional[int] = None
@@ -115,7 +125,7 @@ class AnalysisSummary(BaseModel):
 class RecurringTransactionBase(BaseModel):
     name: str
     amount: float
-    type: Literal['Income', 'Expense', 'Transfer', 'LiabilityPayment']
+    type: TransactionTypeLiteral
     from_account_id: Optional[int] = None
     to_account_id: Optional[int] = None
     frequency: Literal['Monthly', 'Yearly']

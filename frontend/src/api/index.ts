@@ -125,12 +125,12 @@ export const getAccountsByType = async () => {
     return response.data;
 };
 
-export const createAccount = async (account: { name: string; account_type: string; budget_limit?: number }) => {
+export const createAccount = async (account: { name: string; account_type: string; balance?: number; budget_limit?: number; expected_return?: number }) => {
     const response = await api.post('/accounts/', account);
     return response.data;
 };
 
-export const updateAccount = async (id: number, data: { name?: string; budget_limit?: number; is_active?: boolean }) => {
+export const updateAccount = async (id: number, data: { name?: string; budget_limit?: number; expected_return?: number; is_active?: boolean }) => {
     const response = await api.put(`/accounts/${id}`, data);
     return response.data;
 };

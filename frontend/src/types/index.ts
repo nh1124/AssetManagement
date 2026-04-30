@@ -3,7 +3,7 @@ export interface Transaction {
     date: string;
     description: string;
     amount: number;
-    type: 'Income' | 'Expense' | 'Transfer' | 'LiabilityPayment';
+    type: 'Income' | 'Expense' | 'Transfer' | 'LiabilityPayment' | 'Borrowing' | 'CreditExpense' | 'CreditAssetPurchase';
     category?: string;
     currency: string;
     from_account_id?: number;

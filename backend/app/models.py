@@ -11,6 +11,9 @@ class TransactionType(str, enum.Enum):
     EXPENSE = "Expense"
     TRANSFER = "Transfer"
     LIABILITY_PAYMENT = "LiabilityPayment"
+    BORROWING = "Borrowing"
+    CREDIT_EXPENSE = "CreditExpense"
+    CREDIT_ASSET_PURCHASE = "CreditAssetPurchase"
 
 class AccountType(str, enum.Enum):
     ASSET = "asset"
@@ -149,7 +152,7 @@ class RecurringTransaction(Base):
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
     name = Column(String, index=True)
     amount = Column(Float)
-    type = Column(String)  # Income, Expense, Transfer, LiabilityPayment
+    type = Column(String)  # Income, Expense, Transfer, LiabilityPayment, Borrowing, CreditExpense, CreditAssetPurchase
     from_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     to_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     frequency = Column(String)  # Monthly, Yearly
