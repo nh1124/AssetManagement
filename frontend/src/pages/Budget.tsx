@@ -1,13 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import type { MonthlyBudget } from '../types';
-import { createBudget, deleteBudget, getBudgetDefaults, getBudgets } from '../api';
+import { createBudget, deleteBudget, getAccounts, getBudgets } from '../api';
 import { useToast } from '../components/Toast';
+
+interface ExpenseAccount {
+    id: number;
+    name: string;
+}
 
 export default function Budget() {
     const [period, setPeriod] = useState(new Date().toISOString().slice(0, 7));
     const [budgets, setBudgets] = useState<MonthlyBudget[]>([]);
-    const [defaults, setDefaults] = useState<Array<{ account_id: number; account_name: string; budget_limit?: number }>>([]);
+    const [expenseAccounts, setExpenseAccounts] = useState<ExpenseAccount[]>([]);
     const [newBudget, setNewBudget] = useState({ account_id: '', amount: '' });
     const [loading, setLoading] = useState(false);
     const { showToast } = useToast();
@@ -17,10 +22,10 @@ export default function Budget() {
         try {
             const [budgetRows, defaultRows] = await Promise.all([
                 getBudgets(period),
-                getBudgetDefaults(),
+                getAccounts('expense'),
             ]);
             setBudgets(budgetRows);
-            setDefaults(defaultRows);
+            setExpenseAccounts(defaultRows);
         } catch (error) {
             console.error(error);
             showToast('Failed to load budget data', 'error');
@@ -112,9 +117,9 @@ export default function Budget() {
                         className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
                     >
                         <option value="">Select...</option>
-                        {defaults.map((row) => (
-                            <option key={row.account_id} value={row.account_id}>
-                                {row.account_name}
+                        {expenseAccounts.map((row) => (
+                            <option key={row.id} value={row.id}>
+                                {row.name}
                             </option>
                         ))}
                     </select>

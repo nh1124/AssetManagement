@@ -13,13 +13,11 @@ class AccountCreate(BaseModel):
     name: str
     account_type: str
     balance: float = 0
-    budget_limit: Optional[float] = None
     expected_return: float = 0.0
 
 class AccountUpdate(BaseModel):
     name: Optional[str] = None
     balance: Optional[float] = None
-    budget_limit: Optional[float] = None
     expected_return: Optional[float] = None
     is_active: Optional[bool] = None
 
@@ -28,7 +26,6 @@ class AccountResponse(BaseModel):
     name: str
     account_type: str
     balance: float
-    budget_limit: Optional[float] = None
     expected_return: float = 0.0
     is_active: bool = True
 
@@ -77,7 +74,6 @@ def get_accounts_grouped_by_type(
                 "id": acc.id,
                 "name": acc.name,
                 "balance": acc.balance,
-                "budget_limit": acc.budget_limit
             })
     
     return grouped

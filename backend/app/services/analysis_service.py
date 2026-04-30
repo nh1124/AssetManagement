@@ -43,16 +43,7 @@ def get_summary(db: Session, client_id: int) -> dict:
         models.MonthlyBudget.target_period == month_str,
     ).all()
 
-    if monthly_budgets:
-        next_month_budget = sum(mb.amount for mb in monthly_budgets)
-    else:
-        expense_accounts = db.query(models.Account).filter(
-            models.Account.client_id == client_id,
-            models.Account.account_type == "expense",
-            models.Account.is_active.is_(True),
-            models.Account.budget_limit.isnot(None),
-        ).all()
-        next_month_budget = sum(a.budget_limit or 0.0 for a in expense_accounts)
+    next_month_budget = sum(mb.amount for mb in monthly_budgets)
 
     capsules = db.query(models.Capsule).filter(
         models.Capsule.client_id == client_id

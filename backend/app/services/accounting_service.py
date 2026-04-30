@@ -372,9 +372,7 @@ def get_variance_analysis(
     variance_items = []
     for acc in accounts:
         actual = actual_by_account_id.get(acc.id, 0.0)
-        budget = budget_map.get(acc.id)
-        if budget is None:
-            budget = acc.budget_limit or 0.0
+        budget = budget_map.get(acc.id, 0.0)
 
         variance = budget - actual
         variance_items.append(

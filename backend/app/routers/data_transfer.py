@@ -96,7 +96,6 @@ def export_client_data(
                         "account_type",
                         "balance",
                         "parent_id",
-                        "budget_limit",
                         "expected_return",
                         "is_active",
                     ],
@@ -340,7 +339,6 @@ def import_client_data(
                 name=item["name"],
                 account_type=item["account_type"],
                 balance=item.get("balance") or 0,
-                budget_limit=item.get("budget_limit"),
                 expected_return=item.get("expected_return") or 0.0,
                 is_active=item.get("is_active", True),
             )

@@ -42,6 +42,9 @@ def startup_event():
 
     db = SessionLocal()
     try:
+        db.execute(text("ALTER TABLE accounts DROP COLUMN IF EXISTS budget_limit"))
+        db.commit()
+
         # 1. Ensure Default Client exists
         default_client = db.query(models.Client).filter(models.Client.id == 1).first()
         if not default_client:

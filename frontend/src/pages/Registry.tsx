@@ -329,7 +329,7 @@ export default function Registry() {
     const [accounts, setAccounts] = useState<any[]>([]);
     const [editingId, setEditingId] = useState<number | null>(null);
     const [editForm, setEditForm] = useState<any>({});
-    const [newAccount, setNewAccount] = useState({ name: '', account_type: 'expense', budget_limit: '' });
+    const [newAccount, setNewAccount] = useState({ name: '', account_type: 'expense' });
     const [showAddAccount, setShowAddAccount] = useState(false);
     const [productModal, setProductModal] = useState<{ type: 'asset' | 'item'; product: Product | null } | null>(null);
     const [loadingProducts, setLoadingProducts] = useState(false);
@@ -374,10 +374,9 @@ export default function Registry() {
             await createAccount({
                 name: newAccount.name.toLowerCase().replace(/\s+/g, '_'),
                 account_type: newAccount.account_type,
-                budget_limit: newAccount.budget_limit ? parseFloat(newAccount.budget_limit) : undefined,
             });
             showToast(`Account "${newAccount.name}" created`, 'success');
-            setNewAccount({ name: '', account_type: 'expense', budget_limit: '' });
+            setNewAccount({ name: '', account_type: 'expense' });
             setShowAddAccount(false);
             fetchData();
         } catch (error) {
@@ -563,15 +562,6 @@ export default function Registry() {
                                             onChange={(event) => setEditForm({ ...editForm, name: event.target.value })}
                                             className="flex-1 bg-slate-900 border border-slate-600 px-1 py-0.5 text-xs"
                                         />
-                                        {type.value === 'expense' && (
-                                            <input
-                                                type="number"
-                                                placeholder="Budget"
-                                                value={editForm.budget_limit ?? account.budget_limit ?? ''}
-                                                onChange={(event) => setEditForm({ ...editForm, budget_limit: event.target.value ? parseFloat(event.target.value) : null })}
-                                                className="w-24 bg-slate-900 border border-slate-600 px-1 py-0.5 text-xs font-mono-nums"
-                                            />
-                                        )}
                                         <button onClick={() => handleUpdateAccount(account.id)} className="p-1 text-emerald-400 hover:bg-slate-700">
                                             <Save size={12} />
                                         </button>
@@ -583,14 +573,11 @@ export default function Registry() {
                                     <>
                                         <span className="flex-1 text-xs capitalize">{account.name.replace(/_/g, ' ')}</span>
                                         <span className="text-xs font-mono-nums text-slate-400">{formatCurrency(account.balance)}</span>
-                                        {type.value === 'expense' && account.budget_limit && (
-                                            <span className="text-[10px] text-amber-400">Budget: {formatCurrency(account.budget_limit)}</span>
-                                        )}
                                         <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                             <button
                                                 onClick={() => {
                                                     setEditingId(account.id);
-                                                    setEditForm({ name: account.name, budget_limit: account.budget_limit });
+                                                    setEditForm({ name: account.name });
                                                 }}
                                                 className="p-1 text-slate-500 hover:text-white hover:bg-slate-700"
                                             >
@@ -613,7 +600,7 @@ export default function Registry() {
 
             {showAddAccount ? (
                 <div className="border border-dashed border-emerald-700 p-3 space-y-2">
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-2 gap-2">
                         <input
                             type="text"
                             placeholder="Account name"
@@ -630,15 +617,6 @@ export default function Registry() {
                                 <option key={type.value} value={type.value}>{type.label}</option>
                             ))}
                         </select>
-                        {newAccount.account_type === 'expense' && (
-                            <input
-                                type="number"
-                                placeholder="Monthly budget"
-                                value={newAccount.budget_limit}
-                                onChange={(event) => setNewAccount({ ...newAccount, budget_limit: event.target.value })}
-                                className="bg-slate-900 border border-slate-700 px-2 py-1 text-xs font-mono-nums"
-                            />
-                        )}
                     </div>
                     <div className="flex gap-2">
                         <button onClick={handleAddAccount} className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-1.5 text-xs">

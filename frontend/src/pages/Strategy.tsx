@@ -84,7 +84,7 @@ interface DashboardData {
 interface BudgetAccount {
     id: number;
     name: string;
-    budget_limit: number;
+    amount: number;
     balance: number;
     is_custom: boolean;
 }
@@ -119,7 +119,7 @@ export default function Strategy() {
     const [budgetEdits, setBudgetEdits] = useState<Record<number, number>>({});
     const [showBudgetCategoryForm, setShowBudgetCategoryForm] = useState(false);
     const [editingBudgetAccount, setEditingBudgetAccount] = useState<BudgetAccount | null>(null);
-    const [budgetCategoryForm, setBudgetCategoryForm] = useState({ name: '', budget_limit: '' });
+    const [budgetCategoryForm, setBudgetCategoryForm] = useState({ name: '', amount: '' });
     const [currentPeriod, setCurrentPeriod] = useState<string>(new Date().toISOString().slice(0, 7)); // YYYY-MM
     const [monteCarlo, setMonteCarlo] = useState<MonteCarloResult | null>(null);
     const [monteCarloLoading, setMonteCarloLoading] = useState(false);
@@ -287,7 +287,7 @@ export default function Strategy() {
             // Initialize edits with values from response
             const edits: Record<number, number> = {};
             summary.expense_accounts.forEach((acc: BudgetAccount) => {
-                edits[acc.id] = acc.budget_limit;
+                edits[acc.id] = acc.amount;
             });
             setBudgetEdits(edits);
         } catch (error) {
@@ -444,11 +444,11 @@ export default function Strategy() {
             setEditingBudgetAccount(account);
             setBudgetCategoryForm({
                 name: account.name,
-                budget_limit: String(budgetEdits[account.id] ?? account.budget_limit ?? 0),
+                amount: String(budgetEdits[account.id] ?? account.amount ?? 0),
             });
         } else {
             setEditingBudgetAccount(null);
-            setBudgetCategoryForm({ name: '', budget_limit: '' });
+            setBudgetCategoryForm({ name: '', amount: '' });
         }
         setShowBudgetCategoryForm(true);
     };
@@ -457,28 +457,36 @@ export default function Strategy() {
         const name = budgetCategoryForm.name.trim();
         if (!name) return;
 
-        const budgetLimit = parseFloat(budgetCategoryForm.budget_limit || '0') || 0;
+        const amount = parseFloat(budgetCategoryForm.amount || '0') || 0;
         try {
             if (editingBudgetAccount) {
                 await updateAccount(editingBudgetAccount.id, {
                     name,
-                    budget_limit: budgetLimit,
                 });
-                setBudgetEdits({ ...budgetEdits, [editingBudgetAccount.id]: budgetLimit });
+                await saveMonthlyBudgets([{
+                    account_id: editingBudgetAccount.id,
+                    target_period: currentPeriod,
+                    amount,
+                }]);
+                setBudgetEdits({ ...budgetEdits, [editingBudgetAccount.id]: amount });
                 showToast('Budget category updated', 'success');
             } else {
                 const created = await createAccount({
                     name,
                     account_type: 'expense',
                     balance: 0,
-                    budget_limit: budgetLimit,
                 });
-                setBudgetEdits({ ...budgetEdits, [created.id]: budgetLimit });
+                await saveMonthlyBudgets([{
+                    account_id: created.id,
+                    target_period: currentPeriod,
+                    amount,
+                }]);
+                setBudgetEdits({ ...budgetEdits, [created.id]: amount });
                 showToast('Budget category added', 'success');
             }
             setShowBudgetCategoryForm(false);
             setEditingBudgetAccount(null);
-            setBudgetCategoryForm({ name: '', budget_limit: '' });
+            setBudgetCategoryForm({ name: '', amount: '' });
             fetchBudgetSummary();
         } catch (error) {
             showToast('Failed to save budget category', 'error');
@@ -504,7 +512,7 @@ export default function Strategy() {
             const prevSummary = await getBudgetSummary(prevPeriod);
             const edits: Record<number, number> = {};
             prevSummary.expense_accounts.forEach((acc: BudgetAccount) => {
-                edits[acc.id] = acc.budget_limit;
+                edits[acc.id] = acc.amount;
             });
             setBudgetEdits(edits);
             showToast(`Copied from ${prevPeriod}`, 'info');
@@ -669,12 +677,12 @@ export default function Strategy() {
                                     />
                                 </div>
                                 <div className="col-span-3">
-                                    <label className="block text-[9px] text-slate-500 uppercase mb-1">Default Limit</label>
+                                    <label className="block text-[9px] text-slate-500 uppercase mb-1">Monthly Amount</label>
                                     <input
                                         type="number"
                                         step="1000"
-                                        value={budgetCategoryForm.budget_limit}
-                                        onChange={(e) => setBudgetCategoryForm({ ...budgetCategoryForm, budget_limit: e.target.value })}
+                                        value={budgetCategoryForm.amount}
+                                        onChange={(e) => setBudgetCategoryForm({ ...budgetCategoryForm, amount: e.target.value })}
                                         placeholder="0"
                                         className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums text-right focus:outline-none focus:border-emerald-500"
                                     />
@@ -691,7 +699,7 @@ export default function Strategy() {
                                     onClick={() => {
                                         setShowBudgetCategoryForm(false);
                                         setEditingBudgetAccount(null);
-                                        setBudgetCategoryForm({ name: '', budget_limit: '' });
+                                        setBudgetCategoryForm({ name: '', amount: '' });
                                     }}
                                     className="col-span-2 bg-slate-800 hover:bg-slate-700 text-slate-300 py-1.5 text-xs"
                                 >

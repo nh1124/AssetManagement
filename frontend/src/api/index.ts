@@ -125,12 +125,12 @@ export const getAccountsByType = async () => {
     return response.data;
 };
 
-export const createAccount = async (account: { name: string; account_type: string; balance?: number; budget_limit?: number; expected_return?: number }) => {
+export const createAccount = async (account: { name: string; account_type: string; balance?: number; expected_return?: number }) => {
     const response = await api.post('/accounts/', account);
     return response.data;
 };
 
-export const updateAccount = async (id: number, data: { name?: string; budget_limit?: number; expected_return?: number; is_active?: boolean }) => {
+export const updateAccount = async (id: number, data: { name?: string; expected_return?: number; is_active?: boolean }) => {
     const response = await api.put(`/accounts/${id}`, data);
     return response.data;
 };
@@ -270,16 +270,6 @@ export const createBudget = async (budget: { account_id: number; target_period: 
 
 export const deleteBudget = async (id: string) => {
     const response = await api.delete(`/budgets/${id}`);
-    return response.data;
-};
-
-export const getBudgetDefaults = async () => {
-    const response = await api.get('/budgets/defaults');
-    return response.data;
-};
-
-export const updateBudgetDefault = async (accountId: number, budget_limit: number | null) => {
-    const response = await api.put(`/budgets/defaults/${accountId}`, { budget_limit });
     return response.data;
 };
 

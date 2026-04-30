@@ -69,7 +69,6 @@ class Account(Base):
     account_type = Column(String)  # asset, liability, income, expense
     balance = Column(Float, default=0)
     parent_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
-    budget_limit = Column(Float, nullable=True)  # Monthly budget for expense accounts
     expected_return = Column(Float, default=0.0)  # Annual return rate % for asset accounts
     is_active = Column(Boolean, default=True)
     

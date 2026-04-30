@@ -112,19 +112,16 @@ def get_budget_summary(
     total_variable_budget = 0.0
     
     for acc in expense_accounts:
-        # Fallback logic: MonthlyBudget -> Account.budget_limit -> 0
-        limit = budget_map.get(acc.id)
-        if limit is None:
-            limit = acc.budget_limit or 0.0
-            
+        amount = budget_map.get(acc.id, 0.0)
+
         expense_budgets.append({
             "id": acc.id,
             "name": acc.name,
-            "budget_limit": limit,
+            "amount": amount,
             "balance": acc.balance,
             "is_custom": acc.id in budget_map
         })
-        total_variable_budget += limit
+        total_variable_budget += amount
     
     # Get total income from income accounts or recurring
     income_recurring = db.query(models.RecurringTransaction).filter(

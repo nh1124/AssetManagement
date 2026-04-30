@@ -18,7 +18,6 @@ class AccountBase(BaseModel):
     name: str
     account_type: str
     balance: float = 0
-    budget_limit: Optional[float] = None
     expected_return: float = 0.0  # Annual return rate %
 
 class AccountCreate(AccountBase):
@@ -26,7 +25,6 @@ class AccountCreate(AccountBase):
 
 class AccountUpdate(BaseModel):
     name: Optional[str] = None
-    budget_limit: Optional[float] = None
     expected_return: Optional[float] = None
     is_active: Optional[bool] = None
 

@@ -4,7 +4,6 @@ from datetime import date
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
 from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
@@ -13,10 +12,6 @@ from ..database import get_db
 from ..dependencies import get_current_client
 
 router = APIRouter(prefix="/budgets", tags=["budgets"])
-
-
-class BudgetLimitUpdate(BaseModel):
-    budget_limit: Optional[float] = None
 
 
 def _period_to_range(period: str) -> tuple[date, date]:
@@ -143,48 +138,3 @@ def delete_budget(
     db.delete(budget)
     db.commit()
     return {"message": "Budget deleted"}
-
-
-@router.get("/defaults")
-def get_budget_defaults(
-    db: Session = Depends(get_db),
-    current_client: models.Client = Depends(get_current_client),
-):
-    accounts = db.query(models.Account).filter(
-        models.Account.client_id == current_client.id,
-        models.Account.account_type == "expense",
-        models.Account.is_active.is_(True),
-    ).all()
-    return [
-        {
-            "account_id": a.id,
-            "account_name": a.name,
-            "budget_limit": a.budget_limit,
-        }
-        for a in accounts
-    ]
-
-
-@router.put("/defaults/{account_id}")
-def update_budget_default(
-    account_id: int,
-    payload: BudgetLimitUpdate,
-    db: Session = Depends(get_db),
-    current_client: models.Client = Depends(get_current_client),
-):
-    account = db.query(models.Account).filter(
-        models.Account.id == account_id,
-        models.Account.client_id == current_client.id,
-        models.Account.account_type == "expense",
-    ).first()
-    if not account:
-        raise HTTPException(status_code=404, detail="Expense account not found")
-
-    account.budget_limit = payload.budget_limit
-    db.commit()
-    db.refresh(account)
-    return {
-        "account_id": account.id,
-        "account_name": account.name,
-        "budget_limit": account.budget_limit,
-    }
