@@ -1,5 +1,9 @@
 import TheLab from './TheLab';
 
-export default function Analytics() {
-    return <TheLab />;
+interface AnalyticsProps {
+    onNavigate?: (page: string) => void;
+}
+
+export default function Analytics({ onNavigate }: AnalyticsProps) {
+    return <TheLab onNavigate={onNavigate} />;
 }

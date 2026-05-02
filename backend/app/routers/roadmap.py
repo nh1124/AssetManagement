@@ -3,12 +3,32 @@ from sqlalchemy.orm import Session
 from typing import List
 from .. import models, schemas, database, dependencies
 from ..services.milestone_service import reset_milestones_from_annual_plan
+from ..services.strategy_service import get_roadmap_projection
 
 router = APIRouter(
     prefix="/roadmap",
     tags=["Roadmap"],
     dependencies=[Depends(dependencies.get_current_client)]
 )
+
+
+@router.get("/projection")
+def read_roadmap_projection(
+    years: int = Query(default=30, ge=1, le=60),
+    annual_return: float = Query(default=5.0),
+    inflation: float = Query(default=2.0),
+    monthly_savings: float | None = Query(default=None, ge=0),
+    db: Session = Depends(database.get_db),
+    current_client: models.Client = Depends(dependencies.get_current_client),
+):
+    return get_roadmap_projection(
+        db=db,
+        client_id=current_client.id,
+        years=years,
+        annual_return=annual_return,
+        inflation=inflation,
+        monthly_savings=monthly_savings,
+    )
 
 @router.get("/milestones", response_model=List[schemas.Milestone])
 def read_milestones(

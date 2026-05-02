@@ -1,11 +1,14 @@
+from pathlib import Path
+
+from alembic import command
+from alembic.config import Config
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from . import models
-from .database import engine
-from .migration_runner import run_migrations
 from .routers import (
     accounts,
+    actions,
     ai,
     analysis,
     auth,
@@ -30,6 +33,13 @@ app = FastAPI(
     description="SaaS Refactor - Multi-Client Finance Management"
 )
 
+
+def run_alembic_migrations() -> None:
+    backend_dir = Path(__file__).resolve().parents[1]
+    alembic_cfg = Config(str(backend_dir / "alembic.ini"))
+    alembic_cfg.set_main_option("script_location", str(backend_dir / "alembic"))
+    command.upgrade(alembic_cfg, "head")
+
 # Startup Seed Logic
 @app.on_event("startup")
 def startup_event():
@@ -38,8 +48,7 @@ def startup_event():
     from .utils.password import hash_password
     from .services.accounting_service import ensure_default_accounts
 
-    models.Base.metadata.create_all(bind=engine)
-    run_migrations(engine)
+    run_alembic_migrations()
 
     db = SessionLocal()
     try:
@@ -114,6 +123,7 @@ app.include_router(life_events.router)
 app.include_router(monthly_reviews.router)
 app.include_router(simulation.router)
 app.include_router(accounts.router)
+app.include_router(actions.router, dependencies=[Depends(get_current_client)])
 app.include_router(ai.router)
 app.include_router(clients.router)
 app.include_router(data_transfer.router)
@@ -130,7 +140,8 @@ def get_me(current_client: models.Client = Depends(get_current_client)):
         "id": current_client.id,
         "name": current_client.name,
         "username": current_client.username,
-        "email": current_client.email
+        "email": current_client.email,
+        "general_settings": current_client.general_settings or {},
     }
 
 @app.get("/")

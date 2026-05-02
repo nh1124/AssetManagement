@@ -10,6 +10,16 @@ from ..services.accounting_service import process_transaction
 
 router = APIRouter(prefix="/recurring", tags=["recurring"])
 
+
+def advance_next_due_date(recurring: models.RecurringTransaction) -> None:
+    if recurring.next_due_date is None:
+        recurring.next_due_date = date.today()
+
+    if recurring.frequency == 'Monthly':
+        recurring.next_due_date += relativedelta(months=1)
+    elif recurring.frequency == 'Yearly':
+        recurring.next_due_date += relativedelta(years=1)
+
 @router.get("/", response_model=List[schemas.RecurringTransaction])
 def get_recurring_transactions(
     db: Session = Depends(get_db),
@@ -120,12 +130,30 @@ def process_recurring_transaction(
     process_transaction(db, db_transaction)
 
     # 2. Update the next_due_date of the recurring item
-    if db_recurring.frequency == 'Monthly':
-        db_recurring.next_due_date += relativedelta(months=1)
-    elif db_recurring.frequency == 'Yearly':
-        db_recurring.next_due_date += relativedelta(years=1)
+    advance_next_due_date(db_recurring)
     
     db.commit()
     db.refresh(db_recurring)
 
     return {"message": "Transaction processed", "transaction_id": db_transaction.id, "next_due_date": db_recurring.next_due_date}
+
+
+@router.post("/{recurring_id}/skip")
+def skip_recurring_transaction(
+    recurring_id: int,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client)
+):
+    db_recurring = db.query(models.RecurringTransaction).filter(
+        models.RecurringTransaction.id == recurring_id,
+        models.RecurringTransaction.client_id == current_client.id
+    ).first()
+
+    if not db_recurring:
+        raise HTTPException(status_code=404, detail="Recurring transaction not found")
+
+    advance_next_due_date(db_recurring)
+    db.commit()
+    db.refresh(db_recurring)
+
+    return {"message": "Recurring transaction skipped", "next_due_date": db_recurring.next_due_date}

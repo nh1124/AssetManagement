@@ -6,7 +6,7 @@ from ..database import get_db
 from ..dependencies import get_current_client
 from .. import models
 from ..services import analysis_service
-from ..services.accounting_service import get_balance_sheet, get_profit_loss, get_variance_analysis, ensure_default_accounts
+from ..services.accounting_service import get_balance_sheet, get_profit_loss, get_profit_loss_rollup, get_variance_analysis, ensure_default_accounts
 from ..services.reconcile_service import run_reconcile
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
@@ -44,6 +44,7 @@ def get_bs(
 def get_pl(
     year: int = Query(default=None),
     month: int = Query(default=None),
+    rollup: bool = Query(default=False),
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
@@ -54,6 +55,8 @@ def get_pl(
     if month is None:
         month = date.today().month
     
+    if rollup:
+        return get_profit_loss_rollup(db, year, month, client_id=current_client.id)
     return get_profit_loss(db, year, month, client_id=current_client.id)
 
 @router.get("/variance")
@@ -87,6 +90,16 @@ def get_net_position(
     """Get net position for current client."""
     ensure_default_accounts(db, client_id=current_client.id)
     return analysis_service.get_net_position(db, client_id=current_client.id)
+
+
+@router.get("/net-worth-history")
+def get_net_worth_history(
+    months: int = Query(default=36, ge=1, le=240),
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    """Get month-end net worth history calculated from journal entries."""
+    return analysis_service.get_net_worth_history(db, client_id=current_client.id, months=months)
 
 
 @router.get("/reconcile")

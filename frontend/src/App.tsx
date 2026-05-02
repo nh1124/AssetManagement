@@ -8,6 +8,8 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import Journal from './pages/Journal';
 import Goal from './pages/Goal';
 import Analytics from './pages/Analytics';
+import Inbox from './pages/Inbox';
+import Roadmap from './pages/Roadmap';
 import Strategy from './pages/Strategy';
 import Registry from './pages/Registry';
 import SettingsPage from './pages/Settings';
@@ -32,12 +34,16 @@ function AppContent() {
 
   const renderPage = () => {
     switch (currentPage) {
+      case 'inbox':
+        return <Inbox onNavigate={setCurrentPage} />;
       case 'journal':
         return <Journal />;
       case 'goal':
         return <Goal />;
       case 'analytics':
-        return <Analytics />;
+        return <Analytics onNavigate={setCurrentPage} />;
+      case 'roadmap':
+        return <Roadmap />;
       case 'strategy':
         return <Strategy />;
       case 'registry':

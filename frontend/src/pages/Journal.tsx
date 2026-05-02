@@ -6,9 +6,9 @@ import {
 import TabPanel from '../components/TabPanel';
 import SplitView from '../components/SplitView';
 import {
-    getTransactions, getRecurringTransactions,
+    getRecurringTransactions,
     createRecurringTransaction, deleteRecurringTransaction,
-    getAccounts, createTransaction, deleteTransaction,
+    getAccounts, createTransaction, deleteTransaction, updateTransaction, getTransactionsPage,
 } from '../api';
 import { useToast } from '../components/Toast';
 import type { Transaction } from '../types';
@@ -20,6 +20,8 @@ const MAIN_TABS = [
 ];
 
 const CURRENCIES = ['JPY', 'USD', 'EUR', 'GBP', 'CNY'];
+const FILTER_STORAGE_KEY = 'finance_journal_filters';
+const PAGE_SIZE = 50;
 type TransactionKind =
     | 'Income'
     | 'Expense'
@@ -101,9 +103,31 @@ const ACCOUNT_RULES = Object.fromEntries(
 const typeDescription = (type: string) =>
     TRANSACTION_TYPES.find((option) => option.value === type)?.description ?? '';
 
+const defaultFilters = {
+    startDate: '',
+    endDate: '',
+    type: '',
+    q: '',
+    category: '',
+    amountMin: '',
+    amountMax: '',
+    accountId: '',
+};
+
+const loadStoredFilters = () => {
+    try {
+        return { ...defaultFilters, ...JSON.parse(localStorage.getItem(FILTER_STORAGE_KEY) || '{}') };
+    } catch {
+        return defaultFilters;
+    }
+};
+
 export default function Journal() {
-    const [activeTab, setActiveTab] = useState('transaction');
+    const [activeTab, setActiveTab] = useState(() => localStorage.getItem('finance_journal_tab') || 'transaction');
     const [transactions, setTransactions] = useState<Transaction[]>([]);
+    const [transactionTotal, setTransactionTotal] = useState(0);
+    const [filters, setFilters] = useState(loadStoredFilters);
+    const [editingTransactionId, setEditingTransactionId] = useState<number | null>(null);
     const [recurringItems, setRecurringItems] = useState<any[]>([]);
     const [accounts, setAccounts] = useState<AccountItem[]>([]);
     const [isProcessing, setIsProcessing] = useState(false);
@@ -147,6 +171,7 @@ export default function Journal() {
 
     useEffect(() => {
         fetchInitialData();
+        localStorage.removeItem('finance_journal_tab');
     }, []);
 
     useEffect(() => {
@@ -171,12 +196,13 @@ export default function Journal() {
 
     const fetchInitialData = async () => {
         try {
-            const [txs, recs, accs] = await Promise.all([
-                getTransactions(),
+            const [txPage, recs, accs] = await Promise.all([
+                getTransactionsPage({ ...filters, limit: PAGE_SIZE, offset: 0 }),
                 getRecurringTransactions(),
                 getAccounts(),
             ]);
-            setTransactions(txs);
+            setTransactions(txPage.items);
+            setTransactionTotal(txPage.total);
             setRecurringItems(recs);
             setAccounts(accs);
         } catch (error) {
@@ -185,13 +211,44 @@ export default function Journal() {
         }
     };
 
-    const fetchTransactionsOnly = async () => {
+    const fetchTransactionsOnly = async (nextFilters = filters, append = false) => {
         try {
-            const txs = await getTransactions();
-            setTransactions(txs);
+            const txPage = await getTransactionsPage({
+                ...nextFilters,
+                limit: PAGE_SIZE,
+                offset: append ? transactions.length : 0,
+            });
+            setTransactions((prev) => append ? [...prev, ...txPage.items] : txPage.items);
+            setTransactionTotal(txPage.total);
         } catch (error) {
             console.error('Failed to update transactions:', error);
         }
+    };
+
+    const applyFilters = (nextFilters = filters) => {
+        localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(nextFilters));
+        setFilters(nextFilters);
+        fetchTransactionsOnly(nextFilters, false);
+    };
+
+    const setPresetRange = (preset: 'today' | 'week' | 'month' | '30d') => {
+        const end = new Date();
+        const start = new Date();
+        if (preset === 'week') start.setDate(end.getDate() - 6);
+        if (preset === 'month') start.setDate(1);
+        if (preset === '30d') start.setDate(end.getDate() - 29);
+        const next = {
+            ...filters,
+            startDate: start.toISOString().slice(0, 10),
+            endDate: end.toISOString().slice(0, 10),
+        };
+        applyFilters(next);
+    };
+
+    const clearFilters = () => {
+        localStorage.removeItem(FILTER_STORAGE_KEY);
+        setFilters(defaultFilters);
+        fetchTransactionsOnly(defaultFilters, false);
     };
 
     const getCurrencySymbol = (currency: string) => {
@@ -208,7 +265,7 @@ export default function Journal() {
             const toAccountId = formData.toAccountId ? parseInt(formData.toAccountId, 10) : undefined;
             const toAccount = toAccounts.find((acc) => acc.id === toAccountId);
 
-            await createTransaction({
+            const payload = {
                 date: formData.date,
                 description: formData.description,
                 amount: parseFloat(formData.amount),
@@ -217,8 +274,15 @@ export default function Journal() {
                 currency: formData.currency,
                 from_account_id: fromAccountId,
                 to_account_id: toAccountId,
-            });
-            showToast('Record saved', 'success');
+            };
+            if (editingTransactionId) {
+                await updateTransaction(editingTransactionId, payload);
+                showToast('Transaction updated', 'success');
+            } else {
+                await createTransaction(payload);
+                showToast('Record saved', 'success');
+            }
+            setEditingTransactionId(null);
             setFormData({ ...formData, description: '', amount: '', category: '' });
             fetchTransactionsOnly();
         } catch (error) {
@@ -333,6 +397,35 @@ export default function Journal() {
         }
     };
 
+    const handleEditTransaction = (tx: Transaction) => {
+        setActiveTab('transaction');
+        setEditingTransactionId(tx.id);
+        setFormData({
+            date: tx.date,
+            description: tx.description,
+            amount: String(tx.amount),
+            type: tx.type,
+            category: tx.category || '',
+            currency: tx.currency || 'JPY',
+            fromAccountId: tx.from_account_id ? String(tx.from_account_id) : '',
+            toAccountId: tx.to_account_id ? String(tx.to_account_id) : '',
+        });
+    };
+
+    const cancelEditTransaction = () => {
+        setEditingTransactionId(null);
+        setFormData({
+            date: new Date().toISOString().split('T')[0],
+            description: '',
+            amount: '',
+            type: 'Expense',
+            category: '',
+            currency: 'JPY',
+            fromAccountId: '',
+            toAccountId: '',
+        });
+    };
+
     const [editingRecurringId, setEditingRecurringId] = useState<number | null>(null); // State for editing
 
     const handleAddRecurring = async () => {
@@ -398,6 +491,17 @@ export default function Journal() {
             showToast('Failed to delete rule', 'error');
         }
     };
+
+    const loadedIncome = transactions
+        .filter((tx) => tx.type === 'Income')
+        .reduce((sum, tx) => sum + tx.amount, 0);
+    const loadedOutflow = transactions
+        .filter((tx) => tx.type !== 'Income')
+        .reduce((sum, tx) => sum + tx.amount, 0);
+    const loadedNet = loadedIncome - loadedOutflow;
+    const loadedAverage = transactions.length
+        ? transactions.reduce((sum, tx) => sum + tx.amount, 0) / transactions.length
+        : 0;
 
     const leftPane = (
         <TabPanel tabs={MAIN_TABS} activeTab={activeTab} onTabChange={setActiveTab}>
@@ -496,14 +600,25 @@ export default function Journal() {
                             </div>
                         </div>
 
-                        <button
-                            type="submit"
-                            disabled={isProcessing}
-                            className="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-2 flex items-center justify-center gap-1 text-xs font-medium transition-colors"
-                        >
-                            {isProcessing ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-                            Save Transaction
-                        </button>
+                        <div className="flex gap-2">
+                            <button
+                                type="submit"
+                                disabled={isProcessing}
+                                className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-2 flex items-center justify-center gap-1 text-xs font-medium transition-colors disabled:opacity-50"
+                            >
+                                {isProcessing ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                                {editingTransactionId ? 'Update Transaction' : 'Save Transaction'}
+                            </button>
+                            {editingTransactionId && (
+                                <button
+                                    type="button"
+                                    onClick={cancelEditTransaction}
+                                    className="px-4 bg-slate-800 hover:bg-slate-700 text-slate-300 py-2 text-xs font-medium"
+                                >
+                                    Cancel
+                                </button>
+                            )}
+                        </div>
                     </form>
                 )}
 
@@ -825,6 +940,94 @@ export default function Journal() {
 
     const rightPane = (
         <div className="space-y-3 h-full flex flex-col">
+            <div className="border border-slate-800 bg-slate-900/70 p-3 space-y-3">
+                <div className="grid grid-cols-2 xl:grid-cols-4 gap-2">
+                    <input
+                        type="date"
+                        value={filters.startDate}
+                        onChange={(e) => setFilters({ ...filters, startDate: e.target.value })}
+                        className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs"
+                        title="Start date"
+                    />
+                    <input
+                        type="date"
+                        value={filters.endDate}
+                        onChange={(e) => setFilters({ ...filters, endDate: e.target.value })}
+                        className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs"
+                        title="End date"
+                    />
+                    <select
+                        value={filters.type}
+                        onChange={(e) => setFilters({ ...filters, type: e.target.value })}
+                        className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs"
+                        title="Transaction type"
+                    >
+                        <option value="">All types</option>
+                        {TRANSACTION_TYPES.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                    </select>
+                    <select
+                        value={filters.accountId}
+                        onChange={(e) => setFilters({ ...filters, accountId: e.target.value })}
+                        className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs"
+                        title="Account"
+                    >
+                        <option value="">All accounts</option>
+                        {accounts.map((account) => (
+                            <option key={account.id} value={account.id}>{account.name}</option>
+                        ))}
+                    </select>
+                    <input
+                        type="text"
+                        value={filters.q}
+                        onChange={(e) => setFilters({ ...filters, q: e.target.value })}
+                        placeholder="Description"
+                        className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs"
+                    />
+                    <input
+                        type="text"
+                        value={filters.category}
+                        onChange={(e) => setFilters({ ...filters, category: e.target.value })}
+                        placeholder="Category"
+                        className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs"
+                    />
+                    <input
+                        type="number"
+                        value={filters.amountMin}
+                        onChange={(e) => setFilters({ ...filters, amountMin: e.target.value })}
+                        placeholder="Min amount"
+                        className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs"
+                    />
+                    <input
+                        type="number"
+                        value={filters.amountMax}
+                        onChange={(e) => setFilters({ ...filters, amountMax: e.target.value })}
+                        placeholder="Max amount"
+                        className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs"
+                    />
+                </div>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap gap-1">
+                        <button onClick={() => setPresetRange('today')} className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-[10px]">Today</button>
+                        <button onClick={() => setPresetRange('week')} className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-[10px]">This week</button>
+                        <button onClick={() => setPresetRange('month')} className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-[10px]">This month</button>
+                        <button onClick={() => setPresetRange('30d')} className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-[10px]">Last 30 days</button>
+                    </div>
+                    <div className="flex gap-2">
+                        <button onClick={() => applyFilters()} className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white text-[10px] font-bold">Apply</button>
+                        <button onClick={clearFilters} className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold">Clear</button>
+                    </div>
+                </div>
+                <div className="grid grid-cols-4 gap-2 text-[10px] text-slate-400">
+                    <span>{transactionTotal} results</span>
+                    <span className="font-mono-nums text-emerald-400">Income {getCurrencySymbol('JPY')}{Math.round(loadedIncome).toLocaleString()}</span>
+                    <span className="font-mono-nums text-rose-400">Outflow {getCurrencySymbol('JPY')}{Math.round(loadedOutflow).toLocaleString()}</span>
+                    <span className={`font-mono-nums ${loadedNet >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                        Net {getCurrencySymbol('JPY')}{Math.round(loadedNet).toLocaleString()} / Avg {Math.round(loadedAverage).toLocaleString()}
+                    </span>
+                </div>
+            </div>
             <div className="flex-1 overflow-auto space-y-0.5">
                 {transactions.length === 0 ? (
                     <p className="text-slate-600 text-xs py-8 text-center">No transactions yet</p>
@@ -846,6 +1049,7 @@ export default function Journal() {
                                     <button
                                         type="button"
                                         className="p-1 hover:text-slate-300"
+                                        onClick={() => handleEditTransaction(tx)}
                                         aria-label="Edit transaction"
                                         title="Edit transaction"
                                     >
@@ -864,6 +1068,15 @@ export default function Journal() {
                             </div>
                         </div>
                     ))
+                )}
+                {transactions.length < transactionTotal && (
+                    <button
+                        type="button"
+                        onClick={() => fetchTransactionsOnly(filters, true)}
+                        className="w-full py-2 text-xs text-cyan-400 hover:bg-slate-800/50"
+                    >
+                        Load more ({transactions.length}/{transactionTotal})
+                    </button>
                 )}
             </div>
         </div>

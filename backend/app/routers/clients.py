@@ -1,9 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException, Header
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from .. import models
 from ..database import get_db
-from ..security import encrypt_key, decrypt_key
+from ..dependencies import get_current_client
+from ..security import encrypt_key
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/clients", tags=["clients"])
@@ -21,6 +23,15 @@ class ClientResponse(BaseModel):
 
 class ClientKeyUpdate(BaseModel):
     gemini_api_key: str
+
+
+class ClientCreatePayload(BaseModel):
+    name: str
+    seed_defaults: bool = True
+
+
+class ClientSettingsUpdate(BaseModel):
+    general_settings: dict
 
 @router.get("/", response_model=List[ClientResponse])
 def get_clients(db: Session = Depends(get_db)):
@@ -45,20 +56,32 @@ def get_clients(db: Session = Depends(get_db)):
     return results
 
 
-@router.post("/")
-def create_client(name: str, db: Session = Depends(get_db)):
+@router.post("/", response_model=ClientResponse)
+def create_client(
+    payload: ClientCreatePayload,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
     """Create a new client."""
-    db_client = models.Client(name=name, ai_config={}, general_settings={})
+    db_client = models.Client(name=payload.name, ai_config={}, general_settings={})
     db.add(db_client)
+    db.flush()
+    if payload.seed_defaults:
+        from ..services.accounting_service import ensure_default_accounts
+        ensure_default_accounts(db, client_id=db_client.id)
     db.commit()
     db.refresh(db_client)
-    return db_client
+    return {
+        "id": db_client.id,
+        "name": db_client.name,
+        "ai_config": db_client.ai_config or {},
+        "general_settings": db_client.general_settings or {},
+        "has_key": False,
+    }
 
 @router.put("/{client_id}/key")
 def update_client_key(client_id: int, key_data: ClientKeyUpdate, db: Session = Depends(get_db)):
     """Update (and encrypt) a client's Gemini API key in ai_config JSON. Matches VisionArk patch/ai."""
-    from sqlalchemy.orm.attributes import flag_modified
-    
     db_client = db.query(models.Client).filter(models.Client.id == client_id).first()
     if not db_client:
         raise HTTPException(status_code=404, detail="Client not found")
@@ -73,3 +96,20 @@ def update_client_key(client_id: int, key_data: ClientKeyUpdate, db: Session = D
     
     db.commit()
     return {"message": "API key updated and encrypted successfully in ai_config"}
+
+
+@router.put("/{client_id}/settings")
+def update_client_settings(
+    client_id: int,
+    payload: ClientSettingsUpdate,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    if current_client.id != client_id:
+        raise HTTPException(status_code=403, detail="Cannot edit another client settings")
+    settings = dict(current_client.general_settings or {})
+    settings.update(payload.general_settings or {})
+    current_client.general_settings = settings
+    flag_modified(current_client, "general_settings")
+    db.commit()
+    return current_client.general_settings

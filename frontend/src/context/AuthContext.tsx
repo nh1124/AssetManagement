@@ -6,6 +6,7 @@ interface User {
     name: string;
     username: string;
     email?: string;
+    general_settings?: Record<string, any>;
 }
 
 interface AuthContextType {

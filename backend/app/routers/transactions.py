@@ -2,6 +2,7 @@ from datetime import date
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
@@ -11,6 +12,7 @@ from ..services.accounting_service import (
     ensure_default_accounts,
     process_transaction,
     revert_transaction,
+    update_transaction as update_transaction_service,
 )
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
@@ -32,11 +34,19 @@ def _serialize_transaction(tx: models.Transaction) -> dict:
     }
 
 
-@router.get("/", response_model=List[schemas.Transaction])
+@router.get("/")
 def get_transactions(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
-    limit: int = Query(50, le=100),
+    type: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+    amount_min: Optional[float] = Query(None),
+    amount_max: Optional[float] = Query(None),
+    account_id: Optional[int] = Query(None),
+    q: Optional[str] = Query(None),
+    limit: int = Query(50, le=500),
+    offset: int = Query(0, ge=0),
+    paginated: bool = Query(False),
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
@@ -46,9 +56,30 @@ def get_transactions(
         query = query.filter(models.Transaction.date >= start_date)
     if end_date:
         query = query.filter(models.Transaction.date <= end_date)
+    if type:
+        query = query.filter(models.Transaction.type == type)
+    if category:
+        query = query.filter(models.Transaction.category.ilike(f"%{category}%"))
+    if amount_min is not None:
+        query = query.filter(models.Transaction.amount >= amount_min)
+    if amount_max is not None:
+        query = query.filter(models.Transaction.amount <= amount_max)
+    if account_id:
+        query = query.filter(
+            or_(
+                models.Transaction.from_account_id == account_id,
+                models.Transaction.to_account_id == account_id,
+            )
+        )
+    if q:
+        query = query.filter(models.Transaction.description.ilike(f"%{q}%"))
 
-    txs = query.order_by(models.Transaction.date.desc()).limit(limit).all()
-    return [_serialize_transaction(tx) for tx in txs]
+    total = query.count() if paginated else None
+    txs = query.order_by(models.Transaction.date.desc(), models.Transaction.id.desc()).offset(offset).limit(limit).all()
+    items = [_serialize_transaction(tx) for tx in txs]
+    if paginated:
+        return {"items": items, "total": total}
+    return items
 
 
 @router.post("/", response_model=schemas.Transaction)
@@ -69,6 +100,25 @@ def create_transaction(
     db.refresh(db_transaction)
 
     return _serialize_transaction(db_transaction)
+
+
+@router.put("/{transaction_id}", response_model=schemas.Transaction)
+def update_transaction(
+    transaction_id: int,
+    payload: schemas.TransactionUpdate,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    """Update a transaction and atomically rebuild its journal entries."""
+    ensure_default_accounts(db, client_id=current_client.id)
+    try:
+        tx = update_transaction_service(db, transaction_id, payload, current_client.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if not tx:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    return _serialize_transaction(tx)
 
 
 @router.delete("/{transaction_id}")

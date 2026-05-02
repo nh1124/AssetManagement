@@ -359,6 +359,172 @@ def calculate_overall_goal_probability(db: Session, client_id: int) -> dict:
     }
 
 
+def calculate_roadmap_progression(events: list[dict]) -> dict:
+    """Return weighted goal progression and status across all future liabilities."""
+    total_target = sum((event.get("target_amount") or 0.0) for event in events)
+    if not events or total_target <= 0:
+        return {"progression": 100.0, "status": "On Track"}
+
+    weighted_progress = sum(
+        min(event.get("progress_percentage") or 0.0, 100.0)
+        * ((event.get("target_amount") or 0.0) / total_target)
+        for event in events
+    )
+    if weighted_progress >= 95:
+        status = "On Track"
+    elif weighted_progress >= 80:
+        status = "At Risk"
+    else:
+        status = "Off Track"
+    return {"progression": round(weighted_progress, 1), "status": status}
+
+
+def simulate_net_worth_forward(
+    db: Session,
+    client_id: int,
+    years: int = 30,
+    annual_return: float = 5.0,
+    inflation: float = 2.0,
+    monthly_savings: float | None = None,
+) -> list[dict]:
+    """Simulate total net worth forward as yearly P10/P50/P90 bands."""
+    from .accounting_service import get_balance_sheet
+
+    years = max(1, min(years, 60))
+    config = db.query(models.SimulationConfig).filter(
+        models.SimulationConfig.client_id == client_id
+    ).first()
+    if monthly_savings is None:
+        monthly_savings = config.monthly_savings if config else 50000.0
+    volatility = config.volatility if config else 15.0
+
+    bs = get_balance_sheet(db, client_id=client_id)
+    starting_net_worth = bs.get("net_worth", 0.0) or 0.0
+    annual_contribution = (monthly_savings or 0.0) * 12
+    real_return = (annual_return - inflation) / 100.0
+    return_std = max(volatility or 0.0, 0.0) / 100.0
+    current_year = date.today().year
+
+    n_simulations = 1200
+    rng = np.random.default_rng(42)
+    balances = np.full(n_simulations, starting_net_worth, dtype=float)
+    projection = [
+        {
+            "year": current_year,
+            "p10": round(float(starting_net_worth), 0),
+            "p50": round(float(starting_net_worth), 0),
+            "p90": round(float(starting_net_worth), 0),
+        }
+    ]
+
+    for offset in range(1, years + 1):
+        sampled_returns = rng.normal(real_return, return_std, n_simulations)
+        balances = (balances + annual_contribution) * (1 + sampled_returns)
+        p10, p50, p90 = np.percentile(balances, [10, 50, 90])
+        projection.append(
+            {
+                "year": current_year + offset,
+                "p10": round(float(p10), 0),
+                "p50": round(float(p50), 0),
+                "p90": round(float(p90), 0),
+            }
+        )
+
+    return projection
+
+
+def aggregate_life_event_demand_by_year(
+    db: Session,
+    client_id: int,
+    years: int = 30,
+) -> list[dict]:
+    """Return cumulative future liability demand by calendar year."""
+    years = max(1, min(years, 60))
+    current_year = date.today().year
+    life_events = db.query(models.LifeEvent).filter(
+        models.LifeEvent.client_id == client_id
+    ).order_by(models.LifeEvent.target_date, models.LifeEvent.id).all()
+
+    rows = []
+    for year in range(current_year, current_year + years + 1):
+        due = [
+            event for event in life_events
+            if event.target_date and event.target_date.year <= year
+        ]
+        rows.append(
+            {
+                "year": year,
+                "cumulative_target": round(
+                    sum((event.target_amount or 0.0) for event in due),
+                    0,
+                ),
+                "event_count": len(due),
+            }
+        )
+    return rows
+
+
+def get_roadmap_projection(
+    db: Session,
+    client_id: int,
+    years: int = 30,
+    annual_return: float = 5.0,
+    inflation: float = 2.0,
+    monthly_savings: float | None = None,
+) -> dict:
+    """Combine historical net worth, forward simulation, goals, and milestones."""
+    from .analysis_service import get_net_worth_history
+
+    events = get_life_events_with_progress(
+        db=db,
+        client_id=client_id,
+        annual_return=annual_return,
+        monthly_savings=monthly_savings if monthly_savings is not None else 50000.0,
+    )
+    progression = calculate_roadmap_progression(events)
+    milestones = db.query(models.Milestone).filter(
+        models.Milestone.client_id == client_id
+    ).order_by(models.Milestone.date, models.Milestone.id).all()
+    event_name_by_id = {event["id"]: event["name"] for event in events}
+
+    return {
+        "history": get_net_worth_history(db, client_id=client_id, months=24),
+        "projection": simulate_net_worth_forward(
+            db=db,
+            client_id=client_id,
+            years=years,
+            annual_return=annual_return,
+            inflation=inflation,
+            monthly_savings=monthly_savings,
+        ),
+        "liability_demand": aggregate_life_event_demand_by_year(
+            db=db,
+            client_id=client_id,
+            years=years,
+        ),
+        "milestones": [
+            {
+                "id": milestone.id,
+                "life_event_id": milestone.life_event_id,
+                "life_event_name": event_name_by_id.get(milestone.life_event_id),
+                "date": milestone.date.isoformat(),
+                "target_amount": milestone.target_amount,
+                "note": milestone.note,
+            }
+            for milestone in milestones
+        ],
+        "events": events,
+        "roadmap_progression": progression["status"],
+        "roadmap_progression_pct": progression["progression"],
+        "params": {
+            "years": years,
+            "annual_return": annual_return,
+            "inflation": inflation,
+            "monthly_savings": monthly_savings,
+        },
+    }
+
+
 def get_strategy_dashboard(
     db: Session, 
     client_id: int,

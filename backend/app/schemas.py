@@ -18,14 +18,20 @@ class AccountBase(BaseModel):
     name: str
     account_type: str
     balance: float = 0
+    parent_id: Optional[int] = None
     expected_return: float = 0.0  # Annual return rate %
+    role: Literal["defense", "growth", "earmarked", "operating", "unassigned"] = "unassigned"
+    role_target_amount: Optional[float] = None
 
 class AccountCreate(AccountBase):
     pass
 
 class AccountUpdate(BaseModel):
     name: Optional[str] = None
+    parent_id: Optional[int] = None
     expected_return: Optional[float] = None
+    role: Optional[Literal["defense", "growth", "earmarked", "operating", "unassigned"]] = None
+    role_target_amount: Optional[float] = None
     is_active: Optional[bool] = None
 
 class Account(AccountBase):
@@ -48,6 +54,16 @@ class TransactionBase(BaseModel):
 
 class TransactionCreate(TransactionBase):
     pass
+
+class TransactionUpdate(BaseModel):
+    date: Optional[date] = None
+    description: Optional[str] = None
+    amount: Optional[float] = None
+    type: Optional[TransactionTypeLiteral] = None
+    category: Optional[str] = None
+    currency: Optional[str] = None
+    from_account_id: Optional[int] = None
+    to_account_id: Optional[int] = None
 
 class Transaction(TransactionBase):
     id: int
@@ -110,11 +126,15 @@ class AnalysisSummary(BaseModel):
     total_goal_amount: float
     total_funded: float
     effective_cash: Optional[float] = None
+    logical_balance: Optional[float] = None
     cfo_briefing: Optional[str] = None
     savings_rate: Optional[float] = None
     idle_money_rate: Optional[float] = None
+    idle_money: Optional[float] = None
+    idle_money_by_role: Optional[list[dict]] = None
     liquidity_coverage_ratio: Optional[float] = None
     runway_months: Optional[float] = None
+    roadmap_progression: Optional[Literal["On Track", "At Risk", "Off Track"]] = None
     monthly_transaction_count: Optional[int] = None
     total_goal_count: Optional[int] = None
     budget_usage_rate: Optional[float] = None

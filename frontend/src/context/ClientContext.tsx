@@ -13,6 +13,7 @@ interface ClientContextType {
     clientId: number;
     setClientId: (id: number) => void;
     clients: Client[];
+    currentClient?: Client;
     refreshClients: () => Promise<void>;
 }
 
@@ -35,7 +36,7 @@ export const ClientProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     const refreshClients = async () => {
         try {
-            const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8100'}/clients/`);
+            const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:18100'}/clients/`);
             if (response.ok) {
                 const data = await response.json();
                 setClients(data);
@@ -49,8 +50,10 @@ export const ClientProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         refreshClients();
     }, []);
 
+    const currentClient = clients.find((client) => client.id === clientId);
+
     return (
-        <ClientContext.Provider value={{ clientId, setClientId, clients, refreshClients }}>
+        <ClientContext.Provider value={{ clientId, setClientId, clients, currentClient, refreshClients }}>
             {children}
         </ClientContext.Provider>
     );

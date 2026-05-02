@@ -1,8 +1,8 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Save, User, Key, Eye, EyeOff, Users, Plus, Settings, PlusCircle, Database, Download, Upload } from 'lucide-react';
 import { useClient } from '../context/ClientContext';
 import { useAuth } from '../context/AuthContext';
-import { exportData, importData, updateClientKey, updateProfile } from '../api';
+import { createClient, exportData, importData, updateClientKey, updateClientSettings, updateProfile } from '../api';
 import { useToast } from '../components/Toast';
 
 export default function SettingsPage() {
@@ -24,7 +24,22 @@ export default function SettingsPage() {
     const [isSaving, setIsSaving] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
     const [isImporting, setIsImporting] = useState(false);
+    const [showClientModal, setShowClientModal] = useState(false);
+    const [newClient, setNewClient] = useState({ name: '', seed_defaults: true });
+    const [isCreatingClient, setIsCreatingClient] = useState(false);
     const importInputRef = useRef<HTMLInputElement>(null);
+    const currentClient = clients.find(c => c.id === clientId);
+
+    useEffect(() => {
+        const general = currentClient?.general_settings || user?.general_settings || {};
+        setSettings((prev) => ({
+            ...prev,
+            name: user?.name || prev.name,
+            email: user?.email || prev.email,
+            currency: general.currency || 'JPY',
+            language: general.language || 'ja',
+        }));
+    }, [currentClient?.id, user?.id]);
 
     const handleSave = async () => {
         setIsSaving(true);
@@ -42,6 +57,11 @@ export default function SettingsPage() {
                 setSettings(prev => ({ ...prev, geminiApiKey: '' }));
             }
 
+            await updateClientSettings(clientId, {
+                currency: settings.currency,
+                language: settings.language,
+            });
+
             setSaved(true);
             showToast('Profile and settings updated successfully', 'success');
             refreshClients();
@@ -53,7 +73,25 @@ export default function SettingsPage() {
         }
     };
 
-    const currentClient = clients.find(c => c.id === clientId);
+    const handleCreateClient = async () => {
+        if (!newClient.name.trim()) return;
+        setIsCreatingClient(true);
+        try {
+            const created = await createClient({
+                name: newClient.name.trim(),
+                seed_defaults: newClient.seed_defaults,
+            });
+            await refreshClients();
+            setNewClient({ name: '', seed_defaults: true });
+            setShowClientModal(false);
+            setClientId(created.id);
+            showToast('Client created', 'success');
+        } catch (error: any) {
+            showToast(error.response?.data?.detail || 'Failed to create client', 'error');
+        } finally {
+            setIsCreatingClient(false);
+        }
+    };
 
     const handleExport = async () => {
         setIsExporting(true);
@@ -206,7 +244,7 @@ export default function SettingsPage() {
                                     </select>
                                     <button
                                         className="px-3 bg-slate-800/50 border border-slate-700 hover:bg-slate-700 transition-colors"
-                                        onClick={() => {/* TODO: Add new client */ }}
+                                        onClick={() => setShowClientModal(true)}
                                     >
                                         <Plus size={16} />
                                     </button>
@@ -343,6 +381,41 @@ export default function SettingsPage() {
                     </div>
                 </div>
             </div>
+            {showClientModal && (
+                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+                    <div className="w-full max-w-md bg-slate-950 border border-slate-700 p-5">
+                        <div className="flex items-center justify-between mb-4">
+                            <h2 className="text-sm font-semibold">New Client</h2>
+                            <button onClick={() => setShowClientModal(false)} className="text-slate-500 hover:text-slate-200">
+                                ×
+                            </button>
+                        </div>
+                        <div className="space-y-3">
+                            <input
+                                value={newClient.name}
+                                onChange={(event) => setNewClient({ ...newClient, name: event.target.value })}
+                                placeholder="Client name"
+                                className="w-full bg-slate-900 border border-slate-700 px-3 py-2 text-sm"
+                            />
+                            <label className="flex items-center gap-2 text-xs text-slate-400">
+                                <input
+                                    type="checkbox"
+                                    checked={newClient.seed_defaults}
+                                    onChange={(event) => setNewClient({ ...newClient, seed_defaults: event.target.checked })}
+                                />
+                                Seed default accounts
+                            </label>
+                            <button
+                                onClick={handleCreateClient}
+                                disabled={isCreatingClient}
+                                className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white py-2 text-xs font-bold"
+                            >
+                                {isCreatingClient ? 'Creating...' : 'Create Client'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

@@ -162,9 +162,9 @@ def _apply_credit(account: models.Account, amount: float) -> None:
         account.balance += amount
 
 
-def process_transaction(db: Session, transaction: models.Transaction) -> None:
+def _post_transaction_journal(db: Session, transaction: models.Transaction) -> None:
     """
-    Process a transaction with double-entry bookkeeping.
+    Post a transaction with double-entry bookkeeping without committing.
     The UI uses from_account as the credit side and to_account as the debit side.
     """
     client_id = transaction.client_id
@@ -216,12 +216,17 @@ def process_transaction(db: Session, transaction: models.Transaction) -> None:
 
     db.add(debit_entry)
     db.add(credit_entry)
+
+
+def process_transaction(db: Session, transaction: models.Transaction) -> None:
+    """Process a transaction with double-entry bookkeeping and commit it."""
+    _post_transaction_journal(db, transaction)
     db.commit()
 
 
-def revert_transaction(db: Session, transaction: models.Transaction) -> None:
+def _rollback_transaction_effects(db: Session, transaction: models.Transaction) -> None:
     """
-    Revert the impact of a transaction on account balances before deletion.
+    Revert the impact of a transaction on account balances without committing.
     """
     client_id = transaction.client_id
     if client_id is None:
@@ -235,7 +240,44 @@ def revert_transaction(db: Session, transaction: models.Transaction) -> None:
     if to_account:
         _apply_credit(to_account, transaction.amount)
 
+
+def revert_transaction(db: Session, transaction: models.Transaction) -> None:
+    """Revert the impact of a transaction on account balances before deletion."""
+    _rollback_transaction_effects(db, transaction)
     db.commit()
+
+
+def update_transaction(
+    db: Session,
+    transaction_id: int,
+    payload,
+    client_id: int,
+) -> models.Transaction | None:
+    tx = db.query(models.Transaction).filter(
+        models.Transaction.id == transaction_id,
+        models.Transaction.client_id == client_id,
+    ).first()
+    if not tx:
+        return None
+
+    try:
+        _rollback_transaction_effects(db, tx)
+        db.query(models.JournalEntry).filter(
+            models.JournalEntry.transaction_id == transaction_id
+        ).delete(synchronize_session=False)
+
+        update_data = payload.model_dump(exclude_unset=True)
+        for field, value in update_data.items():
+            setattr(tx, field, value)
+
+        db.flush()
+        _post_transaction_journal(db, tx)
+        db.commit()
+        db.refresh(tx)
+        return tx
+    except Exception:
+        db.rollback()
+        raise
 
 
 def get_balance_sheet(
@@ -312,6 +354,59 @@ def get_profit_loss(db: Session, year: int, month: int, client_id: int | None = 
         "total_income": total_income,
         "total_expenses": total_expense,
         "net_profit_loss": net_pl,
+    }
+
+
+def get_profit_loss_rollup(db: Session, year: int, month: int, client_id: int | None = None) -> dict:
+    """Generate P/L grouped by top-level parent account when hierarchy exists."""
+    start_date = date(year, month, 1)
+    if month == 12:
+        end_date = date(year + 1, 1, 1)
+    else:
+        end_date = date(year, month + 1, 1)
+
+    accounts = db.query(models.Account).filter(models.Account.client_id == client_id).all()
+    account_by_id = {account.id: account for account in accounts}
+
+    def root_name(account_id: int | None, fallback: str) -> str:
+        account = account_by_id.get(account_id or -1)
+        if not account:
+            return fallback or "Other"
+        seen = set()
+        current = account
+        while current.parent_id and current.parent_id not in seen and current.parent_id in account_by_id:
+            seen.add(current.id)
+            current = account_by_id[current.parent_id]
+        return current.name or fallback or "Other"
+
+    transactions = db.query(models.Transaction).filter(
+        and_(
+            models.Transaction.client_id == client_id,
+            models.Transaction.date >= start_date,
+            models.Transaction.date < end_date,
+        )
+    ).all()
+
+    income_by_category: dict[str, float] = {}
+    expense_by_category: dict[str, float] = {}
+    for tx in transactions:
+        if tx.type == "Income":
+            category = root_name(tx.from_account_id, tx.category or "Other")
+            income_by_category[category] = income_by_category.get(category, 0) + tx.amount
+        elif tx.type in ("Expense", "CreditExpense"):
+            category = root_name(tx.to_account_id, tx.category or "Other")
+            expense_by_category[category] = expense_by_category.get(category, 0) + tx.amount
+
+    total_income = sum(income_by_category.values())
+    total_expense = sum(expense_by_category.values())
+    return {
+        "period": f"{year}-{month:02d}",
+        "income": [{"category": k, "amount": v} for k, v in income_by_category.items()],
+        "expenses": [{"category": k, "amount": v} for k, v in expense_by_category.items()],
+        "total_income": total_income,
+        "total_expenses": total_expense,
+        "net_profit_loss": total_income - total_expense,
+        "rollup": True,
     }
 
 

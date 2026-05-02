@@ -21,6 +21,13 @@ class AccountType(str, enum.Enum):
     INCOME = "income"
     EXPENSE = "expense"
 
+class AccountRole(str, enum.Enum):
+    DEFENSE = "defense"
+    GROWTH = "growth"
+    EARMARKED = "earmarked"
+    OPERATING = "operating"
+    UNASSIGNED = "unassigned"
+
 class Client(Base):
     """SaaS Client/User: Owns a subset of data. Matches VisionArk's User + UserSettings pattern."""
     __tablename__ = "clients"
@@ -57,6 +64,7 @@ class Client(Base):
     milestones = relationship("Milestone", back_populates="client")
     capsules = relationship("Capsule", back_populates="client")
     monthly_reviews = relationship("MonthlyReview", back_populates="client")
+    monthly_actions = relationship("MonthlyAction", back_populates="client")
 
 class Account(Base):
     """Double-entry accounting: Each account has a type and balance."""
@@ -70,6 +78,8 @@ class Account(Base):
     balance = Column(Float, default=0)
     parent_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     expected_return = Column(Float, default=0.0)  # Annual return rate % for asset accounts
+    role = Column(String, default=AccountRole.UNASSIGNED.value, server_default=AccountRole.UNASSIGNED.value, nullable=False)
+    role_target_amount = Column(Float, nullable=True)
     is_active = Column(Boolean, default=True)
     
     client = relationship("Client", back_populates="accounts")
@@ -225,6 +235,32 @@ class MonthlyReview(Base):
     __table_args__ = (UniqueConstraint("client_id", "target_period", name="_client_review_period_uc"),)
 
     client = relationship("Client", back_populates="monthly_reviews")
+
+
+class MonthlyAction(Base):
+    """Auditable decision/action record generated from monthly reports or reviews."""
+    __tablename__ = "monthly_actions"
+    __table_args__ = (
+        UniqueConstraint("client_id", "idempotency_key", name="_client_action_idempotency_uc"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
+    source_period = Column(String, nullable=False)
+    target_period = Column(String, nullable=True)
+    proposal_id = Column(String, nullable=False)
+    kind = Column(String, nullable=False)
+    description = Column(Text, default="")
+    amount = Column(Float, nullable=True)
+    target_id = Column(Integer, nullable=True)
+    payload = Column(JSON, default=dict)
+    result = Column(JSON, default=dict)
+    status = Column(String, default="pending")  # pending / applied / skipped / failed
+    idempotency_key = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    applied_at = Column(DateTime, nullable=True)
+
+    client = relationship("Client", back_populates="monthly_actions")
 
 class Milestone(Base):
     __tablename__ = "milestones"

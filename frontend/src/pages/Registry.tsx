@@ -7,6 +7,7 @@ import {
     deleteAccount,
     deleteProduct,
     getAccounts,
+    getAccountTree,
     getProducts,
     getUnitEconomicsSummary,
     seedDefaultAccounts,
@@ -14,7 +15,7 @@ import {
     updateProduct,
 } from '../api';
 import { useToast } from '../components/Toast';
-import type { Product } from '../types';
+import type { Account, AccountRole, AccountTreeNode, Product } from '../types';
 
 const TABS = [
     { id: 'accounts', label: 'Accounts' },
@@ -27,6 +28,14 @@ const ACCOUNT_TYPES = [
     { value: 'liability', label: 'Liability', color: 'text-rose-400' },
     { value: 'income', label: 'Income', color: 'text-cyan-400' },
     { value: 'expense', label: 'Expense', color: 'text-amber-400' },
+];
+
+const ACCOUNT_ROLES: Array<{ value: AccountRole; label: string }> = [
+    { value: 'defense', label: 'Defense' },
+    { value: 'growth', label: 'Growth' },
+    { value: 'earmarked', label: 'Earmarked' },
+    { value: 'operating', label: 'Operating' },
+    { value: 'unassigned', label: 'Unassigned' },
 ];
 
 const EMPTY_PRODUCT_FORM = {
@@ -326,10 +335,17 @@ export default function Registry() {
     const [activeTab, setActiveTab] = useState('accounts');
     const [products, setProducts] = useState<Product[]>([]);
     const [unitSummary, setUnitSummary] = useState<any>(null);
-    const [accounts, setAccounts] = useState<any[]>([]);
+    const [accounts, setAccounts] = useState<Account[]>([]);
+    const [accountTree, setAccountTree] = useState<Record<string, AccountTreeNode[]>>({});
     const [editingId, setEditingId] = useState<number | null>(null);
     const [editForm, setEditForm] = useState<any>({});
-    const [newAccount, setNewAccount] = useState({ name: '', account_type: 'expense' });
+    const [newAccount, setNewAccount] = useState({
+        name: '',
+        account_type: 'expense',
+        role: 'unassigned' as AccountRole,
+        role_target_amount: '',
+        parent_id: '',
+    });
     const [showAddAccount, setShowAddAccount] = useState(false);
     const [productModal, setProductModal] = useState<{ type: 'asset' | 'item'; product: Product | null } | null>(null);
     const [loadingProducts, setLoadingProducts] = useState(false);
@@ -345,19 +361,23 @@ export default function Registry() {
     const fetchData = async () => {
         try {
             setLoadingProducts(true);
-            const [productsData, summaryData, accountsData] = await Promise.all([
+            const [productsData, summaryData, accountsData, treeData] = await Promise.all([
                 getProducts(),
                 getUnitEconomicsSummary(),
                 getAccounts(),
+                getAccountTree(),
             ]);
             setProducts(productsData);
             setUnitSummary(summaryData);
             setAccounts(accountsData);
+            setAccountTree(treeData);
         } catch (error) {
             console.error('Failed to fetch registry data:', error);
             try {
                 await seedDefaultAccounts();
-                setAccounts(await getAccounts());
+                const [accountsData, treeData] = await Promise.all([getAccounts(), getAccountTree()]);
+                setAccounts(accountsData);
+                setAccountTree(treeData);
             } catch {
                 showToast('Failed to load registry data', 'error');
             }
@@ -374,9 +394,12 @@ export default function Registry() {
             await createAccount({
                 name: newAccount.name.toLowerCase().replace(/\s+/g, '_'),
                 account_type: newAccount.account_type,
+                role: newAccount.account_type === 'asset' ? newAccount.role : 'unassigned',
+                role_target_amount: newAccount.role_target_amount ? Number(newAccount.role_target_amount) : null,
+                parent_id: newAccount.parent_id ? Number(newAccount.parent_id) : null,
             });
             showToast(`Account "${newAccount.name}" created`, 'success');
-            setNewAccount({ name: '', account_type: 'expense' });
+            setNewAccount({ name: '', account_type: 'expense', role: 'unassigned', role_target_amount: '', parent_id: '' });
             setShowAddAccount(false);
             fetchData();
         } catch (error) {
@@ -543,57 +566,127 @@ export default function Registry() {
         );
     };
 
-    const renderAccounts = () => (
+    const renderAccounts = () => {
+        const renderNode = (account: AccountTreeNode, depth: number) => {
+            const parentOptions = accounts.filter((candidate) => (
+                candidate.account_type === account.account_type && candidate.id !== account.id
+            ));
+            return (
+                <div key={account.id} className="space-y-1">
+                    <div className="flex items-center gap-2 py-1.5 px-2 bg-slate-800/30 border border-slate-700 group flex-wrap" style={{ marginLeft: depth * 18 }}>
+                        {editingId === account.id ? (
+                            <>
+                                <input
+                                    type="text"
+                                    value={editForm.name ?? account.name}
+                                    onChange={(event) => setEditForm({ ...editForm, name: event.target.value })}
+                                    className="min-w-44 flex-1 bg-slate-900 border border-slate-600 px-1 py-0.5 text-xs"
+                                />
+                                <select
+                                    value={editForm.parent_id ?? account.parent_id ?? ''}
+                                    onChange={(event) => setEditForm({ ...editForm, parent_id: event.target.value === '' ? null : Number(event.target.value) })}
+                                    className="bg-slate-900 border border-slate-600 px-1 py-0.5 text-xs text-slate-200"
+                                >
+                                    <option value="">No parent</option>
+                                    {parentOptions.map((candidate) => (
+                                        <option key={candidate.id} value={candidate.id}>{candidate.name}</option>
+                                    ))}
+                                </select>
+                                {account.account_type === 'asset' && (
+                                    <>
+                                        <select
+                                            value={editForm.role ?? account.role ?? 'unassigned'}
+                                            onChange={(event) => setEditForm({ ...editForm, role: event.target.value as AccountRole })}
+                                            className="bg-slate-900 border border-slate-600 px-1 py-0.5 text-xs text-slate-200"
+                                        >
+                                            {ACCOUNT_ROLES.map((role) => (
+                                                <option key={role.value} value={role.value}>{role.label}</option>
+                                            ))}
+                                        </select>
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            placeholder="Target"
+                                            value={editForm.role_target_amount ?? account.role_target_amount ?? ''}
+                                            onChange={(event) => setEditForm({ ...editForm, role_target_amount: event.target.value === '' ? null : Number(event.target.value) })}
+                                            className="w-28 bg-slate-900 border border-slate-600 px-1 py-0.5 text-xs font-mono-nums"
+                                        />
+                                    </>
+                                )}
+                                <button onClick={() => handleUpdateAccount(account.id)} className="p-1 text-emerald-400 hover:bg-slate-700">
+                                    <Save size={12} />
+                                </button>
+                                <button onClick={() => setEditingId(null)} className="p-1 text-slate-400 hover:bg-slate-700">
+                                    <X size={12} />
+                                </button>
+                            </>
+                        ) : (
+                            <>
+                                <span className="flex-1 text-xs capitalize">{account.name.replace(/_/g, ' ')}</span>
+                                {account.account_type === 'asset' && (
+                                    <span className="text-[10px] px-1.5 py-0.5 border border-slate-700 text-cyan-300 bg-slate-900/60 capitalize">
+                                        {account.role || 'unassigned'}
+                                    </span>
+                                )}
+                                <span className="text-[10px] font-mono-nums text-slate-500">self {formatCurrency(account.balance)}</span>
+                                <span className="text-xs font-mono-nums text-slate-300">rollup {formatCurrency(account.rollup_balance)}</span>
+                                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button
+                                        onClick={() => {
+                                            setNewAccount({
+                                                name: '',
+                                                account_type: account.account_type,
+                                                role: 'unassigned',
+                                                role_target_amount: '',
+                                                parent_id: String(account.id),
+                                            });
+                                            setShowAddAccount(true);
+                                        }}
+                                        className="p-1 text-slate-500 hover:text-emerald-400 hover:bg-slate-700"
+                                        title="Add child account"
+                                    >
+                                        <Plus size={10} />
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setEditingId(account.id);
+                                            setEditForm({
+                                                name: account.name,
+                                                parent_id: account.parent_id ?? null,
+                                                role: account.role || 'unassigned',
+                                                role_target_amount: account.role_target_amount ?? null,
+                                            });
+                                        }}
+                                        className="p-1 text-slate-500 hover:text-white hover:bg-slate-700"
+                                    >
+                                        <Edit size={10} />
+                                    </button>
+                                    <button
+                                        onClick={() => handleDeleteAccount(account.id)}
+                                        className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-700"
+                                    >
+                                        <Trash2 size={10} />
+                                    </button>
+                                </div>
+                            </>
+                        )}
+                    </div>
+                    {account.children.map((child) => renderNode(child, depth + 1))}
+                </div>
+            );
+        };
+
+        return (
         <div className="space-y-4">
             {ACCOUNT_TYPES.map((type) => {
                 const typeAccounts = accounts.filter((account) => account.account_type === type.value);
+                const treeNodes = accountTree[type.value] ?? [];
                 return (
                     <div key={type.value} className="space-y-1">
                         <p className={`text-[10px] uppercase tracking-wider ${type.color} flex items-center gap-1`}>
                             <Wallet size={10} /> {type.label} Accounts ({typeAccounts.length})
                         </p>
-                        {typeAccounts.map((account) => (
-                            <div key={account.id} className="flex items-center gap-2 py-1.5 px-2 bg-slate-800/30 border border-slate-700 group">
-                                {editingId === account.id ? (
-                                    <>
-                                        <input
-                                            type="text"
-                                            value={editForm.name ?? account.name}
-                                            onChange={(event) => setEditForm({ ...editForm, name: event.target.value })}
-                                            className="flex-1 bg-slate-900 border border-slate-600 px-1 py-0.5 text-xs"
-                                        />
-                                        <button onClick={() => handleUpdateAccount(account.id)} className="p-1 text-emerald-400 hover:bg-slate-700">
-                                            <Save size={12} />
-                                        </button>
-                                        <button onClick={() => setEditingId(null)} className="p-1 text-slate-400 hover:bg-slate-700">
-                                            <X size={12} />
-                                        </button>
-                                    </>
-                                ) : (
-                                    <>
-                                        <span className="flex-1 text-xs capitalize">{account.name.replace(/_/g, ' ')}</span>
-                                        <span className="text-xs font-mono-nums text-slate-400">{formatCurrency(account.balance)}</span>
-                                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <button
-                                                onClick={() => {
-                                                    setEditingId(account.id);
-                                                    setEditForm({ name: account.name });
-                                                }}
-                                                className="p-1 text-slate-500 hover:text-white hover:bg-slate-700"
-                                            >
-                                                <Edit size={10} />
-                                            </button>
-                                            <button
-                                                onClick={() => handleDeleteAccount(account.id)}
-                                                className="p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-700"
-                                            >
-                                                <Trash2 size={10} />
-                                            </button>
-                                        </div>
-                                    </>
-                                )}
-                            </div>
-                        ))}
+                        {treeNodes.map((account) => renderNode(account, 0))}
                     </div>
                 );
             })}
@@ -617,6 +710,37 @@ export default function Registry() {
                                 <option key={type.value} value={type.value}>{type.label}</option>
                             ))}
                         </select>
+                        <select
+                            value={newAccount.parent_id}
+                            onChange={(event) => setNewAccount({ ...newAccount, parent_id: event.target.value })}
+                            className="bg-slate-900 border border-slate-700 px-2 py-1 text-xs"
+                        >
+                            <option value="">No parent</option>
+                            {accounts.filter((account) => account.account_type === newAccount.account_type).map((account) => (
+                                <option key={account.id} value={account.id}>{account.name}</option>
+                            ))}
+                        </select>
+                        {newAccount.account_type === 'asset' && (
+                            <>
+                                <select
+                                    value={newAccount.role}
+                                    onChange={(event) => setNewAccount({ ...newAccount, role: event.target.value as AccountRole })}
+                                    className="bg-slate-900 border border-slate-700 px-2 py-1 text-xs"
+                                >
+                                    {ACCOUNT_ROLES.map((role) => (
+                                        <option key={role.value} value={role.value}>{role.label}</option>
+                                    ))}
+                                </select>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    placeholder="Role target"
+                                    value={newAccount.role_target_amount}
+                                    onChange={(event) => setNewAccount({ ...newAccount, role_target_amount: event.target.value })}
+                                    className="bg-slate-900 border border-slate-700 px-2 py-1 text-xs font-mono-nums"
+                                />
+                            </>
+                        )}
                     </div>
                     <div className="flex gap-2">
                         <button onClick={handleAddAccount} className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-1.5 text-xs">
@@ -636,7 +760,8 @@ export default function Registry() {
                 </button>
             )}
         </div>
-    );
+        );
+    };
 
     return (
         <div className="h-full p-4 overflow-auto">

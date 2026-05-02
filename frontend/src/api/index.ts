@@ -1,9 +1,19 @@
 import axios from 'axios';
 import type {
+    Account,
+    AccountRole,
+    AccountTreeNode,
     AnalysisSummary,
+    MonthlyAction,
     MonteCarloResult,
     MonthlyBudget,
+    MonthlyReport,
     MonthlyReview,
+    NetWorthHistoryPoint,
+    ReconcileResponse,
+    RecurringTransaction,
+    ReviewActionCreate,
+    RoadmapProjection,
     Transaction,
 } from '../types';
 
@@ -78,10 +88,11 @@ export const getBalanceSheet = async (year?: number, month?: number) => {
     return response.data;
 };
 
-export const getProfitLoss = async (year?: number, month?: number) => {
+export const getProfitLoss = async (year?: number, month?: number, rollup: boolean = false) => {
     const params = new URLSearchParams();
     if (year) params.append('year', String(year));
     if (month) params.append('month', String(month));
+    if (rollup) params.append('rollup', 'true');
     const response = await api.get(`/analysis/profit-loss?${params.toString()}`);
     return response.data;
 };
@@ -99,6 +110,11 @@ export const getDepreciation = async () => {
     return response.data;
 };
 
+export const getNetWorthHistory = async (months: number = 36): Promise<NetWorthHistoryPoint[]> => {
+    const response = await api.get('/analysis/net-worth-history', { params: { months } });
+    return response.data;
+};
+
 export const getMonthlyReview = async (period?: string): Promise<MonthlyReview> => {
     const response = await api.get('/monthly-reviews/', { params: { period } });
     return response.data;
@@ -113,8 +129,33 @@ export const saveMonthlyReview = async (review: {
     return response.data;
 };
 
+export const getMonthlyActions = async (sourcePeriod?: string): Promise<MonthlyAction[]> => {
+    const response = await api.get('/actions/', { params: sourcePeriod ? { source_period: sourcePeriod } : undefined });
+    return response.data;
+};
+
+export const createMonthlyAction = async (payload: ReviewActionCreate): Promise<MonthlyAction> => {
+    const response = await api.post('/actions/', payload);
+    return response.data;
+};
+
+export const processDueMonthlyActions = async (): Promise<{ processed: MonthlyAction[] }> => {
+    const response = await api.post('/actions/process-due');
+    return response.data;
+};
+
+export const applyReviewAction = async (id: number): Promise<MonthlyAction> => {
+    const response = await api.post(`/actions/${id}/apply`);
+    return response.data;
+};
+
+export const skipReviewAction = async (id: number): Promise<MonthlyAction> => {
+    const response = await api.post(`/actions/${id}/skip`);
+    return response.data;
+};
+
 // Accounts endpoints
-export const getAccounts = async (accountType?: string) => {
+export const getAccounts = async (accountType?: string): Promise<Account[]> => {
     const params = accountType ? `?account_type=${accountType}` : '';
     const response = await api.get(`/accounts/${params}`);
     return response.data;
@@ -125,12 +166,32 @@ export const getAccountsByType = async () => {
     return response.data;
 };
 
-export const createAccount = async (account: { name: string; account_type: string; balance?: number; expected_return?: number }) => {
+export const getAccountTree = async (): Promise<Record<string, AccountTreeNode[]>> => {
+    const response = await api.get('/accounts/tree');
+    return response.data;
+};
+
+export const createAccount = async (account: {
+    name: string;
+    account_type: string;
+    balance?: number;
+    parent_id?: number | null;
+    expected_return?: number;
+    role?: AccountRole;
+    role_target_amount?: number | null;
+}): Promise<Account> => {
     const response = await api.post('/accounts/', account);
     return response.data;
 };
 
-export const updateAccount = async (id: number, data: { name?: string; expected_return?: number; is_active?: boolean }) => {
+export const updateAccount = async (id: number, data: {
+    name?: string;
+    parent_id?: number | null;
+    expected_return?: number;
+    role?: AccountRole;
+    role_target_amount?: number | null;
+    is_active?: boolean;
+}): Promise<Account> => {
     const response = await api.put(`/accounts/${id}`, data);
     return response.data;
 };
@@ -146,6 +207,33 @@ export const seedDefaultAccounts = async () => {
 };
 
 // Transaction endpoints
+export interface TransactionQuery {
+    startDate?: string;
+    endDate?: string;
+    type?: string;
+    category?: string;
+    amountMin?: string;
+    amountMax?: string;
+    accountId?: string;
+    q?: string;
+    limit?: number;
+    offset?: number;
+}
+
+const appendTransactionQuery = (params: URLSearchParams, query?: TransactionQuery) => {
+    if (!query) return;
+    if (query.startDate) params.append('start_date', query.startDate);
+    if (query.endDate) params.append('end_date', query.endDate);
+    if (query.type) params.append('type', query.type);
+    if (query.category) params.append('category', query.category);
+    if (query.amountMin) params.append('amount_min', query.amountMin);
+    if (query.amountMax) params.append('amount_max', query.amountMax);
+    if (query.accountId) params.append('account_id', query.accountId);
+    if (query.q) params.append('q', query.q);
+    if (query.limit) params.append('limit', String(query.limit));
+    if (query.offset) params.append('offset', String(query.offset));
+};
+
 export const getTransactions = async (startDate?: string, endDate?: string): Promise<Transaction[]> => {
     const params = new URLSearchParams();
     if (startDate) params.append('start_date', startDate);
@@ -154,8 +242,25 @@ export const getTransactions = async (startDate?: string, endDate?: string): Pro
     return response.data;
 };
 
+export const getTransactionsPage = async (
+    query: TransactionQuery
+): Promise<{ items: Transaction[]; total: number }> => {
+    const params = new URLSearchParams({ paginated: 'true' });
+    appendTransactionQuery(params, query);
+    const response = await api.get(`/transactions/?${params.toString()}`);
+    return response.data;
+};
+
 export const createTransaction = async (transaction: Omit<Transaction, 'id'>): Promise<Transaction> => {
     const response = await api.post('/transactions/', transaction);
+    return response.data;
+};
+
+export const updateTransaction = async (
+    id: number,
+    transaction: Partial<Omit<Transaction, 'id'>>
+): Promise<Transaction> => {
+    const response = await api.put(`/transactions/${id}`, transaction);
     return response.data;
 };
 
@@ -332,6 +437,16 @@ export const updateClientKey = async (clientId: number, gemini_api_key: string) 
     return response.data;
 };
 
+export const updateClientSettings = async (clientId: number, general_settings: Record<string, unknown>) => {
+    const response = await api.put(`/clients/${clientId}/settings`, { general_settings });
+    return response.data;
+};
+
+export const createClient = async (payload: { name: string; seed_defaults: boolean }) => {
+    const response = await api.post('/clients/', payload);
+    return response.data;
+};
+
 // Data transfer endpoints
 export const exportData = async () => {
     const response = await api.get('/data/export');
@@ -344,7 +459,7 @@ export const importData = async (payload: any) => {
 };
 
 // Recurring Transactions endpoints
-export const getRecurringTransactions = async () => {
+export const getRecurringTransactions = async (): Promise<RecurringTransaction[]> => {
     const response = await api.get('/recurring/');
     return response.data;
 };
@@ -364,7 +479,7 @@ export const deleteRecurringTransaction = async (id: number) => {
     return response.data;
 };
 
-export const getDueRecurringTransactions = async () => {
+export const getDueRecurringTransactions = async (): Promise<RecurringTransaction[]> => {
     const response = await api.get('/recurring/due');
     return response.data;
 };
@@ -374,7 +489,22 @@ export const processRecurringTransaction = async (id: number) => {
     return response.data;
 };
 
+export const skipRecurringTransaction = async (id: number) => {
+    const response = await api.post(`/recurring/${id}/skip`);
+    return response.data;
+};
+
 // Roadmap endpoints
+export const getRoadmapProjection = async (params: {
+    years?: number;
+    annual_return?: number;
+    inflation?: number;
+    monthly_savings?: number;
+} = {}): Promise<RoadmapProjection> => {
+    const response = await api.get('/roadmap/projection', { params });
+    return response.data;
+};
+
 export const getMilestones = async (lifeEventId?: number) => {
     const response = await api.get('/roadmap/milestones', {
         params: lifeEventId ? { life_event_id: lifeEventId } : undefined,
@@ -431,18 +561,26 @@ export const contributeToCapsule = async (
     return response.data;
 };
 
-export const getReconcileStatus = async () => {
+export const getReconcileStatus = async (): Promise<ReconcileResponse> => {
     const response = await api.get('/analysis/reconcile');
     return response.data;
 };
 
-export const fixReconcile = async () => {
+export const fixReconcile = async (): Promise<ReconcileResponse> => {
     const response = await api.post('/analysis/reconcile/fix');
     return response.data;
 };
 
-export const getMonthlyReport = async (year?: number, month?: number) => {
+export const getMonthlyReport = async (year?: number, month?: number): Promise<MonthlyReport> => {
     const response = await api.get('/reports/monthly', { params: { year, month } });
+    return response.data;
+};
+
+export const applyMonthlyReportAction = async (
+    period: string,
+    proposalId: string
+): Promise<{ status: string; action: MonthlyAction }> => {
+    const response = await api.post(`/reports/${period}/actions/${proposalId}/apply`);
     return response.data;
 };
 

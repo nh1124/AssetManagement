@@ -1,6 +1,7 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { BarChart3, Flag, Target, Package, Settings, Plus, LogOut, User as UserIcon, List } from 'lucide-react';
+import { BarChart3, Flag, Target, Package, Settings, Plus, LogOut, User as UserIcon, List, Inbox, Map } from 'lucide-react';
+import { getDueRecurringTransactions } from '../api';
 
 interface LayoutProps {
     children: ReactNode;
@@ -10,9 +11,11 @@ interface LayoutProps {
 }
 
 const navItems = [
+    { id: 'inbox', label: 'Inbox', icon: Inbox },
     { id: 'journal', label: 'Journal', icon: List },
     { id: 'goal', label: 'Goal', icon: Flag },
     { id: 'analytics', label: 'Analytics', icon: BarChart3 },
+    { id: 'roadmap', label: 'Roadmap', icon: Map },
     { id: 'strategy', label: 'Strategy', icon: Target },
     { id: 'registry', label: 'Registry', icon: Package },
     { id: 'settings', label: 'Settings', icon: Settings },
@@ -20,6 +23,27 @@ const navItems = [
 
 export default function Layout({ children, currentPage, onNavigate, onOpenQuickInput }: LayoutProps) {
     const { user, logout } = useAuth();
+    const [dueCount, setDueCount] = useState(0);
+
+    useEffect(() => {
+        let mounted = true;
+
+        const refreshDueCount = async () => {
+            try {
+                const due = await getDueRecurringTransactions();
+                if (mounted) setDueCount(due.length);
+            } catch {
+                if (mounted) setDueCount(0);
+            }
+        };
+
+        refreshDueCount();
+        const intervalId = window.setInterval(refreshDueCount, 30000);
+        return () => {
+            mounted = false;
+            window.clearInterval(intervalId);
+        };
+    }, []);
 
     return (
         <div className="min-h-screen bg-slate-900 text-slate-50 flex flex-col">
@@ -50,6 +74,11 @@ export default function Layout({ children, currentPage, onNavigate, onOpenQuickI
                                     >
                                         <Icon size={14} />
                                         <span>{item.label}</span>
+                                        {item.id === 'inbox' && dueCount > 0 && (
+                                            <span className="min-w-4 h-4 px-1 rounded-full bg-rose-600 text-white text-[9px] leading-4 text-center">
+                                                {dueCount}
+                                            </span>
+                                        )}
                                     </button>
                                 );
                             })}
