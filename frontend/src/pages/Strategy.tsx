@@ -9,7 +9,6 @@ import {
     getBudgetSummary,
     getCapsules,
     processCapsuleContributions,
-    runPurchaseAudit,
     saveMonthlyBudgets,
     suggestBudget,
     updateAccount,
@@ -40,7 +39,6 @@ interface BudgetSummary {
 const TABS = [
     { id: 'budgeting', label: 'Budgeting' },
     { id: 'capsules', label: 'Capsules' },
-    { id: 'purchase_audit', label: 'Purchase Audit' },
 ];
 
 const formatCurrency = (value: number | undefined | null) => `JPY ${Math.round(value || 0).toLocaleString()}`;
@@ -60,9 +58,6 @@ export default function Strategy() {
     const [showCapsuleForm, setShowCapsuleForm] = useState(false);
     const [editingCapsuleId, setEditingCapsuleId] = useState<number | null>(null);
     const [capsuleForm, setCapsuleForm] = useState({ name: '', target_amount: '', monthly_contribution: '', current_balance: '0' });
-
-    const [auditForm, setAuditForm] = useState({ name: '', price: '', lifespan_months: '24', category: 'Other' });
-    const [auditResult, setAuditResult] = useState<any>(null);
 
     const variableBudgetTotal = Object.values(budgetEdits).reduce((sum, amount) => sum + amount, 0);
     const calculatedRemaining = (budgetSummary?.monthly_income || 0)
@@ -247,20 +242,6 @@ export default function Strategy() {
         }
     };
 
-    const runAudit = async () => {
-        if (!auditForm.name || !auditForm.price) return;
-        try {
-            setAuditResult(await runPurchaseAudit({
-                name: auditForm.name,
-                price: Number(auditForm.price),
-                lifespan_months: Number(auditForm.lifespan_months),
-                category: auditForm.category,
-            }));
-        } catch (error) {
-            showToast('Failed to run purchase audit', 'error');
-        }
-    };
-
     const renderBudgeting = () => (
         <div className="grid grid-cols-1 min-[960px]:grid-cols-[380px_1fr] gap-4 p-4">
             <section className="space-y-4">
@@ -373,44 +354,6 @@ export default function Strategy() {
         </div>
     );
 
-    const renderPurchaseAudit = () => (
-        <div className="grid grid-cols-1 min-[960px]:grid-cols-[380px_1fr] gap-4 p-4">
-            <section className="bg-slate-900/60 border border-slate-800 p-4 space-y-3">
-                <h2 className="text-xs text-slate-400 uppercase tracking-wider">Purchase Input</h2>
-                <input value={auditForm.name} onChange={(event) => setAuditForm({ ...auditForm, name: event.target.value })} placeholder="Item name" className="w-full bg-slate-900 border border-slate-700 px-2 py-2 text-xs" />
-                <input type="number" value={auditForm.price} onChange={(event) => setAuditForm({ ...auditForm, price: event.target.value })} placeholder="Price" className="w-full bg-slate-900 border border-slate-700 px-2 py-2 text-xs font-mono-nums" />
-                <input type="number" value={auditForm.lifespan_months} onChange={(event) => setAuditForm({ ...auditForm, lifespan_months: event.target.value })} placeholder="Lifespan months" className="w-full bg-slate-900 border border-slate-700 px-2 py-2 text-xs font-mono-nums" />
-                <input value={auditForm.category} onChange={(event) => setAuditForm({ ...auditForm, category: event.target.value })} placeholder="Category" className="w-full bg-slate-900 border border-slate-700 px-2 py-2 text-xs" />
-                <button onClick={runAudit} className="w-full bg-cyan-600 hover:bg-cyan-500 text-white py-2 text-xs">Run Purchase Audit</button>
-            </section>
-
-            <section className="bg-slate-900/60 border border-slate-800 p-4">
-                <h2 className="text-xs text-slate-400 uppercase tracking-wider mb-3">Decision Result</h2>
-                {!auditResult ? (
-                    <p className="text-xs text-slate-600">Run an audit to see TCO, goal impact, and the verdict.</p>
-                ) : (
-                    <div className="space-y-3 text-xs">
-                        <p className={`text-2xl font-bold ${auditResult.verdict === 'Go' ? 'text-emerald-400' : auditResult.verdict === 'Wait' ? 'text-amber-400' : 'text-rose-400'}`}>{auditResult.verdict}</p>
-                        <p className="text-slate-300">{auditResult.verdict_reason}</p>
-                        <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                            <div className="bg-slate-800/50 border border-slate-700 p-2"><p className="text-slate-500">Monthly TCO</p><p className="font-mono-nums text-cyan-400">{formatCurrency(auditResult.tco_analysis?.monthly_cost)}</p></div>
-                            <div className="bg-slate-800/50 border border-slate-700 p-2"><p className="text-slate-500">Logical Balance After</p><p className="font-mono-nums text-slate-200">{formatCurrency(auditResult.logical_balance_after)}</p></div>
-                            <div className="bg-slate-800/50 border border-slate-700 p-2"><p className="text-slate-500">Opportunity Cost</p><p className="font-mono-nums text-amber-400">{formatCurrency(auditResult.opportunity_cost?.future_value_loss)}</p></div>
-                        </div>
-                        {(auditResult.goal_impact ?? []).length > 0 && (
-                            <div className="bg-slate-800/30 border border-slate-700 p-3 space-y-2">
-                                <p className="text-slate-400 uppercase text-[10px]">Goal Impact</p>
-                                {auditResult.goal_impact.map((goal: any, index: number) => (
-                                    <div key={index} className="flex justify-between"><span>{goal.life_event_name}</span><span className={`font-mono-nums ${goal.delta < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>{goal.delta}%</span></div>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                )}
-            </section>
-        </div>
-    );
-
     return (
         <div className="h-full flex flex-col">
             <div className="px-4 pt-4 pb-2">
@@ -419,7 +362,6 @@ export default function Strategy() {
             <TabPanel tabs={TABS} activeTab={activeTab} onTabChange={setActiveTab}>
                 {activeTab === 'budgeting' && renderBudgeting()}
                 {activeTab === 'capsules' && renderCapsules()}
-                {activeTab === 'purchase_audit' && renderPurchaseAudit()}
             </TabPanel>
         </div>
     );

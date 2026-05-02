@@ -33,6 +33,7 @@ def _slug(text: str) -> str:
 def _capsule_to_dict(capsule: models.Capsule) -> dict:
     balance = capsule.account.balance if capsule.account else capsule.current_balance
     progress_pct = (balance / capsule.target_amount * 100) if capsule.target_amount else 0
+    progress_pct = min(100, progress_pct)
     return {
         "id": capsule.id,
         "name": capsule.name,
@@ -43,6 +44,21 @@ def _capsule_to_dict(capsule: models.Capsule) -> dict:
         "created_at": capsule.created_at,
         "progress_pct": round(progress_pct, 1),
     }
+
+
+def _capsule_balance(capsule: models.Capsule) -> float:
+    return capsule.account.balance if capsule.account else (capsule.current_balance or 0.0)
+
+
+def _normalize_balance(balance: float, target_amount: float | None) -> float:
+    normalized = max(0.0, balance or 0.0)
+    if target_amount:
+        normalized = min(normalized, target_amount)
+    return normalized
+
+
+def _remaining_target(capsule: models.Capsule) -> float:
+    return max(0.0, (capsule.target_amount or 0.0) - _capsule_balance(capsule))
 
 
 def _create_capsule_account(db: Session, client_id: int, capsule_name: str) -> models.Account:
@@ -87,12 +103,15 @@ def create_capsule(
     current_client: models.Client = Depends(dependencies.get_current_client),
 ):
     account = _create_capsule_account(db, current_client.id, capsule.name)
+    target_amount = max(0.0, capsule.target_amount or 0.0)
+    initial_balance = _normalize_balance(capsule.current_balance, target_amount)
+    account.balance = initial_balance
     db_capsule = models.Capsule(
         client_id=current_client.id,
         name=capsule.name,
-        target_amount=capsule.target_amount,
-        monthly_contribution=capsule.monthly_contribution,
-        current_balance=0.0,
+        target_amount=target_amount,
+        monthly_contribution=max(0.0, capsule.monthly_contribution or 0.0),
+        current_balance=initial_balance,
         account_id=account.id,
     )
     db.add(db_capsule)
@@ -119,11 +138,21 @@ def update_capsule(
     for key, value in update_data.items():
         if key == "current_balance":
             # Keep account balance as source of truth.
+            value = _normalize_balance(value, db_capsule.target_amount)
             if db_capsule.account:
-                db_capsule.account.balance = value or 0.0
-            db_capsule.current_balance = value or 0.0
+                db_capsule.account.balance = value
+            db_capsule.current_balance = value
+        elif key == "target_amount":
+            db_capsule.target_amount = max(0.0, value or 0.0)
+        elif key == "monthly_contribution":
+            db_capsule.monthly_contribution = max(0.0, value or 0.0)
         else:
             setattr(db_capsule, key, value)
+
+    normalized_balance = _normalize_balance(_capsule_balance(db_capsule), db_capsule.target_amount)
+    if db_capsule.account:
+        db_capsule.account.balance = normalized_balance
+    db_capsule.current_balance = normalized_balance
 
     db.commit()
     db.refresh(db_capsule)
@@ -143,6 +172,8 @@ def delete_capsule(
     if not capsule:
         raise HTTPException(status_code=404, detail="Capsule not found")
 
+    if capsule.account:
+        capsule.account.is_active = False
     db.delete(capsule)
     db.commit()
     return {"message": "Capsule deleted successfully"}
@@ -169,11 +200,26 @@ def contribute_to_capsule(
     if not from_account:
         raise HTTPException(status_code=404, detail="Source account not found")
 
+    amount = payload.amount
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Contribution amount must be positive")
+
+    remaining = _remaining_target(capsule)
+    if remaining <= 0:
+        return {
+            "status": "skipped",
+            "message": "Capsule target already reached",
+            "transaction_id": None,
+            "amount": 0.0,
+            "new_balance": _capsule_balance(capsule),
+        }
+
+    amount = min(amount, remaining)
     tx = models.Transaction(
         client_id=current_client.id,
         date=payload.contribution_date or date.today(),
         description=f"Capsule contribution: {capsule.name}",
-        amount=payload.amount,
+        amount=amount,
         type="Transfer",
         from_account_id=from_account.id,
         to_account_id=capsule.account_id,
@@ -185,10 +231,13 @@ def contribute_to_capsule(
     db.refresh(tx)
     process_transaction(db, tx)
     db.refresh(capsule)
+    capsule.current_balance = _capsule_balance(capsule)
+    db.commit()
 
     return {
         "status": "ok",
         "transaction_id": tx.id,
+        "amount": amount,
         "new_balance": capsule.account.balance if capsule.account else capsule.current_balance,
     }
 
@@ -208,11 +257,14 @@ def process_monthly_contributions(
     for capsule in capsules:
         if capsule.monthly_contribution <= 0 or not capsule.account_id:
             continue
+        amount = min(capsule.monthly_contribution, _remaining_target(capsule))
+        if amount <= 0:
+            continue
         tx = models.Transaction(
             client_id=current_client.id,
             date=date.today(),
             description=f"Capsule auto contribution: {capsule.name}",
-            amount=capsule.monthly_contribution,
+            amount=amount,
             type="Transfer",
             from_account_id=cash_account.id,
             to_account_id=capsule.account_id,
@@ -223,9 +275,12 @@ def process_monthly_contributions(
         db.commit()
         db.refresh(tx)
         process_transaction(db, tx)
-        total_added += capsule.monthly_contribution
+        db.refresh(capsule)
+        capsule.current_balance = _capsule_balance(capsule)
+        total_added += amount
         updated_count += 1
 
+    db.commit()
     return {
         "message": f"Processed contributions for {updated_count} capsules",
         "total_added": total_added,

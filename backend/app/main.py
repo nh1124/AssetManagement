@@ -16,7 +16,6 @@ from .routers import (
     life_events,
     monthly_reviews,
     products,
-    purchase_audit,
     recurring,
     reports,
     roadmap,
@@ -123,7 +122,6 @@ app.include_router(recurring.router, dependencies=[Depends(get_current_client)])
 app.include_router(roadmap.router, dependencies=[Depends(get_current_client)])
 app.include_router(capsules.router, dependencies=[Depends(get_current_client)])
 app.include_router(reports.router, dependencies=[Depends(get_current_client)])
-app.include_router(purchase_audit.router, dependencies=[Depends(get_current_client)])
 
 @app.get("/me")
 def get_me(current_client: models.Client = Depends(get_current_client)):

@@ -446,14 +446,4 @@ export const getMonthlyReport = async (year?: number, month?: number) => {
     return response.data;
 };
 
-export const runPurchaseAudit = async (payload: {
-    name: string;
-    price: number;
-    lifespan_months: number;
-    category?: string;
-}) => {
-    const response = await api.post('/purchase-audit', payload);
-    return response.data;
-};
-
 export default api;
