@@ -251,7 +251,7 @@ def export_client_data(
                 .all()
             ],
             "milestones": [
-                _row(milestone, ["id", "date", "target_amount", "note", "created_at"])
+                _row(milestone, ["id", "life_event_id", "date", "target_amount", "note", "created_at"])
                 for milestone in db.query(models.Milestone)
                 .filter(models.Milestone.client_id == current_client.id)
                 .order_by(models.Milestone.id)
@@ -488,6 +488,7 @@ def import_client_data(
             db.add(
                 models.Milestone(
                     client_id=current_client.id,
+                    life_event_id=event_map.get(item.get("life_event_id")),
                     date=_parse_date(item.get("date")),
                     target_amount=item.get("target_amount") or 0,
                     note=item.get("note"),

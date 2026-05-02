@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from uuid import UUID
 from datetime import date, datetime
 from typing import Optional, Literal
@@ -144,8 +144,8 @@ class RecurringTransaction(RecurringTransactionBase):
 # ========== Life Events & Allocations ==========
 
 class GoalAllocationBase(BaseModel):
-    account_id: int
-    allocation_percentage: float  # 0.0 - 100.0
+    account_id: int = Field(gt=0)
+    allocation_percentage: float = Field(gt=0, le=100)  # 0.0 - 100.0
 
 class GoalAllocationCreate(GoalAllocationBase):
     pass
@@ -268,6 +268,7 @@ class MonteCarloResult(BaseModel):
 # ========== Roadmap & Capsules ==========
 
 class MilestoneBase(BaseModel):
+    life_event_id: Optional[int] = None
     date: date
     target_amount: float
     note: Optional[str] = None

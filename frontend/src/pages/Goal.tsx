@@ -1,5 +1,6 @@
-﻿import { useEffect, useMemo, useState } from 'react';
-import { Calendar, Edit2, Flag, Link, Plus, Save, Sparkles, Trash2, X } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { BarChart3, Calendar, Check, Edit2, Flag, Link, Plus, RefreshCw, Save, Sparkles, Trash2, TrendingUp, X } from 'lucide-react';
+import { Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import {
     addAllocation,
     createGoal,
@@ -10,18 +11,35 @@ import {
     getMilestones,
     getGoalDashboard,
     optimizeAllocations,
+    resetMilestonesFromAnnualPlan,
+    runMonteCarloSimulation,
+    updateAllocation,
     updateGoal,
 } from '../api';
 import { useToast } from '../components/Toast';
 import { PRIORITY_COLORS, priorityLabel } from '../utils/priority';
-import type { LifeEvent, Milestone } from '../types';
+import type { GoalAllocation, LifeEvent, Milestone, MonteCarloResult } from '../types';
 
 interface DashboardData {
     events: LifeEvent[];
-    unallocated_assets: Array<{ id: number; name: string; balance: number; remaining_percentage?: number }>;
+    unallocated_assets: Array<{ id: number; name: string; balance: number; remaining_percentage?: number; available_balance?: number }>;
     total_allocated: number;
     total_unallocated: number;
+    simulation_params?: {
+        annual_return: number;
+        inflation: number;
+        monthly_savings: number;
+    };
 }
+
+type GoalTab = 'summary' | 'simulation' | 'milestone' | 'assetAllocation';
+
+const GOAL_TABS: Array<{ id: GoalTab; label: string }> = [
+    { id: 'summary', label: 'Summary' },
+    { id: 'simulation', label: 'Simulation' },
+    { id: 'milestone', label: 'Milestone' },
+    { id: 'assetAllocation', label: 'AssetAllocation' },
+];
 
 const emptyEventForm = {
     name: '',
@@ -32,36 +50,57 @@ const emptyEventForm = {
 };
 
 const formatCurrency = (value: number | undefined | null) => `JPY ${Math.round(value || 0).toLocaleString()}`;
+const formatCompact = (value: number) => `JPY ${(value / 10000).toFixed(0)}man`;
+
+const getErrorDetail = (error: unknown, fallback: string) => {
+    const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+    return detail || fallback;
+};
 
 export default function Goal() {
     const { showToast } = useToast();
     const [dashboard, setDashboard] = useState<DashboardData | null>(null);
     const [selectedGoal, setSelectedGoal] = useState<LifeEvent | null>(null);
+    const [activeGoalTab, setActiveGoalTab] = useState<GoalTab>('summary');
     const [milestones, setMilestones] = useState<Milestone[]>([]);
     const [eventForm, setEventForm] = useState(emptyEventForm);
     const [editingEvent, setEditingEvent] = useState<LifeEvent | null>(null);
     const [showEventModal, setShowEventModal] = useState(false);
     const [allocationForm, setAllocationForm] = useState({ account_id: '', allocation_percentage: '100' });
+    const [allocationEdits, setAllocationEdits] = useState<Record<number, string>>({});
     const [milestoneForm, setMilestoneForm] = useState({ date: '', target_amount: '', note: '' });
+    const [simParams, setSimParams] = useState({ annual_return: 5, inflation: 2, monthly_savings: 50000 });
+    const [monteCarlo, setMonteCarlo] = useState<MonteCarloResult | null>(null);
     const [loading, setLoading] = useState(false);
+    const [simLoading, setSimLoading] = useState(false);
     const [optimizing, setOptimizing] = useState(false);
 
     const selectedGoalId = selectedGoal?.id;
 
-    const fetchGoalWorkspace = async () => {
+    const fetchGoalMilestones = async (goalId: number) => {
+        setMilestones(await getMilestones(goalId));
+    };
+
+    const fetchGoalWorkspace = async (preferredGoalId = selectedGoalId) => {
         setLoading(true);
         try {
-            const [dashboardData, milestoneData] = await Promise.all([
-                getGoalDashboard(),
-                getMilestones(),
-            ]);
+            const dashboardData = await getGoalDashboard(
+                simParams.annual_return,
+                simParams.inflation,
+                simParams.monthly_savings,
+            );
             setDashboard(dashboardData);
-            setMilestones(milestoneData);
 
-            const nextSelected = selectedGoalId
-                ? dashboardData.events.find((goal: LifeEvent) => goal.id === selectedGoalId)
+            const nextSelected = preferredGoalId
+                ? dashboardData.events.find((goal: LifeEvent) => goal.id === preferredGoalId)
                 : dashboardData.events[0];
             setSelectedGoal(nextSelected ?? null);
+            setAllocationEdits({});
+            if (nextSelected) {
+                await fetchGoalMilestones(nextSelected.id);
+            } else {
+                setMilestones([]);
+            }
         } catch (error) {
             console.error('Failed to load goal workspace:', error);
             showToast('Failed to load goals', 'error');
@@ -70,9 +109,32 @@ export default function Goal() {
         }
     };
 
+    const fetchMonteCarlo = async (goalId: number) => {
+        setSimLoading(true);
+        try {
+            setMonteCarlo(await runMonteCarloSimulation(goalId, 1000));
+        } catch (error) {
+            console.error('Failed to run Monte Carlo:', error);
+            setMonteCarlo(null);
+            showToast('Failed to run Monte Carlo simulation', 'error');
+        } finally {
+            setSimLoading(false);
+        }
+    };
+
     useEffect(() => {
         fetchGoalWorkspace();
     }, []);
+
+    useEffect(() => {
+        if (activeGoalTab !== 'simulation') return;
+        const timer = window.setTimeout(() => fetchGoalWorkspace(selectedGoalId), 300);
+        return () => window.clearTimeout(timer);
+    }, [activeGoalTab, simParams.annual_return, simParams.inflation, simParams.monthly_savings]);
+
+    useEffect(() => {
+        if (activeGoalTab === 'simulation' && selectedGoal?.id) fetchMonteCarlo(selectedGoal.id);
+    }, [activeGoalTab, selectedGoal?.id]);
 
     const totals = useMemo(() => {
         const goals = dashboard?.events ?? [];
@@ -82,6 +144,39 @@ export default function Goal() {
             count: goals.length,
         };
     }, [dashboard]);
+
+    const monteCarloChartData = useMemo(() => monteCarlo?.year_by_year.p50.map((p50, index) => ({
+        year: index,
+        p10: monteCarlo.year_by_year.p10[index] ?? p50,
+        p50,
+        p90: monteCarlo.year_by_year.p90[index] ?? p50,
+    })) ?? [], [monteCarlo]);
+
+    const availableAssets = useMemo(() => {
+        const allocatedAccountIds = new Set((selectedGoal?.allocations ?? []).map((allocation) => allocation.account_id));
+        return (dashboard?.unallocated_assets ?? []).filter((asset) => !allocatedAccountIds.has(asset.id));
+    }, [dashboard, selectedGoal]);
+
+    const selectedAvailableAsset = useMemo(() => {
+        const accountId = Number(allocationForm.account_id);
+        return availableAssets.find((asset) => asset.id === accountId);
+    }, [availableAssets, allocationForm.account_id]);
+
+    const getUsedAllocation = (accountId: number, excludeAllocationId?: number) => {
+        return (dashboard?.events ?? []).reduce((total, goal) => {
+            return total + (goal.allocations ?? []).reduce((sum, allocation) => {
+                if (allocation.account_id !== accountId || allocation.id === excludeAllocationId) return sum;
+                return sum + allocation.allocation_percentage;
+            }, 0);
+        }, 0);
+    };
+
+    const validateAllocationPct = (value: number, maxPct: number) => {
+        if (!Number.isFinite(value) || value <= 0) return 'Allocation must be greater than 0%.';
+        if (value > 100) return 'Allocation cannot exceed 100%.';
+        if (value > maxPct + 0.0001) return `Only ${Math.max(0, maxPct).toFixed(1)}% is available for this asset.`;
+        return null;
+    };
 
     const openCreateModal = () => {
         setEditingEvent(null);
@@ -115,12 +210,14 @@ export default function Goal() {
             if (editingEvent) {
                 await updateGoal(editingEvent.id, payload);
                 showToast('Goal updated', 'success');
+                setShowEventModal(false);
+                await fetchGoalWorkspace(editingEvent.id);
             } else {
-                await createGoal(payload);
+                const created = await createGoal(payload);
                 showToast('Goal created', 'success');
+                setShowEventModal(false);
+                await fetchGoalWorkspace(created.id);
             }
-            setShowEventModal(false);
-            await fetchGoalWorkspace();
         } catch (error) {
             showToast('Failed to save goal', 'error');
         }
@@ -140,16 +237,45 @@ export default function Goal() {
 
     const saveAllocation = async () => {
         if (!selectedGoal || !allocationForm.account_id) return;
+        const requestedPct = Number(allocationForm.allocation_percentage);
+        const maxPct = selectedAvailableAsset?.remaining_percentage ?? 0;
+        const validationError = validateAllocationPct(requestedPct, maxPct);
+        if (validationError) {
+            showToast(validationError, 'error');
+            return;
+        }
+
         try {
             await addAllocation(selectedGoal.id, {
                 account_id: Number(allocationForm.account_id),
-                allocation_percentage: Number(allocationForm.allocation_percentage),
+                allocation_percentage: requestedPct,
             });
             setAllocationForm({ account_id: '', allocation_percentage: '100' });
             showToast('Allocation added', 'success');
-            await fetchGoalWorkspace();
+            await fetchGoalWorkspace(selectedGoal.id);
         } catch (error) {
-            showToast('Failed to add allocation', 'error');
+            showToast(getErrorDetail(error, 'Failed to add allocation'), 'error');
+        }
+    };
+
+    const saveAllocationUpdate = async (allocation: GoalAllocation) => {
+        const nextPct = Number(allocationEdits[allocation.id] ?? allocation.allocation_percentage);
+        const maxPct = 100 - getUsedAllocation(allocation.account_id, allocation.id);
+        const validationError = validateAllocationPct(nextPct, maxPct);
+        if (validationError) {
+            showToast(validationError, 'error');
+            return;
+        }
+
+        try {
+            await updateAllocation(allocation.id, {
+                account_id: allocation.account_id,
+                allocation_percentage: nextPct,
+            });
+            showToast('Allocation updated', 'success');
+            await fetchGoalWorkspace(selectedGoal?.id);
+        } catch (error) {
+            showToast(getErrorDetail(error, 'Failed to update allocation'), 'error');
         }
     };
 
@@ -157,7 +283,7 @@ export default function Goal() {
         try {
             await deleteAllocation(allocationId);
             showToast('Allocation removed', 'info');
-            await fetchGoalWorkspace();
+            await fetchGoalWorkspace(selectedGoal?.id);
         } catch (error) {
             showToast('Failed to remove allocation', 'error');
         }
@@ -172,32 +298,39 @@ export default function Goal() {
                 return;
             }
             if (!confirm(`Apply ${suggestions.length} suggested allocations?`)) return;
+
+            let applied = 0;
             for (const suggestion of suggestions) {
+                const targetGoal = dashboard?.events.find((goal) => goal.id === suggestion.life_event_id);
+                const alreadyAllocated = targetGoal?.allocations?.some((allocation) => allocation.account_id === suggestion.account_id);
+                if (alreadyAllocated) continue;
                 await addAllocation(suggestion.life_event_id, {
                     account_id: suggestion.account_id,
                     allocation_percentage: suggestion.percentage,
                 });
+                applied += 1;
             }
-            showToast('Optimized allocations applied', 'success');
-            await fetchGoalWorkspace();
+            showToast(applied > 0 ? `Applied ${applied} suggested allocations` : 'No new allocation suggestions to apply', applied > 0 ? 'success' : 'info');
+            await fetchGoalWorkspace(selectedGoal?.id);
         } catch (error) {
-            showToast('Failed to optimize allocations', 'error');
+            showToast(getErrorDetail(error, 'Failed to optimize allocations'), 'error');
         } finally {
             setOptimizing(false);
         }
     };
 
     const createRoadmapMilestone = async () => {
-        if (!milestoneForm.date || !milestoneForm.target_amount) return;
+        if (!selectedGoal || !milestoneForm.date || !milestoneForm.target_amount) return;
         try {
             await createMilestone({
+                life_event_id: selectedGoal.id,
                 date: milestoneForm.date,
                 target_amount: Number(milestoneForm.target_amount),
                 note: milestoneForm.note,
             });
             setMilestoneForm({ date: '', target_amount: '', note: '' });
             showToast('Milestone created', 'success');
-            await fetchGoalWorkspace();
+            await fetchGoalMilestones(selectedGoal.id);
         } catch (error) {
             showToast('Failed to create milestone', 'error');
         }
@@ -208,9 +341,387 @@ export default function Goal() {
         try {
             await deleteMilestone(id);
             showToast('Milestone deleted', 'info');
-            await fetchGoalWorkspace();
+            if (selectedGoal) await fetchGoalMilestones(selectedGoal.id);
         } catch (error) {
             showToast('Failed to delete milestone', 'error');
+        }
+    };
+
+    const resetMilestones = async () => {
+        if (!selectedGoal) return;
+        if (!confirm('Reset milestones from the annual plan? Existing milestones for this goal will be replaced.')) return;
+        try {
+            setMilestones(await resetMilestonesFromAnnualPlan(selectedGoal.id));
+            showToast('Milestones reset from annual plan', 'success');
+        } catch (error) {
+            showToast('Failed to reset milestones', 'error');
+        }
+    };
+
+    const refreshSimulation = async () => {
+        await fetchGoalWorkspace(selectedGoal?.id);
+        if (selectedGoal?.id) await fetchMonteCarlo(selectedGoal.id);
+    };
+
+    const renderSummary = () => {
+        if (!selectedGoal) return null;
+        const fundedPct = selectedGoal.target_amount > 0 ? Math.min(100, ((selectedGoal.current_funded || 0) / selectedGoal.target_amount) * 100) : 0;
+        const projectedPct = selectedGoal.target_amount > 0 ? Math.min(100, ((selectedGoal.projected_amount || 0) / selectedGoal.target_amount) * 100) : 0;
+
+        return (
+            <div className="space-y-4">
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                    <div className="bg-slate-800/40 border border-slate-700 p-3">
+                        <p className="text-[10px] text-slate-500 uppercase">Target</p>
+                        <p className="font-mono-nums text-cyan-400">{formatCurrency(selectedGoal.target_amount)}</p>
+                    </div>
+                    <div className="bg-slate-800/40 border border-slate-700 p-3">
+                        <p className="text-[10px] text-slate-500 uppercase">Funded</p>
+                        <p className="font-mono-nums text-emerald-400">{formatCurrency(selectedGoal.current_funded)}</p>
+                    </div>
+                    <div className="bg-slate-800/40 border border-slate-700 p-3">
+                        <p className="text-[10px] text-slate-500 uppercase">Gap</p>
+                        <p className="font-mono-nums text-amber-400">{formatCurrency(selectedGoal.gap)}</p>
+                    </div>
+                    <div className="bg-slate-800/40 border border-slate-700 p-3">
+                        <p className="text-[10px] text-slate-500 uppercase">Status</p>
+                        <p className="font-mono-nums text-slate-200">{selectedGoal.status || 'Not Started'}</p>
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-1 min-[1120px]:grid-cols-[1fr_320px] gap-4">
+                    <div className="bg-slate-800/30 border border-slate-700 p-4">
+                        <h3 className="text-[10px] text-slate-500 uppercase tracking-wider mb-4">Progress</h3>
+                        <div className="space-y-4">
+                            <div>
+                                <div className="flex justify-between text-xs mb-1">
+                                    <span className="text-slate-400">Funded</span>
+                                    <span className="font-mono-nums text-emerald-400">{fundedPct.toFixed(1)}%</span>
+                                </div>
+                                <div className="h-2 bg-slate-950 border border-slate-800 overflow-hidden">
+                                    <div className="h-full bg-emerald-500" style={{ width: `${fundedPct}%` }} />
+                                </div>
+                            </div>
+                            <div>
+                                <div className="flex justify-between text-xs mb-1">
+                                    <span className="text-slate-400">Projected</span>
+                                    <span className="font-mono-nums text-cyan-400">{projectedPct.toFixed(1)}%</span>
+                                </div>
+                                <div className="h-2 bg-slate-950 border border-slate-800 overflow-hidden">
+                                    <div className="h-full bg-cyan-500" style={{ width: `${projectedPct}%` }} />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="bg-slate-800/30 border border-slate-700 p-4">
+                        <h3 className="text-[10px] text-slate-500 uppercase tracking-wider mb-3">Signals</h3>
+                        <div className="space-y-2 text-xs">
+                            <div className="flex justify-between gap-3">
+                                <span className="text-slate-500">Priority</span>
+                                <span className={PRIORITY_COLORS[selectedGoal.priority]}>{priorityLabel(selectedGoal.priority)}</span>
+                            </div>
+                            <div className="flex justify-between gap-3">
+                                <span className="text-slate-500">Target Date</span>
+                                <span className="font-mono-nums text-slate-300">{selectedGoal.target_date}</span>
+                            </div>
+                            <div className="flex justify-between gap-3">
+                                <span className="text-slate-500">Years Left</span>
+                                <span className="font-mono-nums text-slate-300">{selectedGoal.years_remaining?.toFixed(1) ?? '0.0'}</span>
+                            </div>
+                            <div className="flex justify-between gap-3">
+                                <span className="text-slate-500">Return</span>
+                                <span className="font-mono-nums text-slate-300">{selectedGoal.weighted_return?.toFixed(1) ?? simParams.annual_return}%</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    const renderSimulation = () => {
+        if (!selectedGoal) return null;
+
+        return (
+            <div className="grid grid-cols-1 min-[1120px]:grid-cols-[320px_1fr] gap-4">
+                <section className="space-y-4">
+                    <div className="bg-slate-800/30 border border-slate-700 p-4">
+                        <div className="flex items-center justify-between mb-3">
+                            <h3 className="text-[10px] text-slate-500 uppercase tracking-wider flex items-center gap-2"><TrendingUp size={14} /> Assumptions</h3>
+                            <button
+                                onClick={refreshSimulation}
+                                disabled={loading || simLoading}
+                                className="p-1.5 hover:bg-slate-800 text-slate-400 disabled:opacity-50"
+                                title="Refresh simulation"
+                            >
+                                <RefreshCw size={13} className={loading || simLoading ? 'animate-spin' : ''} />
+                            </button>
+                        </div>
+                        <div className="space-y-3">
+                            <label className="block text-xs text-slate-500">
+                                Annual Return (%)
+                                <input type="number" step="0.5" value={simParams.annual_return} onChange={(event) => setSimParams({ ...simParams, annual_return: Number(event.target.value) })} className="mt-1 w-full bg-slate-900 border border-slate-700 px-2 py-2 text-xs font-mono-nums" />
+                            </label>
+                            <label className="block text-xs text-slate-500">
+                                Inflation (%)
+                                <input type="number" step="0.5" value={simParams.inflation} onChange={(event) => setSimParams({ ...simParams, inflation: Number(event.target.value) })} className="mt-1 w-full bg-slate-900 border border-slate-700 px-2 py-2 text-xs font-mono-nums" />
+                            </label>
+                            <label className="block text-xs text-slate-500">
+                                Monthly Savings
+                                <input type="number" step="10000" value={simParams.monthly_savings} onChange={(event) => setSimParams({ ...simParams, monthly_savings: Number(event.target.value) })} className="mt-1 w-full bg-slate-900 border border-slate-700 px-2 py-2 text-xs font-mono-nums" />
+                            </label>
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                        <div className="bg-slate-800/40 border border-slate-700 p-2">
+                            <p className="text-slate-500">Projected</p>
+                            <p className="font-mono-nums text-cyan-400">{formatCurrency(selectedGoal.projected_amount)}</p>
+                        </div>
+                        <div className="bg-slate-800/40 border border-slate-700 p-2">
+                            <p className="text-slate-500">Gap</p>
+                            <p className="font-mono-nums text-amber-400">{formatCurrency(selectedGoal.gap)}</p>
+                        </div>
+                    </div>
+                </section>
+
+                <section className="space-y-4 min-w-0">
+                    <div className="bg-slate-800/30 border border-slate-700 p-4">
+                        <h3 className="text-[10px] text-slate-500 uppercase tracking-wider mb-3">Projection ({selectedGoal.weighted_return?.toFixed(1) || simParams.annual_return}% return)</h3>
+                        <div className="h-64">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <LineChart data={selectedGoal.roadmap ?? []} margin={{ top: 8, right: 16, bottom: 34, left: 8 }}>
+                                    <XAxis dataKey="year" tick={{ fontSize: 10 }} stroke="#64748b" label={{ value: 'Years', position: 'insideBottom', offset: -8, fontSize: 10 }} />
+                                    <YAxis tick={{ fontSize: 10 }} stroke="#64748b" tickFormatter={formatCompact} />
+                                    <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', fontSize: 11 }} formatter={(value) => [formatCurrency(value as number), '']} />
+                                    <Legend verticalAlign="bottom" align="center" wrapperStyle={{ fontSize: 10, paddingTop: 14 }} />
+                                    <Line type="monotone" dataKey="end_balance" stroke="#10b981" name="Balance" strokeWidth={2} dot={false} />
+                                    <Line type="monotone" dataKey={() => selectedGoal.target_amount} stroke="#f97316" strokeDasharray="5 5" name="Target" dot={false} />
+                                </LineChart>
+                            </ResponsiveContainer>
+                        </div>
+                    </div>
+
+                    <div className="bg-slate-800/30 border border-slate-700 p-4">
+                        <h3 className="text-[10px] text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2"><BarChart3 size={14} /> Monte Carlo (1000 runs)</h3>
+                        {simLoading ? (
+                            <p className="text-xs text-slate-500">Calculating...</p>
+                        ) : monteCarlo ? (
+                            <>
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3 text-xs">
+                                    <div className="bg-slate-900/60 border border-slate-700 p-2"><p className="text-slate-500">Success</p><p className="font-mono-nums text-emerald-400">{monteCarlo.probability}%</p></div>
+                                    <div className="bg-slate-900/60 border border-slate-700 p-2"><p className="text-slate-500">P10</p><p className="font-mono-nums">{formatCurrency(monteCarlo.percentiles.p10)}</p></div>
+                                    <div className="bg-slate-900/60 border border-slate-700 p-2"><p className="text-slate-500">P50</p><p className="font-mono-nums text-cyan-400">{formatCurrency(monteCarlo.percentiles.p50)}</p></div>
+                                    <div className="bg-slate-900/60 border border-slate-700 p-2"><p className="text-slate-500">P90</p><p className="font-mono-nums text-emerald-400">{formatCurrency(monteCarlo.percentiles.p90)}</p></div>
+                                </div>
+                                <div className="h-60">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <LineChart data={monteCarloChartData} margin={{ top: 8, right: 16, bottom: 24, left: 8 }}>
+                                            <XAxis dataKey="year" tick={{ fontSize: 10 }} stroke="#64748b" />
+                                            <YAxis tick={{ fontSize: 10 }} stroke="#64748b" tickFormatter={formatCompact} />
+                                            <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', fontSize: 11 }} formatter={(value) => [formatCurrency(value as number), '']} />
+                                            <Legend verticalAlign="bottom" align="center" wrapperStyle={{ fontSize: 10, paddingTop: 14 }} />
+                                            <Line type="monotone" dataKey="p10" stroke="#f59e0b" name="P10" dot={false} />
+                                            <Line type="monotone" dataKey="p50" stroke="#22d3ee" name="P50" dot={false} />
+                                            <Line type="monotone" dataKey="p90" stroke="#10b981" name="P90" dot={false} />
+                                        </LineChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            </>
+                        ) : (
+                            <p className="text-xs text-slate-500">No simulation result yet.</p>
+                        )}
+                    </div>
+
+                    <div className="bg-slate-800/30 border border-slate-700 overflow-hidden">
+                        <h3 className="text-[10px] text-slate-500 uppercase tracking-wider p-3 bg-slate-800/50 border-b border-slate-700">Annual Roadmap</h3>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left text-[10px]">
+                                <thead className="bg-slate-800 text-slate-500 uppercase">
+                                    <tr>
+                                        <th className="px-3 py-2 font-normal">Year</th>
+                                        <th className="px-3 py-2 font-normal">Start</th>
+                                        <th className="px-3 py-2 font-normal">Contribution</th>
+                                        <th className="px-3 py-2 font-normal">Gain</th>
+                                        <th className="px-3 py-2 font-normal">End</th>
+                                        <th className="px-3 py-2 font-normal text-right">Coverage</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-800">
+                                    {(selectedGoal.roadmap ?? []).map((row) => (
+                                        <tr key={row.year} className="hover:bg-slate-800/40">
+                                            <td className="px-3 py-2 text-slate-400">{row.year === 0 ? 'Current' : `Year ${row.year}`}</td>
+                                            <td className="px-3 py-2 font-mono-nums">{formatCurrency(row.start_balance)}</td>
+                                            <td className="px-3 py-2 font-mono-nums text-cyan-400">+{formatCurrency(row.contribution)}</td>
+                                            <td className="px-3 py-2 font-mono-nums text-emerald-400">+{formatCurrency(row.investment_gain)}</td>
+                                            <td className="px-3 py-2 font-mono-nums text-slate-100">{formatCurrency(row.end_balance)}</td>
+                                            <td className="px-3 py-2 text-right font-mono-nums">{row.goal_coverage}%</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        );
+    };
+
+    const renderMilestones = () => (
+        <div className="bg-slate-800/30 border border-slate-700 p-4">
+            <div className="flex items-center justify-between mb-3">
+                <h3 className="text-[10px] text-slate-500 uppercase tracking-wider flex items-center gap-1"><Flag size={12} /> Milestones</h3>
+                <button
+                    onClick={resetMilestones}
+                    className="text-[10px] text-cyan-400 hover:text-cyan-300"
+                >
+                    Reset from Annual Plan
+                </button>
+            </div>
+            <div className="grid grid-cols-12 gap-2 mb-3">
+                <input type="date" value={milestoneForm.date} onChange={(event) => setMilestoneForm({ ...milestoneForm, date: event.target.value })} className="col-span-12 md:col-span-3 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs" />
+                <input type="number" placeholder="Target" value={milestoneForm.target_amount} onChange={(event) => setMilestoneForm({ ...milestoneForm, target_amount: event.target.value })} className="col-span-12 md:col-span-3 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums" />
+                <input placeholder="Note" value={milestoneForm.note} onChange={(event) => setMilestoneForm({ ...milestoneForm, note: event.target.value })} className="col-span-12 md:col-span-4 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs" />
+                <button onClick={createRoadmapMilestone} className="col-span-12 md:col-span-2 bg-emerald-900/50 border border-emerald-800 text-emerald-300 text-xs">Add</button>
+            </div>
+            <div className="space-y-2 max-h-[520px] overflow-auto">
+                {milestones.length === 0 ? (
+                    <p className="text-xs text-slate-600">No milestones yet. Add one manually or reset from the annual plan.</p>
+                ) : milestones.map((milestone) => (
+                    <div key={milestone.id} className="grid grid-cols-1 md:grid-cols-[140px_1fr_auto] items-center gap-3 bg-slate-900/60 border border-slate-700 p-2 text-xs">
+                        <div className="flex items-center gap-2">
+                            <Calendar size={12} className="text-slate-500" />
+                            <span className="font-mono-nums text-slate-300">{milestone.date}</span>
+                        </div>
+                        <div className="min-w-0">
+                            <span className="font-mono-nums text-emerald-400">{formatCurrency(milestone.target_amount)}</span>
+                            {milestone.note && <span className="ml-3 text-slate-500">{milestone.note}</span>}
+                        </div>
+                        <button onClick={() => removeRoadmapMilestone(milestone.id)} className="text-slate-600 hover:text-rose-400 justify-self-end"><Trash2 size={12} /></button>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+
+    const renderAssetAllocation = () => {
+        const allocations = selectedGoal?.allocations ?? [];
+        const allocationTotal = allocations.reduce((sum, allocation) => sum + (allocation.account_balance || 0) * allocation.allocation_percentage / 100, 0);
+
+        return (
+            <div className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="bg-slate-800/40 border border-slate-700 p-3">
+                        <p className="text-[10px] text-slate-500 uppercase">Allocated Here</p>
+                        <p className="font-mono-nums text-emerald-400">{formatCurrency(allocationTotal)}</p>
+                    </div>
+                    <div className="bg-slate-800/40 border border-slate-700 p-3">
+                        <p className="text-[10px] text-slate-500 uppercase">Unallocated</p>
+                        <p className="font-mono-nums text-cyan-400">{formatCurrency(dashboard?.total_unallocated)}</p>
+                    </div>
+                    <div className="bg-slate-800/40 border border-slate-700 p-3">
+                        <p className="text-[10px] text-slate-500 uppercase">Assets</p>
+                        <p className="font-mono-nums text-slate-200">{allocations.length}</p>
+                    </div>
+                </div>
+
+                <div className="bg-slate-800/30 border border-slate-700 p-4">
+                    <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-[10px] text-slate-500 uppercase tracking-wider flex items-center gap-1"><Link size={12} /> Allocated Assets</h3>
+                        <button
+                            onClick={runAllocationOptimization}
+                            disabled={optimizing}
+                            className="text-[10px] text-purple-400 hover:text-purple-300 flex items-center gap-1 disabled:opacity-50"
+                        >
+                            <Sparkles size={12} /> {optimizing ? 'Optimizing...' : 'AI Optimize'}
+                        </button>
+                    </div>
+
+                    <div className="space-y-2 mb-4">
+                        {allocations.length === 0 ? (
+                            <p className="text-xs text-slate-600">No assets allocated yet.</p>
+                        ) : (
+                            allocations.map((allocation) => {
+                                const editValue = allocationEdits[allocation.id] ?? String(allocation.allocation_percentage);
+                                const allocatedAmount = (allocation.account_balance || 0) * Number(editValue || allocation.allocation_percentage) / 100;
+
+                                return (
+                                    <div key={allocation.id} className="grid grid-cols-1 min-[760px]:grid-cols-[1fr_170px_84px] items-center gap-3 bg-slate-900/60 border border-slate-700 p-2 text-xs">
+                                        <div className="min-w-0">
+                                            <p className="text-slate-200 truncate">{allocation.account_name}</p>
+                                            <p className="text-[10px] text-slate-500">
+                                                {formatCurrency(allocation.account_balance)} / {formatCurrency(allocatedAmount)}
+                                            </p>
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            <input
+                                                type="number"
+                                                min="0.1"
+                                                max={100 - getUsedAllocation(allocation.account_id, allocation.id)}
+                                                step="0.1"
+                                                value={editValue}
+                                                onChange={(event) => setAllocationEdits({ ...allocationEdits, [allocation.id]: event.target.value })}
+                                                className="w-full bg-slate-950 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums"
+                                            />
+                                            <span className="text-slate-500">%</span>
+                                        </div>
+                                        <div className="flex justify-end gap-2">
+                                            <button onClick={() => saveAllocationUpdate(allocation)} className="p-1.5 text-slate-500 hover:text-emerald-400" title="Save allocation"><Check size={13} /></button>
+                                            <button onClick={() => removeAllocation(allocation.id)} className="p-1.5 text-slate-600 hover:text-rose-400" title="Remove allocation"><Trash2 size={13} /></button>
+                                        </div>
+                                    </div>
+                                );
+                            })
+                        )}
+                    </div>
+
+                    <div className="grid grid-cols-12 gap-2 border-t border-slate-800 pt-3">
+                        <select
+                            value={allocationForm.account_id}
+                            onChange={(event) => {
+                                const accountId = Number(event.target.value);
+                                const account = availableAssets.find((asset) => asset.id === accountId);
+                                setAllocationForm({
+                                    account_id: event.target.value,
+                                    allocation_percentage: String(Math.round(account?.remaining_percentage ?? 100)),
+                                });
+                            }}
+                            className="col-span-12 md:col-span-7 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-slate-300"
+                        >
+                            <option value="">Select asset...</option>
+                            {availableAssets.map((asset) => (
+                                <option key={asset.id} value={asset.id}>{asset.name} ({Math.round(asset.remaining_percentage ?? 0)}% left)</option>
+                            ))}
+                        </select>
+                        <input
+                            type="number"
+                            min="0.1"
+                            max={selectedAvailableAsset?.remaining_percentage ?? 100}
+                            step="0.1"
+                            value={allocationForm.allocation_percentage}
+                            onChange={(event) => setAllocationForm({ ...allocationForm, allocation_percentage: event.target.value })}
+                            className="col-span-8 md:col-span-3 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums"
+                        />
+                        <button onClick={saveAllocation} disabled={!allocationForm.account_id} className="col-span-4 md:col-span-2 bg-cyan-900/50 border border-cyan-800 text-cyan-300 hover:bg-cyan-900 disabled:opacity-40"><Plus size={14} className="mx-auto" /></button>
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
+    const renderActiveGoalTab = () => {
+        switch (activeGoalTab) {
+            case 'summary':
+                return renderSummary();
+            case 'simulation':
+                return renderSimulation();
+            case 'milestone':
+                return renderMilestones();
+            case 'assetAllocation':
+                return renderAssetAllocation();
+            default:
+                return null;
         }
     };
 
@@ -260,7 +771,10 @@ export default function Goal() {
                             dashboard?.events.map((goal) => (
                                 <button
                                     key={goal.id}
-                                    onClick={() => setSelectedGoal(goal)}
+                                    onClick={() => {
+                                        setSelectedGoal(goal);
+                                        fetchGoalMilestones(goal.id);
+                                    }}
                                     className={`w-full text-left border px-3 py-3 transition-colors ${selectedGoal?.id === goal.id ? 'border-cyan-700 bg-cyan-950/20' : 'border-slate-800 bg-slate-800/20 hover:bg-slate-800/50'}`}
                                 >
                                     <div className="flex items-start justify-between gap-2">
@@ -283,7 +797,7 @@ export default function Goal() {
 
                 <section className="bg-slate-900/60 border border-slate-800 overflow-auto">
                     {!selectedGoal ? (
-                        <div className="h-full flex items-center justify-center text-xs text-slate-600">Select or create a goal to edit its roadmap.</div>
+                        <div className="h-full flex items-center justify-center text-xs text-slate-600">Select or create a goal to edit its details.</div>
                     ) : (
                         <div className="p-4 space-y-4">
                             <div className="flex items-start justify-between gap-3">
@@ -298,133 +812,19 @@ export default function Goal() {
                                 </div>
                             </div>
 
-                            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-                                <div className="bg-slate-800/40 border border-slate-700 p-3">
-                                    <p className="text-[10px] text-slate-500 uppercase">Target</p>
-                                    <p className="font-mono-nums text-cyan-400">{formatCurrency(selectedGoal.target_amount)}</p>
-                                </div>
-                                <div className="bg-slate-800/40 border border-slate-700 p-3">
-                                    <p className="text-[10px] text-slate-500 uppercase">Funded</p>
-                                    <p className="font-mono-nums text-emerald-400">{formatCurrency(selectedGoal.current_funded)}</p>
-                                </div>
-                                <div className="bg-slate-800/40 border border-slate-700 p-3">
-                                    <p className="text-[10px] text-slate-500 uppercase">Gap</p>
-                                    <p className="font-mono-nums text-amber-400">{formatCurrency(selectedGoal.gap)}</p>
-                                </div>
-                                <div className="bg-slate-800/40 border border-slate-700 p-3">
-                                    <p className="text-[10px] text-slate-500 uppercase">Status</p>
-                                    <p className="font-mono-nums text-slate-200">{selectedGoal.status || 'Not Started'}</p>
-                                </div>
+                            <div className="flex border-b border-slate-800 overflow-x-auto">
+                                {GOAL_TABS.map((tab) => (
+                                    <button
+                                        key={tab.id}
+                                        onClick={() => setActiveGoalTab(tab.id)}
+                                        className={`px-4 py-2 text-xs font-medium whitespace-nowrap transition-colors ${activeGoalTab === tab.id ? 'text-cyan-300 border-b border-cyan-500 bg-slate-800/40' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/30'}`}
+                                    >
+                                        {tab.label}
+                                    </button>
+                                ))}
                             </div>
 
-                            <div className="grid grid-cols-1 min-[1120px]:grid-cols-2 gap-4">
-                                <div className="bg-slate-800/30 border border-slate-700 p-4">
-                                    <div className="flex items-center justify-between mb-3">
-                                        <h3 className="text-[10px] text-slate-500 uppercase tracking-wider flex items-center gap-1"><Link size={12} /> Allocated Assets</h3>
-                                        <button
-                                            onClick={runAllocationOptimization}
-                                            disabled={optimizing}
-                                            className="text-[10px] text-purple-400 hover:text-purple-300 flex items-center gap-1 disabled:opacity-50"
-                                        >
-                                            <Sparkles size={12} /> {optimizing ? 'Optimizing...' : 'AI Optimize'}
-                                        </button>
-                                    </div>
-                                    <div className="space-y-2 mb-4">
-                                        {(selectedGoal.allocations ?? []).length === 0 ? (
-                                            <p className="text-xs text-slate-600">No assets allocated yet.</p>
-                                        ) : (
-                                            selectedGoal.allocations.map((allocation) => (
-                                                <div key={allocation.id} className="flex items-center justify-between gap-3 bg-slate-900/60 border border-slate-700 p-2 text-xs">
-                                                    <div>
-                                                        <p className="text-slate-200">{allocation.account_name}</p>
-                                                        <p className="text-[10px] text-slate-500">{allocation.allocation_percentage}% / {formatCurrency((allocation.account_balance || 0) * allocation.allocation_percentage / 100)}</p>
-                                                    </div>
-                                                    <button onClick={() => removeAllocation(allocation.id)} className="text-slate-600 hover:text-rose-400"><Trash2 size={12} /></button>
-                                                </div>
-                                            ))
-                                        )}
-                                    </div>
-                                    <div className="grid grid-cols-12 gap-2 border-t border-slate-800 pt-3">
-                                        <select
-                                            value={allocationForm.account_id}
-                                            onChange={(event) => {
-                                                const accountId = Number(event.target.value);
-                                                const account = dashboard?.unallocated_assets.find((asset) => asset.id === accountId);
-                                                setAllocationForm({
-                                                    account_id: event.target.value,
-                                                    allocation_percentage: String(Math.round(account?.remaining_percentage ?? 100)),
-                                                });
-                                            }}
-                                            className="col-span-7 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-slate-300"
-                                        >
-                                            <option value="">Select asset...</option>
-                                            {(dashboard?.unallocated_assets ?? []).map((asset) => (
-                                                <option key={asset.id} value={asset.id}>{asset.name} ({Math.round(asset.remaining_percentage ?? 0)}% left)</option>
-                                            ))}
-                                        </select>
-                                        <input
-                                            type="number"
-                                            value={allocationForm.allocation_percentage}
-                                            onChange={(event) => setAllocationForm({ ...allocationForm, allocation_percentage: event.target.value })}
-                                            className="col-span-3 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums"
-                                        />
-                                        <button onClick={saveAllocation} className="col-span-2 bg-cyan-900/50 border border-cyan-800 text-cyan-300 hover:bg-cyan-900"><Plus size={14} className="mx-auto" /></button>
-                                    </div>
-                                </div>
-
-                                <div className="bg-slate-800/30 border border-slate-700 p-4">
-                                    <h3 className="text-[10px] text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-1"><Flag size={12} /> Roadmap Milestones</h3>
-                                    <div className="grid grid-cols-12 gap-2 mb-3">
-                                        <input type="date" value={milestoneForm.date} onChange={(event) => setMilestoneForm({ ...milestoneForm, date: event.target.value })} className="col-span-3 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs" />
-                                        <input type="number" placeholder="Target" value={milestoneForm.target_amount} onChange={(event) => setMilestoneForm({ ...milestoneForm, target_amount: event.target.value })} className="col-span-3 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums" />
-                                        <input placeholder="Note" value={milestoneForm.note} onChange={(event) => setMilestoneForm({ ...milestoneForm, note: event.target.value })} className="col-span-4 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs" />
-                                        <button onClick={createRoadmapMilestone} className="col-span-2 bg-emerald-900/50 border border-emerald-800 text-emerald-300 text-xs">Add</button>
-                                    </div>
-                                    <div className="space-y-2 max-h-52 overflow-auto">
-                                        {milestones.map((milestone) => (
-                                            <div key={milestone.id} className="flex items-center justify-between bg-slate-900/60 border border-slate-700 p-2 text-xs">
-                                                <div className="flex items-center gap-3">
-                                                    <Calendar size={12} className="text-slate-500" />
-                                                    <span className="font-mono-nums text-slate-300">{milestone.date}</span>
-                                                    <span className="font-mono-nums text-emerald-400">{formatCurrency(milestone.target_amount)}</span>
-                                                    <span className="text-slate-500">{milestone.note}</span>
-                                                </div>
-                                                <button onClick={() => removeRoadmapMilestone(milestone.id)} className="text-slate-600 hover:text-rose-400"><Trash2 size={12} /></button>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div className="bg-slate-800/30 border border-slate-700 overflow-hidden">
-                                <h3 className="text-[10px] text-slate-500 uppercase tracking-wider p-3 bg-slate-800/50 border-b border-slate-700">Annual Roadmap</h3>
-                                <div className="overflow-x-auto">
-                                    <table className="w-full text-left text-[10px]">
-                                        <thead className="bg-slate-800 text-slate-500 uppercase">
-                                            <tr>
-                                                <th className="px-3 py-2 font-normal">Year</th>
-                                                <th className="px-3 py-2 font-normal">Start</th>
-                                                <th className="px-3 py-2 font-normal">Contribution</th>
-                                                <th className="px-3 py-2 font-normal">Gain</th>
-                                                <th className="px-3 py-2 font-normal">End</th>
-                                                <th className="px-3 py-2 font-normal text-right">Coverage</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-slate-800">
-                                            {(selectedGoal.roadmap ?? []).map((row) => (
-                                                <tr key={row.year} className="hover:bg-slate-800/40">
-                                                    <td className="px-3 py-2 text-slate-400">{row.year === 0 ? 'Current' : `Year ${row.year}`}</td>
-                                                    <td className="px-3 py-2 font-mono-nums">{formatCurrency(row.start_balance)}</td>
-                                                    <td className="px-3 py-2 font-mono-nums text-cyan-400">+{formatCurrency(row.contribution)}</td>
-                                                    <td className="px-3 py-2 font-mono-nums text-emerald-400">+{formatCurrency(row.investment_gain)}</td>
-                                                    <td className="px-3 py-2 font-mono-nums text-slate-100">{formatCurrency(row.end_balance)}</td>
-                                                    <td className="px-3 py-2 text-right font-mono-nums">{row.goal_coverage}%</td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
+                            {renderActiveGoalTab()}
                         </div>
                     )}
                 </section>

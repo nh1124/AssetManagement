@@ -108,6 +108,7 @@ export interface AnalysisSummary {
 
 export interface Milestone {
     id: number;
+    life_event_id?: number;
     date: string;
     target_amount: number;
     note?: string;

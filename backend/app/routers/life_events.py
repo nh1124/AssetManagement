@@ -209,6 +209,10 @@ def create_life_event(
     db.add(db_event)
     db.commit()
     db.refresh(db_event)
+    from ..services.milestone_service import reset_milestones_from_annual_plan
+
+    reset_milestones_from_annual_plan(db, current_client.id, db_event.id)
+    db.refresh(db_event)
     return db_event
 
 @router.put("/{event_id}")
@@ -305,17 +309,28 @@ def add_allocation(
     if not event:
         raise HTTPException(status_code=404, detail="Life event not found")
     
-    # Verify account exists and is an asset
-    account = db.query(models.Account).filter(models.Account.id == allocation.account_id).first()
+    # Verify account exists for this client and is an asset
+    account = db.query(models.Account).filter(
+        models.Account.id == allocation.account_id,
+        models.Account.client_id == current_client.id
+    ).first()
     if not account:
         raise HTTPException(status_code=404, detail="Account not found")
     if account.account_type != "asset":
         raise HTTPException(status_code=400, detail="Only asset accounts can be allocated to goals")
+
+    existing_same_goal = db.query(models.GoalAllocation).filter(
+        models.GoalAllocation.life_event_id == event_id,
+        models.GoalAllocation.account_id == allocation.account_id
+    ).first()
+    if existing_same_goal:
+        raise HTTPException(status_code=400, detail="Asset is already allocated to this goal")
     
     # Validation: Ensure total allocation for this account across ALL goals does not exceed 100%
     # 1. Sum existing allocations for this account
-    existing_allocations = db.query(models.GoalAllocation).filter(
-        models.GoalAllocation.account_id == allocation.account_id
+    existing_allocations = db.query(models.GoalAllocation).join(models.LifeEvent).filter(
+        models.GoalAllocation.account_id == allocation.account_id,
+        models.LifeEvent.client_id == current_client.id
     ).all()
     current_total = sum(a.allocation_percentage for a in existing_allocations)
     
@@ -359,11 +374,28 @@ def update_allocation(
     if not db_alloc:
         raise HTTPException(status_code=404, detail="Allocation not found")
     
+    account = db.query(models.Account).filter(
+        models.Account.id == allocation.account_id,
+        models.Account.client_id == current_client.id
+    ).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    if account.account_type != "asset":
+        raise HTTPException(status_code=400, detail="Only asset accounts can be allocated to goals")
+
+    existing_same_goal = db.query(models.GoalAllocation).filter(
+        models.GoalAllocation.life_event_id == db_alloc.life_event_id,
+        models.GoalAllocation.account_id == allocation.account_id,
+        models.GoalAllocation.id != allocation_id
+    ).first()
+    if existing_same_goal:
+        raise HTTPException(status_code=400, detail="Asset is already allocated to this goal")
+
     # Validation: Ensure total allocation for this account (excluding current record) + new value <= 100%
-    other_allocations = db.query(models.GoalAllocation).filter(
-        models.GoalAllocation.account_id == db_alloc.account_id,
+    other_allocations = db.query(models.GoalAllocation).join(models.LifeEvent).filter(
+        models.GoalAllocation.account_id == allocation.account_id,
         models.GoalAllocation.id != allocation_id,
-        models.GoalAllocation.life_event_id != db_alloc.life_event_id # ensure we look at other allocations broadly, though id check is enough
+        models.LifeEvent.client_id == current_client.id
     ).all()
     
     current_total_others = sum(a.allocation_percentage for a in other_allocations)
@@ -375,6 +407,7 @@ def update_allocation(
             detail=f"Asset is over-allocated. Total others: {current_total_others}%. Remaining: {remaining}%. Requested: {allocation.allocation_percentage}%"
         )
     
+    db_alloc.account_id = allocation.account_id
     db_alloc.allocation_percentage = allocation.allocation_percentage
     db.commit()
     db.refresh(db_alloc)
@@ -383,7 +416,9 @@ def update_allocation(
         "id": db_alloc.id,
         "life_event_id": db_alloc.life_event_id,
         "account_id": db_alloc.account_id,
-        "allocation_percentage": db_alloc.allocation_percentage
+        "allocation_percentage": db_alloc.allocation_percentage,
+        "account_name": account.name,
+        "account_balance": account.balance
     }
 
 @router.delete("/allocations/{allocation_id}")

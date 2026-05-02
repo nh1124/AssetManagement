@@ -1,0 +1,3 @@
+ALTER TABLE accounts DROP COLUMN IF EXISTS budget_limit;
+
+ALTER TABLE milestones ADD COLUMN IF NOT EXISTS life_event_id INTEGER;

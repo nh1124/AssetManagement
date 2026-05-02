@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from . import models
 from .database import engine
+from .migration_runner import run_migrations
 from .routers import (
     accounts,
     ai,
@@ -39,12 +40,10 @@ def startup_event():
     from .services.accounting_service import ensure_default_accounts
 
     models.Base.metadata.create_all(bind=engine)
+    run_migrations(engine)
 
     db = SessionLocal()
     try:
-        db.execute(text("ALTER TABLE accounts DROP COLUMN IF EXISTS budget_limit"))
-        db.commit()
-
         # 1. Ensure Default Client exists
         default_client = db.query(models.Client).filter(models.Client.id == 1).first()
         if not default_client:

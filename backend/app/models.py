@@ -180,10 +180,12 @@ class LifeEvent(Base):
 
     client = relationship("Client", back_populates="life_events")
     allocations = relationship("GoalAllocation", back_populates="life_event", cascade="all, delete-orphan")
+    milestones = relationship("Milestone", back_populates="life_event", cascade="all, delete-orphan")
 
 class GoalAllocation(Base):
     """Links assets to life events (the 'buckets' for funding goals)."""
     __tablename__ = "goal_allocations"
+    __table_args__ = (UniqueConstraint("life_event_id", "account_id", name="_goal_allocation_event_account_uc"),)
 
     id = Column(Integer, primary_key=True, index=True)
     life_event_id = Column(Integer, ForeignKey("life_events.id", ondelete="CASCADE"))
@@ -229,12 +231,14 @@ class Milestone(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
+    life_event_id = Column(Integer, ForeignKey("life_events.id", ondelete="CASCADE"), nullable=True)
     date = Column(Date)
     target_amount = Column(Float)
     note = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     client = relationship("Client", back_populates="milestones")
+    life_event = relationship("LifeEvent", back_populates="milestones")
 
 class Capsule(Base):
     __tablename__ = "capsules"

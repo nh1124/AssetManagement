@@ -375,8 +375,10 @@ export const processRecurringTransaction = async (id: number) => {
 };
 
 // Roadmap endpoints
-export const getMilestones = async () => {
-    const response = await api.get('/roadmap/milestones');
+export const getMilestones = async (lifeEventId?: number) => {
+    const response = await api.get('/roadmap/milestones', {
+        params: lifeEventId ? { life_event_id: lifeEventId } : undefined,
+    });
     return response.data;
 };
 
@@ -387,6 +389,11 @@ export const createMilestone = async (milestone: any) => {
 
 export const deleteMilestone = async (id: number) => {
     const response = await api.delete(`/roadmap/milestones/${id}`);
+    return response.data;
+};
+
+export const resetMilestonesFromAnnualPlan = async (lifeEventId: number) => {
+    const response = await api.post(`/roadmap/life-events/${lifeEventId}/milestones/reset-from-annual`);
     return response.data;
 };
 
