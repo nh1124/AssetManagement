@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
 from uuid import UUID
 from datetime import date, datetime
+from datetime import date as DateType
 from typing import Any, Optional, Literal
 
 TransactionTypeLiteral = Literal[
@@ -56,7 +57,7 @@ class TransactionCreate(TransactionBase):
     pass
 
 class TransactionUpdate(BaseModel):
-    date: Optional[date] = None
+    date: Optional[DateType] = None
     description: Optional[str] = None
     amount: Optional[float] = None
     type: Optional[TransactionTypeLiteral] = None
