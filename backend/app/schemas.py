@@ -44,7 +44,7 @@ class Account(AccountBase):
 # Transaction Schemas
 class TransactionBase(BaseModel):
     date: date
-    description: str
+    description: Optional[str] = ''
     amount: float
     type: TransactionTypeLiteral
     category: Optional[str] = None

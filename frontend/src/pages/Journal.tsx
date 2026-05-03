@@ -263,7 +263,7 @@ export default function Journal() {
 
     const handleRecordSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!formData.description || !formData.amount) return;
+        if (!formData.amount) return;
         setIsProcessing(true);
         try {
             const fromAccountId = formData.fromAccountId ? parseInt(formData.fromAccountId, 10) : undefined;
