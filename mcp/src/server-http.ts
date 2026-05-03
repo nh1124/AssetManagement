@@ -3,14 +3,8 @@
 // ============================================================
 
 import express, { type Request, type Response, type NextFunction } from "express";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { registerAccountTools } from "./tools/accounts.js";
-import { registerCapsuleTools } from "./tools/capsules.js";
-import { registerLifeEventTools } from "./tools/life-events.js";
-import { registerAnalysisTools } from "./tools/analysis.js";
-import { registerTransactionTools } from "./tools/transactions.js";
-import { registerCalculatorTools } from "./tools/calculator.js";
+import { buildMcpServer } from "./server.js";
 import {
   BASE_URL, getDiscoveryMetadata, registerClient, getClient,
   createAuthCode, exchangeCodeForTokens, refreshAccessToken, validateAccessToken,
@@ -34,7 +28,13 @@ app.use((_req: Request, res: Response, next: NextFunction) => {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Mcp-Session-Id, Last-Event-ID");
   next();
 });
-app.options("*", (_req, res) => res.sendStatus(204));
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (req.method === "OPTIONS") {
+    res.sendStatus(204);
+    return;
+  }
+  next();
+});
 
 // ─── OAuth 2.0 Endpoints ──────────────────────────────────
 
@@ -154,17 +154,6 @@ function requireBearer(req: Request, res: Response, next: NextFunction): void {
 }
 
 // ─── MCP Endpoint (Stateless) ─────────────────────────────
-
-function buildMcpServer(): McpServer {
-  const server = new McpServer({ name: "asset-management", version: "1.0.0" });
-  registerAccountTools(server);
-  registerCapsuleTools(server);
-  registerLifeEventTools(server);
-  registerAnalysisTools(server);
-  registerTransactionTools(server);
-  registerCalculatorTools(server);
-  return server;
-}
 
 app.post("/mcp", requireBearer, async (req, res) => {
   const server = buildMcpServer();

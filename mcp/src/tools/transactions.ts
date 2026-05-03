@@ -1,5 +1,5 @@
 // ============================================================
-// Transaction Tools — backed by FastAPI /transactions/
+// Transaction tools backed by FastAPI /transactions/
 // ============================================================
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -7,71 +7,96 @@ import { z } from "zod";
 import { api } from "../api-client.js";
 import { toStructured } from "../utils.js";
 
+const transactionTypeSchema = z.enum([
+  "Income",
+  "Expense",
+  "Transfer",
+  "LiabilityPayment",
+  "Borrowing",
+  "CreditExpense",
+  "CreditAssetPurchase",
+]);
+
 interface Transaction {
   id: number;
   date: string;
   description: string;
   amount: number;
-  type: string;
+  type: z.infer<typeof transactionTypeSchema>;
   category?: string | null;
   currency?: string;
   from_account_id?: number | null;
   to_account_id?: number | null;
+  from_account_name?: string | null;
+  to_account_name?: string | null;
 }
 
 export function registerTransactionTools(server: McpServer): void {
-
-  // ── transactions_list ──────────────────────────────────────
   server.registerTool(
     "transactions_list",
     {
-      title: "取引一覧",
-      description: `取引一覧を取得します。期間・件数でフィルタリング可能。
-
-Use when: 取引履歴を確認したいとき`,
-      inputSchema: z.object({
-        limit: z.number().int().min(1).max(500).optional().default(30).describe("取得件数（デフォルト30）"),
-        start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("開始日（YYYY-MM-DD）"),
-        end_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("終了日（YYYY-MM-DD）")
-      }).strict(),
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+      title: "List transactions",
+      description: "Returns transactions with optional date, type, category, amount, account, and text filters.",
+      inputSchema: z
+        .object({
+          limit: z.number().int().min(1).max(500).optional().default(30).describe("Maximum number of rows"),
+          offset: z.number().int().min(0).optional().default(0).describe("Rows to skip"),
+          start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Start date, YYYY-MM-DD"),
+          end_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("End date, YYYY-MM-DD"),
+          type: transactionTypeSchema.optional().describe("Transaction type"),
+          category: z.string().optional().describe("Category contains this text"),
+          amount_min: z.number().optional().describe("Minimum amount"),
+          amount_max: z.number().optional().describe("Maximum amount"),
+          account_id: z.number().int().min(1).optional().describe("From or to account ID"),
+          q: z.string().optional().describe("Description contains this text"),
+        })
+        .strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async ({ limit = 30, start_date, end_date }) => {
+    async ({ limit = 30, offset = 0, start_date, end_date, type, category, amount_min, amount_max, account_id, q }) => {
       try {
         const params = new URLSearchParams();
         params.append("limit", String(limit));
+        params.append("offset", String(offset));
         if (start_date !== undefined) params.append("start_date", start_date);
         if (end_date !== undefined) params.append("end_date", end_date);
+        if (type !== undefined) params.append("type", type);
+        if (category !== undefined) params.append("category", category);
+        if (amount_min !== undefined) params.append("amount_min", String(amount_min));
+        if (amount_max !== undefined) params.append("amount_max", String(amount_max));
+        if (account_id !== undefined) params.append("account_id", String(account_id));
+        if (q !== undefined) params.append("q", q);
+
         const data = await api.get<Transaction[]>(`/transactions/?${params.toString()}`);
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
-          structuredContent: toStructured({ transactions: data })
+          structuredContent: toStructured({ transactions: data }),
         };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
       }
-    }
+    },
   );
 
-  // ── transactions_create ────────────────────────────────────
   server.registerTool(
     "transactions_create",
     {
-      title: "取引登録",
-      description: `新しい取引（収入・支出・振替など）を登録します。
-
-Use when: 取引を記録したいとき`,
-      inputSchema: z.object({
-        date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe("取引日（YYYY-MM-DD）"),
-        description: z.string().min(1).describe("取引の説明"),
-        amount: z.number().min(0).describe("金額"),
-        type: z.enum(["Income", "Expense", "Transfer", "LiabilityPayment"]).describe("取引タイプ"),
-        category: z.string().optional().describe("カテゴリ"),
-        from_account_id: z.number().int().min(1).optional().describe("出金元口座ID"),
-        to_account_id: z.number().int().min(1).optional().describe("入金先口座ID"),
-        currency: z.string().optional().default("JPY").describe("通貨（デフォルト: JPY）")
-      }).strict(),
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+      title: "Create transaction",
+      description:
+        "Creates and posts a transaction. This changes account balances through the backend journal processing.",
+      inputSchema: z
+        .object({
+          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe("Transaction date, YYYY-MM-DD"),
+          description: z.string().min(1).describe("Description"),
+          amount: z.number().min(0).describe("Amount"),
+          type: transactionTypeSchema.describe("Transaction type"),
+          category: z.string().optional().describe("Category"),
+          from_account_id: z.number().int().min(1).optional().describe("Source account ID"),
+          to_account_id: z.number().int().min(1).optional().describe("Destination account ID"),
+          currency: z.string().optional().default("JPY").describe("Currency"),
+        })
+        .strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
     async ({ date, description, amount, type, category, from_account_id, to_account_id, currency = "JPY" }) => {
       try {
@@ -82,42 +107,40 @@ Use when: 取引を記録したいとき`,
         const data = await api.post<Transaction>("/transactions/", body);
         return {
           content: [{ type: "text", text: `Created transaction:\n${JSON.stringify(data, null, 2)}` }],
-          structuredContent: toStructured(data)
+          structuredContent: toStructured(data),
         };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
       }
-    }
+    },
   );
 
-  // ── transactions_recent ────────────────────────────────────
   server.registerTool(
     "transactions_recent",
     {
-      title: "直近10件の取引サマリー",
-      description: `最新10件の取引をテキスト形式で素早く確認します。
-
-Use when: 最近の取引を手軽に把握したいとき`,
+      title: "Show recent transactions",
+      description: "Returns the 10 newest transactions in a compact text summary.",
       inputSchema: z.object({}).strict(),
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false }
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async () => {
       try {
         const data = await api.get<Transaction[]>("/transactions/?limit=10");
         if (!data || data.length === 0) {
-          return { content: [{ type: "text", text: "取引データがありません。" }] };
+          return { content: [{ type: "text", text: "No transactions found." }] };
         }
-        const lines = data.map(t =>
-          `${t.date}  ${t.type.padEnd(18)}  ${String(t.amount.toLocaleString()).padStart(12)}円  ${t.description}`
+        const lines = data.map(
+          (t) =>
+            `${t.date}  ${t.type.padEnd(18)}  ${String(t.amount.toLocaleString()).padStart(12)} JPY  ${t.description}`,
         );
-        const text = `直近${data.length}件の取引:\n\n${lines.join("\n")}`;
+        const text = `Recent ${data.length} transactions:\n\n${lines.join("\n")}`;
         return {
           content: [{ type: "text", text }],
-          structuredContent: toStructured({ transactions: data })
+          structuredContent: toStructured({ transactions: data }),
         };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
       }
-    }
+    },
   );
 }

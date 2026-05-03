@@ -48,5 +48,23 @@ services:
       - backend
     restart: unless-stopped
 
+  mcp:
+    build:
+      context: ./mcp
+    container_name: finance-mcp
+    ports:
+      - "${MCP_PORT:-13000}:3000"
+    environment:
+      - PORT=3000
+      - BASE_URL=${MCP_BASE_URL:-http://localhost:13000}
+      - MCP_PASSWORD=${MCP_PASSWORD:-change-me}
+      - JWT_SECRET=${MCP_JWT_SECRET:-change-me-to-a-secret-key-at-least-32-chars}
+      - BACKEND_URL=http://backend:8000
+      - BACKEND_USERNAME=${BACKEND_USERNAME:-}
+      - BACKEND_PASSWORD=${BACKEND_PASSWORD:-}
+    depends_on:
+      - backend
+    restart: unless-stopped
+
 volumes:
   postgres_data:
