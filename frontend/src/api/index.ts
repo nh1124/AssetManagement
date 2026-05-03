@@ -327,8 +327,19 @@ export const updateLifeEvent = async (id: number, event: any) => {
     return response.data;
 };
 
-export const deleteLifeEvent = async (id: number) => {
-    const response = await api.delete(`/life-events/${id}`);
+export const deleteLifeEvent = async (id: number, transferAccountId?: number) => {
+    const params = transferAccountId != null ? `?transfer_account_id=${transferAccountId}` : '';
+    const response = await api.delete(`/life-events/${id}${params}`);
+    return response.data;
+};
+
+export const getGoalCapsules = async (goalId: number): Promise<Array<{
+    id: number;
+    name: string;
+    current_balance: number;
+    account_id: number | null;
+}>> => {
+    const response = await api.get(`/life-events/${goalId}/capsules`);
     return response.data;
 };
 
@@ -589,8 +600,9 @@ export const updateCapsule = async (id: number, capsule: any) => {
     return response.data;
 };
 
-export const deleteCapsule = async (id: number) => {
-    const response = await api.delete(`/capsules/${id}`);
+export const deleteCapsule = async (id: number, transferAccountId?: number) => {
+    const params = transferAccountId != null ? `?transfer_account_id=${transferAccountId}` : '';
+    const response = await api.delete(`/capsules/${id}${params}`);
     return response.data;
 };
 

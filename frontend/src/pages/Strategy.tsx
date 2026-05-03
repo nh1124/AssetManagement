@@ -1,5 +1,5 @@
 ﻿import { useEffect, useState } from 'react';
-import { Archive, ChevronLeft, ChevronRight, Copy, Edit2, Plus, Save, Sparkles, Trash2 } from 'lucide-react';
+import { Archive, ChevronLeft, ChevronRight, Copy, Edit2, Plus, Save, Sparkles, Trash2, X } from 'lucide-react';
 import TabPanel from '../components/TabPanel';
 import { useToast } from '../components/Toast';
 import { useClient } from '../context/ClientContext';
@@ -77,6 +77,13 @@ export default function Strategy() {
     const [capsules, setCapsules] = useState<Capsule[]>([]);
     const [capsuleRules, setCapsuleRules] = useState<CapsuleRule[]>([]);
     const [accounts, setAccounts] = useState<Account[]>([]);
+    const [capsuleDeleteModal, setCapsuleDeleteModal] = useState<{
+        capsuleId: number;
+        capsuleName: string;
+        currentBalance: number;
+        transferAccountId: string;
+        confirming: boolean;
+    } | null>(null);
     const [showCapsuleForm, setShowCapsuleForm] = useState(false);
     const [showRuleForm, setShowRuleForm] = useState(false);
     const [editingCapsuleId, setEditingCapsuleId] = useState<number | null>(null);
@@ -262,14 +269,36 @@ export default function Strategy() {
         }
     };
 
-    const removeCapsule = async (id: number) => {
-        if (!confirm('Delete this capsule?')) return;
+    const openCapsuleDeleteModal = (capsule: Capsule) => {
+        setCapsuleDeleteModal({
+            capsuleId: capsule.id,
+            capsuleName: capsule.name,
+            currentBalance: capsule.current_balance ?? 0,
+            transferAccountId: '',
+            confirming: false,
+        });
+    };
+
+    const confirmCapsuleDelete = async () => {
+        if (!capsuleDeleteModal) return;
+        const hasBalance = capsuleDeleteModal.currentBalance > 0;
+        if (hasBalance && !capsuleDeleteModal.transferAccountId) {
+            showToast('Please select a transfer account', 'warning');
+            return;
+        }
+        setCapsuleDeleteModal({ ...capsuleDeleteModal, confirming: true });
         try {
-            await deleteCapsule(id);
+            const transferId = capsuleDeleteModal.transferAccountId
+                ? Number(capsuleDeleteModal.transferAccountId)
+                : undefined;
+            await deleteCapsule(capsuleDeleteModal.capsuleId, transferId);
             showToast('Capsule deleted', 'info');
+            setCapsuleDeleteModal(null);
             await fetchCapsules();
         } catch (error) {
-            showToast('Failed to delete capsule', 'error');
+            const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
+            showToast(detail || 'Failed to delete capsule', 'error');
+            setCapsuleDeleteModal({ ...capsuleDeleteModal, confirming: false });
         }
     };
 
@@ -497,7 +526,7 @@ export default function Strategy() {
                                     <div className="text-right"><p className="text-lg font-mono-nums text-purple-400">{formatCurrency(capsule.current_balance)}</p><p className="text-[10px] text-slate-500">+{formatCurrency(capsule.monthly_contribution)} / mo</p></div>
                                 </div>
                                 <div className="h-1.5 bg-slate-900 rounded-full overflow-hidden"><div className="h-full bg-purple-500" style={{ width: `${progress}%` }} /></div>
-                                <div className="flex justify-end gap-3 text-[10px]"><button onClick={() => openCapsuleForm(capsule)} className="text-slate-400 hover:text-white flex items-center gap-1"><Edit2 size={10} /> Edit</button><button onClick={() => removeCapsule(capsule.id)} className="text-slate-400 hover:text-rose-400 flex items-center gap-1"><Trash2 size={10} /> Delete</button></div>
+                                <div className="flex justify-end gap-3 text-[10px]"><button onClick={() => openCapsuleForm(capsule)} className="text-slate-400 hover:text-white flex items-center gap-1"><Edit2 size={10} /> Edit</button><button onClick={() => openCapsuleDeleteModal(capsule)} className="text-slate-400 hover:text-rose-400 flex items-center gap-1"><Trash2 size={10} /> Delete</button></div>
                             </div>
                         );
                     })}
@@ -531,6 +560,88 @@ export default function Strategy() {
                 {activeTab === 'budgeting' && renderBudgeting()}
                 {activeTab === 'capsules' && renderCapsules()}
             </TabPanel>
+
+            {capsuleDeleteModal && (
+                <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+                    <div className="bg-slate-900 border border-rose-800/60 p-6 w-full max-w-md">
+                        <div className="flex justify-between items-center mb-4">
+                            <h2 className="text-sm font-medium text-rose-300 flex items-center gap-2">
+                                <Trash2 size={14} /> Delete Capsule
+                            </h2>
+                            <button
+                                onClick={() => setCapsuleDeleteModal(null)}
+                                disabled={capsuleDeleteModal.confirming}
+                                className="text-slate-400 hover:text-white disabled:opacity-40"
+                            >
+                                <X size={16} />
+                            </button>
+                        </div>
+
+                        <p className="text-sm text-slate-300 mb-1">
+                            Are you sure you want to delete <span className="text-white font-medium">"{capsuleDeleteModal.capsuleName}"</span>?
+                        </p>
+                        <p className="text-xs text-slate-500 mb-4">
+                            All linked Auto Allocation Rules will also be permanently deleted.
+                        </p>
+
+                        <div className="flex justify-between items-center bg-slate-800/50 border border-slate-700 px-3 py-2 text-xs mb-4">
+                            <span className="text-slate-400">Current balance</span>
+                            <span className={`font-mono-nums ${capsuleDeleteModal.currentBalance > 0 ? 'text-amber-400' : 'text-slate-500'}`}>
+                                {formatCurrency(capsuleDeleteModal.currentBalance)}
+                            </span>
+                        </div>
+
+                        {capsuleDeleteModal.currentBalance > 0 && (
+                            <div className="mb-5">
+                                <p className="text-[10px] text-amber-400 uppercase tracking-wider mb-2">
+                                    ⚠ Balance detected — select transfer destination
+                                </p>
+                                <p className="text-[10px] text-slate-500 mb-2">
+                                    The accumulated balance will be transferred to the selected account before deletion.
+                                </p>
+                                <select
+                                    value={capsuleDeleteModal.transferAccountId}
+                                    onChange={(e) =>
+                                        setCapsuleDeleteModal({ ...capsuleDeleteModal, transferAccountId: e.target.value })
+                                    }
+                                    className="w-full bg-slate-800 border border-slate-600 px-3 py-2 text-xs text-slate-200"
+                                    disabled={capsuleDeleteModal.confirming}
+                                >
+                                    <option value="">Select account...</option>
+                                    {accounts
+                                        .filter((a) => a.account_type === 'asset' && a.role !== 'earmarked' && a.is_active)
+                                        .map((a) => (
+                                            <option key={a.id} value={a.id}>
+                                                {a.name} ({formatCurrency(a.balance)})
+                                            </option>
+                                        ))}
+                                </select>
+                            </div>
+                        )}
+
+                        <div className="flex gap-2 justify-end">
+                            <button
+                                onClick={() => setCapsuleDeleteModal(null)}
+                                disabled={capsuleDeleteModal.confirming}
+                                className="px-4 py-2 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-40"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={confirmCapsuleDelete}
+                                disabled={
+                                    capsuleDeleteModal.confirming ||
+                                    (capsuleDeleteModal.currentBalance > 0 && !capsuleDeleteModal.transferAccountId)
+                                }
+                                className="px-4 py-2 text-xs bg-rose-800 hover:bg-rose-700 text-rose-100 disabled:opacity-40 flex items-center gap-2"
+                            >
+                                <Trash2 size={12} />
+                                {capsuleDeleteModal.confirming ? 'Deleting...' : 'Delete Capsule'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

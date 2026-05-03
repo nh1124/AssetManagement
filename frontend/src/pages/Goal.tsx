@@ -10,8 +10,10 @@ import {
     deleteAllocation,
     deleteGoal,
     deleteMilestone,
+    getAccounts,
     getMilestones,
     getGoalDashboard,
+    getGoalCapsules,
     getCapsules,
     getRoadmapProjection,
     optimizeAllocations,
@@ -25,6 +27,7 @@ import { useClient } from '../context/ClientContext';
 import { formatCompactCurrency, formatCurrency as formatCurrencyWithSetting } from '../utils/currency';
 import { PRIORITY_COLORS, priorityLabel } from '../utils/priority';
 import type {
+    Account,
     GoalAllocation,
     Capsule,
     LifeEvent,
@@ -127,6 +130,14 @@ export default function Goal() {
     const [simLoading, setSimLoading] = useState(false);
     const [roadmapLoading, setRoadmapLoading] = useState(false);
     const [optimizing, setOptimizing] = useState(false);
+    const [deleteModal, setDeleteModal] = useState<{
+        goalId: number;
+        goalName: string;
+        capsules: Array<{ id: number; name: string; current_balance: number; account_id: number | null }>;
+        transferAccountId: string;
+        confirming: boolean;
+        assetAccounts: Account[];
+    } | null>(null);
 
     const selectedGoalId = selectedGoal?.id;
 
@@ -392,15 +403,48 @@ export default function Goal() {
         }
     };
 
-    const removeEvent = async (eventId: number) => {
-        if (!confirm('Delete this goal?')) return;
+    const openDeleteModal = async (goalId: number, goalName: string) => {
         try {
-            await deleteGoal(eventId);
-            if (selectedGoal?.id === eventId) setSelectedGoal(null);
+            const [capsuleData, accountData] = await Promise.all([
+                getGoalCapsules(goalId),
+                getAccounts('asset'),
+            ]);
+            const assetAccounts = (accountData as Account[]).filter(
+                (a) => a.role !== 'earmarked' && a.is_active,
+            );
+            setDeleteModal({
+                goalId,
+                goalName,
+                capsules: capsuleData,
+                transferAccountId: '',
+                confirming: false,
+                assetAccounts,
+            });
+        } catch {
+            showToast('Failed to load capsule data', 'error');
+        }
+    };
+
+    const confirmDelete = async () => {
+        if (!deleteModal) return;
+        const hasBalance = deleteModal.capsules.some((c) => c.current_balance > 0);
+        if (hasBalance && !deleteModal.transferAccountId) {
+            showToast('Please select a transfer account', 'warning');
+            return;
+        }
+        setDeleteModal({ ...deleteModal, confirming: true });
+        try {
+            const transferId = deleteModal.transferAccountId
+                ? Number(deleteModal.transferAccountId)
+                : undefined;
+            await deleteGoal(deleteModal.goalId, transferId);
+            if (selectedGoal?.id === deleteModal.goalId) setSelectedGoal(null);
             showToast('Goal deleted', 'info');
+            setDeleteModal(null);
             await fetchGoalWorkspace();
         } catch (error) {
-            showToast('Failed to delete goal', 'error');
+            showToast(getErrorDetail(error, 'Failed to delete goal'), 'error');
+            setDeleteModal({ ...deleteModal, confirming: false });
         }
     };
 
@@ -1242,7 +1286,7 @@ export default function Goal() {
                                 {selectedScope === 'goal' && selectedGoal && (
                                     <div className="flex gap-2">
                                         <button onClick={() => openEditModal(selectedGoal)} className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300"><Edit2 size={14} /></button>
-                                        <button onClick={() => removeEvent(selectedGoal.id)} className="p-2 bg-slate-800 hover:bg-rose-950 text-slate-300 hover:text-rose-300"><Trash2 size={14} /></button>
+                                        <button onClick={() => openDeleteModal(selectedGoal.id, selectedGoal.name)} className="p-2 bg-slate-800 hover:bg-rose-950 text-slate-300 hover:text-rose-300"><Trash2 size={14} /></button>
                                     </div>
                                 )}
                             </div>
@@ -1266,6 +1310,97 @@ export default function Goal() {
                     )}
                 </section>
             </div>
+
+            {deleteModal && (
+                <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
+                    <div className="bg-slate-900 border border-rose-800/60 p-6 w-full max-w-md">
+                        <div className="flex justify-between items-center mb-4">
+                            <h2 className="text-sm font-medium text-rose-300 flex items-center gap-2">
+                                <Trash2 size={14} /> Delete Goal
+                            </h2>
+                            <button
+                                onClick={() => setDeleteModal(null)}
+                                disabled={deleteModal.confirming}
+                                className="text-slate-400 hover:text-white disabled:opacity-40"
+                            >
+                                <X size={16} />
+                            </button>
+                        </div>
+
+                        <p className="text-sm text-slate-300 mb-1">
+                            Are you sure you want to delete <span className="text-white font-medium">"{deleteModal.goalName}"</span>?
+                        </p>
+                        <p className="text-xs text-slate-500 mb-4">
+                            All linked Capsules, Capsule Rules, Allocations, and Milestones will also be permanently deleted.
+                        </p>
+
+                        {deleteModal.capsules.length > 0 && (
+                            <div className="mb-4 space-y-2">
+                                <p className="text-[10px] text-slate-500 uppercase tracking-wider">Linked Capsules</p>
+                                {deleteModal.capsules.map((cap) => (
+                                    <div
+                                        key={cap.id}
+                                        className="flex justify-between items-center bg-slate-800/50 border border-slate-700 px-3 py-2 text-xs"
+                                    >
+                                        <span className="text-slate-300">{cap.name}</span>
+                                        <span className={`font-mono-nums ${cap.current_balance > 0 ? 'text-amber-400' : 'text-slate-500'}`}>
+                                            {formatCurrency(cap.current_balance)}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {deleteModal.capsules.some((c) => c.current_balance > 0) && (
+                            <div className="mb-5">
+                                <p className="text-[10px] text-amber-400 uppercase tracking-wider mb-2">
+                                    ⚠ Capsule balance detected — select transfer destination
+                                </p>
+                                <p className="text-[10px] text-slate-500 mb-2">
+                                    The accumulated balance will be transferred to the selected account before deletion.
+                                </p>
+                                <select
+                                    value={deleteModal.transferAccountId}
+                                    onChange={(e) =>
+                                        setDeleteModal({ ...deleteModal, transferAccountId: e.target.value })
+                                    }
+                                    className="w-full bg-slate-800 border border-slate-600 px-3 py-2 text-xs text-slate-200"
+                                    disabled={deleteModal.confirming}
+                                >
+                                    <option value="">Select account...</option>
+                                    {deleteModal.assetAccounts.map((acc) => (
+                                        <option key={acc.id} value={acc.id}>
+                                            {acc.name} ({formatCompact(acc.balance)})
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+                        )}
+
+                        <div className="flex gap-2 justify-end">
+                            <button
+                                onClick={() => setDeleteModal(null)}
+                                disabled={deleteModal.confirming}
+                                className="px-4 py-2 text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 disabled:opacity-40"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                onClick={confirmDelete}
+                                disabled={
+                                    deleteModal.confirming ||
+                                    (deleteModal.capsules.some((c) => c.current_balance > 0) &&
+                                        !deleteModal.transferAccountId)
+                                }
+                                className="px-4 py-2 text-xs bg-rose-800 hover:bg-rose-700 text-rose-100 disabled:opacity-40 flex items-center gap-2"
+                            >
+                                <Trash2 size={12} />
+                                {deleteModal.confirming ? 'Deleting...' : 'Delete Goal'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {showEventModal && (
                 <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">

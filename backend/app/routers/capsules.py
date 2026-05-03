@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date
 from typing import List, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -132,9 +132,17 @@ def update_capsule(
 @router.delete("/{capsule_id}")
 def delete_capsule(
     capsule_id: int,
+    transfer_account_id: Optional[int] = Query(None, description="Transfer capsule balance to this account before deletion"),
     db: Session = Depends(database.get_db),
     current_client: models.Client = Depends(dependencies.get_current_client),
 ):
+    """Delete a capsule belonging to current client.
+
+    If the capsule has a non-zero balance, transfer_account_id is required.
+    The balance is moved to transfer_account_id via a Transfer transaction
+    before the capsule (and its CapsuleRules) is deleted.
+    The earmarked Account linked to the capsule is also deleted.
+    """
     capsule = db.query(models.Capsule).filter(
         models.Capsule.id == capsule_id,
         models.Capsule.client_id == current_client.id,
@@ -142,9 +150,54 @@ def delete_capsule(
     if not capsule:
         raise HTTPException(status_code=404, detail="Capsule not found")
 
-    if capsule.account:
-        capsule.account.is_active = False
+    bal = capsule_balance(db, capsule)
+
+    if bal > 0 and transfer_account_id is None:
+        raise HTTPException(
+            status_code=422,
+            detail="transfer_account_id is required because this capsule has a non-zero balance.",
+        )
+
+    if transfer_account_id is not None:
+        dest = db.get(models.Account, transfer_account_id)
+        if not dest or dest.client_id != current_client.id:
+            raise HTTPException(status_code=404, detail="Transfer destination account not found")
+
+    # Transfer balance to destination account
+    if bal > 0 and transfer_account_id is not None:
+        tx = models.Transaction(
+            client_id=current_client.id,
+            date=date.today(),
+            description=f"Capsule deleted – funds returned from Capsule: {capsule.name}",
+            amount=bal,
+            type="Transfer",
+            from_account_id=capsule.account_id,
+            to_account_id=transfer_account_id,
+            currency="JPY",
+            category="capsule_return",
+        )
+        db.add(tx)
+        db.flush()
+        process_transaction(db, tx)
+
+    # Collect account ID before nullifying FK
+    account_id = capsule.account_id
+    capsule.account_id = None
+    db.flush()
+
+    # Delete capsule (cascades CapsuleRules)
     db.delete(capsule)
+    db.flush()
+
+    # Delete the (now-empty) earmarked account and its journal entries
+    if account_id:
+        db.query(models.JournalEntry).filter(
+            models.JournalEntry.account_id == account_id
+        ).delete(synchronize_session=False)
+        account = db.get(models.Account, account_id)
+        if account:
+            db.delete(account)
+
     db.commit()
     return {"message": "Capsule deleted successfully"}
 
