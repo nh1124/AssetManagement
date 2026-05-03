@@ -42,6 +42,7 @@ import type { ActionProposal, AnalysisSummary, MonthlyAction, MonthlyReport, Per
 
 interface TheLabProps {
     onNavigate?: (page: string) => void;
+    mode?: 'portfolio' | 'period';
 }
 
 const PORTFOLIO_TABS = [
@@ -104,8 +105,8 @@ const getPresetRange = (preset: PeriodPreset) => {
     return { start: toISODate(monthStart(today)), end: toISODate(monthEnd(today)) };
 };
 
-export default function TheLab({ onNavigate }: TheLabProps) {
-    const [analysisMode, setAnalysisMode] = useState<'portfolio' | 'period'>('portfolio');
+export default function TheLab({ onNavigate, mode }: TheLabProps) {
+    const [analysisMode, setAnalysisMode] = useState<'portfolio' | 'period'>(mode ?? 'portfolio');
     const [portfolioTab, setPortfolioTab] = useState('overview');
     const [periodTab, setPeriodTab] = useState('periodSummary');
     const [periodPreset, setPeriodPreset] = useState<PeriodPreset>('thisMonth');
@@ -154,6 +155,10 @@ export default function TheLab({ onNavigate }: TheLabProps) {
     const { showToast } = useToast();
     const { currentClient } = useClient();
 
+    useEffect(() => {
+        if (mode) setAnalysisMode(mode);
+    }, [mode]);
+
     const fetchData = async () => {
         setLoading(true);
         try {
@@ -196,7 +201,7 @@ export default function TheLab({ onNavigate }: TheLabProps) {
                 next_actions: reviewData.next_actions || '',
             });
         } catch (error) {
-            console.error('Failed to fetch analytics data:', error);
+            console.error('Failed to fetch financial review data:', error);
         } finally {
             setLoading(false);
         }
@@ -320,9 +325,9 @@ export default function TheLab({ onNavigate }: TheLabProps) {
                 next_actions: reviewDraft.next_actions,
             });
             setPeriodReview(saved);
-            showToast('Period review saved', 'success');
+            showToast('Review saved', 'success');
         } catch (error) {
-            showToast('Failed to save period review', 'error');
+            showToast('Failed to save review', 'error');
         } finally {
             setReviewSaving(false);
         }
@@ -1097,7 +1102,7 @@ export default function TheLab({ onNavigate }: TheLabProps) {
                             className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white py-2 text-xs font-bold flex items-center justify-center gap-2"
                         >
                             <Save size={14} />
-                            {reviewSaving ? 'Saving...' : 'Save Period Review'}
+                            {reviewSaving ? 'Saving...' : 'Save Review'}
                         </button>
                     </div>
                 );
@@ -1178,24 +1183,26 @@ export default function TheLab({ onNavigate }: TheLabProps) {
         <div className="h-full flex flex-col p-4 overflow-auto">
             <div className="flex flex-col gap-3 mb-4 flex-shrink-0">
                 <div className="flex flex-col min-[760px]:flex-row min-[760px]:items-center justify-between gap-3">
-                    <div className="inline-flex border border-slate-800 bg-slate-900/70 w-fit">
-                        <button
-                            type="button"
-                            onClick={() => setAnalysisMode('portfolio')}
-                            className={`px-4 py-2 text-xs font-medium ${analysisMode === 'portfolio' ? 'bg-emerald-950/40 text-emerald-300 border-b border-emerald-500' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/40'}`}
-                        >
-                            Portfolio
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => setAnalysisMode('period')}
-                            className={`px-4 py-2 text-xs font-medium ${analysisMode === 'period' ? 'bg-emerald-950/40 text-emerald-300 border-b border-emerald-500' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/40'}`}
-                        >
-                            Period Review
-                        </button>
-                    </div>
+                    {!mode && (
+                        <div className="inline-flex border border-slate-800 bg-slate-900/70 w-fit">
+                            <button
+                                type="button"
+                                onClick={() => setAnalysisMode('portfolio')}
+                                className={`px-4 py-2 text-xs font-medium ${analysisMode === 'portfolio' ? 'bg-emerald-950/40 text-emerald-300 border-b border-emerald-500' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/40'}`}
+                            >
+                                Portfolio
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setAnalysisMode('period')}
+                                className={`px-4 py-2 text-xs font-medium ${analysisMode === 'period' ? 'bg-emerald-950/40 text-emerald-300 border-b border-emerald-500' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/40'}`}
+                            >
+                                Review
+                            </button>
+                        </div>
+                    )}
 
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 ml-auto">
                         {analysisMode === 'period' && (
                             <div className="flex flex-wrap items-center justify-end gap-2">
                                 <select

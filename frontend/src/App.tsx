@@ -7,7 +7,8 @@ import { ClientProvider } from './context/ClientContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Journal from './pages/Journal';
 import Goal from './pages/Goal';
-import Analytics from './pages/Analytics';
+import Portfolio from './pages/Portfolio';
+import Review from './pages/Review';
 import Strategy from './pages/Strategy';
 import Registry from './pages/Registry';
 import SettingsPage from './pages/Settings';
@@ -36,8 +37,10 @@ function AppContent() {
         return <Journal />;
       case 'goal':
         return <Goal />;
-      case 'analytics':
-        return <Analytics onNavigate={setCurrentPage} />;
+      case 'portfolio':
+        return <Portfolio onNavigate={setCurrentPage} />;
+      case 'review':
+        return <Review onNavigate={setCurrentPage} />;
       case 'strategy':
         return <Strategy />;
       case 'registry':
