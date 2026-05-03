@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from datetime import date, datetime
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from .. import models, schemas
@@ -10,6 +11,7 @@ from ..services.goal_service import (
     generate_budget_from_goals,
     get_strategy_dashboard
 )
+from ..services.capsule_service import create_capsule_for_goal
 
 router = APIRouter(prefix="/life-events", tags=["life_events"])
 
@@ -61,11 +63,11 @@ def get_budget_summary(
     current_client: models.Client = Depends(get_current_client)
 ):
     """Get budget summary: required savings from goals + fixed costs from recurring."""
-    from sqlalchemy import func
-    from datetime import datetime
-    
     if not period:
         period = datetime.now().strftime("%Y-%m")
+    year, month = [int(part) for part in period.split("-")]
+    period_start = date(year, month, 1)
+    period_end = date(year + (1 if month == 12 else 0), 1 if month == 12 else month + 1, 1)
     
     # Calculate required monthly savings from life event gaps
     events_with_progress = get_life_events_with_progress(db, client_id=current_client.id)
@@ -122,6 +124,42 @@ def get_budget_summary(
             "is_custom": acc.id in budget_map
         })
         total_variable_budget += amount
+
+    capsules = db.query(models.Capsule).filter(
+        models.Capsule.client_id == current_client.id
+    ).all()
+    capsule_account_ids = [capsule.account_id for capsule in capsules if capsule.account_id]
+    actual_by_capsule_account: dict[int, float] = {account_id: 0.0 for account_id in capsule_account_ids}
+    if capsule_account_ids:
+        capsule_transactions = db.query(models.Transaction).filter(
+            models.Transaction.client_id == current_client.id,
+            models.Transaction.type == "Transfer",
+            models.Transaction.to_account_id.in_(capsule_account_ids),
+            models.Transaction.date >= period_start,
+            models.Transaction.date < period_end,
+        ).all()
+        for tx in capsule_transactions:
+            actual_by_capsule_account[tx.to_account_id] = actual_by_capsule_account.get(tx.to_account_id, 0.0) + (tx.amount or 0.0)
+
+    sinking_funds = []
+    total_capsule_plan = 0.0
+    total_capsule_actual = 0.0
+    for capsule in capsules:
+        planned = capsule.monthly_contribution or 0.0
+        actual = actual_by_capsule_account.get(capsule.account_id, 0.0) if capsule.account_id else 0.0
+        total_capsule_plan += planned
+        total_capsule_actual += actual
+        sinking_funds.append({
+            "id": capsule.id,
+            "name": capsule.name,
+            "life_event_id": capsule.life_event_id,
+            "account_id": capsule.account_id,
+            "planned": round(planned, 0),
+            "actual": round(actual, 0),
+            "variance": round(planned - actual, 0),
+            "current_balance": round(capsule.current_balance or 0.0, 0),
+            "target_amount": round(capsule.target_amount or 0.0, 0),
+        })
     
     # Get total income from income accounts or recurring
     income_recurring = db.query(models.RecurringTransaction).filter(
@@ -133,7 +171,7 @@ def get_budget_summary(
     monthly_income = sum(r.amount for r in income_recurring if r.frequency == "Monthly")
     monthly_income += sum(r.amount / 12 for r in income_recurring if r.frequency == "Yearly")
     
-    remaining = monthly_income - required_monthly_savings - monthly_fixed_costs - total_variable_budget
+    remaining = monthly_income - required_monthly_savings - monthly_fixed_costs - total_variable_budget - total_capsule_plan
     
     return {
         "period": period,
@@ -141,8 +179,11 @@ def get_budget_summary(
         "monthly_fixed_costs": round(monthly_fixed_costs, 0),
         "monthly_income": round(monthly_income, 0),
         "total_variable_budget": round(total_variable_budget, 0),
+        "total_capsule_plan": round(total_capsule_plan, 0),
+        "total_capsule_actual": round(total_capsule_actual, 0),
         "remaining_balance": round(remaining, 0),
         "expense_accounts": expense_budgets,
+        "sinking_funds": sinking_funds,
         "goals_count": len(events_with_progress),
         "total_goal_gap": round(total_gap, 0)
     }
@@ -212,6 +253,8 @@ def create_life_event(
     from ..services.milestone_service import reset_milestones_from_annual_plan
 
     reset_milestones_from_annual_plan(db, current_client.id, db_event.id)
+    create_capsule_for_goal(db, current_client.id, db_event)
+    db.commit()
     db.refresh(db_event)
     return db_event
 

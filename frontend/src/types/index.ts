@@ -312,11 +312,28 @@ export interface RoadmapProjection {
 
 export interface Capsule {
     id: number;
+    life_event_id?: number | null;
     name: string;
     target_amount: number;
     monthly_contribution: number;
     current_balance: number;
     account_id?: number;
+}
+
+export interface CapsuleRule {
+    id: number;
+    capsule_id: number;
+    capsule_name?: string | null;
+    trigger_type: Transaction['type'];
+    trigger_category?: string | null;
+    trigger_description?: string | null;
+    source_mode: 'transaction_account' | 'fixed_account';
+    source_account_id?: number | null;
+    source_account_name?: string | null;
+    amount_type: 'fixed' | 'percentage';
+    amount_value: number;
+    is_active: boolean;
+    created_at: string;
 }
 
 export interface MonteCarloResult {

@@ -6,8 +6,12 @@ import { useClient } from '../context/ClientContext';
 import {
     createAccount,
     createCapsule,
+    createCapsuleRule,
     deleteCapsule,
+    deleteCapsuleRule,
+    getAccounts,
     getBudgetSummary,
+    getCapsuleRules,
     getCapsules,
     processCapsuleContributions,
     saveMonthlyBudgets,
@@ -16,7 +20,7 @@ import {
     updateCapsule,
 } from '../api';
 import { formatCurrency as formatCurrencyWithSetting } from '../utils/currency';
-import type { Capsule } from '../types';
+import type { Account, Capsule, CapsuleRule, Transaction } from '../types';
 
 interface BudgetAccount {
     id: number;
@@ -32,11 +36,26 @@ interface BudgetSummary {
     monthly_fixed_costs: number;
     monthly_income: number;
     total_variable_budget: number;
+    total_capsule_plan: number;
+    total_capsule_actual: number;
     remaining_balance: number;
     expense_accounts: BudgetAccount[];
+    sinking_funds: Array<{
+        id: number;
+        name: string;
+        life_event_id?: number | null;
+        account_id?: number | null;
+        planned: number;
+        actual: number;
+        variance: number;
+        current_balance: number;
+        target_amount: number;
+    }>;
     goals_count: number;
     total_goal_gap: number;
 }
+
+type TransactionKind = Transaction['type'];
 
 const TABS = [
     { id: 'budgeting', label: 'Budgeting' },
@@ -56,15 +75,29 @@ export default function Strategy() {
     const [budgetThinking, setBudgetThinking] = useState(false);
 
     const [capsules, setCapsules] = useState<Capsule[]>([]);
+    const [capsuleRules, setCapsuleRules] = useState<CapsuleRule[]>([]);
+    const [accounts, setAccounts] = useState<Account[]>([]);
     const [showCapsuleForm, setShowCapsuleForm] = useState(false);
+    const [showRuleForm, setShowRuleForm] = useState(false);
     const [editingCapsuleId, setEditingCapsuleId] = useState<number | null>(null);
     const [capsuleForm, setCapsuleForm] = useState({ name: '', target_amount: '', monthly_contribution: '', current_balance: '0' });
+    const [ruleForm, setRuleForm] = useState({
+        capsule_id: '',
+        trigger_type: 'Income' as TransactionKind,
+        trigger_category: '',
+        trigger_description: '',
+        source_mode: 'transaction_account',
+        source_account_id: '',
+        amount_type: 'fixed',
+        amount_value: '',
+    });
 
     const variableBudgetTotal = Object.values(budgetEdits).reduce((sum, amount) => sum + amount, 0);
     const calculatedRemaining = (budgetSummary?.monthly_income || 0)
         - (budgetSummary?.required_monthly_savings || 0)
         - (budgetSummary?.monthly_fixed_costs || 0)
-        - variableBudgetTotal;
+        - variableBudgetTotal
+        - (budgetSummary?.total_capsule_plan || 0);
     const formatCurrency = (value: number | undefined | null) =>
         formatCurrencyWithSetting(value, currentClient?.general_settings?.currency);
 
@@ -85,7 +118,14 @@ export default function Strategy() {
 
     const fetchCapsules = async () => {
         try {
-            setCapsules(await getCapsules());
+            const [capsuleData, ruleData, accountData] = await Promise.all([
+                getCapsules(),
+                getCapsuleRules(),
+                getAccounts(),
+            ]);
+            setCapsules(capsuleData);
+            setCapsuleRules(ruleData);
+            setAccounts(accountData);
         } catch (error) {
             console.error('Failed to fetch capsules:', error);
             showToast('Failed to load capsules', 'error');
@@ -244,6 +284,49 @@ export default function Strategy() {
         }
     };
 
+    const saveCapsuleRule = async () => {
+        if (!ruleForm.capsule_id || !ruleForm.amount_value) return;
+        try {
+            await createCapsuleRule({
+                capsule_id: Number(ruleForm.capsule_id),
+                trigger_type: ruleForm.trigger_type,
+                trigger_category: ruleForm.trigger_category.trim() || null,
+                trigger_description: ruleForm.trigger_description.trim() || null,
+                source_mode: ruleForm.source_mode,
+                source_account_id: ruleForm.source_mode === 'fixed_account' && ruleForm.source_account_id ? Number(ruleForm.source_account_id) : null,
+                amount_type: ruleForm.amount_type,
+                amount_value: Number(ruleForm.amount_value),
+                is_active: true,
+            });
+            setRuleForm({
+                capsule_id: '',
+                trigger_type: 'Income',
+                trigger_category: '',
+                trigger_description: '',
+                source_mode: 'transaction_account',
+                source_account_id: '',
+                amount_type: 'fixed',
+                amount_value: '',
+            });
+            setShowRuleForm(false);
+            showToast('Capsule rule saved', 'success');
+            await fetchCapsules();
+        } catch (error) {
+            showToast('Failed to save capsule rule', 'error');
+        }
+    };
+
+    const removeCapsuleRule = async (id: number) => {
+        if (!confirm('Delete this capsule rule?')) return;
+        try {
+            await deleteCapsuleRule(id);
+            showToast('Capsule rule deleted', 'info');
+            await fetchCapsules();
+        } catch (error) {
+            showToast('Failed to delete capsule rule', 'error');
+        }
+    };
+
     const renderBudgeting = () => (
         <div className="grid grid-cols-1 min-[960px]:grid-cols-[380px_1fr] gap-4 p-4">
             <section className="space-y-4">
@@ -258,6 +341,7 @@ export default function Strategy() {
                         <div className="bg-slate-800/50 border border-slate-700 p-2"><p className="text-slate-500">Income</p><p className="font-mono-nums text-emerald-400">{formatCurrency(budgetSummary?.monthly_income)}</p></div>
                         <div className="bg-slate-800/50 border border-slate-700 p-2"><p className="text-slate-500">Goal Savings</p><p className="font-mono-nums text-cyan-400">{formatCurrency(budgetSummary?.required_monthly_savings)}</p></div>
                         <div className="bg-slate-800/50 border border-slate-700 p-2"><p className="text-slate-500">Fixed Costs</p><p className="font-mono-nums text-amber-400">{formatCurrency(budgetSummary?.monthly_fixed_costs)}</p></div>
+                        <div className="bg-slate-800/50 border border-slate-700 p-2"><p className="text-slate-500">Sinking Funds</p><p className="font-mono-nums text-purple-300">{formatCurrency(budgetSummary?.total_capsule_plan)}</p></div>
                         <div className="bg-slate-800/50 border border-slate-700 p-2"><p className="text-slate-500">Remaining</p><p className={`font-mono-nums ${calculatedRemaining >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(calculatedRemaining)}</p></div>
                     </div>
                 </div>
@@ -314,6 +398,39 @@ export default function Strategy() {
                         </tbody>
                     </table>
                 </div>
+
+                <div className="mt-6">
+                    <div className="flex items-center justify-between mb-3">
+                        <h2 className="text-xs text-slate-400 uppercase tracking-wider">Sinking Funds</h2>
+                        <span className="text-xs text-slate-500 font-mono-nums">Actual {formatCurrency(budgetSummary?.total_capsule_actual)}</span>
+                    </div>
+                    <div className="overflow-x-auto border border-slate-800">
+                        <table className="w-full text-[10px]">
+                            <thead className="text-slate-500 uppercase border-b border-slate-700 bg-slate-800/50">
+                                <tr>
+                                    <th className="px-2 py-2 text-left font-normal">Capsule</th>
+                                    <th className="px-2 py-2 text-right font-normal">Actual</th>
+                                    <th className="px-2 py-2 text-right font-normal">Plan</th>
+                                    <th className="px-2 py-2 text-right font-normal">Variance</th>
+                                    <th className="px-2 py-2 text-right font-normal">Balance</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-800/70">
+                                {(budgetSummary?.sinking_funds ?? []).length === 0 ? (
+                                    <tr><td colSpan={5} className="px-2 py-4 text-slate-600">No capsule sinking funds.</td></tr>
+                                ) : (budgetSummary?.sinking_funds ?? []).map((fund) => (
+                                    <tr key={fund.id} className="hover:bg-slate-800/30">
+                                        <td className="px-2 py-2 text-slate-300">{fund.name}</td>
+                                        <td className="px-2 py-2 text-right font-mono-nums text-slate-400">{formatCurrency(fund.actual)}</td>
+                                        <td className="px-2 py-2 text-right font-mono-nums text-purple-300">{formatCurrency(fund.planned)}</td>
+                                        <td className={`px-2 py-2 text-right font-mono-nums ${fund.variance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(fund.variance)}</td>
+                                        <td className="px-2 py-2 text-right font-mono-nums text-slate-500">{formatCurrency(fund.current_balance)}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             </section>
         </div>
     );
@@ -324,12 +441,46 @@ export default function Strategy() {
                 <h2 className="text-xs text-slate-400 uppercase tracking-wider">Capsule Actions</h2>
                 <button onClick={() => openCapsuleForm()} className="w-full bg-purple-900/40 hover:bg-purple-900/60 border border-purple-800 py-2 text-xs text-purple-200 flex items-center justify-center gap-2"><Plus size={14} /> New Capsule</button>
                 <button onClick={processCapsules} className="w-full bg-slate-800 hover:bg-slate-700 border border-slate-700 py-2 text-xs text-slate-300 flex items-center justify-center gap-2"><Sparkles size={14} /> Process Contributions</button>
+                <button onClick={() => setShowRuleForm(!showRuleForm)} className="w-full bg-slate-800 hover:bg-slate-700 border border-slate-700 py-2 text-xs text-slate-300 flex items-center justify-center gap-2"><Plus size={14} /> Auto Rule</button>
                 {showCapsuleForm && (
                     <div className="border border-purple-800/50 bg-purple-900/10 p-3 space-y-2">
                         <input value={capsuleForm.name} onChange={(event) => setCapsuleForm({ ...capsuleForm, name: event.target.value })} placeholder="Name" className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs" />
                         <input type="number" value={capsuleForm.target_amount} onChange={(event) => setCapsuleForm({ ...capsuleForm, target_amount: event.target.value })} placeholder="Target amount" className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums" />
                         <input type="number" value={capsuleForm.monthly_contribution} onChange={(event) => setCapsuleForm({ ...capsuleForm, monthly_contribution: event.target.value })} placeholder="Monthly contribution" className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums" />
                         <div className="flex gap-2"><button onClick={saveCapsule} className="flex-1 bg-purple-600 hover:bg-purple-500 text-white py-2 text-xs">Save</button><button onClick={() => setShowCapsuleForm(false)} className="px-3 bg-slate-800 text-slate-400 text-xs">Cancel</button></div>
+                    </div>
+                )}
+                {showRuleForm && (
+                    <div className="border border-cyan-800/50 bg-cyan-900/10 p-3 space-y-2">
+                        <select value={ruleForm.capsule_id} onChange={(event) => setRuleForm({ ...ruleForm, capsule_id: event.target.value })} className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs">
+                            <option value="">Capsule</option>
+                            {capsules.map((capsule) => <option key={capsule.id} value={capsule.id}>{capsule.name}</option>)}
+                        </select>
+                        <div className="grid grid-cols-2 gap-2">
+                            <select value={ruleForm.trigger_type} onChange={(event) => setRuleForm({ ...ruleForm, trigger_type: event.target.value as TransactionKind })} className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs">
+                                {(['Income', 'Expense', 'CreditExpense', 'Transfer'] as TransactionKind[]).map((type) => <option key={type} value={type}>{type}</option>)}
+                            </select>
+                            <input value={ruleForm.trigger_category} onChange={(event) => setRuleForm({ ...ruleForm, trigger_category: event.target.value })} placeholder="Category contains" className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs" />
+                        </div>
+                        <input value={ruleForm.trigger_description} onChange={(event) => setRuleForm({ ...ruleForm, trigger_description: event.target.value })} placeholder="Description contains" className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs" />
+                        <div className="grid grid-cols-2 gap-2">
+                            <select value={ruleForm.amount_type} onChange={(event) => setRuleForm({ ...ruleForm, amount_type: event.target.value })} className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs">
+                                <option value="fixed">Fixed</option>
+                                <option value="percentage">Percent</option>
+                            </select>
+                            <input type="number" value={ruleForm.amount_value} onChange={(event) => setRuleForm({ ...ruleForm, amount_value: event.target.value })} placeholder={ruleForm.amount_type === 'percentage' ? 'Percent' : 'Amount'} className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums" />
+                        </div>
+                        <select value={ruleForm.source_mode} onChange={(event) => setRuleForm({ ...ruleForm, source_mode: event.target.value, source_account_id: '' })} className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs">
+                            <option value="transaction_account">Use transaction account</option>
+                            <option value="fixed_account">Use fixed source account</option>
+                        </select>
+                        {ruleForm.source_mode === 'fixed_account' && (
+                            <select value={ruleForm.source_account_id} onChange={(event) => setRuleForm({ ...ruleForm, source_account_id: event.target.value })} className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs">
+                                <option value="">Source account</option>
+                                {accounts.filter((account) => account.account_type === 'asset').map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+                            </select>
+                        )}
+                        <div className="flex gap-2"><button onClick={saveCapsuleRule} className="flex-1 bg-cyan-700 hover:bg-cyan-600 text-white py-2 text-xs">Save Rule</button><button onClick={() => setShowRuleForm(false)} className="px-3 bg-slate-800 text-slate-400 text-xs">Cancel</button></div>
                     </div>
                 )}
             </section>
@@ -350,6 +501,25 @@ export default function Strategy() {
                             </div>
                         );
                     })}
+                </div>
+                <div className="mt-6">
+                    <h2 className="text-xs text-slate-400 uppercase tracking-wider mb-3">Auto Allocation Rules</h2>
+                    <div className="space-y-2">
+                        {capsuleRules.length === 0 ? <p className="text-xs text-slate-600">No auto allocation rules.</p> : capsuleRules.map((rule) => (
+                            <div key={rule.id} className="bg-slate-800/30 border border-slate-700 p-2 grid grid-cols-1 md:grid-cols-[1fr_auto] gap-2 text-xs">
+                                <div>
+                                    <p className="text-slate-200">{rule.trigger_type} {rule.trigger_category ? `/ ${rule.trigger_category}` : ''} → {rule.capsule_name}</p>
+                                    <p className="text-[10px] text-slate-500">
+                                        {rule.amount_type === 'percentage' ? `${rule.amount_value}%` : formatCurrency(rule.amount_value)}
+                                        {' from '}
+                                        {rule.source_mode === 'fixed_account' ? rule.source_account_name || 'fixed account' : 'transaction account'}
+                                        {rule.trigger_description ? ` / ${rule.trigger_description}` : ''}
+                                    </p>
+                                </div>
+                                <button onClick={() => removeCapsuleRule(rule.id)} className="text-slate-500 hover:text-rose-400 justify-self-end"><Trash2 size={12} /></button>
+                            </div>
+                        ))}
+                    </div>
                 </div>
             </section>
         </div>

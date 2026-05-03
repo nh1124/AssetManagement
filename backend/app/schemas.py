@@ -331,6 +331,7 @@ class CapsuleBase(BaseModel):
     target_amount: float
     monthly_contribution: float
     current_balance: float = 0.0
+    life_event_id: Optional[int] = None
 
 class CapsuleCreate(CapsuleBase):
     pass
@@ -340,10 +341,49 @@ class CapsuleUpdate(BaseModel):
     target_amount: Optional[float] = None
     monthly_contribution: Optional[float] = None
     current_balance: Optional[float] = None
+    life_event_id: Optional[int] = None
 
 class Capsule(CapsuleBase):
     id: int
     account_id: Optional[int] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class CapsuleRuleBase(BaseModel):
+    capsule_id: int
+    trigger_type: TransactionTypeLiteral
+    trigger_category: Optional[str] = None
+    trigger_description: Optional[str] = None
+    source_mode: Literal["transaction_account", "fixed_account"] = "transaction_account"
+    source_account_id: Optional[int] = None
+    amount_type: Literal["fixed", "percentage"] = "fixed"
+    amount_value: float = Field(ge=0)
+    is_active: bool = True
+
+
+class CapsuleRuleCreate(CapsuleRuleBase):
+    pass
+
+
+class CapsuleRuleUpdate(BaseModel):
+    capsule_id: Optional[int] = None
+    trigger_type: Optional[TransactionTypeLiteral] = None
+    trigger_category: Optional[str] = None
+    trigger_description: Optional[str] = None
+    source_mode: Optional[Literal["transaction_account", "fixed_account"]] = None
+    source_account_id: Optional[int] = None
+    amount_type: Optional[Literal["fixed", "percentage"]] = None
+    amount_value: Optional[float] = Field(default=None, ge=0)
+    is_active: Optional[bool] = None
+
+
+class CapsuleRule(CapsuleRuleBase):
+    id: int
+    capsule_name: Optional[str] = None
+    source_account_name: Optional[str] = None
     created_at: datetime
 
     class Config:

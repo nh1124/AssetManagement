@@ -5,12 +5,14 @@ import {
     addAllocation,
     applyMilestonesFromSimulation,
     createGoal,
+    createGoalCapsule,
     createMilestone,
     deleteAllocation,
     deleteGoal,
     deleteMilestone,
     getMilestones,
     getGoalDashboard,
+    getCapsules,
     getRoadmapProjection,
     optimizeAllocations,
     previewMilestonesFromSimulation,
@@ -24,6 +26,7 @@ import { formatCompactCurrency, formatCurrency as formatCurrencyWithSetting } fr
 import { PRIORITY_COLORS, priorityLabel } from '../utils/priority';
 import type {
     GoalAllocation,
+    Capsule,
     LifeEvent,
     Milestone,
     MilestoneSimulationBasis,
@@ -97,6 +100,7 @@ export default function Goal() {
     const formatCompact = (value: number | undefined | null) => formatCompactCurrency(value, currentCurrency);
     const [dashboard, setDashboard] = useState<DashboardData | null>(null);
     const [selectedGoal, setSelectedGoal] = useState<LifeEvent | null>(null);
+    const [capsules, setCapsules] = useState<Capsule[]>([]);
     const [selectedScope, setSelectedScope] = useState<GoalScope>('all');
     const [activeGoalTab, setActiveGoalTab] = useState<GoalTab>('simulation');
     const [projectionView, setProjectionView] = useState<ProjectionView>('combined');
@@ -142,7 +146,9 @@ export default function Goal() {
                 simParams.inflation,
                 simParams.monthly_savings,
             );
+            const capsuleData = await getCapsules();
             setDashboard(dashboardData);
+            setCapsules(capsuleData);
 
             const nextSelected = preferredGoalId
                 ? dashboardData.events.find((goal: LifeEvent) => goal.id === preferredGoalId)
@@ -439,6 +445,17 @@ export default function Goal() {
             await fetchGoalWorkspace(selectedGoal?.id);
         } catch (error) {
             showToast(getErrorDetail(error, 'Failed to update allocation'), 'error');
+        }
+    };
+
+    const ensureSelectedGoalCapsule = async () => {
+        if (!selectedGoal) return;
+        try {
+            await createGoalCapsule(selectedGoal.id);
+            showToast('Goal capsule created', 'success');
+            await fetchGoalWorkspace(selectedGoal.id);
+        } catch (error) {
+            showToast(getErrorDetail(error, 'Failed to create goal capsule'), 'error');
         }
     };
 
@@ -987,6 +1004,7 @@ export default function Goal() {
 
     const renderAssetAllocation = () => {
         const allocations = selectedGoal?.allocations ?? [];
+        const linkedCapsule = selectedGoal ? capsules.find((capsule) => capsule.life_event_id === selectedGoal.id) : undefined;
         const allocationTotal = allocations.reduce((sum, allocation) => sum + (allocation.account_balance || 0) * allocation.allocation_percentage / 100, 0);
 
         return (
@@ -1019,6 +1037,17 @@ export default function Goal() {
                     </div>
 
                     <div className="space-y-2 mb-4">
+                        {!linkedCapsule && (
+                            <div className="bg-cyan-950/20 border border-cyan-800/50 p-3 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+                                <div>
+                                    <p className="text-cyan-200">No linked capsule for this goal.</p>
+                                    <p className="text-[10px] text-slate-500 mt-1">Create a dedicated sinking fund and use its account as this goal's allocation source.</p>
+                                </div>
+                                <button onClick={ensureSelectedGoalCapsule} className="px-3 py-1.5 bg-cyan-700 hover:bg-cyan-600 text-white text-[10px]">
+                                    Create Capsule
+                                </button>
+                            </div>
+                        )}
                         {allocations.length === 0 ? (
                             <p className="text-xs text-slate-600">No assets allocated yet.</p>
                         ) : (

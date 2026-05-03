@@ -14,6 +14,7 @@ from ..services.accounting_service import (
     revert_transaction,
     update_transaction as update_transaction_service,
 )
+from ..services.capsule_service import apply_capsule_rules_for_transaction
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
 
@@ -98,6 +99,7 @@ def create_transaction(
 
     process_transaction(db, db_transaction)
     db.refresh(db_transaction)
+    apply_capsule_rules_for_transaction(db, db_transaction)
 
     return _serialize_transaction(db_transaction)
 

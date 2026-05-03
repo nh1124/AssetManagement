@@ -579,6 +579,11 @@ export const createCapsule = async (capsule: any) => {
     return response.data;
 };
 
+export const createGoalCapsule = async (lifeEventId: number) => {
+    const response = await api.post(`/capsules/life-events/${lifeEventId}`);
+    return response.data;
+};
+
 export const updateCapsule = async (id: number, capsule: any) => {
     const response = await api.put(`/capsules/${id}`, capsule);
     return response.data;
@@ -604,6 +609,26 @@ export const contributeToCapsule = async (
 
 export const getReconcileStatus = async (): Promise<ReconcileResponse> => {
     const response = await api.get('/analysis/reconcile');
+    return response.data;
+};
+
+export const getCapsuleRules = async () => {
+    const response = await api.get('/capsules/rules');
+    return response.data;
+};
+
+export const createCapsuleRule = async (rule: any) => {
+    const response = await api.post('/capsules/rules', rule);
+    return response.data;
+};
+
+export const updateCapsuleRule = async (id: number, rule: any) => {
+    const response = await api.put(`/capsules/rules/${id}`, rule);
+    return response.data;
+};
+
+export const deleteCapsuleRule = async (id: number) => {
+    const response = await api.delete(`/capsules/rules/${id}`);
     return response.data;
 };
 

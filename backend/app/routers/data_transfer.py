@@ -298,12 +298,35 @@ def export_client_data(
                         "monthly_contribution",
                         "current_balance",
                         "account_id",
+                        "life_event_id",
                         "created_at",
                     ],
                 )
                 for capsule in db.query(models.Capsule)
                 .filter(models.Capsule.client_id == current_client.id)
                 .order_by(models.Capsule.id)
+                .all()
+            ],
+            "capsule_rules": [
+                _row(
+                    rule,
+                    [
+                        "id",
+                        "capsule_id",
+                        "trigger_type",
+                        "trigger_category",
+                        "trigger_description",
+                        "source_mode",
+                        "source_account_id",
+                        "amount_type",
+                        "amount_value",
+                        "is_active",
+                        "created_at",
+                    ],
+                )
+                for rule in db.query(models.CapsuleRule)
+                .filter(models.CapsuleRule.client_id == current_client.id)
+                .order_by(models.CapsuleRule.id)
                 .all()
             ],
         },
@@ -348,6 +371,7 @@ def import_client_data(
             models.MonthlyBudget,
             models.MonthlyReview,
             models.PeriodReview,
+            models.CapsuleRule,
             models.Capsule,
             models.Milestone,
             models.RecurringTransaction,
@@ -544,18 +568,41 @@ def import_client_data(
                 )
             )
 
+        capsule_map: dict[int, int] = {}
         for item in data.get("capsules", []):
-            db.add(
-                models.Capsule(
-                    client_id=current_client.id,
-                    name=item["name"],
-                    target_amount=item.get("target_amount") or 0,
-                    monthly_contribution=item.get("monthly_contribution") or 0,
-                    current_balance=item.get("current_balance") or 0,
-                    account_id=account_map.get(item.get("account_id")),
-                    created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
-                )
+            old_id = int(item["id"])
+            capsule = models.Capsule(
+                client_id=current_client.id,
+                name=item["name"],
+                target_amount=item.get("target_amount") or 0,
+                monthly_contribution=item.get("monthly_contribution") or 0,
+                current_balance=item.get("current_balance") or 0,
+                account_id=account_map.get(item.get("account_id")),
+                life_event_id=event_map.get(item.get("life_event_id")),
+                created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
             )
+            db.add(capsule)
+            db.flush()
+            capsule_map[old_id] = capsule.id
+
+        for item in data.get("capsule_rules", []):
+            capsule_id = capsule_map.get(item.get("capsule_id"))
+            if capsule_id:
+                db.add(
+                    models.CapsuleRule(
+                        client_id=current_client.id,
+                        capsule_id=capsule_id,
+                        trigger_type=item["trigger_type"],
+                        trigger_category=item.get("trigger_category"),
+                        trigger_description=item.get("trigger_description"),
+                        source_mode=item.get("source_mode") or "transaction_account",
+                        source_account_id=account_map.get(item.get("source_account_id")),
+                        amount_type=item.get("amount_type") or "fixed",
+                        amount_value=item.get("amount_value") or 0,
+                        is_active=item.get("is_active", True),
+                        created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
+                    )
+                )
 
         db.commit()
     except Exception as exc:

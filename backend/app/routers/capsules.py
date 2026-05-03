@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from datetime import date
 from typing import List, Optional
 
@@ -10,6 +9,14 @@ from sqlalchemy.orm import Session
 
 from .. import database, dependencies, models, schemas
 from ..services.accounting_service import get_or_create_account, process_transaction
+from ..services.capsule_service import (
+    capsule_balance,
+    capsule_to_dict,
+    create_capsule_account,
+    create_capsule_for_goal,
+    ensure_capsule_account,
+    remaining_target,
+)
 
 router = APIRouter(
     prefix="/capsules",
@@ -24,63 +31,22 @@ class CapsuleContributionRequest(BaseModel):
     contribution_date: Optional[date] = None
 
 
-def _slug(text: str) -> str:
-    text = text.strip().lower()
-    text = re.sub(r"[^a-z0-9_]+", "_", text)
-    return re.sub(r"_+", "_", text).strip("_")
-
-
-def _capsule_to_dict(capsule: models.Capsule) -> dict:
-    balance = capsule.account.balance if capsule.account else capsule.current_balance
-    progress_pct = (balance / capsule.target_amount * 100) if capsule.target_amount else 0
-    progress_pct = min(100, progress_pct)
+def _rule_to_dict(rule: models.CapsuleRule) -> dict:
     return {
-        "id": capsule.id,
-        "name": capsule.name,
-        "target_amount": capsule.target_amount,
-        "monthly_contribution": capsule.monthly_contribution,
-        "current_balance": balance,
-        "account_id": capsule.account_id,
-        "created_at": capsule.created_at,
-        "progress_pct": round(progress_pct, 1),
+        "id": rule.id,
+        "capsule_id": rule.capsule_id,
+        "capsule_name": rule.capsule.name if rule.capsule else None,
+        "trigger_type": rule.trigger_type,
+        "trigger_category": rule.trigger_category,
+        "trigger_description": rule.trigger_description,
+        "source_mode": rule.source_mode,
+        "source_account_id": rule.source_account_id,
+        "source_account_name": rule.source_account.name if rule.source_account else None,
+        "amount_type": rule.amount_type,
+        "amount_value": rule.amount_value,
+        "is_active": rule.is_active,
+        "created_at": rule.created_at,
     }
-
-
-def _capsule_balance(capsule: models.Capsule) -> float:
-    return capsule.account.balance if capsule.account else (capsule.current_balance or 0.0)
-
-
-def _normalize_balance(balance: float, target_amount: float | None) -> float:
-    normalized = max(0.0, balance or 0.0)
-    if target_amount:
-        normalized = min(normalized, target_amount)
-    return normalized
-
-
-def _remaining_target(capsule: models.Capsule) -> float:
-    return max(0.0, (capsule.target_amount or 0.0) - _capsule_balance(capsule))
-
-
-def _create_capsule_account(db: Session, client_id: int, capsule_name: str) -> models.Account:
-    base = f"capsule_{_slug(capsule_name)}"
-    candidate = base
-    i = 2
-    while db.query(models.Account).filter(
-        models.Account.client_id == client_id,
-        models.Account.name == candidate,
-    ).first():
-        candidate = f"{base}_{i}"
-        i += 1
-
-    account = models.Account(
-        client_id=client_id,
-        name=candidate,
-        account_type="asset",
-        balance=0.0,
-    )
-    db.add(account)
-    db.flush()
-    return account
 
 
 @router.get("/", response_model=List[schemas.Capsule])
@@ -93,7 +59,9 @@ def read_capsules(
     capsules = db.query(models.Capsule).filter(
         models.Capsule.client_id == current_client.id
     ).offset(skip).limit(limit).all()
-    return [_capsule_to_dict(c) for c in capsules]
+    result = [capsule_to_dict(db, c) for c in capsules]
+    db.commit()
+    return result
 
 
 @router.post("/", response_model=schemas.Capsule)
@@ -102,7 +70,7 @@ def create_capsule(
     db: Session = Depends(database.get_db),
     current_client: models.Client = Depends(dependencies.get_current_client),
 ):
-    account = _create_capsule_account(db, current_client.id, capsule.name)
+    account = create_capsule_account(db, current_client.id, capsule.name)
     target_amount = max(0.0, capsule.target_amount or 0.0)
     if abs(capsule.current_balance or 0.0) > 0.01:
         raise HTTPException(
@@ -111,6 +79,7 @@ def create_capsule(
         )
     db_capsule = models.Capsule(
         client_id=current_client.id,
+        life_event_id=capsule.life_event_id,
         name=capsule.name,
         target_amount=target_amount,
         monthly_contribution=max(0.0, capsule.monthly_contribution or 0.0),
@@ -120,7 +89,7 @@ def create_capsule(
     db.add(db_capsule)
     db.commit()
     db.refresh(db_capsule)
-    return _capsule_to_dict(db_capsule)
+    return capsule_to_dict(db, db_capsule)
 
 
 @router.put("/{capsule_id}", response_model=schemas.Capsule)
@@ -152,11 +121,12 @@ def update_capsule(
         else:
             setattr(db_capsule, key, value)
 
-    db_capsule.current_balance = _capsule_balance(db_capsule)
+    ensure_capsule_account(db, db_capsule)
+    db_capsule.current_balance = capsule_balance(db, db_capsule)
 
     db.commit()
     db.refresh(db_capsule)
-    return _capsule_to_dict(db_capsule)
+    return capsule_to_dict(db, db_capsule)
 
 
 @router.delete("/{capsule_id}")
@@ -190,8 +160,9 @@ def contribute_to_capsule(
         models.Capsule.id == capsule_id,
         models.Capsule.client_id == current_client.id,
     ).first()
-    if not capsule or not capsule.account_id:
+    if not capsule:
         raise HTTPException(status_code=404, detail="Capsule not found")
+    ensure_capsule_account(db, capsule)
 
     from_account = db.query(models.Account).filter(
         models.Account.id == payload.from_account_id,
@@ -204,14 +175,14 @@ def contribute_to_capsule(
     if amount <= 0:
         raise HTTPException(status_code=400, detail="Contribution amount must be positive")
 
-    remaining = _remaining_target(capsule)
+    remaining = remaining_target(db, capsule)
     if remaining <= 0:
         return {
             "status": "skipped",
             "message": "Capsule target already reached",
             "transaction_id": None,
             "amount": 0.0,
-            "new_balance": _capsule_balance(capsule),
+            "new_balance": capsule_balance(db, capsule),
         }
 
     amount = min(amount, remaining)
@@ -231,14 +202,14 @@ def contribute_to_capsule(
     db.refresh(tx)
     process_transaction(db, tx)
     db.refresh(capsule)
-    capsule.current_balance = _capsule_balance(capsule)
+    capsule.current_balance = capsule_balance(db, capsule)
     db.commit()
 
     return {
         "status": "ok",
         "transaction_id": tx.id,
         "amount": amount,
-        "new_balance": capsule.account.balance if capsule.account else capsule.current_balance,
+        "new_balance": capsule_balance(db, capsule),
     }
 
 
@@ -255,9 +226,10 @@ def process_monthly_contributions(
     total_added = 0.0
     updated_count = 0
     for capsule in capsules:
+        ensure_capsule_account(db, capsule)
         if capsule.monthly_contribution <= 0 or not capsule.account_id:
             continue
-        amount = min(capsule.monthly_contribution, _remaining_target(capsule))
+        amount = min(capsule.monthly_contribution, remaining_target(db, capsule))
         if amount <= 0:
             continue
         tx = models.Transaction(
@@ -276,7 +248,7 @@ def process_monthly_contributions(
         db.refresh(tx)
         process_transaction(db, tx)
         db.refresh(capsule)
-        capsule.current_balance = _capsule_balance(capsule)
+        capsule.current_balance = capsule_balance(db, capsule)
         total_added += amount
         updated_count += 1
 
@@ -286,3 +258,95 @@ def process_monthly_contributions(
         "total_added": total_added,
         "updated_capsules": updated_count,
     }
+
+
+@router.post("/life-events/{life_event_id}", response_model=schemas.Capsule)
+def create_goal_capsule(
+    life_event_id: int,
+    db: Session = Depends(database.get_db),
+    current_client: models.Client = Depends(dependencies.get_current_client),
+):
+    goal = db.query(models.LifeEvent).filter(
+        models.LifeEvent.id == life_event_id,
+        models.LifeEvent.client_id == current_client.id,
+    ).first()
+    if not goal:
+        raise HTTPException(status_code=404, detail="Life event not found")
+    capsule = create_capsule_for_goal(db, current_client.id, goal)
+    db.commit()
+    db.refresh(capsule)
+    return capsule_to_dict(db, capsule)
+
+
+@router.get("/rules", response_model=List[schemas.CapsuleRule])
+def read_capsule_rules(
+    db: Session = Depends(database.get_db),
+    current_client: models.Client = Depends(dependencies.get_current_client),
+):
+    rules = db.query(models.CapsuleRule).filter(
+        models.CapsuleRule.client_id == current_client.id
+    ).order_by(models.CapsuleRule.id).all()
+    return [_rule_to_dict(rule) for rule in rules]
+
+
+@router.post("/rules", response_model=schemas.CapsuleRule)
+def create_capsule_rule(
+    payload: schemas.CapsuleRuleCreate,
+    db: Session = Depends(database.get_db),
+    current_client: models.Client = Depends(dependencies.get_current_client),
+):
+    capsule = db.query(models.Capsule).filter(
+        models.Capsule.id == payload.capsule_id,
+        models.Capsule.client_id == current_client.id,
+    ).first()
+    if not capsule:
+        raise HTTPException(status_code=404, detail="Capsule not found")
+    if payload.source_account_id:
+        account = db.query(models.Account).filter(
+            models.Account.id == payload.source_account_id,
+            models.Account.client_id == current_client.id,
+        ).first()
+        if not account:
+            raise HTTPException(status_code=404, detail="Source account not found")
+    rule = models.CapsuleRule(**payload.model_dump(), client_id=current_client.id)
+    db.add(rule)
+    db.commit()
+    db.refresh(rule)
+    return _rule_to_dict(rule)
+
+
+@router.put("/rules/{rule_id}", response_model=schemas.CapsuleRule)
+def update_capsule_rule(
+    rule_id: int,
+    payload: schemas.CapsuleRuleUpdate,
+    db: Session = Depends(database.get_db),
+    current_client: models.Client = Depends(dependencies.get_current_client),
+):
+    rule = db.query(models.CapsuleRule).filter(
+        models.CapsuleRule.id == rule_id,
+        models.CapsuleRule.client_id == current_client.id,
+    ).first()
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(rule, key, value)
+    db.commit()
+    db.refresh(rule)
+    return _rule_to_dict(rule)
+
+
+@router.delete("/rules/{rule_id}")
+def delete_capsule_rule(
+    rule_id: int,
+    db: Session = Depends(database.get_db),
+    current_client: models.Client = Depends(dependencies.get_current_client),
+):
+    rule = db.query(models.CapsuleRule).filter(
+        models.CapsuleRule.id == rule_id,
+        models.CapsuleRule.client_id == current_client.id,
+    ).first()
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    db.delete(rule)
+    db.commit()
+    return {"message": "Rule deleted"}

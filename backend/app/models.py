@@ -63,6 +63,7 @@ class Client(Base):
     recurring_transactions = relationship("RecurringTransaction", back_populates="client")
     milestones = relationship("Milestone", back_populates="client")
     capsules = relationship("Capsule", back_populates="client")
+    capsule_rules = relationship("CapsuleRule", back_populates="client")
     monthly_reviews = relationship("MonthlyReview", back_populates="client")
     period_reviews = relationship("PeriodReview", back_populates="client")
     monthly_actions = relationship("MonthlyAction", back_populates="client")
@@ -303,6 +304,7 @@ class Capsule(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
+    life_event_id = Column(Integer, ForeignKey("life_events.id", ondelete="SET NULL"), nullable=True)
     name = Column(String, index=True)
     target_amount = Column(Float)
     monthly_contribution = Column(Float)
@@ -312,3 +314,25 @@ class Capsule(Base):
 
     client = relationship("Client", back_populates="capsules")
     account = relationship("Account", foreign_keys=[account_id])
+    life_event = relationship("LifeEvent")
+
+
+class CapsuleRule(Base):
+    __tablename__ = "capsule_rules"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
+    capsule_id = Column(Integer, ForeignKey("capsules.id", ondelete="CASCADE"), nullable=False)
+    trigger_type = Column(String, nullable=False)
+    trigger_category = Column(String, nullable=True)
+    trigger_description = Column(String, nullable=True)
+    source_mode = Column(String, default="transaction_account", nullable=False)
+    source_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
+    amount_type = Column(String, default="fixed", nullable=False)
+    amount_value = Column(Float, default=0.0, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    client = relationship("Client", back_populates="capsule_rules")
+    capsule = relationship("Capsule")
+    source_account = relationship("Account", foreign_keys=[source_account_id])
