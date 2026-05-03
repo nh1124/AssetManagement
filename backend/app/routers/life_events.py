@@ -282,20 +282,48 @@ def update_life_event(
 
 @router.delete("/{event_id}")
 def delete_life_event(
-    event_id: int, 
+    event_id: int,
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
-    """Delete a life event belonging to current client."""
+    """Delete a life event belonging to current client.
+
+    Cascades: GoalAllocations, Milestones, Capsules, CapsuleRules are all deleted.
+    The Account linked to each Capsule (earmarked account) is also deleted,
+    including its JournalEntries.
+    """
     db_event = db.query(models.LifeEvent).filter(
         models.LifeEvent.id == event_id,
         models.LifeEvent.client_id == current_client.id
     ).first()
-    
+
     if not db_event:
         raise HTTPException(status_code=404, detail="Life event not found")
-        
+
+    # Collect account IDs from linked capsules before deletion
+    account_ids_to_delete = [
+        c.account_id for c in db_event.capsules if c.account_id is not None
+    ]
+
+    # Nullify account_id on capsules so the accounts can be deleted without FK violation
+    for capsule in db_event.capsules:
+        capsule.account_id = None
+    db.flush()
+
+    # Delete the life event (cascades: capsules, capsule_rules, goal_allocations, milestones)
     db.delete(db_event)
+    db.flush()
+
+    # Delete the earmarked accounts (and their journal entries) that belonged to capsules
+    for account_id in account_ids_to_delete:
+        account = db.get(models.Account, account_id)
+        if account:
+            # Remove journal entries referencing this account first
+            db.query(models.JournalEntry).filter(
+                models.JournalEntry.account_id == account_id
+            ).delete(synchronize_session=False)
+            db.delete(account)
+
     db.commit()
     return {"message": "Deleted"}
 

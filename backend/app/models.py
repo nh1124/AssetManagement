@@ -193,6 +193,7 @@ class LifeEvent(Base):
     client = relationship("Client", back_populates="life_events")
     allocations = relationship("GoalAllocation", back_populates="life_event", cascade="all, delete-orphan")
     milestones = relationship("Milestone", back_populates="life_event", cascade="all, delete-orphan")
+    capsules = relationship("Capsule", back_populates="life_event", cascade="all, delete-orphan")
 
 class GoalAllocation(Base):
     """Links assets to life events (the 'buckets' for funding goals)."""
@@ -304,7 +305,7 @@ class Capsule(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
-    life_event_id = Column(Integer, ForeignKey("life_events.id", ondelete="SET NULL"), nullable=True)
+    life_event_id = Column(Integer, ForeignKey("life_events.id", ondelete="CASCADE"), nullable=True)
     name = Column(String, index=True)
     target_amount = Column(Float)
     monthly_contribution = Column(Float)
@@ -314,7 +315,7 @@ class Capsule(Base):
 
     client = relationship("Client", back_populates="capsules")
     account = relationship("Account", foreign_keys=[account_id])
-    life_event = relationship("LifeEvent")
+    life_event = relationship("LifeEvent", back_populates="capsules")
 
 
 class CapsuleRule(Base):
