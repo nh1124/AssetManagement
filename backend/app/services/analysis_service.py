@@ -9,6 +9,7 @@ from sqlalchemy import and_, extract, func
 from sqlalchemy.orm import Session
 
 from .. import models
+from .accounting_service import calculate_account_journal_balance
 
 
 LIQUID_ACCOUNT_NAMES = {"cash", "bank", "savings"}
@@ -24,7 +25,7 @@ def _cash_accounts(db: Session, client_id: int) -> list[models.Account]:
 
 
 def _sum_liquid_assets(db: Session, client_id: int) -> float:
-    return sum((account.balance or 0.0) for account in _cash_accounts(db, client_id))
+    return sum(calculate_account_journal_balance(db, account) for account in _cash_accounts(db, client_id))
 
 
 def _sum_unpaid_liabilities(db: Session, client_id: int) -> float:
@@ -32,7 +33,7 @@ def _sum_unpaid_liabilities(db: Session, client_id: int) -> float:
         models.Account.client_id == client_id,
         models.Account.account_type == "liability",
     ).all()
-    return sum(abs(account.balance or 0.0) for account in liabilities)
+    return sum(abs(calculate_account_journal_balance(db, account)) for account in liabilities)
 
 
 def _sum_capsule_balance(db: Session, client_id: int) -> float:
@@ -40,7 +41,7 @@ def _sum_capsule_balance(db: Session, client_id: int) -> float:
         models.Capsule.client_id == client_id
     ).all()
     return sum(
-        ((capsule.account.balance if capsule.account else capsule.current_balance) or 0.0)
+        ((calculate_account_journal_balance(db, capsule.account) if capsule.account else capsule.current_balance) or 0.0)
         for capsule in capsules
     )
 
@@ -62,7 +63,7 @@ def calculate_idle_money(db: Session, client_id: int) -> dict:
         role = account.role or "unassigned"
         if role not in ACCOUNT_ROLES:
             role = "unassigned"
-        by_role[role] += account.balance or 0.0
+        by_role[role] += calculate_account_journal_balance(db, account)
         if account.role_target_amount:
             targets_by_role[role] += account.role_target_amount
 
@@ -170,7 +171,7 @@ def get_summary(db: Session, client_id: int) -> dict:
     goal_data = calculate_overall_goal_probability(db, client_id=client_id)
 
     cash_accounts = _cash_accounts(db, client_id)
-    total_cash = sum(a.balance for a in cash_accounts) if cash_accounts else 0.0
+    total_cash = sum(calculate_account_journal_balance(db, account) for account in cash_accounts) if cash_accounts else 0.0
     liquid_assets = total_cash
 
     cc_unpaid = _sum_unpaid_liabilities(db, client_id)

@@ -11,9 +11,10 @@ from datetime import date
 from typing import List, Optional, Tuple
 import numpy as np
 from .. import models
+from .accounting_service import calculate_account_journal_balance
 
 
-def calculate_current_funded_and_weighted_return(event: models.LifeEvent) -> Tuple[float, float]:
+def calculate_current_funded_and_weighted_return(event: models.LifeEvent, db: Optional[Session] = None) -> Tuple[float, float]:
     """
     Calculate current funded amount and weighted average return from allocations.
     Returns (current_funded, weighted_return_rate).
@@ -23,9 +24,10 @@ def calculate_current_funded_and_weighted_return(event: models.LifeEvent) -> Tup
     total_allocation = 0.0
     
     for alloc in event.allocations:
-        if alloc.account and alloc.account.balance:
+        account_balance = calculate_account_journal_balance(db, alloc.account) if db and alloc.account else (alloc.account.balance if alloc.account else 0)
+        if alloc.account and account_balance:
             allocation_pct = alloc.allocation_percentage / 100.0
-            funded_amount = alloc.account.balance * allocation_pct
+            funded_amount = account_balance * allocation_pct
             total_funded += funded_amount
             
             # Weight the return by the funded amount
@@ -264,7 +266,7 @@ def get_life_events_with_progress(
         years_remaining = max(0, days_remaining / 365.25)
         
         # Calculate current funded AND weighted return from allocations
-        current_funded, weighted_return = calculate_current_funded_and_weighted_return(event)
+        current_funded, weighted_return = calculate_current_funded_and_weighted_return(event, db)
         
         # Use weighted return if allocations exist, otherwise fallback to global
         effective_return = weighted_return if event.allocations else annual_return
@@ -293,7 +295,7 @@ def get_life_events_with_progress(
                 "account_id": alloc.account_id,
                 "allocation_percentage": alloc.allocation_percentage,
                 "account_name": alloc.account.name if alloc.account else None,
-                "account_balance": alloc.account.balance if alloc.account else 0,
+                "account_balance": calculate_account_journal_balance(db, alloc.account) if alloc.account else 0,
                 "expected_return": alloc.account.expected_return if alloc.account else 0
             })
         
@@ -562,7 +564,7 @@ def get_strategy_dashboard(
         remaining_pct = max(0, 100 - used_pct)
         
         # Calculate unallocated balance portion
-        balance = acc.balance or 0
+        balance = calculate_account_journal_balance(db, acc)
         unallocated_balance = balance * (remaining_pct / 100.0)
         
         total_allocated += (balance - unallocated_balance)

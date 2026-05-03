@@ -93,7 +93,7 @@ def monte_carlo_simulation(
     inflation_rate = config.inflation_rate if config else 2.0
     monthly_savings = config.monthly_savings if config else 50000.0
 
-    current_funded, weighted_return = calculate_current_funded_and_weighted_return(event)
+    current_funded, weighted_return = calculate_current_funded_and_weighted_return(event, db)
     effective_return = weighted_return if event.allocations else annual_return
     years_remaining = max(0.0, (event.target_date - date.today()).days / 365.25)
 

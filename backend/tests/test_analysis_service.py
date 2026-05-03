@@ -23,19 +23,42 @@ def _session():
     return TestingSessionLocal()
 
 
+def _post_opening_balances(db, accounts: list[tuple[models.Account, float]]) -> None:
+    tx = models.Transaction(
+        client_id=accounts[0][0].client_id,
+        date=date.today(),
+        description="Opening balances",
+        amount=0,
+        type="Transfer",
+    )
+    db.add(tx)
+    db.flush()
+    for account, amount in accounts:
+        if account.account_type in ("asset", "expense", "item"):
+            db.add(models.JournalEntry(transaction_id=tx.id, account_id=account.id, debit=amount, credit=0))
+        else:
+            db.add(models.JournalEntry(transaction_id=tx.id, account_id=account.id, debit=0, credit=amount))
+
+
 def test_logical_balance_subtracts_due_recurring_outflow() -> None:
     db = _session()
     try:
         client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        cash = models.Account(client_id=1, name="cash", account_type="asset", balance=0)
+        bank = models.Account(client_id=1, name="bank", account_type="asset", balance=0)
+        savings = models.Account(client_id=1, name="savings", account_type="asset", balance=0)
+        credit = models.Account(client_id=1, name="credit", account_type="liability", balance=0)
         db.add(client)
         db.add_all(
             [
-                models.Account(client_id=1, name="cash", account_type="asset", balance=700000),
-                models.Account(client_id=1, name="bank", account_type="asset", balance=300000),
-                models.Account(client_id=1, name="savings", account_type="asset", balance=0),
-                models.Account(client_id=1, name="credit", account_type="liability", balance=-100000),
+                cash,
+                bank,
+                savings,
+                credit,
             ]
         )
+        db.flush()
+        _post_opening_balances(db, [(cash, 700000), (bank, 300000), (credit, 100000)])
         db.add(
             models.Capsule(
                 client_id=1,
@@ -168,12 +191,30 @@ def test_roadmap_projection_returns_projection_and_liability_demand() -> None:
     try:
         today = date.today()
         client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        cash = models.Account(client_id=1, name="cash", account_type="asset", balance=0)
+        credit = models.Account(client_id=1, name="credit", account_type="liability", balance=0)
         db.add(client)
         db.add_all(
             [
-                models.Account(client_id=1, name="cash", account_type="asset", balance=500000),
-                models.Account(client_id=1, name="credit", account_type="liability", balance=-100000),
+                cash,
+                credit,
                 models.SimulationConfig(client_id=1, monthly_savings=50000, annual_return=5, inflation_rate=2),
+            ]
+        )
+        db.flush()
+        opening = models.Transaction(
+            client_id=1,
+            date=today,
+            description="Opening balances",
+            amount=0,
+            type="Transfer",
+        )
+        db.add(opening)
+        db.flush()
+        db.add_all(
+            [
+                models.JournalEntry(transaction_id=opening.id, account_id=cash.id, debit=500000, credit=0),
+                models.JournalEntry(transaction_id=opening.id, account_id=credit.id, debit=0, credit=100000),
             ]
         )
         goal = models.LifeEvent(
@@ -220,33 +261,38 @@ def test_idle_money_uses_account_roles_and_defense_excess() -> None:
     db = _session()
     try:
         client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        emergency = models.Account(
+            client_id=1,
+            name="emergency",
+            account_type="asset",
+            balance=0,
+            role="defense",
+            role_target_amount=600000,
+        )
+        brokerage = models.Account(
+            client_id=1,
+            name="brokerage",
+            account_type="asset",
+            balance=0,
+            role="growth",
+        )
+        loose_cash = models.Account(
+            client_id=1,
+            name="loose_cash",
+            account_type="asset",
+            balance=0,
+            role="unassigned",
+        )
         db.add(client)
         db.add_all(
             [
-                models.Account(
-                    client_id=1,
-                    name="emergency",
-                    account_type="asset",
-                    balance=800000,
-                    role="defense",
-                    role_target_amount=600000,
-                ),
-                models.Account(
-                    client_id=1,
-                    name="brokerage",
-                    account_type="asset",
-                    balance=300000,
-                    role="growth",
-                ),
-                models.Account(
-                    client_id=1,
-                    name="loose_cash",
-                    account_type="asset",
-                    balance=150000,
-                    role="unassigned",
-                ),
+                emergency,
+                brokerage,
+                loose_cash,
             ]
         )
+        db.flush()
+        _post_opening_balances(db, [(emergency, 800000), (brokerage, 300000), (loose_cash, 150000)])
         db.commit()
 
         result = calculate_idle_money(db, client_id=1)

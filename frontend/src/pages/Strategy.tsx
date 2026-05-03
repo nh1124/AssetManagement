@@ -198,7 +198,7 @@ export default function Strategy() {
                 name: capsule.name,
                 target_amount: String(capsule.target_amount),
                 monthly_contribution: String(capsule.monthly_contribution),
-                current_balance: String(capsule.current_balance),
+                current_balance: '0',
             }
             : { name: '', target_amount: '', monthly_contribution: '', current_balance: '0' });
         setShowCapsuleForm(true);
@@ -210,7 +210,6 @@ export default function Strategy() {
             name: capsuleForm.name,
             target_amount: Number(capsuleForm.target_amount),
             monthly_contribution: Number(capsuleForm.monthly_contribution || '0'),
-            current_balance: Number(capsuleForm.current_balance || '0'),
         };
         try {
             if (editingCapsuleId) await updateCapsule(editingCapsuleId, payload);
@@ -330,7 +329,6 @@ export default function Strategy() {
                         <input value={capsuleForm.name} onChange={(event) => setCapsuleForm({ ...capsuleForm, name: event.target.value })} placeholder="Name" className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs" />
                         <input type="number" value={capsuleForm.target_amount} onChange={(event) => setCapsuleForm({ ...capsuleForm, target_amount: event.target.value })} placeholder="Target amount" className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums" />
                         <input type="number" value={capsuleForm.monthly_contribution} onChange={(event) => setCapsuleForm({ ...capsuleForm, monthly_contribution: event.target.value })} placeholder="Monthly contribution" className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums" />
-                        <input type="number" value={capsuleForm.current_balance} onChange={(event) => setCapsuleForm({ ...capsuleForm, current_balance: event.target.value })} placeholder="Current balance" className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums" />
                         <div className="flex gap-2"><button onClick={saveCapsule} className="flex-1 bg-purple-600 hover:bg-purple-500 text-white py-2 text-xs">Save</button><button onClick={() => setShowCapsuleForm(false)} className="px-3 bg-slate-800 text-slate-400 text-xs">Cancel</button></div>
                     </div>
                 )}

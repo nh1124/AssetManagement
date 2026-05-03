@@ -3,10 +3,10 @@ from __future__ import annotations
 
 from typing import List
 
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .. import models
+from .accounting_service import calculate_account_journal_balance
 
 
 def calculate_true_balance(db: Session, account: models.Account) -> float:
@@ -15,17 +15,7 @@ def calculate_true_balance(db: Session, account: models.Account) -> float:
     - asset / expense / item: debit - credit
     - liability / income: credit - debit
     """
-    result = db.query(
-        func.sum(models.JournalEntry.debit).label("total_debit"),
-        func.sum(models.JournalEntry.credit).label("total_credit"),
-    ).filter(models.JournalEntry.account_id == account.id).first()
-
-    total_debit = result.total_debit or 0.0
-    total_credit = result.total_credit or 0.0
-
-    if account.account_type in ("asset", "expense", "item"):
-        return total_debit - total_credit
-    return total_credit - total_debit
+    return calculate_account_journal_balance(db, account)
 
 
 def run_reconcile(db: Session, client_id: int, fix: bool = False) -> List[dict]:

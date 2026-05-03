@@ -4,6 +4,7 @@ from typing import List, Optional, Literal
 from .. import models
 from ..database import get_db
 from ..dependencies import get_current_client
+from ..services.accounting_service import calculate_account_journal_balance
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
@@ -42,13 +43,18 @@ class AccountResponse(BaseModel):
         from_attributes = True
 
 
-def _serialize_account(account: models.Account, rollup_balance: float | None = None) -> dict:
+def _serialize_account(
+    account: models.Account,
+    balance: float | None = None,
+    rollup_balance: float | None = None,
+) -> dict:
+    account_balance = (account.balance or 0.0) if balance is None else balance
     return {
         "id": account.id,
         "name": account.name,
         "account_type": account.account_type,
-        "balance": account.balance or 0.0,
-        "rollup_balance": rollup_balance if rollup_balance is not None else account.balance or 0.0,
+        "balance": account_balance,
+        "rollup_balance": rollup_balance if rollup_balance is not None else account_balance,
         "parent_id": account.parent_id,
         "expected_return": account.expected_return or 0.0,
         "role": account.role or "unassigned",
@@ -95,19 +101,20 @@ def _validate_parent(
         ).first()
 
 
-def _build_tree(accounts: list[models.Account]) -> dict:
+def _build_tree(db: Session, accounts: list[models.Account]) -> dict:
     by_id = {account.id: account for account in accounts}
+    balances = {account.id: calculate_account_journal_balance(db, account) for account in accounts}
     children_by_parent: dict[int | None, list[models.Account]] = {}
     for account in accounts:
         parent_id = account.parent_id if account.parent_id in by_id else None
         children_by_parent.setdefault(parent_id, []).append(account)
 
     def rollup(account: models.Account) -> float:
-        return (account.balance or 0.0) + sum(rollup(child) for child in children_by_parent.get(account.id, []))
+        return balances.get(account.id, 0.0) + sum(rollup(child) for child in children_by_parent.get(account.id, []))
 
     def node(account: models.Account) -> dict:
         return {
-            **_serialize_account(account, rollup_balance=rollup(account)),
+            **_serialize_account(account, balance=balances.get(account.id, 0.0), rollup_balance=rollup(account)),
             "children": [node(child) for child in sorted(children_by_parent.get(account.id, []), key=lambda item: item.name)],
         }
 
@@ -133,7 +140,11 @@ def get_accounts(
     if account_type:
         query = query.filter(models.Account.account_type == account_type)
     
-    return query.order_by(models.Account.account_type, models.Account.name).all()
+    accounts = query.order_by(models.Account.account_type, models.Account.name).all()
+    return [
+        _serialize_account(account, balance=calculate_account_journal_balance(db, account))
+        for account in accounts
+    ]
 
 
 @router.get("/tree")
@@ -145,7 +156,7 @@ def get_account_tree(
         models.Account.client_id == current_client.id,
         models.Account.is_active == True,
     ).all()
-    return _build_tree(accounts)
+    return _build_tree(db, accounts)
 
 @router.get("/by-type")
 def get_accounts_grouped_by_type(
@@ -170,7 +181,7 @@ def get_accounts_grouped_by_type(
             grouped[acc.account_type].append({
                 "id": acc.id,
                 "name": acc.name,
-                "balance": acc.balance,
+                "balance": calculate_account_journal_balance(db, acc),
                 "role": acc.role,
                 "role_target_amount": acc.role_target_amount,
             })
@@ -185,12 +196,17 @@ def create_account(
 ):
     """Create a new account for current client."""
     payload = account.model_dump()
+    if abs(payload.pop("balance", 0) or 0) > 0.01:
+        raise HTTPException(
+            status_code=400,
+            detail="Journal is the source of truth. Create an opening-balance transaction instead of setting account.balance.",
+        )
     _validate_parent(db, current_client.id, payload["account_type"], payload.get("parent_id"))
     db_account = models.Account(**payload, client_id=current_client.id)
     db.add(db_account)
     db.commit()
     db.refresh(db_account)
-    return db_account
+    return _serialize_account(db_account, balance=calculate_account_journal_balance(db, db_account))
 
 @router.put("/{account_id}", response_model=AccountResponse)
 def update_account(
@@ -209,6 +225,11 @@ def update_account(
         raise HTTPException(status_code=404, detail="Account not found")
         
     update_data = account.model_dump(exclude_unset=True)
+    if "balance" in update_data:
+        raise HTTPException(
+            status_code=400,
+            detail="Journal is the source of truth. Use transactions to change balances.",
+        )
     if "parent_id" in update_data:
         next_parent_id = update_data["parent_id"]
         _validate_parent(
@@ -222,7 +243,7 @@ def update_account(
         setattr(db_account, key, value)
     db.commit()
     db.refresh(db_account)
-    return db_account
+    return _serialize_account(db_account, balance=calculate_account_journal_balance(db, db_account))
 
 @router.delete("/{account_id}")
 def delete_account(

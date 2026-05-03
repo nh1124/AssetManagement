@@ -104,14 +104,17 @@ def create_capsule(
 ):
     account = _create_capsule_account(db, current_client.id, capsule.name)
     target_amount = max(0.0, capsule.target_amount or 0.0)
-    initial_balance = _normalize_balance(capsule.current_balance, target_amount)
-    account.balance = initial_balance
+    if abs(capsule.current_balance or 0.0) > 0.01:
+        raise HTTPException(
+            status_code=400,
+            detail="Journal is the source of truth. Fund capsules with contribution transactions.",
+        )
     db_capsule = models.Capsule(
         client_id=current_client.id,
         name=capsule.name,
         target_amount=target_amount,
         monthly_contribution=max(0.0, capsule.monthly_contribution or 0.0),
-        current_balance=initial_balance,
+        current_balance=0.0,
         account_id=account.id,
     )
     db.add(db_capsule)
@@ -137,11 +140,11 @@ def update_capsule(
     update_data = capsule_update.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         if key == "current_balance":
-            # Keep account balance as source of truth.
-            value = _normalize_balance(value, db_capsule.target_amount)
-            if db_capsule.account:
-                db_capsule.account.balance = value
-            db_capsule.current_balance = value
+            if abs(value or 0.0) > 0.01:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Journal is the source of truth. Fund capsules with contribution transactions.",
+                )
         elif key == "target_amount":
             db_capsule.target_amount = max(0.0, value or 0.0)
         elif key == "monthly_contribution":
@@ -149,10 +152,7 @@ def update_capsule(
         else:
             setattr(db_capsule, key, value)
 
-    normalized_balance = _normalize_balance(_capsule_balance(db_capsule), db_capsule.target_amount)
-    if db_capsule.account:
-        db_capsule.account.balance = normalized_balance
-    db_capsule.current_balance = normalized_balance
+    db_capsule.current_balance = _capsule_balance(db_capsule)
 
     db.commit()
     db.refresh(db_capsule)

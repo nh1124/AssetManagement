@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
-from sqlalchemy import and_
+from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
 from .. import models
@@ -146,6 +146,24 @@ TRANSACTION_ACCOUNT_DEFAULTS = {
         "to_type": "asset",
     },
 }
+
+
+def calculate_account_journal_balance(db: Session, account: models.Account) -> float:
+    """
+    Calculate an account balance from journal entries only.
+    Account.balance is treated as a denormalized cache, not source-of-truth.
+    """
+    result = db.query(
+        func.sum(models.JournalEntry.debit).label("total_debit"),
+        func.sum(models.JournalEntry.credit).label("total_credit"),
+    ).filter(models.JournalEntry.account_id == account.id).first()
+
+    total_debit = result.total_debit or 0.0
+    total_credit = result.total_credit or 0.0
+
+    if account.account_type in DEBIT_NORMAL_TYPES:
+        return total_debit - total_credit
+    return total_credit - total_debit
 
 
 def _apply_debit(account: models.Account, amount: float) -> None:
@@ -296,10 +314,11 @@ def get_balance_sheet(
     assets = []
     liabilities = []
     for acc in accounts:
+        balance = calculate_account_journal_balance(db, acc)
         if acc.account_type in ("asset", "item"):
-            assets.append({"name": acc.name, "balance": acc.balance})
+            assets.append({"name": acc.name, "balance": balance})
         elif acc.account_type == "liability":
-            liabilities.append({"name": acc.name, "balance": abs(acc.balance)})
+            liabilities.append({"name": acc.name, "balance": abs(balance)})
 
     total_assets = sum(a["balance"] for a in assets)
     total_liabilities = sum(l["balance"] for l in liabilities)
