@@ -1106,8 +1106,6 @@ export default function Journal() {
             <SplitView
                 left={leftPane}
                 right={rightPane}
-                leftTitle="Input & Rule Management"
-                rightTitle="Transaction Journal"
             />
         </div>
     );

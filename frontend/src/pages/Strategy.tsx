@@ -359,9 +359,6 @@ export default function Strategy() {
 
     return (
         <div className="h-full flex flex-col">
-            <div className="px-4 pt-4 pb-2">
-                <h1 className="text-xl font-semibold text-slate-100">Strategy</h1>
-            </div>
             <TabPanel tabs={TABS} activeTab={activeTab} onTabChange={setActiveTab}>
                 {activeTab === 'budgeting' && renderBudgeting()}
                 {activeTab === 'capsules' && renderCapsules()}

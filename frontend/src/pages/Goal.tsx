@@ -849,10 +849,7 @@ export default function Goal() {
 
     return (
         <div className="h-full overflow-auto p-4 space-y-4">
-            <div className="flex items-start justify-between gap-4">
-                <div>
-                    <h1 className="text-xl font-semibold text-slate-100">Goal</h1>
-                </div>
+            <div className="flex justify-end">
                 <button
                     onClick={openCreateModal}
                     className="bg-cyan-600 hover:bg-cyan-500 text-white px-3 py-2 text-xs font-medium flex items-center gap-2"

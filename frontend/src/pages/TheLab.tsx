@@ -49,6 +49,7 @@ const PORTFOLIO_TABS = [
     { id: 'history', label: 'History' },
     { id: 'kpi', label: 'KPI' },
     { id: 'capsules', label: 'Capsules' },
+    { id: 'reconcile', label: 'Data Quality' },
 ];
 
 const MONTHLY_TABS = [
@@ -1096,15 +1097,6 @@ export default function TheLab({ onNavigate }: TheLabProps) {
                     </div>
 
                     <div className="flex items-center gap-2">
-                        {analysisMode === 'portfolio' && (
-                            <button
-                                type="button"
-                                onClick={() => setPortfolioTab('reconcile')}
-                                className={`px-3 py-1.5 text-xs border ${portfolioTab === 'reconcile' ? 'border-cyan-700 bg-cyan-950/40 text-cyan-300' : 'border-slate-700 bg-slate-800/60 text-slate-400 hover:text-slate-200'}`}
-                            >
-                                Data Quality
-                            </button>
-                        )}
                         {analysisMode === 'monthly' && (
                             <div className="flex items-center gap-2">
                                 <button onClick={() => navigateMonth('prev')} className="p-1 hover:bg-slate-800 text-slate-400">
