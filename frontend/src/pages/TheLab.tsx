@@ -507,6 +507,9 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
             { name: 'Fixed', amount: fixedAmount },
             { name: 'Variable', amount: variableAmount },
         ].filter((row) => row.amount > 0);
+        const totalBudget = variance?.total_budget ?? (variance?.items ?? []).reduce((sum: number, item: any) => sum + (item.budget || 0), 0);
+        const totalActual = variance?.total_actual ?? (variance?.items ?? []).reduce((sum: number, item: any) => sum + (item.actual || 0), 0);
+        const totalVariance = variance?.total_variance ?? (totalBudget - totalActual);
         const categoryColor = (index: number, total: number) => `hsl(${Math.round(index * 360 / Math.max(total, 1))}, 62%, 52%)`;
 
         switch (activeTab) {
@@ -662,6 +665,14 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
                                 </span>
                             </div>
                         ))}
+                        <div className="grid grid-cols-4 gap-2 text-xs border-t border-slate-700 pt-2 mt-2">
+                            <span className="text-slate-100 font-medium">Total</span>
+                            <span className="font-mono-nums text-slate-200 text-right">{formatCurrency(totalBudget)}</span>
+                            <span className="font-mono-nums text-amber-300 text-right">{formatCurrency(totalActual)}</span>
+                            <span className={`font-mono-nums text-right ${totalVariance >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+                                {formatCurrency(totalVariance)}
+                            </span>
+                        </div>
                     </div>
                 );
             case 'bs':
@@ -675,6 +686,10 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
                                     <span className="font-mono-nums">{formatCurrency(a.balance)}</span>
                                 </div>
                             ))}
+                            <div className="flex justify-between text-xs border-t border-slate-700 pt-2 mt-2">
+                                <span className="text-slate-100 font-medium">Total Assets</span>
+                                <span className="font-mono-nums text-emerald-300">{formatCurrency(balanceSheet?.total_assets ?? 0)}</span>
+                            </div>
                         </div>
                         <div className="bg-slate-800/30 border border-slate-700 p-4">
                             <h3 className="text-xs text-rose-400 mb-2">Liabilities</h3>
@@ -684,6 +699,14 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
                                     <span className="font-mono-nums">{formatCurrency(l.balance)}</span>
                                 </div>
                             ))}
+                            <div className="flex justify-between text-xs border-t border-slate-700 pt-2 mt-2">
+                                <span className="text-slate-100 font-medium">Total Liabilities</span>
+                                <span className="font-mono-nums text-rose-300">{formatCurrency(balanceSheet?.total_liabilities ?? 0)}</span>
+                            </div>
+                            <div className="flex justify-between text-xs border-t border-slate-800 pt-2 mt-2">
+                                <span className="text-slate-100 font-medium">Net Worth</span>
+                                <span className="font-mono-nums text-cyan-300">{formatCurrency(balanceSheet?.net_worth ?? 0)}</span>
+                            </div>
                         </div>
                     </div>
                 );
@@ -709,6 +732,10 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
                                     <span className="font-mono-nums text-emerald-400">+{formatCurrency(i.amount)}</span>
                                 </div>
                             ))}
+                            <div className="flex justify-between text-xs border-t border-slate-700 pt-2 mt-2">
+                                <span className="text-slate-100 font-medium">Total Income</span>
+                                <span className="font-mono-nums text-emerald-300">+{formatCurrency(profitLoss?.total_income ?? 0)}</span>
+                            </div>
                         </div>
                         <div className="bg-slate-800/30 border border-slate-700 p-4">
                             <h3 className="text-xs text-rose-400 mb-2">Expenses</h3>
@@ -734,6 +761,16 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
                                     </div>
                                 </div>
                             ))}
+                            <div className="flex justify-between text-xs border-t border-slate-700 pt-2 mt-2">
+                                <span className="text-slate-100 font-medium">Total Expenses</span>
+                                <span className="font-mono-nums text-rose-300">-{formatCurrency(profitLoss?.total_expenses ?? 0)}</span>
+                            </div>
+                            <div className="flex justify-between text-xs border-t border-slate-800 pt-2 mt-2">
+                                <span className="text-slate-100 font-medium">Net P/L</span>
+                                <span className={`font-mono-nums ${(profitLoss?.net_profit_loss ?? 0) >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>
+                                    {formatCurrency(profitLoss?.net_profit_loss ?? 0)}
+                                </span>
+                            </div>
                         </div>
                         <div className="bg-slate-800/30 border border-slate-700 p-4 min-h-72">
                             <h3 className="text-xs text-cyan-400 mb-2">Expense Mix</h3>

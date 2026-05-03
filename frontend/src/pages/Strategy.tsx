@@ -356,7 +356,15 @@ export default function Strategy() {
         }
     };
 
-    const renderBudgeting = () => (
+    const renderBudgeting = () => {
+        const variableActualTotal = (budgetSummary?.expense_accounts ?? []).reduce((sum, account) => sum + (account.balance || 0), 0);
+        const variableVarianceTotal = variableBudgetTotal - variableActualTotal;
+        const sinkingPlanTotal = budgetSummary?.total_capsule_plan ?? 0;
+        const sinkingActualTotal = budgetSummary?.total_capsule_actual ?? 0;
+        const sinkingVarianceTotal = sinkingPlanTotal - sinkingActualTotal;
+        const sinkingBalanceTotal = (budgetSummary?.sinking_funds ?? []).reduce((sum, fund) => sum + (fund.current_balance || 0), 0);
+
+        return (
         <div className="grid grid-cols-1 min-[960px]:grid-cols-[380px_1fr] gap-4 p-4">
             <section className="space-y-4">
                 <div className="bg-slate-900/60 border border-slate-800 p-4">
@@ -424,6 +432,13 @@ export default function Strategy() {
                                     </tr>
                                 );
                             })}
+                            <tr className="border-t border-slate-700 bg-slate-800/40">
+                                <td className="px-2 py-2 text-slate-100 font-medium">Total</td>
+                                <td className="px-2 py-2 text-right font-mono-nums text-slate-300">{formatCurrency(variableActualTotal)}</td>
+                                <td className="px-2 py-2 text-right font-mono-nums text-slate-200">{formatCurrency(variableBudgetTotal)}</td>
+                                <td className={`px-2 py-2 text-right font-mono-nums ${variableVarianceTotal >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>{formatCurrency(variableVarianceTotal)}</td>
+                                <td className="px-2 py-2" />
+                            </tr>
                         </tbody>
                     </table>
                 </div>
@@ -456,13 +471,21 @@ export default function Strategy() {
                                         <td className="px-2 py-2 text-right font-mono-nums text-slate-500">{formatCurrency(fund.current_balance)}</td>
                                     </tr>
                                 ))}
+                                <tr className="border-t border-slate-700 bg-slate-800/40">
+                                    <td className="px-2 py-2 text-slate-100 font-medium">Total</td>
+                                    <td className="px-2 py-2 text-right font-mono-nums text-slate-300">{formatCurrency(sinkingActualTotal)}</td>
+                                    <td className="px-2 py-2 text-right font-mono-nums text-purple-200">{formatCurrency(sinkingPlanTotal)}</td>
+                                    <td className={`px-2 py-2 text-right font-mono-nums ${sinkingVarianceTotal >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>{formatCurrency(sinkingVarianceTotal)}</td>
+                                    <td className="px-2 py-2 text-right font-mono-nums text-slate-300">{formatCurrency(sinkingBalanceTotal)}</td>
+                                </tr>
                             </tbody>
                         </table>
                     </div>
                 </div>
             </section>
         </div>
-    );
+        );
+    };
 
     const renderCapsules = () => (
         <div className="grid grid-cols-1 min-[960px]:grid-cols-[340px_1fr] gap-4 p-4">
