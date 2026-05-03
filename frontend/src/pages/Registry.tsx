@@ -15,6 +15,8 @@ import {
     updateProduct,
 } from '../api';
 import { useToast } from '../components/Toast';
+import { useClient } from '../context/ClientContext';
+import { formatCurrency as formatCurrencyWithSetting } from '../utils/currency';
 import type { Account, AccountRole, AccountTreeNode, Product } from '../types';
 
 const TABS = [
@@ -350,6 +352,7 @@ export default function Registry() {
     const [productModal, setProductModal] = useState<{ type: 'asset' | 'item'; product: Product | null } | null>(null);
     const [loadingProducts, setLoadingProducts] = useState(false);
     const { showToast } = useToast();
+    const { currentClient } = useClient();
 
     const assets = useMemo(() => products.filter((product) => product.is_asset), [products]);
     const items = useMemo(() => products.filter((product) => !product.is_asset), [products]);
@@ -386,7 +389,8 @@ export default function Registry() {
         }
     };
 
-    const formatCurrency = (value: number | null | undefined) => `¥${Math.round(value ?? 0).toLocaleString()}`;
+    const formatCurrency = (value: number | null | undefined) =>
+        formatCurrencyWithSetting(value, currentClient?.general_settings?.currency);
 
     const handleAddAccount = async () => {
         if (!newAccount.name.trim()) return;

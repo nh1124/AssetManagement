@@ -1,16 +1,19 @@
 import { useState, useEffect, useRef } from 'react';
 import {
     Trash2, Plus, Sparkles, Send, Loader2, ImagePlus, X,
-    ArrowUpCircle, ArrowDownCircle, RefreshCw, Edit
+    ArrowUpCircle, ArrowDownCircle, RefreshCw, Edit, SlidersHorizontal
 } from 'lucide-react';
 import TabPanel from '../components/TabPanel';
 import SplitView from '../components/SplitView';
 import {
     getRecurringTransactions,
-    createRecurringTransaction, deleteRecurringTransaction,
+    createRecurringTransaction, deleteRecurringTransaction, updateRecurringTransaction,
     getAccounts, createTransaction, deleteTransaction, updateTransaction, getTransactionsPage,
+    analyzeWithBackend,
 } from '../api';
 import { useToast } from '../components/Toast';
+import { useClient } from '../context/ClientContext';
+import { formatCurrency as formatCurrencyWithSetting, getCurrencySymbol } from '../utils/currency';
 import type { Transaction } from '../types';
 
 const MAIN_TABS = [
@@ -123,15 +126,22 @@ const loadStoredFilters = () => {
 };
 
 export default function Journal() {
-    const [activeTab, setActiveTab] = useState(() => localStorage.getItem('finance_journal_tab') || 'transaction');
+    const [activeTab, setActiveTab] = useState(() => {
+        const stored = localStorage.getItem('finance_journal_tab');
+        return stored === 'recurring' || stored === 'ai' ? stored : 'transaction';
+    });
     const [transactions, setTransactions] = useState<Transaction[]>([]);
     const [transactionTotal, setTransactionTotal] = useState(0);
     const [filters, setFilters] = useState(loadStoredFilters);
+    const [showFilters, setShowFilters] = useState(false);
     const [editingTransactionId, setEditingTransactionId] = useState<number | null>(null);
     const [recurringItems, setRecurringItems] = useState<any[]>([]);
     const [accounts, setAccounts] = useState<AccountItem[]>([]);
     const [isProcessing, setIsProcessing] = useState(false);
     const { showToast } = useToast();
+    const { currentClient } = useClient();
+    const currentCurrency = currentClient?.general_settings?.currency || 'JPY';
+    const formatCurrency = (value: number | undefined | null) => formatCurrencyWithSetting(value, currentCurrency);
 
     // Manual Input State
     const [formData, setFormData] = useState({
@@ -251,11 +261,6 @@ export default function Journal() {
         fetchTransactionsOnly(defaultFilters, false);
     };
 
-    const getCurrencySymbol = (currency: string) => {
-        const symbols: Record<string, string> = { JPY: '¥', USD: '$', EUR: '€', GBP: '£', CNY: '¥' };
-        return symbols[currency] || currency;
-    };
-
     const handleRecordSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!formData.description || !formData.amount) return;
@@ -303,7 +308,6 @@ export default function Journal() {
                 const mimeType = selectedImage.split(';')[0].split(':')[1];
                 parts.push({ inline_data: { mime_type: mimeType, data: base64Data } });
             }
-            const { analyzeWithBackend } = await import('../api');
             const results = await analyzeWithBackend({ parts });
             if (Array.isArray(results)) setSuggestedTransactions(results);
         } catch (error) {
@@ -444,7 +448,6 @@ export default function Journal() {
 
             if (editingRecurringId) {
                 // Update existing rule
-                const { updateRecurringTransaction } = await import('../api');
                 await updateRecurringTransaction(editingRecurringId, payload);
                 showToast('Recurring payment updated', 'success');
             } else {
@@ -467,6 +470,7 @@ export default function Journal() {
     };
 
     const handleEditRecurring = (item: any) => {
+        setActiveTab('recurring');
         setNewRecurring({
             name: item.name,
             amount: item.amount.toString(),
@@ -700,7 +704,7 @@ export default function Journal() {
                                                 {st.is_recurring
                                                     ? `${st.frequency} (Day ${st.day_of_month})`
                                                     : st.date}
-                                                • {st.category} • ¥{st.amount.toLocaleString()}
+                                                / {st.category} / {formatCurrency(st.amount)}
                                             </p>
                                             <button
                                                 type="button"
@@ -749,7 +753,7 @@ export default function Journal() {
                                 <div key={item.id} className="flex items-center justify-between py-2 px-3 bg-slate-800/30 border border-slate-700 group">
                                     <div>
                                         <p className="text-xs font-medium">{item.name}</p>
-                                        <p className="text-[10px] text-slate-500">{item.frequency} • ¥{item.amount.toLocaleString()}</p>
+                                        <p className="text-[10px] text-slate-500">{item.frequency} / {formatCurrency(item.amount)}</p>
                                     </div>
                                     <div className="flex gap-1 opacity-0 group-hover:opacity-100">
                                         <button
@@ -804,7 +808,7 @@ export default function Journal() {
                                     <div>
                                         <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Amount</label>
                                         <div className="relative">
-                                            <span className="absolute left-2 top-1.5 text-slate-500 text-xs">¥</span>
+                                            <span className="absolute left-2 top-1.5 text-slate-500 text-xs">{getCurrencySymbol(currentCurrency)}</span>
                                             <input
                                                 type="number"
                                                 value={newRecurring.amount}
@@ -941,7 +945,28 @@ export default function Journal() {
     const rightPane = (
         <div className="space-y-3 h-full flex flex-col">
             <div className="border border-slate-800 bg-slate-900/70 p-3 space-y-3">
-                <div className="grid grid-cols-2 xl:grid-cols-4 gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="grid grid-cols-2 xl:grid-cols-4 gap-x-4 gap-y-1 text-[10px] text-slate-400 flex-1">
+                        <span>{transactionTotal} results</span>
+                        <span className="font-mono-nums text-emerald-400">Income {formatCurrency(loadedIncome)}</span>
+                        <span className="font-mono-nums text-rose-400">Outflow {formatCurrency(loadedOutflow)}</span>
+                        <span className={`font-mono-nums ${loadedNet >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                            Net {formatCurrency(loadedNet)} / Avg {formatCurrency(loadedAverage)}
+                        </span>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => setShowFilters((value) => !value)}
+                        className={`p-1.5 border text-slate-300 hover:text-emerald-300 ${showFilters ? 'border-emerald-700 bg-emerald-950/30' : 'border-slate-700 bg-slate-800 hover:bg-slate-700'}`}
+                        aria-label="Toggle transaction filters"
+                        title="Transaction filters"
+                    >
+                        <SlidersHorizontal size={14} />
+                    </button>
+                </div>
+                {showFilters && (
+                    <>
+                        <div className="grid grid-cols-2 xl:grid-cols-4 gap-2">
                     <input
                         type="date"
                         value={filters.startDate}
@@ -1006,8 +1031,8 @@ export default function Journal() {
                         placeholder="Max amount"
                         className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs"
                     />
-                </div>
-                <div className="flex flex-wrap items-center justify-between gap-2">
+                        </div>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex flex-wrap gap-1">
                         <button onClick={() => setPresetRange('today')} className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-[10px]">Today</button>
                         <button onClick={() => setPresetRange('week')} className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-[10px]">This week</button>
@@ -1018,15 +1043,9 @@ export default function Journal() {
                         <button onClick={() => applyFilters()} className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white text-[10px] font-bold">Apply</button>
                         <button onClick={clearFilters} className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold">Clear</button>
                     </div>
-                </div>
-                <div className="grid grid-cols-4 gap-2 text-[10px] text-slate-400">
-                    <span>{transactionTotal} results</span>
-                    <span className="font-mono-nums text-emerald-400">Income {getCurrencySymbol('JPY')}{Math.round(loadedIncome).toLocaleString()}</span>
-                    <span className="font-mono-nums text-rose-400">Outflow {getCurrencySymbol('JPY')}{Math.round(loadedOutflow).toLocaleString()}</span>
-                    <span className={`font-mono-nums ${loadedNet >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                        Net {getCurrencySymbol('JPY')}{Math.round(loadedNet).toLocaleString()} / Avg {Math.round(loadedAverage).toLocaleString()}
-                    </span>
-                </div>
+                        </div>
+                    </>
+                )}
             </div>
             <div className="flex-1 overflow-auto space-y-0.5">
                 {transactions.length === 0 ? (
@@ -1043,7 +1062,7 @@ export default function Journal() {
                             </div>
                             <div className="flex items-center gap-2">
                                 <span className={`text-xs font-mono-nums ${tx.type === 'Income' ? 'text-emerald-500' : tx.type === 'Expense' || tx.type === 'LiabilityPayment' ? 'text-rose-500' : 'text-cyan-500'}`}>
-                                    {tx.type === 'Income' ? '+' : tx.type === 'Expense' || tx.type === 'LiabilityPayment' ? '-' : ''}{getCurrencySymbol(tx.currency || 'JPY')}{tx.amount.toLocaleString()}
+                                    {tx.type === 'Income' ? '+' : tx.type === 'Expense' || tx.type === 'LiabilityPayment' ? '-' : ''}{formatCurrencyWithSetting(tx.amount, tx.currency || currentCurrency)}
                                 </span>
                                 <div className="flex gap-1 opacity-0 group-hover:opacity-100">
                                     <button

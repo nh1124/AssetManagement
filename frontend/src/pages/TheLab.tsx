@@ -9,7 +9,6 @@ import {
     Pie,
     PieChart,
     ResponsiveContainer,
-    Scatter,
     Tooltip,
     XAxis,
     YAxis,
@@ -22,7 +21,6 @@ import {
     getCapsules,
     getMonthlyReport,
     getMonthlyReview,
-    getMilestones,
     getNetWorthHistory,
     getProfitLoss,
     getAccounts,
@@ -40,7 +38,7 @@ import {
 } from '../api';
 import { useToast } from '../components/Toast';
 import { formatCurrency as formatCurrencyWithSetting } from '../utils/currency';
-import type { ActionProposal, AnalysisSummary, Milestone, MonthlyAction, MonthlyReport, MonthlyReview, NetWorthHistoryPoint, ReconcileResponse, ReviewActionKind } from '../types';
+import type { ActionProposal, AnalysisSummary, MonthlyAction, MonthlyReport, MonthlyReview, NetWorthHistoryPoint, ReconcileResponse, ReviewActionKind } from '../types';
 
 interface TheLabProps {
     onNavigate?: (page: string) => void;
@@ -78,7 +76,6 @@ export default function TheLab({ onNavigate }: TheLabProps) {
     const [monthlyReview, setMonthlyReview] = useState<MonthlyReview | null>(null);
     const [monthlyActions, setMonthlyActions] = useState<MonthlyAction[]>([]);
     const [netWorthHistory, setNetWorthHistory] = useState<NetWorthHistoryPoint[]>([]);
-    const [milestones, setMilestones] = useState<Milestone[]>([]);
     const [historyMonths, setHistoryMonths] = useState(36);
     const [reviewDraft, setReviewDraft] = useState({ reflection: '', next_actions: '' });
     const [actionDraft, setActionDraft] = useState({
@@ -113,7 +110,7 @@ export default function TheLab({ onNavigate }: TheLabProps) {
             const prevDate = selectedMonth === 1
                 ? { year: selectedYear - 1, month: 12 }
                 : { year: selectedYear, month: selectedMonth - 1 };
-            const [summaryData, bsData, plData, prevPlData, varianceData, capsuleData, reportData, reviewData, historyData, milestoneData, recurringData, accountData, actionData] = await Promise.all([
+            const [summaryData, bsData, plData, prevPlData, varianceData, capsuleData, reportData, reviewData, historyData, recurringData, accountData, actionData] = await Promise.all([
                 getAnalysisSummary(),
                 getBalanceSheet(selectedYear, selectedMonth),
                 getProfitLoss(selectedYear, selectedMonth, plRollup),
@@ -123,7 +120,6 @@ export default function TheLab({ onNavigate }: TheLabProps) {
                 getMonthlyReport(selectedYear, selectedMonth),
                 getMonthlyReview(period),
                 getNetWorthHistory(historyMonths),
-                getMilestones(),
                 getRecurringTransactions(),
                 getAccounts(),
                 getMonthlyActions(period),
@@ -140,7 +136,6 @@ export default function TheLab({ onNavigate }: TheLabProps) {
             setMonthlyReport(reportData);
             setMonthlyReview(reviewData);
             setNetWorthHistory(historyData);
-            setMilestones(milestoneData);
             setReviewDraft({
                 reflection: reviewData.reflection || '',
                 next_actions: reviewData.next_actions || '',
@@ -437,11 +432,6 @@ export default function TheLab({ onNavigate }: TheLabProps) {
     };
 
     const renderTabContent = () => {
-        const milestonePoints = milestones.map((milestone) => ({
-            period: milestone.date.slice(0, 7),
-            milestone: milestone.target_amount,
-            note: milestone.note || 'Milestone',
-        }));
         const expenseRows = profitLoss?.expenses ?? [];
         const previousExpenseMap = new Map<string, number>(
             (previousProfitLoss?.expenses ?? []).map((row: any) => [String(row.category).toLowerCase(), row.amount || 0])
@@ -531,7 +521,6 @@ export default function TheLab({ onNavigate }: TheLabProps) {
                                     <Line type="monotone" dataKey="net_worth" name="Net Worth" stroke="#10b981" dot={false} strokeWidth={2} />
                                     <Line type="monotone" dataKey="assets" name="Assets" stroke="#22d3ee" dot={false} strokeWidth={1.5} />
                                     <Line type="monotone" dataKey="liabilities" name="Liabilities" stroke="#f59e0b" dot={false} strokeWidth={1.5} />
-                                    <Scatter data={milestonePoints} dataKey="milestone" name="Milestones" fill="#f59e0b" />
                                 </ComposedChart>
                             </ResponsiveContainer>
                         </div>

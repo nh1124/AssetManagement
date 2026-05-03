@@ -2,6 +2,7 @@
 import { Archive, ChevronLeft, ChevronRight, Copy, Edit2, Plus, Save, Sparkles, Trash2 } from 'lucide-react';
 import TabPanel from '../components/TabPanel';
 import { useToast } from '../components/Toast';
+import { useClient } from '../context/ClientContext';
 import {
     createAccount,
     createCapsule,
@@ -14,6 +15,7 @@ import {
     updateAccount,
     updateCapsule,
 } from '../api';
+import { formatCurrency as formatCurrencyWithSetting } from '../utils/currency';
 import type { Capsule } from '../types';
 
 interface BudgetAccount {
@@ -41,10 +43,9 @@ const TABS = [
     { id: 'capsules', label: 'Capsules' },
 ];
 
-const formatCurrency = (value: number | undefined | null) => `JPY ${Math.round(value || 0).toLocaleString()}`;
-
 export default function Strategy() {
     const { showToast } = useToast();
+    const { currentClient } = useClient();
     const [activeTab, setActiveTab] = useState('budgeting');
     const [currentPeriod, setCurrentPeriod] = useState(new Date().toISOString().slice(0, 7));
     const [budgetSummary, setBudgetSummary] = useState<BudgetSummary | null>(null);
@@ -64,6 +65,8 @@ export default function Strategy() {
         - (budgetSummary?.required_monthly_savings || 0)
         - (budgetSummary?.monthly_fixed_costs || 0)
         - variableBudgetTotal;
+    const formatCurrency = (value: number | undefined | null) =>
+        formatCurrencyWithSetting(value, currentClient?.general_settings?.currency);
 
     const fetchBudgetSummary = async (period = currentPeriod) => {
         try {

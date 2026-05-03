@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { BarChart3, Calendar, Check, Edit2, Flag, Link, Plus, RefreshCw, Save, Sparkles, Trash2, TrendingUp, X } from 'lucide-react';
-import { Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Area, ComposedChart, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import {
     addAllocation,
     createGoal,
@@ -10,6 +10,7 @@ import {
     deleteMilestone,
     getMilestones,
     getGoalDashboard,
+    getRoadmapProjection,
     optimizeAllocations,
     resetMilestonesFromAnnualPlan,
     runMonteCarloSimulation,
@@ -17,8 +18,10 @@ import {
     updateGoal,
 } from '../api';
 import { useToast } from '../components/Toast';
+import { useClient } from '../context/ClientContext';
+import { formatCompactCurrency, formatCurrency as formatCurrencyWithSetting } from '../utils/currency';
 import { PRIORITY_COLORS, priorityLabel } from '../utils/priority';
-import type { GoalAllocation, LifeEvent, Milestone, MonteCarloResult } from '../types';
+import type { GoalAllocation, LifeEvent, Milestone, MonteCarloResult, RoadmapProjection } from '../types';
 
 interface DashboardData {
     events: LifeEvent[];
@@ -31,6 +34,18 @@ interface DashboardData {
         monthly_savings: number;
     };
 }
+
+type RoadmapChartPoint = {
+    label: string;
+    sort: number;
+    actual?: number;
+    p10?: number;
+    p50?: number;
+    p90?: number;
+    band?: number;
+    liability?: number;
+    risk?: boolean;
+};
 
 type GoalTab = 'summary' | 'simulation' | 'milestone' | 'assetAllocation';
 
@@ -49,8 +64,11 @@ const emptyEventForm = {
     note: '',
 };
 
-const formatCurrency = (value: number | undefined | null) => `JPY ${Math.round(value || 0).toLocaleString()}`;
-const formatCompact = (value: number) => `JPY ${(value / 10000).toFixed(0)}man`;
+const statusTone = (status?: string) => {
+    if (status === 'On Track') return 'text-emerald-300 border-emerald-800 bg-emerald-950/30';
+    if (status === 'At Risk') return 'text-amber-300 border-amber-800 bg-amber-950/30';
+    return 'text-rose-300 border-rose-800 bg-rose-950/30';
+};
 
 const getErrorDetail = (error: unknown, fallback: string) => {
     const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
@@ -59,6 +77,10 @@ const getErrorDetail = (error: unknown, fallback: string) => {
 
 export default function Goal() {
     const { showToast } = useToast();
+    const { currentClient } = useClient();
+    const currentCurrency = currentClient?.general_settings?.currency || 'JPY';
+    const formatCurrency = (value: number | undefined | null) => formatCurrencyWithSetting(value, currentCurrency);
+    const formatCompact = (value: number | undefined | null) => formatCompactCurrency(value, currentCurrency);
     const [dashboard, setDashboard] = useState<DashboardData | null>(null);
     const [selectedGoal, setSelectedGoal] = useState<LifeEvent | null>(null);
     const [activeGoalTab, setActiveGoalTab] = useState<GoalTab>('summary');
@@ -71,8 +93,10 @@ export default function Goal() {
     const [milestoneForm, setMilestoneForm] = useState({ date: '', target_amount: '', note: '' });
     const [simParams, setSimParams] = useState({ annual_return: 5, inflation: 2, monthly_savings: 50000 });
     const [monteCarlo, setMonteCarlo] = useState<MonteCarloResult | null>(null);
+    const [roadmapProjection, setRoadmapProjection] = useState<RoadmapProjection | null>(null);
     const [loading, setLoading] = useState(false);
     const [simLoading, setSimLoading] = useState(false);
+    const [roadmapLoading, setRoadmapLoading] = useState(false);
     const [optimizing, setOptimizing] = useState(false);
 
     const selectedGoalId = selectedGoal?.id;
@@ -122,13 +146,34 @@ export default function Goal() {
         }
     };
 
+    const fetchRoadmapProjection = async () => {
+        setRoadmapLoading(true);
+        try {
+            setRoadmapProjection(await getRoadmapProjection({
+                years: 30,
+                annual_return: simParams.annual_return,
+                inflation: simParams.inflation,
+                monthly_savings: simParams.monthly_savings,
+            }));
+        } catch (error) {
+            console.error('Failed to load roadmap projection:', error);
+            setRoadmapProjection(null);
+            showToast('Failed to load roadmap projection', 'error');
+        } finally {
+            setRoadmapLoading(false);
+        }
+    };
+
     useEffect(() => {
         fetchGoalWorkspace();
     }, []);
 
     useEffect(() => {
         if (activeGoalTab !== 'simulation') return;
-        const timer = window.setTimeout(() => fetchGoalWorkspace(selectedGoalId), 300);
+        const timer = window.setTimeout(() => {
+            fetchGoalWorkspace(selectedGoalId);
+            fetchRoadmapProjection();
+        }, 300);
         return () => window.clearTimeout(timer);
     }, [activeGoalTab, simParams.annual_return, simParams.inflation, simParams.monthly_savings]);
 
@@ -151,6 +196,43 @@ export default function Goal() {
         p50,
         p90: monteCarlo.year_by_year.p90[index] ?? p50,
     })) ?? [], [monteCarlo]);
+
+    const roadmapChartData = useMemo<RoadmapChartPoint[]>(() => {
+        if (!roadmapProjection) return [];
+        const demandByYear = new Map(roadmapProjection.liability_demand.map((row) => [row.year, row.cumulative_target]));
+        const history = roadmapProjection.history.map((row) => {
+            const [year, month] = row.period.split('-').map(Number);
+            return {
+                label: row.period,
+                sort: year + (month - 1) / 12,
+                actual: row.net_worth,
+            };
+        });
+        const projection = roadmapProjection.projection.map((row) => {
+            const liability = demandByYear.get(row.year) ?? 0;
+            return {
+                label: String(row.year),
+                sort: row.year,
+                p10: row.p10,
+                p50: row.p50,
+                p90: row.p90,
+                band: Math.max(0, row.p90 - row.p10),
+                liability,
+                risk: row.p50 < liability,
+            };
+        });
+        return [...history, ...projection].sort((a, b) => a.sort - b.sort);
+    }, [roadmapProjection]);
+
+    const firstRoadmapRisk = useMemo(() => roadmapChartData.find((row) => row.risk), [roadmapChartData]);
+
+    const roadmapTotals = useMemo(() => {
+        const goals = roadmapProjection?.events ?? [];
+        return {
+            target: goals.reduce((sum, goal) => sum + (goal.target_amount || 0), 0),
+            projected: goals.reduce((sum, goal) => sum + (goal.projected_amount || 0), 0),
+        };
+    }, [roadmapProjection]);
 
     const availableAssets = useMemo(() => {
         const allocatedAccountIds = new Set((selectedGoal?.allocations ?? []).map((allocation) => allocation.account_id));
@@ -359,7 +441,10 @@ export default function Goal() {
     };
 
     const refreshSimulation = async () => {
-        await fetchGoalWorkspace(selectedGoal?.id);
+        await Promise.all([
+            fetchGoalWorkspace(selectedGoal?.id),
+            fetchRoadmapProjection(),
+        ]);
         if (selectedGoal?.id) await fetchMonteCarlo(selectedGoal.id);
     };
 
@@ -501,6 +586,43 @@ export default function Goal() {
                                 </LineChart>
                             </ResponsiveContainer>
                         </div>
+                    </div>
+
+                    <div className="bg-slate-800/30 border border-slate-700 p-4">
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-3">
+                            <h3 className="text-[10px] text-slate-500 uppercase tracking-wider flex items-center gap-2"><TrendingUp size={14} /> Portfolio Roadmap</h3>
+                            <div className="flex flex-wrap items-center gap-2 text-[10px]">
+                                <span className={`px-2 py-1 border ${statusTone(roadmapProjection?.roadmap_progression)}`}>
+                                    {roadmapProjection?.roadmap_progression ?? (roadmapLoading ? 'Loading' : 'No Data')}
+                                    {roadmapProjection ? ` / ${Math.round(roadmapProjection.roadmap_progression_pct ?? 0)}%` : ''}
+                                </span>
+                                <span className="font-mono-nums text-rose-300">Demand {formatCompact(roadmapTotals.target)}</span>
+                                <span className="font-mono-nums text-emerald-300">Projected {formatCompact(roadmapTotals.projected)}</span>
+                            </div>
+                        </div>
+                        {roadmapLoading && roadmapChartData.length === 0 ? (
+                            <p className="text-xs text-slate-500">Loading roadmap...</p>
+                        ) : (
+                            <div className="h-72">
+                                <ResponsiveContainer width="100%" height="100%">
+                                    <ComposedChart data={roadmapChartData} margin={{ top: 8, right: 16, bottom: 28, left: 8 }}>
+                                        <XAxis dataKey="label" tick={{ fontSize: 10 }} stroke="#64748b" interval="preserveStartEnd" minTickGap={24} />
+                                        <YAxis tick={{ fontSize: 10 }} stroke="#64748b" tickFormatter={formatCompact} width={70} />
+                                        <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', fontSize: 11 }} formatter={(value) => [formatCurrency(value as number), '']} />
+                                        <Legend verticalAlign="bottom" align="center" wrapperStyle={{ fontSize: 10, paddingTop: 14 }} />
+                                        <Area dataKey="p10" stackId="roadmap-band" stroke="none" fill="transparent" name="P10" />
+                                        <Area dataKey="band" stackId="roadmap-band" stroke="none" fill="#22c55e" fillOpacity={0.12} name="P10-P90" />
+                                        <Line type="monotone" dataKey="actual" stroke="#34d399" strokeWidth={2} dot={false} name="Actual Net Worth" connectNulls={false} />
+                                        <Line type="monotone" dataKey="p50" stroke="#22d3ee" strokeWidth={2} strokeDasharray="6 4" dot={false} name="Projected P50" connectNulls={false} />
+                                        <Line type="monotone" dataKey="liability" stroke="#fb7185" strokeWidth={2} dot={false} name="Liability Demand" connectNulls={false} />
+                                        {firstRoadmapRisk && <ReferenceLine x={firstRoadmapRisk.label} stroke="#fb7185" strokeDasharray="4 4" />}
+                                    </ComposedChart>
+                                </ResponsiveContainer>
+                            </div>
+                        )}
+                        {firstRoadmapRisk && (
+                            <p className="mt-2 text-xs text-rose-300">P50 falls below cumulative demand in {firstRoadmapRisk.label}.</p>
+                        )}
                     </div>
 
                     <div className="bg-slate-800/30 border border-slate-700 p-4">

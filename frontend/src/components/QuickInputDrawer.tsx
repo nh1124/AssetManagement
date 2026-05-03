@@ -2,6 +2,8 @@ import { useState, useRef, useEffect } from 'react';
 import { X, ArrowRightLeft, CreditCard, Sparkles, Loader2, ImagePlus, Send } from 'lucide-react';
 import { getAccountsByType, createTransaction, seedDefaultAccounts, analyzeWithBackend } from '../api';
 import { useToast } from './Toast';
+import { useClient } from '../context/ClientContext';
+import { formatCurrency } from '../utils/currency';
 
 interface QuickInputDrawerProps {
     isOpen: boolean;
@@ -51,12 +53,14 @@ export default function QuickInputDrawer({ isOpen, onClose }: QuickInputDrawerPr
     const [accountsByType, setAccountsByType] = useState<Record<AccountGroup, AccountOption[]>>(EMPTY_ACCOUNTS);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const { showToast } = useToast();
+    const { currentClient } = useClient();
+    const currentCurrency = currentClient?.general_settings?.currency || 'JPY';
 
     const [formData, setFormData] = useState({
         date: new Date().toISOString().split('T')[0],
         description: '',
         amount: '',
-        currency: 'JPY',
+        currency: currentCurrency,
         fromAccountId: '',
         toAccountId: '',
     });
@@ -101,6 +105,10 @@ export default function QuickInputDrawer({ isOpen, onClose }: QuickInputDrawerPr
         }
     }, [isOpen]);
 
+    useEffect(() => {
+        setFormData((prev) => ({ ...prev, currency: currentCurrency }));
+    }, [currentCurrency]);
+
     const handleTypeChange = (type: TransactionKind) => {
         setActiveType(type);
         resetAccountSelection(type, accountsByType);
@@ -131,7 +139,7 @@ export default function QuickInputDrawer({ isOpen, onClose }: QuickInputDrawerPr
             });
 
             showToast(
-                `Saved: ${activeType === 'Income' ? '+' : '-'} ${formData.currency} ${parseFloat(formData.amount).toLocaleString()} from ${fromAccount?.name ?? 'account'}`,
+                `Saved: ${activeType === 'Income' ? '+' : '-'} ${formatCurrency(parseFloat(formData.amount), formData.currency)} from ${fromAccount?.name ?? 'account'}`,
                 'success'
             );
 
