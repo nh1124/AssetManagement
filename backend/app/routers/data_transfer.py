@@ -250,6 +250,25 @@ def export_client_data(
                 .order_by(models.MonthlyReview.target_period)
                 .all()
             ],
+            "period_reviews": [
+                _row(
+                    review,
+                    [
+                        "id",
+                        "start_date",
+                        "end_date",
+                        "label",
+                        "reflection",
+                        "next_actions",
+                        "created_at",
+                        "updated_at",
+                    ],
+                )
+                for review in db.query(models.PeriodReview)
+                .filter(models.PeriodReview.client_id == current_client.id)
+                .order_by(models.PeriodReview.start_date, models.PeriodReview.end_date)
+                .all()
+            ],
             "milestones": [
                 _row(milestone, ["id", "life_event_id", "date", "target_amount", "note", "created_at"])
                 for milestone in db.query(models.Milestone)
@@ -316,6 +335,7 @@ def import_client_data(
         for model in [
             models.MonthlyBudget,
             models.MonthlyReview,
+            models.PeriodReview,
             models.Capsule,
             models.Milestone,
             models.RecurringTransaction,
@@ -477,6 +497,20 @@ def import_client_data(
                 models.MonthlyReview(
                     client_id=current_client.id,
                     target_period=item["target_period"],
+                    reflection=item.get("reflection") or "",
+                    next_actions=item.get("next_actions") or "",
+                    created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
+                    updated_at=_parse_datetime(item.get("updated_at")),
+                )
+            )
+
+        for item in data.get("period_reviews", []):
+            db.add(
+                models.PeriodReview(
+                    client_id=current_client.id,
+                    start_date=_parse_date(item.get("start_date")),
+                    end_date=_parse_date(item.get("end_date")),
+                    label=item.get("label") or "",
                     reflection=item.get("reflection") or "",
                     next_actions=item.get("next_actions") or "",
                     created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),

@@ -64,6 +64,7 @@ class Client(Base):
     milestones = relationship("Milestone", back_populates="client")
     capsules = relationship("Capsule", back_populates="client")
     monthly_reviews = relationship("MonthlyReview", back_populates="client")
+    period_reviews = relationship("PeriodReview", back_populates="client")
     monthly_actions = relationship("MonthlyAction", back_populates="client")
 
 class Account(Base):
@@ -235,6 +236,25 @@ class MonthlyReview(Base):
     __table_args__ = (UniqueConstraint("client_id", "target_period", name="_client_review_period_uc"),)
 
     client = relationship("Client", back_populates="monthly_reviews")
+
+
+class PeriodReview(Base):
+    """PDCA review notes for an explicit accounting period."""
+    __tablename__ = "period_reviews"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
+    start_date = Column(Date, nullable=False)
+    end_date = Column(Date, nullable=False)
+    label = Column(String, nullable=False, default="")
+    reflection = Column(Text, default="")
+    next_actions = Column(Text, default="")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (UniqueConstraint("client_id", "start_date", "end_date", name="_client_review_range_uc"),)
+
+    client = relationship("Client", back_populates="period_reviews")
 
 
 class MonthlyAction(Base):

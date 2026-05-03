@@ -211,16 +211,30 @@ export interface ReviewActionCreate {
 
 export interface MonthlyReport {
     period: string;
+    start_date?: string;
+    end_date?: string;
     summary: {
         net_worth: number;
         net_worth_change?: number;
         net_worth_change_pct?: number;
         monthly_pl: number;
+        period_pl?: number;
         savings_rate: number;
     };
     goal_progress: Array<Record<string, unknown>>;
     anomalies: Array<Record<string, any>>;
     action_proposals: ActionProposal[];
+}
+
+export interface PeriodReview {
+    id: number;
+    start_date: string;
+    end_date: string;
+    label: string;
+    reflection: string;
+    next_actions: string;
+    created_at: string;
+    updated_at?: string | null;
 }
 
 export interface Milestone {

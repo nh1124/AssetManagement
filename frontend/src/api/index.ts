@@ -9,6 +9,7 @@ import type {
     MonthlyBudget,
     MonthlyReport,
     MonthlyReview,
+    PeriodReview,
     NetWorthHistoryPoint,
     ReconcileResponse,
     RecurringTransaction,
@@ -80,27 +81,32 @@ export const getAnalysisSummary = async (): Promise<AnalysisSummary> => {
     return response.data;
 };
 
-export const getBalanceSheet = async (year?: number, month?: number) => {
+export const getBalanceSheet = async (year?: number, month?: number, asOf?: string) => {
     const params = new URLSearchParams();
     if (year) params.append('year', String(year));
     if (month) params.append('month', String(month));
+    if (asOf) params.append('as_of', asOf);
     const response = await api.get(`/analysis/balance-sheet?${params.toString()}`);
     return response.data;
 };
 
-export const getProfitLoss = async (year?: number, month?: number, rollup: boolean = false) => {
+export const getProfitLoss = async (year?: number, month?: number, rollup: boolean = false, startDate?: string, endDate?: string) => {
     const params = new URLSearchParams();
     if (year) params.append('year', String(year));
     if (month) params.append('month', String(month));
     if (rollup) params.append('rollup', 'true');
+    if (startDate) params.append('start_date', startDate);
+    if (endDate) params.append('end_date', endDate);
     const response = await api.get(`/analysis/profit-loss?${params.toString()}`);
     return response.data;
 };
 
-export const getVarianceAnalysis = async (year?: number, month?: number) => {
+export const getVarianceAnalysis = async (year?: number, month?: number, startDate?: string, endDate?: string) => {
     const params = new URLSearchParams();
     if (year) params.append('year', String(year));
     if (month) params.append('month', String(month));
+    if (startDate) params.append('start_date', startDate);
+    if (endDate) params.append('end_date', endDate);
     const response = await api.get(`/analysis/variance?${params.toString()}`);
     return response.data;
 };
@@ -126,6 +132,22 @@ export const saveMonthlyReview = async (review: {
     next_actions: string;
 }): Promise<MonthlyReview> => {
     const response = await api.put('/monthly-reviews/', review);
+    return response.data;
+};
+
+export const getPeriodReview = async (startDate: string, endDate: string): Promise<PeriodReview> => {
+    const response = await api.get('/period-reviews/', { params: { start_date: startDate, end_date: endDate } });
+    return response.data;
+};
+
+export const savePeriodReview = async (review: {
+    start_date: string;
+    end_date: string;
+    label: string;
+    reflection: string;
+    next_actions: string;
+}): Promise<PeriodReview> => {
+    const response = await api.put('/period-reviews/', review);
     return response.data;
 };
 
@@ -576,11 +598,27 @@ export const getMonthlyReport = async (year?: number, month?: number): Promise<M
     return response.data;
 };
 
+export const getPeriodReport = async (startDate: string, endDate: string): Promise<MonthlyReport> => {
+    const response = await api.get('/reports/period', { params: { start_date: startDate, end_date: endDate } });
+    return response.data;
+};
+
 export const applyMonthlyReportAction = async (
     period: string,
     proposalId: string
 ): Promise<{ status: string; action: MonthlyAction }> => {
     const response = await api.post(`/reports/${period}/actions/${proposalId}/apply`);
+    return response.data;
+};
+
+export const applyPeriodReportAction = async (
+    startDate: string,
+    endDate: string,
+    proposalId: string
+): Promise<{ status: string; action: MonthlyAction }> => {
+    const response = await api.post(`/reports/period/actions/${proposalId}/apply`, null, {
+        params: { start_date: startDate, end_date: endDate },
+    });
     return response.data;
 };
 

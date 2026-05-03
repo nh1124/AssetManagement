@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Check, ChevronLeft, ChevronRight, RefreshCw, Save } from 'lucide-react';
+import { Check, RefreshCw, Save } from 'lucide-react';
 import {
     CartesianGrid,
     Cell,
@@ -19,8 +19,8 @@ import {
     getAnalysisSummary,
     getBalanceSheet,
     getCapsules,
-    getMonthlyReport,
-    getMonthlyReview,
+    getPeriodReport,
+    getPeriodReview,
     getNetWorthHistory,
     getProfitLoss,
     getAccounts,
@@ -30,15 +30,15 @@ import {
     processDueMonthlyActions,
     applyReviewAction,
     skipReviewAction,
-    applyMonthlyReportAction,
+    applyPeriodReportAction,
     getReconcileStatus,
     getVarianceAnalysis,
     fixReconcile,
-    saveMonthlyReview,
+    savePeriodReview,
 } from '../api';
 import { useToast } from '../components/Toast';
 import { formatCurrency as formatCurrencyWithSetting } from '../utils/currency';
-import type { ActionProposal, AnalysisSummary, MonthlyAction, MonthlyReport, MonthlyReview, NetWorthHistoryPoint, ReconcileResponse, ReviewActionKind } from '../types';
+import type { ActionProposal, AnalysisSummary, MonthlyAction, MonthlyReport, PeriodReview, NetWorthHistoryPoint, ReconcileResponse, ReviewActionKind } from '../types';
 
 interface TheLabProps {
     onNavigate?: (page: string) => void;
@@ -52,21 +52,66 @@ const PORTFOLIO_TABS = [
     { id: 'reconcile', label: 'Data Quality' },
 ];
 
-const MONTHLY_TABS = [
-    { id: 'monthlySummary', label: 'Summary' },
+const PERIOD_TABS = [
+    { id: 'periodSummary', label: 'Summary' },
     { id: 'pl', label: 'P/L' },
     { id: 'bs', label: 'B/S' },
-    { id: 'variance', label: 'Budget vs Actual' },
-    { id: 'report', label: 'Monthly Report' },
-    { id: 'review', label: 'Monthly Review' },
+    { id: 'variance', label: 'Budget' },
+    { id: 'report', label: 'Report' },
+    { id: 'review', label: 'Review' },
+    { id: 'actions', label: 'Actions' },
 ];
 
+type PeriodPreset = 'thisMonth' | 'lastMonth' | 'thisQuarter' | 'ytd' | 'thisYear' | 'last12Months' | 'custom';
+
+const toISODate = (date: Date) => {
+    const offset = date.getTimezoneOffset();
+    const localDate = new Date(date.getTime() - offset * 60 * 1000);
+    return localDate.toISOString().slice(0, 10);
+};
+
+const monthStart = (date: Date) => new Date(date.getFullYear(), date.getMonth(), 1);
+const monthEnd = (date: Date) => new Date(date.getFullYear(), date.getMonth() + 1, 0);
+
+const getPresetRange = (preset: PeriodPreset) => {
+    const today = new Date();
+    if (preset === 'lastMonth') {
+        const lastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+        return { start: toISODate(monthStart(lastMonth)), end: toISODate(monthEnd(lastMonth)) };
+    }
+    if (preset === 'thisQuarter') {
+        const quarterStartMonth = Math.floor(today.getMonth() / 3) * 3;
+        return {
+            start: toISODate(new Date(today.getFullYear(), quarterStartMonth, 1)),
+            end: toISODate(today),
+        };
+    }
+    if (preset === 'ytd') {
+        return { start: toISODate(new Date(today.getFullYear(), 0, 1)), end: toISODate(today) };
+    }
+    if (preset === 'thisYear') {
+        return {
+            start: toISODate(new Date(today.getFullYear(), 0, 1)),
+            end: toISODate(new Date(today.getFullYear(), 11, 31)),
+        };
+    }
+    if (preset === 'last12Months') {
+        return {
+            start: toISODate(new Date(today.getFullYear(), today.getMonth() - 11, 1)),
+            end: toISODate(today),
+        };
+    }
+    return { start: toISODate(monthStart(today)), end: toISODate(monthEnd(today)) };
+};
+
 export default function TheLab({ onNavigate }: TheLabProps) {
-    const [analysisMode, setAnalysisMode] = useState<'portfolio' | 'monthly'>('portfolio');
+    const [analysisMode, setAnalysisMode] = useState<'portfolio' | 'period'>('portfolio');
     const [portfolioTab, setPortfolioTab] = useState('overview');
-    const [monthlyTab, setMonthlyTab] = useState('monthlySummary');
-    const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
-    const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
+    const [periodTab, setPeriodTab] = useState('periodSummary');
+    const [periodPreset, setPeriodPreset] = useState<PeriodPreset>('thisMonth');
+    const initialRange = getPresetRange('thisMonth');
+    const [periodStartDate, setPeriodStartDate] = useState(initialRange.start);
+    const [periodEndDate, setPeriodEndDate] = useState(initialRange.end);
     const [loading, setLoading] = useState(false);
     const [plRollup, setPlRollup] = useState(false);
 
@@ -79,7 +124,7 @@ export default function TheLab({ onNavigate }: TheLabProps) {
     const [recurringItems, setRecurringItems] = useState<any[]>([]);
     const [accounts, setAccounts] = useState<any[]>([]);
     const [monthlyReport, setMonthlyReport] = useState<MonthlyReport | null>(null);
-    const [monthlyReview, setMonthlyReview] = useState<MonthlyReview | null>(null);
+    const [periodReview, setPeriodReview] = useState<PeriodReview | null>(null);
     const [monthlyActions, setMonthlyActions] = useState<MonthlyAction[]>([]);
     const [netWorthHistory, setNetWorthHistory] = useState<NetWorthHistoryPoint[]>([]);
     const [historyMonths, setHistoryMonths] = useState(36);
@@ -112,23 +157,27 @@ export default function TheLab({ onNavigate }: TheLabProps) {
     const fetchData = async () => {
         setLoading(true);
         try {
-            const period = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
-            const prevDate = selectedMonth === 1
-                ? { year: selectedYear - 1, month: 12 }
-                : { year: selectedYear, month: selectedMonth - 1 };
+            const periodKey = `${periodStartDate}..${periodEndDate}`;
+            const start = new Date(`${periodStartDate}T00:00:00`);
+            const end = new Date(`${periodEndDate}T00:00:00`);
+            const spanDays = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1);
+            const previousEnd = new Date(start);
+            previousEnd.setDate(previousEnd.getDate() - 1);
+            const previousStart = new Date(previousEnd);
+            previousStart.setDate(previousStart.getDate() - spanDays + 1);
             const [summaryData, bsData, plData, prevPlData, varianceData, capsuleData, reportData, reviewData, historyData, recurringData, accountData, actionData] = await Promise.all([
                 getAnalysisSummary(),
-                getBalanceSheet(selectedYear, selectedMonth),
-                getProfitLoss(selectedYear, selectedMonth, plRollup),
-                getProfitLoss(prevDate.year, prevDate.month, plRollup),
-                getVarianceAnalysis(selectedYear, selectedMonth),
+                getBalanceSheet(undefined, undefined, periodEndDate),
+                getProfitLoss(undefined, undefined, plRollup, periodStartDate, periodEndDate),
+                getProfitLoss(undefined, undefined, plRollup, toISODate(previousStart), toISODate(previousEnd)),
+                getVarianceAnalysis(undefined, undefined, periodStartDate, periodEndDate),
                 getCapsules(),
-                getMonthlyReport(selectedYear, selectedMonth),
-                getMonthlyReview(period),
+                getPeriodReport(periodStartDate, periodEndDate),
+                getPeriodReview(periodStartDate, periodEndDate),
                 getNetWorthHistory(historyMonths),
                 getRecurringTransactions(),
                 getAccounts(),
-                getMonthlyActions(period),
+                getMonthlyActions(periodKey),
             ]);
             setSummary(summaryData);
             setBalanceSheet(bsData);
@@ -140,7 +189,7 @@ export default function TheLab({ onNavigate }: TheLabProps) {
             setAccounts(accountData);
             setMonthlyActions(actionData);
             setMonthlyReport(reportData);
-            setMonthlyReview(reviewData);
+            setPeriodReview(reviewData);
             setNetWorthHistory(historyData);
             setReviewDraft({
                 reflection: reviewData.reflection || '',
@@ -155,25 +204,7 @@ export default function TheLab({ onNavigate }: TheLabProps) {
 
     useEffect(() => {
         fetchData();
-    }, [selectedYear, selectedMonth, historyMonths, plRollup]);
-
-    const navigateMonth = (direction: 'prev' | 'next') => {
-        if (direction === 'prev') {
-            if (selectedMonth === 1) {
-                setSelectedMonth(12);
-                setSelectedYear(selectedYear - 1);
-            } else {
-                setSelectedMonth(selectedMonth - 1);
-            }
-        } else {
-            if (selectedMonth === 12) {
-                setSelectedMonth(1);
-                setSelectedYear(selectedYear + 1);
-            } else {
-                setSelectedMonth(selectedMonth + 1);
-            }
-        }
-    };
+    }, [periodStartDate, periodEndDate, historyMonths, plRollup]);
 
     const changeHistoryMonths = async (months: number) => {
         setHistoryMonths(months);
@@ -279,25 +310,27 @@ export default function TheLab({ onNavigate }: TheLabProps) {
     ];
 
     const handleSaveReview = async () => {
-        const period = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
         setReviewSaving(true);
         try {
-            const saved = await saveMonthlyReview({
-                target_period: period,
+            const saved = await savePeriodReview({
+                start_date: periodStartDate,
+                end_date: periodEndDate,
+                label: `${periodStartDate} - ${periodEndDate}`,
                 reflection: reviewDraft.reflection,
                 next_actions: reviewDraft.next_actions,
             });
-            setMonthlyReview(saved);
-            showToast('Monthly review saved', 'success');
+            setPeriodReview(saved);
+            showToast('Period review saved', 'success');
         } catch (error) {
-            showToast('Failed to save monthly review', 'error');
+            showToast('Failed to save period review', 'error');
         } finally {
             setReviewSaving(false);
         }
     };
 
     const nextMonthPeriod = () => {
-        const date = new Date(selectedYear, selectedMonth, 1);
+        const end = new Date(`${periodEndDate}T00:00:00`);
+        const date = new Date(end.getFullYear(), end.getMonth() + 1, 1);
         return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
     };
 
@@ -330,16 +363,14 @@ export default function TheLab({ onNavigate }: TheLabProps) {
     };
 
     const refreshActions = async () => {
-        const period = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
-        setMonthlyActions(await getMonthlyActions(period));
+        setMonthlyActions(await getMonthlyActions(`${periodStartDate}..${periodEndDate}`));
     };
 
     const handleCreateAction = async () => {
-        const period = `${selectedYear}-${String(selectedMonth).padStart(2, '0')}`;
         setActionSaving(true);
         try {
             await createMonthlyAction({
-                source_period: period,
+                source_period: `${periodStartDate}..${periodEndDate}`,
                 target_period: actionDraft.target_period || nextMonthPeriod(),
                 kind: actionDraft.kind,
                 description: actionDraft.description,
@@ -425,8 +456,8 @@ export default function TheLab({ onNavigate }: TheLabProps) {
         if (!monthlyReport) return;
         setApplyingProposalId(proposal.id);
         try {
-            const result = await applyMonthlyReportAction(monthlyReport.period, proposal.id);
-            const nextReport = await getMonthlyReport(selectedYear, selectedMonth);
+            const result = await applyPeriodReportAction(periodStartDate, periodEndDate, proposal.id);
+            const nextReport = await getPeriodReport(periodStartDate, periodEndDate);
             setMonthlyReport(nextReport);
             showToast(result.status === 'already_applied' ? 'Action already applied' : 'Action applied', 'success');
         } catch (error) {
@@ -438,7 +469,7 @@ export default function TheLab({ onNavigate }: TheLabProps) {
     };
 
     const renderTabContent = () => {
-        const activeTab = analysisMode === 'portfolio' ? portfolioTab : monthlyTab;
+        const activeTab = analysisMode === 'portfolio' ? portfolioTab : periodTab;
         const expenseRows = profitLoss?.expenses ?? [];
         const previousExpenseMap = new Map<string, number>(
             (previousProfitLoss?.expenses ?? []).map((row: any) => [String(row.category).toLowerCase(), row.amount || 0])
@@ -499,11 +530,11 @@ export default function TheLab({ onNavigate }: TheLabProps) {
                         </div>
                     </div>
                 );
-            case 'monthlySummary':
+            case 'periodSummary':
                 return (
                     <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
                         <div className="bg-slate-800/50 border border-slate-700 p-3">
-                            <p className="text-[10px] text-slate-500 uppercase">Monthly P/L</p>
+                            <p className="text-[10px] text-slate-500 uppercase">Period P/L</p>
                             <p className={`text-lg font-mono-nums ${(monthlyReport?.summary?.monthly_pl ?? profitLoss?.net_profit_loss ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                                 {formatCurrency(monthlyReport?.summary?.monthly_pl ?? profitLoss?.net_profit_loss ?? 0)}
                             </p>
@@ -841,7 +872,7 @@ export default function TheLab({ onNavigate }: TheLabProps) {
                         <div className="bg-slate-800/30 border border-slate-700 p-4 text-xs">
                             <p>Period: {monthlyReport?.period}</p>
                             <p>Net Worth: <span className="font-mono-nums">{formatCurrency(monthlyReport?.summary?.net_worth ?? 0)}</span></p>
-                            <p>Monthly P/L: <span className="font-mono-nums">{formatCurrency(monthlyReport?.summary?.monthly_pl ?? 0)}</span></p>
+                            <p>Period P/L: <span className="font-mono-nums">{formatCurrency(monthlyReport?.summary?.monthly_pl ?? 0)}</span></p>
                             <p>Savings Rate: <span className="font-mono-nums">{monthlyReport?.summary?.savings_rate ?? 0}%</span></p>
                         </div>
                         <div className="bg-slate-800/30 border border-slate-700 p-4">
@@ -860,7 +891,7 @@ export default function TheLab({ onNavigate }: TheLabProps) {
                     <div className="space-y-4">
                         <div className="grid grid-cols-3 gap-3">
                             <div className="bg-slate-800/50 border border-slate-700 p-3">
-                                <p className="text-[10px] text-slate-500 uppercase">Monthly P/L</p>
+                                <p className="text-[10px] text-slate-500 uppercase">Period P/L</p>
                                 <p className={`text-lg font-mono-nums ${(monthlyReport?.summary?.monthly_pl ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                                     {formatCurrency(monthlyReport?.summary?.monthly_pl ?? 0)}
                                 </p>
@@ -883,18 +914,18 @@ export default function TheLab({ onNavigate }: TheLabProps) {
                                 <textarea
                                     value={reviewDraft.reflection}
                                     onChange={(e) => setReviewDraft({ ...reviewDraft, reflection: e.target.value })}
-                                    placeholder="What happened this month? What should be kept or corrected?"
+                                    placeholder="What happened in this period? What should be kept or corrected?"
                                     className="w-full min-h-48 bg-slate-900 border border-slate-700 px-3 py-2 text-xs text-slate-200 resize-y focus:outline-none focus:border-emerald-500"
                                 />
                             </div>
                             <div className="bg-slate-800/30 border border-slate-700 p-4">
                                 <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-2">
-                                    Next Month Actions
+                                    Next Actions
                                 </label>
                                 <textarea
                                     value={reviewDraft.next_actions}
                                     onChange={(e) => setReviewDraft({ ...reviewDraft, next_actions: e.target.value })}
-                                    placeholder="Budget changes, spending rules, transfers, or follow-up actions for next month."
+                                    placeholder="Budget changes, spending rules, transfers, or follow-up actions for the next period."
                                     className="w-full min-h-48 bg-slate-900 border border-slate-700 px-3 py-2 text-xs text-slate-200 resize-y focus:outline-none focus:border-emerald-500"
                                 />
                             </div>
@@ -1010,12 +1041,12 @@ export default function TheLab({ onNavigate }: TheLabProps) {
                             <div className="flex items-center justify-between mb-3">
                                 <p className="text-xs text-slate-400">Report Signals</p>
                                 <span className="text-[10px] text-slate-600">
-                                    Last saved: {monthlyReview?.updated_at || monthlyReview?.created_at || 'Not saved yet'}
+                                    Last saved: {periodReview?.updated_at || periodReview?.created_at || 'Not saved yet'}
                                 </span>
                             </div>
                             <div className="space-y-2">
                                 {(monthlyReport?.action_proposals ?? []).length === 0 ? (
-                                    <p className="text-xs text-slate-500">No automatic action proposals for this month.</p>
+                                    <p className="text-xs text-slate-500">No automatic action proposals for this period.</p>
                                 ) : (
                                     (monthlyReport?.action_proposals ?? []).map((proposal) => (
                                         <div key={proposal.id} className="flex items-center justify-between gap-3 text-xs border-b border-slate-800 pb-2">
@@ -1066,8 +1097,76 @@ export default function TheLab({ onNavigate }: TheLabProps) {
                             className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white py-2 text-xs font-bold flex items-center justify-center gap-2"
                         >
                             <Save size={14} />
-                            {reviewSaving ? 'Saving...' : 'Save Monthly Review'}
+                            {reviewSaving ? 'Saving...' : 'Save Period Review'}
                         </button>
+                    </div>
+                );
+            case 'actions':
+                return (
+                    <div className="space-y-4">
+                        <div className="bg-slate-800/30 border border-slate-700 p-4 space-y-3">
+                            <div className="flex items-center justify-between gap-3">
+                                <p className="text-xs text-slate-400">Action Builder</p>
+                                <button onClick={handleProcessDueActions} className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-white text-[10px]">
+                                    Process Due
+                                </button>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+                                <select
+                                    value={actionDraft.kind}
+                                    onChange={(event) => setActionDraft({ ...actionDraft, kind: event.target.value as ReviewActionKind })}
+                                    className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
+                                >
+                                    <option value="set_budget">Set Budget</option>
+                                    <option value="add_recurring">Add Recurring</option>
+                                    <option value="pause_recurring">Pause Recurring</option>
+                                    <option value="boost_allocation">Boost Allocation</option>
+                                    <option value="change_capsule_contribution">Capsule Contribution</option>
+                                </select>
+                                <input
+                                    type="month"
+                                    value={actionDraft.target_period || nextMonthPeriod()}
+                                    onChange={(event) => setActionDraft({ ...actionDraft, target_period: event.target.value })}
+                                    className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
+                                />
+                                <input
+                                    value={actionDraft.description}
+                                    onChange={(event) => setActionDraft({ ...actionDraft, description: event.target.value })}
+                                    placeholder="Description"
+                                    className="md:col-span-3 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
+                                />
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                                <select value={actionDraft.account_id} onChange={(event) => setActionDraft({ ...actionDraft, account_id: event.target.value })} className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs">
+                                    <option value="">Account</option>
+                                    {accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+                                </select>
+                                <input type="number" value={actionDraft.amount} onChange={(event) => setActionDraft({ ...actionDraft, amount: event.target.value })} placeholder="Amount" className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums" />
+                                <input value={actionDraft.name} onChange={(event) => setActionDraft({ ...actionDraft, name: event.target.value })} placeholder="Name" className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs" />
+                                <button onClick={handleCreateAction} disabled={actionSaving} className="bg-cyan-700 hover:bg-cyan-600 disabled:opacity-50 text-white text-xs px-3 py-1.5">
+                                    {actionSaving ? 'Queueing...' : 'Queue Action'}
+                                </button>
+                            </div>
+                        </div>
+
+                        <div className="bg-slate-800/30 border border-slate-700 p-4 space-y-2">
+                            <p className="text-xs text-slate-400">Queued Actions</p>
+                            {monthlyActions.length === 0 ? (
+                                <p className="text-xs text-slate-500">No queued review actions.</p>
+                            ) : monthlyActions.map((action) => (
+                                <div key={action.id} className="flex items-center justify-between gap-3 border-t border-slate-800 pt-2 text-xs">
+                                    <div className="min-w-0">
+                                        <p className="text-slate-300 truncate">{action.description || action.kind}</p>
+                                        <p className="text-[10px] text-slate-600">{action.kind} / {action.target_period} / {action.status}</p>
+                                        {typeof action.result?.error === 'string' && <p className="text-[10px] text-rose-300">{action.result.error}</p>}
+                                    </div>
+                                    <div className="flex gap-2">
+                                        <button disabled={action.status === 'applied'} onClick={() => handleApplyReviewAction(action.id)} className="px-2 py-1 bg-emerald-800 disabled:opacity-40 text-white">Apply</button>
+                                        <button disabled={action.status === 'skipped'} onClick={() => handleSkipReviewAction(action.id)} className="px-2 py-1 bg-slate-700 disabled:opacity-40 text-white">Skip</button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
                     </div>
                 );
             default:
@@ -1089,25 +1188,56 @@ export default function TheLab({ onNavigate }: TheLabProps) {
                         </button>
                         <button
                             type="button"
-                            onClick={() => setAnalysisMode('monthly')}
-                            className={`px-4 py-2 text-xs font-medium ${analysisMode === 'monthly' ? 'bg-emerald-950/40 text-emerald-300 border-b border-emerald-500' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/40'}`}
+                            onClick={() => setAnalysisMode('period')}
+                            className={`px-4 py-2 text-xs font-medium ${analysisMode === 'period' ? 'bg-emerald-950/40 text-emerald-300 border-b border-emerald-500' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/40'}`}
                         >
-                            Monthly Close
+                            Period Review
                         </button>
                     </div>
 
                     <div className="flex items-center gap-2">
-                        {analysisMode === 'monthly' && (
-                            <div className="flex items-center gap-2">
-                                <button onClick={() => navigateMonth('prev')} className="p-1 hover:bg-slate-800 text-slate-400">
-                                    <ChevronLeft size={16} />
-                                </button>
-                                <span className="text-sm font-medium min-w-[100px] text-center">
-                                    {selectedYear}/{String(selectedMonth).padStart(2, '0')}
-                                </span>
-                                <button onClick={() => navigateMonth('next')} className="p-1 hover:bg-slate-800 text-slate-400">
-                                    <ChevronRight size={16} />
-                                </button>
+                        {analysisMode === 'period' && (
+                            <div className="flex flex-wrap items-center justify-end gap-2">
+                                <select
+                                    value={periodPreset}
+                                    onChange={(event) => {
+                                        const nextPreset = event.target.value as PeriodPreset;
+                                        setPeriodPreset(nextPreset);
+                                        if (nextPreset !== 'custom') {
+                                            const nextRange = getPresetRange(nextPreset);
+                                            setPeriodStartDate(nextRange.start);
+                                            setPeriodEndDate(nextRange.end);
+                                        }
+                                    }}
+                                    className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-slate-200"
+                                >
+                                    <option value="thisMonth">This Month</option>
+                                    <option value="lastMonth">Last Month</option>
+                                    <option value="thisQuarter">This Quarter</option>
+                                    <option value="ytd">YTD</option>
+                                    <option value="thisYear">This Year</option>
+                                    <option value="last12Months">Last 12 Months</option>
+                                    <option value="custom">Custom</option>
+                                </select>
+                                <input
+                                    type="date"
+                                    value={periodStartDate}
+                                    onChange={(event) => {
+                                        setPeriodPreset('custom');
+                                        setPeriodStartDate(event.target.value);
+                                    }}
+                                    className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-slate-200"
+                                />
+                                <span className="text-xs text-slate-600">to</span>
+                                <input
+                                    type="date"
+                                    value={periodEndDate}
+                                    onChange={(event) => {
+                                        setPeriodPreset('custom');
+                                        setPeriodEndDate(event.target.value);
+                                    }}
+                                    className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-slate-200"
+                                />
                             </div>
                         )}
                         <button onClick={fetchData} className="p-1.5 hover:bg-slate-800 text-slate-400 flex items-center gap-1 text-xs" disabled={loading}>
@@ -1119,9 +1249,9 @@ export default function TheLab({ onNavigate }: TheLabProps) {
             </div>
 
             <TabPanel
-                tabs={analysisMode === 'portfolio' ? PORTFOLIO_TABS : MONTHLY_TABS}
-                activeTab={analysisMode === 'portfolio' ? portfolioTab : monthlyTab}
-                onTabChange={analysisMode === 'portfolio' ? setPortfolioTab : setMonthlyTab}
+                tabs={analysisMode === 'portfolio' ? PORTFOLIO_TABS : PERIOD_TABS}
+                activeTab={analysisMode === 'portfolio' ? portfolioTab : periodTab}
+                onTabChange={analysisMode === 'portfolio' ? setPortfolioTab : setPeriodTab}
             >
                 <div className="p-4">{renderTabContent()}</div>
             </TabPanel>

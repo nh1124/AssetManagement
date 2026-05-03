@@ -148,15 +148,24 @@ TRANSACTION_ACCOUNT_DEFAULTS = {
 }
 
 
-def calculate_account_journal_balance(db: Session, account: models.Account) -> float:
+def calculate_account_journal_balance(
+    db: Session,
+    account: models.Account,
+    as_of_date: date | None = None,
+) -> float:
     """
     Calculate an account balance from journal entries only.
     Account.balance is treated as a denormalized cache, not source-of-truth.
     """
-    result = db.query(
+    query = db.query(
         func.sum(models.JournalEntry.debit).label("total_debit"),
         func.sum(models.JournalEntry.credit).label("total_credit"),
-    ).filter(models.JournalEntry.account_id == account.id).first()
+    ).filter(models.JournalEntry.account_id == account.id)
+
+    if as_of_date is not None:
+        query = query.join(models.Transaction).filter(models.Transaction.date <= as_of_date)
+
+    result = query.first()
 
     total_debit = result.total_debit or 0.0
     total_credit = result.total_credit or 0.0
@@ -314,7 +323,7 @@ def get_balance_sheet(
     assets = []
     liabilities = []
     for acc in accounts:
-        balance = calculate_account_journal_balance(db, acc)
+        balance = calculate_account_journal_balance(db, acc, as_of_date)
         if acc.account_type in ("asset", "item"):
             assets.append({"name": acc.name, "balance": balance})
         elif acc.account_type == "liability":
@@ -334,21 +343,18 @@ def get_balance_sheet(
     }
 
 
-def get_profit_loss(db: Session, year: int, month: int, client_id: int | None = None) -> dict:
-    """
-    Generate Profit & Loss statement for a specific month and client.
-    """
-    start_date = date(year, month, 1)
-    if month == 12:
-        end_date = date(year + 1, 1, 1)
-    else:
-        end_date = date(year, month + 1, 1)
-
+def get_profit_loss_for_range(
+    db: Session,
+    start_date: date,
+    end_date: date,
+    client_id: int | None = None,
+) -> dict:
+    """Generate Profit & Loss statement for an inclusive date range."""
     transactions = db.query(models.Transaction).filter(
         and_(
             models.Transaction.client_id == client_id,
             models.Transaction.date >= start_date,
-            models.Transaction.date < end_date,
+            models.Transaction.date <= end_date,
         )
     ).all()
 
@@ -367,7 +373,9 @@ def get_profit_loss(db: Session, year: int, month: int, client_id: int | None = 
     net_pl = total_income - total_expense
 
     return {
-        "period": f"{year}-{month:02d}",
+        "period": f"{start_date.isoformat()}..{end_date.isoformat()}",
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
         "income": [{"category": k, "amount": v} for k, v in income_by_category.items()],
         "expenses": [{"category": k, "amount": v} for k, v in expense_by_category.items()],
         "total_income": total_income,
@@ -376,14 +384,23 @@ def get_profit_loss(db: Session, year: int, month: int, client_id: int | None = 
     }
 
 
-def get_profit_loss_rollup(db: Session, year: int, month: int, client_id: int | None = None) -> dict:
-    """Generate P/L grouped by top-level parent account when hierarchy exists."""
+def get_profit_loss(db: Session, year: int, month: int, client_id: int | None = None) -> dict:
+    """Generate Profit & Loss statement for a specific month and client."""
     start_date = date(year, month, 1)
     if month == 12:
         end_date = date(year + 1, 1, 1)
     else:
         end_date = date(year, month + 1, 1)
+    return get_profit_loss_for_range(db, start_date, end_date - date.resolution, client_id)
 
+
+def get_profit_loss_rollup_for_range(
+    db: Session,
+    start_date: date,
+    end_date: date,
+    client_id: int | None = None,
+) -> dict:
+    """Generate P/L grouped by top-level parent account for an inclusive date range."""
     accounts = db.query(models.Account).filter(models.Account.client_id == client_id).all()
     account_by_id = {account.id: account for account in accounts}
 
@@ -402,7 +419,7 @@ def get_profit_loss_rollup(db: Session, year: int, month: int, client_id: int | 
         and_(
             models.Transaction.client_id == client_id,
             models.Transaction.date >= start_date,
-            models.Transaction.date < end_date,
+            models.Transaction.date <= end_date,
         )
     ).all()
 
@@ -419,7 +436,9 @@ def get_profit_loss_rollup(db: Session, year: int, month: int, client_id: int | 
     total_income = sum(income_by_category.values())
     total_expense = sum(expense_by_category.values())
     return {
-        "period": f"{year}-{month:02d}",
+        "period": f"{start_date.isoformat()}..{end_date.isoformat()}",
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
         "income": [{"category": k, "amount": v} for k, v in income_by_category.items()],
         "expenses": [{"category": k, "amount": v} for k, v in expense_by_category.items()],
         "total_income": total_income,
@@ -429,17 +448,37 @@ def get_profit_loss_rollup(db: Session, year: int, month: int, client_id: int | 
     }
 
 
-def get_variance_analysis(
+def get_profit_loss_rollup(db: Session, year: int, month: int, client_id: int | None = None) -> dict:
+    """Generate P/L grouped by top-level parent account when hierarchy exists."""
+    start_date = date(year, month, 1)
+    if month == 12:
+        end_date = date(year + 1, 1, 1)
+    else:
+        end_date = date(year, month + 1, 1)
+    return get_profit_loss_rollup_for_range(db, start_date, end_date - date.resolution, client_id)
+
+
+def _period_months(start_date: date, end_date: date) -> list[str]:
+    months = []
+    cursor = date(start_date.year, start_date.month, 1)
+    last = date(end_date.year, end_date.month, 1)
+    while cursor <= last:
+        months.append(f"{cursor.year}-{cursor.month:02d}")
+        if cursor.month == 12:
+            cursor = date(cursor.year + 1, 1, 1)
+        else:
+            cursor = date(cursor.year, cursor.month + 1, 1)
+    return months
+
+
+def get_variance_analysis_for_range(
     db: Session,
-    year: int,
-    month: int,
+    start_date: date,
+    end_date: date,
     client_id: int | None = None,
 ) -> dict:
-    """
-    Compare actual spending vs monthly budgets for a specific month and client.
-    Uses models.MonthlyBudget (per account) joined with actual transactions.
-    """
-    month_str = f"{year}-{month:02d}"
+    """Compare actual spending vs summed monthly budgets over an inclusive range."""
+    month_keys = _period_months(start_date, end_date)
 
     accounts = db.query(models.Account).filter(
         models.Account.client_id == client_id,
@@ -449,22 +488,19 @@ def get_variance_analysis(
 
     monthly_budgets = db.query(models.MonthlyBudget).filter(
         models.MonthlyBudget.client_id == client_id,
-        models.MonthlyBudget.target_period == month_str,
+        models.MonthlyBudget.target_period.in_(month_keys),
     ).all()
-    budget_map = {mb.account_id: mb.amount for mb in monthly_budgets}
-    account_name_to_id = {acc.name: acc.id for acc in accounts}
+    budget_map: dict[int, float] = {}
+    for budget in monthly_budgets:
+        budget_map[budget.account_id] = budget_map.get(budget.account_id, 0.0) + budget.amount
 
-    start_date = date(year, month, 1)
-    if month == 12:
-        end_date = date(year + 1, 1, 1)
-    else:
-        end_date = date(year, month + 1, 1)
+    account_name_to_id = {acc.name: acc.id for acc in accounts}
 
     transactions = db.query(models.Transaction).filter(
         and_(
             models.Transaction.client_id == client_id,
             models.Transaction.date >= start_date,
-            models.Transaction.date < end_date,
+            models.Transaction.date <= end_date,
             models.Transaction.type.in_(["Expense", "CreditExpense"]),
         )
     ).all()
@@ -487,14 +523,12 @@ def get_variance_analysis(
     for acc in accounts:
         actual = actual_by_account_id.get(acc.id, 0.0)
         budget = budget_map.get(acc.id, 0.0)
-
-        variance = budget - actual
         variance_items.append(
             {
                 "category": acc.name,
                 "budget": budget,
                 "actual": actual,
-                "variance": variance,
+                "variance": budget - actual,
                 "percentage": (actual / budget * 100) if budget > 0 else 0,
             }
         )
@@ -514,9 +548,28 @@ def get_variance_analysis(
     total_actual = sum(v["actual"] for v in variance_items)
 
     return {
-        "period": month_str,
+        "period": f"{start_date.isoformat()}..{end_date.isoformat()}",
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "budget_months": month_keys,
         "items": variance_items,
         "total_budget": total_budget,
         "total_actual": total_actual,
         "total_variance": total_budget - total_actual,
     }
+
+
+def get_variance_analysis(
+    db: Session,
+    year: int,
+    month: int,
+    client_id: int | None = None,
+) -> dict:
+    start_date = date(year, month, 1)
+    if month == 12:
+        end_date = date(year + 1, 1, 1)
+    else:
+        end_date = date(year, month + 1, 1)
+    result = get_variance_analysis_for_range(db, start_date, end_date - date.resolution, client_id)
+    result["period"] = f"{year}-{month:02d}"
+    return result

@@ -6,7 +6,16 @@ from ..database import get_db
 from ..dependencies import get_current_client
 from .. import models
 from ..services import analysis_service
-from ..services.accounting_service import get_balance_sheet, get_profit_loss, get_profit_loss_rollup, get_variance_analysis, ensure_default_accounts
+from ..services.accounting_service import (
+    ensure_default_accounts,
+    get_balance_sheet,
+    get_profit_loss,
+    get_profit_loss_for_range,
+    get_profit_loss_rollup,
+    get_profit_loss_rollup_for_range,
+    get_variance_analysis,
+    get_variance_analysis_for_range,
+)
 from ..services.reconcile_service import run_reconcile
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
@@ -24,19 +33,21 @@ def get_analysis_summary(
 def get_bs(
     year: Optional[int] = Query(None),
     month: Optional[int] = Query(None),
+    as_of: Optional[date] = Query(None),
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
     """Get Balance Sheet snapshot for current client."""
     ensure_default_accounts(db, client_id=current_client.id)
-    if year and month:
-        # Get B/S as of end of month
-        if month == 12:
-            as_of = date(year + 1, 1, 1)
+    if as_of is None:
+        if year and month:
+            # Get B/S as of end of month.
+            if month == 12:
+                as_of = date(year, 12, 31)
+            else:
+                as_of = date(year, month + 1, 1) - date.resolution
         else:
-            as_of = date(year, month + 1, 1)
-    else:
-        as_of = date.today()
+            as_of = date.today()
     
     return get_balance_sheet(db, as_of, client_id=current_client.id)
 
@@ -44,12 +55,19 @@ def get_bs(
 def get_pl(
     year: int = Query(default=None),
     month: int = Query(default=None),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
     rollup: bool = Query(default=False),
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
     """Get Profit & Loss for current client."""
     ensure_default_accounts(db, client_id=current_client.id)
+    if start_date and end_date:
+        if rollup:
+            return get_profit_loss_rollup_for_range(db, start_date, end_date, client_id=current_client.id)
+        return get_profit_loss_for_range(db, start_date, end_date, client_id=current_client.id)
+
     if year is None:
         year = date.today().year
     if month is None:
@@ -63,10 +81,15 @@ def get_pl(
 def get_variance(
     year: int = Query(default=None),
     month: int = Query(default=None),
+    start_date: Optional[date] = Query(None),
+    end_date: Optional[date] = Query(None),
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
     """Get Budget vs Actual variance analysis for current client."""
+    if start_date and end_date:
+        return get_variance_analysis_for_range(db, start_date, end_date, client_id=current_client.id)
+
     if year is None:
         year = date.today().year
     if month is None:

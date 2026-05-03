@@ -11,7 +11,9 @@ from .accounting_service import (
     get_balance_sheet,
     get_or_create_account,
     get_profit_loss,
+    get_profit_loss_for_range,
     get_variance_analysis,
+    get_variance_analysis_for_range,
     process_transaction,
 )
 from .goal_service import get_life_events_with_progress
@@ -35,6 +37,15 @@ def _next_period(period: str) -> str:
 
 def _action_key(period: str, proposal_id: str) -> str:
     return f"monthly_report:{period}:{proposal_id}"
+
+
+def _period_key(start_date: date, end_date: date) -> str:
+    return f"{start_date.isoformat()}..{end_date.isoformat()}"
+
+
+def _next_month_period_from_date(reference: date) -> str:
+    next_month = reference + relativedelta(months=1)
+    return f"{next_month.year}-{next_month.month:02d}"
 
 
 def _attach_action_status(
@@ -72,7 +83,7 @@ def generate_monthly_report(db: Session, client_id: int, year: int, month: int) 
     current_period_end = next_month_start - relativedelta(days=1)
     previous_period_end = prev_day
 
-    bs_current = get_balance_sheet(db, next_month_start, client_id)
+    bs_current = get_balance_sheet(db, current_period_end, client_id)
     bs_prev = get_balance_sheet(db, prev_day, client_id)
     net_worth_change = bs_current["net_worth"] - bs_prev["net_worth"]
     net_worth_change_pct = (net_worth_change / bs_prev["net_worth"] * 100) if bs_prev["net_worth"] else 0
@@ -179,6 +190,120 @@ def generate_monthly_report(db: Session, client_id: int, year: int, month: int) 
             "net_worth_change": round(net_worth_change, 0),
             "net_worth_change_pct": round(net_worth_change_pct, 1),
             "monthly_pl": pl["net_profit_loss"],
+            "savings_rate": round(savings_rate, 1),
+        },
+        "goal_progress": goal_progress,
+        "anomalies": anomalies,
+        "action_proposals": action_proposals,
+    }
+
+
+def generate_period_report(db: Session, client_id: int, start_date: date, end_date: date) -> dict:
+    if end_date < start_date:
+        raise ValueError("end_date must be on or after start_date")
+
+    previous_period_end = start_date - relativedelta(days=1)
+    period = _period_key(start_date, end_date)
+
+    bs_current = get_balance_sheet(db, end_date, client_id)
+    bs_prev = get_balance_sheet(db, previous_period_end, client_id)
+    net_worth_change = bs_current["net_worth"] - bs_prev["net_worth"]
+    net_worth_change_pct = (net_worth_change / bs_prev["net_worth"] * 100) if bs_prev["net_worth"] else 0
+
+    pl = get_profit_loss_for_range(db, start_date, end_date, client_id)
+    period_pl = pl["net_profit_loss"]
+    savings_rate = (period_pl / pl["total_income"] * 100) if pl["total_income"] else 0
+
+    variance = get_variance_analysis_for_range(db, start_date, end_date, client_id)
+    anomalies = []
+    for item in variance.get("items", []):
+        if item["budget"] > 0 and item["actual"] > 0:
+            pct = item["actual"] / item["budget"] * 100
+            if pct >= ANOMALY_THRESHOLD_PCT:
+                anomalies.append(
+                    {
+                        "category": item["category"],
+                        "budget": item["budget"],
+                        "actual": item["actual"],
+                        "overage_pct": round(pct, 1),
+                        "severity": "high" if pct >= HIGH_SEVERITY_PCT else "medium",
+                    }
+                )
+
+    current_events = get_life_events_with_progress(db, client_id, reference_date=end_date)
+    previous_events = get_life_events_with_progress(db, client_id, reference_date=previous_period_end)
+    previous_by_id = {event["id"]: event for event in previous_events}
+
+    goal_progress = []
+    for event in current_events:
+        previous_probability = previous_by_id.get(event["id"], {}).get(
+            "progress_percentage",
+            event["progress_percentage"],
+        )
+        current_probability = event["progress_percentage"]
+        goal_progress.append(
+            {
+                "id": event["id"],
+                "name": event["name"],
+                "probability_current": round(current_probability, 1),
+                "probability_previous_period": round(previous_probability, 1),
+                "delta": round(current_probability - previous_probability, 1),
+                "status": event["status"],
+            }
+        )
+
+    action_proposals = []
+    if period_pl > 0 and current_events:
+        worst_event = min(current_events, key=lambda e: e["progress_percentage"])
+        amount = round(period_pl, 0)
+        proposal_id = f"{_slug(period)}_allocate_to_goal_{worst_event['id']}_{int(amount)}"
+        action_proposals.append(
+            {
+                "id": proposal_id,
+                "kind": "allocate_to_goal",
+                "type": "invest_surplus",
+                "description": (
+                    f"Period surplus JPY {period_pl:,.0f} can be allocated to "
+                    f"{worst_event['name']} to improve success probability."
+                ),
+                "amount": amount,
+                "target_id": worst_event["id"],
+                "target_life_event_id": worst_event["id"],
+                "auto_executable": True,
+            }
+        )
+
+    for anomaly in anomalies:
+        overage = anomaly["actual"] - anomaly["budget"]
+        proposal_id = f"{_slug(period)}_review_budget_{_slug(anomaly['category'])}"
+        action_proposals.append(
+            {
+                "id": proposal_id,
+                "kind": "review_budget",
+                "type": "reduce_spending",
+                "description": (
+                    f"{anomaly['category']} spending is {anomaly['overage_pct']:.0f}% of budget. "
+                    f"Review budget allocation for the next planning period."
+                ),
+                "amount": round(overage, 0),
+                "target_id": None,
+                "target_life_event_id": None,
+                "auto_executable": False,
+                "navigation_target": "strategy",
+            }
+        )
+    action_proposals = _attach_action_status(db, client_id, period, action_proposals)
+
+    return {
+        "period": period,
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "summary": {
+            "net_worth": bs_current["net_worth"],
+            "net_worth_change": round(net_worth_change, 0),
+            "net_worth_change_pct": round(net_worth_change_pct, 1),
+            "monthly_pl": period_pl,
+            "period_pl": period_pl,
             "savings_rate": round(savings_rate, 1),
         },
         "goal_progress": goal_progress,
@@ -328,6 +453,69 @@ def apply_monthly_report_proposal(
     except Exception as exc:
         action.status = "failed"
         action.result = {"error": str(exc)}
+        db.commit()
+        raise
+
+
+def apply_period_report_proposal(
+    db: Session,
+    client_id: int,
+    start_date: date,
+    end_date: date,
+    proposal_id: str,
+) -> dict:
+    report = generate_period_report(db, client_id, start_date, end_date)
+    period = report["period"]
+    proposal = next(
+        (item for item in report["action_proposals"] if item.get("id") == proposal_id),
+        None,
+    )
+    if not proposal:
+        raise LookupError("Proposal not found")
+    if not proposal.get("auto_executable"):
+        raise ValueError("Proposal is not auto executable")
+
+    idempotency_key = _action_key(period, proposal_id)
+    action = db.query(models.MonthlyAction).filter(
+        models.MonthlyAction.client_id == client_id,
+        models.MonthlyAction.idempotency_key == idempotency_key,
+    ).first()
+    if action and action.status == "applied":
+        return {"status": "already_applied", "action": _monthly_action_to_dict(action)}
+
+    if not action:
+        action = models.MonthlyAction(
+            client_id=client_id,
+            source_period=period,
+            target_period=_next_month_period_from_date(end_date),
+            proposal_id=proposal_id,
+            kind=proposal["kind"],
+            description=proposal["description"],
+            amount=proposal.get("amount"),
+            target_id=proposal.get("target_id"),
+            payload=proposal,
+            status="pending",
+            idempotency_key=idempotency_key,
+        )
+        db.add(action)
+        db.commit()
+        db.refresh(action)
+
+    try:
+        if proposal["kind"] == "allocate_to_goal":
+            result = _apply_allocate_to_goal(db, client_id, period, proposal)
+        else:
+            raise ValueError(f"Unsupported proposal kind: {proposal['kind']}")
+
+        action.status = "applied"
+        action.applied_at = datetime.utcnow()
+        action.result = result
+        db.commit()
+        db.refresh(action)
+        return {"status": "applied", "action": _monthly_action_to_dict(action)}
+    except Exception:
+        action.status = "failed"
+        action.result = {"error": "Failed to apply proposal"}
         db.commit()
         raise
 

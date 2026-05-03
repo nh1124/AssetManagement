@@ -18,6 +18,7 @@ from .routers import (
     data_transfer,
     life_events,
     monthly_reviews,
+    period_reviews,
     products,
     recurring,
     reports,
@@ -92,6 +93,7 @@ def startup_event():
             "recurring_transactions",
             "monthly_budgets",
             "monthly_reviews",
+            "period_reviews",
             "milestones",
             "capsules",
         ]:
@@ -121,6 +123,7 @@ app.include_router(products.router)
 app.include_router(budgets.router)
 app.include_router(life_events.router)
 app.include_router(monthly_reviews.router)
+app.include_router(period_reviews.router)
 app.include_router(simulation.router)
 app.include_router(accounts.router)
 app.include_router(actions.router, dependencies=[Depends(get_current_client)])

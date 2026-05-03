@@ -7,7 +7,12 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.app import models
 from backend.app.database import Base
-from backend.app.services.accounting_service import get_profit_loss_rollup, process_transaction
+from backend.app.services.accounting_service import (
+    get_balance_sheet,
+    get_profit_loss_for_range,
+    get_profit_loss_rollup,
+    process_transaction,
+)
 from backend.app.services.analysis_service import calculate_idle_money, get_summary
 from backend.app.services.reconcile_service import run_reconcile
 from backend.app.services.report_service import apply_monthly_report_proposal, generate_monthly_report
@@ -337,6 +342,49 @@ def test_profit_loss_rollup_uses_parent_account_category() -> None:
 
         assert result["expenses"] == [{"category": "food", "amount": 1200}]
         assert result["rollup"] is True
+    finally:
+        db.close()
+
+
+def test_period_pl_and_balance_sheet_respect_explicit_dates() -> None:
+    db = _session()
+    try:
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        cash = models.Account(client_id=1, id=10, name="cash", account_type="asset", balance=0)
+        salary = models.Account(client_id=1, id=11, name="salary", account_type="income", balance=0)
+        db.add_all([client, cash, salary])
+        db.commit()
+
+        april_income = models.Transaction(
+            client_id=1,
+            date=date(2026, 4, 30),
+            description="April salary",
+            amount=100000,
+            type="Income",
+            category="salary",
+            from_account_id=11,
+            to_account_id=10,
+        )
+        may_income = models.Transaction(
+            client_id=1,
+            date=date(2026, 5, 1),
+            description="May salary",
+            amount=200000,
+            type="Income",
+            category="salary",
+            from_account_id=11,
+            to_account_id=10,
+        )
+        db.add_all([april_income, may_income])
+        db.commit()
+        process_transaction(db, april_income)
+        process_transaction(db, may_income)
+
+        april_bs = get_balance_sheet(db, date(2026, 4, 30), client_id=1)
+        may_pl = get_profit_loss_for_range(db, date(2026, 5, 1), date(2026, 5, 31), client_id=1)
+
+        assert april_bs["net_worth"] == 100000
+        assert may_pl["total_income"] == 200000
     finally:
         db.close()
 

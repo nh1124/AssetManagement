@@ -219,6 +219,27 @@ class MonthlyReview(MonthlyReviewBase):
     class Config:
         from_attributes = True
 
+
+class PeriodReviewBase(BaseModel):
+    start_date: date
+    end_date: date
+    label: str = ""
+    reflection: str = ""
+    next_actions: str = ""
+
+
+class PeriodReviewCreate(PeriodReviewBase):
+    pass
+
+
+class PeriodReview(PeriodReviewBase):
+    id: int
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
 class LifeEventBase(BaseModel):
     name: str
     target_date: date
