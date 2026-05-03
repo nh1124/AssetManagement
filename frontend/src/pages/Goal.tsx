@@ -3,6 +3,7 @@ import { BarChart3, Calendar, Check, Edit2, Flag, Link, Plus, RefreshCw, Save, S
 import { Area, ComposedChart, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import {
     addAllocation,
+    applyMilestonesFromSimulation,
     createGoal,
     createMilestone,
     deleteAllocation,
@@ -12,6 +13,7 @@ import {
     getGoalDashboard,
     getRoadmapProjection,
     optimizeAllocations,
+    previewMilestonesFromSimulation,
     resetMilestonesFromAnnualPlan,
     runMonteCarloSimulation,
     updateAllocation,
@@ -21,7 +23,17 @@ import { useToast } from '../components/Toast';
 import { useClient } from '../context/ClientContext';
 import { formatCompactCurrency, formatCurrency as formatCurrencyWithSetting } from '../utils/currency';
 import { PRIORITY_COLORS, priorityLabel } from '../utils/priority';
-import type { GoalAllocation, LifeEvent, Milestone, MonteCarloResult, RoadmapProjection } from '../types';
+import type {
+    GoalAllocation,
+    LifeEvent,
+    Milestone,
+    MilestoneSimulationBasis,
+    MilestoneSimulationInterval,
+    MilestoneSimulationMode,
+    MilestoneSimulationPreview,
+    MonteCarloResult,
+    RoadmapProjection,
+} from '../types';
 
 interface DashboardData {
     events: LifeEvent[];
@@ -94,6 +106,14 @@ export default function Goal() {
     const [simParams, setSimParams] = useState({ annual_return: 5, inflation: 2, monthly_savings: 50000 });
     const [monteCarlo, setMonteCarlo] = useState<MonteCarloResult | null>(null);
     const [roadmapProjection, setRoadmapProjection] = useState<RoadmapProjection | null>(null);
+    const [milestonePlan, setMilestonePlan] = useState<{
+        basis: MilestoneSimulationBasis;
+        interval: MilestoneSimulationInterval;
+        mode: MilestoneSimulationMode;
+        n_simulations: number;
+    }>({ basis: 'p50', interval: 'annual', mode: 'replace', n_simulations: 1000 });
+    const [milestonePreview, setMilestonePreview] = useState<MilestoneSimulationPreview | null>(null);
+    const [milestonePlanLoading, setMilestonePlanLoading] = useState(false);
     const [loading, setLoading] = useState(false);
     const [simLoading, setSimLoading] = useState(false);
     const [roadmapLoading, setRoadmapLoading] = useState(false);
@@ -180,6 +200,10 @@ export default function Goal() {
     useEffect(() => {
         if (activeGoalTab === 'simulation' && selectedGoal?.id) fetchMonteCarlo(selectedGoal.id);
     }, [activeGoalTab, selectedGoal?.id]);
+
+    useEffect(() => {
+        setMilestonePreview(null);
+    }, [selectedGoal?.id, simParams.annual_return, simParams.inflation, simParams.monthly_savings]);
 
     const totals = useMemo(() => {
         const goals = dashboard?.events ?? [];
@@ -440,6 +464,45 @@ export default function Goal() {
         }
     };
 
+    const milestonePlanPayload = () => ({
+        ...milestonePlan,
+        annual_return: simParams.annual_return,
+        inflation: simParams.inflation,
+        monthly_savings: simParams.monthly_savings,
+    });
+
+    const previewSimulationMilestones = async () => {
+        if (!selectedGoal) return;
+        setMilestonePlanLoading(true);
+        try {
+            const preview = await previewMilestonesFromSimulation(selectedGoal.id, milestonePlanPayload());
+            setMilestonePreview(preview);
+            showToast('Milestone preview generated', 'success');
+        } catch (error) {
+            showToast(getErrorDetail(error, 'Failed to preview simulation milestones'), 'error');
+        } finally {
+            setMilestonePlanLoading(false);
+        }
+    };
+
+    const applySimulationMilestones = async () => {
+        if (!selectedGoal) return;
+        const verb = milestonePlan.mode === 'replace' ? 'replace existing milestones' : 'add new milestones';
+        if (!confirm(`Apply this simulation plan and ${verb}?`)) return;
+        setMilestonePlanLoading(true);
+        try {
+            const created = await applyMilestonesFromSimulation(selectedGoal.id, milestonePlanPayload());
+            setMilestones(await getMilestones(selectedGoal.id));
+            setMilestonePreview(null);
+            showToast(`Created ${created.length} simulation milestones`, 'success');
+            setActiveGoalTab('milestone');
+        } catch (error) {
+            showToast(getErrorDetail(error, 'Failed to apply simulation milestones'), 'error');
+        } finally {
+            setMilestonePlanLoading(false);
+        }
+    };
+
     const refreshSimulation = async () => {
         await Promise.all([
             fetchGoalWorkspace(selectedGoal?.id),
@@ -656,6 +719,101 @@ export default function Goal() {
                         )}
                     </div>
 
+                    <div className="bg-slate-800/30 border border-slate-700 p-4">
+                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-3">
+                            <h3 className="text-[10px] text-slate-500 uppercase tracking-wider flex items-center gap-2"><Sparkles size={14} /> Milestone Plan</h3>
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={previewSimulationMilestones}
+                                    disabled={milestonePlanLoading}
+                                    className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-[10px]"
+                                >
+                                    Preview
+                                </button>
+                                <button
+                                    onClick={applySimulationMilestones}
+                                    disabled={milestonePlanLoading || !milestonePreview}
+                                    className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-white text-[10px]"
+                                >
+                                    Apply
+                                </button>
+                            </div>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-2 mb-3">
+                            <label className="text-[10px] text-slate-500 uppercase">
+                                Basis
+                                <select value={milestonePlan.basis} onChange={(event) => {
+                                    setMilestonePlan({ ...milestonePlan, basis: event.target.value as MilestoneSimulationBasis });
+                                    setMilestonePreview(null);
+                                }} className="mt-1 w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-slate-200">
+                                    <option value="p50">Monte Carlo P50</option>
+                                    <option value="p10">Conservative P10</option>
+                                    <option value="p90">Upside P90</option>
+                                    <option value="deterministic">Deterministic</option>
+                                </select>
+                            </label>
+                            <label className="text-[10px] text-slate-500 uppercase">
+                                Interval
+                                <select value={milestonePlan.interval} onChange={(event) => {
+                                    setMilestonePlan({ ...milestonePlan, interval: event.target.value as MilestoneSimulationInterval });
+                                    setMilestonePreview(null);
+                                }} className="mt-1 w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-slate-200">
+                                    <option value="annual">Annual</option>
+                                    <option value="semiannual">Semiannual</option>
+                                    <option value="quarterly">Quarterly</option>
+                                    <option value="target_only">Target only</option>
+                                </select>
+                            </label>
+                            <label className="text-[10px] text-slate-500 uppercase">
+                                Mode
+                                <select value={milestonePlan.mode} onChange={(event) => {
+                                    setMilestonePlan({ ...milestonePlan, mode: event.target.value as MilestoneSimulationMode });
+                                    setMilestonePreview(null);
+                                }} className="mt-1 w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-slate-200">
+                                    <option value="replace">Replace existing</option>
+                                    <option value="add">Add only</option>
+                                </select>
+                            </label>
+                            <label className="text-[10px] text-slate-500 uppercase">
+                                Runs
+                                <input type="number" min={100} max={10000} step={100} value={milestonePlan.n_simulations} onChange={(event) => {
+                                    setMilestonePlan({ ...milestonePlan, n_simulations: Number(event.target.value) });
+                                    setMilestonePreview(null);
+                                }} className="mt-1 w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-slate-200 font-mono-nums" />
+                            </label>
+                        </div>
+                        {milestonePreview ? (
+                            <div className="border border-slate-700 overflow-hidden">
+                                <div className="flex items-center justify-between bg-slate-900/70 px-3 py-2 text-[10px] text-slate-500">
+                                    <span>{milestonePreview.items.length} candidates</span>
+                                    <span>{milestonePreview.mode === 'replace' ? `${milestonePreview.existing_count} existing will be replaced` : 'Existing dates will be kept'}</span>
+                                </div>
+                                <div className="max-h-56 overflow-auto">
+                                    <table className="w-full text-left text-[10px]">
+                                        <thead className="bg-slate-800 text-slate-500 uppercase sticky top-0">
+                                            <tr>
+                                                <th className="px-3 py-2 font-normal">Date</th>
+                                                <th className="px-3 py-2 font-normal">Target</th>
+                                                <th className="px-3 py-2 font-normal">Source</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-800">
+                                            {milestonePreview.items.map((item) => (
+                                                <tr key={`${item.date}-${item.target_amount}`}>
+                                                    <td className="px-3 py-2 font-mono-nums text-slate-300">{item.date}</td>
+                                                    <td className="px-3 py-2 font-mono-nums text-emerald-400">{formatCurrency(item.target_amount)}</td>
+                                                    <td className="px-3 py-2 text-slate-500">{item.note}</td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        ) : (
+                            <p className="text-xs text-slate-500">Generate a preview to turn this simulation into auditable milestones.</p>
+                        )}
+                    </div>
+
                     <div className="bg-slate-800/30 border border-slate-700 overflow-hidden">
                         <h3 className="text-[10px] text-slate-500 uppercase tracking-wider p-3 bg-slate-800/50 border-b border-slate-700">Annual Roadmap</h3>
                         <div className="overflow-x-auto">
@@ -719,6 +877,7 @@ export default function Goal() {
                         <div className="min-w-0">
                             <span className="font-mono-nums text-emerald-400">{formatCurrency(milestone.target_amount)}</span>
                             {milestone.note && <span className="ml-3 text-slate-500">{milestone.note}</span>}
+                            {milestone.source && milestone.source !== 'manual' && <span className="ml-3 text-[10px] text-cyan-500">{milestone.source}</span>}
                         </div>
                         <button onClick={() => removeRoadmapMilestone(milestone.id)} className="text-slate-600 hover:text-rose-400 justify-self-end"><Trash2 size={12} /></button>
                     </div>

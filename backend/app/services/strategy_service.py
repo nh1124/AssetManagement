@@ -82,6 +82,59 @@ def calculate_projection(
     return balance
 
 
+def get_goal_simulation_context(
+    db: Session,
+    client_id: int,
+    event: models.LifeEvent,
+    annual_return: float | None = None,
+    inflation: float | None = None,
+    monthly_savings: float | None = None,
+    reference_date: date | None = None,
+) -> dict:
+    """Return the normalized simulation inputs used by goal projections."""
+    config = db.query(models.SimulationConfig).filter(
+        models.SimulationConfig.client_id == client_id
+    ).first()
+
+    base_annual_return = annual_return
+    if base_annual_return is None:
+        base_annual_return = config.annual_return if config else 5.0
+
+    base_inflation = inflation
+    if base_inflation is None:
+        base_inflation = config.inflation_rate if config else 2.0
+
+    base_monthly_savings = monthly_savings
+    if base_monthly_savings is None:
+        base_monthly_savings = config.monthly_savings if config else 50000.0
+
+    life_events = db.query(models.LifeEvent).filter(
+        models.LifeEvent.client_id == client_id
+    ).all()
+    priority_weight_map = {1: 3, 2: 2, 3: 1}
+    total_weight = sum(priority_weight_map.get(item.priority, 1) for item in life_events) or 1
+    weight = priority_weight_map.get(event.priority, 1)
+
+    current_funded, weighted_return = calculate_current_funded_and_weighted_return(event, db)
+    effective_return = weighted_return if event.allocations else base_annual_return
+    evaluation_date = reference_date or date.today()
+    years_remaining = max(0.0, (event.target_date - evaluation_date).days / 365.25)
+
+    return {
+        "current_funded": current_funded,
+        "weighted_return": weighted_return,
+        "annual_return": base_annual_return,
+        "effective_return": effective_return,
+        "inflation_rate": base_inflation,
+        "monthly_savings": base_monthly_savings,
+        "allocated_monthly_savings": base_monthly_savings * (weight / total_weight),
+        "priority_weight": weight,
+        "total_priority_weight": total_weight,
+        "years_remaining": years_remaining,
+        "reference_date": evaluation_date,
+    }
+
+
 def run_monte_carlo(
     current_funded: float,
     monthly_savings: float,

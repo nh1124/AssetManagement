@@ -9,6 +9,9 @@ import type {
     MonthlyBudget,
     MonthlyReport,
     MonthlyReview,
+    Milestone,
+    MilestoneSimulationPreview,
+    MilestoneSimulationRequest,
     PeriodReview,
     NetWorthHistoryPoint,
     ReconcileResponse,
@@ -527,25 +530,41 @@ export const getRoadmapProjection = async (params: {
     return response.data;
 };
 
-export const getMilestones = async (lifeEventId?: number) => {
+export const getMilestones = async (lifeEventId?: number): Promise<Milestone[]> => {
     const response = await api.get('/roadmap/milestones', {
         params: lifeEventId ? { life_event_id: lifeEventId } : undefined,
     });
     return response.data;
 };
 
-export const createMilestone = async (milestone: any) => {
+export const createMilestone = async (milestone: any): Promise<Milestone> => {
     const response = await api.post('/roadmap/milestones', milestone);
     return response.data;
 };
 
-export const deleteMilestone = async (id: number) => {
+export const deleteMilestone = async (id: number): Promise<Milestone> => {
     const response = await api.delete(`/roadmap/milestones/${id}`);
     return response.data;
 };
 
-export const resetMilestonesFromAnnualPlan = async (lifeEventId: number) => {
+export const resetMilestonesFromAnnualPlan = async (lifeEventId: number): Promise<Milestone[]> => {
     const response = await api.post(`/roadmap/life-events/${lifeEventId}/milestones/reset-from-annual`);
+    return response.data;
+};
+
+export const previewMilestonesFromSimulation = async (
+    lifeEventId: number,
+    payload: MilestoneSimulationRequest
+): Promise<MilestoneSimulationPreview> => {
+    const response = await api.post(`/roadmap/life-events/${lifeEventId}/milestones/from-simulation/preview`, payload);
+    return response.data;
+};
+
+export const applyMilestonesFromSimulation = async (
+    lifeEventId: number,
+    payload: MilestoneSimulationRequest
+): Promise<Milestone[]> => {
+    const response = await api.post(`/roadmap/life-events/${lifeEventId}/milestones/from-simulation`, payload);
     return response.data;
 };
 

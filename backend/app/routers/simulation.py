@@ -1,5 +1,3 @@
-from datetime import date
-
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -7,8 +5,8 @@ from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.simulation_service import (
-    calculate_current_funded_and_weighted_return,
     calculate_goal_probability_monte_carlo,
+    get_goal_simulation_context,
     run_monte_carlo,
 )
 
@@ -88,32 +86,26 @@ def monte_carlo_simulation(
         models.SimulationConfig.client_id == current_client.id
     ).first()
 
-    annual_return = config.annual_return if config else 5.0
     volatility = config.volatility if config else 15.0
-    inflation_rate = config.inflation_rate if config else 2.0
-    monthly_savings = config.monthly_savings if config else 50000.0
-
-    current_funded, weighted_return = calculate_current_funded_and_weighted_return(event, db)
-    effective_return = weighted_return if event.allocations else annual_return
-    years_remaining = max(0.0, (event.target_date - date.today()).days / 365.25)
+    context = get_goal_simulation_context(db, current_client.id, event)
 
     mc_result = run_monte_carlo(
-        current_funded=current_funded,
-        monthly_savings=monthly_savings,
-        years_remaining=years_remaining,
-        annual_return=effective_return,
+        current_funded=context["current_funded"],
+        monthly_savings=context["allocated_monthly_savings"],
+        years_remaining=context["years_remaining"],
+        annual_return=context["effective_return"],
         volatility=volatility,
-        inflation_rate=inflation_rate,
+        inflation_rate=context["inflation_rate"],
         n_simulations=n_simulations,
     )
     probability = calculate_goal_probability_monte_carlo(
-        current_funded=current_funded,
-        monthly_savings=monthly_savings,
-        years_remaining=years_remaining,
+        current_funded=context["current_funded"],
+        monthly_savings=context["allocated_monthly_savings"],
+        years_remaining=context["years_remaining"],
         target_amount=event.target_amount,
-        annual_return=effective_return,
+        annual_return=context["effective_return"],
         volatility=volatility,
-        inflation_rate=inflation_rate,
+        inflation_rate=context["inflation_rate"],
         n_simulations=n_simulations,
     )
 
@@ -121,7 +113,7 @@ def monte_carlo_simulation(
         "life_event_id": life_event_id,
         "life_event_name": event.name,
         "target_amount": event.target_amount,
-        "years_remaining": round(years_remaining, 1),
+        "years_remaining": round(context["years_remaining"], 1),
         "probability": probability,
         "percentiles": mc_result["percentiles"],
         "year_by_year": mc_result["year_by_year"],

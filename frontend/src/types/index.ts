@@ -243,6 +243,31 @@ export interface Milestone {
     date: string;
     target_amount: number;
     note?: string;
+    source?: string;
+    source_snapshot?: Record<string, unknown> | null;
+}
+
+export type MilestoneSimulationBasis = 'deterministic' | 'p10' | 'p50' | 'p90';
+export type MilestoneSimulationInterval = 'annual' | 'semiannual' | 'quarterly' | 'target_only';
+export type MilestoneSimulationMode = 'add' | 'replace';
+
+export interface MilestoneSimulationRequest {
+    basis: MilestoneSimulationBasis;
+    interval: MilestoneSimulationInterval;
+    mode: MilestoneSimulationMode;
+    n_simulations: number;
+    annual_return?: number;
+    inflation?: number;
+    monthly_savings?: number;
+}
+
+export interface MilestoneSimulationPreview {
+    life_event_id: number;
+    basis: MilestoneSimulationBasis;
+    interval: MilestoneSimulationInterval;
+    mode: MilestoneSimulationMode;
+    existing_count: number;
+    items: Array<Omit<Milestone, 'id'>>;
 }
 
 export interface NetWorthHistoryPoint {

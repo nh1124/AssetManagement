@@ -291,6 +291,8 @@ class Milestone(Base):
     date = Column(Date)
     target_amount = Column(Float)
     note = Column(String, nullable=True)
+    source = Column(String, default="manual", server_default="manual", nullable=False)
+    source_snapshot = Column(JSON, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     client = relationship("Client", back_populates="milestones")

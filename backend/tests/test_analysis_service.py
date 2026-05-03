@@ -19,6 +19,7 @@ from backend.app.services.report_service import apply_monthly_report_proposal, g
 from backend.app.services.accounting_service import update_transaction
 from backend.app.services.action_bridge_service import apply_action, create_action
 from backend.app.services.strategy_service import get_roadmap_projection
+from backend.app.services.milestone_service import apply_milestones_from_simulation, preview_milestones_from_simulation
 
 
 def _session():
@@ -415,5 +416,62 @@ def test_review_action_set_budget_applies_to_target_period() -> None:
 
         assert applied["status"] == "applied"
         assert budget.amount == 45000
+    finally:
+        db.close()
+
+
+def test_simulation_milestones_preview_and_apply_persist_source_snapshot() -> None:
+    db = _session()
+    try:
+        today = date.today()
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        cash = models.Account(client_id=1, name="cash", account_type="asset", balance=0)
+        db.add_all(
+            [
+                client,
+                cash,
+                models.SimulationConfig(
+                    client_id=1,
+                    monthly_savings=120000,
+                    annual_return=5,
+                    volatility=10,
+                    inflation_rate=2,
+                ),
+            ]
+        )
+        db.flush()
+        _post_opening_balances(db, [(cash, 100000)])
+        goal = models.LifeEvent(
+            client_id=1,
+            name="House",
+            target_date=date(today.year + 2, today.month, min(today.day, 28)),
+            target_amount=1000000,
+            priority=1,
+        )
+        db.add(goal)
+        db.commit()
+
+        preview = preview_milestones_from_simulation(
+            db,
+            client_id=1,
+            life_event_id=goal.id,
+            basis="deterministic",
+            interval="annual",
+            mode="replace",
+        )
+        created = apply_milestones_from_simulation(
+            db,
+            client_id=1,
+            life_event_id=goal.id,
+            basis="deterministic",
+            interval="annual",
+            mode="replace",
+        )
+
+        assert preview["items"]
+        assert created
+        assert all(item.source == "simulation_deterministic" for item in created)
+        assert created[0].source_snapshot["allocated_monthly_savings"] == 120000
+        assert created[-1].target_amount == 1000000
     finally:
         db.close()

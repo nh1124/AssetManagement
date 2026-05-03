@@ -2,7 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import List
 from .. import models, schemas, database, dependencies
-from ..services.milestone_service import reset_milestones_from_annual_plan
+from ..services.milestone_service import (
+    apply_milestones_from_simulation,
+    preview_milestones_from_simulation,
+    reset_milestones_from_annual_plan,
+)
 from ..services.strategy_service import get_roadmap_projection
 
 router = APIRouter(
@@ -77,6 +81,54 @@ def reset_life_event_milestones_from_annual(
     if not event:
         raise HTTPException(status_code=404, detail="Life event not found")
     return reset_milestones_from_annual_plan(db, current_client.id, life_event_id)
+
+
+@router.post("/life-events/{life_event_id}/milestones/from-simulation/preview", response_model=schemas.MilestoneSimulationPreview)
+def preview_life_event_milestones_from_simulation(
+    life_event_id: int,
+    payload: schemas.MilestoneSimulationRequest,
+    db: Session = Depends(database.get_db),
+    current_client: models.Client = Depends(dependencies.get_current_client),
+):
+    try:
+        return preview_milestones_from_simulation(
+            db=db,
+            client_id=current_client.id,
+            life_event_id=life_event_id,
+            basis=payload.basis,
+            interval=payload.interval,
+            mode=payload.mode,
+            n_simulations=payload.n_simulations,
+            annual_return=payload.annual_return,
+            inflation=payload.inflation,
+            monthly_savings=payload.monthly_savings,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/life-events/{life_event_id}/milestones/from-simulation", response_model=List[schemas.Milestone])
+def create_life_event_milestones_from_simulation(
+    life_event_id: int,
+    payload: schemas.MilestoneSimulationRequest,
+    db: Session = Depends(database.get_db),
+    current_client: models.Client = Depends(dependencies.get_current_client),
+):
+    try:
+        return apply_milestones_from_simulation(
+            db=db,
+            client_id=current_client.id,
+            life_event_id=life_event_id,
+            basis=payload.basis,
+            interval=payload.interval,
+            mode=payload.mode,
+            n_simulations=payload.n_simulations,
+            annual_return=payload.annual_return,
+            inflation=payload.inflation,
+            monthly_savings=payload.monthly_savings,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 @router.delete("/milestones/{milestone_id}", response_model=schemas.Milestone)
 def delete_milestone(

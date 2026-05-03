@@ -1,7 +1,7 @@
 from pydantic import BaseModel, Field
 from uuid import UUID
 from datetime import date, datetime
-from typing import Optional, Literal
+from typing import Any, Optional, Literal
 
 TransactionTypeLiteral = Literal[
     'Income',
@@ -313,6 +313,8 @@ class MilestoneBase(BaseModel):
     date: date
     target_amount: float
     note: Optional[str] = None
+    source: str = "manual"
+    source_snapshot: Optional[dict[str, Any]] = None
 
 class MilestoneCreate(MilestoneBase):
     pass
@@ -346,3 +348,22 @@ class Capsule(CapsuleBase):
 
     class Config:
         from_attributes = True
+
+
+class MilestoneSimulationRequest(BaseModel):
+    basis: Literal["deterministic", "p10", "p50", "p90"] = "p50"
+    interval: Literal["annual", "semiannual", "quarterly", "target_only"] = "annual"
+    mode: Literal["add", "replace"] = "replace"
+    n_simulations: int = Field(default=1000, ge=100, le=10000)
+    annual_return: Optional[float] = None
+    inflation: Optional[float] = None
+    monthly_savings: Optional[float] = None
+
+
+class MilestoneSimulationPreview(BaseModel):
+    life_event_id: int
+    basis: str
+    interval: str
+    mode: str
+    existing_count: int
+    items: list[MilestoneCreate]

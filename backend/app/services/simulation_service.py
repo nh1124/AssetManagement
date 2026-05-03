@@ -8,6 +8,7 @@ from .strategy_service import (
     calculate_current_funded_and_weighted_return,
     calculate_goal_probability_monte_carlo,
     calculate_projection,
+    get_goal_simulation_context,
     run_monte_carlo,
 )
 
@@ -15,5 +16,6 @@ __all__ = [
     "calculate_current_funded_and_weighted_return",
     "calculate_goal_probability_monte_carlo",
     "calculate_projection",
+    "get_goal_simulation_context",
     "run_monte_carlo",
 ]
