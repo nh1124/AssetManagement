@@ -44,21 +44,26 @@ interface TheLabProps {
     onNavigate?: (page: string) => void;
 }
 
-const TABS = [
-    { id: 'trends', label: 'Trends' },
+const PORTFOLIO_TABS = [
+    { id: 'overview', label: 'Overview' },
     { id: 'history', label: 'History' },
     { id: 'kpi', label: 'KPI' },
-    { id: 'variance', label: 'Budget vs Actual' },
-    { id: 'bs', label: 'B/S' },
-    { id: 'pl', label: 'P/L' },
-    { id: 'reconcile', label: 'Reconcile' },
     { id: 'capsules', label: 'Capsules' },
+];
+
+const MONTHLY_TABS = [
+    { id: 'monthlySummary', label: 'Summary' },
+    { id: 'pl', label: 'P/L' },
+    { id: 'bs', label: 'B/S' },
+    { id: 'variance', label: 'Budget vs Actual' },
     { id: 'report', label: 'Monthly Report' },
     { id: 'review', label: 'Monthly Review' },
 ];
 
 export default function TheLab({ onNavigate }: TheLabProps) {
-    const [activeTab, setActiveTab] = useState('trends');
+    const [analysisMode, setAnalysisMode] = useState<'portfolio' | 'monthly'>('portfolio');
+    const [portfolioTab, setPortfolioTab] = useState('overview');
+    const [monthlyTab, setMonthlyTab] = useState('monthlySummary');
     const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
     const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
     const [loading, setLoading] = useState(false);
@@ -432,6 +437,7 @@ export default function TheLab({ onNavigate }: TheLabProps) {
     };
 
     const renderTabContent = () => {
+        const activeTab = analysisMode === 'portfolio' ? portfolioTab : monthlyTab;
         const expenseRows = profitLoss?.expenses ?? [];
         const previousExpenseMap = new Map<string, number>(
             (previousProfitLoss?.expenses ?? []).map((row: any) => [String(row.category).toLowerCase(), row.amount || 0])
@@ -467,18 +473,12 @@ export default function TheLab({ onNavigate }: TheLabProps) {
         const categoryColor = (index: number, total: number) => `hsl(${Math.round(index * 360 / Math.max(total, 1))}, 62%, 52%)`;
 
         switch (activeTab) {
-            case 'trends':
+            case 'overview':
                 return (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
                         <div className="bg-slate-800/50 border border-slate-700 p-3">
                             <p className="text-[10px] text-slate-500 uppercase">Net Worth</p>
                             <p className="text-lg font-mono-nums text-emerald-400">{formatOptionalCurrency(summary?.net_worth)}</p>
-                        </div>
-                        <div className="bg-slate-800/50 border border-slate-700 p-3">
-                            <p className="text-[10px] text-slate-500 uppercase">Monthly P/L</p>
-                            <p className={`text-lg font-mono-nums ${(summary?.monthly_pl || 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                {formatOptionalCurrency(summary?.monthly_pl)}
-                            </p>
                         </div>
                         <div className="bg-slate-800/50 border border-slate-700 p-3">
                             <p className="text-[10px] text-slate-500 uppercase">Effective Cash</p>
@@ -487,6 +487,41 @@ export default function TheLab({ onNavigate }: TheLabProps) {
                         <div className="bg-slate-800/50 border border-slate-700 p-3">
                             <p className="text-[10px] text-slate-500 uppercase">Goal Probability</p>
                             <p className="text-lg font-mono-nums text-amber-400">{formatOptionalPercent(summary?.goal_probability)}</p>
+                        </div>
+                        <div className="bg-slate-800/50 border border-slate-700 p-3">
+                            <p className="text-[10px] text-slate-500 uppercase">Roadmap</p>
+                            <p className={`text-lg font-mono-nums ${kpiTone(roadmapStatus(summary?.roadmap_progression))}`}>{summary?.roadmap_progression ?? '—'}</p>
+                        </div>
+                        <div className="bg-slate-800/50 border border-slate-700 p-3">
+                            <p className="text-[10px] text-slate-500 uppercase">Logical Balance</p>
+                            <p className={`text-lg font-mono-nums ${kpiTone(currencyStatus(summary?.logical_balance))}`}>{formatOptionalCurrency(summary?.logical_balance)}</p>
+                        </div>
+                    </div>
+                );
+            case 'monthlySummary':
+                return (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
+                        <div className="bg-slate-800/50 border border-slate-700 p-3">
+                            <p className="text-[10px] text-slate-500 uppercase">Monthly P/L</p>
+                            <p className={`text-lg font-mono-nums ${(monthlyReport?.summary?.monthly_pl ?? profitLoss?.net_profit_loss ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
+                                {formatCurrency(monthlyReport?.summary?.monthly_pl ?? profitLoss?.net_profit_loss ?? 0)}
+                            </p>
+                        </div>
+                        <div className="bg-slate-800/50 border border-slate-700 p-3">
+                            <p className="text-[10px] text-slate-500 uppercase">Income</p>
+                            <p className="text-lg font-mono-nums text-emerald-400">{formatCurrency(profitLoss?.total_income ?? 0)}</p>
+                        </div>
+                        <div className="bg-slate-800/50 border border-slate-700 p-3">
+                            <p className="text-[10px] text-slate-500 uppercase">Expenses</p>
+                            <p className="text-lg font-mono-nums text-rose-400">{formatCurrency(profitLoss?.total_expenses ?? 0)}</p>
+                        </div>
+                        <div className="bg-slate-800/50 border border-slate-700 p-3">
+                            <p className="text-[10px] text-slate-500 uppercase">Savings Rate</p>
+                            <p className="text-lg font-mono-nums text-cyan-400">{monthlyReport?.summary?.savings_rate ?? 0}%</p>
+                        </div>
+                        <div className="bg-slate-800/50 border border-slate-700 p-3">
+                            <p className="text-[10px] text-slate-500 uppercase">Anomalies</p>
+                            <p className="text-lg font-mono-nums text-amber-400">{monthlyReport?.anomalies?.length ?? 0}</p>
                         </div>
                     </div>
                 );
@@ -1041,25 +1076,61 @@ export default function TheLab({ onNavigate }: TheLabProps) {
 
     return (
         <div className="h-full flex flex-col p-4 overflow-auto">
-            <div className="flex items-center justify-between mb-4 flex-shrink-0">
-                <div className="flex items-center gap-2">
-                    <button onClick={() => navigateMonth('prev')} className="p-1 hover:bg-slate-800 text-slate-400">
-                        <ChevronLeft size={16} />
-                    </button>
-                    <span className="text-sm font-medium min-w-[100px] text-center">
-                        {selectedYear}/{String(selectedMonth).padStart(2, '0')}
-                    </span>
-                    <button onClick={() => navigateMonth('next')} className="p-1 hover:bg-slate-800 text-slate-400">
-                        <ChevronRight size={16} />
-                    </button>
+            <div className="flex flex-col gap-3 mb-4 flex-shrink-0">
+                <div className="flex flex-col min-[760px]:flex-row min-[760px]:items-center justify-between gap-3">
+                    <div className="inline-flex border border-slate-800 bg-slate-900/70 w-fit">
+                        <button
+                            type="button"
+                            onClick={() => setAnalysisMode('portfolio')}
+                            className={`px-4 py-2 text-xs font-medium ${analysisMode === 'portfolio' ? 'bg-emerald-950/40 text-emerald-300 border-b border-emerald-500' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/40'}`}
+                        >
+                            Portfolio
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setAnalysisMode('monthly')}
+                            className={`px-4 py-2 text-xs font-medium ${analysisMode === 'monthly' ? 'bg-emerald-950/40 text-emerald-300 border-b border-emerald-500' : 'text-slate-500 hover:text-slate-300 hover:bg-slate-800/40'}`}
+                        >
+                            Monthly Close
+                        </button>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                        {analysisMode === 'portfolio' && (
+                            <button
+                                type="button"
+                                onClick={() => setPortfolioTab('reconcile')}
+                                className={`px-3 py-1.5 text-xs border ${portfolioTab === 'reconcile' ? 'border-cyan-700 bg-cyan-950/40 text-cyan-300' : 'border-slate-700 bg-slate-800/60 text-slate-400 hover:text-slate-200'}`}
+                            >
+                                Data Quality
+                            </button>
+                        )}
+                        {analysisMode === 'monthly' && (
+                            <div className="flex items-center gap-2">
+                                <button onClick={() => navigateMonth('prev')} className="p-1 hover:bg-slate-800 text-slate-400">
+                                    <ChevronLeft size={16} />
+                                </button>
+                                <span className="text-sm font-medium min-w-[100px] text-center">
+                                    {selectedYear}/{String(selectedMonth).padStart(2, '0')}
+                                </span>
+                                <button onClick={() => navigateMonth('next')} className="p-1 hover:bg-slate-800 text-slate-400">
+                                    <ChevronRight size={16} />
+                                </button>
+                            </div>
+                        )}
+                        <button onClick={fetchData} className="p-1.5 hover:bg-slate-800 text-slate-400 flex items-center gap-1 text-xs" disabled={loading}>
+                            <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+                            Refresh
+                        </button>
+                    </div>
                 </div>
-                <button onClick={fetchData} className="p-1.5 hover:bg-slate-800 text-slate-400 flex items-center gap-1 text-xs" disabled={loading}>
-                    <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
-                    Refresh
-                </button>
             </div>
 
-            <TabPanel tabs={TABS} activeTab={activeTab} onTabChange={setActiveTab}>
+            <TabPanel
+                tabs={analysisMode === 'portfolio' ? PORTFOLIO_TABS : MONTHLY_TABS}
+                activeTab={analysisMode === 'portfolio' ? portfolioTab : monthlyTab}
+                onTabChange={analysisMode === 'portfolio' ? setPortfolioTab : setMonthlyTab}
+            >
                 <div className="p-4">{renderTabContent()}</div>
             </TabPanel>
         </div>
