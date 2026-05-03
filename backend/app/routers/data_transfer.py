@@ -97,6 +97,8 @@ def export_client_data(
                         "balance",
                         "parent_id",
                         "expected_return",
+                        "role",
+                        "role_target_amount",
                         "is_active",
                     ],
                 )
@@ -396,6 +398,8 @@ def import_client_data(
                 account_type=item["account_type"],
                 balance=0,
                 expected_return=item.get("expected_return") or 0.0,
+                role=item.get("role", "unassigned"),
+                role_target_amount=item.get("role_target_amount"),
                 is_active=item.get("is_active", True),
             )
             db.add(account)
