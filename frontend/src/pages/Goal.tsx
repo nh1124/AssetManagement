@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
-import { BarChart3, Calendar, Check, Edit2, Flag, Link, Plus, RefreshCw, Save, Sparkles, Trash2, TrendingUp, X } from 'lucide-react';
-import { Area, ComposedChart, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { Calendar, Check, Edit2, Flag, Link, Plus, RefreshCw, Save, Sparkles, Trash2, TrendingUp, X } from 'lucide-react';
+import { Area, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import {
     addAllocation,
     applyMilestonesFromSimulation,
@@ -14,7 +14,6 @@ import {
     getRoadmapProjection,
     optimizeAllocations,
     previewMilestonesFromSimulation,
-    resetMilestonesFromAnnualPlan,
     runMonteCarloSimulation,
     updateAllocation,
     updateGoal,
@@ -60,6 +59,9 @@ type RoadmapChartPoint = {
 };
 
 type GoalTab = 'summary' | 'simulation' | 'milestone' | 'assetAllocation';
+type GoalScope = 'all' | 'goal';
+type ProjectionView = 'projection' | 'monteCarlo' | 'combined';
+type AllRoadmapView = 'roadmap' | 'riskBand' | 'combined';
 
 const GOAL_TABS: Array<{ id: GoalTab; label: string }> = [
     { id: 'summary', label: 'Summary' },
@@ -95,7 +97,10 @@ export default function Goal() {
     const formatCompact = (value: number | undefined | null) => formatCompactCurrency(value, currentCurrency);
     const [dashboard, setDashboard] = useState<DashboardData | null>(null);
     const [selectedGoal, setSelectedGoal] = useState<LifeEvent | null>(null);
-    const [activeGoalTab, setActiveGoalTab] = useState<GoalTab>('summary');
+    const [selectedScope, setSelectedScope] = useState<GoalScope>('all');
+    const [activeGoalTab, setActiveGoalTab] = useState<GoalTab>('simulation');
+    const [projectionView, setProjectionView] = useState<ProjectionView>('combined');
+    const [allRoadmapView, setAllRoadmapView] = useState<AllRoadmapView>('combined');
     const [milestones, setMilestones] = useState<Milestone[]>([]);
     const [eventForm, setEventForm] = useState(emptyEventForm);
     const [editingEvent, setEditingEvent] = useState<LifeEvent | null>(null);
@@ -125,6 +130,10 @@ export default function Goal() {
         setMilestones(await getMilestones(goalId));
     };
 
+    const fetchAllMilestones = async () => {
+        setMilestones(await getMilestones());
+    };
+
     const fetchGoalWorkspace = async (preferredGoalId = selectedGoalId) => {
         setLoading(true);
         try {
@@ -140,7 +149,9 @@ export default function Goal() {
                 : dashboardData.events[0];
             setSelectedGoal(nextSelected ?? null);
             setAllocationEdits({});
-            if (nextSelected) {
+            if (selectedScope === 'all') {
+                await fetchAllMilestones();
+            } else if (nextSelected) {
                 await fetchGoalMilestones(nextSelected.id);
             } else {
                 setMilestones([]);
@@ -198,12 +209,43 @@ export default function Goal() {
     }, [activeGoalTab, simParams.annual_return, simParams.inflation, simParams.monthly_savings]);
 
     useEffect(() => {
-        if (activeGoalTab === 'simulation' && selectedGoal?.id) fetchMonteCarlo(selectedGoal.id);
-    }, [activeGoalTab, selectedGoal?.id]);
+        if (activeGoalTab === 'simulation' && selectedScope === 'goal' && selectedGoal?.id) fetchMonteCarlo(selectedGoal.id);
+    }, [activeGoalTab, selectedScope, selectedGoal?.id]);
 
     useEffect(() => {
-        setMilestonePreview(null);
-    }, [selectedGoal?.id, simParams.annual_return, simParams.inflation, simParams.monthly_savings]);
+        if (selectedScope !== 'goal' || activeGoalTab !== 'simulation' || !selectedGoal?.id) {
+            setMilestonePreview(null);
+            return;
+        }
+
+        let cancelled = false;
+        const timer = window.setTimeout(async () => {
+            setMilestonePlanLoading(true);
+            try {
+                const preview = await previewMilestonesFromSimulation(selectedGoal.id, milestonePlanPayload());
+                if (!cancelled) setMilestonePreview(preview);
+            } catch (error) {
+                if (!cancelled) setMilestonePreview(null);
+            } finally {
+                if (!cancelled) setMilestonePlanLoading(false);
+            }
+        }, 250);
+        return () => {
+            cancelled = true;
+            window.clearTimeout(timer);
+        };
+    }, [
+        selectedScope,
+        activeGoalTab,
+        selectedGoal?.id,
+        simParams.annual_return,
+        simParams.inflation,
+        simParams.monthly_savings,
+        milestonePlan.basis,
+        milestonePlan.interval,
+        milestonePlan.mode,
+        milestonePlan.n_simulations,
+    ]);
 
     const totals = useMemo(() => {
         const goals = dashboard?.events ?? [];
@@ -220,6 +262,21 @@ export default function Goal() {
         p50,
         p90: monteCarlo.year_by_year.p90[index] ?? p50,
     })) ?? [], [monteCarlo]);
+
+    const goalProjectionChartData = useMemo(() => {
+        const mcByYear = new Map(monteCarloChartData.map((row) => [row.year, row]));
+        return (selectedGoal?.roadmap ?? []).map((row) => {
+            const mc = mcByYear.get(row.year);
+            return {
+                ...row,
+                target: selectedGoal?.target_amount ?? 0,
+                p10: mc?.p10,
+                p50: mc?.p50,
+                p90: mc?.p90,
+                band: mc ? Math.max(0, mc.p90 - mc.p10) : undefined,
+            };
+        });
+    }, [monteCarloChartData, selectedGoal]);
 
     const roadmapChartData = useMemo<RoadmapChartPoint[]>(() => {
         if (!roadmapProjection) return [];
@@ -453,17 +510,6 @@ export default function Goal() {
         }
     };
 
-    const resetMilestones = async () => {
-        if (!selectedGoal) return;
-        if (!confirm('Reset milestones from the annual plan? Existing milestones for this goal will be replaced.')) return;
-        try {
-            setMilestones(await resetMilestonesFromAnnualPlan(selectedGoal.id));
-            showToast('Milestones reset from annual plan', 'success');
-        } catch (error) {
-            showToast('Failed to reset milestones', 'error');
-        }
-    };
-
     const milestonePlanPayload = () => ({
         ...milestonePlan,
         annual_return: simParams.annual_return,
@@ -477,7 +523,6 @@ export default function Goal() {
         try {
             const preview = await previewMilestonesFromSimulation(selectedGoal.id, milestonePlanPayload());
             setMilestonePreview(preview);
-            showToast('Milestone preview generated', 'success');
         } catch (error) {
             showToast(getErrorDetail(error, 'Failed to preview simulation milestones'), 'error');
         } finally {
@@ -493,9 +538,8 @@ export default function Goal() {
         try {
             const created = await applyMilestonesFromSimulation(selectedGoal.id, milestonePlanPayload());
             setMilestones(await getMilestones(selectedGoal.id));
-            setMilestonePreview(null);
+            await previewSimulationMilestones();
             showToast(`Created ${created.length} simulation milestones`, 'success');
-            setActiveGoalTab('milestone');
         } catch (error) {
             showToast(getErrorDetail(error, 'Failed to apply simulation milestones'), 'error');
         } finally {
@@ -503,12 +547,78 @@ export default function Goal() {
         }
     };
 
+    const renderMilestonePlan = () => (
+        <div className="bg-slate-800/30 border border-slate-700 p-4">
+            <div className="flex flex-col gap-3 mb-3">
+                <div className="flex items-center justify-between gap-3">
+                    <h3 className="text-[10px] text-slate-500 uppercase tracking-wider flex items-center gap-2"><Sparkles size={14} /> Milestone Plan</h3>
+                    <div className="flex gap-2">
+                        <button
+                            onClick={applySimulationMilestones}
+                            disabled={milestonePlanLoading || !milestonePreview}
+                            className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-white text-[10px]"
+                        >
+                            Adopt
+                        </button>
+                    </div>
+                </div>
+                <p className="text-[10px] text-slate-500">
+                    Using current simulation: Return {simParams.annual_return}%, Inflation {simParams.inflation}%, Monthly Savings {formatCurrency(simParams.monthly_savings)}
+                </p>
+            </div>
+            <div className="grid grid-cols-1 gap-2 mb-3">
+                <label className="text-[10px] text-slate-500 uppercase">
+                    Basis
+                    <select value={milestonePlan.basis} onChange={(event) => {
+                        setMilestonePlan({ ...milestonePlan, basis: event.target.value as MilestoneSimulationBasis });
+                        setMilestonePreview(null);
+                    }} className="mt-1 w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-slate-200">
+                        <option value="annual_plan">Annual Plan</option>
+                        <option value="p50">Monte Carlo P50</option>
+                        <option value="p10">Conservative P10</option>
+                        <option value="p90">Upside P90</option>
+                        <option value="deterministic">Deterministic</option>
+                    </select>
+                </label>
+                <label className="text-[10px] text-slate-500 uppercase">
+                    Interval
+                    <select value={milestonePlan.interval} onChange={(event) => {
+                        setMilestonePlan({ ...milestonePlan, interval: event.target.value as MilestoneSimulationInterval });
+                        setMilestonePreview(null);
+                    }} className="mt-1 w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-slate-200">
+                        <option value="annual">Annual</option>
+                        <option value="semiannual">Semiannual</option>
+                        <option value="quarterly">Quarterly</option>
+                        <option value="target_only">Target only</option>
+                    </select>
+                </label>
+                <label className="text-[10px] text-slate-500 uppercase">
+                    Mode
+                    <select value={milestonePlan.mode} onChange={(event) => {
+                        setMilestonePlan({ ...milestonePlan, mode: event.target.value as MilestoneSimulationMode });
+                        setMilestonePreview(null);
+                    }} className="mt-1 w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-slate-200">
+                        <option value="replace">Replace existing</option>
+                        <option value="add">Add only</option>
+                    </select>
+                </label>
+            </div>
+            <p className="text-xs text-slate-500">
+                {milestonePlanLoading
+                    ? 'Updating milestone candidates...'
+                    : milestonePreview
+                        ? `${milestonePreview.items.length} candidates shown below. ${milestonePreview.mode === 'replace' ? `${milestonePreview.existing_count} existing milestones will be replaced.` : 'Existing milestone dates will be kept.'}`
+                        : 'Milestone candidates are generated from these settings.'}
+            </p>
+        </div>
+    );
+
     const refreshSimulation = async () => {
         await Promise.all([
             fetchGoalWorkspace(selectedGoal?.id),
             fetchRoadmapProjection(),
         ]);
-        if (selectedGoal?.id) await fetchMonteCarlo(selectedGoal.id);
+        if (selectedScope === 'goal' && selectedGoal?.id) await fetchMonteCarlo(selectedGoal.id);
     };
 
     const renderSummary = () => {
@@ -588,7 +698,102 @@ export default function Goal() {
         );
     };
 
+    const renderAllMilestones = () => (
+        <div className="bg-slate-800/30 border border-slate-700 p-4">
+            <h3 className="text-[10px] text-slate-500 uppercase tracking-wider flex items-center gap-1 mb-3"><Flag size={12} /> All Milestones</h3>
+            <div className="space-y-2 max-h-[420px] overflow-auto">
+                {milestones.length === 0 ? (
+                    <p className="text-xs text-slate-600">No milestones yet.</p>
+                ) : milestones.map((milestone) => (
+                    <div key={milestone.id} className="grid grid-cols-1 md:grid-cols-[140px_1fr] items-center gap-3 bg-slate-900/60 border border-slate-700 p-2 text-xs">
+                        <div className="flex items-center gap-2">
+                            <Calendar size={12} className="text-slate-500" />
+                            <span className="font-mono-nums text-slate-300">{milestone.date}</span>
+                        </div>
+                        <div className="min-w-0">
+                            <span className="font-mono-nums text-emerald-400">{formatCurrency(milestone.target_amount)}</span>
+                            {milestone.note && <span className="ml-3 text-slate-500">{milestone.note}</span>}
+                            {milestone.source && milestone.source !== 'manual' && <span className="ml-3 text-[10px] text-cyan-500">{milestone.source}</span>}
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+
+    const renderAllSimulation = () => (
+        <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+                <div className="bg-slate-800/40 border border-slate-700 p-3">
+                    <p className="text-[10px] text-slate-500 uppercase">Roadmap</p>
+                    <p className={`font-mono-nums ${statusTone(roadmapProjection?.roadmap_progression).split(' ')[0]}`}>{roadmapProjection?.roadmap_progression ?? 'No Data'}</p>
+                </div>
+                <div className="bg-slate-800/40 border border-slate-700 p-3">
+                    <p className="text-[10px] text-slate-500 uppercase">Progression</p>
+                    <p className="font-mono-nums text-cyan-400">{Math.round(roadmapProjection?.roadmap_progression_pct ?? 0)}%</p>
+                </div>
+                <div className="bg-slate-800/40 border border-slate-700 p-3">
+                    <p className="text-[10px] text-slate-500 uppercase">Demand</p>
+                    <p className="font-mono-nums text-rose-300">{formatCurrency(roadmapTotals.target)}</p>
+                </div>
+                <div className="bg-slate-800/40 border border-slate-700 p-3">
+                    <p className="text-[10px] text-slate-500 uppercase">Projected</p>
+                    <p className="font-mono-nums text-emerald-300">{formatCurrency(roadmapTotals.projected)}</p>
+                </div>
+            </div>
+
+            <div className="bg-slate-800/30 border border-slate-700 p-4">
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-3">
+                    <h3 className="text-[10px] text-slate-500 uppercase tracking-wider flex items-center gap-2"><TrendingUp size={14} /> All Goals Roadmap</h3>
+                    <div className="inline-flex border border-slate-700 bg-slate-900/80">
+                        {([
+                            ['roadmap', 'Roadmap'],
+                            ['riskBand', 'Risk Band'],
+                            ['combined', 'Combined'],
+                        ] as Array<[AllRoadmapView, string]>).map(([id, label]) => (
+                            <button
+                                key={id}
+                                onClick={() => setAllRoadmapView(id)}
+                                className={`px-3 py-1.5 text-[10px] ${allRoadmapView === id ? 'bg-cyan-950/50 text-cyan-300' : 'text-slate-500 hover:text-slate-300'}`}
+                            >
+                                {label}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+                {roadmapLoading && roadmapChartData.length === 0 ? (
+                    <p className="text-xs text-slate-500">Loading roadmap...</p>
+                ) : (
+                    <div className="h-[420px]">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <ComposedChart data={roadmapChartData} margin={{ top: 8, right: 16, bottom: 28, left: 8 }}>
+                                <XAxis dataKey="label" tick={{ fontSize: 10 }} stroke="#64748b" interval="preserveStartEnd" minTickGap={24} />
+                                <YAxis tick={{ fontSize: 10 }} stroke="#64748b" tickFormatter={formatCompact} width={70} />
+                                <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', fontSize: 11 }} formatter={(value) => [formatCurrency(value as number), '']} />
+                                <Legend verticalAlign="bottom" align="center" wrapperStyle={{ fontSize: 10, paddingTop: 14 }} />
+                                {(allRoadmapView === 'riskBand' || allRoadmapView === 'combined') && <Area dataKey="p10" stackId="roadmap-band" stroke="none" fill="transparent" name="P10" />}
+                                {(allRoadmapView === 'riskBand' || allRoadmapView === 'combined') && <Area dataKey="band" stackId="roadmap-band" stroke="none" fill="#22c55e" fillOpacity={0.12} name="P10-P90" />}
+                                <Line type="monotone" dataKey="actual" stroke="#34d399" strokeWidth={2} dot={false} name="Actual Net Worth" connectNulls={false} />
+                                {(allRoadmapView === 'riskBand' || allRoadmapView === 'combined') && <Line type="monotone" dataKey="p10" stroke="#f59e0b" dot={false} name="P10" connectNulls={false} />}
+                                <Line type="monotone" dataKey="p50" stroke="#22d3ee" strokeWidth={2} strokeDasharray="6 4" dot={false} name="Projected P50" connectNulls={false} />
+                                {(allRoadmapView === 'riskBand' || allRoadmapView === 'combined') && <Line type="monotone" dataKey="p90" stroke="#10b981" dot={false} name="P90" connectNulls={false} />}
+                                {(allRoadmapView === 'roadmap' || allRoadmapView === 'combined') && <Line type="monotone" dataKey="liability" stroke="#fb7185" strokeWidth={2} dot={false} name="Liability Demand" connectNulls={false} />}
+                                {firstRoadmapRisk && <ReferenceLine x={firstRoadmapRisk.label} stroke="#fb7185" strokeDasharray="4 4" />}
+                            </ComposedChart>
+                        </ResponsiveContainer>
+                    </div>
+                )}
+                {firstRoadmapRisk && (
+                    <p className="mt-2 text-xs text-rose-300">P50 falls below cumulative demand in {firstRoadmapRisk.label}.</p>
+                )}
+            </div>
+
+            {renderAllMilestones()}
+        </div>
+    );
+
     const renderSimulation = () => {
+        if (selectedScope === 'all') return renderAllSimulation();
         if (!selectedGoal) return null;
 
         return (
@@ -622,6 +827,8 @@ export default function Goal() {
                         </div>
                     </div>
 
+                    {renderMilestonePlan()}
+
                     <div className="grid grid-cols-2 gap-2 text-xs">
                         <div className="bg-slate-800/40 border border-slate-700 p-2">
                             <p className="text-slate-500">Projected</p>
@@ -636,181 +843,56 @@ export default function Goal() {
 
                 <section className="space-y-4 min-w-0">
                     <div className="bg-slate-800/30 border border-slate-700 p-4">
-                        <h3 className="text-[10px] text-slate-500 uppercase tracking-wider mb-3">Projection ({selectedGoal.weighted_return?.toFixed(1) || simParams.annual_return}% return)</h3>
-                        <div className="h-64">
-                            <ResponsiveContainer width="100%" height="100%">
-                                <LineChart data={selectedGoal.roadmap ?? []} margin={{ top: 8, right: 16, bottom: 34, left: 8 }}>
-                                    <XAxis dataKey="year" tick={{ fontSize: 10 }} stroke="#64748b" label={{ value: 'Years', position: 'insideBottom', offset: -8, fontSize: 10 }} />
-                                    <YAxis tick={{ fontSize: 10 }} stroke="#64748b" tickFormatter={formatCompact} />
-                                    <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', fontSize: 11 }} formatter={(value) => [formatCurrency(value as number), '']} />
-                                    <Legend verticalAlign="bottom" align="center" wrapperStyle={{ fontSize: 10, paddingTop: 14 }} />
-                                    <Line type="monotone" dataKey="end_balance" stroke="#10b981" name="Balance" strokeWidth={2} dot={false} />
-                                    <Line type="monotone" dataKey={() => selectedGoal.target_amount} stroke="#f97316" strokeDasharray="5 5" name="Target" dot={false} />
-                                </LineChart>
-                            </ResponsiveContainer>
-                        </div>
-                    </div>
-
-                    <div className="bg-slate-800/30 border border-slate-700 p-4">
                         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-3">
-                            <h3 className="text-[10px] text-slate-500 uppercase tracking-wider flex items-center gap-2"><TrendingUp size={14} /> Portfolio Roadmap</h3>
-                            <div className="flex flex-wrap items-center gap-2 text-[10px]">
-                                <span className={`px-2 py-1 border ${statusTone(roadmapProjection?.roadmap_progression)}`}>
-                                    {roadmapProjection?.roadmap_progression ?? (roadmapLoading ? 'Loading' : 'No Data')}
-                                    {roadmapProjection ? ` / ${Math.round(roadmapProjection.roadmap_progression_pct ?? 0)}%` : ''}
-                                </span>
-                                <span className="font-mono-nums text-rose-300">Demand {formatCompact(roadmapTotals.target)}</span>
-                                <span className="font-mono-nums text-emerald-300">Projected {formatCompact(roadmapTotals.projected)}</span>
+                            <h3 className="text-[10px] text-slate-500 uppercase tracking-wider">
+                                Projection ({selectedGoal.weighted_return?.toFixed(1) || simParams.annual_return}% return)
+                            </h3>
+                            <div className="inline-flex border border-slate-700 bg-slate-900/80">
+                                {([
+                                    ['projection', 'Projection'],
+                                    ['monteCarlo', 'Monte Carlo'],
+                                    ['combined', 'Combined'],
+                                ] as Array<[ProjectionView, string]>).map(([id, label]) => (
+                                    <button
+                                        key={id}
+                                        onClick={() => setProjectionView(id)}
+                                        className={`px-3 py-1.5 text-[10px] ${projectionView === id ? 'bg-cyan-950/50 text-cyan-300' : 'text-slate-500 hover:text-slate-300'}`}
+                                    >
+                                        {label}
+                                    </button>
+                                ))}
                             </div>
                         </div>
-                        {roadmapLoading && roadmapChartData.length === 0 ? (
-                            <p className="text-xs text-slate-500">Loading roadmap...</p>
-                        ) : (
-                            <div className="h-72">
-                                <ResponsiveContainer width="100%" height="100%">
-                                    <ComposedChart data={roadmapChartData} margin={{ top: 8, right: 16, bottom: 28, left: 8 }}>
-                                        <XAxis dataKey="label" tick={{ fontSize: 10 }} stroke="#64748b" interval="preserveStartEnd" minTickGap={24} />
-                                        <YAxis tick={{ fontSize: 10 }} stroke="#64748b" tickFormatter={formatCompact} width={70} />
-                                        <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', fontSize: 11 }} formatter={(value) => [formatCurrency(value as number), '']} />
-                                        <Legend verticalAlign="bottom" align="center" wrapperStyle={{ fontSize: 10, paddingTop: 14 }} />
-                                        <Area dataKey="p10" stackId="roadmap-band" stroke="none" fill="transparent" name="P10" />
-                                        <Area dataKey="band" stackId="roadmap-band" stroke="none" fill="#22c55e" fillOpacity={0.12} name="P10-P90" />
-                                        <Line type="monotone" dataKey="actual" stroke="#34d399" strokeWidth={2} dot={false} name="Actual Net Worth" connectNulls={false} />
-                                        <Line type="monotone" dataKey="p50" stroke="#22d3ee" strokeWidth={2} strokeDasharray="6 4" dot={false} name="Projected P50" connectNulls={false} />
-                                        <Line type="monotone" dataKey="liability" stroke="#fb7185" strokeWidth={2} dot={false} name="Liability Demand" connectNulls={false} />
-                                        {firstRoadmapRisk && <ReferenceLine x={firstRoadmapRisk.label} stroke="#fb7185" strokeDasharray="4 4" />}
-                                    </ComposedChart>
-                                </ResponsiveContainer>
-                            </div>
-                        )}
-                        {firstRoadmapRisk && (
-                            <p className="mt-2 text-xs text-rose-300">P50 falls below cumulative demand in {firstRoadmapRisk.label}.</p>
-                        )}
-                    </div>
-
-                    <div className="bg-slate-800/30 border border-slate-700 p-4">
-                        <h3 className="text-[10px] text-slate-500 uppercase tracking-wider mb-3 flex items-center gap-2"><BarChart3 size={14} /> Monte Carlo (1000 runs)</h3>
                         {simLoading ? (
                             <p className="text-xs text-slate-500">Calculating...</p>
-                        ) : monteCarlo ? (
+                        ) : (
                             <>
-                                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3 text-xs">
-                                    <div className="bg-slate-900/60 border border-slate-700 p-2"><p className="text-slate-500">Success</p><p className="font-mono-nums text-emerald-400">{monteCarlo.probability}%</p></div>
-                                    <div className="bg-slate-900/60 border border-slate-700 p-2"><p className="text-slate-500">P10</p><p className="font-mono-nums">{formatCurrency(monteCarlo.percentiles.p10)}</p></div>
-                                    <div className="bg-slate-900/60 border border-slate-700 p-2"><p className="text-slate-500">P50</p><p className="font-mono-nums text-cyan-400">{formatCurrency(monteCarlo.percentiles.p50)}</p></div>
-                                    <div className="bg-slate-900/60 border border-slate-700 p-2"><p className="text-slate-500">P90</p><p className="font-mono-nums text-emerald-400">{formatCurrency(monteCarlo.percentiles.p90)}</p></div>
-                                </div>
-                                <div className="h-60">
+                                {monteCarlo && (
+                                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3 text-xs">
+                                        <div className="bg-slate-900/60 border border-slate-700 p-2"><p className="text-slate-500">Success</p><p className="font-mono-nums text-emerald-400">{monteCarlo.probability}%</p></div>
+                                        <div className="bg-slate-900/60 border border-slate-700 p-2"><p className="text-slate-500">P10</p><p className="font-mono-nums">{formatCurrency(monteCarlo.percentiles.p10)}</p></div>
+                                        <div className="bg-slate-900/60 border border-slate-700 p-2"><p className="text-slate-500">P50</p><p className="font-mono-nums text-cyan-400">{formatCurrency(monteCarlo.percentiles.p50)}</p></div>
+                                        <div className="bg-slate-900/60 border border-slate-700 p-2"><p className="text-slate-500">P90</p><p className="font-mono-nums text-emerald-400">{formatCurrency(monteCarlo.percentiles.p90)}</p></div>
+                                    </div>
+                                )}
+                                <div className="h-[360px]">
                                     <ResponsiveContainer width="100%" height="100%">
-                                        <LineChart data={monteCarloChartData} margin={{ top: 8, right: 16, bottom: 24, left: 8 }}>
-                                            <XAxis dataKey="year" tick={{ fontSize: 10 }} stroke="#64748b" />
+                                        <ComposedChart data={goalProjectionChartData} margin={{ top: 8, right: 16, bottom: 34, left: 8 }}>
+                                            <XAxis dataKey="year" tick={{ fontSize: 10 }} stroke="#64748b" label={{ value: 'Years', position: 'insideBottom', offset: -8, fontSize: 10 }} />
                                             <YAxis tick={{ fontSize: 10 }} stroke="#64748b" tickFormatter={formatCompact} />
                                             <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', fontSize: 11 }} formatter={(value) => [formatCurrency(value as number), '']} />
                                             <Legend verticalAlign="bottom" align="center" wrapperStyle={{ fontSize: 10, paddingTop: 14 }} />
-                                            <Line type="monotone" dataKey="p10" stroke="#f59e0b" name="P10" dot={false} />
-                                            <Line type="monotone" dataKey="p50" stroke="#22d3ee" name="P50" dot={false} />
-                                            <Line type="monotone" dataKey="p90" stroke="#10b981" name="P90" dot={false} />
-                                        </LineChart>
+                                            {(projectionView === 'monteCarlo' || projectionView === 'combined') && <Area dataKey="p10" stackId="goal-band" stroke="none" fill="transparent" name="P10" />}
+                                            {(projectionView === 'monteCarlo' || projectionView === 'combined') && <Area dataKey="band" stackId="goal-band" stroke="none" fill="#22c55e" fillOpacity={0.12} name="P10-P90" />}
+                                            {(projectionView === 'projection' || projectionView === 'combined') && <Line type="monotone" dataKey="end_balance" stroke="#10b981" name="Projection" strokeWidth={2} dot={false} />}
+                                            {(projectionView === 'monteCarlo' || projectionView === 'combined') && <Line type="monotone" dataKey="p10" stroke="#f59e0b" name="P10" dot={false} connectNulls={false} />}
+                                            {(projectionView === 'monteCarlo' || projectionView === 'combined') && <Line type="monotone" dataKey="p50" stroke="#22d3ee" name="P50" dot={false} connectNulls={false} />}
+                                            {(projectionView === 'monteCarlo' || projectionView === 'combined') && <Line type="monotone" dataKey="p90" stroke="#10b981" name="P90" dot={false} connectNulls={false} />}
+                                            <Line type="monotone" dataKey="target" stroke="#f97316" strokeDasharray="5 5" name="Target" dot={false} />
+                                        </ComposedChart>
                                     </ResponsiveContainer>
                                 </div>
                             </>
-                        ) : (
-                            <p className="text-xs text-slate-500">No simulation result yet.</p>
-                        )}
-                    </div>
-
-                    <div className="bg-slate-800/30 border border-slate-700 p-4">
-                        <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-3">
-                            <h3 className="text-[10px] text-slate-500 uppercase tracking-wider flex items-center gap-2"><Sparkles size={14} /> Milestone Plan</h3>
-                            <div className="flex gap-2">
-                                <button
-                                    onClick={previewSimulationMilestones}
-                                    disabled={milestonePlanLoading}
-                                    className="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white text-[10px]"
-                                >
-                                    Preview
-                                </button>
-                                <button
-                                    onClick={applySimulationMilestones}
-                                    disabled={milestonePlanLoading || !milestonePreview}
-                                    className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-white text-[10px]"
-                                >
-                                    Apply
-                                </button>
-                            </div>
-                        </div>
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-2 mb-3">
-                            <label className="text-[10px] text-slate-500 uppercase">
-                                Basis
-                                <select value={milestonePlan.basis} onChange={(event) => {
-                                    setMilestonePlan({ ...milestonePlan, basis: event.target.value as MilestoneSimulationBasis });
-                                    setMilestonePreview(null);
-                                }} className="mt-1 w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-slate-200">
-                                    <option value="p50">Monte Carlo P50</option>
-                                    <option value="p10">Conservative P10</option>
-                                    <option value="p90">Upside P90</option>
-                                    <option value="deterministic">Deterministic</option>
-                                </select>
-                            </label>
-                            <label className="text-[10px] text-slate-500 uppercase">
-                                Interval
-                                <select value={milestonePlan.interval} onChange={(event) => {
-                                    setMilestonePlan({ ...milestonePlan, interval: event.target.value as MilestoneSimulationInterval });
-                                    setMilestonePreview(null);
-                                }} className="mt-1 w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-slate-200">
-                                    <option value="annual">Annual</option>
-                                    <option value="semiannual">Semiannual</option>
-                                    <option value="quarterly">Quarterly</option>
-                                    <option value="target_only">Target only</option>
-                                </select>
-                            </label>
-                            <label className="text-[10px] text-slate-500 uppercase">
-                                Mode
-                                <select value={milestonePlan.mode} onChange={(event) => {
-                                    setMilestonePlan({ ...milestonePlan, mode: event.target.value as MilestoneSimulationMode });
-                                    setMilestonePreview(null);
-                                }} className="mt-1 w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-slate-200">
-                                    <option value="replace">Replace existing</option>
-                                    <option value="add">Add only</option>
-                                </select>
-                            </label>
-                            <label className="text-[10px] text-slate-500 uppercase">
-                                Runs
-                                <input type="number" min={100} max={10000} step={100} value={milestonePlan.n_simulations} onChange={(event) => {
-                                    setMilestonePlan({ ...milestonePlan, n_simulations: Number(event.target.value) });
-                                    setMilestonePreview(null);
-                                }} className="mt-1 w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-slate-200 font-mono-nums" />
-                            </label>
-                        </div>
-                        {milestonePreview ? (
-                            <div className="border border-slate-700 overflow-hidden">
-                                <div className="flex items-center justify-between bg-slate-900/70 px-3 py-2 text-[10px] text-slate-500">
-                                    <span>{milestonePreview.items.length} candidates</span>
-                                    <span>{milestonePreview.mode === 'replace' ? `${milestonePreview.existing_count} existing will be replaced` : 'Existing dates will be kept'}</span>
-                                </div>
-                                <div className="max-h-56 overflow-auto">
-                                    <table className="w-full text-left text-[10px]">
-                                        <thead className="bg-slate-800 text-slate-500 uppercase sticky top-0">
-                                            <tr>
-                                                <th className="px-3 py-2 font-normal">Date</th>
-                                                <th className="px-3 py-2 font-normal">Target</th>
-                                                <th className="px-3 py-2 font-normal">Source</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-slate-800">
-                                            {milestonePreview.items.map((item) => (
-                                                <tr key={`${item.date}-${item.target_amount}`}>
-                                                    <td className="px-3 py-2 font-mono-nums text-slate-300">{item.date}</td>
-                                                    <td className="px-3 py-2 font-mono-nums text-emerald-400">{formatCurrency(item.target_amount)}</td>
-                                                    <td className="px-3 py-2 text-slate-500">{item.note}</td>
-                                                </tr>
-                                            ))}
-                                        </tbody>
-                                    </table>
-                                </div>
-                            </div>
-                        ) : (
-                            <p className="text-xs text-slate-500">Generate a preview to turn this simulation into auditable milestones.</p>
                         )}
                     </div>
 
@@ -843,33 +925,49 @@ export default function Goal() {
                             </table>
                         </div>
                     </div>
+
+                    {renderMilestones()}
                 </section>
             </div>
         );
     };
 
-    const renderMilestones = () => (
+    const renderMilestones = () => {
+        const showingPlan = selectedScope === 'goal' && activeGoalTab === 'simulation';
+        const displayedMilestones = showingPlan ? (milestonePreview?.items ?? []) : milestones;
+
+        return (
         <div className="bg-slate-800/30 border border-slate-700 p-4">
             <div className="flex items-center justify-between mb-3">
-                <h3 className="text-[10px] text-slate-500 uppercase tracking-wider flex items-center gap-1"><Flag size={12} /> Milestones</h3>
-                <button
-                    onClick={resetMilestones}
-                    className="text-[10px] text-cyan-400 hover:text-cyan-300"
-                >
-                    Reset from Annual Plan
-                </button>
+                <h3 className="text-[10px] text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                    <Flag size={12} /> {showingPlan ? 'Milestone Candidates' : 'Milestones'}
+                </h3>
+                {showingPlan && (
+                    <div className="flex items-center gap-2">
+                        {milestonePlanLoading && <span className="text-[10px] text-slate-600">Updating...</span>}
+                        <button
+                            onClick={applySimulationMilestones}
+                            disabled={milestonePlanLoading || !milestonePreview}
+                            className="inline-flex items-center gap-1 px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-white text-[10px]"
+                        >
+                            <Check size={12} /> Adopt
+                        </button>
+                    </div>
+                )}
             </div>
-            <div className="grid grid-cols-12 gap-2 mb-3">
-                <input type="date" value={milestoneForm.date} onChange={(event) => setMilestoneForm({ ...milestoneForm, date: event.target.value })} className="col-span-12 md:col-span-3 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs" />
-                <input type="number" placeholder="Target" value={milestoneForm.target_amount} onChange={(event) => setMilestoneForm({ ...milestoneForm, target_amount: event.target.value })} className="col-span-12 md:col-span-3 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums" />
-                <input placeholder="Note" value={milestoneForm.note} onChange={(event) => setMilestoneForm({ ...milestoneForm, note: event.target.value })} className="col-span-12 md:col-span-4 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs" />
-                <button onClick={createRoadmapMilestone} className="col-span-12 md:col-span-2 bg-emerald-900/50 border border-emerald-800 text-emerald-300 text-xs">Add</button>
-            </div>
+            {!showingPlan && (
+                <div className="grid grid-cols-12 gap-2 mb-3">
+                    <input type="date" value={milestoneForm.date} onChange={(event) => setMilestoneForm({ ...milestoneForm, date: event.target.value })} className="col-span-12 md:col-span-3 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs" />
+                    <input type="number" placeholder="Target" value={milestoneForm.target_amount} onChange={(event) => setMilestoneForm({ ...milestoneForm, target_amount: event.target.value })} className="col-span-12 md:col-span-3 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums" />
+                    <input placeholder="Note" value={milestoneForm.note} onChange={(event) => setMilestoneForm({ ...milestoneForm, note: event.target.value })} className="col-span-12 md:col-span-4 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs" />
+                    <button onClick={createRoadmapMilestone} className="col-span-12 md:col-span-2 bg-emerald-900/50 border border-emerald-800 text-emerald-300 text-xs">Add</button>
+                </div>
+            )}
             <div className="space-y-2 max-h-[520px] overflow-auto">
-                {milestones.length === 0 ? (
-                    <p className="text-xs text-slate-600">No milestones yet. Add one manually or reset from the annual plan.</p>
-                ) : milestones.map((milestone) => (
-                    <div key={milestone.id} className="grid grid-cols-1 md:grid-cols-[140px_1fr_auto] items-center gap-3 bg-slate-900/60 border border-slate-700 p-2 text-xs">
+                {displayedMilestones.length === 0 ? (
+                    <p className="text-xs text-slate-600">{showingPlan ? 'No candidate milestones for this plan.' : 'No milestones yet. Add one manually or adopt a simulation plan.'}</p>
+                ) : displayedMilestones.map((milestone) => (
+                    <div key={`${milestone.date}-${milestone.target_amount}-${milestone.note ?? ''}`} className="grid grid-cols-1 md:grid-cols-[140px_1fr_auto] items-center gap-3 bg-slate-900/60 border border-slate-700 p-2 text-xs">
                         <div className="flex items-center gap-2">
                             <Calendar size={12} className="text-slate-500" />
                             <span className="font-mono-nums text-slate-300">{milestone.date}</span>
@@ -879,12 +977,13 @@ export default function Goal() {
                             {milestone.note && <span className="ml-3 text-slate-500">{milestone.note}</span>}
                             {milestone.source && milestone.source !== 'manual' && <span className="ml-3 text-[10px] text-cyan-500">{milestone.source}</span>}
                         </div>
-                        <button onClick={() => removeRoadmapMilestone(milestone.id)} className="text-slate-600 hover:text-rose-400 justify-self-end"><Trash2 size={12} /></button>
+                        {!showingPlan && typeof (milestone as Milestone).id === 'number' && <button onClick={() => removeRoadmapMilestone((milestone as Milestone).id)} className="text-slate-600 hover:text-rose-400 justify-self-end"><Trash2 size={12} /></button>}
                     </div>
                 ))}
             </div>
         </div>
-    );
+        );
+    };
 
     const renderAssetAllocation = () => {
         const allocations = selectedGoal?.allocations ?? [];
@@ -992,6 +1091,7 @@ export default function Goal() {
     };
 
     const renderActiveGoalTab = () => {
+        if (selectedScope === 'all') return renderSimulation();
         switch (activeGoalTab) {
             case 'summary':
                 return renderSummary();
@@ -1043,6 +1143,27 @@ export default function Goal() {
                         {loading && <span className="text-[10px] text-slate-600">Loading...</span>}
                     </div>
                     <div className="flex-1 overflow-auto p-3 space-y-2">
+                        <button
+                            onClick={() => {
+                                setSelectedScope('all');
+                                setActiveGoalTab('simulation');
+                                setMilestonePreview(null);
+                                fetchAllMilestones();
+                                fetchRoadmapProjection();
+                            }}
+                            className={`w-full text-left border px-3 py-3 transition-colors ${selectedScope === 'all' ? 'border-cyan-700 bg-cyan-950/20' : 'border-slate-800 bg-slate-800/20 hover:bg-slate-800/50'}`}
+                        >
+                            <div className="flex items-start justify-between gap-2">
+                                <div className="min-w-0">
+                                    <p className="text-sm text-slate-100 truncate">All Goals</p>
+                                    <p className="text-[10px] text-slate-500 mt-1">Portfolio roadmap / aggregate liability demand</p>
+                                </div>
+                                <span className="text-[10px] text-slate-400 font-mono-nums">{Math.round(roadmapProjection?.roadmap_progression_pct ?? 0)}%</span>
+                            </div>
+                            <div className="h-1 bg-slate-900 rounded-full mt-3 overflow-hidden">
+                                <div className="h-full bg-cyan-500" style={{ width: `${Math.min(100, roadmapProjection?.roadmap_progression_pct ?? 0)}%` }} />
+                            </div>
+                        </button>
                         {(dashboard?.events ?? []).length === 0 ? (
                             <div className="text-center text-xs text-slate-600 py-10">No goals yet. Create the first north star.</div>
                         ) : (
@@ -1050,10 +1171,13 @@ export default function Goal() {
                                 <button
                                     key={goal.id}
                                     onClick={() => {
+                                        setSelectedScope('goal');
                                         setSelectedGoal(goal);
+                                        setActiveGoalTab('summary');
+                                        setMilestonePreview(null);
                                         fetchGoalMilestones(goal.id);
                                     }}
-                                    className={`w-full text-left border px-3 py-3 transition-colors ${selectedGoal?.id === goal.id ? 'border-cyan-700 bg-cyan-950/20' : 'border-slate-800 bg-slate-800/20 hover:bg-slate-800/50'}`}
+                                    className={`w-full text-left border px-3 py-3 transition-colors ${selectedScope === 'goal' && selectedGoal?.id === goal.id ? 'border-cyan-700 bg-cyan-950/20' : 'border-slate-800 bg-slate-800/20 hover:bg-slate-800/50'}`}
                                 >
                                     <div className="flex items-start justify-between gap-2">
                                         <div className="min-w-0">
@@ -1074,23 +1198,28 @@ export default function Goal() {
                 </section>
 
                 <section className="bg-slate-900/60 border border-slate-800 overflow-auto">
-                    {!selectedGoal ? (
+                    {selectedScope === 'goal' && !selectedGoal ? (
                         <div className="h-full flex items-center justify-center text-xs text-slate-600">Select or create a goal to edit its details.</div>
                     ) : (
                         <div className="p-4 space-y-4">
                             <div className="flex items-start justify-between gap-3">
                                 <div>
-                                    <p className="text-[10px] text-slate-500 uppercase">Selected Goal</p>
-                                    <h2 className="text-lg text-slate-100">{selectedGoal.name}</h2>
-                                    <p className="text-xs text-slate-500 mt-1">{selectedGoal.note || 'No note yet.'}</p>
+                                    <p className="text-[10px] text-slate-500 uppercase">{selectedScope === 'all' ? 'Selected Scope' : 'Selected Goal'}</p>
+                                    <h2 className="text-lg text-slate-100">{selectedScope === 'all' ? 'All Goals' : selectedGoal?.name}</h2>
+                                    <p className="text-xs text-slate-500 mt-1">
+                                        {selectedScope === 'all' ? 'Portfolio roadmap and aggregate liability demand.' : selectedGoal?.note || 'No note yet.'}
+                                    </p>
                                 </div>
-                                <div className="flex gap-2">
-                                    <button onClick={() => openEditModal(selectedGoal)} className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300"><Edit2 size={14} /></button>
-                                    <button onClick={() => removeEvent(selectedGoal.id)} className="p-2 bg-slate-800 hover:bg-rose-950 text-slate-300 hover:text-rose-300"><Trash2 size={14} /></button>
-                                </div>
+                                {selectedScope === 'goal' && selectedGoal && (
+                                    <div className="flex gap-2">
+                                        <button onClick={() => openEditModal(selectedGoal)} className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300"><Edit2 size={14} /></button>
+                                        <button onClick={() => removeEvent(selectedGoal.id)} className="p-2 bg-slate-800 hover:bg-rose-950 text-slate-300 hover:text-rose-300"><Trash2 size={14} /></button>
+                                    </div>
+                                )}
                             </div>
 
-                            <div className="flex border-b border-slate-800 overflow-x-auto">
+                            {selectedScope === 'goal' && (
+                                <div className="flex border-b border-slate-800 overflow-x-auto">
                                 {GOAL_TABS.map((tab) => (
                                     <button
                                         key={tab.id}
@@ -1100,7 +1229,8 @@ export default function Goal() {
                                         {tab.label}
                                     </button>
                                 ))}
-                            </div>
+                                </div>
+                            )}
 
                             {renderActiveGoalTab()}
                         </div>

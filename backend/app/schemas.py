@@ -351,7 +351,7 @@ class Capsule(CapsuleBase):
 
 
 class MilestoneSimulationRequest(BaseModel):
-    basis: Literal["deterministic", "p10", "p50", "p90"] = "p50"
+    basis: Literal["annual_plan", "deterministic", "p10", "p50", "p90"] = "p50"
     interval: Literal["annual", "semiannual", "quarterly", "target_only"] = "annual"
     mode: Literal["add", "replace"] = "replace"
     n_simulations: int = Field(default=1000, ge=100, le=10000)

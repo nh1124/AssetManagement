@@ -247,7 +247,7 @@ export interface Milestone {
     source_snapshot?: Record<string, unknown> | null;
 }
 
-export type MilestoneSimulationBasis = 'deterministic' | 'p10' | 'p50' | 'p90';
+export type MilestoneSimulationBasis = 'annual_plan' | 'deterministic' | 'p10' | 'p50' | 'p90';
 export type MilestoneSimulationInterval = 'annual' | 'semiannual' | 'quarterly' | 'target_only';
 export type MilestoneSimulationMode = 'add' | 'replace';
 

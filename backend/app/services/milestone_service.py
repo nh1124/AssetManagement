@@ -145,6 +145,20 @@ def preview_milestones_from_simulation(
     monthly_savings: float | None = None,
 ) -> dict:
     """Build milestone candidates from the same normalized inputs as goal simulation."""
+    if basis == "annual_plan":
+        existing_count = db.query(models.Milestone).filter(
+            models.Milestone.client_id == client_id,
+            models.Milestone.life_event_id == life_event_id,
+        ).count()
+        return {
+            "life_event_id": life_event_id,
+            "basis": basis,
+            "interval": interval,
+            "mode": mode,
+            "existing_count": existing_count,
+            "items": build_default_milestone_rows(db, client_id, life_event_id),
+        }
+
     event = _get_event(db, client_id, life_event_id)
     config = db.query(models.SimulationConfig).filter(
         models.SimulationConfig.client_id == client_id
