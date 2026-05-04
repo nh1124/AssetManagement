@@ -4,7 +4,7 @@ from typing import List, Optional, Literal
 from .. import models
 from ..database import get_db
 from ..dependencies import get_current_client
-from ..services.accounting_service import calculate_account_journal_balance
+from ..services.fx_service import calculate_account_valued_balance
 from ..services.capsule_service import ensure_capsule_account
 from pydantic import BaseModel
 
@@ -104,7 +104,7 @@ def _validate_parent(
 
 def _build_tree(db: Session, accounts: list[models.Account]) -> dict:
     by_id = {account.id: account for account in accounts}
-    balances = {account.id: calculate_account_journal_balance(db, account) for account in accounts}
+    balances = {account.id: calculate_account_valued_balance(db, account) for account in accounts}
     children_by_parent: dict[int | None, list[models.Account]] = {}
     for account in accounts:
         parent_id = account.parent_id if account.parent_id in by_id else None
@@ -159,7 +159,7 @@ def get_accounts(
     
     accounts = query.order_by(models.Account.account_type, models.Account.name).all()
     return [
-        _serialize_account(account, balance=calculate_account_journal_balance(db, account))
+        _serialize_account(account, balance=calculate_account_valued_balance(db, account))
         for account in accounts
     ]
 
@@ -198,7 +198,7 @@ def get_accounts_grouped_by_type(
             grouped[acc.account_type].append({
                 "id": acc.id,
                 "name": acc.name,
-                "balance": calculate_account_journal_balance(db, acc),
+                "balance": calculate_account_valued_balance(db, acc),
                 "role": acc.role,
                 "role_target_amount": acc.role_target_amount,
             })
@@ -223,7 +223,7 @@ def create_account(
     db.add(db_account)
     db.commit()
     db.refresh(db_account)
-    return _serialize_account(db_account, balance=calculate_account_journal_balance(db, db_account))
+    return _serialize_account(db_account, balance=calculate_account_valued_balance(db, db_account))
 
 @router.put("/{account_id}", response_model=AccountResponse)
 def update_account(
@@ -260,7 +260,7 @@ def update_account(
         setattr(db_account, key, value)
     db.commit()
     db.refresh(db_account)
-    return _serialize_account(db_account, balance=calculate_account_journal_balance(db, db_account))
+    return _serialize_account(db_account, balance=calculate_account_valued_balance(db, db_account))
 
 @router.delete("/{account_id}")
 def delete_account(

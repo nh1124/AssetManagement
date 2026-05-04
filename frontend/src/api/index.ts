@@ -4,6 +4,8 @@ import type {
     AccountRole,
     AccountTreeNode,
     AnalysisSummary,
+    ExchangeRate,
+    ExchangeRateAutoUpdateResult,
     MonthlyAction,
     MonteCarloResult,
     MonthlyBudget,
@@ -491,6 +493,35 @@ export const exportData = async () => {
 
 export const importData = async (payload: any) => {
     const response = await api.post('/data/import', payload);
+    return response.data;
+};
+
+// Exchange rates
+export const getExchangeRates = async (): Promise<ExchangeRate[]> => {
+    const response = await api.get('/exchange-rates/');
+    return response.data;
+};
+
+export const createExchangeRate = async (payload: Omit<ExchangeRate, 'id' | 'created_at' | 'updated_at'>): Promise<ExchangeRate> => {
+    const response = await api.post('/exchange-rates/', payload);
+    return response.data;
+};
+
+export const updateExchangeRate = async (
+    id: number,
+    payload: Partial<Omit<ExchangeRate, 'id' | 'created_at' | 'updated_at'>>
+): Promise<ExchangeRate> => {
+    const response = await api.put(`/exchange-rates/${id}`, payload);
+    return response.data;
+};
+
+export const deleteExchangeRate = async (id: number) => {
+    const response = await api.delete(`/exchange-rates/${id}`);
+    return response.data;
+};
+
+export const autoUpdateExchangeRates = async (): Promise<ExchangeRateAutoUpdateResult> => {
+    const response = await api.post('/exchange-rates/auto-update');
     return response.data;
 };
 

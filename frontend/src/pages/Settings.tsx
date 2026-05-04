@@ -311,6 +311,7 @@ export default function SettingsPage() {
                                 >
                                     <option value="JPY">¥ JPY</option>
                                     <option value="USD">$ USD</option>
+                                    <option value="EUR">€ EUR</option>
                                 </select>
                             </div>
                             <div>

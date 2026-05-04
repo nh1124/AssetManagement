@@ -9,7 +9,7 @@ from sqlalchemy import and_, extract, func
 from sqlalchemy.orm import Session
 
 from .. import models
-from .accounting_service import calculate_account_journal_balance
+from .fx_service import calculate_account_valued_balance, convert_transaction_amount
 
 
 LIQUID_ACCOUNT_NAMES = {"cash", "bank", "savings"}
@@ -25,7 +25,7 @@ def _cash_accounts(db: Session, client_id: int) -> list[models.Account]:
 
 
 def _sum_liquid_assets(db: Session, client_id: int) -> float:
-    return sum(calculate_account_journal_balance(db, account) for account in _cash_accounts(db, client_id))
+    return sum(calculate_account_valued_balance(db, account) for account in _cash_accounts(db, client_id))
 
 
 def _sum_unpaid_liabilities(db: Session, client_id: int) -> float:
@@ -33,7 +33,7 @@ def _sum_unpaid_liabilities(db: Session, client_id: int) -> float:
         models.Account.client_id == client_id,
         models.Account.account_type == "liability",
     ).all()
-    return sum(abs(calculate_account_journal_balance(db, account)) for account in liabilities)
+    return sum(abs(calculate_account_valued_balance(db, account)) for account in liabilities)
 
 
 def _sum_capsule_balance(db: Session, client_id: int) -> float:
@@ -41,7 +41,7 @@ def _sum_capsule_balance(db: Session, client_id: int) -> float:
         models.Capsule.client_id == client_id
     ).all()
     return sum(
-        ((calculate_account_journal_balance(db, capsule.account) if capsule.account else capsule.current_balance) or 0.0)
+        ((calculate_account_valued_balance(db, capsule.account) if capsule.account else capsule.current_balance) or 0.0)
         for capsule in capsules
     )
 
@@ -63,7 +63,7 @@ def calculate_idle_money(db: Session, client_id: int) -> dict:
         role = account.role or "unassigned"
         if role not in ACCOUNT_ROLES:
             role = "unassigned"
-        by_role[role] += calculate_account_journal_balance(db, account)
+        by_role[role] += calculate_account_valued_balance(db, account)
         if account.role_target_amount:
             targets_by_role[role] += account.role_target_amount
 
@@ -171,7 +171,7 @@ def get_summary(db: Session, client_id: int) -> dict:
     goal_data = calculate_overall_goal_probability(db, client_id=client_id)
 
     cash_accounts = _cash_accounts(db, client_id)
-    total_cash = sum(calculate_account_journal_balance(db, account) for account in cash_accounts) if cash_accounts else 0.0
+    total_cash = sum(calculate_account_valued_balance(db, account) for account in cash_accounts) if cash_accounts else 0.0
     liquid_assets = total_cash
 
     cc_unpaid = _sum_unpaid_liabilities(db, client_id)
@@ -195,11 +195,12 @@ def get_summary(db: Session, client_id: int) -> dict:
     savings_rate = (fcf / total_income * 100) if total_income > 0 else 0.0
 
     three_months_ago = today - relativedelta(months=3)
-    recent_expenses = db.query(func.sum(models.Transaction.amount)).filter(
+    recent_expense_txs = db.query(models.Transaction).filter(
         models.Transaction.client_id == client_id,
         models.Transaction.type.in_(["Expense", "CreditExpense"]),
         models.Transaction.date >= three_months_ago,
-    ).scalar() or 0.0
+    ).all()
+    recent_expenses = sum(convert_transaction_amount(db, tx, client_id=client_id) for tx in recent_expense_txs)
     avg_monthly_expense = recent_expenses / 3 if recent_expenses > 0 else 1.0
     runway_months = (
         (logical_balance / avg_monthly_expense)
@@ -348,30 +349,15 @@ def get_net_position(db: Session, client_id: int) -> dict:
 
 
 def _calc_net_worth_at(db: Session, client_id: int, as_of: date) -> dict:
-    rows = db.query(
-        models.Account.account_type,
-        func.sum(models.JournalEntry.debit).label("debit"),
-        func.sum(models.JournalEntry.credit).label("credit"),
-    ).join(
-        models.JournalEntry,
-        models.JournalEntry.account_id == models.Account.id,
-    ).join(
-        models.Transaction,
-        models.Transaction.id == models.JournalEntry.transaction_id,
-    ).filter(
-        models.Transaction.client_id == client_id,
-        models.Transaction.date <= as_of,
-    ).group_by(models.Account.account_type).all()
-
     assets = 0.0
     liabilities = 0.0
-    for account_type, debit, credit in rows:
-        debit = debit or 0.0
-        credit = credit or 0.0
-        if account_type in ("asset", "item"):
-            assets += debit - credit
-        elif account_type == "liability":
-            liabilities += credit - debit
+    accounts = db.query(models.Account).filter(models.Account.client_id == client_id).all()
+    for account in accounts:
+        balance = calculate_account_valued_balance(db, account, as_of_date=as_of)
+        if account.account_type in ("asset", "item"):
+            assets += balance
+        elif account.account_type == "liability":
+            liabilities += abs(balance)
 
     return {
         "assets": assets,

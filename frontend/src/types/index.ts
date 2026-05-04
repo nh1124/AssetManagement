@@ -32,6 +32,25 @@ export interface AccountTreeNode extends Account {
     children: AccountTreeNode[];
 }
 
+export interface ExchangeRate {
+    id: number;
+    base_currency: string;
+    quote_currency: string;
+    rate: number;
+    as_of_date: string;
+    source: string;
+    created_at?: string | null;
+    updated_at?: string | null;
+}
+
+export interface ExchangeRateAutoUpdateResult {
+    target_currency: string;
+    detected_pairs: Array<Pick<ExchangeRate, 'base_currency' | 'quote_currency'>>;
+    updated: ExchangeRate[];
+    skipped: Array<Pick<ExchangeRate, 'base_currency' | 'quote_currency'> & { reason: string }>;
+    errors: Array<Pick<ExchangeRate, 'base_currency' | 'quote_currency'> & { error: string }>;
+}
+
 export interface GoalAllocation {
     id: number;
     life_event_id: number;

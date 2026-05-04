@@ -2,12 +2,16 @@ import { useEffect, useMemo, useState } from 'react';
 import { Cpu, Edit, Package, Plus, RefreshCw, Save, Trash2, Wallet, X } from 'lucide-react';
 import TabPanel from '../components/TabPanel';
 import {
+    autoUpdateExchangeRates,
     createAccount,
+    createExchangeRate,
     createProduct,
     deleteAccount,
+    deleteExchangeRate,
     deleteProduct,
     getAccounts,
     getAccountTree,
+    getExchangeRates,
     getProducts,
     getUnitEconomicsSummary,
     seedDefaultAccounts,
@@ -17,10 +21,11 @@ import {
 import { useToast } from '../components/Toast';
 import { useClient } from '../context/ClientContext';
 import { formatCurrency as formatCurrencyWithSetting } from '../utils/currency';
-import type { Account, AccountRole, AccountTreeNode, Product } from '../types';
+import type { Account, AccountRole, AccountTreeNode, ExchangeRate, Product } from '../types';
 
 const TABS = [
     { id: 'accounts', label: 'Accounts' },
+    { id: 'exchange-rates', label: 'Exchange Rates' },
     { id: 'assets', label: 'Assets' },
     { id: 'items', label: 'Items' },
 ];
@@ -339,6 +344,21 @@ export default function Registry() {
     const [unitSummary, setUnitSummary] = useState<any>(null);
     const [accounts, setAccounts] = useState<Account[]>([]);
     const [accountTree, setAccountTree] = useState<Record<string, AccountTreeNode[]>>({});
+    const [exchangeRates, setExchangeRates] = useState<ExchangeRate[]>([]);
+    const [autoUpdatingRates, setAutoUpdatingRates] = useState(false);
+    const [lastRateUpdate, setLastRateUpdate] = useState<{
+        updated: number;
+        skipped: number;
+        errors: number;
+    } | null>(null);
+    const [rateDraft, setRateDraft] = useState({
+        base_currency: 'USD',
+        quote_currency: 'JPY',
+        rate: '',
+        as_of_date: new Date().toISOString().slice(0, 10),
+        source: 'manual',
+    });
+    const [isSavingRate, setIsSavingRate] = useState(false);
     const [editingId, setEditingId] = useState<number | null>(null);
     const [editForm, setEditForm] = useState<any>({});
     const [newAccount, setNewAccount] = useState({
@@ -361,19 +381,34 @@ export default function Registry() {
         fetchData();
     }, []);
 
+    useEffect(() => {
+        const currency = currentClient?.general_settings?.currency;
+        if (currency) {
+            setRateDraft((prev) => ({ ...prev, quote_currency: currency }));
+        }
+    }, [currentClient?.general_settings?.currency]);
+
+    useEffect(() => {
+        if (activeTab === 'exchange-rates') {
+            handleAutoUpdateRates(true);
+        }
+    }, [activeTab]);
+
     const fetchData = async () => {
         try {
             setLoadingProducts(true);
-            const [productsData, summaryData, accountsData, treeData] = await Promise.all([
+            const [productsData, summaryData, accountsData, treeData, ratesData] = await Promise.all([
                 getProducts(),
                 getUnitEconomicsSummary(),
                 getAccounts(),
                 getAccountTree(),
+                getExchangeRates(),
             ]);
             setProducts(productsData);
             setUnitSummary(summaryData);
             setAccounts(accountsData);
             setAccountTree(treeData);
+            setExchangeRates(ratesData);
         } catch (error) {
             console.error('Failed to fetch registry data:', error);
             try {
@@ -429,6 +464,63 @@ export default function Registry() {
             fetchData();
         } catch (error) {
             showToast('Failed to delete account', 'error');
+        }
+    };
+
+    const handleAddRate = async () => {
+        const numericRate = Number(rateDraft.rate);
+        if (!rateDraft.base_currency.trim() || !rateDraft.quote_currency.trim() || !numericRate) return;
+        setIsSavingRate(true);
+        try {
+            await createExchangeRate({
+                base_currency: rateDraft.base_currency.trim().toUpperCase(),
+                quote_currency: rateDraft.quote_currency.trim().toUpperCase(),
+                rate: numericRate,
+                as_of_date: rateDraft.as_of_date,
+                source: rateDraft.source || 'manual',
+            });
+            setRateDraft((prev) => ({ ...prev, rate: '' }));
+            setExchangeRates(await getExchangeRates());
+            showToast('Exchange rate saved', 'success');
+        } catch (error: any) {
+            showToast(error?.response?.data?.detail || 'Failed to save exchange rate', 'error');
+        } finally {
+            setIsSavingRate(false);
+        }
+    };
+
+    const handleDeleteRate = async (id: number) => {
+        try {
+            await deleteExchangeRate(id);
+            setExchangeRates((prev) => prev.filter((rate) => rate.id !== id));
+            showToast('Exchange rate deleted', 'success');
+        } catch (error: any) {
+            showToast(error?.response?.data?.detail || 'Failed to delete exchange rate', 'error');
+        }
+    };
+
+    const handleAutoUpdateRates = async (silent = false) => {
+        setAutoUpdatingRates(true);
+        try {
+            const result = await autoUpdateExchangeRates();
+            setLastRateUpdate({
+                updated: result.updated.length,
+                skipped: result.skipped.length,
+                errors: result.errors.length,
+            });
+            setExchangeRates(await getExchangeRates());
+            if (!silent) {
+                const message = result.errors.length
+                    ? `Updated ${result.updated.length}, ${result.errors.length} failed`
+                    : `Updated ${result.updated.length}, skipped ${result.skipped.length}`;
+                showToast(message, result.errors.length ? 'error' : 'success');
+            }
+        } catch (error: any) {
+            if (!silent) {
+                showToast(error?.response?.data?.detail || 'Failed to auto-update rates', 'error');
+            }
+        } finally {
+            setAutoUpdatingRates(false);
         }
     };
 
@@ -569,6 +661,119 @@ export default function Registry() {
             </div>
         );
     };
+
+    const renderExchangeRates = () => (
+        <div className="space-y-4">
+            <div>
+                <div className="flex items-center justify-between gap-3">
+                    <div>
+                        <h2 className="text-sm font-semibold">Exchange Rates</h2>
+                        <p className="text-[10px] text-slate-500">
+                            Valuation rates used to convert journal currencies into the client base currency.
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => handleAutoUpdateRates(false)}
+                        disabled={autoUpdatingRates}
+                        className="px-3 py-1.5 border border-slate-700 text-slate-300 hover:bg-slate-800 disabled:opacity-50 text-xs flex items-center gap-1"
+                    >
+                        <RefreshCw size={12} className={autoUpdatingRates ? 'animate-spin' : ''} />
+                        Auto Update
+                    </button>
+                </div>
+                {lastRateUpdate && (
+                    <p className="mt-2 text-[10px] text-slate-500">
+                        Last auto check: updated {lastRateUpdate.updated}, skipped {lastRateUpdate.skipped}, errors {lastRateUpdate.errors}
+                    </p>
+                )}
+            </div>
+
+            <div className="border border-slate-800 p-3">
+                <div className="grid grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_1fr_1fr_auto] gap-2">
+                    <input
+                        value={rateDraft.base_currency}
+                        onChange={(event) => setRateDraft({ ...rateDraft, base_currency: event.target.value })}
+                        className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs uppercase"
+                        placeholder="USD"
+                    />
+                    <input
+                        value={rateDraft.quote_currency}
+                        onChange={(event) => setRateDraft({ ...rateDraft, quote_currency: event.target.value })}
+                        className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs uppercase"
+                        placeholder={currentClient?.general_settings?.currency || 'JPY'}
+                    />
+                    <input
+                        type="number"
+                        value={rateDraft.rate}
+                        onChange={(event) => setRateDraft({ ...rateDraft, rate: event.target.value })}
+                        className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums"
+                        placeholder="Rate"
+                    />
+                    <input
+                        type="date"
+                        value={rateDraft.as_of_date}
+                        onChange={(event) => setRateDraft({ ...rateDraft, as_of_date: event.target.value })}
+                        className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
+                    />
+                    <input
+                        value={rateDraft.source}
+                        onChange={(event) => setRateDraft({ ...rateDraft, source: event.target.value })}
+                        className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
+                        placeholder="manual"
+                    />
+                    <button
+                        type="button"
+                        disabled={isSavingRate}
+                        onClick={handleAddRate}
+                        className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 px-3 py-1.5 text-xs font-semibold text-white"
+                    >
+                        {isSavingRate ? 'Saving...' : 'Add Rate'}
+                    </button>
+                </div>
+            </div>
+
+            <div className="border border-slate-800 overflow-auto">
+                <table className="w-full text-xs">
+                    <thead className="bg-slate-900">
+                        <tr className="border-b border-slate-800">
+                            <th className="p-2 text-left text-slate-500 uppercase font-medium">Pair</th>
+                            <th className="p-2 text-right text-slate-500 uppercase font-medium">Rate</th>
+                            <th className="p-2 text-left text-slate-500 uppercase font-medium">As Of</th>
+                            <th className="p-2 text-left text-slate-500 uppercase font-medium">Source</th>
+                            <th className="p-2" />
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {exchangeRates.length === 0 ? (
+                            <tr>
+                                <td colSpan={5} className="p-6 text-center text-slate-500">No exchange rates configured.</td>
+                            </tr>
+                        ) : (
+                            exchangeRates.map((rate) => (
+                                <tr key={rate.id} className="border-b border-slate-800/50 hover:bg-slate-800/30 group">
+                                    <td className="p-2 font-mono text-slate-200">{rate.base_currency}/{rate.quote_currency}</td>
+                                    <td className="p-2 text-right font-mono-nums text-emerald-300">{rate.rate}</td>
+                                    <td className="p-2 font-mono text-slate-500">{rate.as_of_date}</td>
+                                    <td className="p-2 text-slate-400">{rate.source || 'manual'}</td>
+                                    <td className="p-2 text-right">
+                                        <button
+                                            type="button"
+                                            onClick={() => handleDeleteRate(rate.id)}
+                                            className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-rose-300"
+                                            title="Delete rate"
+                                        >
+                                            <Trash2 size={12} />
+                                        </button>
+                                    </td>
+                                </tr>
+                            ))
+                        )}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
 
     const renderAccounts = () => {
         const renderNode = (account: AccountTreeNode, depth: number) => {
@@ -772,6 +977,7 @@ export default function Registry() {
             <TabPanel tabs={TABS} activeTab={activeTab} onTabChange={setActiveTab}>
                 <div className="p-4">
                     {activeTab === 'accounts' && renderAccounts()}
+                    {activeTab === 'exchange-rates' && renderExchangeRates()}
                     {activeTab === 'assets' && renderProducts('asset')}
                     {activeTab === 'items' && renderProducts('item')}
                 </div>

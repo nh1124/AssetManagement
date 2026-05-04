@@ -20,6 +20,7 @@ from backend.app.services.accounting_service import update_transaction
 from backend.app.services.action_bridge_service import apply_action, create_action
 from backend.app.services.strategy_service import get_roadmap_projection
 from backend.app.services.milestone_service import apply_milestones_from_simulation, preview_milestones_from_simulation
+from backend.app.services.fx_service import update_used_exchange_rates
 
 
 def _session():
@@ -188,6 +189,92 @@ def test_update_transaction_rebuilds_journal_and_keeps_reconcile_clean() -> None
             models.JournalEntry.transaction_id == tx.id
         ).count() == 2
         assert run_reconcile(db, client_id=1, fix=False) == []
+    finally:
+        db.close()
+
+
+def test_foreign_currency_transactions_are_valued_with_exchange_rates() -> None:
+    db = _session()
+    try:
+        client = models.Client(id=1, name="test", general_settings={"currency": "JPY"}, ai_config={})
+        cash = models.Account(client_id=1, name="cash", account_type="asset", balance=0)
+        salary = models.Account(client_id=1, name="salary", account_type="income", balance=0)
+        db.add(client)
+        db.add_all([cash, salary])
+        db.add(
+            models.ExchangeRate(
+                client_id=1,
+                base_currency="USD",
+                quote_currency="JPY",
+                rate=150,
+                as_of_date=date.today(),
+                source="manual",
+            )
+        )
+        db.commit()
+
+        tx = models.Transaction(
+            client_id=1,
+            date=date.today(),
+            description="USD income",
+            amount=10,
+            type="Income",
+            category="salary",
+            currency="USD",
+            from_account_id=salary.id,
+            to_account_id=cash.id,
+        )
+        db.add(tx)
+        db.commit()
+        db.refresh(tx)
+        process_transaction(db, tx)
+
+        bs = get_balance_sheet(db, client_id=1)
+        pl = get_profit_loss_for_range(db, date.today(), date.today(), client_id=1)
+
+        assert bs["currency"] == "JPY"
+        assert bs["total_assets"] == 1500
+        assert pl["total_income"] == 1500
+    finally:
+        db.close()
+
+
+def test_auto_update_detects_used_currency_once_per_day() -> None:
+    db = _session()
+    try:
+        client = models.Client(id=1, name="test", general_settings={"currency": "JPY"}, ai_config={})
+        cash = models.Account(client_id=1, name="cash", account_type="asset", balance=0)
+        salary = models.Account(client_id=1, name="salary", account_type="income", balance=0)
+        db.add_all([client, cash, salary])
+        db.commit()
+
+        tx = models.Transaction(
+            client_id=1,
+            date=date.today(),
+            description="USD income",
+            amount=10,
+            type="Income",
+            category="salary",
+            currency="USD",
+            from_account_id=salary.id,
+            to_account_id=cash.id,
+        )
+        db.add(tx)
+        db.commit()
+
+        calls = []
+
+        def fetcher(base: str, quote: str) -> dict:
+            calls.append((base, quote))
+            return {"rate": 150.0, "market_date": "2026-05-04", "provider": "test"}
+
+        first = update_used_exchange_rates(db, 1, today=date(2026, 5, 4), fetcher=fetcher)
+        second = update_used_exchange_rates(db, 1, today=date(2026, 5, 4), fetcher=fetcher)
+
+        assert calls == [("USD", "JPY")]
+        assert len(first["updated"]) == 1
+        assert first["updated"][0]["source"] == "auto:test:2026-05-04"
+        assert len(second["skipped"]) == 1
     finally:
         db.close()
 

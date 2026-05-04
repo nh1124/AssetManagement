@@ -74,6 +74,35 @@ class Transaction(TransactionBase):
     class Config:
         from_attributes = True
 
+
+class ExchangeRateBase(BaseModel):
+    base_currency: str
+    quote_currency: str
+    rate: float = Field(gt=0)
+    as_of_date: DateType
+    source: str = "manual"
+
+
+class ExchangeRateCreate(ExchangeRateBase):
+    pass
+
+
+class ExchangeRateUpdate(BaseModel):
+    base_currency: Optional[str] = None
+    quote_currency: Optional[str] = None
+    rate: Optional[float] = Field(default=None, gt=0)
+    as_of_date: Optional[DateType] = None
+    source: Optional[str] = None
+
+
+class ExchangeRate(ExchangeRateBase):
+    id: int
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
 # Product Schemas
 class ProductBase(BaseModel):
     name: str

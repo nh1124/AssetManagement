@@ -332,6 +332,25 @@ def export_client_data(
                 .order_by(models.CapsuleRule.id)
                 .all()
             ],
+            "exchange_rates": [
+                _row(
+                    rate,
+                    [
+                        "id",
+                        "base_currency",
+                        "quote_currency",
+                        "rate",
+                        "as_of_date",
+                        "source",
+                        "created_at",
+                        "updated_at",
+                    ],
+                )
+                for rate in db.query(models.ExchangeRate)
+                .filter(models.ExchangeRate.client_id == current_client.id)
+                .order_by(models.ExchangeRate.id)
+                .all()
+            ],
         },
     }
 
@@ -376,6 +395,7 @@ def import_client_data(
             models.PeriodReview,
             models.CapsuleRule,
             models.Capsule,
+            models.ExchangeRate,
             models.Milestone,
             models.RecurringTransaction,
             models.SimulationConfig,
@@ -619,6 +639,20 @@ def import_client_data(
                         created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
                     )
                 )
+
+        for item in data.get("exchange_rates", []):
+            db.add(
+                models.ExchangeRate(
+                    client_id=current_client.id,
+                    base_currency=(item.get("base_currency") or "JPY").upper(),
+                    quote_currency=(item.get("quote_currency") or "JPY").upper(),
+                    rate=item.get("rate") or 1.0,
+                    as_of_date=_parse_date(item.get("as_of_date")) or date.today(),
+                    source=item.get("source") or "manual",
+                    created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
+                    updated_at=_parse_datetime(item.get("updated_at")),
+                )
+            )
 
         db.commit()
     except Exception as exc:

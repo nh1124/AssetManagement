@@ -16,6 +16,7 @@ from .routers import (
     capsules,
     clients,
     data_transfer,
+    exchange_rates,
     life_events,
     monthly_reviews,
     period_reviews,
@@ -96,6 +97,7 @@ def startup_event():
             "period_reviews",
             "milestones",
             "capsules",
+            "exchange_rates",
         ]:
             try:
                 db.execute(text(f"UPDATE {table} SET client_id = 1 WHERE client_id IS NULL"))
@@ -135,6 +137,7 @@ app.include_router(recurring.router, dependencies=[Depends(get_current_client)])
 app.include_router(roadmap.router, dependencies=[Depends(get_current_client)])
 app.include_router(capsules.router, dependencies=[Depends(get_current_client)])
 app.include_router(reports.router, dependencies=[Depends(get_current_client)])
+app.include_router(exchange_rates.router, dependencies=[Depends(get_current_client)])
 
 @app.get("/me")
 def get_me(current_client: models.Client = Depends(get_current_client)):

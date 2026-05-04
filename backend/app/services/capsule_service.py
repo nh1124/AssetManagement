@@ -6,7 +6,8 @@ from datetime import date
 from sqlalchemy.orm import Session
 
 from .. import models
-from .accounting_service import calculate_account_journal_balance, process_transaction
+from .accounting_service import process_transaction
+from .fx_service import calculate_account_valued_balance
 
 
 def slug(text: str) -> str:
@@ -76,7 +77,7 @@ def ensure_capsule_account(db: Session, capsule: models.Capsule) -> models.Accou
 
 def capsule_balance(db: Session, capsule: models.Capsule) -> float:
     if capsule.account:
-        return calculate_account_journal_balance(db, capsule.account)
+        return calculate_account_valued_balance(db, capsule.account)
     return capsule.current_balance or 0.0
 
 

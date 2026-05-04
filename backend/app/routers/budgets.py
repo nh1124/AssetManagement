@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
+from ..services.fx_service import convert_transaction_amount
 
 router = APIRouter(prefix="/budgets", tags=["budgets"])
 
@@ -61,12 +62,13 @@ def get_budgets(
 
     actual_map: dict[int, float] = {}
     for tx in expense_txs:
+        amount = convert_transaction_amount(db, tx, client_id=current_client.id)
         if tx.to_account_id and tx.to_account_id in account_map:
-            actual_map[tx.to_account_id] = actual_map.get(tx.to_account_id, 0.0) + tx.amount
+            actual_map[tx.to_account_id] = actual_map.get(tx.to_account_id, 0.0) + amount
             continue
         if tx.category and tx.category in account_name_to_id:
             acc_id = account_name_to_id[tx.category]
-            actual_map[acc_id] = actual_map.get(acc_id, 0.0) + tx.amount
+            actual_map[acc_id] = actual_map.get(acc_id, 0.0) + amount
 
     result = []
     for budget in budgets:

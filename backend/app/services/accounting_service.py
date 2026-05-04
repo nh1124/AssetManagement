@@ -8,6 +8,7 @@ from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
 from .. import models
+from .fx_service import calculate_account_valued_balance, convert_transaction_amount, get_client_currency
 
 # Default accounts to create on startup
 DEFAULT_ACCOUNTS = [
@@ -323,7 +324,7 @@ def get_balance_sheet(
     assets = []
     liabilities = []
     for acc in accounts:
-        balance = calculate_account_journal_balance(db, acc, as_of_date)
+        balance = calculate_account_valued_balance(db, acc, as_of_date)
         if acc.account_type in ("asset", "item"):
             assets.append({"name": acc.name, "balance": balance})
         elif acc.account_type == "liability":
@@ -335,6 +336,7 @@ def get_balance_sheet(
 
     return {
         "as_of_date": as_of_date.isoformat(),
+        "currency": get_client_currency(db, client_id),
         "assets": assets,
         "liabilities": liabilities,
         "total_assets": total_assets,
@@ -363,10 +365,11 @@ def get_profit_loss_for_range(
 
     for tx in transactions:
         cat = tx.category or "Other"
+        amount = convert_transaction_amount(db, tx, client_id=client_id)
         if tx.type == "Income":
-            income_by_category[cat] = income_by_category.get(cat, 0) + tx.amount
+            income_by_category[cat] = income_by_category.get(cat, 0) + amount
         elif tx.type in ("Expense", "CreditExpense"):
-            expense_by_category[cat] = expense_by_category.get(cat, 0) + tx.amount
+            expense_by_category[cat] = expense_by_category.get(cat, 0) + amount
 
     total_income = sum(income_by_category.values())
     total_expense = sum(expense_by_category.values())
@@ -426,12 +429,13 @@ def get_profit_loss_rollup_for_range(
     income_by_category: dict[str, float] = {}
     expense_by_category: dict[str, float] = {}
     for tx in transactions:
+        amount = convert_transaction_amount(db, tx, client_id=client_id)
         if tx.type == "Income":
             category = root_name(tx.from_account_id, tx.category or "Other")
-            income_by_category[category] = income_by_category.get(category, 0) + tx.amount
+            income_by_category[category] = income_by_category.get(category, 0) + amount
         elif tx.type in ("Expense", "CreditExpense"):
             category = root_name(tx.to_account_id, tx.category or "Other")
-            expense_by_category[category] = expense_by_category.get(category, 0) + tx.amount
+            expense_by_category[category] = expense_by_category.get(category, 0) + amount
 
     total_income = sum(income_by_category.values())
     total_expense = sum(expense_by_category.values())
@@ -508,16 +512,17 @@ def get_variance_analysis_for_range(
     actual_by_account_id: dict[int, float] = {}
     orphan_actual_by_category: dict[str, float] = {}
     for tx in transactions:
+        amount = convert_transaction_amount(db, tx, client_id=client_id)
         if tx.to_account_id and tx.to_account_id in account_name_to_id.values():
-            actual_by_account_id[tx.to_account_id] = actual_by_account_id.get(tx.to_account_id, 0.0) + tx.amount
+            actual_by_account_id[tx.to_account_id] = actual_by_account_id.get(tx.to_account_id, 0.0) + amount
             continue
 
         if tx.category and tx.category in account_name_to_id:
             acc_id = account_name_to_id[tx.category]
-            actual_by_account_id[acc_id] = actual_by_account_id.get(acc_id, 0.0) + tx.amount
+            actual_by_account_id[acc_id] = actual_by_account_id.get(acc_id, 0.0) + amount
         else:
             cat = tx.category or "Other"
-            orphan_actual_by_category[cat] = orphan_actual_by_category.get(cat, 0.0) + tx.amount
+            orphan_actual_by_category[cat] = orphan_actual_by_category.get(cat, 0.0) + amount
 
     variance_items = []
     for acc in accounts:

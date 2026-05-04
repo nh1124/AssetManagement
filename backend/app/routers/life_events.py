@@ -13,6 +13,7 @@ from ..services.goal_service import (
 )
 from ..services.capsule_service import create_capsule_for_goal, capsule_balance
 from ..services.accounting_service import process_transaction
+from ..services.fx_service import calculate_account_valued_balance, convert_transaction_amount
 
 router = APIRouter(prefix="/life-events", tags=["life_events"])
 
@@ -121,7 +122,7 @@ def get_budget_summary(
             "id": acc.id,
             "name": acc.name,
             "amount": amount,
-            "balance": acc.balance,
+            "balance": calculate_account_valued_balance(db, acc),
             "is_custom": acc.id in budget_map
         })
         total_variable_budget += amount
@@ -140,7 +141,7 @@ def get_budget_summary(
             models.Transaction.date < period_end,
         ).all()
         for tx in capsule_transactions:
-            actual_by_capsule_account[tx.to_account_id] = actual_by_capsule_account.get(tx.to_account_id, 0.0) + (tx.amount or 0.0)
+            actual_by_capsule_account[tx.to_account_id] = actual_by_capsule_account.get(tx.to_account_id, 0.0) + convert_transaction_amount(db, tx, current_client.id)
 
     sinking_funds = []
     total_capsule_plan = 0.0
@@ -423,7 +424,7 @@ def get_allocations(
             "account_id": alloc.account_id,
             "allocation_percentage": alloc.allocation_percentage,
             "account_name": alloc.account.name if alloc.account else None,
-            "account_balance": alloc.account.balance if alloc.account else 0
+            "account_balance": calculate_account_valued_balance(db, alloc.account) if alloc.account else 0
         })
     return result
 
@@ -490,7 +491,7 @@ def add_allocation(
         "account_id": db_alloc.account_id,
         "allocation_percentage": db_alloc.allocation_percentage,
         "account_name": account.name,
-        "account_balance": account.balance
+        "account_balance": calculate_account_valued_balance(db, account)
     }
 
 @router.put("/allocations/{allocation_id}")
@@ -552,7 +553,7 @@ def update_allocation(
         "account_id": db_alloc.account_id,
         "allocation_percentage": db_alloc.allocation_percentage,
         "account_name": account.name,
-        "account_balance": account.balance
+        "account_balance": calculate_account_valued_balance(db, account)
     }
 
 @router.delete("/allocations/{allocation_id}")
