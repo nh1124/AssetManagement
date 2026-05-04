@@ -275,7 +275,7 @@ export default function Journal() {
                 description: formData.description,
                 amount: parseFloat(formData.amount),
                 type: formData.type,
-                category: formData.category || toAccount?.name || '',
+                category: toAccount?.name || formData.category || '',
                 currency: formData.currency,
                 from_account_id: fromAccountId,
                 to_account_id: toAccountId,
@@ -593,7 +593,10 @@ export default function Journal() {
                                 <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">To Account</label>
                                 <select
                                     value={formData.toAccountId}
-                                    onChange={(e) => setFormData({ ...formData, toAccountId: e.target.value })}
+                                    onChange={(e) => {
+                                        const newToAccount = toAccounts.find((a) => String(a.id) === e.target.value);
+                                        setFormData({ ...formData, toAccountId: e.target.value, category: newToAccount?.name || formData.category });
+                                    }}
                                     className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
                                 >
                                     <option value="">Select...</option>

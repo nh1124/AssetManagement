@@ -298,6 +298,13 @@ def update_transaction(
         for field, value in update_data.items():
             setattr(tx, field, value)
 
+        # Keep category in sync with to_account when account changes for expense types.
+        if 'to_account_id' in update_data and 'category' not in update_data:
+            if tx.type in ("Expense", "CreditExpense") and tx.to_account_id:
+                to_acct = _get_account_by_id(db, tx.to_account_id, client_id)
+                if to_acct:
+                    tx.category = to_acct.name
+
         db.flush()
         _post_transaction_journal(db, tx)
         db.commit()
@@ -319,7 +326,10 @@ def get_balance_sheet(
     if as_of_date is None:
         as_of_date = date.today()
 
-    accounts = db.query(models.Account).filter(models.Account.client_id == client_id).all()
+    accounts = db.query(models.Account).filter(
+        models.Account.client_id == client_id,
+        models.Account.is_active == True,
+    ).all()
 
     assets = []
     liabilities = []
@@ -404,7 +414,10 @@ def get_profit_loss_rollup_for_range(
     client_id: int | None = None,
 ) -> dict:
     """Generate P/L grouped by top-level parent account for an inclusive date range."""
-    accounts = db.query(models.Account).filter(models.Account.client_id == client_id).all()
+    accounts = db.query(models.Account).filter(
+        models.Account.client_id == client_id,
+        models.Account.is_active == True,
+    ).all()
     account_by_id = {account.id: account for account in accounts}
 
     def root_name(account_id: int | None, fallback: str) -> str:
