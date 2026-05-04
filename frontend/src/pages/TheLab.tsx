@@ -511,11 +511,77 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
         const totalActual = variance?.total_actual ?? (variance?.items ?? []).reduce((sum: number, item: any) => sum + (item.actual || 0), 0);
         const totalVariance = variance?.total_variance ?? (totalBudget - totalActual);
         const categoryColor = (index: number, total: number) => `hsl(${Math.round(index * 360 / Math.max(total, 1))}, 62%, 52%)`;
+        const assetRows = [...(balanceSheet?.assets ?? [])]
+            .filter((row: any) => Math.abs(row.balance || 0) > 0.01)
+            .sort((a: any, b: any) => (b.balance || 0) - (a.balance || 0));
+        const liabilityRows = [...(balanceSheet?.liabilities ?? [])]
+            .filter((row: any) => Math.abs(row.balance || 0) > 0.01)
+            .sort((a: any, b: any) => (b.balance || 0) - (a.balance || 0));
+        const totalAssets = balanceSheet?.total_assets ?? 0;
+        const totalLiabilities = balanceSheet?.total_liabilities ?? 0;
+        const netWorth = balanceSheet?.net_worth ?? summary?.net_worth ?? 0;
+        const debtRatio = totalAssets > 0 ? totalLiabilities / totalAssets * 100 : 0;
+        const assetMixData = assetRows.length > 7
+            ? [
+                ...assetRows.slice(0, 7).map((row: any) => ({ name: row.name, value: Math.max(0, row.balance || 0) })),
+                {
+                    name: 'Others',
+                    value: assetRows.slice(7).reduce((sum: number, row: any) => sum + Math.max(0, row.balance || 0), 0),
+                },
+            ].filter((row) => row.value > 0)
+            : assetRows.map((row: any) => ({ name: row.name, value: Math.max(0, row.balance || 0) }));
+        const roleLabels: Record<string, string> = {
+            defense: 'Defense',
+            growth: 'Growth',
+            earmarked: 'Earmarked',
+            operating: 'Operating',
+            unassigned: 'Unassigned',
+        };
+        const roleColors: Record<string, string> = {
+            defense: '#22d3ee',
+            growth: '#10b981',
+            earmarked: '#a78bfa',
+            operating: '#f59e0b',
+            unassigned: '#64748b',
+        };
+        const roleTargetMap = new Map<string, number | null>(
+            (summary?.idle_money_by_role ?? []).map((row) => [row.role, row.target ?? null])
+        );
+        const roleRows = ['defense', 'growth', 'earmarked', 'operating', 'unassigned'].map((role) => {
+            const balance = accounts
+                .filter((account) => account.account_type === 'asset' && (account.role || 'unassigned') === role)
+                .reduce((sum, account) => sum + (account.balance || 0), 0);
+            return {
+                role,
+                label: roleLabels[role],
+                balance,
+                pct: totalAssets > 0 ? balance / totalAssets * 100 : 0,
+                target: roleTargetMap.get(role),
+            };
+        });
+        const assetCoverageRows = [
+            { label: 'Assets', amount: totalAssets, color: 'bg-emerald-500', pct: totalAssets > 0 ? 100 : 0 },
+            { label: 'Liabilities', amount: totalLiabilities, color: 'bg-rose-500', pct: totalAssets > 0 ? Math.min(100, totalLiabilities / totalAssets * 100) : 0 },
+            { label: 'Net Worth', amount: netWorth, color: 'bg-cyan-500', pct: totalAssets > 0 ? Math.max(0, Math.min(100, netWorth / totalAssets * 100)) : 0 },
+        ];
+        const portfolioSignals = [
+            assetRows.length === 0 ? 'Opening balances or asset transactions are not posted yet.' : null,
+            totalLiabilities > totalAssets ? 'Liabilities exceed assets. Net worth is negative.' : null,
+            (summary?.effective_cash ?? 0) < 0 ? 'Effective cash is below zero after budgets, liabilities, and capsules.' : null,
+            roleRows.find((row) => row.role === 'unassigned' && row.balance > 0)
+                ? 'Some assets are unassigned. Set roles in Registry to clarify intent.'
+                : null,
+            roleRows.find((row) => row.role === 'growth' && row.balance <= 0) && totalAssets > 0
+                ? 'No growth assets are currently identified.'
+                : null,
+            (summary?.goal_probability ?? 100) < 60 ? 'Goal probability is low. Review Goal simulation and funding.' : null,
+        ].filter(Boolean) as string[];
 
         switch (activeTab) {
             case 'overview':
                 return (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
+                    <div className="space-y-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-3">
                         <div className="bg-slate-800/50 border border-slate-700 p-3">
                             <p className="text-[10px] text-slate-500 uppercase">Net Worth</p>
                             <p className="text-lg font-mono-nums text-emerald-400">{formatOptionalCurrency(summary?.net_worth)}</p>
@@ -535,6 +601,139 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
                         <div className="bg-slate-800/50 border border-slate-700 p-3">
                             <p className="text-[10px] text-slate-500 uppercase">Logical Balance</p>
                             <p className={`text-lg font-mono-nums ${kpiTone(currencyStatus(summary?.logical_balance))}`}>{formatOptionalCurrency(summary?.logical_balance)}</p>
+                        </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_1fr] gap-4">
+                            <div className="bg-slate-800/30 border border-slate-700 p-4">
+                                <div className="flex items-center justify-between gap-3 mb-3">
+                                    <h3 className="text-xs text-slate-400 uppercase tracking-wider">Asset Mix</h3>
+                                    <span className="text-[10px] text-slate-500">{assetRows.length} holdings</span>
+                                </div>
+                                <div className="grid grid-cols-1 md:grid-cols-[280px_1fr] gap-4 items-center">
+                                    <div className="h-64">
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <PieChart>
+                                                <Pie
+                                                    data={assetMixData.length ? assetMixData : [{ name: 'No assets', value: 1 }]}
+                                                    dataKey="value"
+                                                    nameKey="name"
+                                                    innerRadius={58}
+                                                    outerRadius={92}
+                                                    paddingAngle={assetMixData.length > 1 ? 2 : 0}
+                                                >
+                                                    {(assetMixData.length ? assetMixData : [{ name: 'No assets', value: 1 }]).map((entry, index) => (
+                                                        <Cell key={`${entry.name}-${index}`} fill={assetMixData.length ? categoryColor(index, assetMixData.length) : '#334155'} />
+                                                    ))}
+                                                </Pie>
+                                                <Tooltip
+                                                    contentStyle={{ background: '#0f172a', border: '1px solid #334155', fontSize: 12 }}
+                                                    formatter={(value, name) => [assetMixData.length ? formatCurrency(Number(value ?? 0)) : '-', String(name)]}
+                                                />
+                                            </PieChart>
+                                        </ResponsiveContainer>
+                                    </div>
+                                    <div className="space-y-2">
+                                        {assetRows.slice(0, 8).map((row: any, index: number) => {
+                                            const pct = totalAssets > 0 ? (row.balance || 0) / totalAssets * 100 : 0;
+                                            return (
+                                                <div key={row.name} className="space-y-1">
+                                                    <div className="flex items-center justify-between gap-2 text-xs">
+                                                        <div className="flex items-center gap-2 min-w-0">
+                                                            <span className="h-2 w-2" style={{ background: categoryColor(index, assetRows.length) }} />
+                                                            <span className="truncate text-slate-300">{row.name}</span>
+                                                        </div>
+                                                        <span className="font-mono-nums text-slate-400 whitespace-nowrap">{formatCurrency(row.balance)}</span>
+                                                    </div>
+                                                    <div className="h-1.5 bg-slate-900 border border-slate-800">
+                                                        <div className="h-full bg-cyan-500" style={{ width: `${Math.min(100, pct)}%` }} />
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                        {assetRows.length === 0 && <p className="text-xs text-slate-500">No positive asset balances are available.</p>}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="bg-slate-800/30 border border-slate-700 p-4">
+                                <h3 className="text-xs text-slate-400 uppercase tracking-wider mb-3">Portfolio Structure</h3>
+                                <div className="space-y-4">
+                                    {assetCoverageRows.map((row) => (
+                                        <div key={row.label} className="space-y-1">
+                                            <div className="flex justify-between text-xs">
+                                                <span className="text-slate-300">{row.label}</span>
+                                                <span className="font-mono-nums text-slate-400">{formatCurrency(row.amount)}</span>
+                                            </div>
+                                            <div className="h-2 bg-slate-900 border border-slate-800">
+                                                <div className={`h-full ${row.color}`} style={{ width: `${row.pct}%` }} />
+                                            </div>
+                                        </div>
+                                    ))}
+                                    <div className="grid grid-cols-2 gap-2 pt-2">
+                                        <div className="border border-slate-800 p-2">
+                                            <p className="text-[10px] text-slate-500 uppercase">Debt Ratio</p>
+                                            <p className={`font-mono-nums ${debtRatio > 50 ? 'text-rose-400' : debtRatio > 20 ? 'text-amber-400' : 'text-emerald-300'}`}>
+                                                {debtRatio.toFixed(1)}%
+                                            </p>
+                                        </div>
+                                        <div className="border border-slate-800 p-2">
+                                            <p className="text-[10px] text-slate-500 uppercase">Goal Probability</p>
+                                            <p className={`font-mono-nums ${kpiTone(probabilityStatus(summary?.goal_probability))}`}>
+                                                {formatOptionalPercent(summary?.goal_probability)}
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 xl:grid-cols-[1.2fr_1fr] gap-4">
+                            <div className="bg-slate-800/30 border border-slate-700 p-4">
+                                <h3 className="text-xs text-slate-400 uppercase tracking-wider mb-3">Role Allocation</h3>
+                                <div className="space-y-3">
+                                    {roleRows.map((row) => (
+                                        <div key={row.role} className="grid grid-cols-[88px_1fr_auto] items-center gap-3 text-xs">
+                                            <span className="text-slate-300">{row.label}</span>
+                                            <div className="h-2 bg-slate-900 border border-slate-800">
+                                                <div className="h-full" style={{ width: `${Math.min(100, row.pct)}%`, background: roleColors[row.role] }} />
+                                            </div>
+                                            <span className="font-mono-nums text-slate-400 text-right w-32">
+                                                {formatCurrency(row.balance)} / {row.pct.toFixed(1)}%
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="bg-slate-800/30 border border-slate-700 p-4">
+                                <div className="flex items-center justify-between gap-3 mb-3">
+                                    <h3 className="text-xs text-slate-400 uppercase tracking-wider">Attention</h3>
+                                    <span className={`text-[10px] ${portfolioSignals.length ? 'text-amber-300' : 'text-emerald-300'}`}>
+                                        {portfolioSignals.length ? `${portfolioSignals.length} signals` : 'OK'}
+                                    </span>
+                                </div>
+                                <div className="space-y-2">
+                                    {portfolioSignals.length === 0 ? (
+                                        <p className="text-xs text-slate-500">No immediate portfolio structure issues detected.</p>
+                                    ) : portfolioSignals.map((signal) => (
+                                        <div key={signal} className="border border-slate-800 bg-slate-900/50 px-3 py-2 text-xs text-slate-300">
+                                            {signal}
+                                        </div>
+                                    ))}
+                                </div>
+                                {liabilityRows.length > 0 && (
+                                    <div className="mt-4 pt-3 border-t border-slate-800">
+                                        <p className="text-[10px] text-slate-500 uppercase mb-2">Largest Liabilities</p>
+                                        {liabilityRows.slice(0, 3).map((row: any) => (
+                                            <div key={row.name} className="flex justify-between text-xs">
+                                                <span className="text-slate-300">{row.name}</span>
+                                                <span className="font-mono-nums text-rose-300">{formatCurrency(row.balance)}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
                         </div>
                     </div>
                 );
