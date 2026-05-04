@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 from datetime import date
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 import numpy as np
 from .. import models
 from .fx_service import calculate_account_valued_balance
@@ -82,6 +82,68 @@ def calculate_projection(
     return balance
 
 
+def _coerce_schedule_amount(value: Any) -> float:
+    try:
+        amount = float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return max(0.0, amount)
+
+
+def _coerce_schedule_date(value: Any) -> date | None:
+    if isinstance(value, date):
+        return value
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(str(value))
+    except ValueError:
+        return None
+
+
+def monthly_equivalent_from_contribution_schedule(
+    contribution_schedule: list[dict[str, Any]] | None,
+    reference_date: date,
+    target_date: date,
+) -> float | None:
+    """Convert flexible contribution assumptions into a monthly equivalent.
+
+    Existing projection math allocates one shared savings pool across goals by
+    priority. To keep that accounting model stable, bonus and one-time plans are
+    normalized over each goal's remaining period before priority allocation.
+    """
+    if not contribution_schedule:
+        return None
+
+    horizon_years = max((target_date - reference_date).days / 365.25, 1 / 12)
+    total = 0.0
+    has_valid_item = False
+
+    for item in contribution_schedule:
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("kind")
+        amount = _coerce_schedule_amount(item.get("amount"))
+        if amount <= 0:
+            continue
+
+        if kind == "monthly":
+            total += amount * 12 * horizon_years
+            has_valid_item = True
+        elif kind == "yearly":
+            total += amount * horizon_years
+            has_valid_item = True
+        elif kind == "one_time":
+            item_date = _coerce_schedule_date(item.get("date"))
+            if item_date is None or reference_date <= item_date <= target_date:
+                total += amount
+                has_valid_item = True
+
+    if not has_valid_item:
+        return None
+    return total / horizon_years / 12
+
+
 def get_goal_simulation_context(
     db: Session,
     client_id: int,
@@ -90,6 +152,8 @@ def get_goal_simulation_context(
     inflation: float | None = None,
     monthly_savings: float | None = None,
     reference_date: date | None = None,
+    contribution_schedule: list[dict[str, Any]] | None = None,
+    allocation_mode: str = "weighted",
 ) -> dict:
     """Return the normalized simulation inputs used by goal projections."""
     config = db.query(models.SimulationConfig).filter(
@@ -108,16 +172,25 @@ def get_goal_simulation_context(
     if base_monthly_savings is None:
         base_monthly_savings = config.monthly_savings if config else 50000.0
 
+    evaluation_date = reference_date or date.today()
+    schedule_monthly = monthly_equivalent_from_contribution_schedule(
+        contribution_schedule,
+        evaluation_date,
+        event.target_date,
+    )
+    if schedule_monthly is not None:
+        base_monthly_savings = schedule_monthly
+
     life_events = db.query(models.LifeEvent).filter(
         models.LifeEvent.client_id == client_id
     ).all()
     priority_weight_map = {1: 3, 2: 2, 3: 1}
     total_weight = sum(priority_weight_map.get(item.priority, 1) for item in life_events) or 1
     weight = priority_weight_map.get(event.priority, 1)
+    allocation_ratio = weight / total_weight if allocation_mode != "direct" else 1.0
 
     current_funded, weighted_return = calculate_current_funded_and_weighted_return(event, db)
     effective_return = weighted_return if event.allocations else base_annual_return
-    evaluation_date = reference_date or date.today()
     years_remaining = max(0.0, (event.target_date - evaluation_date).days / 365.25)
 
     return {
@@ -127,7 +200,9 @@ def get_goal_simulation_context(
         "effective_return": effective_return,
         "inflation_rate": base_inflation,
         "monthly_savings": base_monthly_savings,
-        "allocated_monthly_savings": base_monthly_savings * (weight / total_weight),
+        "allocated_monthly_savings": base_monthly_savings * allocation_ratio,
+        "contribution_schedule": contribution_schedule or [],
+        "allocation_mode": allocation_mode,
         "priority_weight": weight,
         "total_priority_weight": total_weight,
         "years_remaining": years_remaining,
@@ -287,46 +362,38 @@ def determine_status(projected: float, target: float, years_remaining: float) ->
 def get_life_events_with_progress(
     db: Session, 
     client_id: int, 
-    annual_return: float = 5.0,
-    monthly_savings: float = 50000.0,
+    annual_return: float | None = None,
+    monthly_savings: float | None = None,
+    inflation: float | None = None,
     reference_date: Optional[date] = None,
+    contribution_schedule: list[dict[str, Any]] | None = None,
+    allocation_mode: str = "weighted",
 ) -> List[dict]:
     """Get all life events with calculated progress for current client."""
     life_events = db.query(models.LifeEvent).filter(
         models.LifeEvent.client_id == client_id
     ).all()
     
-    # Get simulation config for defaults
-    config = db.query(models.SimulationConfig).filter(
-        models.SimulationConfig.client_id == client_id
-    ).first()
-    
-    if config:
-        annual_return = config.annual_return or annual_return
-        monthly_savings = config.monthly_savings or monthly_savings
-
-    priority_weight_map = {1: 3, 2: 2, 3: 1}
-    total_weight = sum(priority_weight_map.get(event.priority, 1) for event in life_events)
-    if total_weight == 0:
-        total_weight = 1
-    
     evaluation_date = reference_date or date.today()
     result = []
     
     for event in life_events:
-        # Calculate years remaining
-        days_remaining = (event.target_date - evaluation_date).days
-        years_remaining = max(0, days_remaining / 365.25)
-        
-        # Calculate current funded AND weighted return from allocations
-        current_funded, weighted_return = calculate_current_funded_and_weighted_return(event, db)
-        
-        # Use weighted return if allocations exist, otherwise fallback to global
-        effective_return = weighted_return if event.allocations else annual_return
-        
-        # Calculate projected amount
-        weight = priority_weight_map.get(event.priority, 1)
-        allocated_savings = monthly_savings * (weight / total_weight)
+        context = get_goal_simulation_context(
+            db=db,
+            client_id=client_id,
+            event=event,
+            annual_return=annual_return,
+            inflation=inflation,
+            monthly_savings=monthly_savings,
+            reference_date=evaluation_date,
+            contribution_schedule=contribution_schedule,
+            allocation_mode=allocation_mode,
+        )
+        current_funded = context["current_funded"]
+        weighted_return = context["weighted_return"]
+        effective_return = context["effective_return"]
+        allocated_savings = context["allocated_monthly_savings"]
+        years_remaining = context["years_remaining"]
         
         projected = calculate_projection(
             current_funded=current_funded,
@@ -441,6 +508,7 @@ def simulate_net_worth_forward(
     annual_return: float = 5.0,
     inflation: float = 2.0,
     monthly_savings: float | None = None,
+    contribution_schedule: list[dict[str, Any]] | None = None,
 ) -> list[dict]:
     """Simulate total net worth forward as yearly P10/P50/P90 bands."""
     from .accounting_service import get_balance_sheet
@@ -451,6 +519,14 @@ def simulate_net_worth_forward(
     ).first()
     if monthly_savings is None:
         monthly_savings = config.monthly_savings if config else 50000.0
+    today = date.today()
+    schedule_monthly = monthly_equivalent_from_contribution_schedule(
+        contribution_schedule,
+        today,
+        today.replace(year=today.year + years),
+    )
+    if schedule_monthly is not None:
+        monthly_savings = schedule_monthly
     volatility = config.volatility if config else 15.0
 
     bs = get_balance_sheet(db, client_id=client_id)
@@ -458,7 +534,7 @@ def simulate_net_worth_forward(
     annual_contribution = (monthly_savings or 0.0) * 12
     real_return = (annual_return - inflation) / 100.0
     return_std = max(volatility or 0.0, 0.0) / 100.0
-    current_year = date.today().year
+    current_year = today.year
 
     n_simulations = 1200
     rng = np.random.default_rng(42)
@@ -526,6 +602,8 @@ def get_roadmap_projection(
     annual_return: float = 5.0,
     inflation: float = 2.0,
     monthly_savings: float | None = None,
+    contribution_schedule: list[dict[str, Any]] | None = None,
+    allocation_mode: str = "weighted",
 ) -> dict:
     """Combine historical net worth, forward simulation, goals, and milestones."""
     from .analysis_service import get_net_worth_history
@@ -535,6 +613,9 @@ def get_roadmap_projection(
         client_id=client_id,
         annual_return=annual_return,
         monthly_savings=monthly_savings if monthly_savings is not None else 50000.0,
+        inflation=inflation,
+        contribution_schedule=contribution_schedule,
+        allocation_mode=allocation_mode,
     )
     progression = calculate_roadmap_progression(events)
     milestones = db.query(models.Milestone).filter(
@@ -551,6 +632,7 @@ def get_roadmap_projection(
             annual_return=annual_return,
             inflation=inflation,
             monthly_savings=monthly_savings,
+            contribution_schedule=contribution_schedule,
         ),
         "liability_demand": aggregate_life_event_demand_by_year(
             db=db,
@@ -576,6 +658,7 @@ def get_roadmap_projection(
             "annual_return": annual_return,
             "inflation": inflation,
             "monthly_savings": monthly_savings,
+            "contribution_schedule": contribution_schedule or [],
         },
     }
 
@@ -583,15 +666,23 @@ def get_roadmap_projection(
 def get_strategy_dashboard(
     db: Session, 
     client_id: int,
-    annual_return: float = 5.0,
-    inflation: float = 2.0,
-    monthly_savings: float = 50000.0
+    annual_return: float | None = 5.0,
+    inflation: float | None = 2.0,
+    monthly_savings: float | None = 50000.0,
+    contribution_schedule: list[dict[str, Any]] | None = None,
+    allocation_mode: str = "weighted",
 ) -> dict:
     """Get comprehensive strategy dashboard with events and unallocated assets."""
     
     # Get events with progress
     events = get_life_events_with_progress(
-        db, client_id, annual_return, monthly_savings
+        db,
+        client_id,
+        annual_return=annual_return,
+        monthly_savings=monthly_savings,
+        inflation=inflation,
+        contribution_schedule=contribution_schedule,
+        allocation_mode=allocation_mode,
     )
     
     # Get all asset accounts
@@ -640,7 +731,9 @@ def get_strategy_dashboard(
         "simulation_params": {
             "annual_return": annual_return,
             "inflation": inflation,
-            "monthly_savings": monthly_savings
+            "monthly_savings": monthly_savings,
+            "contribution_schedule": contribution_schedule or [],
+            "allocation_mode": allocation_mode,
         }
     }
 

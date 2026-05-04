@@ -4,6 +4,7 @@ import type {
     AccountRole,
     AccountTreeNode,
     AnalysisSummary,
+    ContributionScheduleItem,
     ExchangeRate,
     ExchangeRateAutoUpdateResult,
     MonthlyAction,
@@ -312,9 +313,22 @@ export const getGoalProbability = async () => {
     return response.data;
 };
 
-export const getStrategyDashboard = async (annual_return: number = 5.0, inflation: number = 2.0, monthly_savings: number = 50000) => {
+const appendContributionSchedule = (params: Record<string, unknown>, contribution_schedule?: ContributionScheduleItem[]) => {
+    if (contribution_schedule?.length) {
+        params.contribution_schedule = JSON.stringify(contribution_schedule);
+    }
+    return params;
+};
+
+export const getStrategyDashboard = async (
+    annual_return: number = 5.0,
+    inflation: number = 2.0,
+    monthly_savings: number = 50000,
+    contribution_schedule?: ContributionScheduleItem[],
+    allocation_mode: 'weighted' | 'direct' = 'weighted',
+) => {
     const response = await api.get('/life-events/dashboard', {
-        params: { annual_return, inflation, monthly_savings }
+        params: appendContributionSchedule({ annual_return, inflation, monthly_savings, allocation_mode }, contribution_schedule)
     });
     return response.data;
 };
@@ -400,9 +414,25 @@ export const saveSimulationConfig = async (config: any) => {
     return response.data;
 };
 
-export const runMonteCarloSimulation = async (lifeEventId: number, nSimulations: number = 1000): Promise<MonteCarloResult> => {
+export const runMonteCarloSimulation = async (
+    lifeEventId: number,
+    nSimulations: number = 1000,
+    params: {
+        annual_return?: number;
+        inflation?: number;
+        monthly_savings?: number;
+        contribution_schedule?: ContributionScheduleItem[];
+        allocation_mode?: 'weighted' | 'direct';
+    } = {},
+): Promise<MonteCarloResult> => {
     const response = await api.post(`/simulation/monte-carlo/${lifeEventId}`, null, {
-        params: { n_simulations: nSimulations }
+        params: appendContributionSchedule({
+            n_simulations: nSimulations,
+            annual_return: params.annual_return,
+            inflation: params.inflation,
+            monthly_savings: params.monthly_savings,
+            allocation_mode: params.allocation_mode ?? 'direct',
+        }, params.contribution_schedule)
     });
     return response.data;
 };
@@ -567,8 +597,13 @@ export const getRoadmapProjection = async (params: {
     annual_return?: number;
     inflation?: number;
     monthly_savings?: number;
+    contribution_schedule?: ContributionScheduleItem[];
+    allocation_mode?: 'weighted' | 'direct';
 } = {}): Promise<RoadmapProjection> => {
-    const response = await api.get('/roadmap/projection', { params });
+    const { contribution_schedule, ...rest } = params;
+    const response = await api.get('/roadmap/projection', {
+        params: appendContributionSchedule(rest, contribution_schedule),
+    });
     return response.data;
 };
 

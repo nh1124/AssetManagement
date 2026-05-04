@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+import json
 
 from .. import models, schemas
 from ..database import get_db
@@ -11,6 +12,18 @@ from ..services.simulation_service import (
 )
 
 router = APIRouter(prefix="/simulation", tags=["simulation"])
+
+
+def _parse_contribution_schedule(raw: str | None) -> list[dict]:
+    if not raw:
+        return []
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Invalid contribution_schedule JSON") from exc
+    if not isinstance(value, list):
+        raise HTTPException(status_code=400, detail="contribution_schedule must be a list")
+    return [item for item in value if isinstance(item, dict)]
 
 
 @router.get("/config", response_model=schemas.SimulationConfig)
@@ -71,6 +84,11 @@ def update_simulation_config(
 def monte_carlo_simulation(
     life_event_id: int,
     n_simulations: int = Query(default=1000, ge=100, le=10000),
+    annual_return: float | None = Query(default=None),
+    inflation: float | None = Query(default=None),
+    monthly_savings: float | None = Query(default=None, ge=0),
+    contribution_schedule: str | None = Query(default=None),
+    allocation_mode: str = Query(default="direct", pattern="^(weighted|direct)$"),
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
@@ -87,7 +105,16 @@ def monte_carlo_simulation(
     ).first()
 
     volatility = config.volatility if config else 15.0
-    context = get_goal_simulation_context(db, current_client.id, event)
+    context = get_goal_simulation_context(
+        db,
+        current_client.id,
+        event,
+        annual_return=annual_return,
+        inflation=inflation,
+        monthly_savings=monthly_savings,
+        contribution_schedule=_parse_contribution_schedule(contribution_schedule),
+        allocation_mode=allocation_mode,
+    )
 
     mc_result = run_monte_carlo(
         current_funded=context["current_funded"],

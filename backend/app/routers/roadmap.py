@@ -1,12 +1,25 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import List
+import json
 from .. import models, schemas, database, dependencies
 from ..services.milestone_service import (
     apply_milestones_from_simulation,
     preview_milestones_from_simulation,
     reset_milestones_from_annual_plan,
 )
+
+
+def _parse_contribution_schedule(raw: str | None) -> list[dict]:
+    if not raw:
+        return []
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Invalid contribution_schedule JSON") from exc
+    if not isinstance(value, list):
+        raise HTTPException(status_code=400, detail="contribution_schedule must be a list")
+    return [item for item in value if isinstance(item, dict)]
 from ..services.strategy_service import get_roadmap_projection
 
 router = APIRouter(
@@ -22,6 +35,8 @@ def read_roadmap_projection(
     annual_return: float = Query(default=5.0),
     inflation: float = Query(default=2.0),
     monthly_savings: float | None = Query(default=None, ge=0),
+    contribution_schedule: str | None = Query(default=None),
+    allocation_mode: str = Query(default="weighted", pattern="^(weighted|direct)$"),
     db: Session = Depends(database.get_db),
     current_client: models.Client = Depends(dependencies.get_current_client),
 ):
@@ -32,6 +47,8 @@ def read_roadmap_projection(
         annual_return=annual_return,
         inflation=inflation,
         monthly_savings=monthly_savings,
+        contribution_schedule=_parse_contribution_schedule(contribution_schedule),
+        allocation_mode=allocation_mode,
     )
 
 @router.get("/milestones", response_model=List[schemas.Milestone])
@@ -102,6 +119,8 @@ def preview_life_event_milestones_from_simulation(
             annual_return=payload.annual_return,
             inflation=payload.inflation,
             monthly_savings=payload.monthly_savings,
+            contribution_schedule=[item.model_dump() for item in payload.contribution_schedule],
+            allocation_mode=payload.allocation_mode,
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -126,6 +145,8 @@ def create_life_event_milestones_from_simulation(
             annual_return=payload.annual_return,
             inflation=payload.inflation,
             monthly_savings=payload.monthly_savings,
+            contribution_schedule=[item.model_dump() for item in payload.contribution_schedule],
+            allocation_mode=payload.allocation_mode,
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

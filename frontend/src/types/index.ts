@@ -269,6 +269,15 @@ export interface Milestone {
 export type MilestoneSimulationBasis = 'annual_plan' | 'deterministic' | 'p10' | 'p50' | 'p90';
 export type MilestoneSimulationInterval = 'annual' | 'semiannual' | 'quarterly' | 'target_only';
 export type MilestoneSimulationMode = 'add' | 'replace';
+export type ContributionScheduleKind = 'monthly' | 'yearly' | 'one_time';
+
+export interface ContributionScheduleItem {
+    kind: ContributionScheduleKind;
+    amount: number;
+    month?: number | null;
+    date?: string | null;
+    note?: string | null;
+}
 
 export interface MilestoneSimulationRequest {
     basis: MilestoneSimulationBasis;
@@ -278,6 +287,8 @@ export interface MilestoneSimulationRequest {
     annual_return?: number;
     inflation?: number;
     monthly_savings?: number;
+    contribution_schedule?: ContributionScheduleItem[];
+    allocation_mode?: 'weighted' | 'direct';
 }
 
 export interface MilestoneSimulationPreview {

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Any
 
 from dateutil.relativedelta import relativedelta
 from sqlalchemy.orm import Session
@@ -56,14 +57,32 @@ def _simulation_value_at(
     return float(result["percentiles"][basis])
 
 
-def build_default_milestone_rows(db: Session, client_id: int, life_event_id: int) -> list[dict]:
+def build_default_milestone_rows(
+    db: Session,
+    client_id: int,
+    life_event_id: int,
+    *,
+    annual_return: float | None = None,
+    inflation: float | None = None,
+    monthly_savings: float | None = None,
+    contribution_schedule: list[dict[str, Any]] | None = None,
+    allocation_mode: str = "weighted",
+) -> list[dict]:
     """Build editable milestone defaults from the calculated annual roadmap.
 
     Annual Roadmap remains useful as a baseline calculator, but persisted milestones
     are the user-facing roadmap. The final target date is always included so the
     user has an explicit end-state milestone.
     """
-    events = get_life_events_with_progress(db, client_id=client_id)
+    events = get_life_events_with_progress(
+        db,
+        client_id=client_id,
+        annual_return=annual_return,
+        inflation=inflation,
+        monthly_savings=monthly_savings,
+        contribution_schedule=contribution_schedule,
+        allocation_mode=allocation_mode,
+    )
     event = next((item for item in events if item["id"] == life_event_id), None)
     if not event:
         return []
@@ -143,6 +162,8 @@ def preview_milestones_from_simulation(
     annual_return: float | None = None,
     inflation: float | None = None,
     monthly_savings: float | None = None,
+    contribution_schedule: list[dict[str, Any]] | None = None,
+    allocation_mode: str = "weighted",
 ) -> dict:
     """Build milestone candidates from the same normalized inputs as goal simulation."""
     if basis == "annual_plan":
@@ -156,7 +177,16 @@ def preview_milestones_from_simulation(
             "interval": interval,
             "mode": mode,
             "existing_count": existing_count,
-            "items": build_default_milestone_rows(db, client_id, life_event_id),
+            "items": build_default_milestone_rows(
+                db,
+                client_id,
+                life_event_id,
+                annual_return=annual_return,
+                inflation=inflation,
+                monthly_savings=monthly_savings,
+                contribution_schedule=contribution_schedule,
+                allocation_mode=allocation_mode,
+            ),
         }
 
     event = _get_event(db, client_id, life_event_id)
@@ -171,6 +201,8 @@ def preview_milestones_from_simulation(
         annual_return=annual_return,
         inflation=inflation,
         monthly_savings=monthly_savings,
+        contribution_schedule=contribution_schedule,
+        allocation_mode=allocation_mode,
     )
 
     today = context["reference_date"]
@@ -210,6 +242,8 @@ def preview_milestones_from_simulation(
                     "volatility": volatility,
                     "monthly_savings": context["monthly_savings"],
                     "allocated_monthly_savings": context["allocated_monthly_savings"],
+                    "contribution_schedule": context["contribution_schedule"],
+                    "allocation_mode": context["allocation_mode"],
                     "current_funded": context["current_funded"],
                     "generated_at": generated_at,
                 },

@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from datetime import date, datetime
+import json
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from .. import models, schemas
@@ -16,6 +17,18 @@ from ..services.accounting_service import process_transaction
 from ..services.fx_service import calculate_account_valued_balance, convert_transaction_amount
 
 router = APIRouter(prefix="/life-events", tags=["life_events"])
+
+
+def _parse_contribution_schedule(raw: Optional[str]) -> list[dict]:
+    if not raw:
+        return []
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Invalid contribution_schedule JSON") from exc
+    if not isinstance(value, list):
+        raise HTTPException(status_code=400, detail="contribution_schedule must be a list")
+    return [item for item in value if isinstance(item, dict)]
 
 @router.get("/")
 def get_life_events(
@@ -46,6 +59,8 @@ def get_dashboard(
     annual_return: float = Query(5.0, description="Annual return rate (%)"),
     inflation: float = Query(2.0, description="Inflation rate (%)"),
     monthly_savings: float = Query(50000.0, description="Monthly savings amount"),
+    contribution_schedule: Optional[str] = Query(None, description="JSON contribution schedule"),
+    allocation_mode: str = Query("weighted", pattern="^(weighted|direct)$"),
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
@@ -55,7 +70,9 @@ def get_dashboard(
         client_id=current_client.id,
         annual_return=annual_return,
         inflation=inflation,
-        monthly_savings=monthly_savings
+        monthly_savings=monthly_savings,
+        contribution_schedule=_parse_contribution_schedule(contribution_schedule),
+        allocation_mode=allocation_mode,
     )
 
 @router.get("/budget-summary")

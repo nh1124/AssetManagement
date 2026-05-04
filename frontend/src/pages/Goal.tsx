@@ -28,6 +28,8 @@ import { formatCompactCurrency, formatCurrency as formatCurrencyWithSetting } fr
 import { PRIORITY_COLORS, priorityLabel } from '../utils/priority';
 import type {
     Account,
+    ContributionScheduleItem,
+    ContributionScheduleKind,
     GoalAllocation,
     Capsule,
     LifeEvent,
@@ -68,6 +70,7 @@ type GoalTab = 'summary' | 'simulation' | 'milestone' | 'assetAllocation';
 type GoalScope = 'all' | 'goal';
 type ProjectionView = 'projection' | 'monteCarlo' | 'combined';
 type AllRoadmapView = 'roadmap' | 'riskBand' | 'combined';
+type ContributionDraft = ContributionScheduleItem & { id: string };
 
 const GOAL_TABS: Array<{ id: GoalTab; label: string }> = [
     { id: 'summary', label: 'Summary' },
@@ -116,6 +119,7 @@ export default function Goal() {
     const [allocationEdits, setAllocationEdits] = useState<Record<number, string>>({});
     const [milestoneForm, setMilestoneForm] = useState({ date: '', target_amount: '', note: '' });
     const [simParams, setSimParams] = useState({ annual_return: 5, inflation: 2, monthly_savings: 50000 });
+    const [extraContributions, setExtraContributions] = useState<ContributionDraft[]>([]);
     const [monteCarlo, setMonteCarlo] = useState<MonteCarloResult | null>(null);
     const [roadmapProjection, setRoadmapProjection] = useState<RoadmapProjection | null>(null);
     const [milestonePlan, setMilestonePlan] = useState<{
@@ -140,6 +144,31 @@ export default function Goal() {
     } | null>(null);
 
     const selectedGoalId = selectedGoal?.id;
+    const simulationContributionSchedule = useMemo<ContributionScheduleItem[]>(() => {
+        const schedule: ContributionScheduleItem[] = [
+            { kind: 'monthly', amount: Math.max(0, Number(simParams.monthly_savings) || 0), note: 'base monthly savings' },
+        ];
+        extraContributions.forEach((item) => {
+            const amount = Math.max(0, Number(item.amount) || 0);
+            if (amount <= 0) return;
+            schedule.push({
+                kind: item.kind,
+                amount,
+                month: item.kind === 'yearly' ? item.month ?? 6 : null,
+                date: item.kind === 'one_time' ? item.date || null : null,
+                note: item.note || null,
+            });
+        });
+        return schedule;
+    }, [extraContributions, simParams.monthly_savings]);
+
+    const simulationContextParams = useMemo(() => ({
+        annual_return: simParams.annual_return,
+        inflation: simParams.inflation,
+        monthly_savings: simParams.monthly_savings,
+        contribution_schedule: simulationContributionSchedule,
+        allocation_mode: 'direct' as const,
+    }), [simParams.annual_return, simParams.inflation, simParams.monthly_savings, simulationContributionSchedule]);
 
     const fetchGoalMilestones = async (goalId: number) => {
         setMilestones(await getMilestones(goalId));
@@ -149,24 +178,37 @@ export default function Goal() {
         setMilestones(await getMilestones());
     };
 
-    const fetchGoalWorkspace = async (preferredGoalId = selectedGoalId) => {
+    const fetchGoalWorkspace = async (preferredGoalId = selectedGoalId, scope: GoalScope = selectedScope) => {
         setLoading(true);
         try {
-            const dashboardData = await getGoalDashboard(
+            const baseDashboardData = await getGoalDashboard(
                 simParams.annual_return,
                 simParams.inflation,
                 simParams.monthly_savings,
+                simulationContributionSchedule,
+                'weighted',
             );
+            const preferredId = preferredGoalId ?? baseDashboardData.events[0]?.id;
+            const directDashboardData = scope === 'goal' && preferredId
+                ? await getGoalDashboard(
+                    simParams.annual_return,
+                    simParams.inflation,
+                    simParams.monthly_savings,
+                    simulationContributionSchedule,
+                    'direct',
+                )
+                : null;
             const capsuleData = await getCapsules();
-            setDashboard(dashboardData);
+            setDashboard(baseDashboardData);
             setCapsules(capsuleData);
 
-            const nextSelected = preferredGoalId
-                ? dashboardData.events.find((goal: LifeEvent) => goal.id === preferredGoalId)
-                : dashboardData.events[0];
+            const selectedEvents = directDashboardData?.events ?? baseDashboardData.events;
+            const nextSelected = preferredId
+                ? selectedEvents.find((goal: LifeEvent) => goal.id === preferredId)
+                : selectedEvents[0];
             setSelectedGoal(nextSelected ?? null);
             setAllocationEdits({});
-            if (selectedScope === 'all') {
+            if (scope === 'all') {
                 await fetchAllMilestones();
             } else if (nextSelected) {
                 await fetchGoalMilestones(nextSelected.id);
@@ -184,7 +226,7 @@ export default function Goal() {
     const fetchMonteCarlo = async (goalId: number) => {
         setSimLoading(true);
         try {
-            setMonteCarlo(await runMonteCarloSimulation(goalId, 1000));
+            setMonteCarlo(await runMonteCarloSimulation(goalId, 1000, simulationContextParams));
         } catch (error) {
             console.error('Failed to run Monte Carlo:', error);
             setMonteCarlo(null);
@@ -202,6 +244,8 @@ export default function Goal() {
                 annual_return: simParams.annual_return,
                 inflation: simParams.inflation,
                 monthly_savings: simParams.monthly_savings,
+                contribution_schedule: simulationContributionSchedule,
+                allocation_mode: selectedScope === 'goal' ? 'direct' : 'weighted',
             }));
         } catch (error) {
             console.error('Failed to load roadmap projection:', error);
@@ -219,15 +263,15 @@ export default function Goal() {
     useEffect(() => {
         if (activeGoalTab !== 'simulation') return;
         const timer = window.setTimeout(() => {
-            fetchGoalWorkspace(selectedGoalId);
+            fetchGoalWorkspace(selectedGoalId, selectedScope);
             fetchRoadmapProjection();
         }, 300);
         return () => window.clearTimeout(timer);
-    }, [activeGoalTab, simParams.annual_return, simParams.inflation, simParams.monthly_savings]);
+    }, [activeGoalTab, selectedScope, simParams.annual_return, simParams.inflation, simParams.monthly_savings, simulationContributionSchedule]);
 
     useEffect(() => {
         if (activeGoalTab === 'simulation' && selectedScope === 'goal' && selectedGoal?.id) fetchMonteCarlo(selectedGoal.id);
-    }, [activeGoalTab, selectedScope, selectedGoal?.id]);
+    }, [activeGoalTab, selectedScope, selectedGoal?.id, simulationContextParams]);
 
     useEffect(() => {
         if (selectedScope !== 'goal' || activeGoalTab !== 'simulation' || !selectedGoal?.id) {
@@ -258,6 +302,7 @@ export default function Goal() {
         simParams.annual_return,
         simParams.inflation,
         simParams.monthly_savings,
+        simulationContributionSchedule,
         milestonePlan.basis,
         milestonePlan.interval,
         milestonePlan.mode,
@@ -576,6 +621,8 @@ export default function Goal() {
         annual_return: simParams.annual_return,
         inflation: simParams.inflation,
         monthly_savings: simParams.monthly_savings,
+        contribution_schedule: simulationContributionSchedule,
+        allocation_mode: selectedScope === 'goal' ? 'direct' as const : 'weighted' as const,
     });
 
     const previewSimulationMilestones = async () => {
@@ -608,6 +655,46 @@ export default function Goal() {
         }
     };
 
+    const addContribution = (kind: ContributionScheduleKind) => {
+        setExtraContributions((items) => [
+            ...items,
+            {
+                id: `${kind}-${Date.now()}`,
+                kind,
+                amount: 0,
+                month: kind === 'yearly' ? 6 : null,
+                date: kind === 'one_time' ? new Date().toISOString().slice(0, 10) : null,
+                note: kind === 'yearly' ? 'bonus' : 'one-time',
+            },
+        ]);
+    };
+
+    const updateContribution = (id: string, patch: Partial<ContributionDraft>) => {
+        setExtraContributions((items) => items.map((item) => item.id === id ? { ...item, ...patch } : item));
+    };
+
+    const removeContribution = (id: string) => {
+        setExtraContributions((items) => items.filter((item) => item.id !== id));
+    };
+
+    const monthlyEquivalentForSelectedGoal = useMemo(() => {
+        if (!selectedGoal) return simParams.monthly_savings;
+        const targetDate = new Date(`${selectedGoal.target_date}T00:00:00`);
+        const now = new Date();
+        const horizonYears = Math.max((targetDate.getTime() - now.getTime()) / (365.25 * 24 * 60 * 60 * 1000), 1 / 12);
+        const total = simulationContributionSchedule.reduce((sum, item) => {
+            if (item.kind === 'monthly') return sum + item.amount * 12 * horizonYears;
+            if (item.kind === 'yearly') return sum + item.amount * horizonYears;
+            if (item.kind === 'one_time') {
+                if (!item.date) return sum + item.amount;
+                const itemDate = new Date(`${item.date}T00:00:00`);
+                return itemDate >= now && itemDate <= targetDate ? sum + item.amount : sum;
+            }
+            return sum;
+        }, 0);
+        return total / horizonYears / 12;
+    }, [selectedGoal, simParams.monthly_savings, simulationContributionSchedule]);
+
     const renderMilestonePlan = () => (
         <div className="bg-slate-800/30 border border-slate-700 p-4">
             <div className="flex flex-col gap-3 mb-3">
@@ -624,7 +711,7 @@ export default function Goal() {
                     </div>
                 </div>
                 <p className="text-[10px] text-slate-500">
-                    Using current simulation: Return {simParams.annual_return}%, Inflation {simParams.inflation}%, Monthly Savings {formatCurrency(simParams.monthly_savings)}
+                    Using current simulation: Return {simParams.annual_return}%, Inflation {simParams.inflation}%, Contribution Plan {formatCurrency(monthlyEquivalentForSelectedGoal)} / mo equivalent
                 </p>
             </div>
             <div className="grid grid-cols-1 gap-2 mb-3">
@@ -676,7 +763,7 @@ export default function Goal() {
 
     const refreshSimulation = async () => {
         await Promise.all([
-            fetchGoalWorkspace(selectedGoal?.id),
+            fetchGoalWorkspace(selectedGoal?.id, selectedScope),
             fetchRoadmapProjection(),
         ]);
         if (selectedScope === 'goal' && selectedGoal?.id) await fetchMonteCarlo(selectedGoal.id);
@@ -885,6 +972,65 @@ export default function Goal() {
                                 Monthly Savings
                                 <input type="number" step="10000" value={simParams.monthly_savings} onChange={(event) => setSimParams({ ...simParams, monthly_savings: Number(event.target.value) })} className="mt-1 w-full bg-slate-900 border border-slate-700 px-2 py-2 text-xs font-mono-nums" />
                             </label>
+                            <div className="border-t border-slate-800 pt-3 space-y-2">
+                                <div className="flex items-center justify-between gap-2">
+                                    <div>
+                                        <p className="text-[10px] uppercase tracking-wider text-slate-500">Contribution Plan</p>
+                                        <p className="text-[10px] text-slate-600">Equivalent: {formatCurrency(monthlyEquivalentForSelectedGoal)} / mo</p>
+                                    </div>
+                                    <div className="flex border border-slate-700">
+                                        <button onClick={() => addContribution('yearly')} className="px-2 py-1 text-[10px] text-slate-300 hover:bg-slate-800" title="Add yearly bonus contribution"><Plus size={11} /></button>
+                                        <button onClick={() => addContribution('one_time')} className="px-2 py-1 text-[10px] text-slate-300 hover:bg-slate-800 border-l border-slate-700" title="Add one-time contribution"><Calendar size={11} /></button>
+                                    </div>
+                                </div>
+                                {extraContributions.map((item) => (
+                                    <div key={item.id} className="grid grid-cols-[82px_1fr_32px] gap-2 items-center">
+                                        <select
+                                            value={item.kind}
+                                            onChange={(event) => updateContribution(item.id, {
+                                                kind: event.target.value as ContributionScheduleKind,
+                                                month: event.target.value === 'yearly' ? item.month ?? 6 : null,
+                                                date: event.target.value === 'one_time' ? item.date || new Date().toISOString().slice(0, 10) : null,
+                                            })}
+                                            className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-[10px]"
+                                        >
+                                            <option value="yearly">Bonus</option>
+                                            <option value="one_time">One-time</option>
+                                        </select>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <input
+                                                type="number"
+                                                step="10000"
+                                                value={item.amount}
+                                                onChange={(event) => updateContribution(item.id, { amount: Number(event.target.value) })}
+                                                className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-[10px] font-mono-nums"
+                                                placeholder="Amount"
+                                            />
+                                            {item.kind === 'yearly' ? (
+                                                <select
+                                                    value={item.month ?? 6}
+                                                    onChange={(event) => updateContribution(item.id, { month: Number(event.target.value) })}
+                                                    className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-[10px]"
+                                                >
+                                                    {Array.from({ length: 12 }, (_, index) => index + 1).map((month) => (
+                                                        <option key={month} value={month}>{month}月</option>
+                                                    ))}
+                                                </select>
+                                            ) : (
+                                                <input
+                                                    type="date"
+                                                    value={item.date || ''}
+                                                    onChange={(event) => updateContribution(item.id, { date: event.target.value })}
+                                                    className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-[10px]"
+                                                />
+                                            )}
+                                        </div>
+                                        <button onClick={() => removeContribution(item.id)} className="h-full border border-slate-700 text-slate-500 hover:text-rose-300 hover:border-rose-800" title="Remove contribution">
+                                            <Trash2 size={12} className="mx-auto" />
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
                         </div>
                     </div>
 
@@ -1221,6 +1367,7 @@ export default function Goal() {
                                 setSelectedScope('all');
                                 setActiveGoalTab('simulation');
                                 setMilestonePreview(null);
+                                fetchGoalWorkspace(undefined, 'all');
                                 fetchAllMilestones();
                                 fetchRoadmapProjection();
                             }}
@@ -1248,6 +1395,7 @@ export default function Goal() {
                                         setSelectedGoal(goal);
                                         setActiveGoalTab('summary');
                                         setMilestonePreview(null);
+                                        fetchGoalWorkspace(goal.id, 'goal');
                                         fetchGoalMilestones(goal.id);
                                     }}
                                     className={`w-full text-left border px-3 py-3 transition-colors ${selectedScope === 'goal' && selectedGoal?.id === goal.id ? 'border-cyan-700 bg-cyan-950/20' : 'border-slate-800 bg-slate-800/20 hover:bg-slate-800/50'}`}

@@ -420,6 +420,14 @@ class CapsuleRule(CapsuleRuleBase):
         from_attributes = True
 
 
+class ContributionScheduleItem(BaseModel):
+    kind: Literal["monthly", "yearly", "one_time"] = "monthly"
+    amount: float = Field(ge=0)
+    month: Optional[int] = Field(default=None, ge=1, le=12)
+    date: Optional[DateType] = None
+    note: Optional[str] = None
+
+
 class MilestoneSimulationRequest(BaseModel):
     basis: Literal["annual_plan", "deterministic", "p10", "p50", "p90"] = "p50"
     interval: Literal["annual", "semiannual", "quarterly", "target_only"] = "annual"
@@ -428,6 +436,8 @@ class MilestoneSimulationRequest(BaseModel):
     annual_return: Optional[float] = None
     inflation: Optional[float] = None
     monthly_savings: Optional[float] = None
+    contribution_schedule: list[ContributionScheduleItem] = Field(default_factory=list)
+    allocation_mode: Literal["weighted", "direct"] = "weighted"
 
 
 class MilestoneSimulationPreview(BaseModel):
