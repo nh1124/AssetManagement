@@ -326,9 +326,10 @@ export const getStrategyDashboard = async (
     monthly_savings: number = 50000,
     contribution_schedule?: ContributionScheduleItem[],
     allocation_mode: 'weighted' | 'direct' = 'weighted',
+    roadmap_interval: 'auto' | 'monthly' | 'quarterly' | 'annual' = 'auto',
 ) => {
     const response = await api.get('/life-events/dashboard', {
-        params: appendContributionSchedule({ annual_return, inflation, monthly_savings, allocation_mode }, contribution_schedule)
+        params: appendContributionSchedule({ annual_return, inflation, monthly_savings, allocation_mode, roadmap_interval }, contribution_schedule)
     });
     return response.data;
 };

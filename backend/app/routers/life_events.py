@@ -61,18 +61,20 @@ def get_dashboard(
     monthly_savings: float = Query(50000.0, description="Monthly savings amount"),
     contribution_schedule: Optional[str] = Query(None, description="JSON contribution schedule"),
     allocation_mode: str = Query("weighted", pattern="^(weighted|direct)$"),
+    roadmap_interval: str = Query("auto", description="Roadmap granularity: auto|monthly|quarterly|annual"),
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
     """Get comprehensive strategy dashboard with events, projections, and unallocated assets."""
     return get_strategy_dashboard(
-        db, 
+        db,
         client_id=current_client.id,
         annual_return=annual_return,
         inflation=inflation,
         monthly_savings=monthly_savings,
         contribution_schedule=_parse_contribution_schedule(contribution_schedule),
         allocation_mode=allocation_mode,
+        roadmap_interval=roadmap_interval,
     )
 
 @router.get("/budget-summary")

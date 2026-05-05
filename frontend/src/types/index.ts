@@ -54,6 +54,7 @@ export interface ExchangeRateAutoUpdateResult {
 
 export interface RoadmapEntry {
     year: number;
+    label?: string;
     start_balance: number;
     contribution: number;
     investment_gain: number;

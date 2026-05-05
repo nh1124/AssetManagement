@@ -38,6 +38,7 @@ import type {
     MilestoneSimulationMode,
     MilestoneSimulationPreview,
     MonteCarloResult,
+    RoadmapEntry,
     RoadmapProjection,
 } from '../types';
 
@@ -115,8 +116,12 @@ export default function Goal() {
     const [holdingForm, setHoldingForm] = useState({ account_id: '', held_amount: '', note: '' });
     const [holdingEdits, setHoldingEdits] = useState<Record<number, string>>({});
     const [milestoneForm, setMilestoneForm] = useState({ date: '', target_amount: '', note: '' });
-    const [simParams, setSimParams] = useState({ annual_return: 5, inflation: 2, monthly_savings: 50000 });
-    const [extraContributions, setExtraContributions] = useState<ContributionDraft[]>([]);
+    const [simParams, setSimParams] = useState({ annual_return: 5, inflation: 2 });
+    const [contributions, setContributions] = useState<ContributionDraft[]>([
+        { id: 'base-monthly', kind: 'monthly', amount: 50000, note: '' },
+    ]);
+    const [roadmapInterval, setRoadmapInterval] = useState<'auto' | 'monthly' | 'quarterly' | 'annual'>('auto');
+    const [roadmapTableEntries, setRoadmapTableEntries] = useState<RoadmapEntry[]>([]);
     const [monteCarlo, setMonteCarlo] = useState<MonteCarloResult | null>(null);
     const [roadmapProjection, setRoadmapProjection] = useState<RoadmapProjection | null>(null);
     const [milestonePlan, setMilestonePlan] = useState<{
@@ -140,31 +145,50 @@ export default function Goal() {
     } | null>(null);
 
     const selectedGoalId = selectedGoal?.id;
-    const simulationContributionSchedule = useMemo<ContributionScheduleItem[]>(() => {
-        const schedule: ContributionScheduleItem[] = [
-            { kind: 'monthly', amount: Math.max(0, Number(simParams.monthly_savings) || 0), note: 'base monthly savings' },
-        ];
-        extraContributions.forEach((item) => {
-            const amount = Math.max(0, Number(item.amount) || 0);
-            if (amount <= 0) return;
-            schedule.push({
+
+    const simulationContributionSchedule = useMemo<ContributionScheduleItem[]>(() =>
+        contributions
+            .filter((item) => Number(item.amount) > 0)
+            .map((item) => ({
                 kind: item.kind,
-                amount,
-                month: item.kind === 'yearly' ? item.month ?? 6 : null,
-                date: item.kind === 'one_time' ? item.date || null : null,
+                amount: Math.max(0, Number(item.amount) || 0),
+                month: item.kind === 'yearly' ? (item.month ?? 6) : null,
+                date: item.kind === 'one_time' ? (item.date || null) : null,
                 note: item.note || null,
-            });
-        });
-        return schedule;
-    }, [extraContributions, simParams.monthly_savings]);
+            })),
+    [contributions]);
+
+    const baseMonthlyEquivalent = useMemo(() =>
+        contributions
+            .filter((item) => item.kind === 'monthly')
+            .reduce((sum, item) => sum + Math.max(0, Number(item.amount) || 0), 0),
+    [contributions]);
+
+    const monthlyEquivalentForSelectedGoal = useMemo(() => {
+        if (!selectedGoal) return baseMonthlyEquivalent;
+        const targetDate = new Date(`${selectedGoal.target_date}T00:00:00`);
+        const now = new Date();
+        const horizonYears = Math.max((targetDate.getTime() - now.getTime()) / (365.25 * 24 * 60 * 60 * 1000), 1 / 12);
+        const total = simulationContributionSchedule.reduce((sum, item) => {
+            if (item.kind === 'monthly') return sum + item.amount * 12 * horizonYears;
+            if (item.kind === 'yearly') return sum + item.amount * horizonYears;
+            if (item.kind === 'one_time') {
+                if (!item.date) return sum + item.amount;
+                const itemDate = new Date(`${item.date}T00:00:00`);
+                return itemDate >= now && itemDate <= targetDate ? sum + item.amount : sum;
+            }
+            return sum;
+        }, 0);
+        return total / horizonYears / 12;
+    }, [selectedGoal, baseMonthlyEquivalent, simulationContributionSchedule]);
 
     const simulationContextParams = useMemo(() => ({
         annual_return: simParams.annual_return,
         inflation: simParams.inflation,
-        monthly_savings: simParams.monthly_savings,
+        monthly_savings: monthlyEquivalentForSelectedGoal,
         contribution_schedule: simulationContributionSchedule,
         allocation_mode: 'direct' as const,
-    }), [simParams.annual_return, simParams.inflation, simParams.monthly_savings, simulationContributionSchedule]);
+    }), [simParams.annual_return, simParams.inflation, monthlyEquivalentForSelectedGoal, simulationContributionSchedule]);
 
     const fetchGoalMilestones = async (goalId: number) => {
         setMilestones(await getMilestones(goalId));
@@ -177,21 +201,24 @@ export default function Goal() {
     const fetchGoalWorkspace = async (preferredGoalId = selectedGoalId, scope: GoalScope = selectedScope) => {
         setLoading(true);
         try {
+            // Always use 'annual' for chart data so MC year-by-year aligns correctly
             const baseDashboardData = await getGoalDashboard(
                 simParams.annual_return,
                 simParams.inflation,
-                simParams.monthly_savings,
+                baseMonthlyEquivalent,
                 simulationContributionSchedule,
                 'weighted',
+                'annual',
             );
             const preferredId = preferredGoalId ?? baseDashboardData.events[0]?.id;
             const directDashboardData = scope === 'goal' && preferredId
                 ? await getGoalDashboard(
                     simParams.annual_return,
                     simParams.inflation,
-                    simParams.monthly_savings,
+                    baseMonthlyEquivalent,
                     simulationContributionSchedule,
                     'direct',
+                    'annual',
                 )
                 : null;
             const [capsuleData, accountsData] = await Promise.all([getCapsules(), getAccounts('asset')]);
@@ -219,6 +246,23 @@ export default function Goal() {
         }
     };
 
+    const fetchRoadmapTable = async (goalId: number, interval: typeof roadmapInterval) => {
+        try {
+            const data = await getGoalDashboard(
+                simParams.annual_return,
+                simParams.inflation,
+                baseMonthlyEquivalent,
+                simulationContributionSchedule,
+                'direct',
+                interval,
+            );
+            const goal = (data.events as LifeEvent[]).find((e) => e.id === goalId);
+            setRoadmapTableEntries(goal?.roadmap ?? []);
+        } catch {
+            setRoadmapTableEntries([]);
+        }
+    };
+
     const fetchMonteCarlo = async (goalId: number) => {
         setSimLoading(true);
         try {
@@ -239,7 +283,7 @@ export default function Goal() {
                 years: 30,
                 annual_return: simParams.annual_return,
                 inflation: simParams.inflation,
-                monthly_savings: simParams.monthly_savings,
+                monthly_savings: baseMonthlyEquivalent,
                 contribution_schedule: simulationContributionSchedule,
                 allocation_mode: selectedScope === 'goal' ? 'direct' : 'weighted',
             }));
@@ -263,7 +307,17 @@ export default function Goal() {
             fetchRoadmapProjection();
         }, 300);
         return () => window.clearTimeout(timer);
-    }, [activeGoalTab, selectedScope, simParams.annual_return, simParams.inflation, simParams.monthly_savings, simulationContributionSchedule]);
+    }, [activeGoalTab, selectedScope, simParams.annual_return, simParams.inflation, simulationContributionSchedule]);
+
+    // Roadmap table with user-selected granularity (separate from chart which is always annual)
+    useEffect(() => {
+        if (activeGoalTab !== 'simulation' || selectedScope !== 'goal' || !selectedGoalId) {
+            setRoadmapTableEntries([]);
+            return;
+        }
+        const timer = window.setTimeout(() => fetchRoadmapTable(selectedGoalId, roadmapInterval), 300);
+        return () => window.clearTimeout(timer);
+    }, [activeGoalTab, selectedScope, selectedGoalId, roadmapInterval, simParams.annual_return, simParams.inflation, simulationContributionSchedule]);
 
     useEffect(() => {
         if (activeGoalTab === 'simulation' && selectedScope === 'goal' && selectedGoal?.id) fetchMonteCarlo(selectedGoal.id);
@@ -297,7 +351,6 @@ export default function Goal() {
         selectedGoal?.id,
         simParams.annual_return,
         simParams.inflation,
-        simParams.monthly_savings,
         simulationContributionSchedule,
         milestonePlan.basis,
         milestonePlan.interval,
@@ -551,7 +604,7 @@ export default function Goal() {
         ...milestonePlan,
         annual_return: simParams.annual_return,
         inflation: simParams.inflation,
-        monthly_savings: simParams.monthly_savings,
+        monthly_savings: monthlyEquivalentForSelectedGoal,
         contribution_schedule: simulationContributionSchedule,
         allocation_mode: selectedScope === 'goal' ? 'direct' as const : 'weighted' as const,
     });
@@ -587,7 +640,7 @@ export default function Goal() {
     };
 
     const addContribution = (kind: ContributionScheduleKind) => {
-        setExtraContributions((items) => [
+        setContributions((items) => [
             ...items,
             {
                 id: `${kind}-${Date.now()}`,
@@ -595,36 +648,18 @@ export default function Goal() {
                 amount: 0,
                 month: kind === 'yearly' ? 6 : null,
                 date: kind === 'one_time' ? new Date().toISOString().slice(0, 10) : null,
-                note: kind === 'yearly' ? 'bonus' : 'one-time',
+                note: '',
             },
         ]);
     };
 
     const updateContribution = (id: string, patch: Partial<ContributionDraft>) => {
-        setExtraContributions((items) => items.map((item) => item.id === id ? { ...item, ...patch } : item));
+        setContributions((items) => items.map((item) => item.id === id ? { ...item, ...patch } : item));
     };
 
     const removeContribution = (id: string) => {
-        setExtraContributions((items) => items.filter((item) => item.id !== id));
+        setContributions((items) => items.filter((item) => item.id !== id));
     };
-
-    const monthlyEquivalentForSelectedGoal = useMemo(() => {
-        if (!selectedGoal) return simParams.monthly_savings;
-        const targetDate = new Date(`${selectedGoal.target_date}T00:00:00`);
-        const now = new Date();
-        const horizonYears = Math.max((targetDate.getTime() - now.getTime()) / (365.25 * 24 * 60 * 60 * 1000), 1 / 12);
-        const total = simulationContributionSchedule.reduce((sum, item) => {
-            if (item.kind === 'monthly') return sum + item.amount * 12 * horizonYears;
-            if (item.kind === 'yearly') return sum + item.amount * horizonYears;
-            if (item.kind === 'one_time') {
-                if (!item.date) return sum + item.amount;
-                const itemDate = new Date(`${item.date}T00:00:00`);
-                return itemDate >= now && itemDate <= targetDate ? sum + item.amount : sum;
-            }
-            return sum;
-        }, 0);
-        return total / horizonYears / 12;
-    }, [selectedGoal, simParams.monthly_savings, simulationContributionSchedule]);
 
     const renderMilestonePlan = () => (
         <div className="bg-slate-800/30 border border-slate-700 p-4">
@@ -642,7 +677,7 @@ export default function Goal() {
                     </div>
                 </div>
                 <p className="text-[10px] text-slate-500">
-                    Using current simulation: Return {simParams.annual_return}%, Inflation {simParams.inflation}%, Contribution Plan {formatCurrency(monthlyEquivalentForSelectedGoal)} / mo equivalent
+                    Return {simParams.annual_return}%, Inflation {simParams.inflation}%, Income {formatCurrency(monthlyEquivalentForSelectedGoal)} / mo
                 </p>
             </div>
             <div className="grid grid-cols-1 gap-2 mb-3">
@@ -899,36 +934,35 @@ export default function Goal() {
                                 Inflation (%)
                                 <input type="number" step="0.5" value={simParams.inflation} onChange={(event) => setSimParams({ ...simParams, inflation: Number(event.target.value) })} className="mt-1 w-full bg-slate-900 border border-slate-700 px-2 py-2 text-xs font-mono-nums" />
                             </label>
-                            <label className="block text-xs text-slate-500">
-                                Monthly Savings
-                                <input type="number" step="10000" value={simParams.monthly_savings} onChange={(event) => setSimParams({ ...simParams, monthly_savings: Number(event.target.value) })} className="mt-1 w-full bg-slate-900 border border-slate-700 px-2 py-2 text-xs font-mono-nums" />
-                            </label>
                             <div className="border-t border-slate-800 pt-3 space-y-2">
                                 <div className="flex items-center justify-between gap-2">
                                     <div>
-                                        <p className="text-[10px] uppercase tracking-wider text-slate-500">Contribution Plan</p>
-                                        <p className="text-[10px] text-slate-600">Equivalent: {formatCurrency(monthlyEquivalentForSelectedGoal)} / mo</p>
+                                        <p className="text-[10px] uppercase tracking-wider text-slate-500">Income Schedule</p>
+                                        <p className="text-[10px] text-slate-600">≈ {formatCurrency(monthlyEquivalentForSelectedGoal)} / mo</p>
                                     </div>
                                     <div className="flex border border-slate-700">
-                                        <button onClick={() => addContribution('yearly')} className="px-2 py-1 text-[10px] text-slate-300 hover:bg-slate-800" title="Add yearly bonus contribution"><Plus size={11} /></button>
-                                        <button onClick={() => addContribution('one_time')} className="px-2 py-1 text-[10px] text-slate-300 hover:bg-slate-800 border-l border-slate-700" title="Add one-time contribution"><Calendar size={11} /></button>
+                                        <button type="button" onClick={() => addContribution('monthly')} className="px-2 py-1 text-[10px] text-slate-300 hover:bg-slate-800" title="Add monthly savings"><Plus size={11} /></button>
+                                        <button type="button" onClick={() => addContribution('yearly')} className="px-2 py-1 text-[10px] text-slate-300 hover:bg-slate-800 border-l border-slate-700" title="Add yearly bonus"><Calendar size={11} /></button>
+                                        <button type="button" onClick={() => addContribution('one_time')} className="px-2 py-1 text-[10px] text-slate-300 hover:bg-slate-800 border-l border-slate-700" title="Add one-time contribution"><Archive size={11} /></button>
                                     </div>
                                 </div>
-                                {extraContributions.map((item) => (
-                                    <div key={item.id} className="grid grid-cols-[82px_1fr_32px] gap-2 items-center">
+                                {contributions.map((item) => (
+                                    <div key={item.id} className="grid grid-cols-[72px_1fr_28px] gap-1.5 items-center">
                                         <select
                                             value={item.kind}
+                                            title="Contribution type"
                                             onChange={(event) => updateContribution(item.id, {
                                                 kind: event.target.value as ContributionScheduleKind,
-                                                month: event.target.value === 'yearly' ? item.month ?? 6 : null,
-                                                date: event.target.value === 'one_time' ? item.date || new Date().toISOString().slice(0, 10) : null,
+                                                month: event.target.value === 'yearly' ? (item.month ?? 6) : null,
+                                                date: event.target.value === 'one_time' ? (item.date || new Date().toISOString().slice(0, 10)) : null,
                                             })}
-                                            className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-[10px]"
+                                            className="bg-slate-900 border border-slate-700 px-1.5 py-1.5 text-[10px]"
                                         >
+                                            <option value="monthly">Monthly</option>
                                             <option value="yearly">Bonus</option>
                                             <option value="one_time">One-time</option>
                                         </select>
-                                        <div className="grid grid-cols-2 gap-2">
+                                        <div className="grid grid-cols-2 gap-1.5">
                                             <input
                                                 type="number"
                                                 step="10000"
@@ -940,24 +974,28 @@ export default function Goal() {
                                             {item.kind === 'yearly' ? (
                                                 <select
                                                     value={item.month ?? 6}
+                                                    title="Month of year"
                                                     onChange={(event) => updateContribution(item.id, { month: Number(event.target.value) })}
-                                                    className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-[10px]"
+                                                    className="bg-slate-900 border border-slate-700 px-1.5 py-1.5 text-[10px]"
                                                 >
-                                                    {Array.from({ length: 12 }, (_, index) => index + 1).map((month) => (
-                                                        <option key={month} value={month}>{month}月</option>
+                                                    {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                                                        <option key={m} value={m}>{m}月</option>
                                                     ))}
                                                 </select>
-                                            ) : (
+                                            ) : item.kind === 'one_time' ? (
                                                 <input
                                                     type="date"
+                                                    title="Date of contribution"
                                                     value={item.date || ''}
                                                     onChange={(event) => updateContribution(item.id, { date: event.target.value })}
-                                                    className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-[10px]"
+                                                    className="bg-slate-900 border border-slate-700 px-1.5 py-1.5 text-[10px]"
                                                 />
+                                            ) : (
+                                                <div className="text-[10px] text-slate-600 px-2 py-1.5">per month</div>
                                             )}
                                         </div>
-                                        <button onClick={() => removeContribution(item.id)} className="h-full border border-slate-700 text-slate-500 hover:text-rose-300 hover:border-rose-800" title="Remove contribution">
-                                            <Trash2 size={12} className="mx-auto" />
+                                        <button onClick={() => removeContribution(item.id)} className="h-full border border-slate-700 text-slate-500 hover:text-rose-300 hover:border-rose-800" title="Remove">
+                                            <Trash2 size={11} className="mx-auto" />
                                         </button>
                                     </div>
                                 ))}
@@ -1018,10 +1056,33 @@ export default function Goal() {
                                         <ComposedChart data={goalProjectionChartData} margin={{ top: 8, right: 16, bottom: 34, left: 8 }}>
                                             <XAxis dataKey="year" tick={{ fontSize: 10 }} stroke="#64748b" label={{ value: 'Years', position: 'insideBottom', offset: -8, fontSize: 10 }} />
                                             <YAxis tick={{ fontSize: 10 }} stroke="#64748b" tickFormatter={formatCompact} />
-                                            <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', fontSize: 11 }} formatter={(value) => [formatCurrency(value as number), '']} />
+                                            <Tooltip
+                                                content={({ active, payload, label }) => {
+                                                    if (!active || !payload?.length) return null;
+                                                    const HIDDEN = new Set(['band']);
+                                                    const seen = new Set<string>();
+                                                    const rows = payload.filter((p) => {
+                                                        const key = p.dataKey as string;
+                                                        if (HIDDEN.has(key) || seen.has(key)) return false;
+                                                        seen.add(key);
+                                                        return true;
+                                                    });
+                                                    return (
+                                                        <div className="bg-slate-800 border border-slate-600 px-3 py-2 text-[11px]">
+                                                            <p className="text-slate-400 mb-1">Year {label}</p>
+                                                            {rows.map((p) => (
+                                                                <div key={p.dataKey as string} className="flex justify-between gap-4" style={{ color: p.color }}>
+                                                                    <span>{p.name}</span>
+                                                                    <span className="font-mono-nums">{formatCurrency(p.value as number)}</span>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    );
+                                                }}
+                                            />
                                             <Legend verticalAlign="bottom" align="center" wrapperStyle={{ fontSize: 10, paddingTop: 14 }} />
-                                            {(projectionView === 'monteCarlo' || projectionView === 'combined') && <Area dataKey="p10" stackId="goal-band" stroke="none" fill="transparent" name="P10" />}
-                                            {(projectionView === 'monteCarlo' || projectionView === 'combined') && <Area dataKey="band" stackId="goal-band" stroke="none" fill="#22c55e" fillOpacity={0.12} name="P10-P90" />}
+                                            {(projectionView === 'monteCarlo' || projectionView === 'combined') && <Area dataKey="p10" stackId="goal-band" stroke="none" fill="transparent" name="P10" legendType="none" />}
+                                            {(projectionView === 'monteCarlo' || projectionView === 'combined') && <Area dataKey="band" stackId="goal-band" stroke="none" fill="#22c55e" fillOpacity={0.12} name="P10–P90 Band" legendType="none" />}
                                             {(projectionView === 'projection' || projectionView === 'combined') && <Line type="monotone" dataKey="end_balance" stroke="#10b981" name="Projection" strokeWidth={2} dot={false} />}
                                             {(projectionView === 'monteCarlo' || projectionView === 'combined') && <Line type="monotone" dataKey="p10" stroke="#f59e0b" name="P10" dot={false} connectNulls={false} />}
                                             {(projectionView === 'monteCarlo' || projectionView === 'combined') && <Line type="monotone" dataKey="p50" stroke="#22d3ee" name="P50" dot={false} connectNulls={false} />}
@@ -1035,12 +1096,26 @@ export default function Goal() {
                     </div>
 
                     <div className="bg-slate-800/30 border border-slate-700 overflow-hidden">
-                        <h3 className="text-[10px] text-slate-500 uppercase tracking-wider p-3 bg-slate-800/50 border-b border-slate-700">Annual Roadmap</h3>
-                        <div className="overflow-x-auto">
+                        <div className="flex items-center justify-between px-3 py-2 bg-slate-800/50 border-b border-slate-700">
+                            <h3 className="text-[10px] text-slate-500 uppercase tracking-wider">Roadmap</h3>
+                            <div className="inline-flex border border-slate-700">
+                                {(['auto', 'monthly', 'quarterly', 'annual'] as const).map((iv) => (
+                                    <button
+                                        key={iv}
+                                        type="button"
+                                        onClick={() => setRoadmapInterval(iv)}
+                                        className={`px-2 py-1 text-[10px] ${roadmapInterval === iv ? 'bg-slate-700 text-slate-100' : 'text-slate-500 hover:text-slate-300'}`}
+                                    >
+                                        {iv === 'auto' ? 'Auto' : iv.charAt(0).toUpperCase() + iv.slice(1)}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                        <div className="overflow-x-auto max-h-64">
                             <table className="w-full text-left text-[10px]">
-                                <thead className="bg-slate-800 text-slate-500 uppercase">
+                                <thead className="bg-slate-800 text-slate-500 uppercase sticky top-0">
                                     <tr>
-                                        <th className="px-3 py-2 font-normal">Year</th>
+                                        <th className="px-3 py-2 font-normal">Period</th>
                                         <th className="px-3 py-2 font-normal">Start</th>
                                         <th className="px-3 py-2 font-normal">Contribution</th>
                                         <th className="px-3 py-2 font-normal">Gain</th>
@@ -1049,9 +1124,9 @@ export default function Goal() {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-800">
-                                    {(selectedGoal.roadmap ?? []).map((row) => (
-                                        <tr key={row.year} className="hover:bg-slate-800/40">
-                                            <td className="px-3 py-2 text-slate-400">{row.year === 0 ? 'Current' : `Year ${row.year}`}</td>
+                                    {roadmapTableEntries.map((row, i) => (
+                                        <tr key={i} className="hover:bg-slate-800/40">
+                                            <td className="px-3 py-2 text-slate-400">{row.label ?? (row.year === 0 ? 'Current' : `Year ${row.year}`)}</td>
                                             <td className="px-3 py-2 font-mono-nums">{formatCurrency(row.start_balance)}</td>
                                             <td className="px-3 py-2 font-mono-nums text-cyan-400">+{formatCurrency(row.contribution)}</td>
                                             <td className="px-3 py-2 font-mono-nums text-emerald-400">+{formatCurrency(row.investment_gain)}</td>

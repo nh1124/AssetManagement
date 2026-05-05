@@ -295,41 +295,84 @@ def generate_roadmap(
     monthly_savings: float,
     years_remaining: float,
     annual_return: float = 5.0,
-    target_amount: float = 0.0
+    target_amount: float = 0.0,
+    interval: str = 'auto',
+    reference_date: Optional[date] = None,
 ) -> List[dict]:
-    """Generate year-by-year simulation data."""
-    roadmap = []
-    r = annual_return / 100.0
-    balance = current_funded
-    annual_contribution = monthly_savings * 12
-    
-    # Year 0 (Current)
-    roadmap.append({
-        "year": 0,
-        "start_balance": round(balance, 2),
-        "contribution": 0,
-        "investment_gain": 0,
-        "end_balance": round(balance, 2),
-        "goal_coverage": round((balance / target_amount * 100) if target_amount > 0 else 0, 1)
-    })
-    
-    full_years = int(years_remaining)
-    for y in range(1, full_years + 1):
-        start_bal = balance
-        # Year End Balance = (Start Balance + Annual Contribution) * (1 + Annual Return Rate)
-        end_bal = (start_bal + annual_contribution) * (1 + r)
-        gain = end_bal - start_bal - annual_contribution
-        
-        balance = end_bal
-        roadmap.append({
-            "year": y,
+    """Generate time-period simulation data with configurable granularity.
+
+    interval: 'auto' | 'monthly' | 'quarterly' | 'annual'
+    Auto resolves to monthly (≤18 months), quarterly (≤60 months), or annual.
+    """
+    ref_date = reference_date or date.today()
+    r_annual = annual_return / 100.0
+    months_remaining = max(1, round(years_remaining * 12))
+
+    if interval == 'auto':
+        if months_remaining <= 18:
+            effective = 'monthly'
+        elif months_remaining <= 60:
+            effective = 'quarterly'
+        else:
+            effective = 'annual'
+    else:
+        effective = interval
+
+    def _row(period_idx: int, label: str, start_bal: float, contribution: float, gain: float, end_bal: float) -> dict:
+        return {
+            "year": period_idx,
+            "label": label,
             "start_balance": round(start_bal, 2),
-            "contribution": round(annual_contribution, 2),
+            "contribution": round(contribution, 2),
             "investment_gain": round(gain, 2),
             "end_balance": round(end_bal, 2),
-            "goal_coverage": round((end_bal / target_amount * 100) if target_amount > 0 else 0, 1)
-        })
-        
+            "goal_coverage": round((end_bal / target_amount * 100) if target_amount > 0 else 0, 1),
+        }
+
+    roadmap: List[dict] = []
+    balance = current_funded
+
+    if effective == 'monthly':
+        r_period = (1 + r_annual) ** (1 / 12) - 1
+        per_period = monthly_savings
+        roadmap.append(_row(0, ref_date.strftime('%Y-%m'), balance, 0, 0, balance))
+        for m in range(1, months_remaining + 1):
+            start_bal = balance
+            end_bal = (start_bal + per_period) * (1 + r_period)
+            gain = end_bal - start_bal - per_period
+            balance = end_bal
+            raw_month = ref_date.month + m
+            lbl_year = ref_date.year + (raw_month - 1) // 12
+            lbl_month = ((raw_month - 1) % 12) + 1
+            roadmap.append(_row(m, f"{lbl_year:04d}-{lbl_month:02d}", start_bal, per_period, gain, end_bal))
+
+    elif effective == 'quarterly':
+        r_period = (1 + r_annual) ** (1 / 4) - 1
+        per_period = monthly_savings * 3
+        quarters_remaining = max(1, round(years_remaining * 4))
+        start_q = (ref_date.month - 1) // 3 + 1
+        roadmap.append(_row(0, f"{ref_date.year} Q{start_q}", balance, 0, 0, balance))
+        for q in range(1, quarters_remaining + 1):
+            start_bal = balance
+            end_bal = (start_bal + per_period) * (1 + r_period)
+            gain = end_bal - start_bal - per_period
+            balance = end_bal
+            raw_month = ref_date.month + q * 3
+            lbl_year = ref_date.year + (raw_month - 1) // 12
+            lbl_month = ((raw_month - 1) % 12) + 1
+            lbl_q = (lbl_month - 1) // 3 + 1
+            roadmap.append(_row(q, f"{lbl_year} Q{lbl_q}", start_bal, per_period, gain, end_bal))
+
+    else:  # annual
+        per_period = monthly_savings * 12
+        roadmap.append(_row(0, "Current", balance, 0, 0, balance))
+        for y in range(1, int(years_remaining) + 1):
+            start_bal = balance
+            end_bal = (start_bal + per_period) * (1 + r_annual)
+            gain = end_bal - start_bal - per_period
+            balance = end_bal
+            roadmap.append(_row(y, f"Year {y}", start_bal, per_period, gain, end_bal))
+
     return roadmap
 
 
@@ -350,14 +393,15 @@ def determine_status(projected: float, target: float, years_remaining: float) ->
 
 
 def get_life_events_with_progress(
-    db: Session, 
-    client_id: int, 
+    db: Session,
+    client_id: int,
     annual_return: float | None = None,
     monthly_savings: float | None = None,
     inflation: float | None = None,
     reference_date: Optional[date] = None,
     contribution_schedule: list[dict[str, Any]] | None = None,
     allocation_mode: str = "weighted",
+    roadmap_interval: str = 'auto',
 ) -> List[dict]:
     """Get all life events with calculated progress for current client."""
     life_events = db.query(models.LifeEvent).filter(
@@ -402,7 +446,9 @@ def get_life_events_with_progress(
             monthly_savings=allocated_savings,
             years_remaining=years_remaining,
             annual_return=effective_return,
-            target_amount=event.target_amount
+            target_amount=event.target_amount,
+            interval=roadmap_interval,
+            reference_date=evaluation_date,
         )
         
         result.append({
@@ -641,17 +687,17 @@ def get_roadmap_projection(
 
 
 def get_strategy_dashboard(
-    db: Session, 
+    db: Session,
     client_id: int,
     annual_return: float | None = 5.0,
     inflation: float | None = 2.0,
     monthly_savings: float | None = 50000.0,
     contribution_schedule: list[dict[str, Any]] | None = None,
     allocation_mode: str = "weighted",
+    roadmap_interval: str = 'auto',
 ) -> dict:
     """Get comprehensive strategy dashboard with events and unallocated assets."""
-    
-    # Get events with progress
+
     events = get_life_events_with_progress(
         db,
         client_id,
@@ -660,6 +706,7 @@ def get_strategy_dashboard(
         inflation=inflation,
         contribution_schedule=contribution_schedule,
         allocation_mode=allocation_mode,
+        roadmap_interval=roadmap_interval,
     )
     
     return {
