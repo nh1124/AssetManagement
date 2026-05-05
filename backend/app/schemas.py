@@ -191,23 +191,7 @@ class RecurringTransaction(RecurringTransactionBase):
     class Config:
         from_attributes = True
 
-# ========== Life Events & Allocations ==========
-
-class GoalAllocationBase(BaseModel):
-    account_id: int = Field(gt=0)
-    allocation_percentage: float = Field(gt=0, le=100)  # 0.0 - 100.0
-
-class GoalAllocationCreate(GoalAllocationBase):
-    pass
-
-class GoalAllocation(GoalAllocationBase):
-    id: int
-    life_event_id: int
-    account_name: Optional[str] = None  # Populated when returning
-    account_balance: Optional[float] = None
-
-    class Config:
-        from_attributes = True
+# ========== Life Events ==========
 
 class MonthlyBudgetBase(BaseModel):
     account_id: int
@@ -290,7 +274,6 @@ class LifeEventUpdate(BaseModel):
 class LifeEvent(LifeEventBase):
     id: int
     created_at: Optional[datetime] = None
-    allocations: list[GoalAllocation] = []
 
     class Config:
         from_attributes = True

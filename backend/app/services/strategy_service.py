@@ -15,37 +15,26 @@ from .fx_service import calculate_account_valued_balance
 
 
 def calculate_current_funded_and_weighted_return(event: models.LifeEvent, db: Optional[Session] = None) -> Tuple[float, float]:
-    """
-    Calculate current funded amount and weighted average return from allocations.
-    Returns (current_funded, weighted_return_rate).
-    """
+    """Calculate current funded amount and weighted average return from CapsuleHoldings."""
+    capsule = next((c for c in (event.capsules or [])), None)
+    if not capsule or not capsule.holdings:
+        return 0.0, 5.0
+
     total_funded = 0.0
     weighted_return_sum = 0.0
-    total_allocation = 0.0
-    
-    for alloc in event.allocations:
-        account_balance = calculate_account_valued_balance(db, alloc.account) if db and alloc.account else (alloc.account.balance if alloc.account else 0)
-        if alloc.account and account_balance:
-            allocation_pct = alloc.allocation_percentage / 100.0
-            funded_amount = account_balance * allocation_pct
-            total_funded += funded_amount
-            
-            # Weight the return by the funded amount
-            account_return = alloc.account.expected_return or 0.0
-            weighted_return_sum += funded_amount * account_return
-            total_allocation += funded_amount
-    
-    # Calculate weighted average return
-    if total_allocation > 0:
-        weighted_return = weighted_return_sum / total_allocation
-    else:
-        weighted_return = 5.0  # Default fallback
-    
+
+    for h in capsule.holdings:
+        held = h.held_amount or 0.0
+        if held > 0:
+            total_funded += held
+            account_return = (h.account.expected_return or 0.0) if h.account else 0.0
+            weighted_return_sum += held * account_return
+
+    weighted_return = weighted_return_sum / total_funded if total_funded > 0 else 5.0
     return total_funded, weighted_return
 
 
 def calculate_current_funded(event: models.LifeEvent) -> float:
-    """Calculate current funded amount from allocations."""
     total, _ = calculate_current_funded_and_weighted_return(event)
     return total
 
@@ -190,7 +179,8 @@ def get_goal_simulation_context(
     allocation_ratio = weight / total_weight if allocation_mode != "direct" else 1.0
 
     current_funded, weighted_return = calculate_current_funded_and_weighted_return(event, db)
-    effective_return = weighted_return if event.allocations else base_annual_return
+    has_holdings = any(c.holdings for c in event.capsules)
+    effective_return = weighted_return if has_holdings else base_annual_return
     years_remaining = max(0.0, (event.target_date - evaluation_date).days / 365.25)
 
     return {
@@ -406,19 +396,6 @@ def get_life_events_with_progress(
         status = determine_status(projected, event.target_amount, years_remaining)
         progress_pct = (projected / event.target_amount * 100) if event.target_amount > 0 else 0
         
-        # Build allocations list with expected_return
-        allocations = []
-        for alloc in event.allocations:
-            allocations.append({
-                "id": alloc.id,
-                "life_event_id": alloc.life_event_id,
-                "account_id": alloc.account_id,
-                "allocation_percentage": alloc.allocation_percentage,
-                "account_name": alloc.account.name if alloc.account else None,
-                "account_balance": calculate_account_valued_balance(db, alloc.account) if alloc.account else 0,
-                "expected_return": alloc.account.expected_return if alloc.account else 0
-            })
-        
         # Generate roadmap
         roadmap = generate_roadmap(
             current_funded=current_funded,
@@ -436,7 +413,7 @@ def get_life_events_with_progress(
             "priority": event.priority,
             "note": event.note,
             "created_at": event.created_at.isoformat() if event.created_at else None,
-            "allocations": allocations,
+            "allocations": [],
             "current_funded": round(current_funded, 2),
             "projected_amount": round(projected, 2),
             "gap": round(gap, 2),
@@ -685,49 +662,11 @@ def get_strategy_dashboard(
         allocation_mode=allocation_mode,
     )
     
-    # Get all asset accounts
-    asset_accounts = db.query(models.Account).filter(
-        models.Account.client_id == client_id,
-        models.Account.account_type == "asset"
-    ).all()
-    
-    # Calculate total allocation percentage per account
-    account_allocation_map = {}
-    for event in events:
-        for alloc in event.get("allocations", []):
-            acc_id = alloc["account_id"]
-            account_allocation_map[acc_id] = account_allocation_map.get(acc_id, 0) + alloc["allocation_percentage"]
-    
-    # Build available assets list (any account with < 100% allocated)
-    unallocated_assets = []
-    total_unallocated = 0.0
-    total_allocated = 0.0
-    
-    for acc in asset_accounts:
-        used_pct = account_allocation_map.get(acc.id, 0)
-        remaining_pct = max(0, 100 - used_pct)
-        
-        # Calculate unallocated balance portion
-        balance = calculate_account_valued_balance(db, acc)
-        unallocated_balance = balance * (remaining_pct / 100.0)
-        
-        total_allocated += (balance - unallocated_balance)
-        total_unallocated += unallocated_balance
-        
-        if remaining_pct > 0.01: # Threshold to avoid floating point issues
-            unallocated_assets.append({
-                "id": acc.id,
-                "name": acc.name,
-                "balance": balance,
-                "remaining_percentage": remaining_pct,
-                "available_balance": unallocated_balance
-            })
-    
     return {
         "events": events,
-        "unallocated_assets": unallocated_assets,
-        "total_allocated": round(total_allocated, 2),
-        "total_unallocated": round(total_unallocated, 2),
+        "unallocated_assets": [],
+        "total_allocated": 0.0,
+        "total_unallocated": 0.0,
         "simulation_params": {
             "annual_return": annual_return,
             "inflation": inflation,

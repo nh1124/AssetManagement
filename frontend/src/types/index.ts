@@ -51,15 +51,6 @@ export interface ExchangeRateAutoUpdateResult {
     errors: Array<Pick<ExchangeRate, 'base_currency' | 'quote_currency'> & { error: string }>;
 }
 
-export interface GoalAllocation {
-    id: number;
-    life_event_id: number;
-    account_id: number;
-    allocation_percentage: number;
-    account_name?: string;
-    account_balance?: number;
-    expected_return?: number;
-}
 
 export interface RoadmapEntry {
     year: number;
@@ -78,7 +69,6 @@ export interface LifeEvent {
     priority: 1 | 2 | 3;
     note?: string | null;
     created_at?: string;
-    allocations: GoalAllocation[];
     current_funded?: number;
     projected_amount?: number;
     gap?: number;

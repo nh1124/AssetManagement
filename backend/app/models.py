@@ -218,22 +218,8 @@ class LifeEvent(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     client = relationship("Client", back_populates="life_events")
-    allocations = relationship("GoalAllocation", back_populates="life_event", cascade="all, delete-orphan")
     milestones = relationship("Milestone", back_populates="life_event", cascade="all, delete-orphan")
     capsules = relationship("Capsule", back_populates="life_event", cascade="all, delete-orphan")
-
-class GoalAllocation(Base):
-    """Links assets to life events (the 'buckets' for funding goals)."""
-    __tablename__ = "goal_allocations"
-    __table_args__ = (UniqueConstraint("life_event_id", "account_id", name="_goal_allocation_event_account_uc"),)
-
-    id = Column(Integer, primary_key=True, index=True)
-    life_event_id = Column(Integer, ForeignKey("life_events.id", ondelete="CASCADE"))
-    account_id = Column(Integer, ForeignKey("accounts.id"))
-    allocation_percentage = Column(Float)  # 0.0 - 100.0
-
-    life_event = relationship("LifeEvent", back_populates="allocations")
-    account = relationship("Account")
 
 class MonthlyBudget(Base):
     """Tracks budgets per month for expense accounts."""

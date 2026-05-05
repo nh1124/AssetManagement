@@ -366,26 +366,6 @@ export const createGoal = createLifeEvent;
 export const updateGoal = updateLifeEvent;
 export const deleteGoal = deleteLifeEvent;
 
-// Goal Allocations
-export const getAllocations = async (eventId: number) => {
-    const response = await api.get(`/life-events/${eventId}/allocations`);
-    return response.data;
-};
-
-export const addAllocation = async (eventId: number, allocation: { account_id: number; allocation_percentage: number }) => {
-    const response = await api.post(`/life-events/${eventId}/allocations`, allocation);
-    return response.data;
-};
-
-export const updateAllocation = async (allocationId: number, allocation: { account_id: number; allocation_percentage: number }) => {
-    const response = await api.put(`/life-events/allocations/${allocationId}`, allocation);
-    return response.data;
-};
-
-export const deleteAllocation = async (allocationId: number) => {
-    const response = await api.delete(`/life-events/allocations/${allocationId}`);
-    return response.data;
-};
 
 // Budget Builder
 export const getBudgetSummary = async (period?: string) => {

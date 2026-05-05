@@ -1,14 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Archive, Calendar, Check, Edit2, Flag, Link, Plus, RefreshCw, Save, Sparkles, Trash2, TrendingUp, X } from 'lucide-react';
+import { Archive, Calendar, Check, Edit2, Flag, Plus, RefreshCw, Save, Sparkles, Trash2, TrendingUp, X } from 'lucide-react';
 import { Area, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import {
-    addAllocation,
     applyMilestonesFromSimulation,
     createCapsuleHolding,
     createGoal,
     createGoalCapsule,
     createMilestone,
-    deleteAllocation,
     deleteCapsuleHolding,
     deleteGoal,
     deleteMilestone,
@@ -18,10 +16,8 @@ import {
     getGoalCapsules,
     getCapsules,
     getRoadmapProjection,
-    optimizeAllocations,
     previewMilestonesFromSimulation,
     runMonteCarloSimulation,
-    updateAllocation,
     updateCapsuleHolding,
     updateGoal,
 } from '../api';
@@ -34,7 +30,6 @@ import type {
     ContributionScheduleItem,
     ContributionScheduleKind,
     CapsuleHolding,
-    GoalAllocation,
     Capsule,
     LifeEvent,
     Milestone,
@@ -48,9 +43,6 @@ import type {
 
 interface DashboardData {
     events: LifeEvent[];
-    unallocated_assets: Array<{ id: number; name: string; balance: number; remaining_percentage?: number; available_balance?: number }>;
-    total_allocated: number;
-    total_unallocated: number;
     simulation_params?: {
         annual_return: number;
         inflation: number;
@@ -119,8 +111,6 @@ export default function Goal() {
     const [eventForm, setEventForm] = useState(emptyEventForm);
     const [editingEvent, setEditingEvent] = useState<LifeEvent | null>(null);
     const [showEventModal, setShowEventModal] = useState(false);
-    const [allocationForm, setAllocationForm] = useState({ account_id: '', allocation_percentage: '100' });
-    const [allocationEdits, setAllocationEdits] = useState<Record<number, string>>({});
     const [accounts, setAccounts] = useState<Account[]>([]);
     const [holdingForm, setHoldingForm] = useState({ account_id: '', held_amount: '', note: '' });
     const [holdingEdits, setHoldingEdits] = useState<Record<number, string>>({});
@@ -140,7 +130,6 @@ export default function Goal() {
     const [loading, setLoading] = useState(false);
     const [simLoading, setSimLoading] = useState(false);
     const [roadmapLoading, setRoadmapLoading] = useState(false);
-    const [optimizing, setOptimizing] = useState(false);
     const [deleteModal, setDeleteModal] = useState<{
         goalId: number;
         goalName: string;
@@ -215,7 +204,6 @@ export default function Goal() {
                 ? selectedEvents.find((goal: LifeEvent) => goal.id === preferredId)
                 : selectedEvents[0];
             setSelectedGoal(nextSelected ?? null);
-            setAllocationEdits({});
             if (scope === 'all') {
                 await fetchAllMilestones();
             } else if (nextSelected) {
@@ -385,36 +373,10 @@ export default function Goal() {
         };
     }, [roadmapProjection]);
 
-    const availableAssets = useMemo(() => {
-        const allocatedAccountIds = new Set((selectedGoal?.allocations ?? []).map((allocation) => allocation.account_id));
-        return (dashboard?.unallocated_assets ?? []).filter((asset) => !allocatedAccountIds.has(asset.id));
-    }, [dashboard, selectedGoal]);
-
-    const selectedAvailableAsset = useMemo(() => {
-        const accountId = Number(allocationForm.account_id);
-        return availableAssets.find((asset) => asset.id === accountId);
-    }, [availableAssets, allocationForm.account_id]);
-
     const linkedCapsule = useMemo(
         () => (selectedGoal ? capsules.find((c) => c.life_event_id === selectedGoal.id) : undefined),
         [capsules, selectedGoal],
     );
-
-    const getUsedAllocation = (accountId: number, excludeAllocationId?: number) => {
-        return (dashboard?.events ?? []).reduce((total, goal) => {
-            return total + (goal.allocations ?? []).reduce((sum, allocation) => {
-                if (allocation.account_id !== accountId || allocation.id === excludeAllocationId) return sum;
-                return sum + allocation.allocation_percentage;
-            }, 0);
-        }, 0);
-    };
-
-    const validateAllocationPct = (value: number, maxPct: number) => {
-        if (!Number.isFinite(value) || value <= 0) return 'Allocation must be greater than 0%.';
-        if (value > 100) return 'Allocation cannot exceed 100%.';
-        if (value > maxPct + 0.0001) return `Only ${Math.max(0, maxPct).toFixed(1)}% is available for this asset.`;
-        return null;
-    };
 
     const openCreateModal = () => {
         setEditingEvent(null);
@@ -506,50 +468,6 @@ export default function Goal() {
         }
     };
 
-    const saveAllocation = async () => {
-        if (!selectedGoal || !allocationForm.account_id) return;
-        const requestedPct = Number(allocationForm.allocation_percentage);
-        const maxPct = selectedAvailableAsset?.remaining_percentage ?? 0;
-        const validationError = validateAllocationPct(requestedPct, maxPct);
-        if (validationError) {
-            showToast(validationError, 'error');
-            return;
-        }
-
-        try {
-            await addAllocation(selectedGoal.id, {
-                account_id: Number(allocationForm.account_id),
-                allocation_percentage: requestedPct,
-            });
-            setAllocationForm({ account_id: '', allocation_percentage: '100' });
-            showToast('Allocation added', 'success');
-            await fetchGoalWorkspace(selectedGoal.id);
-        } catch (error) {
-            showToast(getErrorDetail(error, 'Failed to add allocation'), 'error');
-        }
-    };
-
-    const saveAllocationUpdate = async (allocation: GoalAllocation) => {
-        const nextPct = Number(allocationEdits[allocation.id] ?? allocation.allocation_percentage);
-        const maxPct = 100 - getUsedAllocation(allocation.account_id, allocation.id);
-        const validationError = validateAllocationPct(nextPct, maxPct);
-        if (validationError) {
-            showToast(validationError, 'error');
-            return;
-        }
-
-        try {
-            await updateAllocation(allocation.id, {
-                account_id: allocation.account_id,
-                allocation_percentage: nextPct,
-            });
-            showToast('Allocation updated', 'success');
-            await fetchGoalWorkspace(selectedGoal?.id);
-        } catch (error) {
-            showToast(getErrorDetail(error, 'Failed to update allocation'), 'error');
-        }
-    };
-
     const ensureSelectedGoalCapsule = async () => {
         if (!selectedGoal) return;
         try {
@@ -598,46 +516,6 @@ export default function Goal() {
             await fetchGoalWorkspace(selectedGoal?.id);
         } catch (error) {
             showToast('Failed to remove holding', 'error');
-        }
-    };
-
-    const removeAllocation = async (allocationId: number) => {
-        try {
-            await deleteAllocation(allocationId);
-            showToast('Allocation removed', 'info');
-            await fetchGoalWorkspace(selectedGoal?.id);
-        } catch (error) {
-            showToast('Failed to remove allocation', 'error');
-        }
-    };
-
-    const runAllocationOptimization = async () => {
-        setOptimizing(true);
-        try {
-            const suggestions = await optimizeAllocations();
-            if (!suggestions || suggestions.length === 0) {
-                showToast('No allocation suggestions found', 'info');
-                return;
-            }
-            if (!confirm(`Apply ${suggestions.length} suggested allocations?`)) return;
-
-            let applied = 0;
-            for (const suggestion of suggestions) {
-                const targetGoal = dashboard?.events.find((goal) => goal.id === suggestion.life_event_id);
-                const alreadyAllocated = targetGoal?.allocations?.some((allocation) => allocation.account_id === suggestion.account_id);
-                if (alreadyAllocated) continue;
-                await addAllocation(suggestion.life_event_id, {
-                    account_id: suggestion.account_id,
-                    allocation_percentage: suggestion.percentage,
-                });
-                applied += 1;
-            }
-            showToast(applied > 0 ? `Applied ${applied} suggested allocations` : 'No new allocation suggestions to apply', applied > 0 ? 'success' : 'info');
-            await fetchGoalWorkspace(selectedGoal?.id);
-        } catch (error) {
-            showToast(getErrorDetail(error, 'Failed to optimize allocations'), 'error');
-        } finally {
-            setOptimizing(false);
         }
     };
 
@@ -1246,8 +1124,6 @@ export default function Goal() {
     };
 
     const renderAssetAllocation = () => {
-        const allocations = selectedGoal?.allocations ?? [];
-        const allocationTotal = allocations.reduce((sum, a) => sum + (a.account_balance || 0) * a.allocation_percentage / 100, 0);
         const holdings = linkedCapsule?.holdings ?? [];
         const holdingsTotal = holdings.reduce((s, h) => s + h.held_amount, 0);
         const assetAccounts = accounts.filter((a) => a.account_type === 'asset' && a.role !== 'earmarked');
@@ -1368,100 +1244,6 @@ export default function Goal() {
                     </div>
                 )}
 
-                {/* Section 3: Asset Allocation (secondary) */}
-                <div className="bg-slate-800/30 border border-slate-700 p-4">
-                    <div className="flex items-center justify-between mb-3">
-                        <h3 className="text-[10px] text-slate-500 uppercase tracking-wider flex items-center gap-1"><Link size={12} /> Allocated Assets</h3>
-                        <button
-                            type="button"
-                            onClick={runAllocationOptimization}
-                            disabled={optimizing}
-                            className="text-[10px] text-purple-400 hover:text-purple-300 flex items-center gap-1 disabled:opacity-50"
-                        >
-                            <Sparkles size={12} /> {optimizing ? 'Optimizing...' : 'AI Optimize'}
-                        </button>
-                    </div>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
-                        <div className="bg-slate-900/40 border border-slate-800 p-2">
-                            <p className="text-[10px] text-slate-500 uppercase">Allocated Here</p>
-                            <p className="font-mono-nums text-emerald-400 text-sm">{formatCurrency(allocationTotal)}</p>
-                        </div>
-                        <div className="bg-slate-900/40 border border-slate-800 p-2">
-                            <p className="text-[10px] text-slate-500 uppercase">Unallocated</p>
-                            <p className="font-mono-nums text-cyan-400 text-sm">{formatCurrency(dashboard?.total_unallocated)}</p>
-                        </div>
-                    </div>
-                    <div className="space-y-2 mb-4">
-                        {allocations.length === 0 ? (
-                            <p className="text-xs text-slate-600">No assets allocated yet.</p>
-                        ) : (
-                            allocations.map((allocation) => {
-                                const editValue = allocationEdits[allocation.id] ?? String(allocation.allocation_percentage);
-                                const allocatedAmount = (allocation.account_balance || 0) * Number(editValue || allocation.allocation_percentage) / 100;
-                                return (
-                                    <div key={allocation.id} className="grid grid-cols-1 min-[760px]:grid-cols-[1fr_170px_84px] items-center gap-3 bg-slate-900/60 border border-slate-700 p-2 text-xs">
-                                        <div className="min-w-0">
-                                            <p className="text-slate-200 truncate">{allocation.account_name}</p>
-                                            <p className="text-[10px] text-slate-500">
-                                                {formatCurrency(allocation.account_balance)} / {formatCurrency(allocatedAmount)}
-                                            </p>
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                            <input
-                                                type="number"
-                                                title="Allocation percentage"
-                                                placeholder="%"
-                                                min="0.1"
-                                                max={100 - getUsedAllocation(allocation.account_id, allocation.id)}
-                                                step="0.1"
-                                                value={editValue}
-                                                onChange={(event) => setAllocationEdits({ ...allocationEdits, [allocation.id]: event.target.value })}
-                                                className="w-full bg-slate-950 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums"
-                                            />
-                                            <span className="text-slate-500">%</span>
-                                        </div>
-                                        <div className="flex justify-end gap-2">
-                                            <button type="button" onClick={() => saveAllocationUpdate(allocation)} className="p-1.5 text-slate-500 hover:text-emerald-400" title="Save allocation"><Check size={13} /></button>
-                                            <button type="button" onClick={() => removeAllocation(allocation.id)} className="p-1.5 text-slate-600 hover:text-rose-400" title="Remove allocation"><Trash2 size={13} /></button>
-                                        </div>
-                                    </div>
-                                );
-                            })
-                        )}
-                    </div>
-                    <div className="grid grid-cols-12 gap-2 border-t border-slate-800 pt-3">
-                        <select
-                            title="Select asset to allocate"
-                            value={allocationForm.account_id}
-                            onChange={(event) => {
-                                const accountId = Number(event.target.value);
-                                const account = availableAssets.find((asset) => asset.id === accountId);
-                                setAllocationForm({
-                                    account_id: event.target.value,
-                                    allocation_percentage: String(Math.round(account?.remaining_percentage ?? 100)),
-                                });
-                            }}
-                            className="col-span-12 md:col-span-7 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-slate-300"
-                        >
-                            <option value="">Select asset...</option>
-                            {availableAssets.map((asset) => (
-                                <option key={asset.id} value={asset.id}>{asset.name} ({Math.round(asset.remaining_percentage ?? 0)}% left)</option>
-                            ))}
-                        </select>
-                        <input
-                            type="number"
-                            title="Allocation percentage"
-                            placeholder="%"
-                            min="0.1"
-                            max={selectedAvailableAsset?.remaining_percentage ?? 100}
-                            step="0.1"
-                            value={allocationForm.allocation_percentage}
-                            onChange={(event) => setAllocationForm({ ...allocationForm, allocation_percentage: event.target.value })}
-                            className="col-span-8 md:col-span-3 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums"
-                        />
-                        <button type="button" title="Add allocation" onClick={saveAllocation} disabled={!allocationForm.account_id} className="col-span-4 md:col-span-2 bg-cyan-900/50 border border-cyan-800 text-cyan-300 hover:bg-cyan-900 disabled:opacity-40"><Plus size={14} className="mx-auto" /></button>
-                    </div>
-                </div>
             </div>
         );
     };
@@ -1505,10 +1287,6 @@ export default function Goal() {
                 <div className="bg-slate-800/40 border border-slate-700 p-3">
                     <p className="text-[10px] text-slate-500 uppercase">Remaining Gap</p>
                     <p className="text-lg text-amber-400 font-mono-nums">{formatCurrency(totals.gap)}</p>
-                </div>
-                <div className="bg-slate-800/40 border border-slate-700 p-3">
-                    <p className="text-[10px] text-slate-500 uppercase">Unallocated Assets</p>
-                    <p className="text-lg text-emerald-400 font-mono-nums">{formatCurrency(dashboard?.total_unallocated)}</p>
                 </div>
             </div>
 
