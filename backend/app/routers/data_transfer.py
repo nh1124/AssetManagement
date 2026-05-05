@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from .. import models
 from ..database import get_db
 from ..dependencies import get_current_client
-from ..services.capsule_service import create_capsule_for_goal, ensure_capsule_account
+from ..services.capsule_service import create_capsule_for_goal
 
 router = APIRouter(prefix="/data", tags=["data"])
 
@@ -608,8 +608,6 @@ def import_client_data(
             )
             db.add(capsule)
             db.flush()
-            # account_id が未設定の Capsule には専用の earmarked account を自動生成する
-            ensure_capsule_account(db, capsule)
             capsule_map[old_id] = capsule.id
 
         # LifeEvent ごとに紐づく Capsule+Account が存在しない場合は自動生成する

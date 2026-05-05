@@ -8,14 +8,12 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from .. import database, dependencies, models, schemas
-from ..services.accounting_service import get_or_create_account, process_transaction
 from ..services.capsule_service import (
     capsule_balance,
     capsule_to_dict,
-    create_capsule_account,
     create_capsule_for_goal,
-    ensure_capsule_account,
     remaining_target,
+    upsert_capsule_holding,
 )
 
 router = APIRouter(
@@ -70,13 +68,7 @@ def create_capsule(
     db: Session = Depends(database.get_db),
     current_client: models.Client = Depends(dependencies.get_current_client),
 ):
-    account = create_capsule_account(db, current_client.id, capsule.name)
     target_amount = max(0.0, capsule.target_amount or 0.0)
-    if abs(capsule.current_balance or 0.0) > 0.01:
-        raise HTTPException(
-            status_code=400,
-            detail="Journal is the source of truth. Fund capsules with contribution transactions.",
-        )
     db_capsule = models.Capsule(
         client_id=current_client.id,
         life_event_id=capsule.life_event_id,
@@ -84,7 +76,7 @@ def create_capsule(
         target_amount=target_amount,
         monthly_contribution=max(0.0, capsule.monthly_contribution or 0.0),
         current_balance=0.0,
-        account_id=account.id,
+        account_id=None,
     )
     db.add(db_capsule)
     db.commit()
@@ -109,11 +101,7 @@ def update_capsule(
     update_data = capsule_update.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         if key == "current_balance":
-            if abs(value or 0.0) > 0.01:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Journal is the source of truth. Fund capsules with contribution transactions.",
-                )
+            continue
         elif key == "target_amount":
             db_capsule.target_amount = max(0.0, value or 0.0)
         elif key == "monthly_contribution":
@@ -121,7 +109,6 @@ def update_capsule(
         else:
             setattr(db_capsule, key, value)
 
-    ensure_capsule_account(db, db_capsule)
     db_capsule.current_balance = capsule_balance(db, db_capsule)
 
     db.commit()
@@ -132,17 +119,10 @@ def update_capsule(
 @router.delete("/{capsule_id}")
 def delete_capsule(
     capsule_id: int,
-    transfer_account_id: Optional[int] = Query(None, description="Transfer capsule balance to this account before deletion"),
+    transfer_account_id: Optional[int] = Query(None, description="Ignored — kept for backwards compatibility"),
     db: Session = Depends(database.get_db),
     current_client: models.Client = Depends(dependencies.get_current_client),
 ):
-    """Delete a capsule belonging to current client.
-
-    If the capsule has a non-zero balance, transfer_account_id is required.
-    The balance is moved to transfer_account_id via a Transfer transaction
-    before the capsule (and its CapsuleRules) is deleted.
-    The earmarked Account linked to the capsule is also deleted.
-    """
     capsule = db.query(models.Capsule).filter(
         models.Capsule.id == capsule_id,
         models.Capsule.client_id == current_client.id,
@@ -150,54 +130,7 @@ def delete_capsule(
     if not capsule:
         raise HTTPException(status_code=404, detail="Capsule not found")
 
-    bal = capsule_balance(db, capsule)
-
-    if bal > 0 and transfer_account_id is None:
-        raise HTTPException(
-            status_code=422,
-            detail="transfer_account_id is required because this capsule has a non-zero balance.",
-        )
-
-    if transfer_account_id is not None:
-        dest = db.get(models.Account, transfer_account_id)
-        if not dest or dest.client_id != current_client.id:
-            raise HTTPException(status_code=404, detail="Transfer destination account not found")
-
-    # Transfer balance to destination account
-    if bal > 0 and transfer_account_id is not None:
-        tx = models.Transaction(
-            client_id=current_client.id,
-            date=date.today(),
-            description=f"Capsule deleted – funds returned from Capsule: {capsule.name}",
-            amount=bal,
-            type="Transfer",
-            from_account_id=capsule.account_id,
-            to_account_id=transfer_account_id,
-            currency="JPY",
-            category="capsule_return",
-        )
-        db.add(tx)
-        db.flush()
-        process_transaction(db, tx)
-
-    # Collect account ID before nullifying FK
-    account_id = capsule.account_id
-    capsule.account_id = None
-    db.flush()
-
-    # Delete capsule (cascades CapsuleRules)
     db.delete(capsule)
-    db.flush()
-
-    # Delete the (now-empty) earmarked account and its journal entries
-    if account_id:
-        db.query(models.JournalEntry).filter(
-            models.JournalEntry.account_id == account_id
-        ).delete(synchronize_session=False)
-        account = db.get(models.Account, account_id)
-        if account:
-            db.delete(account)
-
     db.commit()
     return {"message": "Capsule deleted successfully"}
 
@@ -215,7 +148,6 @@ def contribute_to_capsule(
     ).first()
     if not capsule:
         raise HTTPException(status_code=404, detail="Capsule not found")
-    ensure_capsule_account(db, capsule)
 
     from_account = db.query(models.Account).filter(
         models.Account.id == payload.from_account_id,
@@ -233,34 +165,16 @@ def contribute_to_capsule(
         return {
             "status": "skipped",
             "message": "Capsule target already reached",
-            "transaction_id": None,
             "amount": 0.0,
             "new_balance": capsule_balance(db, capsule),
         }
 
     amount = min(amount, remaining)
-    tx = models.Transaction(
-        client_id=current_client.id,
-        date=payload.contribution_date or date.today(),
-        description=f"Capsule contribution: {capsule.name}",
-        amount=amount,
-        type="Transfer",
-        from_account_id=from_account.id,
-        to_account_id=capsule.account_id,
-        currency="JPY",
-        category="capsule_contribution",
-    )
-    db.add(tx)
-    db.commit()
-    db.refresh(tx)
-    process_transaction(db, tx)
-    db.refresh(capsule)
-    capsule.current_balance = capsule_balance(db, capsule)
+    upsert_capsule_holding(db, capsule, from_account.id, amount, note="Manual contribution")
     db.commit()
 
     return {
         "status": "ok",
-        "transaction_id": tx.id,
         "amount": amount,
         "new_balance": capsule_balance(db, capsule),
     }
@@ -271,45 +185,10 @@ def process_monthly_contributions(
     db: Session = Depends(database.get_db),
     current_client: models.Client = Depends(dependencies.get_current_client),
 ):
-    capsules = db.query(models.Capsule).filter(
-        models.Capsule.client_id == current_client.id
-    ).all()
-    cash_account = get_or_create_account(db, "cash", current_client.id, "asset")
-
-    total_added = 0.0
-    updated_count = 0
-    for capsule in capsules:
-        ensure_capsule_account(db, capsule)
-        if capsule.monthly_contribution <= 0 or not capsule.account_id:
-            continue
-        amount = min(capsule.monthly_contribution, remaining_target(db, capsule))
-        if amount <= 0:
-            continue
-        tx = models.Transaction(
-            client_id=current_client.id,
-            date=date.today(),
-            description=f"Capsule auto contribution: {capsule.name}",
-            amount=amount,
-            type="Transfer",
-            from_account_id=cash_account.id,
-            to_account_id=capsule.account_id,
-            currency="JPY",
-            category="capsule_contribution",
-        )
-        db.add(tx)
-        db.commit()
-        db.refresh(tx)
-        process_transaction(db, tx)
-        db.refresh(capsule)
-        capsule.current_balance = capsule_balance(db, capsule)
-        total_added += amount
-        updated_count += 1
-
-    db.commit()
     return {
-        "message": f"Processed contributions for {updated_count} capsules",
-        "total_added": total_added,
-        "updated_capsules": updated_count,
+        "message": "This endpoint is deprecated. Use CapsuleRules for automatic allocation.",
+        "updated_capsules": 0,
+        "total_added": 0.0,
     }
 
 
@@ -403,3 +282,130 @@ def delete_capsule_rule(
     db.delete(rule)
     db.commit()
     return {"message": "Rule deleted"}
+
+
+def _holding_to_dict(h: models.CapsuleHolding) -> dict:
+    return {
+        "id": h.id,
+        "capsule_id": h.capsule_id,
+        "account_id": h.account_id,
+        "account_name": h.account.name if h.account else None,
+        "held_amount": h.held_amount,
+        "note": h.note,
+        "updated_at": h.updated_at,
+    }
+
+
+@router.get("/{capsule_id}/holdings")
+def read_capsule_holdings(
+    capsule_id: int,
+    db: Session = Depends(database.get_db),
+    current_client: models.Client = Depends(dependencies.get_current_client),
+):
+    capsule = db.query(models.Capsule).filter(
+        models.Capsule.id == capsule_id,
+        models.Capsule.client_id == current_client.id,
+    ).first()
+    if not capsule:
+        raise HTTPException(status_code=404, detail="Capsule not found")
+    return [_holding_to_dict(h) for h in capsule.holdings]
+
+
+@router.post("/{capsule_id}/holdings")
+def create_capsule_holding(
+    capsule_id: int,
+    payload: schemas.CapsuleHoldingCreate,
+    db: Session = Depends(database.get_db),
+    current_client: models.Client = Depends(dependencies.get_current_client),
+):
+    capsule = db.query(models.Capsule).filter(
+        models.Capsule.id == capsule_id,
+        models.Capsule.client_id == current_client.id,
+    ).first()
+    if not capsule:
+        raise HTTPException(status_code=404, detail="Capsule not found")
+
+    account = db.query(models.Account).filter(
+        models.Account.id == payload.account_id,
+        models.Account.client_id == current_client.id,
+    ).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+
+    existing = db.query(models.CapsuleHolding).filter(
+        models.CapsuleHolding.capsule_id == capsule_id,
+        models.CapsuleHolding.account_id == payload.account_id,
+    ).first()
+    if existing:
+        existing.held_amount = payload.held_amount
+        existing.note = payload.note
+        db.commit()
+        db.refresh(existing)
+        return _holding_to_dict(existing)
+
+    h = models.CapsuleHolding(
+        capsule_id=capsule_id,
+        account_id=payload.account_id,
+        held_amount=payload.held_amount,
+        note=payload.note,
+    )
+    db.add(h)
+    db.commit()
+    db.refresh(h)
+    return _holding_to_dict(h)
+
+
+@router.put("/{capsule_id}/holdings/{holding_id}")
+def update_capsule_holding(
+    capsule_id: int,
+    holding_id: int,
+    payload: schemas.CapsuleHoldingUpdate,
+    db: Session = Depends(database.get_db),
+    current_client: models.Client = Depends(dependencies.get_current_client),
+):
+    capsule = db.query(models.Capsule).filter(
+        models.Capsule.id == capsule_id,
+        models.Capsule.client_id == current_client.id,
+    ).first()
+    if not capsule:
+        raise HTTPException(status_code=404, detail="Capsule not found")
+
+    h = db.query(models.CapsuleHolding).filter(
+        models.CapsuleHolding.id == holding_id,
+        models.CapsuleHolding.capsule_id == capsule_id,
+    ).first()
+    if not h:
+        raise HTTPException(status_code=404, detail="Holding not found")
+
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(h, key, value)
+
+    db.commit()
+    db.refresh(h)
+    return _holding_to_dict(h)
+
+
+@router.delete("/{capsule_id}/holdings/{holding_id}")
+def delete_capsule_holding(
+    capsule_id: int,
+    holding_id: int,
+    db: Session = Depends(database.get_db),
+    current_client: models.Client = Depends(dependencies.get_current_client),
+):
+    capsule = db.query(models.Capsule).filter(
+        models.Capsule.id == capsule_id,
+        models.Capsule.client_id == current_client.id,
+    ).first()
+    if not capsule:
+        raise HTTPException(status_code=404, detail="Capsule not found")
+
+    h = db.query(models.CapsuleHolding).filter(
+        models.CapsuleHolding.id == holding_id,
+        models.CapsuleHolding.capsule_id == capsule_id,
+    ).first()
+    if not h:
+        raise HTTPException(status_code=404, detail="Holding not found")
+
+    db.delete(h)
+    db.commit()
+    return {"message": "Holding deleted"}

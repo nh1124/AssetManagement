@@ -377,6 +377,7 @@ class Capsule(CapsuleBase):
     id: int
     account_id: Optional[int] = None
     created_at: datetime
+    holdings: list["CapsuleHolding"] = []
 
     class Config:
         from_attributes = True
@@ -415,6 +416,31 @@ class CapsuleRule(CapsuleRuleBase):
     capsule_name: Optional[str] = None
     source_account_name: Optional[str] = None
     created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class CapsuleHoldingBase(BaseModel):
+    account_id: int
+    held_amount: float = Field(ge=0)
+    note: Optional[str] = None
+
+
+class CapsuleHoldingCreate(CapsuleHoldingBase):
+    pass
+
+
+class CapsuleHoldingUpdate(BaseModel):
+    held_amount: Optional[float] = Field(default=None, ge=0)
+    note: Optional[str] = None
+
+
+class CapsuleHolding(CapsuleHoldingBase):
+    id: int
+    capsule_id: int
+    account_name: Optional[str] = None
+    updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True

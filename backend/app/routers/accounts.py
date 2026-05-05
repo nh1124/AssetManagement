@@ -5,7 +5,6 @@ from .. import models
 from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.fx_service import calculate_account_valued_balance
-from ..services.capsule_service import ensure_capsule_account
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
@@ -133,22 +132,6 @@ def get_accounts(
     current_client: models.Client = Depends(get_current_client)
 ):
     """Get all accounts for current client, optionally filtered by type."""
-    capsules = db.query(models.Capsule).filter(models.Capsule.client_id == current_client.id).all()
-    repaired = False
-    for capsule in capsules:
-        before_account_id = capsule.account_id
-        before_name = capsule.account.name if capsule.account else None
-        before_active = capsule.account.is_active if capsule.account else None
-        ensure_capsule_account(db, capsule)
-        if (
-            before_account_id != capsule.account_id
-            or before_name != (capsule.account.name if capsule.account else None)
-            or before_active != (capsule.account.is_active if capsule.account else None)
-        ):
-            repaired = True
-    if repaired:
-        db.commit()
-
     query = db.query(models.Account).filter(
         models.Account.client_id == current_client.id,
         models.Account.is_active == is_active

@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Calendar, Check, Edit2, Flag, Link, Plus, RefreshCw, Save, Sparkles, Trash2, TrendingUp, X } from 'lucide-react';
+import { Archive, Calendar, Check, Edit2, Flag, Link, Plus, RefreshCw, Save, Sparkles, Trash2, TrendingUp, X } from 'lucide-react';
 import { Area, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import {
     addAllocation,
     applyMilestonesFromSimulation,
+    createCapsuleHolding,
     createGoal,
     createGoalCapsule,
     createMilestone,
     deleteAllocation,
+    deleteCapsuleHolding,
     deleteGoal,
     deleteMilestone,
     getAccounts,
@@ -20,6 +22,7 @@ import {
     previewMilestonesFromSimulation,
     runMonteCarloSimulation,
     updateAllocation,
+    updateCapsuleHolding,
     updateGoal,
 } from '../api';
 import { useToast } from '../components/Toast';
@@ -30,6 +33,7 @@ import type {
     Account,
     ContributionScheduleItem,
     ContributionScheduleKind,
+    CapsuleHolding,
     GoalAllocation,
     Capsule,
     LifeEvent,
@@ -117,6 +121,9 @@ export default function Goal() {
     const [showEventModal, setShowEventModal] = useState(false);
     const [allocationForm, setAllocationForm] = useState({ account_id: '', allocation_percentage: '100' });
     const [allocationEdits, setAllocationEdits] = useState<Record<number, string>>({});
+    const [accounts, setAccounts] = useState<Account[]>([]);
+    const [holdingForm, setHoldingForm] = useState({ account_id: '', held_amount: '', note: '' });
+    const [holdingEdits, setHoldingEdits] = useState<Record<number, string>>({});
     const [milestoneForm, setMilestoneForm] = useState({ date: '', target_amount: '', note: '' });
     const [simParams, setSimParams] = useState({ annual_return: 5, inflation: 2, monthly_savings: 50000 });
     const [extraContributions, setExtraContributions] = useState<ContributionDraft[]>([]);
@@ -198,9 +205,10 @@ export default function Goal() {
                     'direct',
                 )
                 : null;
-            const capsuleData = await getCapsules();
+            const [capsuleData, accountsData] = await Promise.all([getCapsules(), getAccounts('asset')]);
             setDashboard(baseDashboardData);
             setCapsules(capsuleData);
+            setAccounts(accountsData as Account[]);
 
             const selectedEvents = directDashboardData?.events ?? baseDashboardData.events;
             const nextSelected = preferredId
@@ -387,6 +395,11 @@ export default function Goal() {
         return availableAssets.find((asset) => asset.id === accountId);
     }, [availableAssets, allocationForm.account_id]);
 
+    const linkedCapsule = useMemo(
+        () => (selectedGoal ? capsules.find((c) => c.life_event_id === selectedGoal.id) : undefined),
+        [capsules, selectedGoal],
+    );
+
     const getUsedAllocation = (accountId: number, excludeAllocationId?: number) => {
         return (dashboard?.events ?? []).reduce((total, goal) => {
             return total + (goal.allocations ?? []).reduce((sum, allocation) => {
@@ -545,6 +558,46 @@ export default function Goal() {
             await fetchGoalWorkspace(selectedGoal.id);
         } catch (error) {
             showToast(getErrorDetail(error, 'Failed to create goal capsule'), 'error');
+        }
+    };
+
+    const saveHolding = async () => {
+        if (!linkedCapsule || !holdingForm.account_id || !holdingForm.held_amount) return;
+        try {
+            await createCapsuleHolding(linkedCapsule.id, {
+                account_id: Number(holdingForm.account_id),
+                held_amount: Number(holdingForm.held_amount),
+                note: holdingForm.note || undefined,
+            });
+            setHoldingForm({ account_id: '', held_amount: '', note: '' });
+            showToast('Holding saved', 'success');
+            await fetchGoalWorkspace(selectedGoal?.id);
+        } catch (error) {
+            showToast(getErrorDetail(error, 'Failed to save holding'), 'error');
+        }
+    };
+
+    const updateHolding = async (holdingId: number) => {
+        if (!linkedCapsule) return;
+        const newAmount = holdingEdits[holdingId];
+        if (newAmount === undefined) return;
+        try {
+            await updateCapsuleHolding(linkedCapsule.id, holdingId, { held_amount: Number(newAmount) });
+            showToast('Holding updated', 'success');
+            await fetchGoalWorkspace(selectedGoal?.id);
+        } catch (error) {
+            showToast(getErrorDetail(error, 'Failed to update holding'), 'error');
+        }
+    };
+
+    const removeHolding = async (holdingId: number) => {
+        if (!linkedCapsule) return;
+        try {
+            await deleteCapsuleHolding(linkedCapsule.id, holdingId);
+            showToast('Holding removed', 'info');
+            await fetchGoalWorkspace(selectedGoal?.id);
+        } catch (error) {
+            showToast('Failed to remove holding', 'error');
         }
     };
 
@@ -1194,30 +1247,133 @@ export default function Goal() {
 
     const renderAssetAllocation = () => {
         const allocations = selectedGoal?.allocations ?? [];
-        const linkedCapsule = selectedGoal ? capsules.find((capsule) => capsule.life_event_id === selectedGoal.id) : undefined;
-        const allocationTotal = allocations.reduce((sum, allocation) => sum + (allocation.account_balance || 0) * allocation.allocation_percentage / 100, 0);
+        const allocationTotal = allocations.reduce((sum, a) => sum + (a.account_balance || 0) * a.allocation_percentage / 100, 0);
+        const holdings = linkedCapsule?.holdings ?? [];
+        const holdingsTotal = holdings.reduce((s, h) => s + h.held_amount, 0);
+        const assetAccounts = accounts.filter((a) => a.account_type === 'asset' && a.role !== 'earmarked');
+        const capsuleProgress = linkedCapsule
+            ? Math.min(100, (linkedCapsule.current_balance / (linkedCapsule.target_amount || 1)) * 100)
+            : 0;
 
         return (
             <div className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <div className="bg-slate-800/40 border border-slate-700 p-3">
-                        <p className="text-[10px] text-slate-500 uppercase">Allocated Here</p>
-                        <p className="font-mono-nums text-emerald-400">{formatCurrency(allocationTotal)}</p>
-                    </div>
-                    <div className="bg-slate-800/40 border border-slate-700 p-3">
-                        <p className="text-[10px] text-slate-500 uppercase">Unallocated</p>
-                        <p className="font-mono-nums text-cyan-400">{formatCurrency(dashboard?.total_unallocated)}</p>
-                    </div>
-                    <div className="bg-slate-800/40 border border-slate-700 p-3">
-                        <p className="text-[10px] text-slate-500 uppercase">Assets</p>
-                        <p className="font-mono-nums text-slate-200">{allocations.length}</p>
-                    </div>
+                {/* Section 1: Linked Capsule */}
+                <div className="bg-slate-800/30 border border-slate-700 p-4">
+                    <h3 className="text-[10px] text-slate-500 uppercase tracking-wider flex items-center gap-1 mb-3">
+                        <Archive size={12} /> Linked Capsule
+                    </h3>
+                    {!linkedCapsule ? (
+                        <div className="bg-cyan-950/20 border border-cyan-800/50 p-3 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
+                            <div>
+                                <p className="text-cyan-200">No linked capsule for this goal.</p>
+                                <p className="text-[10px] text-slate-500 mt-1">Create a dedicated sinking fund to track physical holdings.</p>
+                            </div>
+                            <button type="button" onClick={ensureSelectedGoalCapsule} className="px-3 py-1.5 bg-cyan-700 hover:bg-cyan-600 text-white text-[10px]">
+                                Create Capsule
+                            </button>
+                        </div>
+                    ) : (
+                        <div>
+                            <div className="flex justify-between items-start gap-3">
+                                <div>
+                                    <p className="text-sm text-slate-100">{linkedCapsule.name}</p>
+                                    <p className="text-[10px] text-slate-500 mt-0.5">
+                                        Target {formatCurrency(linkedCapsule.target_amount)} / +{formatCurrency(linkedCapsule.monthly_contribution)} / mo
+                                    </p>
+                                </div>
+                                <div className="text-right">
+                                    <p className="text-lg font-mono-nums text-purple-400">{formatCurrency(linkedCapsule.current_balance)}</p>
+                                    <p className="text-[10px] text-slate-500">{Math.round(capsuleProgress)}%</p>
+                                </div>
+                            </div>
+                            <div className="h-1.5 bg-slate-900 rounded-full overflow-hidden mt-2">
+                                <div className="h-full bg-purple-500" style={{ width: `${capsuleProgress}%` }} />
+                            </div>
+                        </div>
+                    )}
                 </div>
 
+                {/* Section 2: Physical Holdings */}
+                {linkedCapsule && (
+                    <div className="bg-slate-800/30 border border-slate-700 p-4">
+                        <div className="flex items-center justify-between mb-3">
+                            <h3 className="text-[10px] text-slate-500 uppercase tracking-wider flex items-center gap-1">
+                                <TrendingUp size={12} /> Physical Holdings
+                            </h3>
+                            <span className="text-[10px] font-mono-nums text-slate-400">
+                                {formatCurrency(holdingsTotal)} / {formatCurrency(linkedCapsule.current_balance)}
+                            </span>
+                        </div>
+                        <div className="space-y-2 mb-4">
+                            {holdings.length === 0 ? (
+                                <p className="text-xs text-slate-600">No holdings recorded. Add which accounts physically hold this capsule's funds.</p>
+                            ) : (
+                                holdings.map((h: CapsuleHolding) => {
+                                    const editValue = holdingEdits[h.id] ?? String(h.held_amount);
+                                    return (
+                                        <div key={h.id} className="grid grid-cols-1 min-[640px]:grid-cols-[1fr_160px_auto] items-center gap-2 bg-slate-900/60 border border-slate-700 p-2 text-xs">
+                                            <div className="min-w-0">
+                                                <p className="text-slate-200 truncate">{h.account_name}</p>
+                                                {h.note && <p className="text-[10px] text-slate-500">{h.note}</p>}
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <input
+                                                    type="number"
+                                                    title="Held amount"
+                                                    placeholder="Amount"
+                                                    value={editValue}
+                                                    onChange={(e) => setHoldingEdits({ ...holdingEdits, [h.id]: e.target.value })}
+                                                    className="w-full bg-slate-950 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums"
+                                                />
+                                            </div>
+                                            <div className="flex justify-end gap-2">
+                                                <button type="button" onClick={() => updateHolding(h.id)} className="p-1.5 text-slate-500 hover:text-emerald-400" title="Save"><Check size={13} /></button>
+                                                <button type="button" onClick={() => removeHolding(h.id)} className="p-1.5 text-slate-600 hover:text-rose-400" title="Remove holding"><Trash2 size={13} /></button>
+                                            </div>
+                                        </div>
+                                    );
+                                })
+                            )}
+                        </div>
+                        <div className="grid grid-cols-12 gap-2 border-t border-slate-800 pt-3">
+                            <select
+                                title="Select account for holding"
+                                value={holdingForm.account_id}
+                                onChange={(e) => setHoldingForm({ ...holdingForm, account_id: e.target.value })}
+                                className="col-span-12 md:col-span-5 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-slate-300"
+                            >
+                                <option value="">Select account...</option>
+                                {assetAccounts.map((a) => (
+                                    <option key={a.id} value={a.id}>{a.name}</option>
+                                ))}
+                            </select>
+                            <input
+                                type="number"
+                                title="Held amount"
+                                placeholder="Amount"
+                                value={holdingForm.held_amount}
+                                onChange={(e) => setHoldingForm({ ...holdingForm, held_amount: e.target.value })}
+                                className="col-span-8 md:col-span-4 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums"
+                            />
+                            <button
+                                type="button"
+                                title="Add holding"
+                                onClick={saveHolding}
+                                disabled={!holdingForm.account_id || !holdingForm.held_amount}
+                                className="col-span-4 md:col-span-3 bg-purple-900/50 border border-purple-800 text-purple-300 hover:bg-purple-900 disabled:opacity-40"
+                            >
+                                <Plus size={14} className="mx-auto" />
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                {/* Section 3: Asset Allocation (secondary) */}
                 <div className="bg-slate-800/30 border border-slate-700 p-4">
                     <div className="flex items-center justify-between mb-3">
                         <h3 className="text-[10px] text-slate-500 uppercase tracking-wider flex items-center gap-1"><Link size={12} /> Allocated Assets</h3>
                         <button
+                            type="button"
                             onClick={runAllocationOptimization}
                             disabled={optimizing}
                             className="text-[10px] text-purple-400 hover:text-purple-300 flex items-center gap-1 disabled:opacity-50"
@@ -1225,26 +1381,23 @@ export default function Goal() {
                             <Sparkles size={12} /> {optimizing ? 'Optimizing...' : 'AI Optimize'}
                         </button>
                     </div>
-
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+                        <div className="bg-slate-900/40 border border-slate-800 p-2">
+                            <p className="text-[10px] text-slate-500 uppercase">Allocated Here</p>
+                            <p className="font-mono-nums text-emerald-400 text-sm">{formatCurrency(allocationTotal)}</p>
+                        </div>
+                        <div className="bg-slate-900/40 border border-slate-800 p-2">
+                            <p className="text-[10px] text-slate-500 uppercase">Unallocated</p>
+                            <p className="font-mono-nums text-cyan-400 text-sm">{formatCurrency(dashboard?.total_unallocated)}</p>
+                        </div>
+                    </div>
                     <div className="space-y-2 mb-4">
-                        {!linkedCapsule && (
-                            <div className="bg-cyan-950/20 border border-cyan-800/50 p-3 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
-                                <div>
-                                    <p className="text-cyan-200">No linked capsule for this goal.</p>
-                                    <p className="text-[10px] text-slate-500 mt-1">Create a dedicated sinking fund and use its account as this goal's allocation source.</p>
-                                </div>
-                                <button onClick={ensureSelectedGoalCapsule} className="px-3 py-1.5 bg-cyan-700 hover:bg-cyan-600 text-white text-[10px]">
-                                    Create Capsule
-                                </button>
-                            </div>
-                        )}
                         {allocations.length === 0 ? (
                             <p className="text-xs text-slate-600">No assets allocated yet.</p>
                         ) : (
                             allocations.map((allocation) => {
                                 const editValue = allocationEdits[allocation.id] ?? String(allocation.allocation_percentage);
                                 const allocatedAmount = (allocation.account_balance || 0) * Number(editValue || allocation.allocation_percentage) / 100;
-
                                 return (
                                     <div key={allocation.id} className="grid grid-cols-1 min-[760px]:grid-cols-[1fr_170px_84px] items-center gap-3 bg-slate-900/60 border border-slate-700 p-2 text-xs">
                                         <div className="min-w-0">
@@ -1256,6 +1409,8 @@ export default function Goal() {
                                         <div className="flex items-center gap-2">
                                             <input
                                                 type="number"
+                                                title="Allocation percentage"
+                                                placeholder="%"
                                                 min="0.1"
                                                 max={100 - getUsedAllocation(allocation.account_id, allocation.id)}
                                                 step="0.1"
@@ -1266,17 +1421,17 @@ export default function Goal() {
                                             <span className="text-slate-500">%</span>
                                         </div>
                                         <div className="flex justify-end gap-2">
-                                            <button onClick={() => saveAllocationUpdate(allocation)} className="p-1.5 text-slate-500 hover:text-emerald-400" title="Save allocation"><Check size={13} /></button>
-                                            <button onClick={() => removeAllocation(allocation.id)} className="p-1.5 text-slate-600 hover:text-rose-400" title="Remove allocation"><Trash2 size={13} /></button>
+                                            <button type="button" onClick={() => saveAllocationUpdate(allocation)} className="p-1.5 text-slate-500 hover:text-emerald-400" title="Save allocation"><Check size={13} /></button>
+                                            <button type="button" onClick={() => removeAllocation(allocation.id)} className="p-1.5 text-slate-600 hover:text-rose-400" title="Remove allocation"><Trash2 size={13} /></button>
                                         </div>
                                     </div>
                                 );
                             })
                         )}
                     </div>
-
                     <div className="grid grid-cols-12 gap-2 border-t border-slate-800 pt-3">
                         <select
+                            title="Select asset to allocate"
                             value={allocationForm.account_id}
                             onChange={(event) => {
                                 const accountId = Number(event.target.value);
@@ -1295,6 +1450,8 @@ export default function Goal() {
                         </select>
                         <input
                             type="number"
+                            title="Allocation percentage"
+                            placeholder="%"
                             min="0.1"
                             max={selectedAvailableAsset?.remaining_percentage ?? 100}
                             step="0.1"
@@ -1302,7 +1459,7 @@ export default function Goal() {
                             onChange={(event) => setAllocationForm({ ...allocationForm, allocation_percentage: event.target.value })}
                             className="col-span-8 md:col-span-3 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums"
                         />
-                        <button onClick={saveAllocation} disabled={!allocationForm.account_id} className="col-span-4 md:col-span-2 bg-cyan-900/50 border border-cyan-800 text-cyan-300 hover:bg-cyan-900 disabled:opacity-40"><Plus size={14} className="mx-auto" /></button>
+                        <button type="button" title="Add allocation" onClick={saveAllocation} disabled={!allocationForm.account_id} className="col-span-4 md:col-span-2 bg-cyan-900/50 border border-cyan-800 text-cyan-300 hover:bg-cyan-900 disabled:opacity-40"><Plus size={14} className="mx-auto" /></button>
                     </div>
                 </div>
             </div>

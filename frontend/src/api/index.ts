@@ -710,6 +710,28 @@ export const deleteCapsuleRule = async (id: number) => {
     return response.data;
 };
 
+export const createCapsuleHolding = async (
+    capsuleId: number,
+    payload: { account_id: number; held_amount: number; note?: string }
+) => {
+    const response = await api.post(`/capsules/${capsuleId}/holdings`, payload);
+    return response.data;
+};
+
+export const updateCapsuleHolding = async (
+    capsuleId: number,
+    holdingId: number,
+    payload: { held_amount?: number; note?: string }
+) => {
+    const response = await api.put(`/capsules/${capsuleId}/holdings/${holdingId}`, payload);
+    return response.data;
+};
+
+export const deleteCapsuleHolding = async (capsuleId: number, holdingId: number) => {
+    const response = await api.delete(`/capsules/${capsuleId}/holdings/${holdingId}`);
+    return response.data;
+};
+
 export const fixReconcile = async (): Promise<ReconcileResponse> => {
     const response = await api.post('/analysis/reconcile/fix');
     return response.data;

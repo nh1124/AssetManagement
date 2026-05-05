@@ -343,6 +343,7 @@ class Capsule(Base):
     client = relationship("Client", back_populates="capsules")
     account = relationship("Account", foreign_keys=[account_id])
     life_event = relationship("LifeEvent", back_populates="capsules")
+    holdings = relationship("CapsuleHolding", back_populates="capsule", cascade="all, delete-orphan")
 
 
 class CapsuleRule(Base):
@@ -364,3 +365,17 @@ class CapsuleRule(Base):
     client = relationship("Client", back_populates="capsule_rules")
     capsule = relationship("Capsule")
     source_account = relationship("Account", foreign_keys=[source_account_id])
+
+
+class CapsuleHolding(Base):
+    __tablename__ = "capsule_holdings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    capsule_id = Column(Integer, ForeignKey("capsules.id", ondelete="CASCADE"), nullable=False)
+    account_id = Column(Integer, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
+    held_amount = Column(Float, nullable=False, default=0.0)
+    note = Column(String, nullable=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    capsule = relationship("Capsule", back_populates="holdings")
+    account = relationship("Account")

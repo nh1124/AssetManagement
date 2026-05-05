@@ -1,96 +1,63 @@
 from __future__ import annotations
 
-import re
-from datetime import date
-
 from sqlalchemy.orm import Session
 
 from .. import models
-from .accounting_service import process_transaction
-from .fx_service import calculate_account_valued_balance
-
-
-def slug(text: str) -> str:
-    text = text.strip().lower()
-    text = re.sub(r"[^a-z0-9_]+", "_", text)
-    return re.sub(r"_+", "_", text).strip("_")
-
-
-def create_capsule_account(db: Session, client_id: int, capsule_name: str) -> models.Account:
-    candidate = unique_capsule_account_name(db, client_id, capsule_name)
-    account = models.Account(
-        client_id=client_id,
-        name=candidate,
-        account_type="asset",
-        role=models.AccountRole.EARMARKED.value,
-        balance=0.0,
-        is_active=True,
-    )
-    db.add(account)
-    db.flush()
-    return account
-
-
-def unique_capsule_account_name(
-    db: Session,
-    client_id: int,
-    capsule_name: str,
-    account_id: int | None = None,
-) -> str:
-    label = (capsule_name or "").strip() or "Fund"
-    base = f"Capsule: {label}"
-    candidate = base
-    i = 2
-    while True:
-        query = db.query(models.Account).filter(
-            models.Account.client_id == client_id,
-            models.Account.name == candidate,
-        )
-        if account_id is not None:
-            query = query.filter(models.Account.id != account_id)
-        if not query.first():
-            break
-        candidate = f"{base} ({i})"
-        i += 1
-    return candidate
-
-
-def ensure_capsule_account(db: Session, capsule: models.Capsule) -> models.Account:
-    if capsule.account:
-        capsule.account.is_active = True
-        if capsule.account.name.startswith("capsule_"):
-            capsule.account.name = unique_capsule_account_name(
-                db,
-                capsule.client_id,
-                capsule.name,
-                account_id=capsule.account.id,
-            )
-        return capsule.account
-    if capsule.client_id is None:
-        raise ValueError("capsule.client_id is required")
-    account = create_capsule_account(db, capsule.client_id, capsule.name)
-    capsule.account_id = account.id
-    capsule.current_balance = 0.0
-    db.flush()
-    return account
 
 
 def capsule_balance(db: Session, capsule: models.Capsule) -> float:
-    if capsule.account:
-        return calculate_account_valued_balance(db, capsule.account)
-    return capsule.current_balance or 0.0
+    return sum(h.held_amount for h in capsule.holdings)
 
 
 def remaining_target(db: Session, capsule: models.Capsule) -> float:
     return max(0.0, (capsule.target_amount or 0.0) - capsule_balance(db, capsule))
 
 
+def upsert_capsule_holding(
+    db: Session,
+    capsule: models.Capsule,
+    account_id: int,
+    amount_delta: float,
+    note: str | None = None,
+) -> models.CapsuleHolding:
+    holding = db.query(models.CapsuleHolding).filter(
+        models.CapsuleHolding.capsule_id == capsule.id,
+        models.CapsuleHolding.account_id == account_id,
+    ).first()
+    if holding:
+        holding.held_amount = max(0.0, holding.held_amount + amount_delta)
+        if note is not None:
+            holding.note = note
+    else:
+        holding = models.CapsuleHolding(
+            capsule_id=capsule.id,
+            account_id=account_id,
+            held_amount=max(0.0, amount_delta),
+            note=note,
+        )
+        db.add(holding)
+    db.flush()
+    capsule.current_balance = capsule_balance(db, capsule)
+    return holding
+
+
 def capsule_to_dict(db: Session, capsule: models.Capsule) -> dict:
-    account = ensure_capsule_account(db, capsule)
     balance = capsule_balance(db, capsule)
     capsule.current_balance = balance
     progress_pct = (balance / capsule.target_amount * 100) if capsule.target_amount else 0
     progress_pct = min(100, progress_pct)
+    holdings = [
+        {
+            "id": h.id,
+            "capsule_id": h.capsule_id,
+            "account_id": h.account_id,
+            "account_name": h.account.name if h.account else None,
+            "held_amount": h.held_amount,
+            "note": h.note,
+            "updated_at": h.updated_at,
+        }
+        for h in capsule.holdings
+    ]
     return {
         "id": capsule.id,
         "life_event_id": capsule.life_event_id,
@@ -98,9 +65,10 @@ def capsule_to_dict(db: Session, capsule: models.Capsule) -> dict:
         "target_amount": capsule.target_amount,
         "monthly_contribution": capsule.monthly_contribution,
         "current_balance": balance,
-        "account_id": account.id,
+        "account_id": capsule.account_id,
         "created_at": capsule.created_at,
         "progress_pct": round(progress_pct, 1),
+        "holdings": holdings,
     }
 
 
@@ -110,11 +78,8 @@ def create_capsule_for_goal(db: Session, client_id: int, goal: models.LifeEvent)
         models.Capsule.life_event_id == goal.id,
     ).first()
     if existing:
-        ensure_capsule_account(db, existing)
-        _ensure_goal_allocation(db, goal.id, existing.account_id)
         return existing
 
-    account = create_capsule_account(db, client_id, goal.name)
     capsule = models.Capsule(
         client_id=client_id,
         life_event_id=goal.id,
@@ -122,34 +87,16 @@ def create_capsule_for_goal(db: Session, client_id: int, goal: models.LifeEvent)
         target_amount=max(0.0, goal.target_amount or 0.0),
         monthly_contribution=0.0,
         current_balance=0.0,
-        account_id=account.id,
+        account_id=None,
     )
     db.add(capsule)
     db.flush()
-    _ensure_goal_allocation(db, goal.id, account.id)
     return capsule
 
 
-def _ensure_goal_allocation(db: Session, life_event_id: int, account_id: int | None) -> None:
-    if not account_id:
-        return
-    existing = db.query(models.GoalAllocation).filter(
-        models.GoalAllocation.life_event_id == life_event_id,
-        models.GoalAllocation.account_id == account_id,
-    ).first()
-    if existing:
-        existing.allocation_percentage = 100.0
-        return
-    db.add(
-        models.GoalAllocation(
-            life_event_id=life_event_id,
-            account_id=account_id,
-            allocation_percentage=100.0,
-        )
-    )
-
-
-def apply_capsule_rules_for_transaction(db: Session, transaction: models.Transaction) -> list[models.Transaction]:
+def apply_capsule_rules_for_transaction(
+    db: Session, transaction: models.Transaction
+) -> list[models.CapsuleHolding]:
     if transaction.client_id is None:
         return []
     if transaction.category == "capsule_auto_allocation" or transaction.description.startswith("Capsule rule:"):
@@ -159,42 +106,28 @@ def apply_capsule_rules_for_transaction(db: Session, transaction: models.Transac
         models.CapsuleRule.client_id == transaction.client_id,
         models.CapsuleRule.is_active.is_(True),
     ).all()
-    created: list[models.Transaction] = []
+    updated: list[models.CapsuleHolding] = []
 
     for rule in rules:
         if not _rule_matches(rule, transaction):
             continue
         capsule = rule.capsule
-        if not capsule or not capsule.account_id:
+        if not capsule:
             continue
         source_account_id = _resolve_rule_source_account_id(rule, transaction)
-        if not source_account_id or source_account_id == capsule.account_id:
+        if not source_account_id:
             continue
         amount = _resolve_rule_amount(rule, transaction)
         amount = min(amount, remaining_target(db, capsule))
         if amount <= 0:
             continue
-        tx = models.Transaction(
-            client_id=transaction.client_id,
-            date=transaction.date or date.today(),
-            description=f"Capsule rule: {capsule.name}",
-            amount=amount,
-            type="Transfer",
-            from_account_id=source_account_id,
-            to_account_id=capsule.account_id,
-            currency=transaction.currency or "JPY",
-            category="capsule_auto_allocation",
-        )
-        db.add(tx)
-        db.flush()
-        process_transaction(db, tx)
-        db.refresh(tx)
-        capsule.current_balance = capsule_balance(db, capsule)
-        created.append(tx)
 
-    if created:
+        holding = upsert_capsule_holding(db, capsule, source_account_id, amount, note=f"Auto-allocated: {rule.trigger_type}")
+        updated.append(holding)
+
+    if updated:
         db.commit()
-    return created
+    return updated
 
 
 def _rule_matches(rule: models.CapsuleRule, transaction: models.Transaction) -> bool:

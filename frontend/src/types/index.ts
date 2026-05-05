@@ -340,6 +340,16 @@ export interface RoadmapProjection {
     };
 }
 
+export interface CapsuleHolding {
+    id: number;
+    capsule_id: number;
+    account_id: number;
+    account_name?: string | null;
+    held_amount: number;
+    note?: string | null;
+    updated_at?: string | null;
+}
+
 export interface Capsule {
     id: number;
     life_event_id?: number | null;
@@ -348,6 +358,7 @@ export interface Capsule {
     monthly_contribution: number;
     current_balance: number;
     account_id?: number;
+    holdings: CapsuleHolding[];
 }
 
 export interface CapsuleRule {
