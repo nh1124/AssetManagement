@@ -119,7 +119,7 @@ def preview_life_event_milestones_from_simulation(
             annual_return=payload.annual_return,
             inflation=payload.inflation,
             monthly_savings=payload.monthly_savings,
-            contribution_schedule=[item.model_dump() for item in payload.contribution_schedule],
+            contribution_schedule=[item.model_dump(mode='json') for item in payload.contribution_schedule],
             allocation_mode=payload.allocation_mode,
         )
     except LookupError as exc:
@@ -145,7 +145,7 @@ def create_life_event_milestones_from_simulation(
             annual_return=payload.annual_return,
             inflation=payload.inflation,
             monthly_savings=payload.monthly_savings,
-            contribution_schedule=[item.model_dump() for item in payload.contribution_schedule],
+            contribution_schedule=[item.model_dump(mode='json') for item in payload.contribution_schedule],
             allocation_mode=payload.allocation_mode,
         )
     except LookupError as exc:
