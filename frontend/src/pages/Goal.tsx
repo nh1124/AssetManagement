@@ -935,13 +935,13 @@ export default function Goal() {
         setContributions((items) => items.filter((item) => item.id !== id));
     };
 
-    const renderScenariosPanel = () => (
-        <div className="bg-slate-800/30 border border-slate-700 p-4">
-            <div className="flex items-center justify-between mb-3">
-                <h3 className="text-[10px] text-slate-500 uppercase tracking-wider flex items-center gap-2"><Save size={12} /> Scenarios</h3>
+    const renderScenariosSection = () => (
+        <div className="border-t border-slate-800 pt-3 space-y-2">
+            <div className="flex items-center justify-between">
+                <h4 className="text-[10px] text-slate-500 uppercase tracking-wider flex items-center gap-1.5"><Save size={11} /> Scenarios</h4>
                 <span className="text-[10px] text-slate-600">{scenarios.length} saved</span>
             </div>
-            <div className="grid grid-cols-[1fr_auto] gap-2 mb-3">
+            <div className="grid grid-cols-[1fr_auto] gap-2">
                 <input
                     type="text"
                     title="Scenario name"
@@ -961,9 +961,9 @@ export default function Goal() {
                 </button>
             </div>
             {scenarios.length === 0 ? (
-                <p className="text-[10px] text-slate-600">No saved scenarios yet. Save the current parameters above.</p>
+                <p className="text-[10px] text-slate-600">No saved scenarios yet.</p>
             ) : (
-                <div className="space-y-1 max-h-48 overflow-auto">
+                <div className="space-y-1 max-h-40 overflow-auto">
                     {scenarios.map((scenario) => (
                         <div key={scenario.id} className="grid grid-cols-[1fr_auto_auto] items-center gap-2 bg-slate-900/60 border border-slate-700 px-2 py-1.5 text-[10px]">
                             <div className="min-w-0">
@@ -992,7 +992,7 @@ export default function Goal() {
                     ))}
                 </div>
             )}
-            <div className="border-t border-slate-800 mt-3 pt-3 space-y-2">
+            <div className="border-t border-slate-800 pt-2 space-y-2">
                 <label className="flex items-center gap-2 text-[10px] text-slate-400">
                     <input
                         type="checkbox"
@@ -1407,10 +1407,10 @@ export default function Goal() {
                                     </div>
                                 ))}
                             </div>
+                            {renderScenariosSection()}
                         </div>
                     </div>
 
-                    {renderScenariosPanel()}
                     {renderMilestonePlan()}
 
                     <div className="grid grid-cols-2 gap-2 text-xs">
