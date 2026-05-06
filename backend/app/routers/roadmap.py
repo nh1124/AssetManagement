@@ -151,6 +151,26 @@ def create_life_event_milestones_from_simulation(
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+@router.patch("/milestones/{milestone_id}", response_model=schemas.Milestone)
+def update_milestone(
+    milestone_id: int,
+    update: schemas.MilestoneUpdate,
+    db: Session = Depends(database.get_db),
+    current_client: models.Client = Depends(dependencies.get_current_client),
+):
+    milestone = db.query(models.Milestone).filter(
+        models.Milestone.id == milestone_id,
+        models.Milestone.client_id == current_client.id,
+    ).first()
+    if not milestone:
+        raise HTTPException(status_code=404, detail="Milestone not found")
+    for field, value in update.model_dump(exclude_none=True).items():
+        setattr(milestone, field, value)
+    db.commit()
+    db.refresh(milestone)
+    return milestone
+
+
 @router.delete("/milestones/{milestone_id}", response_model=schemas.Milestone)
 def delete_milestone(
     milestone_id: int, 

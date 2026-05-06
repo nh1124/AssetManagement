@@ -332,10 +332,15 @@ class MilestoneBase(BaseModel):
 class MilestoneCreate(MilestoneBase):
     pass
 
+class MilestoneUpdate(BaseModel):
+    note: Optional[str] = None
+    target_amount: Optional[float] = None
+    date: Optional[DateType] = None
+
 class Milestone(MilestoneBase):
     id: int
     created_at: datetime
-    
+
     class Config:
         from_attributes = True
 

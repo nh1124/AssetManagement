@@ -600,6 +600,14 @@ export const createMilestone = async (milestone: any): Promise<Milestone> => {
     return response.data;
 };
 
+export const updateMilestone = async (
+    id: number,
+    update: { note?: string | null; target_amount?: number; date?: string }
+): Promise<Milestone> => {
+    const response = await api.patch(`/roadmap/milestones/${id}`, update);
+    return response.data;
+};
+
 export const deleteMilestone = async (id: number): Promise<Milestone> => {
     const response = await api.delete(`/roadmap/milestones/${id}`);
     return response.data;

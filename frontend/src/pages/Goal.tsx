@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Archive, Calendar, Check, Edit2, Flag, Plus, RefreshCw, Save, Sparkles, Trash2, TrendingUp, X } from 'lucide-react';
+import { Archive, Calendar, Check, ChevronUp, Edit2, Flag, Info, Plus, RefreshCw, Save, Sparkles, Trash2, TrendingUp, X } from 'lucide-react';
 import { Area, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import {
     applyMilestonesFromSimulation,
@@ -20,6 +20,7 @@ import {
     runMonteCarloSimulation,
     updateCapsuleHolding,
     updateGoal,
+    updateMilestone,
 } from '../api';
 import { useToast } from '../components/Toast';
 import { useClient } from '../context/ClientContext';
@@ -137,6 +138,9 @@ export default function Goal() {
     }>({ basis: 'p50', interval: 'annual', mode: 'replace', n_simulations: 1000 });
     const [milestonePreview, setMilestonePreview] = useState<MilestoneSimulationPreview | null>(null);
     const [milestonePlanLoading, setMilestonePlanLoading] = useState(false);
+    const [editingMilestoneNoteId, setEditingMilestoneNoteId] = useState<number | null>(null);
+    const [editingNoteText, setEditingNoteText] = useState('');
+    const [expandedSnapshotId, setExpandedSnapshotId] = useState<number | null>(null);
     const [loading, setLoading] = useState(false);
     const [simLoading, setSimLoading] = useState(false);
     const [roadmapLoading, setRoadmapLoading] = useState(false);
@@ -663,6 +667,27 @@ export default function Goal() {
             if (selectedGoal) await fetchGoalMilestones(selectedGoal.id);
         } catch (error) {
             showToast('Failed to delete milestone', 'error');
+        }
+    };
+
+    const handleEditNote = (id: number, currentNote: string) => {
+        setEditingMilestoneNoteId(id);
+        setEditingNoteText(currentNote ?? '');
+        setExpandedSnapshotId(null);
+    };
+
+    const handleCancelEdit = () => {
+        setEditingMilestoneNoteId(null);
+        setEditingNoteText('');
+    };
+
+    const handleSaveNote = async (id: number) => {
+        try {
+            await updateMilestone(id, { note: editingNoteText || null });
+            setMilestones((prev) => prev.map((m) => m.id === id ? { ...m, note: editingNoteText || undefined } : m));
+            setEditingMilestoneNoteId(null);
+        } catch {
+            showToast('Failed to update note', 'error');
         }
     };
 
@@ -1254,23 +1279,96 @@ export default function Goal() {
                     <button onClick={createRoadmapMilestone} className="col-span-12 md:col-span-2 bg-emerald-900/50 border border-emerald-800 text-emerald-300 text-xs">Add</button>
                 </div>
             )}
-            <div className="space-y-2 max-h-[520px] overflow-auto">
+            <div className="space-y-1 max-h-[520px] overflow-auto">
                 {displayedMilestones.length === 0 ? (
                     <p className="text-xs text-slate-600">{showingPlan ? 'No candidate milestones for this plan.' : 'No milestones yet. Add one manually or adopt a simulation plan.'}</p>
-                ) : displayedMilestones.map((milestone) => (
-                    <div key={`${milestone.date}-${milestone.target_amount}-${milestone.note ?? ''}`} className="grid grid-cols-1 md:grid-cols-[140px_1fr_auto] items-center gap-3 bg-slate-900/60 border border-slate-700 p-2 text-xs">
-                        <div className="flex items-center gap-2">
-                            <Calendar size={12} className="text-slate-500" />
-                            <span className="font-mono-nums text-slate-300">{milestone.date}</span>
+                ) : displayedMilestones.map((milestone) => {
+                    const milestoneId = (milestone as Milestone).id;
+                    const isReal = !showingPlan && typeof milestoneId === 'number';
+                    const isSimSrc = !!milestone.source && milestone.source !== 'manual';
+                    const isEditing = isReal && editingMilestoneNoteId === milestoneId;
+                    const isExpanded = isReal && expandedSnapshotId === milestoneId;
+                    const snap = milestone.source_snapshot as Record<string, unknown> | null | undefined;
+                    return (
+                        <div key={isReal ? milestoneId : `${milestone.date}-${milestone.target_amount}`} className="border border-slate-700">
+                            <div className="grid grid-cols-1 md:grid-cols-[140px_1fr_auto] items-center gap-2 bg-slate-900/60 p-2 text-xs">
+                                {/* Date */}
+                                <div className="flex items-center gap-2">
+                                    <Calendar size={12} className="text-slate-500 shrink-0" />
+                                    <span className="font-mono-nums text-slate-300">{milestone.date}</span>
+                                </div>
+                                {/* Amount + note */}
+                                <div className="min-w-0 flex items-center gap-2">
+                                    <span className="font-mono-nums text-emerald-400 shrink-0">{formatCurrency(milestone.target_amount)}</span>
+                                    {isEditing ? (
+                                        <input
+                                            value={editingNoteText}
+                                            onChange={(e) => setEditingNoteText(e.target.value)}
+                                            onKeyDown={(e) => { if (e.key === 'Enter') handleSaveNote(milestoneId); if (e.key === 'Escape') handleCancelEdit(); }}
+                                            className="flex-1 bg-slate-800 border border-slate-600 px-2 py-0.5 text-xs text-slate-200 min-w-0 outline-none focus:border-slate-400"
+                                            placeholder="Add note..."
+                                            autoFocus
+                                        />
+                                    ) : (
+                                        <span className="text-slate-500 truncate">{milestone.note || ''}</span>
+                                    )}
+                                    {isSimSrc && !isEditing && (
+                                        <span className="text-[10px] text-cyan-600 shrink-0">{milestone.source}</span>
+                                    )}
+                                </div>
+                                {/* Actions */}
+                                {isEditing ? (
+                                    <div className="flex items-center gap-1.5 justify-self-end">
+                                        <button type="button" title="Save note" onClick={() => handleSaveNote(milestoneId)} className="text-emerald-400 hover:text-emerald-300"><Check size={12} /></button>
+                                        <button type="button" title="Cancel edit" onClick={handleCancelEdit} className="text-slate-500 hover:text-slate-300"><X size={12} /></button>
+                                    </div>
+                                ) : isReal ? (
+                                    <div className="flex items-center gap-1.5 justify-self-end">
+                                        {isSimSrc && snap && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setExpandedSnapshotId(isExpanded ? null : milestoneId)}
+                                                className={isExpanded ? 'text-cyan-400' : 'text-slate-600 hover:text-cyan-400'}
+                                                title="Show simulation parameters"
+                                            >
+                                                {isExpanded ? <ChevronUp size={12} /> : <Info size={12} />}
+                                            </button>
+                                        )}
+                                        <button type="button" onClick={() => handleEditNote(milestoneId, milestone.note ?? '')} className="text-slate-600 hover:text-slate-300" title="Edit note"><Edit2 size={12} /></button>
+                                        <button type="button" title="Delete milestone" onClick={() => removeRoadmapMilestone(milestoneId)} className="text-slate-600 hover:text-rose-400"><Trash2 size={12} /></button>
+                                    </div>
+                                ) : null}
+                            </div>
+                            {/* Simulation snapshot panel */}
+                            {isExpanded && snap && (
+                                <div className="border-t border-slate-700/60 bg-slate-950/60 px-3 py-2 text-[10px] text-slate-400 space-y-2">
+                                    <div className="flex flex-wrap gap-x-4 gap-y-1">
+                                        {snap.basis != null && <span>Basis <span className="text-slate-200 uppercase">{String(snap.basis)}</span></span>}
+                                        {snap.annual_return != null && <span>Return <span className="text-slate-200">{String(snap.annual_return)}%</span></span>}
+                                        {snap.inflation_rate != null && <span>Inflation <span className="text-slate-200">{String(snap.inflation_rate)}%</span></span>}
+                                        {snap.monthly_savings != null && <span>Savings <span className="text-slate-200 font-mono-nums">{formatCurrency(snap.monthly_savings as number)}/mo</span></span>}
+                                        {snap.current_funded != null && <span>Funded <span className="text-slate-200 font-mono-nums">{formatCurrency(snap.current_funded as number)}</span></span>}
+                                        {snap.n_simulations != null && <span>Sims <span className="text-slate-200">{String(snap.n_simulations)}</span></span>}
+                                    </div>
+                                    {Array.isArray(snap.contribution_schedule) && (snap.contribution_schedule as ContributionScheduleItem[]).length > 0 && (
+                                        <div className="flex flex-wrap gap-1.5">
+                                            {(snap.contribution_schedule as ContributionScheduleItem[]).map((item, idx) => (
+                                                <span key={idx} className="bg-slate-800 border border-slate-700 px-1.5 py-0.5">
+                                                    {item.kind === 'monthly' && `${formatCurrency(item.amount)}/mo`}
+                                                    {item.kind === 'yearly' && `${formatCurrency(item.amount)} bonus (${item.month}月)`}
+                                                    {item.kind === 'one_time' && `${formatCurrency(item.amount)} on ${item.date}`}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    )}
+                                    {snap.generated_at != null && (
+                                        <p className="text-slate-600">Generated {String(snap.generated_at).slice(0, 10)}</p>
+                                    )}
+                                </div>
+                            )}
                         </div>
-                        <div className="min-w-0">
-                            <span className="font-mono-nums text-emerald-400">{formatCurrency(milestone.target_amount)}</span>
-                            {milestone.note && <span className="ml-3 text-slate-500">{milestone.note}</span>}
-                            {milestone.source && milestone.source !== 'manual' && <span className="ml-3 text-[10px] text-cyan-500">{milestone.source}</span>}
-                        </div>
-                        {!showingPlan && typeof (milestone as Milestone).id === 'number' && <button onClick={() => removeRoadmapMilestone((milestone as Milestone).id)} className="text-slate-600 hover:text-rose-400 justify-self-end"><Trash2 size={12} /></button>}
-                    </div>
-                ))}
+                    );
+                })}
             </div>
         </div>
         );
