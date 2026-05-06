@@ -65,6 +65,7 @@ export interface RoadmapEntry {
 export interface LifeEvent {
     id: number;
     name: string;
+    start_date?: string | null;
     target_date: string;
     target_amount: number;
     priority: 1 | 2 | 3;
@@ -289,6 +290,42 @@ export interface MilestoneSimulationPreview {
     mode: MilestoneSimulationMode;
     existing_count: number;
     items: Array<Omit<Milestone, 'id'>>;
+}
+
+export interface SimulationScenario {
+    id: number;
+    life_event_id: number;
+    name: string;
+    description?: string | null;
+    annual_return: number;
+    inflation: number;
+    monthly_savings?: number | null;
+    contribution_schedule: ContributionScheduleItem[];
+    allocation_mode: 'weighted' | 'direct';
+    created_at?: string | null;
+    updated_at?: string | null;
+}
+
+export interface SimulationScenarioCreatePayload {
+    life_event_id: number;
+    name: string;
+    description?: string | null;
+    annual_return: number;
+    inflation: number;
+    monthly_savings?: number | null;
+    contribution_schedule: ContributionScheduleItem[];
+    allocation_mode: 'weighted' | 'direct';
+}
+
+export interface SimulationScenarioCompareItem {
+    scenario_id: number;
+    scenario_name: string;
+    target_amount: number;
+    years_remaining: number;
+    probability: number;
+    percentiles: { p10: number; p50: number; p90: number };
+    year_by_year: { p10: number[]; p50: number[]; p90: number[] };
+    deterministic_yearly: Array<{ year: number; end_balance: number }>;
 }
 
 export interface NetWorthHistoryPoint {

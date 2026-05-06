@@ -211,6 +211,7 @@ class LifeEvent(Base):
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
     name = Column(String, index=True)  # e.g., "Retirement", "House"
+    start_date = Column(Date, nullable=True)
     target_date = Column(Date)
     target_amount = Column(Float)
     priority = Column(Integer, default=2)  # 1=High, 2=Medium, 3=Low
@@ -312,6 +313,28 @@ class Milestone(Base):
 
     client = relationship("Client", back_populates="milestones")
     life_event = relationship("LifeEvent", back_populates="milestones")
+
+
+class SimulationScenario(Base):
+    """Saved simulation parameters for a goal: lets users compare and reload."""
+    __tablename__ = "simulation_scenarios"
+    __table_args__ = (
+        UniqueConstraint("client_id", "life_event_id", "name", name="_client_life_event_scenario_name_uc"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
+    life_event_id = Column(Integer, ForeignKey("life_events.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    annual_return = Column(Float, nullable=False)
+    inflation = Column(Float, nullable=False)
+    monthly_savings = Column(Float, nullable=True)
+    contribution_schedule = Column(JSON, nullable=False, default=list, server_default="[]")
+    allocation_mode = Column(String, nullable=False, default="direct", server_default="direct")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
 
 class Capsule(Base):
     __tablename__ = "capsules"

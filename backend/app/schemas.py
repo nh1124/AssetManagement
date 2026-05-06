@@ -256,6 +256,7 @@ class PeriodReview(PeriodReviewBase):
 
 class LifeEventBase(BaseModel):
     name: str
+    start_date: Optional[date] = None
     target_date: date
     target_amount: float
     priority: Literal[1, 2, 3] = 2
@@ -266,6 +267,7 @@ class LifeEventCreate(LifeEventBase):
 
 class LifeEventUpdate(BaseModel):
     name: Optional[str] = None
+    start_date: Optional[date] = None
     target_date: Optional[date] = None
     target_amount: Optional[float] = None
     priority: Optional[Literal[1, 2, 3]] = None
@@ -343,6 +345,58 @@ class Milestone(MilestoneBase):
 
     class Config:
         from_attributes = True
+
+
+# ========== Simulation Scenarios ==========
+
+class SimulationScenarioBase(BaseModel):
+    life_event_id: int
+    name: str
+    description: Optional[str] = None
+    annual_return: float
+    inflation: float
+    monthly_savings: Optional[float] = None
+    contribution_schedule: list[dict[str, Any]] = Field(default_factory=list)
+    allocation_mode: Literal["weighted", "direct"] = "direct"
+
+
+class SimulationScenarioCreate(SimulationScenarioBase):
+    pass
+
+
+class SimulationScenarioUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    annual_return: Optional[float] = None
+    inflation: Optional[float] = None
+    monthly_savings: Optional[float] = None
+    contribution_schedule: Optional[list[dict[str, Any]]] = None
+    allocation_mode: Optional[Literal["weighted", "direct"]] = None
+
+
+class SimulationScenario(SimulationScenarioBase):
+    id: int
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class SimulationScenarioCompareRequest(BaseModel):
+    life_event_id: int
+    scenario_ids: list[int] = Field(min_length=2, max_length=2)
+
+
+class SimulationScenarioCompareItem(BaseModel):
+    scenario_id: int
+    scenario_name: str
+    target_amount: float
+    years_remaining: float
+    probability: float
+    percentiles: MonteCarloPercentiles
+    year_by_year: MonteCarloYearByYear
+    deterministic_yearly: list[dict[str, Any]]
 
 class CapsuleBase(BaseModel):
     name: str

@@ -11,6 +11,7 @@ from .. import models
 from .goal_service import get_life_events_with_progress
 from .strategy_service import (
     _period_contribution_from_schedule,
+    calculate_goal_probability_monte_carlo,
     calculate_projection,
     get_goal_simulation_context,
     run_monte_carlo,
@@ -267,6 +268,47 @@ def preview_milestones_from_simulation(
     rows_by_date: dict[date, dict] = {}
     generated_at = datetime.utcnow().isoformat()
 
+    # Goal-level outlook summary computed once and reused in every snapshot
+    target_years_remaining = max(0.0, (target_date - today).days / 365.25)
+    deterministic_at_target = calculate_projection(
+        current_funded=context["current_funded"],
+        monthly_savings=context["allocated_monthly_savings"],
+        years_remaining=target_years_remaining,
+        annual_return=context["effective_return"],
+    )
+    if basis == "deterministic":
+        probability_at_target = None
+        percentiles_at_target = None
+    else:
+        target_mc = run_monte_carlo(
+            current_funded=context["current_funded"],
+            monthly_savings=context["allocated_monthly_savings"],
+            years_remaining=target_years_remaining,
+            annual_return=context["effective_return"],
+            volatility=volatility,
+            inflation_rate=context["inflation_rate"],
+            n_simulations=n_simulations,
+        )
+        percentiles_at_target = target_mc["percentiles"]
+        probability_at_target = calculate_goal_probability_monte_carlo(
+            current_funded=context["current_funded"],
+            monthly_savings=context["allocated_monthly_savings"],
+            years_remaining=target_years_remaining,
+            target_amount=event.target_amount,
+            annual_return=context["effective_return"],
+            volatility=volatility,
+            inflation_rate=context["inflation_rate"],
+            n_simulations=n_simulations,
+        )
+
+    goal_outlook = {
+        "probability_at_target": probability_at_target,
+        "percentiles_at_target": percentiles_at_target,
+        "projected_at_target": round(float(deterministic_at_target), 0),
+        "years_to_target": round(float(target_years_remaining), 2),
+        "target_amount": event.target_amount,
+    }
+
     if interval != "target_only":
         month_step = INTERVAL_MONTHS[interval]
         cursor_months = month_step
@@ -304,6 +346,7 @@ def preview_milestones_from_simulation(
                     "allocation_mode": context["allocation_mode"],
                     "current_funded": context["current_funded"],
                     "generated_at": generated_at,
+                    "goal_outlook": goal_outlook,
                 },
             }
             cursor_months += month_step
@@ -319,7 +362,16 @@ def preview_milestones_from_simulation(
             "interval": interval,
             "mode": mode,
             "target_amount": event.target_amount,
+            "annual_return": context["annual_return"],
+            "effective_return": context["effective_return"],
+            "inflation_rate": context["inflation_rate"],
+            "monthly_savings": context["monthly_savings"],
+            "allocated_monthly_savings": context["allocated_monthly_savings"],
+            "contribution_schedule": context["contribution_schedule"],
+            "allocation_mode": context["allocation_mode"],
+            "current_funded": context["current_funded"],
             "generated_at": generated_at,
+            "goal_outlook": goal_outlook,
         },
     }
 

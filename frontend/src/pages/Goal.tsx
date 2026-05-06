@@ -3,19 +3,23 @@ import { Archive, Calendar, Check, ChevronUp, Edit2, Flag, Info, Plus, RefreshCw
 import { Area, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import {
     applyMilestonesFromSimulation,
+    compareSimulationScenarios,
     createCapsuleHolding,
     createGoal,
     createGoalCapsule,
     createMilestone,
+    createSimulationScenario,
     deleteCapsuleHolding,
     deleteGoal,
     deleteMilestone,
+    deleteSimulationScenario,
     getAccounts,
     getMilestones,
     getGoalDashboard,
     getGoalCapsules,
     getCapsules,
     getRoadmapProjection,
+    getSimulationScenarios,
     previewMilestonesFromSimulation,
     runMonteCarloSimulation,
     updateCapsuleHolding,
@@ -41,6 +45,8 @@ import type {
     MonteCarloResult,
     RoadmapEntry,
     RoadmapProjection,
+    SimulationScenario,
+    SimulationScenarioCompareItem,
 } from '../types';
 
 interface DashboardData {
@@ -79,6 +85,7 @@ const GOAL_TABS: Array<{ id: GoalTab; label: string }> = [
 
 const emptyEventForm = {
     name: '',
+    start_date: '',
     target_date: '',
     target_amount: '',
     priority: 2 as 1 | 2 | 3,
@@ -141,6 +148,18 @@ export default function Goal() {
     const [editingMilestoneNoteId, setEditingMilestoneNoteId] = useState<number | null>(null);
     const [editingNoteText, setEditingNoteText] = useState('');
     const [expandedSnapshotId, setExpandedSnapshotId] = useState<number | null>(null);
+    const [scenarios, setScenarios] = useState<SimulationScenario[]>([]);
+    const [scenarioName, setScenarioName] = useState('');
+    const [compareMode, setCompareMode] = useState(false);
+    const [compareScenarioIds, setCompareScenarioIds] = useState<{ a: number | null; b: number | null }>({ a: null, b: null });
+    const [compareResult, setCompareResult] = useState<SimulationScenarioCompareItem[] | null>(null);
+    const [compareLoading, setCompareLoading] = useState(false);
+    const [compareSeriesVisibility, setCompareSeriesVisibility] = useState({
+        p10: false,
+        p50: true,
+        p90: false,
+        deterministic: false,
+    });
     const [loading, setLoading] = useState(false);
     const [simLoading, setSimLoading] = useState(false);
     const [roadmapLoading, setRoadmapLoading] = useState(false);
@@ -199,6 +218,34 @@ export default function Goal() {
         allocation_mode: 'direct' as const,
     }), [simParams.annual_return, simParams.inflation, monthlyEquivalentForSelectedGoal, simulationContributionSchedule]);
 
+    const compareChartData = useMemo(() => {
+        if (!compareResult || compareResult.length !== 2) return [] as Array<Record<string, number | string>>;
+        const [a, b] = compareResult;
+        const maxYears = Math.max(
+            a.year_by_year.p50.length,
+            b.year_by_year.p50.length,
+            a.deterministic_yearly.length,
+            b.deterministic_yearly.length,
+        );
+        const aDetByYear = new Map<number, number>(a.deterministic_yearly.map((p) => [Math.round(p.year), p.end_balance]));
+        const bDetByYear = new Map<number, number>(b.deterministic_yearly.map((p) => [Math.round(p.year), p.end_balance]));
+        const points: Array<Record<string, number | string>> = [];
+        for (let y = 0; y < maxYears; y += 1) {
+            const row: Record<string, number | string> = { label: y === 0 ? 'Today' : `+${y}y`, year: y };
+            if (a.year_by_year.p10[y] != null) row.a_p10 = a.year_by_year.p10[y];
+            if (a.year_by_year.p50[y] != null) row.a_p50 = a.year_by_year.p50[y];
+            if (a.year_by_year.p90[y] != null) row.a_p90 = a.year_by_year.p90[y];
+            if (aDetByYear.has(y)) row.a_det = aDetByYear.get(y) as number;
+            if (b.year_by_year.p10[y] != null) row.b_p10 = b.year_by_year.p10[y];
+            if (b.year_by_year.p50[y] != null) row.b_p50 = b.year_by_year.p50[y];
+            if (b.year_by_year.p90[y] != null) row.b_p90 = b.year_by_year.p90[y];
+            if (bDetByYear.has(y)) row.b_det = bDetByYear.get(y) as number;
+            row.target = selectedGoal?.target_amount ?? 0;
+            points.push(row);
+        }
+        return points;
+    }, [compareResult, selectedGoal?.target_amount]);
+
     // Load per-goal sim params when the selected goal changes; save when user edits them
     useEffect(() => {
         if (!selectedGoalId) return;
@@ -218,6 +265,140 @@ export default function Goal() {
             goalSimStoreRef.current[selectedGoalId] = { simParams, contributions };
         }
     }, [selectedGoalId, simParams, contributions]);
+
+    const fetchScenarios = async (goalId: number) => {
+        try {
+            const data = await getSimulationScenarios(goalId);
+            setScenarios(data);
+        } catch (error) {
+            console.error('Failed to load scenarios:', error);
+        }
+    };
+
+    useEffect(() => {
+        if (!selectedGoalId) {
+            setScenarios([]);
+            setCompareScenarioIds({ a: null, b: null });
+            setCompareResult(null);
+            setCompareMode(false);
+            return;
+        }
+        fetchScenarios(selectedGoalId);
+    }, [selectedGoalId]);
+
+    const contributionsToDrafts = (items: ContributionScheduleItem[]): ContributionDraft[] => (
+        items.length > 0
+            ? items.map((it, idx) => ({
+                id: `${it.kind}-${idx}-${Date.now()}`,
+                kind: it.kind,
+                amount: Number(it.amount) || 0,
+                month: it.month ?? null,
+                date: it.date ?? null,
+                note: it.note ?? '',
+            }))
+            : [{ id: 'base-monthly', kind: 'monthly', amount: 0, note: '' }]
+    );
+
+    const handleSaveScenario = async () => {
+        if (!selectedGoal || !scenarioName.trim()) return;
+        try {
+            const created = await createSimulationScenario({
+                life_event_id: selectedGoal.id,
+                name: scenarioName.trim(),
+                description: null,
+                annual_return: simParams.annual_return,
+                inflation: simParams.inflation,
+                monthly_savings: monthlyEquivalentForSelectedGoal,
+                contribution_schedule: simulationContributionSchedule,
+                allocation_mode: selectedScope === 'goal' ? 'direct' : 'weighted',
+            });
+            setScenarios((prev) => [created, ...prev]);
+            setScenarioName('');
+            showToast('Scenario saved', 'success');
+        } catch (error) {
+            showToast(getErrorDetail(error, 'Failed to save scenario'), 'error');
+        }
+    };
+
+    const handleLoadScenario = (scenario: SimulationScenario) => {
+        setSimParams({
+            annual_return: Number(scenario.annual_return),
+            inflation: Number(scenario.inflation),
+        });
+        setContributions(contributionsToDrafts(scenario.contribution_schedule || []));
+        showToast(`Loaded scenario: ${scenario.name}`, 'success');
+    };
+
+    const handleDeleteScenario = async (scenarioId: number) => {
+        if (!confirm('Delete this scenario?')) return;
+        try {
+            await deleteSimulationScenario(scenarioId);
+            setScenarios((prev) => prev.filter((s) => s.id !== scenarioId));
+            setCompareScenarioIds((prev) => ({
+                a: prev.a === scenarioId ? null : prev.a,
+                b: prev.b === scenarioId ? null : prev.b,
+            }));
+            showToast('Scenario deleted', 'info');
+        } catch (error) {
+            showToast(getErrorDetail(error, 'Failed to delete scenario'), 'error');
+        }
+    };
+
+    const runScenarioCompare = async (a: number | null, b: number | null) => {
+        if (!selectedGoal || !a || !b) return;
+        setCompareLoading(true);
+        try {
+            const result = await compareSimulationScenarios(selectedGoal.id, [a, b]);
+            setCompareResult(result);
+        } catch (error) {
+            showToast(getErrorDetail(error, 'Failed to compare scenarios'), 'error');
+            setCompareResult(null);
+        } finally {
+            setCompareLoading(false);
+        }
+    };
+
+    const loadSnapshotIntoSimulation = (snap: Record<string, unknown>) => {
+        const annualReturn = Number(snap.annual_return ?? simParams.annual_return) || simParams.annual_return;
+        const inflation = Number(snap.inflation_rate ?? simParams.inflation) || simParams.inflation;
+        setSimParams({ annual_return: annualReturn, inflation });
+        const items = Array.isArray(snap.contribution_schedule)
+            ? (snap.contribution_schedule as ContributionScheduleItem[])
+            : [];
+        setContributions(contributionsToDrafts(items));
+        setActiveGoalTab('simulation');
+        showToast('Loaded snapshot into simulation', 'success');
+    };
+
+    const computeMilestoneDrift = (milestone: Pick<Milestone, 'date' | 'target_amount'>): { current: number; diff: number; pct: number } | null => {
+        if (!roadmapProjection?.projection?.length) return null;
+        const today = new Date();
+        const milestoneDate = new Date(`${milestone.date}T00:00:00`);
+        const yearsOffset = (milestoneDate.getTime() - today.getTime()) / (365.25 * 24 * 60 * 60 * 1000);
+        if (yearsOffset < 0) return null;
+        const points = roadmapProjection.projection;
+        // points are ordered by year (0..N). Linear interpolate p50 at yearsOffset.
+        let lower = points[0];
+        let upper = points[points.length - 1];
+        for (let i = 0; i < points.length - 1; i += 1) {
+            if (points[i].year <= yearsOffset && points[i + 1].year >= yearsOffset) {
+                lower = points[i];
+                upper = points[i + 1];
+                break;
+            }
+        }
+        let current: number;
+        if (lower.year === upper.year) {
+            current = lower.p50;
+        } else {
+            const t = (yearsOffset - lower.year) / (upper.year - lower.year);
+            current = lower.p50 + (upper.p50 - lower.p50) * t;
+        }
+        const target = milestone.target_amount || 0;
+        const diff = current - target;
+        const pct = target > 0 ? (diff / target) * 100 : 0;
+        return { current, diff, pct };
+    };
 
     const fetchGoalMilestones = async (goalId: number) => {
         setMilestones(await getMilestones(goalId));
@@ -511,6 +692,7 @@ export default function Goal() {
         setEditingEvent(event);
         setEventForm({
             name: event.name,
+            start_date: event.start_date || '',
             target_date: event.target_date,
             target_amount: String(event.target_amount),
             priority: event.priority,
@@ -523,6 +705,7 @@ export default function Goal() {
         if (!eventForm.name.trim() || !eventForm.target_date || !eventForm.target_amount) return;
         const payload = {
             name: eventForm.name.trim(),
+            start_date: eventForm.start_date || null,
             target_date: eventForm.target_date,
             target_amount: Number(eventForm.target_amount),
             priority: eventForm.priority,
@@ -752,6 +935,135 @@ export default function Goal() {
         setContributions((items) => items.filter((item) => item.id !== id));
     };
 
+    const renderScenariosPanel = () => (
+        <div className="bg-slate-800/30 border border-slate-700 p-4">
+            <div className="flex items-center justify-between mb-3">
+                <h3 className="text-[10px] text-slate-500 uppercase tracking-wider flex items-center gap-2"><Save size={12} /> Scenarios</h3>
+                <span className="text-[10px] text-slate-600">{scenarios.length} saved</span>
+            </div>
+            <div className="grid grid-cols-[1fr_auto] gap-2 mb-3">
+                <input
+                    type="text"
+                    title="Scenario name"
+                    placeholder="Scenario name"
+                    value={scenarioName}
+                    onChange={(event) => setScenarioName(event.target.value)}
+                    onKeyDown={(event) => { if (event.key === 'Enter') handleSaveScenario(); }}
+                    className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
+                />
+                <button
+                    type="button"
+                    onClick={handleSaveScenario}
+                    disabled={!scenarioName.trim() || !selectedGoal}
+                    className="px-3 py-1.5 bg-cyan-700 hover:bg-cyan-600 disabled:opacity-40 text-white text-[10px] flex items-center gap-1"
+                >
+                    <Save size={11} /> Save
+                </button>
+            </div>
+            {scenarios.length === 0 ? (
+                <p className="text-[10px] text-slate-600">No saved scenarios yet. Save the current parameters above.</p>
+            ) : (
+                <div className="space-y-1 max-h-48 overflow-auto">
+                    {scenarios.map((scenario) => (
+                        <div key={scenario.id} className="grid grid-cols-[1fr_auto_auto] items-center gap-2 bg-slate-900/60 border border-slate-700 px-2 py-1.5 text-[10px]">
+                            <div className="min-w-0">
+                                <p className="text-slate-200 truncate">{scenario.name}</p>
+                                <p className="text-slate-600 truncate">
+                                    {scenario.annual_return}% / Inf {scenario.inflation}% / {scenario.contribution_schedule.length} items
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                title="Load into simulation"
+                                onClick={() => handleLoadScenario(scenario)}
+                                className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200"
+                            >
+                                Load
+                            </button>
+                            <button
+                                type="button"
+                                title="Delete scenario"
+                                onClick={() => handleDeleteScenario(scenario.id)}
+                                className="p-1 text-slate-500 hover:text-rose-400"
+                            >
+                                <Trash2 size={11} />
+                            </button>
+                        </div>
+                    ))}
+                </div>
+            )}
+            <div className="border-t border-slate-800 mt-3 pt-3 space-y-2">
+                <label className="flex items-center gap-2 text-[10px] text-slate-400">
+                    <input
+                        type="checkbox"
+                        checked={compareMode}
+                        onChange={(event) => {
+                            setCompareMode(event.target.checked);
+                            if (!event.target.checked) setCompareResult(null);
+                        }}
+                    />
+                    Compare two scenarios
+                </label>
+                {compareMode && (
+                    <div className="space-y-2">
+                        <div className="grid grid-cols-2 gap-2">
+                            <select
+                                title="Scenario A"
+                                value={compareScenarioIds.a ?? ''}
+                                onChange={(event) => {
+                                    const next = event.target.value ? Number(event.target.value) : null;
+                                    setCompareScenarioIds((prev) => ({ ...prev, a: next }));
+                                    setCompareResult(null);
+                                }}
+                                className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-[10px] text-slate-200"
+                            >
+                                <option value="">Scenario A...</option>
+                                {scenarios.map((s) => (
+                                    <option key={s.id} value={s.id}>{s.name}</option>
+                                ))}
+                            </select>
+                            <select
+                                title="Scenario B"
+                                value={compareScenarioIds.b ?? ''}
+                                onChange={(event) => {
+                                    const next = event.target.value ? Number(event.target.value) : null;
+                                    setCompareScenarioIds((prev) => ({ ...prev, b: next }));
+                                    setCompareResult(null);
+                                }}
+                                className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-[10px] text-slate-200"
+                            >
+                                <option value="">Scenario B...</option>
+                                {scenarios.map((s) => (
+                                    <option key={s.id} value={s.id}>{s.name}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => runScenarioCompare(compareScenarioIds.a, compareScenarioIds.b)}
+                            disabled={!compareScenarioIds.a || !compareScenarioIds.b || compareScenarioIds.a === compareScenarioIds.b || compareLoading}
+                            className="w-full px-3 py-1.5 bg-purple-700 hover:bg-purple-600 disabled:opacity-40 text-white text-[10px] flex items-center justify-center gap-1"
+                        >
+                            <TrendingUp size={11} /> {compareLoading ? 'Computing...' : 'Compare'}
+                        </button>
+                        <div className="flex flex-wrap gap-2 text-[10px] text-slate-400">
+                            {(['p10', 'p50', 'p90', 'deterministic'] as const).map((key) => (
+                                <label key={key} className="flex items-center gap-1">
+                                    <input
+                                        type="checkbox"
+                                        checked={compareSeriesVisibility[key]}
+                                        onChange={(event) => setCompareSeriesVisibility((prev) => ({ ...prev, [key]: event.target.checked }))}
+                                    />
+                                    {key === 'deterministic' ? 'Det' : key.toUpperCase()}
+                                </label>
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+
     const renderMilestonePlan = () => (
         <div className="bg-slate-800/30 border border-slate-700 p-4">
             <div className="flex flex-col gap-3 mb-3">
@@ -883,6 +1195,10 @@ export default function Goal() {
                             <div className="flex justify-between gap-3">
                                 <span className="text-slate-500">Priority</span>
                                 <span className={PRIORITY_COLORS[selectedGoal.priority]}>{priorityLabel(selectedGoal.priority)}</span>
+                            </div>
+                            <div className="flex justify-between gap-3">
+                                <span className="text-slate-500">Start Date</span>
+                                <span className="font-mono-nums text-slate-300">{selectedGoal.start_date || '—'}</span>
                             </div>
                             <div className="flex justify-between gap-3">
                                 <span className="text-slate-500">Target Date</span>
@@ -1094,6 +1410,7 @@ export default function Goal() {
                         </div>
                     </div>
 
+                    {renderScenariosPanel()}
                     {renderMilestonePlan()}
 
                     <div className="grid grid-cols-2 gap-2 text-xs">
@@ -1157,6 +1474,28 @@ export default function Goal() {
                                     </div>
                                 )}
                                 <div className="h-[360px]">
+                                    {compareMode && compareResult && compareResult.length === 2 ? (
+                                        <ResponsiveContainer width="100%" height="100%">
+                                            <ComposedChart data={compareChartData} margin={{ top: 8, right: 16, bottom: 34, left: 8 }}>
+                                                <XAxis dataKey="label" tick={{ fontSize: 10 }} stroke="#64748b" />
+                                                <YAxis tick={{ fontSize: 10 }} stroke="#64748b" tickFormatter={formatCompact} />
+                                                <Tooltip
+                                                    contentStyle={{ background: '#1e293b', border: '1px solid #334155', fontSize: 11 }}
+                                                    formatter={(value) => [formatCurrency(value as number), '']}
+                                                />
+                                                <Legend verticalAlign="bottom" align="center" wrapperStyle={{ fontSize: 10, paddingTop: 14 }} />
+                                                {compareSeriesVisibility.p10 && <Line type="monotone" dataKey="a_p10" stroke="#fbbf24" name={`${compareResult[0].scenario_name} P10`} dot={false} connectNulls />}
+                                                {compareSeriesVisibility.p50 && <Line type="monotone" dataKey="a_p50" stroke="#22d3ee" strokeWidth={2} name={`${compareResult[0].scenario_name} P50`} dot={false} connectNulls />}
+                                                {compareSeriesVisibility.p90 && <Line type="monotone" dataKey="a_p90" stroke="#34d399" name={`${compareResult[0].scenario_name} P90`} dot={false} connectNulls />}
+                                                {compareSeriesVisibility.deterministic && <Line type="monotone" dataKey="a_det" stroke="#22d3ee" strokeDasharray="4 3" name={`${compareResult[0].scenario_name} Det`} dot={false} connectNulls />}
+                                                {compareSeriesVisibility.p10 && <Line type="monotone" dataKey="b_p10" stroke="#f87171" name={`${compareResult[1].scenario_name} P10`} dot={false} connectNulls />}
+                                                {compareSeriesVisibility.p50 && <Line type="monotone" dataKey="b_p50" stroke="#a78bfa" strokeWidth={2} name={`${compareResult[1].scenario_name} P50`} dot={false} connectNulls />}
+                                                {compareSeriesVisibility.p90 && <Line type="monotone" dataKey="b_p90" stroke="#86efac" name={`${compareResult[1].scenario_name} P90`} dot={false} connectNulls />}
+                                                {compareSeriesVisibility.deterministic && <Line type="monotone" dataKey="b_det" stroke="#a78bfa" strokeDasharray="4 3" name={`${compareResult[1].scenario_name} Det`} dot={false} connectNulls />}
+                                                <Line type="monotone" dataKey="target" stroke="#f97316" strokeDasharray="5 5" name="Target" dot={false} />
+                                            </ComposedChart>
+                                        </ResponsiveContainer>
+                                    ) : (
                                     <ResponsiveContainer width="100%" height="100%">
                                         <ComposedChart data={goalProjectionChartData} margin={{ top: 8, right: 16, bottom: 34, left: 8 }}>
                                             <XAxis
@@ -1205,6 +1544,7 @@ export default function Goal() {
                                             <Line type="monotone" dataKey="target" stroke="#f97316" strokeDasharray="5 5" name="Target" dot={false} />
                                         </ComposedChart>
                                     </ResponsiveContainer>
+                                    )}
                                 </div>
                             </>
                         )}
@@ -1342,13 +1682,23 @@ export default function Goal() {
                             {/* Simulation snapshot panel */}
                             {isExpanded && snap && (
                                 <div className="border-t border-slate-700/60 bg-slate-950/60 px-3 py-2 text-[10px] text-slate-400 space-y-2">
-                                    <div className="flex flex-wrap gap-x-4 gap-y-1">
-                                        {snap.basis != null && <span>Basis <span className="text-slate-200 uppercase">{String(snap.basis)}</span></span>}
-                                        {snap.annual_return != null && <span>Return <span className="text-slate-200">{String(snap.annual_return)}%</span></span>}
-                                        {snap.inflation_rate != null && <span>Inflation <span className="text-slate-200">{String(snap.inflation_rate)}%</span></span>}
-                                        {snap.monthly_savings != null && <span>Savings <span className="text-slate-200 font-mono-nums">{formatCurrency(snap.monthly_savings as number)}/mo</span></span>}
-                                        {snap.current_funded != null && <span>Funded <span className="text-slate-200 font-mono-nums">{formatCurrency(snap.current_funded as number)}</span></span>}
-                                        {snap.n_simulations != null && <span>Sims <span className="text-slate-200">{String(snap.n_simulations)}</span></span>}
+                                    <div className="flex items-center justify-between gap-2">
+                                        <div className="flex flex-wrap gap-x-4 gap-y-1">
+                                            {snap.basis != null && <span>Basis <span className="text-slate-200 uppercase">{String(snap.basis)}</span></span>}
+                                            {snap.annual_return != null && <span>Return <span className="text-slate-200">{String(snap.annual_return)}%</span></span>}
+                                            {snap.inflation_rate != null && <span>Inflation <span className="text-slate-200">{String(snap.inflation_rate)}%</span></span>}
+                                            {snap.monthly_savings != null && <span>Savings <span className="text-slate-200 font-mono-nums">{formatCurrency(snap.monthly_savings as number)}/mo</span></span>}
+                                            {snap.current_funded != null && <span>Funded <span className="text-slate-200 font-mono-nums">{formatCurrency(snap.current_funded as number)}</span></span>}
+                                            {snap.n_simulations != null && <span>Sims <span className="text-slate-200">{String(snap.n_simulations)}</span></span>}
+                                        </div>
+                                        <button
+                                            type="button"
+                                            title="Load these parameters into the Simulation tab"
+                                            onClick={() => loadSnapshotIntoSimulation(snap)}
+                                            className="shrink-0 inline-flex items-center gap-1 px-2 py-1 bg-cyan-900/40 hover:bg-cyan-800/60 border border-cyan-800 text-cyan-200 text-[10px]"
+                                        >
+                                            <TrendingUp size={11} /> Load into Simulation
+                                        </button>
                                     </div>
                                     {Array.isArray(snap.contribution_schedule) && (snap.contribution_schedule as ContributionScheduleItem[]).length > 0 && (
                                         <div className="flex flex-wrap gap-1.5">
@@ -1361,6 +1711,46 @@ export default function Goal() {
                                             ))}
                                         </div>
                                     )}
+                                    {(() => {
+                                        const outlook = snap.goal_outlook as Record<string, unknown> | undefined;
+                                        if (!outlook) return null;
+                                        const projectedAtTarget = outlook.projected_at_target as number | undefined;
+                                        const probability = outlook.probability_at_target as number | null | undefined;
+                                        const percentiles = outlook.percentiles_at_target as { p10: number; p50: number; p90: number } | null | undefined;
+                                        const yearsToTarget = outlook.years_to_target as number | undefined;
+                                        return (
+                                            <div className="border-t border-slate-800 pt-2 space-y-1">
+                                                <p className="text-slate-500 uppercase tracking-wider text-[9px]">Goal Outlook (at target date)</p>
+                                                <div className="flex flex-wrap gap-x-4 gap-y-1">
+                                                    {projectedAtTarget != null && <span>Projected <span className="text-slate-200 font-mono-nums">{formatCurrency(projectedAtTarget)}</span></span>}
+                                                    {probability != null && <span>Probability <span className="text-emerald-300 font-mono-nums">{Number(probability).toFixed(1)}%</span></span>}
+                                                    {yearsToTarget != null && <span>Horizon <span className="text-slate-200 font-mono-nums">{Number(yearsToTarget).toFixed(1)}y</span></span>}
+                                                </div>
+                                                {percentiles && (
+                                                    <div className="flex flex-wrap gap-x-4 gap-y-1">
+                                                        <span>P10 <span className="text-amber-300 font-mono-nums">{formatCurrency(percentiles.p10)}</span></span>
+                                                        <span>P50 <span className="text-cyan-300 font-mono-nums">{formatCurrency(percentiles.p50)}</span></span>
+                                                        <span>P90 <span className="text-emerald-300 font-mono-nums">{formatCurrency(percentiles.p90)}</span></span>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })()}
+                                    {(() => {
+                                        const drift = computeMilestoneDrift(milestone);
+                                        if (!drift) return null;
+                                        const tone = drift.diff > 0 ? 'text-emerald-300' : drift.diff < 0 ? 'text-rose-300' : 'text-slate-300';
+                                        return (
+                                            <div className="border-t border-slate-800 pt-2">
+                                                <p className="text-slate-500 uppercase tracking-wider text-[9px]">Drift (saved → current P50)</p>
+                                                <div className="flex flex-wrap gap-x-4 gap-y-1">
+                                                    <span>Saved <span className="text-slate-200 font-mono-nums">{formatCurrency(milestone.target_amount)}</span></span>
+                                                    <span>Current <span className="text-slate-200 font-mono-nums">{formatCurrency(drift.current)}</span></span>
+                                                    <span>Δ <span className={`${tone} font-mono-nums`}>{drift.diff >= 0 ? '+' : ''}{formatCurrency(drift.diff)} ({drift.diff >= 0 ? '+' : ''}{drift.pct.toFixed(1)}%)</span></span>
+                                                </div>
+                                            </div>
+                                        );
+                                    })()}
                                     {snap.generated_at != null && (
                                         <p className="text-slate-600">Generated {String(snap.generated_at).slice(0, 10)}</p>
                                     )}
@@ -1746,9 +2136,16 @@ export default function Goal() {
                         <div className="space-y-3">
                             <input value={eventForm.name} onChange={(event) => setEventForm({ ...eventForm, name: event.target.value })} placeholder="Goal name" className="w-full bg-slate-800 border border-slate-700 px-3 py-2 text-sm" />
                             <div className="grid grid-cols-2 gap-3">
-                                <input type="date" value={eventForm.target_date} onChange={(event) => setEventForm({ ...eventForm, target_date: event.target.value })} className="bg-slate-800 border border-slate-700 px-3 py-2 text-sm" />
-                                <input type="number" value={eventForm.target_amount} onChange={(event) => setEventForm({ ...eventForm, target_amount: event.target.value })} placeholder="Target amount" className="bg-slate-800 border border-slate-700 px-3 py-2 text-sm font-mono-nums" />
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">
+                                    Start Date
+                                    <input type="date" title="Start date" value={eventForm.start_date} onChange={(event) => setEventForm({ ...eventForm, start_date: event.target.value })} className="mt-1 w-full bg-slate-800 border border-slate-700 px-3 py-2 text-sm" />
+                                </label>
+                                <label className="text-[10px] text-slate-500 uppercase tracking-wider">
+                                    Target Date
+                                    <input type="date" title="Target date" value={eventForm.target_date} onChange={(event) => setEventForm({ ...eventForm, target_date: event.target.value })} className="mt-1 w-full bg-slate-800 border border-slate-700 px-3 py-2 text-sm" />
+                                </label>
                             </div>
+                            <input type="number" value={eventForm.target_amount} onChange={(event) => setEventForm({ ...eventForm, target_amount: event.target.value })} placeholder="Target amount" className="w-full bg-slate-800 border border-slate-700 px-3 py-2 text-sm font-mono-nums" />
                             <select value={eventForm.priority} onChange={(event) => setEventForm({ ...eventForm, priority: Number(event.target.value) as 1 | 2 | 3 })} className="w-full bg-slate-800 border border-slate-700 px-3 py-2 text-sm">
                                 <option value={1}>High priority</option>
                                 <option value={2}>Medium priority</option>

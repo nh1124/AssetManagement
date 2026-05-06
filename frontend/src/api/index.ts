@@ -21,6 +21,9 @@ import type {
     RecurringTransaction,
     ReviewActionCreate,
     RoadmapProjection,
+    SimulationScenario,
+    SimulationScenarioCompareItem,
+    SimulationScenarioCreatePayload,
     Transaction,
 } from '../types';
 
@@ -631,6 +634,42 @@ export const applyMilestonesFromSimulation = async (
     payload: MilestoneSimulationRequest
 ): Promise<Milestone[]> => {
     const response = await api.post(`/roadmap/life-events/${lifeEventId}/milestones/from-simulation`, payload);
+    return response.data;
+};
+
+export const getSimulationScenarios = async (lifeEventId: number): Promise<SimulationScenario[]> => {
+    const response = await api.get('/simulation/scenarios', { params: { life_event_id: lifeEventId } });
+    return response.data;
+};
+
+export const createSimulationScenario = async (
+    payload: SimulationScenarioCreatePayload,
+): Promise<SimulationScenario> => {
+    const response = await api.post('/simulation/scenarios', payload);
+    return response.data;
+};
+
+export const updateSimulationScenario = async (
+    id: number,
+    payload: Partial<Omit<SimulationScenarioCreatePayload, 'life_event_id'>>,
+): Promise<SimulationScenario> => {
+    const response = await api.put(`/simulation/scenarios/${id}`, payload);
+    return response.data;
+};
+
+export const deleteSimulationScenario = async (id: number): Promise<SimulationScenario> => {
+    const response = await api.delete(`/simulation/scenarios/${id}`);
+    return response.data;
+};
+
+export const compareSimulationScenarios = async (
+    lifeEventId: number,
+    scenarioIds: [number, number],
+): Promise<SimulationScenarioCompareItem[]> => {
+    const response = await api.post('/simulation/scenarios/compare', {
+        life_event_id: lifeEventId,
+        scenario_ids: scenarioIds,
+    });
     return response.data;
 };
 

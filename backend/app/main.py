@@ -25,6 +25,7 @@ from .routers import (
     reports,
     roadmap,
     simulation,
+    simulation_scenarios,
     transactions,
 )
 from .dependencies import get_current_client
@@ -127,6 +128,7 @@ app.include_router(life_events.router)
 app.include_router(monthly_reviews.router)
 app.include_router(period_reviews.router)
 app.include_router(simulation.router)
+app.include_router(simulation_scenarios.router)
 app.include_router(accounts.router)
 app.include_router(actions.router, dependencies=[Depends(get_current_client)])
 app.include_router(ai.router)
