@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Archive, Calendar, Check, Edit2, Flag, Plus, RefreshCw, Save, Sparkles, Trash2, TrendingUp, X } from 'lucide-react';
 import { Area, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import {
@@ -120,6 +120,11 @@ export default function Goal() {
     const [contributions, setContributions] = useState<ContributionDraft[]>([
         { id: 'base-monthly', kind: 'monthly', amount: 50000, note: '' },
     ]);
+    const goalSimStoreRef = useRef<Record<number, {
+        simParams: { annual_return: number; inflation: number };
+        contributions: ContributionDraft[];
+    }>>({});
+    const prevGoalIdRef = useRef<number | undefined>(undefined);
     const [roadmapInterval, setRoadmapInterval] = useState<'auto' | 'monthly' | 'quarterly' | 'annual'>('auto');
     const [roadmapTableEntries, setRoadmapTableEntries] = useState<RoadmapEntry[]>([]);
     const [monteCarlo, setMonteCarlo] = useState<MonteCarloResult | null>(null);
@@ -189,6 +194,26 @@ export default function Goal() {
         contribution_schedule: simulationContributionSchedule,
         allocation_mode: 'direct' as const,
     }), [simParams.annual_return, simParams.inflation, monthlyEquivalentForSelectedGoal, simulationContributionSchedule]);
+
+    // Load per-goal sim params when the selected goal changes; save when user edits them
+    useEffect(() => {
+        if (!selectedGoalId) return;
+        if (prevGoalIdRef.current !== selectedGoalId) {
+            // Goal switched — load stored values or reset to defaults
+            prevGoalIdRef.current = selectedGoalId;
+            const stored = goalSimStoreRef.current[selectedGoalId];
+            if (stored) {
+                setSimParams(stored.simParams);
+                setContributions(stored.contributions);
+            } else {
+                setSimParams({ annual_return: 5, inflation: 2 });
+                setContributions([{ id: 'base-monthly', kind: 'monthly', amount: 50000, note: '' }]);
+            }
+        } else {
+            // Same goal — user edited params, persist to store
+            goalSimStoreRef.current[selectedGoalId] = { simParams, contributions };
+        }
+    }, [selectedGoalId, simParams, contributions]);
 
     const fetchGoalMilestones = async (goalId: number) => {
         setMilestones(await getMilestones(goalId));
@@ -374,20 +399,61 @@ export default function Goal() {
         p90: monteCarlo.year_by_year.p90[index] ?? p50,
     })) ?? [], [monteCarlo]);
 
+    // How many roadmap periods equal one year (for sub-annual granularity overlay)
+    const periodsPerYear = useMemo(() => {
+        if (roadmapInterval === 'monthly') return 12;
+        if (roadmapInterval === 'quarterly') return 4;
+        if (roadmapInterval === 'annual') return 1;
+        // 'auto': infer from entry count vs years remaining
+        const totalPeriods = roadmapTableEntries.length - 1;
+        const yr = selectedGoal?.years_remaining ?? 1;
+        if (totalPeriods <= 0 || yr <= 0) return 1;
+        const ratio = totalPeriods / yr;
+        return ratio > 6 ? 12 : ratio > 2 ? 4 : 1;
+    }, [roadmapInterval, roadmapTableEntries.length, selectedGoal?.years_remaining]);
+
     const goalProjectionChartData = useMemo(() => {
-        const mcByYear = new Map(monteCarloChartData.map((row) => [row.year, row]));
-        return (selectedGoal?.roadmap ?? []).map((row) => {
-            const mc = mcByYear.get(row.year);
+        const source = roadmapTableEntries.length > 0 ? roadmapTableEntries : (selectedGoal?.roadmap ?? []);
+        return source.map((row, i) => {
+            let p10: number | undefined;
+            let p50: number | undefined;
+            let p90: number | undefined;
+
+            if (periodsPerYear > 1 && monteCarloChartData.length > 0) {
+                // Linearly interpolate annual MC values across sub-annual periods
+                // to avoid sudden jumps at year midpoints
+                const yearFloat = i / periodsPerYear;
+                const yr = Math.floor(yearFloat);
+                const frac = yearFloat - yr;
+                const mcCur = monteCarloChartData[yr];
+                const mcNext = monteCarloChartData[yr + 1];
+                if (mcCur) {
+                    if (mcNext && frac > 0) {
+                        p10 = mcCur.p10 + (mcNext.p10 - mcCur.p10) * frac;
+                        p50 = mcCur.p50 + (mcNext.p50 - mcCur.p50) * frac;
+                        p90 = mcCur.p90 + (mcNext.p90 - mcCur.p90) * frac;
+                    } else {
+                        ({ p10, p50, p90 } = mcCur);
+                    }
+                }
+            } else {
+                const mc = monteCarloChartData[row.year];
+                p10 = mc?.p10;
+                p50 = mc?.p50;
+                p90 = mc?.p90;
+            }
+
             return {
                 ...row,
+                periodIndex: i,
                 target: selectedGoal?.target_amount ?? 0,
-                p10: mc?.p10,
-                p50: mc?.p50,
-                p90: mc?.p90,
-                band: mc ? Math.max(0, mc.p90 - mc.p10) : undefined,
+                p10,
+                p50,
+                p90,
+                band: p10 !== undefined && p90 !== undefined ? Math.max(0, p90 - p10) : undefined,
             };
         });
-    }, [monteCarloChartData, selectedGoal]);
+    }, [monteCarloChartData, selectedGoal, roadmapTableEntries, periodsPerYear]);
 
     const roadmapChartData = useMemo<RoadmapChartPoint[]>(() => {
         if (!roadmapProjection) return [];
@@ -1023,20 +1089,34 @@ export default function Goal() {
                             <h3 className="text-[10px] text-slate-500 uppercase tracking-wider">
                                 Projection ({selectedGoal.weighted_return?.toFixed(1) || simParams.annual_return}% return)
                             </h3>
-                            <div className="inline-flex border border-slate-700 bg-slate-900/80">
-                                {([
-                                    ['projection', 'Projection'],
-                                    ['monteCarlo', 'Monte Carlo'],
-                                    ['combined', 'Combined'],
-                                ] as Array<[ProjectionView, string]>).map(([id, label]) => (
-                                    <button
-                                        key={id}
-                                        onClick={() => setProjectionView(id)}
-                                        className={`px-3 py-1.5 text-[10px] ${projectionView === id ? 'bg-cyan-950/50 text-cyan-300' : 'text-slate-500 hover:text-slate-300'}`}
-                                    >
-                                        {label}
-                                    </button>
-                                ))}
+                            <div className="flex flex-wrap gap-2">
+                                <div className="inline-flex border border-slate-700">
+                                    {(['auto', 'monthly', 'quarterly', 'annual'] as const).map((iv) => (
+                                        <button
+                                            key={iv}
+                                            type="button"
+                                            onClick={() => setRoadmapInterval(iv)}
+                                            className={`px-2 py-1 text-[10px] ${roadmapInterval === iv ? 'bg-slate-700 text-slate-100' : 'text-slate-500 hover:text-slate-300'}`}
+                                        >
+                                            {iv === 'auto' ? 'Auto' : iv.charAt(0).toUpperCase() + iv.slice(1)}
+                                        </button>
+                                    ))}
+                                </div>
+                                <div className="inline-flex border border-slate-700 bg-slate-900/80">
+                                    {([
+                                        ['projection', 'Projection'],
+                                        ['monteCarlo', 'Monte Carlo'],
+                                        ['combined', 'Combined'],
+                                    ] as Array<[ProjectionView, string]>).map(([id, label]) => (
+                                        <button
+                                            key={id}
+                                            onClick={() => setProjectionView(id)}
+                                            className={`px-3 py-1.5 text-[10px] ${projectionView === id ? 'bg-cyan-950/50 text-cyan-300' : 'text-slate-500 hover:text-slate-300'}`}
+                                        >
+                                            {label}
+                                        </button>
+                                    ))}
+                                </div>
                             </div>
                         </div>
                         {simLoading ? (
@@ -1054,7 +1134,17 @@ export default function Goal() {
                                 <div className="h-[360px]">
                                     <ResponsiveContainer width="100%" height="100%">
                                         <ComposedChart data={goalProjectionChartData} margin={{ top: 8, right: 16, bottom: 34, left: 8 }}>
-                                            <XAxis dataKey="year" tick={{ fontSize: 10 }} stroke="#64748b" label={{ value: 'Years', position: 'insideBottom', offset: -8, fontSize: 10 }} />
+                                            <XAxis
+                                                dataKey="label"
+                                                tick={{ fontSize: 10 }}
+                                                stroke="#64748b"
+                                                interval={periodsPerYear > 1
+                                                    ? Math.max(0, Math.ceil(goalProjectionChartData.length / 8) - 1)
+                                                    : 0}
+                                                label={periodsPerYear === 1
+                                                    ? { value: 'Years', position: 'insideBottom', offset: -8, fontSize: 10 }
+                                                    : undefined}
+                                            />
                                             <YAxis tick={{ fontSize: 10 }} stroke="#64748b" tickFormatter={formatCompact} />
                                             <Tooltip
                                                 content={({ active, payload, label }) => {
@@ -1069,7 +1159,7 @@ export default function Goal() {
                                                     });
                                                     return (
                                                         <div className="bg-slate-800 border border-slate-600 px-3 py-2 text-[11px]">
-                                                            <p className="text-slate-400 mb-1">Year {label}</p>
+                                                            <p className="text-slate-400 mb-1">{label}</p>
                                                             {rows.map((p) => (
                                                                 <div key={p.dataKey as string} className="flex justify-between gap-4" style={{ color: p.color }}>
                                                                     <span>{p.name}</span>
@@ -1084,9 +1174,9 @@ export default function Goal() {
                                             {(projectionView === 'monteCarlo' || projectionView === 'combined') && <Area dataKey="p10" stackId="goal-band" stroke="none" fill="transparent" name="P10" legendType="none" />}
                                             {(projectionView === 'monteCarlo' || projectionView === 'combined') && <Area dataKey="band" stackId="goal-band" stroke="none" fill="#22c55e" fillOpacity={0.12} name="P10–P90 Band" legendType="none" />}
                                             {(projectionView === 'projection' || projectionView === 'combined') && <Line type="monotone" dataKey="end_balance" stroke="#10b981" name="Projection" strokeWidth={2} dot={false} />}
-                                            {(projectionView === 'monteCarlo' || projectionView === 'combined') && <Line type="monotone" dataKey="p10" stroke="#f59e0b" name="P10" dot={false} connectNulls={false} />}
-                                            {(projectionView === 'monteCarlo' || projectionView === 'combined') && <Line type="monotone" dataKey="p50" stroke="#22d3ee" name="P50" dot={false} connectNulls={false} />}
-                                            {(projectionView === 'monteCarlo' || projectionView === 'combined') && <Line type="monotone" dataKey="p90" stroke="#10b981" name="P90" dot={false} connectNulls={false} />}
+                                            {(projectionView === 'monteCarlo' || projectionView === 'combined') && <Line type="monotone" dataKey="p10" stroke="#f59e0b" name="P10" dot={false} connectNulls={true} />}
+                                            {(projectionView === 'monteCarlo' || projectionView === 'combined') && <Line type="monotone" dataKey="p50" stroke="#22d3ee" name="P50" dot={false} connectNulls={true} />}
+                                            {(projectionView === 'monteCarlo' || projectionView === 'combined') && <Line type="monotone" dataKey="p90" stroke="#10b981" name="P90" dot={false} connectNulls={true} />}
                                             <Line type="monotone" dataKey="target" stroke="#f97316" strokeDasharray="5 5" name="Target" dot={false} />
                                         </ComposedChart>
                                     </ResponsiveContainer>
@@ -1098,18 +1188,6 @@ export default function Goal() {
                     <div className="bg-slate-800/30 border border-slate-700 overflow-hidden">
                         <div className="flex items-center justify-between px-3 py-2 bg-slate-800/50 border-b border-slate-700">
                             <h3 className="text-[10px] text-slate-500 uppercase tracking-wider">Roadmap</h3>
-                            <div className="inline-flex border border-slate-700">
-                                {(['auto', 'monthly', 'quarterly', 'annual'] as const).map((iv) => (
-                                    <button
-                                        key={iv}
-                                        type="button"
-                                        onClick={() => setRoadmapInterval(iv)}
-                                        className={`px-2 py-1 text-[10px] ${roadmapInterval === iv ? 'bg-slate-700 text-slate-100' : 'text-slate-500 hover:text-slate-300'}`}
-                                    >
-                                        {iv === 'auto' ? 'Auto' : iv.charAt(0).toUpperCase() + iv.slice(1)}
-                                    </button>
-                                ))}
-                            </div>
                         </div>
                         <div className="overflow-x-auto max-h-64">
                             <table className="w-full text-left text-[10px]">

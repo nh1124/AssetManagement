@@ -9,6 +9,7 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 from datetime import date
 from typing import Any, List, Optional, Tuple
+import math
 import numpy as np
 from .. import models
 from .fx_service import calculate_account_valued_balance
@@ -69,6 +70,51 @@ def calculate_projection(
         balance = (balance + annual_contribution * partial_year) * (1 + r * partial_year)
         
     return balance
+
+
+def _period_contribution_from_schedule(
+    schedule: list[dict],
+    period_start: date,
+    period_end: date,  # exclusive
+) -> float:
+    """Return the actual total contribution for a specific period from the schedule.
+
+    monthly  → amount once per calendar month that falls in [period_start, period_end)
+    yearly   → amount once per calendar year when the bonus month falls in the period
+    one_time → amount if the specified date falls in the period
+    """
+    total = 0.0
+    for item in schedule:
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("kind")
+        amount = _coerce_schedule_amount(item.get("amount"))
+        if amount <= 0:
+            continue
+
+        if kind == "monthly":
+            # Count distinct months in [period_start, period_end)
+            y, m = period_start.year, period_start.month
+            while date(y, m, 1) < period_end:
+                total += amount
+                m += 1
+                if m > 12:
+                    m = 1
+                    y += 1
+        elif kind == "yearly":
+            bonus_month = int(item.get("month") or 6)
+            for year in range(period_start.year, period_end.year + 1):
+                try:
+                    bonus_date = date(year, bonus_month, 1)
+                except (ValueError, TypeError):
+                    continue
+                if period_start <= bonus_date < period_end:
+                    total += amount
+        elif kind == "one_time":
+            item_date = _coerce_schedule_date(item.get("date"))
+            if item_date and period_start <= item_date < period_end:
+                total += amount
+    return total
 
 
 def _coerce_schedule_amount(value: Any) -> float:
@@ -298,15 +344,21 @@ def generate_roadmap(
     target_amount: float = 0.0,
     interval: str = 'auto',
     reference_date: Optional[date] = None,
+    contribution_schedule: list[dict] | None = None,
 ) -> List[dict]:
     """Generate time-period simulation data with configurable granularity.
 
     interval: 'auto' | 'monthly' | 'quarterly' | 'annual'
     Auto resolves to monthly (≤18 months), quarterly (≤60 months), or annual.
+
+    When contribution_schedule is supplied the contribution column reflects the
+    actual per-period cash (bonus in its exact month, one-time on its date, etc.).
+    monthly_savings is still used as the fallback when no schedule is given.
     """
     ref_date = reference_date or date.today()
     r_annual = annual_return / 100.0
     months_remaining = max(1, round(years_remaining * 12))
+    use_schedule = bool(contribution_schedule)
 
     if interval == 'auto':
         if months_remaining <= 18:
@@ -329,44 +381,71 @@ def generate_roadmap(
             "goal_coverage": round((end_bal / target_amount * 100) if target_amount > 0 else 0, 1),
         }
 
+    def _next_month_start(y: int, m: int) -> date:
+        return date(y + 1, 1, 1) if m == 12 else date(y, m + 1, 1)
+
     roadmap: List[dict] = []
     balance = current_funded
 
     if effective == 'monthly':
         r_period = (1 + r_annual) ** (1 / 12) - 1
-        per_period = monthly_savings
         roadmap.append(_row(0, ref_date.strftime('%Y-%m'), balance, 0, 0, balance))
         for m in range(1, months_remaining + 1):
+            raw_month = ref_date.month + m
+            lbl_year = ref_date.year + (raw_month - 1) // 12
+            lbl_month = ((raw_month - 1) % 12) + 1
+            period_start = date(lbl_year, lbl_month, 1)
+            period_end = _next_month_start(lbl_year, lbl_month)
+            per_period = (
+                _period_contribution_from_schedule(contribution_schedule, period_start, period_end)
+                if use_schedule else monthly_savings
+            )
             start_bal = balance
             end_bal = (start_bal + per_period) * (1 + r_period)
             gain = end_bal - start_bal - per_period
             balance = end_bal
-            raw_month = ref_date.month + m
-            lbl_year = ref_date.year + (raw_month - 1) // 12
-            lbl_month = ((raw_month - 1) % 12) + 1
             roadmap.append(_row(m, f"{lbl_year:04d}-{lbl_month:02d}", start_bal, per_period, gain, end_bal))
 
     elif effective == 'quarterly':
         r_period = (1 + r_annual) ** (1 / 4) - 1
-        per_period = monthly_savings * 3
         quarters_remaining = max(1, round(years_remaining * 4))
         start_q = (ref_date.month - 1) // 3 + 1
         roadmap.append(_row(0, f"{ref_date.year} Q{start_q}", balance, 0, 0, balance))
         for q in range(1, quarters_remaining + 1):
-            start_bal = balance
-            end_bal = (start_bal + per_period) * (1 + r_period)
-            gain = end_bal - start_bal - per_period
-            balance = end_bal
             raw_month = ref_date.month + q * 3
             lbl_year = ref_date.year + (raw_month - 1) // 12
             lbl_month = ((raw_month - 1) % 12) + 1
             lbl_q = (lbl_month - 1) // 3 + 1
+            q_start_month = (lbl_q - 1) * 3 + 1
+            period_start = date(lbl_year, q_start_month, 1)
+            period_end = _next_month_start(lbl_year, min(q_start_month + 2, 12))
+            if q_start_month + 3 > 12:
+                period_end = date(lbl_year + 1, (q_start_month + 3) - 12, 1)
+            per_period = (
+                _period_contribution_from_schedule(contribution_schedule, period_start, period_end)
+                if use_schedule else monthly_savings * 3
+            )
+            start_bal = balance
+            end_bal = (start_bal + per_period) * (1 + r_period)
+            gain = end_bal - start_bal - per_period
+            balance = end_bal
             roadmap.append(_row(q, f"{lbl_year} Q{lbl_q}", start_bal, per_period, gain, end_bal))
 
     else:  # annual
-        per_period = monthly_savings * 12
         roadmap.append(_row(0, "Current", balance, 0, 0, balance))
-        for y in range(1, int(years_remaining) + 1):
+        for y in range(1, math.ceil(years_remaining) + 1):
+            try:
+                period_start = ref_date.replace(year=ref_date.year + y - 1)
+            except ValueError:
+                period_start = ref_date.replace(year=ref_date.year + y - 1, day=28)
+            try:
+                period_end = ref_date.replace(year=ref_date.year + y)
+            except ValueError:
+                period_end = ref_date.replace(year=ref_date.year + y, day=28)
+            per_period = (
+                _period_contribution_from_schedule(contribution_schedule, period_start, period_end)
+                if use_schedule else monthly_savings * 12
+            )
             start_bal = balance
             end_bal = (start_bal + per_period) * (1 + r_annual)
             gain = end_bal - start_bal - per_period
@@ -440,7 +519,15 @@ def get_life_events_with_progress(
         status = determine_status(projected, event.target_amount, years_remaining)
         progress_pct = (projected / event.target_amount * 100) if event.target_amount > 0 else 0
         
-        # Generate roadmap
+        # In direct mode pass the raw schedule so per-period contributions (bonus
+        # month, one-time date) are shown accurately in the roadmap table.
+        # In weighted mode the schedule amounts would need per-goal scaling, so
+        # we fall back to the pre-averaged allocated_savings.
+        raw_schedule = (
+            context["contribution_schedule"]
+            if context["allocation_mode"] == "direct" and context["contribution_schedule"]
+            else None
+        )
         roadmap = generate_roadmap(
             current_funded=current_funded,
             monthly_savings=allocated_savings,
@@ -449,6 +536,7 @@ def get_life_events_with_progress(
             target_amount=event.target_amount,
             interval=roadmap_interval,
             reference_date=evaluation_date,
+            contribution_schedule=raw_schedule,
         )
         
         result.append({

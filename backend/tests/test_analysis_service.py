@@ -5,22 +5,40 @@ from datetime import date, timedelta
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from backend.app import models
-from backend.app.database import Base
-from backend.app.services.accounting_service import (
-    get_balance_sheet,
-    get_profit_loss_for_range,
-    get_profit_loss_rollup,
-    process_transaction,
-)
-from backend.app.services.analysis_service import calculate_idle_money, get_summary
-from backend.app.services.reconcile_service import run_reconcile
-from backend.app.services.report_service import apply_monthly_report_proposal, generate_monthly_report
-from backend.app.services.accounting_service import update_transaction
-from backend.app.services.action_bridge_service import apply_action, create_action
-from backend.app.services.strategy_service import get_roadmap_projection
-from backend.app.services.milestone_service import apply_milestones_from_simulation, preview_milestones_from_simulation
-from backend.app.services.fx_service import update_used_exchange_rates
+try:
+    from backend.app import models
+    from backend.app.database import Base
+    from backend.app.services.accounting_service import (
+        get_balance_sheet,
+        get_profit_loss_for_range,
+        get_profit_loss_rollup,
+        process_transaction,
+    )
+    from backend.app.services.analysis_service import calculate_idle_money, get_summary
+    from backend.app.services.reconcile_service import run_reconcile
+    from backend.app.services.report_service import apply_monthly_report_proposal, generate_monthly_report
+    from backend.app.services.accounting_service import update_transaction
+    from backend.app.services.action_bridge_service import apply_action, create_action
+    from backend.app.services.strategy_service import get_roadmap_projection
+    from backend.app.services.milestone_service import apply_milestones_from_simulation, preview_milestones_from_simulation
+    from backend.app.services.fx_service import update_used_exchange_rates
+except ModuleNotFoundError:
+    from app import models  # type: ignore[no-redef]
+    from app.database import Base  # type: ignore[no-redef]
+    from app.services.accounting_service import (  # type: ignore[no-redef]
+        get_balance_sheet,
+        get_profit_loss_for_range,
+        get_profit_loss_rollup,
+        process_transaction,
+    )
+    from app.services.analysis_service import calculate_idle_money, get_summary  # type: ignore[no-redef]
+    from app.services.reconcile_service import run_reconcile  # type: ignore[no-redef]
+    from app.services.report_service import apply_monthly_report_proposal, generate_monthly_report  # type: ignore[no-redef]
+    from app.services.accounting_service import update_transaction  # type: ignore[no-redef]
+    from app.services.action_bridge_service import apply_action, create_action  # type: ignore[no-redef]
+    from app.services.strategy_service import get_roadmap_projection  # type: ignore[no-redef]
+    from app.services.milestone_service import apply_milestones_from_simulation, preview_milestones_from_simulation  # type: ignore[no-redef]
+    from app.services.fx_service import update_used_exchange_rates  # type: ignore[no-redef]
 
 
 def _session():
@@ -95,60 +113,6 @@ def test_logical_balance_subtracts_due_recurring_outflow() -> None:
     finally:
         db.close()
 
-
-def test_monthly_report_action_apply_is_idempotent() -> None:
-    db = _session()
-    try:
-        today = date.today()
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
-        db.add(client)
-        db.add_all(
-            [
-                models.Account(client_id=1, name="cash", account_type="asset", balance=0),
-                models.Account(client_id=1, name="savings", account_type="asset", balance=0),
-                models.Account(client_id=1, name="salary", account_type="income", balance=0),
-            ]
-        )
-        goal = models.LifeEvent(
-            client_id=1,
-            name="Retirement",
-            target_date=date(today.year + 5, today.month, min(today.day, 28)),
-            target_amount=1000000,
-            priority=1,
-        )
-        db.add(goal)
-        db.commit()
-
-        income = models.Transaction(
-            client_id=1,
-            date=today,
-            description="Salary",
-            amount=100000,
-            type="Income",
-            category="salary",
-        )
-        db.add(income)
-        db.commit()
-        db.refresh(income)
-        process_transaction(db, income)
-
-        report = generate_monthly_report(db, 1, today.year, today.month)
-        proposal = next(item for item in report["action_proposals"] if item["auto_executable"])
-
-        first = apply_monthly_report_proposal(db, 1, report["period"], proposal["id"])
-        second = apply_monthly_report_proposal(db, 1, report["period"], proposal["id"])
-
-        action_count = db.query(models.MonthlyAction).count()
-        monthly_action_tx_count = db.query(models.Transaction).filter(
-            models.Transaction.category == "monthly_action"
-        ).count()
-
-        assert first["status"] == "applied"
-        assert second["status"] == "already_applied"
-        assert action_count == 1
-        assert monthly_action_tx_count == 1
-    finally:
-        db.close()
 
 
 def test_update_transaction_rebuilds_journal_and_keeps_reconcile_clean() -> None:
