@@ -9,7 +9,12 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from .goal_service import get_life_events_with_progress
-from .strategy_service import calculate_projection, get_goal_simulation_context, run_monte_carlo
+from .strategy_service import (
+    _period_contribution_from_schedule,
+    calculate_projection,
+    get_goal_simulation_context,
+    run_monte_carlo,
+)
 
 
 INTERVAL_MONTHS = {
@@ -17,6 +22,51 @@ INTERVAL_MONTHS = {
     "semiannual": 6,
     "quarterly": 3,
 }
+
+
+def _deterministic_balance_with_schedule(
+    *,
+    context: dict,
+    reference_date: date,
+    target_date: date,
+) -> float:
+    """Compute deterministic balance at target_date using actual per-period schedule.
+
+    Walks month-by-month from reference_date to target_date, calling
+    _period_contribution_from_schedule for each month so that bonus months and
+    one-time contributions appear in the correct calendar period.
+
+    allocation_ratio is preserved by scaling schedule contributions the same way
+    get_goal_simulation_context scales monthly_savings → allocated_monthly_savings.
+    """
+    schedule = context.get("contribution_schedule") or []
+    if not schedule:
+        return calculate_projection(
+            current_funded=context["current_funded"],
+            monthly_savings=context["allocated_monthly_savings"],
+            years_remaining=max(0.0, (target_date - reference_date).days / 365.25),
+            annual_return=context["effective_return"],
+        )
+
+    monthly_savings = context.get("monthly_savings") or 0.0
+    allocated = context.get("allocated_monthly_savings") or 0.0
+    allocation_ratio = (allocated / monthly_savings) if monthly_savings > 0 else 1.0
+
+    monthly_rate = (1 + context["effective_return"] / 100) ** (1 / 12) - 1
+    balance = context["current_funded"]
+    cursor = date(reference_date.year, reference_date.month, 1)
+
+    while cursor < target_date:
+        next_m = cursor + relativedelta(months=1)
+        period_end = min(next_m, target_date)
+        contribution = (
+            _period_contribution_from_schedule(schedule, cursor, period_end)
+            * allocation_ratio
+        )
+        balance = balance * (1 + monthly_rate) + contribution
+        cursor = next_m
+
+    return balance
 
 
 def _get_event(db: Session, client_id: int, life_event_id: int) -> models.LifeEvent:
@@ -36,8 +86,15 @@ def _simulation_value_at(
     context: dict,
     volatility: float,
     n_simulations: int,
+    milestone_date: date | None = None,
 ) -> float:
     if basis == "deterministic":
+        if milestone_date is not None and context.get("contribution_schedule"):
+            return _deterministic_balance_with_schedule(
+                context=context,
+                reference_date=context["reference_date"],
+                target_date=milestone_date,
+            )
         return calculate_projection(
             current_funded=context["current_funded"],
             monthly_savings=context["allocated_monthly_savings"],
@@ -224,6 +281,7 @@ def preview_milestones_from_simulation(
                 context=context,
                 volatility=volatility,
                 n_simulations=n_simulations,
+                milestone_date=milestone_date,
             )
             rows_by_date[milestone_date] = {
                 "life_event_id": life_event_id,
