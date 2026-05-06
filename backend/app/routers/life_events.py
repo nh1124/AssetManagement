@@ -130,19 +130,24 @@ def get_budget_summary(
         models.MonthlyBudget.target_period == period
     ).all()
     budget_map = {mb.account_id: mb.amount for mb in monthly_budgets}
-    
+    budget_id_map = {mb.account_id: str(mb.id) for mb in monthly_budgets}
+
     expense_budgets = []
     total_variable_budget = 0.0
-    
-    for acc in expense_accounts:
-        amount = budget_map.get(acc.id, 0.0)
+    others_actual = 0.0
 
+    for acc in expense_accounts:
+        actual = calculate_account_valued_balance(db, acc)
+        if acc.id not in budget_map:
+            others_actual += actual
+            continue
+        amount = budget_map[acc.id]
         expense_budgets.append({
             "id": acc.id,
             "name": acc.name,
             "amount": amount,
-            "balance": calculate_account_valued_balance(db, acc),
-            "is_custom": acc.id in budget_map
+            "balance": actual,
+            "budget_id": budget_id_map[acc.id],
         })
         total_variable_budget += amount
 
@@ -204,6 +209,7 @@ def get_budget_summary(
         "total_capsule_actual": round(total_capsule_actual, 0),
         "remaining_balance": round(remaining, 0),
         "expense_accounts": expense_budgets,
+        "others_actual": round(others_actual, 0),
         "sinking_funds": sinking_funds,
         "goals_count": len(events_with_progress),
         "total_goal_gap": round(total_gap, 0)

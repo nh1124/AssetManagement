@@ -8,6 +8,7 @@ import {
     createCapsule,
     createCapsuleHolding,
     createCapsuleRule,
+    deleteBudget,
     deleteCapsule,
     deleteCapsuleHolding,
     deleteCapsuleRule,
@@ -29,7 +30,7 @@ interface BudgetAccount {
     name: string;
     amount: number;
     balance: number;
-    is_custom: boolean;
+    budget_id: string;
 }
 
 interface BudgetSummary {
@@ -42,6 +43,7 @@ interface BudgetSummary {
     total_capsule_actual: number;
     remaining_balance: number;
     expense_accounts: BudgetAccount[];
+    others_actual: number;
     sinking_funds: Array<{
         id: number;
         name: string;
@@ -75,6 +77,10 @@ export default function Strategy() {
     const [editingBudgetAccount, setEditingBudgetAccount] = useState<BudgetAccount | null>(null);
     const [budgetCategoryForm, setBudgetCategoryForm] = useState({ name: '', amount: '' });
     const [budgetThinking, setBudgetThinking] = useState(false);
+    const [allExpenseAccounts, setAllExpenseAccounts] = useState<Account[]>([]);
+    const [categorySearch, setCategorySearch] = useState('');
+    const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null);
+    const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
 
     const [capsules, setCapsules] = useState<Capsule[]>([]);
     const [capsuleRules, setCapsuleRules] = useState<CapsuleRule[]>([]);
@@ -160,12 +166,17 @@ export default function Strategy() {
         const previousPeriod = `${previousDate.getFullYear()}-${String(previousDate.getMonth() + 1).padStart(2, '0')}`;
         try {
             const previousSummary = await getBudgetSummary(previousPeriod);
-            const edits: Record<number, number> = {};
-            previousSummary.expense_accounts.forEach((account: BudgetAccount) => {
-                edits[account.id] = account.amount;
-            });
-            setBudgetEdits(edits);
+            if (previousSummary.expense_accounts.length === 0) {
+                showToast('前月に予算設定がありません', 'info');
+                return;
+            }
+            await saveMonthlyBudgets(previousSummary.expense_accounts.map((account: BudgetAccount) => ({
+                account_id: account.id,
+                target_period: currentPeriod,
+                amount: account.amount,
+            })));
             showToast(`Copied from ${previousPeriod}`, 'info');
+            await fetchBudgetSummary();
         } catch (error) {
             showToast('Failed to copy previous budget', 'error');
         }
@@ -211,24 +222,36 @@ export default function Strategy() {
         }
     };
 
-    const openBudgetCategoryForm = (account?: BudgetAccount) => {
+    const openBudgetCategoryForm = async (account?: BudgetAccount) => {
         setEditingBudgetAccount(account ?? null);
         setBudgetCategoryForm(account
             ? { name: account.name, amount: String(budgetEdits[account.id] ?? account.amount ?? 0) }
             : { name: '', amount: '' });
+        setCategorySearch('');
+        setSelectedAccountId(null);
+        setShowCategoryDropdown(false);
+        if (!account) {
+            const all = await getAccounts('expense');
+            setAllExpenseAccounts(all);
+        }
         setShowBudgetCategoryForm(true);
     };
 
     const saveBudgetCategory = async () => {
-        const name = budgetCategoryForm.name.trim();
-        if (!name) return;
         const amount = Number(budgetCategoryForm.amount || '0') || 0;
         try {
             if (editingBudgetAccount) {
+                const name = budgetCategoryForm.name.trim();
+                if (!name) return;
                 await updateAccount(editingBudgetAccount.id, { name });
                 await saveMonthlyBudgets([{ account_id: editingBudgetAccount.id, target_period: currentPeriod, amount }]);
                 showToast('Budget category updated', 'success');
+            } else if (selectedAccountId !== null) {
+                await saveMonthlyBudgets([{ account_id: selectedAccountId, target_period: currentPeriod, amount }]);
+                showToast('Budget category added', 'success');
             } else {
+                const name = categorySearch.trim();
+                if (!name) return;
                 const created = await createAccount({ name, account_type: 'expense', balance: 0 });
                 await saveMonthlyBudgets([{ account_id: created.id, target_period: currentPeriod, amount }]);
                 showToast('Budget category added', 'success');
@@ -236,9 +259,24 @@ export default function Strategy() {
             setShowBudgetCategoryForm(false);
             setEditingBudgetAccount(null);
             setBudgetCategoryForm({ name: '', amount: '' });
+            setCategorySearch('');
+            setSelectedAccountId(null);
             await fetchBudgetSummary();
         } catch (error) {
             showToast('Failed to save budget category', 'error');
+        }
+    };
+
+    const removeBudgetCategory = async (budgetId: string, accountId: number) => {
+        try {
+            await deleteBudget(budgetId);
+            setBudgetEdits(prev => {
+                const { [accountId]: _, ...rest } = prev;
+                return rest;
+            });
+            await fetchBudgetSummary();
+        } catch (error) {
+            showToast('Failed to remove budget category', 'error');
         }
     };
 
@@ -437,14 +475,80 @@ export default function Strategy() {
                     <span className="text-xs text-slate-500 font-mono-nums">Total {formatCurrency(variableBudgetTotal)}</span>
                 </div>
 
-                {showBudgetCategoryForm && (
-                    <div className="mb-3 border border-emerald-800/40 bg-emerald-900/10 p-3 grid grid-cols-12 gap-2 items-end">
-                        <input value={budgetCategoryForm.name} onChange={(event) => setBudgetCategoryForm({ ...budgetCategoryForm, name: event.target.value })} placeholder="Category" className="col-span-5 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs" />
-                        <input type="number" value={budgetCategoryForm.amount} onChange={(event) => setBudgetCategoryForm({ ...budgetCategoryForm, amount: event.target.value })} placeholder="Amount" className="col-span-3 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums" />
-                        <button onClick={saveBudgetCategory} className="col-span-2 bg-emerald-600 hover:bg-emerald-500 text-white py-1.5 text-xs">{editingBudgetAccount ? 'Update' : 'Add'}</button>
-                        <button onClick={() => setShowBudgetCategoryForm(false)} className="col-span-2 bg-slate-800 hover:bg-slate-700 text-slate-300 py-1.5 text-xs">Cancel</button>
-                    </div>
-                )}
+                {showBudgetCategoryForm && (() => {
+                    const currentBudgetIds = new Set((budgetSummary?.expense_accounts ?? []).map(a => a.id));
+                    const filtered = allExpenseAccounts.filter(a =>
+                        !currentBudgetIds.has(a.id) &&
+                        a.name.toLowerCase().includes(categorySearch.toLowerCase())
+                    );
+                    const showCreateNew = categorySearch.trim() !== '' &&
+                        !filtered.some(a => a.name.toLowerCase() === categorySearch.trim().toLowerCase());
+                    return (
+                        <div className="mb-3 border border-emerald-800/40 bg-emerald-900/10 p-3 space-y-2">
+                            <div className="grid grid-cols-12 gap-2 items-start">
+                                {editingBudgetAccount ? (
+                                    <input
+                                        value={budgetCategoryForm.name}
+                                        onChange={e => setBudgetCategoryForm({ ...budgetCategoryForm, name: e.target.value })}
+                                        placeholder="Category name"
+                                        className="col-span-5 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
+                                    />
+                                ) : (
+                                    <div className="col-span-5 relative">
+                                        <input
+                                            value={categorySearch}
+                                            onChange={e => {
+                                                setCategorySearch(e.target.value);
+                                                setSelectedAccountId(null);
+                                                setShowCategoryDropdown(true);
+                                            }}
+                                            onFocus={() => setShowCategoryDropdown(true)}
+                                            onBlur={() => setTimeout(() => setShowCategoryDropdown(false), 150)}
+                                            placeholder="Search or type new..."
+                                            className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
+                                        />
+                                        {showCategoryDropdown && (filtered.length > 0 || showCreateNew) && (
+                                            <div className="absolute z-10 top-full left-0 right-0 bg-slate-900 border border-slate-700 max-h-40 overflow-y-auto">
+                                                {filtered.map(acc => (
+                                                    <button
+                                                        key={acc.id}
+                                                        type="button"
+                                                        onMouseDown={e => { e.preventDefault(); setCategorySearch(acc.name); setSelectedAccountId(acc.id); setShowCategoryDropdown(false); }}
+                                                        className="w-full text-left px-2 py-1.5 text-xs text-slate-300 hover:bg-slate-700"
+                                                    >
+                                                        {acc.name}
+                                                    </button>
+                                                ))}
+                                                {showCreateNew && (
+                                                    <button
+                                                        type="button"
+                                                        onMouseDown={e => { e.preventDefault(); setSelectedAccountId(null); setShowCategoryDropdown(false); }}
+                                                        className="w-full text-left px-2 py-1.5 text-xs text-emerald-400 hover:bg-slate-700"
+                                                    >
+                                                        + 新規作成: "{categorySearch.trim()}"
+                                                    </button>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                                <input
+                                    type="number"
+                                    value={budgetCategoryForm.amount}
+                                    onChange={e => setBudgetCategoryForm({ ...budgetCategoryForm, amount: e.target.value })}
+                                    placeholder="Amount"
+                                    className="col-span-3 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums"
+                                />
+                                <button type="button" onClick={saveBudgetCategory} className="col-span-2 bg-emerald-600 hover:bg-emerald-500 text-white py-1.5 text-xs">
+                                    {editingBudgetAccount ? 'Update' : 'Add'}
+                                </button>
+                                <button type="button" onClick={() => { setShowBudgetCategoryForm(false); setShowCategoryDropdown(false); }} className="col-span-2 bg-slate-800 hover:bg-slate-700 text-slate-300 py-1.5 text-xs">
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                    );
+                })()}
 
                 <div className="overflow-x-auto">
                     <table className="w-full text-[10px]">
@@ -458,6 +562,13 @@ export default function Strategy() {
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-800/70">
+                            {(budgetSummary?.expense_accounts ?? []).length === 0 && (
+                                <tr>
+                                    <td colSpan={5} className="px-2 py-8 text-center text-slate-600 text-xs">
+                                        費目が追加されていません。「Add Category」から追加してください。
+                                    </td>
+                                </tr>
+                            )}
                             {(budgetSummary?.expense_accounts ?? []).map((account) => {
                                 const limit = budgetEdits[account.id] ?? 0;
                                 const variance = limit - (account.balance || 0);
@@ -467,10 +578,21 @@ export default function Strategy() {
                                         <td className="px-2 py-2 text-right font-mono-nums text-slate-500">{formatCurrency(account.balance)}</td>
                                         <td className="px-2 py-2 text-right"><input type="number" step="1000" value={limit} onChange={(event) => setBudgetEdits({ ...budgetEdits, [account.id]: Number(event.target.value) || 0 })} className="w-24 bg-transparent border-b border-slate-700 focus:border-cyan-500 text-right font-mono-nums outline-none" /></td>
                                         <td className={`px-2 py-2 text-right font-mono-nums ${variance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(variance)}</td>
-                                        <td className="px-2 py-2 text-right"><button onClick={() => openBudgetCategoryForm(account)} className="text-slate-500 hover:text-cyan-400 opacity-0 group-hover:opacity-100"><Edit2 size={12} /></button></td>
+                                        <td className="px-2 py-2 text-right flex items-center justify-end gap-2">
+                                            <button type="button" title="Edit category" onClick={() => openBudgetCategoryForm(account)} className="text-slate-500 hover:text-cyan-400 opacity-0 group-hover:opacity-100"><Edit2 size={12} /></button>
+                                            <button type="button" title="Remove from budget" onClick={() => removeBudgetCategory(account.budget_id, account.id)} className="text-slate-500 hover:text-rose-400 opacity-0 group-hover:opacity-100"><Trash2 size={12} /></button>
+                                        </td>
                                     </tr>
                                 );
                             })}
+                            {(budgetSummary?.others_actual ?? 0) > 0 && (
+                                <tr className="hover:bg-slate-800/30 opacity-60">
+                                    <td className="px-2 py-2 text-slate-500 italic">others</td>
+                                    <td className="px-2 py-2 text-right font-mono-nums text-slate-500">{formatCurrency(budgetSummary!.others_actual)}</td>
+                                    <td colSpan={2} className="px-2 py-2 text-right text-[9px] text-slate-600">未予算費目の合計</td>
+                                    <td className="px-2 py-2" />
+                                </tr>
+                            )}
                             <tr className="border-t border-slate-700 bg-slate-800/40">
                                 <td className="px-2 py-2 text-slate-100 font-medium">Total</td>
                                 <td className="px-2 py-2 text-right font-mono-nums text-slate-300">{formatCurrency(variableActualTotal)}</td>
