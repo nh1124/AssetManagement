@@ -22,6 +22,9 @@ data/raw_csv/*.csv
 INITIAL_SETUP.md
 REFACTOR_*.md
 
+# Documentation drafts containing personal info
+docs/
+
 # ============================================================
 # Python
 # ============================================================
