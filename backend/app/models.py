@@ -243,6 +243,7 @@ class MonthlyPlanLine(Base):
     source_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     name = Column(String, nullable=True)
     amount = Column(Float, default=0.0, nullable=False)
+    planned_date = Column(Date, nullable=True)
     priority = Column(Integer, default=2, server_default="2", nullable=False)
     note = Column(Text, nullable=True)
     source = Column(String, default="manual", server_default="manual", nullable=False)

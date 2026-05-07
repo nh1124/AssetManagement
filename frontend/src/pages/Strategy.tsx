@@ -40,10 +40,16 @@ import type {
 interface BudgetAccount {
     id: number;
     account_id?: number | null;
+    target_type?: MonthlyPlanTargetType | null;
+    target_id?: number | null;
+    source_account_id?: number | null;
     name: string;
     amount: number;
     balance: number;
     plan_line_id?: number | null;
+    planned_date?: string | null;
+    priority?: number;
+    note?: string | null;
     recurring_amount?: number;
     recurring_transaction_id?: number | null;
     recurring_transaction_ids?: number[];
@@ -154,6 +160,8 @@ export default function Strategy() {
         account_id: string;
         name: string;
         amount: string;
+        source: 'manual' | 'one_time';
+        planned_date: string;
     }>({
         line_type: 'allocation',
         target_type: 'account',
@@ -161,6 +169,8 @@ export default function Strategy() {
         account_id: '',
         name: '',
         amount: '',
+        source: 'manual',
+        planned_date: `${currentPeriod}-01`,
     });
     const [products, setProducts] = useState<Product[]>([]);
     const [lifeEvents, setLifeEvents] = useState<LifeEvent[]>([]);
@@ -269,6 +279,30 @@ export default function Strategy() {
         setCurrentPeriod(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`);
     };
 
+    const shiftPlannedDateToPeriod = (plannedDate: string | null | undefined, period: string) => {
+        if (!plannedDate) return null;
+        const day = plannedDate.slice(8, 10) || '01';
+        return `${period}-${day}`;
+    };
+
+    const budgetAccountPlanPayload = (account: BudgetAccount, amount: number, period = currentPeriod) => ({
+        id: account.plan_line_id ?? null,
+        target_period: period,
+        line_type: 'expense',
+        target_type: account.target_type ?? 'account',
+        target_id: account.target_id ?? null,
+        account_id: account.account_id ?? (account.target_type === 'account' ? account.id : null),
+        source_account_id: account.source_account_id ?? null,
+        name: account.name ?? null,
+        amount,
+        planned_date: account.source === 'one_time' ? shiftPlannedDateToPeriod(account.planned_date, period) : null,
+        priority: account.priority ?? 2,
+        note: account.note ?? null,
+        source: account.source === 'recurrence' ? 'recurrence' : account.source === 'one_time' ? 'one_time' : 'manual',
+        recurring_transaction_id: account.source === 'recurrence' ? account.recurring_transaction_id ?? null : null,
+        is_active: true,
+    });
+
     const copyPreviousBudget = async () => {
         const [year, month] = currentPeriod.split('-').map(Number);
         const previousDate = new Date(year, month - 2, 1);
@@ -280,13 +314,8 @@ export default function Strategy() {
                 return;
             }
             await saveMonthlyPlanLines(previousSummary.expense_accounts.map((account: BudgetAccount) => ({
+                ...budgetAccountPlanPayload(account, account.amount, currentPeriod),
                 id: null,
-                account_id: account.id,
-                target_period: currentPeriod,
-                line_type: 'expense',
-                target_type: 'account',
-                name: account.name,
-                amount: account.amount,
             })));
             showToast(`Copied from ${previousPeriod}`, 'info');
             await fetchBudgetSummary();
@@ -300,22 +329,8 @@ export default function Strategy() {
             const expenseLines = Object.entries(budgetEdits).flatMap(([accountId, amount]) => {
                 const account = budgetSummary?.expense_accounts.find((item) => item.id === Number(accountId));
                 if (account?.source === 'recurrence' && !account.plan_line_id) return [];
-                return [{
-                    id: account?.plan_line_id ?? null,
-                    target_period: currentPeriod,
-                    line_type: 'expense',
-                    target_type: 'account',
-                    target_id: null,
-                    account_id: account?.account_id ?? Number(accountId),
-                    source_account_id: null,
-                    name: account?.name ?? null,
-                    amount,
-                    priority: 2,
-                    note: null,
-                    source: account?.source === 'recurrence' ? 'recurrence' : 'manual',
-                    recurring_transaction_id: account?.recurring_transaction_id ?? null,
-                    is_active: true,
-                }];
+                if (!account) return [];
+                return [budgetAccountPlanPayload(account, amount)];
             });
             const otherLines = planLineDrafts
                 .filter((line) => !(line.source === 'recurrence' && !line.id))
@@ -329,10 +344,11 @@ export default function Strategy() {
                 source_account_id: line.source_account_id ?? null,
                 name: line.name || line.target_name || null,
                 amount: Number(line.amount || 0),
+                planned_date: line.source === 'one_time' ? line.planned_date ?? `${currentPeriod}-01` : null,
                 priority: line.priority ?? 2,
                 note: line.note ?? null,
-                source: line.source === 'recurrence' ? 'recurrence' : 'manual',
-                recurring_transaction_id: line.recurring_transaction_id ?? null,
+                source: line.source === 'recurrence' ? 'recurrence' : line.source === 'one_time' ? 'one_time' : 'manual',
+                recurring_transaction_id: line.source === 'recurrence' ? line.recurring_transaction_id ?? null : null,
                 is_active: true,
             }));
             await saveMonthlyPlanLines([...expenseLines, ...otherLines]);
@@ -462,6 +478,22 @@ export default function Strategy() {
             account_id: '',
             name: '',
             amount: '',
+            source: 'manual',
+            planned_date: `${currentPeriod}-01`,
+        });
+    };
+
+    const openOneTimePlanForm = (lineType: MonthlyPlanLineType) => {
+        setExpandedPlanForm(lineType);
+        setPlanLineForm({
+            line_type: lineType,
+            target_type: 'manual',
+            target_id: '',
+            account_id: '',
+            name: '',
+            amount: '',
+            source: 'one_time',
+            planned_date: `${currentPeriod}-01`,
         });
     };
 
@@ -494,12 +526,13 @@ export default function Strategy() {
                 id: account.plan_line_id ?? null,
                 target_period: currentPeriod,
                 line_type: 'expense',
-                target_type: 'account',
-                target_id: null,
-                account_id: account.account_id ?? account.id ?? null,
-                source_account_id: null,
+                target_type: account.target_type ?? (account.account_id ? 'account' : 'manual'),
+                target_id: account.target_id ?? null,
+                account_id: account.account_id ?? null,
+                source_account_id: account.source_account_id ?? null,
                 name: account.name,
                 amount: Number(account.recurring_amount || 0),
+                planned_date: null,
                 priority: 2,
                 note: null,
                 source: 'recurrence',
@@ -520,12 +553,13 @@ export default function Strategy() {
                 id: account.plan_line_id ?? null,
                 target_period: currentPeriod,
                 line_type: 'expense',
-                target_type: 'account',
-                target_id: null,
-                account_id: account.account_id ?? account.id ?? null,
-                source_account_id: null,
+                target_type: account.target_type ?? (account.account_id ? 'account' : 'manual'),
+                target_id: account.target_id ?? null,
+                account_id: account.account_id ?? null,
+                source_account_id: account.source_account_id ?? null,
                 name: account.name,
                 amount: Number(account.recurring_amount || 0),
+                planned_date: null,
                 priority: 2,
                 note: null,
                 source: 'recurrence',
@@ -558,6 +592,7 @@ export default function Strategy() {
                 source_account_id: line.source_account_id ?? null,
                 name: line.name || line.target_name || null,
                 amount: Number(line.recurring_amount || 0),
+                planned_date: null,
                 priority: line.priority ?? 2,
                 note: line.note ?? null,
                 source: 'recurrence',
@@ -584,6 +619,7 @@ export default function Strategy() {
                 source_account_id: line.source_account_id ?? null,
                 name: line.name || line.target_name || null,
                 amount: Number(line.recurring_amount || 0),
+                planned_date: null,
                 priority: line.priority ?? 2,
                 note: line.note ?? null,
                 source: 'recurrence',
@@ -615,12 +651,13 @@ export default function Strategy() {
                     id: account.plan_line_id ?? null,
                     target_period: period,
                     line_type: 'expense',
-                    target_type: 'account',
-                    target_id: null,
-                    account_id: account.account_id ?? account.id ?? null,
-                    source_account_id: null,
+                    target_type: account.target_type ?? (account.account_id ? 'account' : 'manual'),
+                    target_id: account.target_id ?? null,
+                    account_id: account.account_id ?? null,
+                    source_account_id: account.source_account_id ?? null,
                     name: account.name,
                     amount: Number(account.recurring_amount || 0),
+                    planned_date: null,
                     priority: 2,
                     note: null,
                     source: 'recurrence',
@@ -639,6 +676,7 @@ export default function Strategy() {
                     source_account_id: line.source_account_id ?? null,
                     name: line.name || line.target_name || null,
                     amount: Number(line.recurring_amount || 0),
+                    planned_date: null,
                     priority: line.priority ?? 2,
                     note: line.note ?? null,
                     source: 'recurrence',
@@ -665,12 +703,13 @@ export default function Strategy() {
                 id: account.plan_line_id,
                 target_period: currentPeriod,
                 line_type: 'expense',
-                target_type: 'account',
-                target_id: null,
-                account_id: account.account_id ?? account.id ?? null,
-                source_account_id: null,
+                target_type: account.target_type ?? (account.account_id ? 'account' : 'manual'),
+                target_id: account.target_id ?? null,
+                account_id: account.account_id ?? null,
+                source_account_id: account.source_account_id ?? null,
                 name: account.name,
                 amount: Number(budgetEdits[account.id] ?? account.amount ?? 0),
+                planned_date: null,
                 priority: 2,
                 note: null,
                 source: 'manual',
@@ -697,6 +736,7 @@ export default function Strategy() {
                 source_account_id: line.source_account_id ?? null,
                 name: line.name || line.target_name || null,
                 amount: Number(line.amount || 0),
+                planned_date: null,
                 priority: line.priority ?? 2,
                 note: line.note ?? null,
                 source: 'manual',
@@ -732,27 +772,15 @@ export default function Strategy() {
                 .map((account) => {
                     const sourceLine = {
                         line_type: 'expense' as MonthlyPlanLineType,
-                        target_type: 'account' as MonthlyPlanTargetType,
-                        account_id: account.account_id ?? account.id ?? null,
-                        target_id: null,
+                        target_type: account.target_type ?? 'account',
+                        account_id: account.account_id ?? (account.target_type === 'account' ? account.id : null),
+                        target_id: account.target_id ?? null,
                         name: account.name,
                     };
                     const targetLine = targetByKey.get(planLineKey(sourceLine));
                     return {
+                        ...budgetAccountPlanPayload(account, Number(budgetEdits[account.id] ?? account.amount ?? 0), targetPeriod),
                         id: targetLine?.id ?? null,
-                        target_period: targetPeriod,
-                        line_type: 'expense',
-                        target_type: 'account',
-                        target_id: null,
-                        account_id: account.account_id ?? account.id ?? null,
-                        source_account_id: null,
-                        name: account.name,
-                        amount: Number(budgetEdits[account.id] ?? account.amount ?? 0),
-                        priority: 2,
-                        note: null,
-                        source: account.source === 'recurrence' ? 'recurrence' : 'manual',
-                        recurring_transaction_id: account.source === 'recurrence' ? account.recurring_transaction_id ?? null : null,
-                        is_active: true,
                     };
                 });
             const planPayload = planLineDrafts
@@ -769,9 +797,10 @@ export default function Strategy() {
                         source_account_id: line.source_account_id ?? null,
                         name: line.name || line.target_name || null,
                         amount: Number(line.amount || 0),
+                        planned_date: line.source === 'one_time' ? shiftPlannedDateToPeriod(line.planned_date, targetPeriod) : null,
                         priority: line.priority ?? 2,
                         note: line.note ?? null,
-                        source: line.source === 'recurrence' ? 'recurrence' : 'manual',
+                        source: line.source === 'recurrence' ? 'recurrence' : line.source === 'one_time' ? 'one_time' : 'manual',
                         recurring_transaction_id: line.source === 'recurrence' ? line.recurring_transaction_id ?? null : null,
                         is_active: true,
                     };
@@ -789,7 +818,7 @@ export default function Strategy() {
         }
     };
 
-    const addPlanLine = () => {
+    const addPlanLine = async () => {
         const amount = Number(planLineForm.amount || '0') || 0;
         let targetType = planLineForm.target_type;
         let targetId: number | null = planLineForm.target_id ? Number(planLineForm.target_id) : null;
@@ -816,6 +845,43 @@ export default function Strategy() {
         }
 
         if (!name && targetType === 'manual') return;
+        if (planLineForm.line_type === 'expense') {
+            try {
+                await saveMonthlyPlanLines([{
+                    id: null,
+                    target_period: currentPeriod,
+                    line_type: 'expense',
+                    target_type: targetType,
+                    target_id: targetId,
+                    account_id: accountId,
+                    source_account_id: null,
+                    name,
+                    amount,
+                    planned_date: planLineForm.source === 'one_time' ? planLineForm.planned_date || `${currentPeriod}-01` : null,
+                    priority: 2,
+                    note: null,
+                    source: planLineForm.source,
+                    recurring_transaction_id: null,
+                    is_active: true,
+                }]);
+                setPlanLineForm({
+                    line_type: planLineForm.line_type,
+                    target_type: 'manual',
+                    target_id: '',
+                    account_id: '',
+                    name: '',
+                    amount: '',
+                    source: 'manual',
+                    planned_date: `${currentPeriod}-01`,
+                });
+                setExpandedPlanForm(null);
+                await fetchBudgetSummary();
+            } catch (error) {
+                showToast('Failed to add plan line', 'error');
+            }
+            return;
+        }
+
         const localId = `new-${Date.now()}-${Math.random().toString(16).slice(2)}`;
         const recurringContext = recurringContextFor({
             target_period: currentPeriod,
@@ -837,10 +903,11 @@ export default function Strategy() {
                 name,
                 target_name: name,
                 amount,
+                planned_date: planLineForm.source === 'one_time' ? planLineForm.planned_date || `${currentPeriod}-01` : null,
                 actual: 0,
                 variance: amount,
                 priority: 2,
-                source: 'manual',
+                source: planLineForm.source,
                 recurring_transaction_id: recurringContext?.recurring_transaction_id ?? null,
                 recurring_transaction_ids: recurringContext?.recurring_transaction_ids ?? [],
                 recurring_items: recurringContext?.recurring_items ?? [],
@@ -856,6 +923,8 @@ export default function Strategy() {
             account_id: '',
             name: '',
             amount: '',
+            source: 'manual',
+            planned_date: `${currentPeriod}-01`,
         });
         setExpandedPlanForm(null);
     };
@@ -1066,8 +1135,8 @@ export default function Strategy() {
                 ja: '費用カテゴリごとの変動支出予算です。今月使える現金を減らします。',
             },
             allocation: {
-                en: 'Planned transfers into assets, capsules, life events, reserves, or registry items.',
-                ja: '資産、Capsule、LifeEvent、予備費、Registry項目への配分計画です。',
+                en: 'Planned transfers into assets, capsules, reserves, or registry items.',
+                ja: '資産、Capsule、予備費、Registry項目への配分計画です。',
             },
             debt: {
                 en: 'Planned cash outflows for loan, credit, or other liability repayments.',
@@ -1139,7 +1208,7 @@ export default function Strategy() {
                         >
                             <option value="account">Account</option>
                             <option value="capsule">Capsule</option>
-                            <option value="life_event">LifeEvent</option>
+                            {lineType !== 'allocation' && <option value="life_event">LifeEvent</option>}
                             <option value="product">Asset/Item</option>
                             <option value="manual">Manual</option>
                         </select>
@@ -1148,7 +1217,7 @@ export default function Strategy() {
                                 value={planLineForm.name}
                                 onChange={(event) => setPlanLineForm({ ...planLineForm, name: event.target.value })}
                                 placeholder="Name"
-                                className="col-span-4 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
+                                className={`${planLineForm.source === 'one_time' ? 'col-span-2' : 'col-span-4'} bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs`}
                             />
                         ) : (
                             <select
@@ -1161,18 +1230,26 @@ export default function Strategy() {
                                         target_id: planLineForm.target_type === 'account' ? '' : value,
                                     });
                                 }}
-                                className="col-span-4 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
+                                className={`${planLineForm.source === 'one_time' ? 'col-span-2' : 'col-span-4'} bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs`}
                             >
                                 <option value="">Target...</option>
                                 {targetOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
                             </select>
+                        )}
+                        {planLineForm.source === 'one_time' && (
+                            <input
+                                type="date"
+                                value={planLineForm.planned_date}
+                                onChange={(event) => setPlanLineForm({ ...planLineForm, planned_date: event.target.value })}
+                                className="col-span-2 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
+                            />
                         )}
                         <input
                             type="number"
                             value={planLineForm.amount}
                             onChange={(event) => setPlanLineForm({ ...planLineForm, amount: event.target.value })}
                             placeholder="Amount"
-                            className="col-span-2 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums"
+                            className={`${planLineForm.source === 'one_time' ? 'col-span-2' : 'col-span-2'} bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums`}
                         />
                         <button type="button" onClick={addPlanLine} className="col-span-2 bg-cyan-700 hover:bg-cyan-600 text-white py-1.5 text-xs">
                             Add
@@ -1214,6 +1291,9 @@ export default function Strategy() {
                             <button type="button" title={`Add ${title}`} onClick={() => openPlanLineForm(addType)} className="text-slate-500 hover:text-cyan-400">
                                 <Plus size={14} />
                             </button>
+                            <button type="button" title={`Add one-time ${title}`} onClick={() => openOneTimePlanForm(addType)} className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-cyan-300">
+                                <Plus size={12} /> One-time
+                            </button>
                         </div>
                     </div>
                     {renderPlanLineForm(addType)}
@@ -1239,7 +1319,12 @@ export default function Strategy() {
                                     return (
                                         <tr key={line.local_id} className="hover:bg-slate-800/30 group">
                                             <td className="px-2 py-2 text-slate-400">{line.line_type.replace('_', ' ')}</td>
-                                            <td className="px-2 py-2 text-slate-300">{planTargetLabel(line)}</td>
+                                            <td className="px-2 py-2 text-slate-300">
+                                                {planTargetLabel(line)}
+                                                {line.source === 'one_time' && line.planned_date && (
+                                                    <span className="ml-2 text-[9px] text-cyan-500 font-mono-nums">{line.planned_date}</span>
+                                                )}
+                                            </td>
                                             <td className="px-2 py-2 text-right font-mono-nums text-slate-500">{formatCurrency(line.actual)}</td>
                                             <td className="px-2 py-2 text-right">
                                                 <input
@@ -1341,8 +1426,13 @@ export default function Strategy() {
                         <button type="button" title="Add category" onClick={() => openBudgetCategoryForm()} className="text-slate-500 hover:text-emerald-400">
                             <Plus size={14} />
                         </button>
+                        <button type="button" title="Add one-time expense" onClick={() => openOneTimePlanForm('expense')} className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-cyan-300">
+                            <Plus size={12} /> One-time
+                        </button>
                     </div>
                 </div>
+
+                {renderPlanLineForm('expense')}
 
                 {showBudgetCategoryForm && (() => {
                     const currentBudgetIds = new Set((budgetSummary?.expense_accounts ?? []).map(a => a.id));
@@ -1445,7 +1535,12 @@ export default function Strategy() {
                                 const isRecurringControlled = account.source === 'recurrence';
                                 return (
                                     <tr key={account.id} className="hover:bg-slate-800/30 group">
-                                        <td className="px-2 py-2 text-slate-300">{account.name}</td>
+                                        <td className="px-2 py-2 text-slate-300">
+                                            {account.name}
+                                            {account.source === 'one_time' && account.planned_date && (
+                                                <span className="ml-2 text-[9px] text-cyan-500 font-mono-nums">{account.planned_date}</span>
+                                            )}
+                                        </td>
                                         <td className="px-2 py-2 text-right font-mono-nums text-slate-500">{formatCurrency(account.balance)}</td>
                                         <td className="px-2 py-2 text-right"><input type="number" step="1000" value={limit} disabled={isRecurringControlled} onChange={(event) => setBudgetEdits({ ...budgetEdits, [account.id]: Number(event.target.value) || 0 })} className={`w-24 bg-transparent border-b text-right font-mono-nums outline-none ${isRecurringControlled ? 'border-transparent text-slate-500' : 'border-slate-700 focus:border-cyan-500'}`} /></td>
                                         <td className={`px-2 py-2 text-right font-mono-nums ${(account.recurring_amount || 0) > 0 ? 'text-cyan-300' : 'text-slate-600'}`}>{(account.recurring_amount || 0) > 0 ? formatCurrency(account.recurring_amount) : '-'}</td>
@@ -1459,7 +1554,9 @@ export default function Strategy() {
                                             )}
                                             {!isRecurringControlled && (
                                                 <>
-                                                    <button type="button" title="Edit category" onClick={() => openBudgetCategoryForm(account)} className="text-slate-500 hover:text-cyan-400"><Edit2 size={12} /></button>
+                                                    {account.source !== 'one_time' && (
+                                                        <button type="button" title="Edit category" onClick={() => openBudgetCategoryForm(account)} className="text-slate-500 hover:text-cyan-400"><Edit2 size={12} /></button>
+                                                    )}
                                                     <button type="button" title="Remove from budget" onClick={() => removeBudgetCategory(account.id, account.plan_line_id)} className="text-slate-500 hover:text-rose-400"><Trash2 size={12} /></button>
                                                 </>
                                             )}

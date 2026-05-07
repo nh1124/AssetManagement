@@ -244,6 +244,7 @@ def _serialize_plan_line(
         "account_name": name_maps["account"].get(line.account_id) if line.account_id else None,
         "source_account_name": name_maps["account"].get(line.source_account_id) if line.source_account_id else None,
         "amount": round(line.amount or 0.0, 0),
+        "planned_date": line.planned_date.isoformat() if line.planned_date else None,
         "actual": round(actual, 0),
         "variance": round((line.amount or 0.0) - actual, 0),
         "recurring_amount": 0.0,
@@ -276,6 +277,7 @@ def _virtual_capsule_line(
         "account_name": capsule.account.name if capsule.account else None,
         "source_account_name": None,
         "amount": round(capsule.monthly_contribution or 0.0, 0),
+        "planned_date": None,
         "recurring_amount": 0.0,
         "priority": 2,
         "note": None,
@@ -359,6 +361,7 @@ def _recurring_plan_line(
         "account_name": name_maps["account"].get(account_id) if account_id else None,
         "source_account_name": name_maps["account"].get(rec.from_account_id) if rec.from_account_id else None,
         "amount": 0.0,
+        "planned_date": None,
         "actual": 0.0,
         "variance": 0.0,
         "recurring_amount": round(amount, 0),
@@ -483,6 +486,11 @@ def get_budget_summary(
     name_maps = _target_name_maps(db, client_id)
     capsules = db.query(models.Capsule).filter(models.Capsule.client_id == client_id).all()
     capsule_accounts = {capsule.id: capsule.account_id for capsule in capsules}
+    capsule_by_life_event_id = {
+        capsule.life_event_id: capsule
+        for capsule in capsules
+        if capsule.life_event_id
+    }
 
     plan_models = db.query(models.MonthlyPlanLine).filter(
         models.MonthlyPlanLine.client_id == client_id,
@@ -493,6 +501,19 @@ def get_budget_summary(
         _serialize_plan_line(db, client_id, line, name_maps, capsule_accounts)
         for line in plan_models
     ]
+    for line in plan_lines:
+        if line.get("line_type") == "allocation" and line.get("target_type") == "life_event":
+            capsule = capsule_by_life_event_id.get(line.get("target_id"))
+            if capsule:
+                line["target_type"] = "capsule"
+                line["target_id"] = capsule.id
+                line["account_id"] = capsule.account_id
+                line["name"] = capsule.name
+                line["target_name"] = capsule.name
+                line["account_name"] = capsule.account.name if capsule.account else None
+                actual = actual_for_plan_line(db, client_id, line, period, capsule_accounts)
+                line["actual"] = round(actual, 0)
+                line["variance"] = round((line.get("amount") or 0.0) - actual, 0)
 
     existing_capsule_ids = {
         line.get("target_id")
@@ -564,12 +585,18 @@ def get_budget_summary(
         "plan_lines": plan_lines,
         "expense_accounts": [
             {
-                "id": line["account_id"] or line["id"] or -(line.get("recurring_transaction_id") or 0),
+                "id": line["id"] if line.get("source") == "one_time" and line.get("id") else line["account_id"] or line["id"] or -(line.get("recurring_transaction_id") or 0),
                 "account_id": line["account_id"],
+                "target_type": line.get("target_type"),
+                "target_id": line.get("target_id"),
+                "source_account_id": line.get("source_account_id"),
                 "name": line["target_name"],
                 "amount": line["amount"],
                 "balance": line["actual"],
                 "plan_line_id": line.get("id"),
+                "planned_date": line.get("planned_date"),
+                "priority": line.get("priority", 2),
+                "note": line.get("note"),
                 "recurring_amount": line.get("recurring_amount", 0.0),
                 "source": line.get("source"),
                 "sync_status": line.get("sync_status"),

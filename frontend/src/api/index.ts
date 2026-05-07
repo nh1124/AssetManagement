@@ -395,6 +395,7 @@ export const saveMonthlyPlanLines = async (lines: Array<{
     source_account_id?: number | null;
     name?: string | null;
     amount: number;
+    planned_date?: string | null;
     priority?: number;
     note?: string | null;
     source?: string;

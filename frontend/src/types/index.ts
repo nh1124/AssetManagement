@@ -115,6 +115,7 @@ export interface MonthlyPlanLine {
     account_name?: string | null;
     source_account_name?: string | null;
     amount: number;
+    planned_date?: string | null;
     actual?: number;
     variance?: number;
     recurring_amount?: number;

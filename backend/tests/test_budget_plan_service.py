@@ -215,6 +215,96 @@ def test_capsule_allocation_actual_uses_current_holding_balance() -> None:
         db.close()
 
 
+def test_life_event_allocation_is_presented_as_capsule() -> None:
+    db = _session()
+    try:
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        account = models.Account(client_id=1, name="event capsule account", account_type="asset")
+        db.add_all([client, account])
+        db.flush()
+        event = models.LifeEvent(
+            client_id=1,
+            name="Move",
+            target_date=date(2027, 4, 1),
+            target_amount=500000,
+            priority=2,
+        )
+        db.add(event)
+        db.flush()
+        capsule = models.Capsule(
+            client_id=1,
+            name="Move Capsule",
+            target_amount=500000,
+            monthly_contribution=0,
+            life_event_id=event.id,
+            account_id=account.id,
+        )
+        db.add(capsule)
+        db.add(models.MonthlyPlanLine(
+            client_id=1,
+            target_period="2026-05",
+            line_type="allocation",
+            target_type="life_event",
+            target_id=event.id,
+            name=event.name,
+            amount=30000,
+        ))
+        db.commit()
+
+        summary = get_budget_summary(db, client_id=1, period="2026-05")
+        line = next(item for item in summary["plan_lines"] if item["line_type"] == "allocation")
+
+        assert line["target_type"] == "capsule"
+        assert line["target_id"] == capsule.id
+        assert line["target_name"] == "Move Capsule"
+    finally:
+        db.close()
+
+
+def test_one_time_plan_line_is_saved_and_returned_with_planned_date() -> None:
+    db = _session()
+    try:
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        db.add(client)
+        db.commit()
+
+        saved = save_plan_lines(db, client_id=1, payloads=[
+            MonthlyPlanLineCreate(
+                target_period="2026-05",
+                line_type="expense",
+                target_type="manual",
+                name="one-time repair",
+                amount=45000,
+                planned_date=date(2026, 5, 20),
+                source="one_time",
+            ),
+            MonthlyPlanLineCreate(
+                target_period="2026-05",
+                line_type="income",
+                target_type="manual",
+                name="one-time refund",
+                amount=12000,
+                planned_date=date(2026, 5, 22),
+                source="one_time",
+            ),
+        ])
+
+        summary = get_budget_summary(db, client_id=1, period="2026-05")
+        expense = next(account for account in summary["expense_accounts"] if account["name"] == "one-time repair")
+        income = next(line for line in summary["plan_lines"] if line["name"] == "one-time refund")
+
+        assert len(saved) == 2
+        assert summary["total_variable_budget"] == 45000
+        assert summary["total_expected_inflow"] == 12000
+        assert expense["source"] == "one_time"
+        assert expense["planned_date"] == "2026-05-20"
+        assert expense["plan_line_id"] == saved[0].id
+        assert income["source"] == "one_time"
+        assert income["planned_date"] == "2026-05-22"
+    finally:
+        db.close()
+
+
 def test_cash_flow_projection_warns_about_unsynced_yearly_income() -> None:
     db = _session()
     try:
