@@ -139,6 +139,7 @@ export default function Strategy() {
     const { showToast } = useToast();
     const { currentClient } = useClient();
     const [activeTab, setActiveTab] = useState('budgeting');
+    const [activeBudgetingTab, setActiveBudgetingTab] = useState<'plan' | 'cash_flow'>('plan');
     const [currentPeriod, setCurrentPeriod] = useState(monthKey());
     const [cashFlowStartPeriod, setCashFlowStartPeriod] = useState(monthKey());
     const [cashFlowMonths, setCashFlowMonths] = useState(12);
@@ -148,7 +149,12 @@ export default function Strategy() {
     const [showBudgetCategoryForm, setShowBudgetCategoryForm] = useState(false);
     const [expandedPlanForm, setExpandedPlanForm] = useState<MonthlyPlanLineType | null>(null);
     const [editingBudgetAccount, setEditingBudgetAccount] = useState<BudgetAccount | null>(null);
-    const [budgetCategoryForm, setBudgetCategoryForm] = useState({ name: '', amount: '' });
+    const [budgetCategoryForm, setBudgetCategoryForm] = useState({
+        name: '',
+        amount: '',
+        source: 'manual' as 'manual' | 'one_time',
+        planned_date: `${currentPeriod}-01`,
+    });
     const [budgetThinking, setBudgetThinking] = useState(false);
     const [allExpenseAccounts, setAllExpenseAccounts] = useState<Account[]>([]);
     const [categorySearch, setCategorySearch] = useState('');
@@ -394,8 +400,13 @@ export default function Strategy() {
     const openBudgetCategoryForm = async (account?: BudgetAccount) => {
         setEditingBudgetAccount(account ?? null);
         setBudgetCategoryForm(account
-            ? { name: account.name, amount: String(budgetEdits[account.id] ?? account.amount ?? 0) }
-            : { name: '', amount: '' });
+            ? {
+                name: account.name,
+                amount: String(budgetEdits[account.id] ?? account.amount ?? 0),
+                source: account.source === 'one_time' ? 'one_time' : 'manual',
+                planned_date: account.planned_date ?? `${currentPeriod}-01`,
+            }
+            : { name: '', amount: '', source: 'manual', planned_date: `${currentPeriod}-01` });
         setCategorySearch('');
         setSelectedAccountId(null);
         setShowCategoryDropdown(false);
@@ -421,6 +432,8 @@ export default function Strategy() {
                     target_type: 'account',
                     name,
                     amount,
+                    planned_date: budgetCategoryForm.source === 'one_time' ? budgetCategoryForm.planned_date : null,
+                    source: budgetCategoryForm.source,
                 }]);
                 showToast('Budget category updated', 'success');
             } else if (selectedAccountId !== null) {
@@ -432,25 +445,41 @@ export default function Strategy() {
                     target_type: 'account',
                     name: account?.name ?? null,
                     amount,
+                    planned_date: budgetCategoryForm.source === 'one_time' ? budgetCategoryForm.planned_date : null,
+                    source: budgetCategoryForm.source,
                 }]);
                 showToast('Budget category added', 'success');
             } else {
                 const name = categorySearch.trim();
                 if (!name) return;
-                const created = await createAccount({ name, account_type: 'expense', balance: 0 });
-                await saveMonthlyPlanLines([{
-                    account_id: created.id,
-                    target_period: currentPeriod,
-                    line_type: 'expense',
-                    target_type: 'account',
-                    name: created.name,
-                    amount,
-                }]);
-                showToast('Budget category added', 'success');
+                if (budgetCategoryForm.source === 'one_time') {
+                    await saveMonthlyPlanLines([{
+                        account_id: null,
+                        target_period: currentPeriod,
+                        line_type: 'expense',
+                        target_type: 'manual',
+                        name,
+                        amount,
+                        planned_date: budgetCategoryForm.planned_date,
+                        source: 'one_time',
+                    }]);
+                    showToast('One-time expense added', 'success');
+                } else {
+                    const created = await createAccount({ name, account_type: 'expense', balance: 0 });
+                    await saveMonthlyPlanLines([{
+                        account_id: created.id,
+                        target_period: currentPeriod,
+                        line_type: 'expense',
+                        target_type: 'account',
+                        name: created.name,
+                        amount,
+                    }]);
+                    showToast('Budget category added', 'success');
+                }
             }
             setShowBudgetCategoryForm(false);
             setEditingBudgetAccount(null);
-            setBudgetCategoryForm({ name: '', amount: '' });
+            setBudgetCategoryForm({ name: '', amount: '', source: 'manual', planned_date: `${currentPeriod}-01` });
             setCategorySearch('');
             setSelectedAccountId(null);
             await fetchBudgetSummary();
@@ -485,20 +514,6 @@ export default function Strategy() {
             name: '',
             amount: '',
             source: 'manual',
-            planned_date: `${currentPeriod}-01`,
-        });
-    };
-
-    const openOneTimePlanForm = (lineType: MonthlyPlanLineType) => {
-        setExpandedPlanForm(lineType);
-        setPlanLineForm({
-            line_type: lineType,
-            target_type: 'manual',
-            target_id: '',
-            account_id: '',
-            name: '',
-            amount: '',
-            source: 'one_time',
             planned_date: `${currentPeriod}-01`,
         });
     };
@@ -1224,7 +1239,7 @@ export default function Strategy() {
                                 value={planLineForm.name}
                                 onChange={(event) => setPlanLineForm({ ...planLineForm, name: event.target.value })}
                                 placeholder="Name"
-                                className={`${planLineForm.source === 'one_time' ? 'col-span-2' : 'col-span-4'} bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs`}
+                                className="col-span-4 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
                             />
                         ) : (
                             <select
@@ -1237,30 +1252,45 @@ export default function Strategy() {
                                         target_id: planLineForm.target_type === 'account' ? '' : value,
                                     });
                                 }}
-                                className={`${planLineForm.source === 'one_time' ? 'col-span-2' : 'col-span-4'} bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs`}
+                                className="col-span-4 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
                             >
                                 <option value="">Target...</option>
                                 {targetOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
                             </select>
-                        )}
-                        {planLineForm.source === 'one_time' && (
-                            <input
-                                type="date"
-                                value={planLineForm.planned_date}
-                                onChange={(event) => setPlanLineForm({ ...planLineForm, planned_date: event.target.value })}
-                                className="col-span-2 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
-                            />
                         )}
                         <input
                             type="number"
                             value={planLineForm.amount}
                             onChange={(event) => setPlanLineForm({ ...planLineForm, amount: event.target.value })}
                             placeholder="Amount"
-                            className={`${planLineForm.source === 'one_time' ? 'col-span-2' : 'col-span-2'} bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums`}
+                            className="col-span-2 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums"
                         />
                         <button type="button" onClick={addPlanLine} className="col-span-2 bg-cyan-700 hover:bg-cyan-600 text-white py-1.5 text-xs">
                             Add
                         </button>
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center gap-3 text-[10px] text-slate-500">
+                        <label className="inline-flex items-center gap-2 text-slate-400">
+                            <input
+                                type="checkbox"
+                                checked={planLineForm.source === 'one_time'}
+                                onChange={(event) => setPlanLineForm({
+                                    ...planLineForm,
+                                    source: event.target.checked ? 'one_time' : 'manual',
+                                    planned_date: event.target.checked ? planLineForm.planned_date || `${currentPeriod}-01` : `${currentPeriod}-01`,
+                                })}
+                                className="h-3 w-3 accent-cyan-500"
+                            />
+                            One-time
+                        </label>
+                        {planLineForm.source === 'one_time' && (
+                            <input
+                                type="date"
+                                value={planLineForm.planned_date}
+                                onChange={(event) => setPlanLineForm({ ...planLineForm, planned_date: event.target.value })}
+                                className="bg-slate-900 border border-slate-700 px-2 py-1 text-xs text-slate-300"
+                            />
+                        )}
                     </div>
                 </div>
             )
@@ -1297,9 +1327,6 @@ export default function Strategy() {
                             </button>
                             <button type="button" title={`Add ${title}`} onClick={() => openPlanLineForm(addType)} className="text-slate-500 hover:text-cyan-400">
                                 <Plus size={14} />
-                            </button>
-                            <button type="button" title={`Add one-time ${title}`} onClick={() => openOneTimePlanForm(addType)} className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-cyan-300">
-                                <Plus size={12} /> One-time
                             </button>
                         </div>
                     </div>
@@ -1383,7 +1410,26 @@ export default function Strategy() {
         };
 
         return (
-        <div className="grid grid-cols-1 min-[960px]:grid-cols-[380px_1fr] gap-4 p-4">
+        <div className="p-4 space-y-4">
+            <div className="flex border border-slate-800 bg-slate-900/60">
+                <button
+                    type="button"
+                    onClick={() => setActiveBudgetingTab('plan')}
+                    className={`px-4 py-2 text-xs font-medium ${activeBudgetingTab === 'plan' ? 'bg-slate-800/70 text-cyan-300' : 'text-slate-500 hover:bg-slate-800/40 hover:text-slate-300'}`}
+                >
+                    Plan
+                </button>
+                <button
+                    type="button"
+                    onClick={() => setActiveBudgetingTab('cash_flow')}
+                    className={`px-4 py-2 text-xs font-medium ${activeBudgetingTab === 'cash_flow' ? 'bg-slate-800/70 text-cyan-300' : 'text-slate-500 hover:bg-slate-800/40 hover:text-slate-300'}`}
+                >
+                    Cash Flow
+                </button>
+            </div>
+
+            {activeBudgetingTab === 'plan' ? (
+        <div className="grid grid-cols-1 min-[960px]:grid-cols-[380px_1fr] gap-4">
             <section className="space-y-4">
                 <div className="bg-slate-900/60 border border-slate-800 p-4">
                     <h2 className="text-xs text-slate-400 uppercase tracking-wider mb-3">Monthly Frame</h2>
@@ -1452,13 +1498,8 @@ export default function Strategy() {
                         <button type="button" title="Add category" onClick={() => openBudgetCategoryForm()} className="text-slate-500 hover:text-emerald-400">
                             <Plus size={14} />
                         </button>
-                        <button type="button" title="Add one-time expense" onClick={() => openOneTimePlanForm('expense')} className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-cyan-300">
-                            <Plus size={12} /> One-time
-                        </button>
                     </div>
                 </div>
-
-                {renderPlanLineForm('expense')}
 
                 {showBudgetCategoryForm && (() => {
                     const currentBudgetIds = new Set((budgetSummary?.expense_accounts ?? []).map(a => a.id));
@@ -1527,9 +1568,37 @@ export default function Strategy() {
                                 <button type="button" onClick={saveBudgetCategory} className="col-span-2 bg-emerald-600 hover:bg-emerald-500 text-white py-1.5 text-xs">
                                     {editingBudgetAccount ? 'Update' : 'Add'}
                                 </button>
-                                <button type="button" onClick={() => { setShowBudgetCategoryForm(false); setShowCategoryDropdown(false); }} className="col-span-2 bg-slate-800 hover:bg-slate-700 text-slate-300 py-1.5 text-xs">
+                                <button type="button" onClick={() => {
+                                    setShowBudgetCategoryForm(false);
+                                    setShowCategoryDropdown(false);
+                                    setEditingBudgetAccount(null);
+                                    setBudgetCategoryForm({ name: '', amount: '', source: 'manual', planned_date: `${currentPeriod}-01` });
+                                }} className="col-span-2 bg-slate-800 hover:bg-slate-700 text-slate-300 py-1.5 text-xs">
                                     Cancel
                                 </button>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-3 text-[10px] text-slate-500">
+                                <label className="inline-flex items-center gap-2 text-slate-400">
+                                    <input
+                                        type="checkbox"
+                                        checked={budgetCategoryForm.source === 'one_time'}
+                                        onChange={(event) => setBudgetCategoryForm({
+                                            ...budgetCategoryForm,
+                                            source: event.target.checked ? 'one_time' : 'manual',
+                                            planned_date: event.target.checked ? budgetCategoryForm.planned_date || `${currentPeriod}-01` : `${currentPeriod}-01`,
+                                        })}
+                                        className="h-3 w-3 accent-emerald-500"
+                                    />
+                                    One-time
+                                </label>
+                                {budgetCategoryForm.source === 'one_time' && (
+                                    <input
+                                        type="date"
+                                        value={budgetCategoryForm.planned_date}
+                                        onChange={(event) => setBudgetCategoryForm({ ...budgetCategoryForm, planned_date: event.target.value })}
+                                        className="bg-slate-900 border border-slate-700 px-2 py-1 text-xs text-slate-300"
+                                    />
+                                )}
                             </div>
                         </div>
                     );
@@ -1613,8 +1682,10 @@ export default function Strategy() {
                 {renderPlanSection('Allocation Plan', ['allocation'], 'allocation', 'No asset allocations yet.', 'Allocated')}
                 {renderPlanSection('Debt Plan', ['debt_payment'], 'debt_payment', 'No planned debt payments yet.')}
             </section>
+        </div>
+            ) : (
 
-            <section className="min-[960px]:col-span-2 bg-slate-900/60 border border-slate-800 p-4 overflow-auto">
+            <section className="bg-slate-900/60 border border-slate-800 p-4 overflow-auto">
                 <div>
                     <div className="flex items-center justify-between mb-3">
                         {renderTitleWithInfo('Cash Flow', 'projection')}
@@ -1749,6 +1820,7 @@ export default function Strategy() {
                     </div>
                 </div>
             </section>
+            )}
         </div>
         );
     };
