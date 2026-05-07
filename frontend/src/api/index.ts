@@ -9,7 +9,6 @@ import type {
     ExchangeRateAutoUpdateResult,
     MonthlyAction,
     MonteCarloResult,
-    MonthlyBudget,
     MonthlyReport,
     MonthlyReview,
     Milestone,
@@ -377,8 +376,21 @@ export const getBudgetSummary = async (period?: string) => {
     return response.data;
 };
 
-export const saveMonthlyBudgets = async (budgets: Array<{ account_id: number; target_period: string; amount: number }>) => {
-    const response = await api.post('/life-events/monthly-budget/batch', budgets);
+export const saveMonthlyPlanLines = async (lines: Array<{
+    id?: number | null;
+    target_period: string;
+    line_type: string;
+    target_type: string;
+    target_id?: number | null;
+    account_id?: number | null;
+    source_account_id?: number | null;
+    name?: string | null;
+    amount: number;
+    priority?: number;
+    note?: string | null;
+    is_active?: boolean;
+}>) => {
+    const response = await api.post('/life-events/monthly-plan-lines/batch', lines);
     return response.data;
 };
 
@@ -421,19 +433,8 @@ export const runMonteCarloSimulation = async (
     return response.data;
 };
 
-// Budget endpoints
-export const getBudgets = async (period?: string): Promise<MonthlyBudget[]> => {
-    const response = await api.get('/budgets/', { params: { period } });
-    return response.data;
-};
-
-export const createBudget = async (budget: { account_id: number; target_period: string; amount: number }) => {
-    const response = await api.post('/budgets/', budget);
-    return response.data;
-};
-
-export const deleteBudget = async (id: string) => {
-    const response = await api.delete(`/budgets/${id}`);
+export const deleteMonthlyPlanLine = async (id: number) => {
+    const response = await api.delete(`/life-events/monthly-plan-lines/${id}`);
     return response.data;
 };
 

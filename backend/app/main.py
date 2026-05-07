@@ -12,7 +12,6 @@ from .routers import (
     ai,
     analysis,
     auth,
-    budgets,
     capsules,
     clients,
     data_transfer,
@@ -93,7 +92,7 @@ def startup_event():
             "life_events",
             "simulation_configs",
             "recurring_transactions",
-            "monthly_budgets",
+            "monthly_plan_lines",
             "monthly_reviews",
             "period_reviews",
             "milestones",
@@ -123,7 +122,6 @@ app.add_middleware(
 app.include_router(analysis.router)
 app.include_router(transactions.router)
 app.include_router(products.router)
-app.include_router(budgets.router)
 app.include_router(life_events.router)
 app.include_router(monthly_reviews.router)
 app.include_router(period_reviews.router)

@@ -99,15 +99,28 @@ export interface Product {
     next_purchase_date?: string;
 }
 
-export interface MonthlyBudget {
-    id: string;
-    account_id: number;
-    account_name: string;
-    account_type: string;
+export type MonthlyPlanLineType = 'income' | 'expense' | 'allocation' | 'debt_payment' | 'borrowing' | 'drawdown';
+export type MonthlyPlanTargetType = 'account' | 'capsule' | 'life_event' | 'product' | 'manual';
+
+export interface MonthlyPlanLine {
+    id?: number | null;
     target_period: string;
+    line_type: MonthlyPlanLineType;
+    target_type: MonthlyPlanTargetType;
+    target_id?: number | null;
+    account_id?: number | null;
+    source_account_id?: number | null;
+    name?: string | null;
+    target_name?: string | null;
+    account_name?: string | null;
+    source_account_name?: string | null;
     amount: number;
-    actual_spending: number;
-    variance: number;
+    actual?: number;
+    variance?: number;
+    priority?: number;
+    note?: string | null;
+    is_active?: boolean;
+    source?: string;
 }
 
 export interface MonthlyReview {

@@ -8,29 +8,41 @@ import {
     createCapsule,
     createCapsuleHolding,
     createCapsuleRule,
-    deleteBudget,
     deleteCapsule,
     deleteCapsuleHolding,
     deleteCapsuleRule,
+    deleteMonthlyPlanLine,
     getAccounts,
     getBudgetSummary,
     getCapsuleRules,
     getCapsules,
+    getLifeEvents,
+    getProducts,
     processCapsuleContributions,
-    saveMonthlyBudgets,
+    saveMonthlyPlanLines,
     suggestBudget,
     updateAccount,
     updateCapsule,
 } from '../api';
 import { formatCurrency as formatCurrencyWithSetting } from '../utils/currency';
-import type { Account, Capsule, CapsuleRule, Transaction } from '../types';
+import type {
+    Account,
+    Capsule,
+    CapsuleRule,
+    LifeEvent,
+    MonthlyPlanLine,
+    MonthlyPlanTargetType,
+    MonthlyPlanLineType,
+    Product,
+    Transaction,
+} from '../types';
 
 interface BudgetAccount {
     id: number;
     name: string;
     amount: number;
     balance: number;
-    budget_id: string;
+    plan_line_id?: number | null;
 }
 
 interface BudgetSummary {
@@ -38,11 +50,32 @@ interface BudgetSummary {
     required_monthly_savings: number;
     monthly_fixed_costs: number;
     monthly_income: number;
+    recurring_debt_payments?: number;
+    recurring_allocations?: number;
+    recurring_borrowing?: number;
+    total_income_plan?: number;
+    total_expected_inflow?: number;
     total_variable_budget: number;
+    total_allocation_plan?: number;
+    total_debt_plan?: number;
     total_capsule_plan: number;
     total_capsule_actual: number;
     remaining_balance: number;
+    starting_cash?: number;
+    ending_cash_after_plan?: number;
+    feasibility_status?: 'ok' | 'warning' | 'shortfall';
     expense_accounts: BudgetAccount[];
+    plan_lines?: MonthlyPlanLine[];
+    cash_flow_projection?: Array<{
+        period: string;
+        inflow: number;
+        expense: number;
+        allocation: number;
+        debt: number;
+        net_cash: number;
+        ending_cash: number;
+        status: 'ok' | 'warning' | 'shortfall';
+    }>;
     others_actual: number;
     sinking_funds: Array<{
         id: number;
@@ -60,6 +93,7 @@ interface BudgetSummary {
 }
 
 type TransactionKind = Transaction['type'];
+type EditablePlanLine = MonthlyPlanLine & { local_id: string };
 
 const TABS = [
     { id: 'budgeting', label: 'Budgeting' },
@@ -74,6 +108,7 @@ export default function Strategy() {
     const [budgetSummary, setBudgetSummary] = useState<BudgetSummary | null>(null);
     const [budgetEdits, setBudgetEdits] = useState<Record<number, number>>({});
     const [showBudgetCategoryForm, setShowBudgetCategoryForm] = useState(false);
+    const [expandedPlanForm, setExpandedPlanForm] = useState<MonthlyPlanLineType | null>(null);
     const [editingBudgetAccount, setEditingBudgetAccount] = useState<BudgetAccount | null>(null);
     const [budgetCategoryForm, setBudgetCategoryForm] = useState({ name: '', amount: '' });
     const [budgetThinking, setBudgetThinking] = useState(false);
@@ -81,6 +116,24 @@ export default function Strategy() {
     const [categorySearch, setCategorySearch] = useState('');
     const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null);
     const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
+    const [planLineDrafts, setPlanLineDrafts] = useState<EditablePlanLine[]>([]);
+    const [planLineForm, setPlanLineForm] = useState<{
+        line_type: MonthlyPlanLineType;
+        target_type: MonthlyPlanTargetType;
+        target_id: string;
+        account_id: string;
+        name: string;
+        amount: string;
+    }>({
+        line_type: 'allocation',
+        target_type: 'account',
+        target_id: '',
+        account_id: '',
+        name: '',
+        amount: '',
+    });
+    const [products, setProducts] = useState<Product[]>([]);
+    const [lifeEvents, setLifeEvents] = useState<LifeEvent[]>([]);
 
     const [capsules, setCapsules] = useState<Capsule[]>([]);
     const [capsuleRules, setCapsuleRules] = useState<CapsuleRule[]>([]);
@@ -95,7 +148,7 @@ export default function Strategy() {
     const [showCapsuleForm, setShowCapsuleForm] = useState(false);
     const [showRuleForm, setShowRuleForm] = useState(false);
     const [editingCapsuleId, setEditingCapsuleId] = useState<number | null>(null);
-    const [capsuleForm, setCapsuleForm] = useState({ name: '', target_amount: '', monthly_contribution: '', current_balance: '0' });
+    const [capsuleForm, setCapsuleForm] = useState({ name: '', target_amount: '', current_balance: '0' });
     const [ruleForm, setRuleForm] = useState({
         capsule_id: '',
         trigger_type: 'Income' as TransactionKind,
@@ -110,11 +163,7 @@ export default function Strategy() {
     const [holdingForms, setHoldingForms] = useState<Record<number, { account_id: string; held_amount: string }>>({});
 
     const variableBudgetTotal = Object.values(budgetEdits).reduce((sum, amount) => sum + amount, 0);
-    const calculatedRemaining = (budgetSummary?.monthly_income || 0)
-        - (budgetSummary?.required_monthly_savings || 0)
-        - (budgetSummary?.monthly_fixed_costs || 0)
-        - variableBudgetTotal
-        - (budgetSummary?.total_capsule_plan || 0);
+    const calculatedRemaining = budgetSummary?.remaining_balance ?? 0;
     const formatCurrency = (value: number | undefined | null) =>
         formatCurrencyWithSetting(value, currentClient?.general_settings?.currency);
 
@@ -127,9 +176,33 @@ export default function Strategy() {
             });
             setBudgetSummary(summary);
             setBudgetEdits(edits);
+            setPlanLineDrafts((summary.plan_lines ?? [])
+                .filter((line: MonthlyPlanLine) => line.line_type !== 'expense')
+                .map((line: MonthlyPlanLine, index: number) => ({
+                    ...line,
+                    local_id: line.id ? `id-${line.id}` : `virtual-${line.line_type}-${line.target_type}-${line.target_id ?? line.name ?? index}`,
+                })));
         } catch (error) {
             console.error('Failed to fetch budget summary:', error);
             showToast('Failed to load budget summary', 'error');
+        }
+    };
+
+    const fetchBudgetReferences = async () => {
+        try {
+            const [accountData, capsuleData, productData, eventData] = await Promise.all([
+                getAccounts(),
+                getCapsules(),
+                getProducts(),
+                getLifeEvents(),
+            ]);
+            setAccounts(accountData);
+            setCapsules(capsuleData);
+            setProducts(productData);
+            setLifeEvents(eventData);
+        } catch (error) {
+            console.error('Failed to fetch budget references:', error);
+            showToast('Failed to load budget options', 'error');
         }
     };
 
@@ -150,7 +223,10 @@ export default function Strategy() {
     };
 
     useEffect(() => {
-        if (activeTab === 'budgeting') fetchBudgetSummary();
+        if (activeTab === 'budgeting') {
+            fetchBudgetSummary();
+            fetchBudgetReferences();
+        }
         if (activeTab === 'capsules') fetchCapsules();
     }, [activeTab, currentPeriod]);
 
@@ -170,9 +246,13 @@ export default function Strategy() {
                 showToast('前月に予算設定がありません', 'info');
                 return;
             }
-            await saveMonthlyBudgets(previousSummary.expense_accounts.map((account: BudgetAccount) => ({
+            await saveMonthlyPlanLines(previousSummary.expense_accounts.map((account: BudgetAccount) => ({
+                id: null,
                 account_id: account.id,
                 target_period: currentPeriod,
+                line_type: 'expense',
+                target_type: 'account',
+                name: account.name,
                 amount: account.amount,
             })));
             showToast(`Copied from ${previousPeriod}`, 'info');
@@ -184,11 +264,38 @@ export default function Strategy() {
 
     const saveBudget = async () => {
         try {
-            await saveMonthlyBudgets(Object.entries(budgetEdits).map(([accountId, amount]) => ({
-                account_id: Number(accountId),
+            const expenseLines = Object.entries(budgetEdits).map(([accountId, amount]) => {
+                const account = budgetSummary?.expense_accounts.find((item) => item.id === Number(accountId));
+                return {
+                    id: account?.plan_line_id ?? null,
+                    target_period: currentPeriod,
+                    line_type: 'expense',
+                    target_type: 'account',
+                    target_id: null,
+                    account_id: Number(accountId),
+                    source_account_id: null,
+                    name: account?.name ?? null,
+                    amount,
+                    priority: 2,
+                    note: null,
+                    is_active: true,
+                };
+            });
+            const otherLines = planLineDrafts.map((line) => ({
+                id: line.id ?? null,
                 target_period: currentPeriod,
-                amount,
-            })));
+                line_type: line.line_type,
+                target_type: line.target_type,
+                target_id: line.target_id ?? null,
+                account_id: line.account_id ?? null,
+                source_account_id: line.source_account_id ?? null,
+                name: line.name || line.target_name || null,
+                amount: Number(line.amount || 0),
+                priority: line.priority ?? 2,
+                note: line.note ?? null,
+                is_active: true,
+            }));
+            await saveMonthlyPlanLines([...expenseLines, ...otherLines]);
             showToast('Monthly budget saved', 'success');
             await fetchBudgetSummary();
         } catch (error) {
@@ -244,16 +351,39 @@ export default function Strategy() {
                 const name = budgetCategoryForm.name.trim();
                 if (!name) return;
                 await updateAccount(editingBudgetAccount.id, { name });
-                await saveMonthlyBudgets([{ account_id: editingBudgetAccount.id, target_period: currentPeriod, amount }]);
+                await saveMonthlyPlanLines([{
+                    id: editingBudgetAccount.plan_line_id ?? null,
+                    account_id: editingBudgetAccount.id,
+                    target_period: currentPeriod,
+                    line_type: 'expense',
+                    target_type: 'account',
+                    name,
+                    amount,
+                }]);
                 showToast('Budget category updated', 'success');
             } else if (selectedAccountId !== null) {
-                await saveMonthlyBudgets([{ account_id: selectedAccountId, target_period: currentPeriod, amount }]);
+                const account = allExpenseAccounts.find((item) => item.id === selectedAccountId);
+                await saveMonthlyPlanLines([{
+                    account_id: selectedAccountId,
+                    target_period: currentPeriod,
+                    line_type: 'expense',
+                    target_type: 'account',
+                    name: account?.name ?? null,
+                    amount,
+                }]);
                 showToast('Budget category added', 'success');
             } else {
                 const name = categorySearch.trim();
                 if (!name) return;
                 const created = await createAccount({ name, account_type: 'expense', balance: 0 });
-                await saveMonthlyBudgets([{ account_id: created.id, target_period: currentPeriod, amount }]);
+                await saveMonthlyPlanLines([{
+                    account_id: created.id,
+                    target_period: currentPeriod,
+                    line_type: 'expense',
+                    target_type: 'account',
+                    name: created.name,
+                    amount,
+                }]);
                 showToast('Budget category added', 'success');
             }
             setShowBudgetCategoryForm(false);
@@ -267,9 +397,12 @@ export default function Strategy() {
         }
     };
 
-    const removeBudgetCategory = async (budgetId: string, accountId: number) => {
+    const removeBudgetCategory = async (accountId: number, planLineId?: number | null) => {
         try {
-            await deleteBudget(budgetId);
+            if (!planLineId) {
+                throw new Error('No plan line id');
+            }
+            await deleteMonthlyPlanLine(planLineId);
             setBudgetEdits(prev => {
                 const { [accountId]: _, ...rest } = prev;
                 return rest;
@@ -280,16 +413,120 @@ export default function Strategy() {
         }
     };
 
+    const openPlanLineForm = (lineType: MonthlyPlanLineType) => {
+        setExpandedPlanForm(expandedPlanForm === lineType ? null : lineType);
+        setPlanLineForm({
+            line_type: lineType,
+            target_type: lineType === 'allocation' || lineType === 'debt_payment' ? 'account' : 'manual',
+            target_id: '',
+            account_id: '',
+            name: '',
+            amount: '',
+        });
+    };
+
+    const planTargetLabel = (line: MonthlyPlanLine) => line.target_name || line.name || line.account_name || 'Manual line';
+
+    const updatePlanLineAmount = (localId: string, amount: number) => {
+        setPlanLineDrafts((prev) => prev.map((line) => (
+            line.local_id === localId ? { ...line, amount } : line
+        )));
+    };
+
+    const addPlanLine = () => {
+        const amount = Number(planLineForm.amount || '0') || 0;
+        let targetType = planLineForm.target_type;
+        let targetId: number | null = planLineForm.target_id ? Number(planLineForm.target_id) : null;
+        let accountId: number | null = planLineForm.account_id ? Number(planLineForm.account_id) : null;
+        let name = planLineForm.name.trim();
+
+        if (targetType === 'account' && accountId) {
+            name = accounts.find((account) => account.id === accountId)?.name ?? name;
+            targetId = null;
+        } else if (targetType === 'capsule' && targetId) {
+            const capsule = capsules.find((item) => item.id === targetId);
+            name = capsule?.name ?? name;
+            accountId = capsule?.account_id ?? null;
+        } else if (targetType === 'life_event' && targetId) {
+            name = lifeEvents.find((event) => event.id === targetId)?.name ?? name;
+            accountId = null;
+        } else if (targetType === 'product' && targetId) {
+            name = products.find((product) => product.id === targetId)?.name ?? name;
+            accountId = null;
+        } else {
+            targetType = 'manual';
+            targetId = null;
+            accountId = null;
+        }
+
+        if (!name && targetType === 'manual') return;
+        const localId = `new-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        setPlanLineDrafts((prev) => ([
+            ...prev,
+            {
+                local_id: localId,
+                target_period: currentPeriod,
+                line_type: planLineForm.line_type,
+                target_type: targetType,
+                target_id: targetId,
+                account_id: accountId,
+                name,
+                target_name: name,
+                amount,
+                actual: 0,
+                variance: amount,
+                priority: 2,
+                is_active: true,
+            },
+        ]));
+        setPlanLineForm({
+            line_type: planLineForm.line_type,
+            target_type: 'account',
+            target_id: '',
+            account_id: '',
+            name: '',
+            amount: '',
+        });
+        setExpandedPlanForm(null);
+    };
+
+    const removePlanLine = async (line: EditablePlanLine) => {
+        try {
+            if (line.id) {
+                await deleteMonthlyPlanLine(line.id);
+                await fetchBudgetSummary();
+                return;
+            }
+            if (line.source === 'capsule' && line.target_type === 'capsule' && line.target_id) {
+                await saveMonthlyPlanLines([{
+                    target_period: currentPeriod,
+                    line_type: 'allocation',
+                    target_type: 'capsule',
+                    target_id: line.target_id,
+                    account_id: line.account_id ?? null,
+                    name: line.name || line.target_name || null,
+                    amount: 0,
+                    priority: line.priority ?? 2,
+                    is_active: true,
+                }]);
+                await fetchBudgetSummary();
+                return;
+            }
+            setPlanLineDrafts((prev) => prev.filter((item) => item.local_id !== line.local_id));
+        } catch (error) {
+            showToast('Failed to remove plan line', 'error');
+        }
+    };
+
     const openCapsuleForm = (capsule?: Capsule) => {
         setEditingCapsuleId(capsule?.id ?? null);
         setCapsuleForm(capsule
             ? {
                 name: capsule.name,
                 target_amount: String(capsule.target_amount),
-                monthly_contribution: String(capsule.monthly_contribution),
                 current_balance: '0',
             }
-            : { name: '', target_amount: '', monthly_contribution: '', current_balance: '0' });
+            : { name: '', target_amount: '', current_balance: '0' });
         setShowCapsuleForm(true);
     };
 
@@ -298,7 +535,9 @@ export default function Strategy() {
         const payload = {
             name: capsuleForm.name,
             target_amount: Number(capsuleForm.target_amount),
-            monthly_contribution: Number(capsuleForm.monthly_contribution || '0'),
+            monthly_contribution: editingCapsuleId
+                ? capsules.find((capsule) => capsule.id === editingCapsuleId)?.monthly_contribution ?? 0
+                : 0,
         };
         try {
             if (editingCapsuleId) await updateCapsule(editingCapsuleId, payload);
@@ -436,10 +675,169 @@ export default function Strategy() {
     const renderBudgeting = () => {
         const variableActualTotal = (budgetSummary?.expense_accounts ?? []).reduce((sum, account) => sum + (account.balance || 0), 0);
         const variableVarianceTotal = variableBudgetTotal - variableActualTotal;
-        const sinkingPlanTotal = budgetSummary?.total_capsule_plan ?? 0;
-        const sinkingActualTotal = budgetSummary?.total_capsule_actual ?? 0;
-        const sinkingVarianceTotal = sinkingPlanTotal - sinkingActualTotal;
-        const sinkingBalanceTotal = (budgetSummary?.sinking_funds ?? []).reduce((sum, fund) => sum + (fund.current_balance || 0), 0);
+        const targetOptions = (() => {
+            if (planLineForm.target_type === 'account') {
+                const allowedTypes =
+                    planLineForm.line_type === 'income' ? ['income'] :
+                    planLineForm.line_type === 'borrowing' || planLineForm.line_type === 'debt_payment' ? ['liability'] :
+                    planLineForm.line_type === 'expense' ? ['expense'] :
+                    ['asset'];
+                return accounts
+                    .filter((account) => allowedTypes.includes(account.account_type))
+                    .map((account) => ({ id: account.id, label: `${account.name} / ${account.account_type}` }));
+            }
+            if (planLineForm.target_type === 'capsule') {
+                return capsules.map((capsule) => ({ id: capsule.id, label: capsule.name }));
+            }
+            if (planLineForm.target_type === 'life_event') {
+                return lifeEvents.map((event) => ({ id: event.id, label: event.name }));
+            }
+            if (planLineForm.target_type === 'product') {
+                return products.map((product) => ({ id: product.id, label: `${product.name} / ${product.is_asset ? 'asset' : 'item'}` }));
+            }
+            return [];
+        })();
+        const planLinesFor = (types: MonthlyPlanLineType[]) =>
+            planLineDrafts.filter((line) => types.includes(line.line_type));
+        const planGroupTotal = (types: MonthlyPlanLineType[]) =>
+            planLinesFor(types).reduce((sum, line) => sum + Number(line.amount || 0), 0);
+        const planGroupActual = (types: MonthlyPlanLineType[]) =>
+            planLinesFor(types).reduce((sum, line) => sum + Number(line.actual || 0), 0);
+        const renderPlanLineForm = (lineType: MonthlyPlanLineType) => (
+            expandedPlanForm === lineType && (
+                <div className="mb-3 border border-cyan-800/40 bg-cyan-900/10 p-3">
+                    <div className="grid grid-cols-12 gap-2">
+                        <select
+                            value={planLineForm.line_type}
+                            onChange={(event) => setPlanLineForm({ ...planLineForm, line_type: event.target.value as MonthlyPlanLineType, target_id: '', account_id: '' })}
+                            className="col-span-2 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
+                        >
+                            {(lineType === 'income'
+                                ? ['income', 'borrowing', 'drawdown']
+                                : [lineType]
+                            ).map((type) => <option key={type} value={type}>{type.replace('_', ' ')}</option>)}
+                        </select>
+                        <select
+                            value={planLineForm.target_type}
+                            onChange={(event) => setPlanLineForm({ ...planLineForm, target_type: event.target.value as MonthlyPlanTargetType, target_id: '', account_id: '' })}
+                            className="col-span-2 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
+                        >
+                            <option value="account">Account</option>
+                            <option value="capsule">Capsule</option>
+                            <option value="life_event">LifeEvent</option>
+                            <option value="product">Asset/Item</option>
+                            <option value="manual">Manual</option>
+                        </select>
+                        {planLineForm.target_type === 'manual' ? (
+                            <input
+                                value={planLineForm.name}
+                                onChange={(event) => setPlanLineForm({ ...planLineForm, name: event.target.value })}
+                                placeholder="Name"
+                                className="col-span-4 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
+                            />
+                        ) : (
+                            <select
+                                value={planLineForm.target_type === 'account' ? planLineForm.account_id : planLineForm.target_id}
+                                onChange={(event) => {
+                                    const value = event.target.value;
+                                    setPlanLineForm({
+                                        ...planLineForm,
+                                        account_id: planLineForm.target_type === 'account' ? value : '',
+                                        target_id: planLineForm.target_type === 'account' ? '' : value,
+                                    });
+                                }}
+                                className="col-span-4 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
+                            >
+                                <option value="">Target...</option>
+                                {targetOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+                            </select>
+                        )}
+                        <input
+                            type="number"
+                            value={planLineForm.amount}
+                            onChange={(event) => setPlanLineForm({ ...planLineForm, amount: event.target.value })}
+                            placeholder="Amount"
+                            className="col-span-2 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums"
+                        />
+                        <button type="button" onClick={addPlanLine} className="col-span-2 bg-cyan-700 hover:bg-cyan-600 text-white py-1.5 text-xs">
+                            Add
+                        </button>
+                    </div>
+                </div>
+            )
+        );
+        const renderPlanSection = (
+            title: string,
+            types: MonthlyPlanLineType[],
+            addType: MonthlyPlanLineType,
+            emptyText: string,
+        ) => {
+            const rows = planLinesFor(types);
+            const totalActual = planGroupActual(types);
+            const totalPlan = planGroupTotal(types);
+            return (
+                <div className="mt-6">
+                    <div className="flex items-center justify-between mb-3">
+                        <h2 className="text-xs text-slate-400 uppercase tracking-wider">{title}</h2>
+                        <div className="flex items-center gap-3">
+                            <span className="text-xs text-slate-500 font-mono-nums">Total {formatCurrency(totalPlan)}</span>
+                            <button type="button" title={`Add ${title}`} onClick={() => openPlanLineForm(addType)} className="text-slate-500 hover:text-cyan-400">
+                                <Plus size={14} />
+                            </button>
+                        </div>
+                    </div>
+                    {renderPlanLineForm(addType)}
+                    <div className="overflow-x-auto border border-slate-800">
+                        <table className="w-full text-[10px]">
+                            <thead className="text-slate-500 uppercase border-b border-slate-700 bg-slate-800/50">
+                                <tr>
+                                    <th className="px-2 py-2 text-left font-normal">Type</th>
+                                    <th className="px-2 py-2 text-left font-normal">Target</th>
+                                    <th className="px-2 py-2 text-right font-normal">Actual</th>
+                                    <th className="px-2 py-2 text-right font-normal">Plan</th>
+                                    <th className="px-2 py-2 text-right font-normal">Variance</th>
+                                    <th className="px-2 py-2 text-right font-normal">Edit</th>
+                                </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-800/70">
+                                {rows.length === 0 ? (
+                                    <tr><td colSpan={6} className="px-2 py-4 text-slate-600">{emptyText}</td></tr>
+                                ) : rows.map((line) => {
+                                    const variance = Number(line.amount || 0) - Number(line.actual || 0);
+                                    return (
+                                        <tr key={line.local_id} className="hover:bg-slate-800/30 group">
+                                            <td className="px-2 py-2 text-slate-400">{line.line_type.replace('_', ' ')}</td>
+                                            <td className="px-2 py-2 text-slate-300">{planTargetLabel(line)}</td>
+                                            <td className="px-2 py-2 text-right font-mono-nums text-slate-500">{formatCurrency(line.actual)}</td>
+                                            <td className="px-2 py-2 text-right">
+                                                <input
+                                                    type="number"
+                                                    step="1000"
+                                                    value={line.amount}
+                                                    onChange={(event) => updatePlanLineAmount(line.local_id, Number(event.target.value) || 0)}
+                                                    className="w-24 bg-transparent border-b border-slate-700 focus:border-cyan-500 text-right font-mono-nums outline-none"
+                                                />
+                                            </td>
+                                            <td className={`px-2 py-2 text-right font-mono-nums ${variance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(variance)}</td>
+                                            <td className="px-2 py-2 text-right">
+                                                <button type="button" title="Remove line" onClick={() => removePlanLine(line)} className="text-slate-500 hover:text-rose-400 opacity-0 group-hover:opacity-100"><Trash2 size={12} /></button>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                                <tr className="border-t border-slate-700 bg-slate-800/40">
+                                    <td className="px-2 py-2 text-slate-100 font-medium">Total</td>
+                                    <td className="px-2 py-2 text-slate-500">{title}</td>
+                                    <td className="px-2 py-2 text-right font-mono-nums text-slate-300">{formatCurrency(totalActual)}</td>
+                                    <td className="px-2 py-2 text-right font-mono-nums text-slate-200">{formatCurrency(totalPlan)}</td>
+                                    <td colSpan={2} />
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            );
+        };
 
         return (
         <div className="grid grid-cols-1 min-[960px]:grid-cols-[380px_1fr] gap-4 p-4">
@@ -453,10 +851,13 @@ export default function Strategy() {
                     </div>
                     <div className="grid grid-cols-2 gap-2 text-xs">
                         <div className="bg-slate-800/50 border border-slate-700 p-2"><p className="text-slate-500">Income</p><p className="font-mono-nums text-emerald-400">{formatCurrency(budgetSummary?.monthly_income)}</p></div>
+                        <div className="bg-slate-800/50 border border-slate-700 p-2"><p className="text-slate-500">Expected Inflow</p><p className="font-mono-nums text-emerald-300">{formatCurrency(budgetSummary?.total_expected_inflow)}</p></div>
                         <div className="bg-slate-800/50 border border-slate-700 p-2"><p className="text-slate-500">Goal Savings</p><p className="font-mono-nums text-cyan-400">{formatCurrency(budgetSummary?.required_monthly_savings)}</p></div>
                         <div className="bg-slate-800/50 border border-slate-700 p-2"><p className="text-slate-500">Fixed Costs</p><p className="font-mono-nums text-amber-400">{formatCurrency(budgetSummary?.monthly_fixed_costs)}</p></div>
-                        <div className="bg-slate-800/50 border border-slate-700 p-2"><p className="text-slate-500">Sinking Funds</p><p className="font-mono-nums text-purple-300">{formatCurrency(budgetSummary?.total_capsule_plan)}</p></div>
+                        <div className="bg-slate-800/50 border border-slate-700 p-2"><p className="text-slate-500">Debt Pay</p><p className="font-mono-nums text-rose-300">{formatCurrency(budgetSummary?.total_debt_plan)}</p></div>
+                        <div className="bg-slate-800/50 border border-slate-700 p-2"><p className="text-slate-500">Allocations</p><p className="font-mono-nums text-cyan-300">{formatCurrency(budgetSummary?.total_allocation_plan)}</p></div>
                         <div className="bg-slate-800/50 border border-slate-700 p-2"><p className="text-slate-500">Remaining</p><p className={`font-mono-nums ${calculatedRemaining >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(calculatedRemaining)}</p></div>
+                        <div className="bg-slate-800/50 border border-slate-700 p-2"><p className="text-slate-500">Ending Cash</p><p className={`font-mono-nums ${(budgetSummary?.ending_cash_after_plan ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(budgetSummary?.ending_cash_after_plan)}</p></div>
                     </div>
                 </div>
 
@@ -464,15 +865,21 @@ export default function Strategy() {
                     <h2 className="text-xs text-slate-400 uppercase tracking-wider">Actions</h2>
                     <button onClick={copyPreviousBudget} className="w-full bg-slate-800 hover:bg-slate-700 border border-slate-700 py-2 text-xs text-slate-300 flex items-center justify-center gap-2"><Copy size={14} /> Copy Previous Month</button>
                     <button onClick={applyBudgetSuggestions} disabled={budgetThinking} className="w-full bg-purple-900/40 hover:bg-purple-900/60 border border-purple-800 py-2 text-xs text-purple-200 flex items-center justify-center gap-2 disabled:opacity-50"><Sparkles size={14} /> {budgetThinking ? 'Thinking...' : 'AI Suggest Budget'}</button>
-                    <button onClick={() => openBudgetCategoryForm()} className="w-full bg-emerald-900/40 hover:bg-emerald-900/60 border border-emerald-800 py-2 text-xs text-emerald-200 flex items-center justify-center gap-2"><Plus size={14} /> Add Category</button>
                     <button onClick={saveBudget} className="w-full bg-cyan-600 hover:bg-cyan-500 py-2 text-xs text-white flex items-center justify-center gap-2"><Save size={14} /> Save {currentPeriod}</button>
                 </div>
             </section>
 
             <section className="bg-slate-900/60 border border-slate-800 p-4 overflow-auto">
+                {renderPlanSection('Income Plan', ['income', 'borrowing', 'drawdown'], 'income', 'No expected inflows yet.')}
+
                 <div className="flex items-center justify-between mb-3">
                     <h2 className="text-xs text-slate-400 uppercase tracking-wider">Variable Budget</h2>
-                    <span className="text-xs text-slate-500 font-mono-nums">Total {formatCurrency(variableBudgetTotal)}</span>
+                    <div className="flex items-center gap-3">
+                        <span className="text-xs text-slate-500 font-mono-nums">Total {formatCurrency(variableBudgetTotal)}</span>
+                        <button type="button" title="Add category" onClick={() => openBudgetCategoryForm()} className="text-slate-500 hover:text-emerald-400">
+                            <Plus size={14} />
+                        </button>
+                    </div>
                 </div>
 
                 {showBudgetCategoryForm && (() => {
@@ -565,7 +972,7 @@ export default function Strategy() {
                             {(budgetSummary?.expense_accounts ?? []).length === 0 && (
                                 <tr>
                                     <td colSpan={5} className="px-2 py-8 text-center text-slate-600 text-xs">
-                                        費目が追加されていません。「Add Category」から追加してください。
+                                        費目が追加されていません。右上の+から追加してください。
                                     </td>
                                 </tr>
                             )}
@@ -580,7 +987,7 @@ export default function Strategy() {
                                         <td className={`px-2 py-2 text-right font-mono-nums ${variance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(variance)}</td>
                                         <td className="px-2 py-2 text-right flex items-center justify-end gap-2">
                                             <button type="button" title="Edit category" onClick={() => openBudgetCategoryForm(account)} className="text-slate-500 hover:text-cyan-400 opacity-0 group-hover:opacity-100"><Edit2 size={12} /></button>
-                                            <button type="button" title="Remove from budget" onClick={() => removeBudgetCategory(account.budget_id, account.id)} className="text-slate-500 hover:text-rose-400 opacity-0 group-hover:opacity-100"><Trash2 size={12} /></button>
+                                            <button type="button" title="Remove from budget" onClick={() => removeBudgetCategory(account.id, account.plan_line_id)} className="text-slate-500 hover:text-rose-400 opacity-0 group-hover:opacity-100"><Trash2 size={12} /></button>
                                         </td>
                                     </tr>
                                 );
@@ -604,41 +1011,39 @@ export default function Strategy() {
                     </table>
                 </div>
 
+                {renderPlanSection('Allocation Plan', ['allocation'], 'allocation', 'No asset allocations yet.')}
+                {renderPlanSection('Debt Plan', ['debt_payment'], 'debt_payment', 'No planned debt payments yet.')}
+
                 <div className="mt-6">
                     <div className="flex items-center justify-between mb-3">
-                        <h2 className="text-xs text-slate-400 uppercase tracking-wider">Sinking Funds</h2>
-                        <span className="text-xs text-slate-500 font-mono-nums">Actual {formatCurrency(budgetSummary?.total_capsule_actual)}</span>
+                        <h2 className="text-xs text-slate-400 uppercase tracking-wider">12 Month Cash Flow</h2>
+                        <span className="text-xs text-slate-500 font-mono-nums">Start {formatCurrency(budgetSummary?.starting_cash)}</span>
                     </div>
                     <div className="overflow-x-auto border border-slate-800">
                         <table className="w-full text-[10px]">
                             <thead className="text-slate-500 uppercase border-b border-slate-700 bg-slate-800/50">
                                 <tr>
-                                    <th className="px-2 py-2 text-left font-normal">Capsule</th>
-                                    <th className="px-2 py-2 text-right font-normal">Actual</th>
-                                    <th className="px-2 py-2 text-right font-normal">Plan</th>
-                                    <th className="px-2 py-2 text-right font-normal">Variance</th>
-                                    <th className="px-2 py-2 text-right font-normal">Balance</th>
+                                    <th className="px-2 py-2 text-left font-normal">Month</th>
+                                    <th className="px-2 py-2 text-right font-normal">Inflow</th>
+                                    <th className="px-2 py-2 text-right font-normal">Expense</th>
+                                    <th className="px-2 py-2 text-right font-normal">Allocation</th>
+                                    <th className="px-2 py-2 text-right font-normal">Debt</th>
+                                    <th className="px-2 py-2 text-right font-normal">Net</th>
+                                    <th className="px-2 py-2 text-right font-normal">Ending</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-800/70">
-                                {(budgetSummary?.sinking_funds ?? []).length === 0 ? (
-                                    <tr><td colSpan={5} className="px-2 py-4 text-slate-600">No capsule sinking funds.</td></tr>
-                                ) : (budgetSummary?.sinking_funds ?? []).map((fund) => (
-                                    <tr key={fund.id} className="hover:bg-slate-800/30">
-                                        <td className="px-2 py-2 text-slate-300">{fund.name}</td>
-                                        <td className="px-2 py-2 text-right font-mono-nums text-slate-400">{formatCurrency(fund.actual)}</td>
-                                        <td className="px-2 py-2 text-right font-mono-nums text-purple-300">{formatCurrency(fund.planned)}</td>
-                                        <td className={`px-2 py-2 text-right font-mono-nums ${fund.variance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(fund.variance)}</td>
-                                        <td className="px-2 py-2 text-right font-mono-nums text-slate-500">{formatCurrency(fund.current_balance)}</td>
+                                {(budgetSummary?.cash_flow_projection ?? []).map((row) => (
+                                    <tr key={row.period} className="hover:bg-slate-800/30">
+                                        <td className="px-2 py-2 text-slate-300">{row.period}</td>
+                                        <td className="px-2 py-2 text-right font-mono-nums text-emerald-400">{formatCurrency(row.inflow)}</td>
+                                        <td className="px-2 py-2 text-right font-mono-nums text-amber-300">{formatCurrency(row.expense)}</td>
+                                        <td className="px-2 py-2 text-right font-mono-nums text-cyan-300">{formatCurrency(row.allocation)}</td>
+                                        <td className="px-2 py-2 text-right font-mono-nums text-rose-300">{formatCurrency(row.debt)}</td>
+                                        <td className={`px-2 py-2 text-right font-mono-nums ${row.net_cash >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(row.net_cash)}</td>
+                                        <td className={`px-2 py-2 text-right font-mono-nums ${row.ending_cash >= 0 ? 'text-slate-200' : 'text-rose-400'}`}>{formatCurrency(row.ending_cash)}</td>
                                     </tr>
                                 ))}
-                                <tr className="border-t border-slate-700 bg-slate-800/40">
-                                    <td className="px-2 py-2 text-slate-100 font-medium">Total</td>
-                                    <td className="px-2 py-2 text-right font-mono-nums text-slate-300">{formatCurrency(sinkingActualTotal)}</td>
-                                    <td className="px-2 py-2 text-right font-mono-nums text-purple-200">{formatCurrency(sinkingPlanTotal)}</td>
-                                    <td className={`px-2 py-2 text-right font-mono-nums ${sinkingVarianceTotal >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>{formatCurrency(sinkingVarianceTotal)}</td>
-                                    <td className="px-2 py-2 text-right font-mono-nums text-slate-300">{formatCurrency(sinkingBalanceTotal)}</td>
-                                </tr>
                             </tbody>
                         </table>
                     </div>
@@ -659,7 +1064,6 @@ export default function Strategy() {
                     <div className="border border-purple-800/50 bg-purple-900/10 p-3 space-y-2">
                         <input value={capsuleForm.name} onChange={(event) => setCapsuleForm({ ...capsuleForm, name: event.target.value })} placeholder="Name" className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs" />
                         <input type="number" value={capsuleForm.target_amount} onChange={(event) => setCapsuleForm({ ...capsuleForm, target_amount: event.target.value })} placeholder="Target amount" className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums" />
-                        <input type="number" value={capsuleForm.monthly_contribution} onChange={(event) => setCapsuleForm({ ...capsuleForm, monthly_contribution: event.target.value })} placeholder="Monthly contribution" className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums" />
                         <div className="flex gap-2"><button onClick={saveCapsule} className="flex-1 bg-purple-600 hover:bg-purple-500 text-white py-2 text-xs">Save</button><button onClick={() => setShowCapsuleForm(false)} className="px-3 bg-slate-800 text-slate-400 text-xs">Cancel</button></div>
                     </div>
                 )}
@@ -699,7 +1103,7 @@ export default function Strategy() {
             </section>
 
             <section className="bg-slate-900/60 border border-slate-800 p-4 overflow-auto">
-                <h2 className="text-xs text-slate-400 uppercase tracking-wider mb-3">Sinking Funds</h2>
+                <h2 className="text-xs text-slate-400 uppercase tracking-wider mb-3">Capsules</h2>
                 <div className="grid grid-cols-1 min-[1120px]:grid-cols-2 gap-3">
                     {capsules.length === 0 ? <p className="text-xs text-slate-600">No capsules yet.</p> : capsules.map((capsule) => {
                         const progress = capsule.target_amount > 0 ? Math.min(100, (capsule.current_balance / capsule.target_amount) * 100) : 0;
@@ -710,7 +1114,7 @@ export default function Strategy() {
                             <div key={capsule.id} className="bg-slate-800/30 border border-slate-700 p-3 space-y-3">
                                 <div className="flex justify-between gap-3">
                                     <div><p className="text-sm text-slate-100 flex items-center gap-2"><Archive size={14} className="text-purple-400" /> {capsule.name}</p><p className="text-[10px] text-slate-500">Target {formatCurrency(capsule.target_amount)}</p></div>
-                                    <div className="text-right"><p className="text-lg font-mono-nums text-purple-400">{formatCurrency(capsule.current_balance)}</p><p className="text-[10px] text-slate-500">+{formatCurrency(capsule.monthly_contribution)} / mo</p></div>
+                                    <div className="text-right"><p className="text-lg font-mono-nums text-purple-400">{formatCurrency(capsule.current_balance)}</p><p className="text-[10px] text-slate-500">{Math.round(progress)}%</p></div>
                                 </div>
                                 <div className="h-1.5 bg-slate-900 rounded-full overflow-hidden"><div className="h-full bg-purple-500" style={{ width: `${progress}%` }} /></div>
                                 <div>

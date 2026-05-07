@@ -503,13 +503,16 @@ def get_variance_analysis_for_range(
         models.Account.is_active.is_(True),
     ).all()
 
-    monthly_budgets = db.query(models.MonthlyBudget).filter(
-        models.MonthlyBudget.client_id == client_id,
-        models.MonthlyBudget.target_period.in_(month_keys),
+    monthly_plan_lines = db.query(models.MonthlyPlanLine).filter(
+        models.MonthlyPlanLine.client_id == client_id,
+        models.MonthlyPlanLine.target_period.in_(month_keys),
+        models.MonthlyPlanLine.line_type == "expense",
+        models.MonthlyPlanLine.is_active.is_(True),
     ).all()
     budget_map: dict[int, float] = {}
-    for budget in monthly_budgets:
-        budget_map[budget.account_id] = budget_map.get(budget.account_id, 0.0) + budget.amount
+    for line in monthly_plan_lines:
+        if line.account_id:
+            budget_map[line.account_id] = budget_map.get(line.account_id, 0.0) + line.amount
 
     account_name_to_id = {acc.name: acc.id for acc in accounts}
 

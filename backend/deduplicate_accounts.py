@@ -47,16 +47,11 @@ def deduplicate():
                     )
                     if je_count: print(f"    - Moved {je_count} journal entries")
 
-                    # 2. Reassign Monthly Budgets
-                    try:
-                        mb_count = db.query(models.MonthlyBudget).filter(models.MonthlyBudget.account_id == acc.id).update(
-                            {models.MonthlyBudget.account_id: keep_account.id}
-                        )
-                        if mb_count: print(f"    - Moved {mb_count} monthly budgets")
-                    except Exception as e:
-                        db.rollback()
-                        db.query(models.MonthlyBudget).filter(models.MonthlyBudget.account_id == acc.id).delete()
-                        print(f"    - Deleted monthly budgets for ID {acc.id} due to conflict")
+                    # 2. Reassign Monthly Plan Lines
+                    mpl_count = db.query(models.MonthlyPlanLine).filter(models.MonthlyPlanLine.account_id == acc.id).update(
+                        {models.MonthlyPlanLine.account_id: keep_account.id}
+                    )
+                    if mpl_count: print(f"    - Moved {mpl_count} monthly plan lines")
                     
                     # 3. Reassign GoalAllocations
                     alloc_count = db.query(models.GoalAllocation).filter(models.GoalAllocation.account_id == acc.id).update(

@@ -459,10 +459,11 @@ def test_review_action_set_budget_applies_to_target_period() -> None:
             payload={"account_id": 20, "amount": 45000},
         )
         applied = apply_action(db, client_id=1, action_id=action["id"])
-        budget = db.query(models.MonthlyBudget).filter(
-            models.MonthlyBudget.client_id == 1,
-            models.MonthlyBudget.account_id == 20,
-            models.MonthlyBudget.target_period == "2026-05",
+        budget = db.query(models.MonthlyPlanLine).filter(
+            models.MonthlyPlanLine.client_id == 1,
+            models.MonthlyPlanLine.account_id == 20,
+            models.MonthlyPlanLine.target_period == "2026-05",
+            models.MonthlyPlanLine.line_type == "expense",
         ).one()
 
         assert applied["status"] == "applied"

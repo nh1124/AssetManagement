@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from datetime import date, datetime
+from datetime import datetime
 import json
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -14,7 +14,7 @@ from ..services.goal_service import (
 )
 from ..services.capsule_service import create_capsule_for_goal, capsule_balance
 from ..services.accounting_service import process_transaction
-from ..services.fx_service import calculate_account_valued_balance, convert_transaction_amount
+from ..services.budget_plan_service import get_budget_summary as build_budget_summary, save_plan_lines
 
 router = APIRouter(prefix="/life-events", tags=["life_events"])
 
@@ -83,188 +83,48 @@ def get_budget_summary(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
-    """Get budget summary: required savings from goals + fixed costs from recurring."""
+    """Get monthly cash-flow plan summary."""
     if not period:
         period = datetime.now().strftime("%Y-%m")
-    year, month = [int(part) for part in period.split("-")]
-    period_start = date(year, month, 1)
-    period_end = date(year + (1 if month == 12 else 0), 1 if month == 12 else month + 1, 1)
-    
-    # Calculate required monthly savings from life event gaps
-    events_with_progress = get_life_events_with_progress(db, client_id=current_client.id)
-    total_gap = sum(max(0, e["gap"]) for e in events_with_progress)
-    avg_years = sum(e["years_remaining"] for e in events_with_progress) / len(events_with_progress) if events_with_progress else 10
-    required_monthly_savings = total_gap / (avg_years * 12) if avg_years > 0 else 0
-    
-    # Get fixed costs from recurring transactions (expense type)
-    recurring = db.query(models.RecurringTransaction).filter(
-        models.RecurringTransaction.client_id == current_client.id,
-        models.RecurringTransaction.is_active == True,
-        models.RecurringTransaction.type.in_([
-            "Expense",
-            "expense",
-            "CreditExpense",
-            "creditexpense",
-            "LiabilityPayment",
-            "liabilitypayment",
-        ])
-    ).all()
-    
-    monthly_fixed_costs = 0.0
-    for rec in recurring:
-        if rec.frequency == "Monthly":
-            monthly_fixed_costs += rec.amount
-        elif rec.frequency == "Yearly":
-            monthly_fixed_costs += rec.amount / 12
-    
-    # Get all expense accounts
-    expense_accounts = db.query(models.Account).filter(
-        models.Account.client_id == current_client.id,
-        models.Account.account_type == "expense",
-        models.Account.is_active == True
-    ).all()
-    
-    # Fetch monthly budgets for this period
-    monthly_budgets = db.query(models.MonthlyBudget).filter(
-        models.MonthlyBudget.client_id == current_client.id,
-        models.MonthlyBudget.target_period == period
-    ).all()
-    budget_map = {mb.account_id: mb.amount for mb in monthly_budgets}
-    budget_id_map = {mb.account_id: str(mb.id) for mb in monthly_budgets}
+    return build_budget_summary(db, current_client.id, period)
 
-    expense_budgets = []
-    total_variable_budget = 0.0
-    others_actual = 0.0
 
-    for acc in expense_accounts:
-        actual = calculate_account_valued_balance(db, acc)
-        if acc.id not in budget_map:
-            others_actual += actual
-            continue
-        amount = budget_map[acc.id]
-        expense_budgets.append({
-            "id": acc.id,
-            "name": acc.name,
-            "amount": amount,
-            "balance": actual,
-            "budget_id": budget_id_map[acc.id],
-        })
-        total_variable_budget += amount
-
-    capsules = db.query(models.Capsule).filter(
-        models.Capsule.client_id == current_client.id
-    ).all()
-    capsule_account_ids = [capsule.account_id for capsule in capsules if capsule.account_id]
-    actual_by_capsule_account: dict[int, float] = {account_id: 0.0 for account_id in capsule_account_ids}
-    if capsule_account_ids:
-        capsule_transactions = db.query(models.Transaction).filter(
-            models.Transaction.client_id == current_client.id,
-            models.Transaction.type == "Transfer",
-            models.Transaction.to_account_id.in_(capsule_account_ids),
-            models.Transaction.date >= period_start,
-            models.Transaction.date < period_end,
-        ).all()
-        for tx in capsule_transactions:
-            actual_by_capsule_account[tx.to_account_id] = actual_by_capsule_account.get(tx.to_account_id, 0.0) + convert_transaction_amount(db, tx, current_client.id)
-
-    sinking_funds = []
-    total_capsule_plan = 0.0
-    total_capsule_actual = 0.0
-    for capsule in capsules:
-        planned = capsule.monthly_contribution or 0.0
-        actual = actual_by_capsule_account.get(capsule.account_id, 0.0) if capsule.account_id else 0.0
-        total_capsule_plan += planned
-        total_capsule_actual += actual
-        sinking_funds.append({
-            "id": capsule.id,
-            "name": capsule.name,
-            "life_event_id": capsule.life_event_id,
-            "account_id": capsule.account_id,
-            "planned": round(planned, 0),
-            "actual": round(actual, 0),
-            "variance": round(planned - actual, 0),
-            "current_balance": round(capsule.current_balance or 0.0, 0),
-            "target_amount": round(capsule.target_amount or 0.0, 0),
-        })
-    
-    # Get total income from income accounts or recurring
-    income_recurring = db.query(models.RecurringTransaction).filter(
-        models.RecurringTransaction.client_id == current_client.id,
-        models.RecurringTransaction.is_active == True,
-        models.RecurringTransaction.type.in_(["Income", "income"])
-    ).all()
-    
-    monthly_income = sum(r.amount for r in income_recurring if r.frequency == "Monthly")
-    monthly_income += sum(r.amount / 12 for r in income_recurring if r.frequency == "Yearly")
-    
-    remaining = monthly_income - required_monthly_savings - monthly_fixed_costs - total_variable_budget - total_capsule_plan
-    
-    return {
-        "period": period,
-        "required_monthly_savings": round(required_monthly_savings, 0),
-        "monthly_fixed_costs": round(monthly_fixed_costs, 0),
-        "monthly_income": round(monthly_income, 0),
-        "total_variable_budget": round(total_variable_budget, 0),
-        "total_capsule_plan": round(total_capsule_plan, 0),
-        "total_capsule_actual": round(total_capsule_actual, 0),
-        "remaining_balance": round(remaining, 0),
-        "expense_accounts": expense_budgets,
-        "others_actual": round(others_actual, 0),
-        "sinking_funds": sinking_funds,
-        "goals_count": len(events_with_progress),
-        "total_goal_gap": round(total_gap, 0)
-    }
-
-@router.post("/monthly-budget")
-def save_monthly_budget(
-    budget_data: schemas.MonthlyBudgetCreate,
+@router.get("/monthly-plan-lines")
+def get_monthly_plan_lines(
+    period: Optional[str] = Query(None, description="Format: YYYY-MM"),
     db: Session = Depends(get_db),
-    current_client: models.Client = Depends(get_current_client)
+    current_client: models.Client = Depends(get_current_client),
 ):
-    """Save or update a monthly budget for a specific account and period."""
-    db_budget = db.query(models.MonthlyBudget).filter(
-        models.MonthlyBudget.account_id == budget_data.account_id,
-        models.MonthlyBudget.target_period == budget_data.target_period,
-        models.MonthlyBudget.client_id == current_client.id
+    if not period:
+        period = datetime.now().strftime("%Y-%m")
+    return build_budget_summary(db, current_client.id, period)["plan_lines"]
+
+
+@router.post("/monthly-plan-lines/batch")
+def save_monthly_plan_lines(
+    lines: List[schemas.MonthlyPlanLineCreate],
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    saved = save_plan_lines(db, current_client.id, lines)
+    return {"status": "success", "ids": [line.id for line in saved]}
+
+
+@router.delete("/monthly-plan-lines/{line_id}")
+def delete_monthly_plan_line(
+    line_id: int,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    line = db.query(models.MonthlyPlanLine).filter(
+        models.MonthlyPlanLine.id == line_id,
+        models.MonthlyPlanLine.client_id == current_client.id,
     ).first()
-    
-    if db_budget:
-        db_budget.amount = budget_data.amount
-    else:
-        db_budget = models.MonthlyBudget(
-            **budget_data.model_dump(),
-            client_id=current_client.id
-        )
-        db.add(db_budget)
-    
+    if not line:
+        raise HTTPException(status_code=404, detail="Monthly plan line not found")
+    line.is_active = False
     db.commit()
-    return {"status": "success"}
-
-@router.post("/monthly-budget/batch")
-def save_batch_monthly_budgets(
-    budgets: List[schemas.MonthlyBudgetCreate],
-    db: Session = Depends(get_db),
-    current_client: models.Client = Depends(get_current_client)
-):
-    """Save/update multiple monthly budgets."""
-    for b in budgets:
-        db_budget = db.query(models.MonthlyBudget).filter(
-            models.MonthlyBudget.account_id == b.account_id,
-            models.MonthlyBudget.target_period == b.target_period,
-            models.MonthlyBudget.client_id == current_client.id
-        ).first()
-        
-        if db_budget:
-            db_budget.amount = b.amount
-        else:
-            db_budget = models.MonthlyBudget(
-                **b.model_dump(),
-                client_id=current_client.id
-            )
-            db.add(db_budget)
-            
-    db.commit()
-    return {"status": "success"}
+    return {"message": "Monthly plan line deleted"}
 
 @router.post("/")
 def create_life_event(

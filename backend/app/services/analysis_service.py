@@ -177,12 +177,14 @@ def get_summary(db: Session, client_id: int) -> dict:
     cc_unpaid = _sum_unpaid_liabilities(db, client_id)
 
     month_str = f"{today.year}-{today.month:02d}"
-    monthly_budgets = db.query(models.MonthlyBudget).filter(
-        models.MonthlyBudget.client_id == client_id,
-        models.MonthlyBudget.target_period == month_str,
+    monthly_plan_lines = db.query(models.MonthlyPlanLine).filter(
+        models.MonthlyPlanLine.client_id == client_id,
+        models.MonthlyPlanLine.target_period == month_str,
+        models.MonthlyPlanLine.line_type == "expense",
+        models.MonthlyPlanLine.is_active.is_(True),
     ).all()
 
-    next_month_budget = sum(mb.amount for mb in monthly_budgets)
+    next_month_budget = sum(line.amount for line in monthly_plan_lines)
 
     total_capsule_balance = _sum_capsule_balance(db, client_id)
 

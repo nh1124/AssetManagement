@@ -1,5 +1,4 @@
 from pydantic import BaseModel, Field
-from uuid import UUID
 from datetime import date, datetime
 from datetime import date as DateType
 from typing import Any, Optional, Literal
@@ -193,26 +192,68 @@ class RecurringTransaction(RecurringTransactionBase):
 
 # ========== Life Events ==========
 
-class MonthlyBudgetBase(BaseModel):
-    account_id: int
-    target_period: str  # "YYYY-MM"
-    amount: float
+MonthlyPlanLineType = Literal[
+    "income",
+    "expense",
+    "allocation",
+    "debt_payment",
+    "borrowing",
+    "drawdown",
+]
 
-class MonthlyBudgetCreate(MonthlyBudgetBase):
-    pass
+MonthlyPlanTargetType = Literal[
+    "account",
+    "capsule",
+    "life_event",
+    "product",
+    "manual",
+]
 
-class MonthlyBudget(MonthlyBudgetBase):
-    id: UUID
+
+class MonthlyPlanLineBase(BaseModel):
+    target_period: str
+    line_type: MonthlyPlanLineType
+    target_type: MonthlyPlanTargetType = "manual"
+    target_id: Optional[int] = None
+    account_id: Optional[int] = None
+    source_account_id: Optional[int] = None
+    name: Optional[str] = None
+    amount: float = 0.0
+    priority: int = 2
+    note: Optional[str] = None
+    is_active: bool = True
+
+
+class MonthlyPlanLineCreate(MonthlyPlanLineBase):
+    id: Optional[int] = None
+
+
+class MonthlyPlanLineUpdate(BaseModel):
+    target_period: Optional[str] = None
+    line_type: Optional[MonthlyPlanLineType] = None
+    target_type: Optional[MonthlyPlanTargetType] = None
+    target_id: Optional[int] = None
+    account_id: Optional[int] = None
+    source_account_id: Optional[int] = None
+    name: Optional[str] = None
+    amount: Optional[float] = None
+    priority: Optional[int] = None
+    note: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class MonthlyPlanLine(MonthlyPlanLineBase):
+    id: int
+    target_name: Optional[str] = None
+    account_name: Optional[str] = None
+    source_account_name: Optional[str] = None
+    actual: float = 0.0
+    variance: float = 0.0
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
-
-
-class MonthlyBudgetWithAccount(MonthlyBudget):
-    account_name: str
-    account_type: str
-    actual_spending: float = 0.0
-    variance: float = 0.0
 
 
 class MonthlyReviewBase(BaseModel):

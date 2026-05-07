@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from typing import Any
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -26,8 +25,6 @@ class ImportPayload(BaseModel):
 def _iso(value: Any) -> Any:
     if isinstance(value, (date, datetime)):
         return value.isoformat()
-    if isinstance(value, UUID):
-        return str(value)
     return value
 
 
@@ -49,14 +46,6 @@ def _parse_datetime(value: Any) -> datetime | None:
     if isinstance(value, datetime):
         return value
     return datetime.fromisoformat(str(value))
-
-
-def _parse_uuid(value: Any) -> UUID | None:
-    if not value:
-        return None
-    if isinstance(value, UUID):
-        return value
-    return UUID(str(value))
 
 
 @router.get("/export")
@@ -229,11 +218,29 @@ def export_client_data(
                 .order_by(models.JournalEntry.id)
                 .all()
             ],
-            "monthly_budgets": [
-                _row(budget, ["id", "account_id", "target_period", "amount"])
-                for budget in db.query(models.MonthlyBudget)
-                .filter(models.MonthlyBudget.client_id == current_client.id)
-                .order_by(models.MonthlyBudget.target_period, models.MonthlyBudget.account_id)
+            "monthly_plan_lines": [
+                _row(
+                    line,
+                    [
+                        "id",
+                        "target_period",
+                        "line_type",
+                        "target_type",
+                        "target_id",
+                        "account_id",
+                        "source_account_id",
+                        "name",
+                        "amount",
+                        "priority",
+                        "note",
+                        "is_active",
+                        "created_at",
+                        "updated_at",
+                    ],
+                )
+                for line in db.query(models.MonthlyPlanLine)
+                .filter(models.MonthlyPlanLine.client_id == current_client.id)
+                .order_by(models.MonthlyPlanLine.target_period, models.MonthlyPlanLine.id)
                 .all()
             ],
             "monthly_reviews": [
@@ -390,7 +397,7 @@ def import_client_data(
             ).delete(synchronize_session=False)
 
         for model in [
-            models.MonthlyBudget,
+            models.MonthlyPlanLine,
             models.MonthlyReview,
             models.PeriodReview,
             models.CapsuleRule,
@@ -432,23 +439,26 @@ def import_client_data(
         for account, old_parent_id in account_parent_updates:
             account.parent_id = account_map.get(old_parent_id)
 
+        product_map: dict[int, int] = {}
         for item in data.get("products", []):
-            db.add(
-                models.Product(
-                    client_id=current_client.id,
-                    name=item["name"],
-                    category=item["category"],
-                    location=item.get("location"),
-                    last_unit_price=item.get("last_unit_price") or 0,
-                    units_per_purchase=item.get("units_per_purchase") or 1,
-                    frequency_days=item.get("frequency_days") or 0,
-                    last_purchase_date=_parse_date(item.get("last_purchase_date")),
-                    is_asset=item.get("is_asset", False),
-                    lifespan_months=item.get("lifespan_months"),
-                    purchase_price=item.get("purchase_price"),
-                    purchase_date=_parse_date(item.get("purchase_date")),
-                )
+            old_id = int(item["id"])
+            product = models.Product(
+                client_id=current_client.id,
+                name=item["name"],
+                category=item["category"],
+                location=item.get("location"),
+                last_unit_price=item.get("last_unit_price") or 0,
+                units_per_purchase=item.get("units_per_purchase") or 1,
+                frequency_days=item.get("frequency_days") or 0,
+                last_purchase_date=_parse_date(item.get("last_purchase_date")),
+                is_asset=item.get("is_asset", False),
+                lifespan_months=item.get("lifespan_months"),
+                purchase_price=item.get("purchase_price"),
+                purchase_date=_parse_date(item.get("purchase_date")),
             )
+            db.add(product)
+            db.flush()
+            product_map[old_id] = product.id
 
         for item in data.get("simulation_configs", []):
             db.add(
@@ -540,19 +550,6 @@ def import_client_data(
                     )
                 )
 
-        for item in data.get("monthly_budgets", []):
-            account_id = account_map.get(item.get("account_id"))
-            if account_id:
-                db.add(
-                    models.MonthlyBudget(
-                        id=_parse_uuid(item.get("id")),
-                        client_id=current_client.id,
-                        account_id=account_id,
-                        target_period=item["target_period"],
-                        amount=item.get("amount") or 0,
-                    )
-                )
-
         for item in data.get("monthly_reviews", []):
             db.add(
                 models.MonthlyReview(
@@ -637,6 +634,36 @@ def import_client_data(
                         created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
                     )
                 )
+
+        for item in data.get("monthly_plan_lines", []):
+            target_type = item.get("target_type") or "manual"
+            target_id = item.get("target_id")
+            if target_type == "capsule":
+                target_id = capsule_map.get(target_id)
+            elif target_type == "life_event":
+                target_id = event_map.get(target_id)
+            elif target_type == "product":
+                target_id = product_map.get(target_id)
+            elif target_type == "account":
+                target_id = None
+            db.add(
+                models.MonthlyPlanLine(
+                    client_id=current_client.id,
+                    target_period=item["target_period"],
+                    line_type=item["line_type"],
+                    target_type=target_type,
+                    target_id=target_id,
+                    account_id=account_map.get(item.get("account_id")),
+                    source_account_id=account_map.get(item.get("source_account_id")),
+                    name=item.get("name"),
+                    amount=item.get("amount") or 0,
+                    priority=item.get("priority") or 2,
+                    note=item.get("note"),
+                    is_active=item.get("is_active", True),
+                    created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
+                    updated_at=_parse_datetime(item.get("updated_at")),
+                )
+            )
 
         for item in data.get("exchange_rates", []):
             db.add(

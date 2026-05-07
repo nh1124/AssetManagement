@@ -1,7 +1,5 @@
 from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, Boolean, DateTime, JSON, Text, UniqueConstraint
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
-import uuid
 from datetime import datetime
 import enum
 from .database import Base
@@ -65,6 +63,7 @@ class Client(Base):
     capsules = relationship("Capsule", back_populates="client")
     capsule_rules = relationship("CapsuleRule", back_populates="client")
     monthly_reviews = relationship("MonthlyReview", back_populates="client")
+    monthly_plan_lines = relationship("MonthlyPlanLine", back_populates="client")
     period_reviews = relationship("PeriodReview", back_populates="client")
     monthly_actions = relationship("MonthlyAction", back_populates="client")
     exchange_rates = relationship("ExchangeRate", back_populates="client")
@@ -222,20 +221,33 @@ class LifeEvent(Base):
     milestones = relationship("Milestone", back_populates="life_event", cascade="all, delete-orphan")
     capsules = relationship("Capsule", back_populates="life_event", cascade="all, delete-orphan")
 
-class MonthlyBudget(Base):
-    """Tracks budgets per month for expense accounts."""
-    __tablename__ = "monthly_budgets"
+class MonthlyPlanLine(Base):
+    """Cash-flow planning line for one month.
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    client_id = Column(Integer, ForeignKey("clients.id"))
-    account_id = Column(Integer, ForeignKey("accounts.id"))
-    target_period = Column(String)  # Format: "YYYY-MM"
-    amount = Column(Float)
+    Represents income assumptions, spending, asset allocations, debt payments,
+    borrowing, and planned drawdowns.
+    """
+    __tablename__ = "monthly_plan_lines"
 
-    __table_args__ = (UniqueConstraint('account_id', 'target_period', name='_account_period_uc'),)
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
+    target_period = Column(String, nullable=False)  # Format: "YYYY-MM"
+    line_type = Column(String, nullable=False)  # income, expense, allocation, debt_payment, borrowing, drawdown
+    target_type = Column(String, default="manual", server_default="manual", nullable=False)
+    target_id = Column(Integer, nullable=True)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
+    source_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
+    name = Column(String, nullable=True)
+    amount = Column(Float, default=0.0, nullable=False)
+    priority = Column(Integer, default=2, server_default="2", nullable=False)
+    note = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True, server_default="true", nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    client = relationship("Client")
-    account = relationship("Account")
+    client = relationship("Client", back_populates="monthly_plan_lines")
+    account = relationship("Account", foreign_keys=[account_id])
+    source_account = relationship("Account", foreign_keys=[source_account_id])
 
 class MonthlyReview(Base):
     """PDCA review notes for a specific month."""

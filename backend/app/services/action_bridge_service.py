@@ -105,24 +105,30 @@ def _apply_set_budget(db: Session, action: models.MonthlyAction) -> dict:
     account_id = int(payload["account_id"])
     amount = float(payload["amount"])
     target_period = action.target_period or next_period(action.source_period)
-    _require_account(db, action.client_id, account_id)
-    budget = db.query(models.MonthlyBudget).filter(
-        models.MonthlyBudget.client_id == action.client_id,
-        models.MonthlyBudget.account_id == account_id,
-        models.MonthlyBudget.target_period == target_period,
+    account = _require_account(db, action.client_id, account_id)
+    plan_line = db.query(models.MonthlyPlanLine).filter(
+        models.MonthlyPlanLine.client_id == action.client_id,
+        models.MonthlyPlanLine.account_id == account_id,
+        models.MonthlyPlanLine.target_period == target_period,
+        models.MonthlyPlanLine.line_type == "expense",
     ).first()
-    if budget:
-        budget.amount = amount
+    if plan_line:
+        plan_line.amount = amount
+        plan_line.name = account.name
+        plan_line.is_active = True
     else:
-        budget = models.MonthlyBudget(
+        plan_line = models.MonthlyPlanLine(
             client_id=action.client_id,
-            account_id=account_id,
             target_period=target_period,
+            line_type="expense",
+            target_type="account",
+            account_id=account_id,
+            name=account.name,
             amount=amount,
         )
-        db.add(budget)
+        db.add(plan_line)
     db.flush()
-    return {"monthly_budget_id": str(budget.id), "target_period": target_period}
+    return {"plan_line_id": plan_line.id, "target_period": target_period}
 
 
 def _apply_add_recurring(db: Session, action: models.MonthlyAction) -> dict:
