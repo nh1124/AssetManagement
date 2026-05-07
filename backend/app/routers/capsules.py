@@ -15,6 +15,10 @@ from ..services.capsule_service import (
     remaining_target,
     upsert_capsule_holding,
 )
+from ..services.product_reserve_service import (
+    ensure_default_product_reserve_pools,
+    sync_product_reserve_capsules,
+)
 
 router = APIRouter(
     prefix="/capsules",
@@ -77,6 +81,9 @@ def create_capsule(
         monthly_contribution=max(0.0, capsule.monthly_contribution or 0.0),
         current_balance=0.0,
         account_id=None,
+        capsule_type=capsule.capsule_type or "manual",
+        target_amount_source=capsule.target_amount_source or "manual",
+        monthly_contribution_source=capsule.monthly_contribution_source or "manual",
     )
     db.add(db_capsule)
     db.commit()
@@ -106,6 +113,8 @@ def update_capsule(
             db_capsule.target_amount = max(0.0, value or 0.0)
         elif key == "monthly_contribution":
             db_capsule.monthly_contribution = max(0.0, value or 0.0)
+        elif key in {"capsule_type", "target_amount_source", "monthly_contribution_source"}:
+            setattr(db_capsule, key, value or "manual")
         else:
             setattr(db_capsule, key, value)
 
@@ -129,6 +138,14 @@ def delete_capsule(
     ).first()
     if not capsule:
         raise HTTPException(status_code=404, detail="Capsule not found")
+    if capsule.life_event_id:
+        raise HTTPException(status_code=400, detail="LifeEvent capsules are managed by their LifeEvent and cannot be deleted directly")
+    linked_products = db.query(models.Product.id).filter(
+        models.Product.client_id == current_client.id,
+        models.Product.funding_capsule_id == capsule.id,
+    ).first()
+    if linked_products:
+        raise HTTPException(status_code=400, detail="Capsules linked to Product/Item reserves cannot be deleted while products use them")
 
     db.delete(capsule)
     db.commit()
@@ -190,6 +207,26 @@ def process_monthly_contributions(
         "updated_capsules": 0,
         "total_added": 0.0,
     }
+
+
+@router.post("/product-reserve-pools", response_model=List[schemas.Capsule])
+def create_product_reserve_pools(
+    db: Session = Depends(database.get_db),
+    current_client: models.Client = Depends(dependencies.get_current_client),
+):
+    capsules = ensure_default_product_reserve_pools(db, current_client.id)
+    db.commit()
+    return [capsule_to_dict(db, capsule) for capsule in capsules]
+
+
+@router.post("/sync-product-reserves")
+def sync_product_reserves(
+    db: Session = Depends(database.get_db),
+    current_client: models.Client = Depends(dependencies.get_current_client),
+):
+    result = sync_product_reserve_capsules(db, current_client.id)
+    db.commit()
+    return result
 
 
 @router.post("/life-events/{life_event_id}", response_model=schemas.Capsule)

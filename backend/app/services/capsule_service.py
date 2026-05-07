@@ -3,6 +3,7 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 
 from .. import models
+from .product_reserve_service import product_reserve_values
 
 
 def capsule_balance(db: Session, capsule: models.Capsule) -> float:
@@ -58,6 +59,19 @@ def capsule_to_dict(db: Session, capsule: models.Capsule) -> dict:
         }
         for h in capsule.holdings
     ]
+    linked_products = [
+        {
+            "id": product.id,
+            "name": product.name,
+            "is_asset": product.is_asset,
+            **product_reserve_values(product),
+        }
+        for product in db.query(models.Product)
+        .filter(models.Product.client_id == capsule.client_id, models.Product.funding_capsule_id == capsule.id)
+        .order_by(models.Product.name)
+        .all()
+    ]
+    recommended_monthly = round(sum(item["recommended_monthly_reserve"] for item in linked_products), 0)
     return {
         "id": capsule.id,
         "life_event_id": capsule.life_event_id,
@@ -66,6 +80,11 @@ def capsule_to_dict(db: Session, capsule: models.Capsule) -> dict:
         "monthly_contribution": capsule.monthly_contribution,
         "current_balance": balance,
         "account_id": capsule.account_id,
+        "capsule_type": capsule.capsule_type or "manual",
+        "target_amount_source": capsule.target_amount_source or "manual",
+        "monthly_contribution_source": capsule.monthly_contribution_source or "manual",
+        "recommended_monthly_contribution": recommended_monthly,
+        "linked_products": linked_products,
         "created_at": capsule.created_at,
         "progress_pct": round(progress_pct, 1),
         "holdings": holdings,
@@ -78,6 +97,9 @@ def create_capsule_for_goal(db: Session, client_id: int, goal: models.LifeEvent)
         models.Capsule.life_event_id == goal.id,
     ).first()
     if existing:
+        existing.capsule_type = existing.capsule_type or "life_event"
+        if existing.capsule_type == "manual":
+            existing.capsule_type = "life_event"
         return existing
 
     capsule = models.Capsule(
@@ -88,6 +110,9 @@ def create_capsule_for_goal(db: Session, client_id: int, goal: models.LifeEvent)
         monthly_contribution=0.0,
         current_balance=0.0,
         account_id=None,
+        capsule_type="life_event",
+        target_amount_source="life_event",
+        monthly_contribution_source="manual",
     )
     db.add(capsule)
     db.flush()

@@ -1,5 +1,5 @@
 ﻿import { useEffect, useState } from 'react';
-import { AlertTriangle, Archive, CalendarDays, ChevronLeft, ChevronRight, Copy, Edit2, Info, Plus, RefreshCw, Save, SlidersHorizontal, Sparkles, Trash2, Unlink, X } from 'lucide-react';
+import { AlertTriangle, Archive, CalendarDays, ChevronLeft, ChevronRight, Copy, Edit2, Info, Plus, RefreshCw, Save, Search, SlidersHorizontal, Sparkles, Trash2, Unlink, X } from 'lucide-react';
 import TabPanel from '../components/TabPanel';
 import { useToast } from '../components/Toast';
 import { useClient } from '../context/ClientContext';
@@ -21,6 +21,7 @@ import {
     processCapsuleContributions,
     saveMonthlyPlanLines,
     suggestBudget,
+    syncProductReserves,
     updateAccount,
     updateCapsule,
 } from '../api';
@@ -64,6 +65,18 @@ interface BudgetAccount {
     sync_status?: 'synced' | 'missing' | 'diff' | null;
 }
 
+interface CashFlowSetupWarning {
+    type: 'missing_budget' | 'amount_diff' | 'missing_product_reserve' | 'product_reserve_diff';
+    source?: 'recurrence' | 'product_reserve';
+    recurring_transaction_id?: number;
+    capsule_id?: number;
+    account_id?: number | null;
+    plan_line_id?: number | null;
+    name: string;
+    amount: number;
+    budget_amount?: number;
+}
+
 interface BudgetSummary {
     period: string;
     required_monthly_savings: number;
@@ -94,13 +107,7 @@ interface BudgetSummary {
         net_cash: number;
         ending_cash: number;
         status: 'ok' | 'warning' | 'shortfall';
-        setup_warnings?: Array<{
-            type: 'missing_budget' | 'amount_diff';
-            recurring_transaction_id: number;
-            name: string;
-            amount: number;
-            budget_amount?: number;
-        }>;
+        setup_warnings?: CashFlowSetupWarning[];
     }>;
     cash_flow_summary?: {
         runway_months: number;
@@ -194,6 +201,9 @@ export default function Strategy() {
         confirming: boolean;
     } | null>(null);
     const [showCapsuleForm, setShowCapsuleForm] = useState(false);
+    const [showCapsuleFilters, setShowCapsuleFilters] = useState(false);
+    const [capsuleSearch, setCapsuleSearch] = useState('');
+    const [capsuleSort, setCapsuleSort] = useState<'name' | 'target' | 'progress' | 'type'>('type');
     const [showRuleForm, setShowRuleForm] = useState(false);
     const [editingCapsuleId, setEditingCapsuleId] = useState<number | null>(null);
     const [capsuleForm, setCapsuleForm] = useState({ name: '', target_amount: '', current_balance: '0' });
@@ -660,6 +670,33 @@ export default function Strategy() {
         }
     };
 
+    const syncSuggestedPlanLine = async (line: EditablePlanLine) => {
+        if (!line.suggested_source || line.suggested_amount == null) return;
+        try {
+            await saveMonthlyPlanLines([{
+                id: line.id ?? null,
+                target_period: currentPeriod,
+                line_type: line.line_type,
+                target_type: line.target_type,
+                target_id: line.target_id ?? null,
+                account_id: line.account_id ?? null,
+                source_account_id: line.source_account_id ?? null,
+                name: line.name || line.target_name || null,
+                amount: Number(line.suggested_amount || 0),
+                planned_date: null,
+                priority: line.priority ?? 2,
+                note: line.note ?? null,
+                source: line.suggested_source === 'product_reserve' ? 'capsule' : line.source ?? 'manual',
+                recurring_transaction_id: line.recurring_transaction_id ?? null,
+                is_active: true,
+            }]);
+            showToast('Synced with suggested amount', 'success');
+            await fetchBudgetSummary();
+        } catch (error) {
+            showToast('Failed to sync suggested amount', 'error');
+        }
+    };
+
     const syncAllRecurrencesForPeriod = async (period: string) => {
         try {
             const summary = period === currentPeriod
@@ -704,7 +741,35 @@ export default function Strategy() {
                     recurring_transaction_id: line.recurring_transaction_id ?? null,
                     is_active: true,
                 }));
-            const payload = [...expensePayload, ...planPayload];
+            const productReservePayload = (summary.cash_flow_projection ?? [])
+                .find((row: { period: string }) => row.period === period)
+                ?.setup_warnings
+                ?.filter((warning: CashFlowSetupWarning) => warning.source === 'product_reserve' && warning.capsule_id)
+                .map((warning: CashFlowSetupWarning) => {
+                    const existing = (summary.plan_lines ?? []).find((line: MonthlyPlanLine) => (
+                        line.line_type === 'allocation'
+                        && line.target_type === 'capsule'
+                        && line.target_id === warning.capsule_id
+                    ));
+                    return {
+                        id: existing?.id ?? warning.plan_line_id ?? null,
+                        target_period: period,
+                        line_type: 'allocation',
+                        target_type: 'capsule',
+                        target_id: warning.capsule_id ?? null,
+                        account_id: warning.account_id ?? null,
+                        source_account_id: null,
+                        name: warning.name,
+                        amount: Number(warning.amount || 0),
+                        planned_date: null,
+                        priority: 2,
+                        note: null,
+                        source: 'manual',
+                        recurring_transaction_id: null,
+                        is_active: true,
+                    };
+                }) ?? [];
+            const payload = [...expensePayload, ...planPayload, ...productReservePayload];
             if (payload.length === 0) {
                 showToast('No recurrence differences to sync', 'info');
                 return;
@@ -1054,6 +1119,16 @@ export default function Strategy() {
         }
     };
 
+    const syncReservePools = async () => {
+        try {
+            const result = await syncProductReserves();
+            showToast(`Synced ${result.updated_capsules} reserve capsule${result.updated_capsules === 1 ? '' : 's'}`, 'success');
+            await Promise.all([fetchCapsules(), fetchBudgetSummary()]);
+        } catch (error) {
+            showToast('Failed to sync product reserves', 'error');
+        }
+    };
+
     const toggleHoldings = (capsuleId: number) => {
         setExpandedHoldingCapsules((prev) => {
             const next = new Set(prev);
@@ -1303,9 +1378,11 @@ export default function Strategy() {
             actualLabel = 'Actual',
         ) => {
             const rows = planLinesFor(types);
+            const usesSuggestedColumn = addType === 'allocation';
             const totalActual = planGroupActual(types);
             const totalPlan = planGroupTotal(types);
             const totalRecurring = rows.reduce((sum, line) => sum + Number(line.recurring_amount || 0), 0);
+            const totalSuggested = rows.reduce((sum, line) => sum + Number(line.suggested_amount || 0), 0);
             const syncableRows = rows.filter((line) => line.recurring_transaction_id && line.sync_status !== 'synced');
             return (
                 <div className="mt-6">
@@ -1339,7 +1416,7 @@ export default function Strategy() {
                                     <th className="px-2 py-2 text-left font-normal">Target</th>
                                     <th className="px-2 py-2 text-right font-normal">{actualLabel}</th>
                                     <th className="px-2 py-2 text-right font-normal">Plan</th>
-                                    <th className="px-2 py-2 text-right font-normal">Recurrence</th>
+                                    <th className="px-2 py-2 text-right font-normal">{usesSuggestedColumn ? 'Source / Suggested' : 'Recurrence'}</th>
                                     <th className="px-2 py-2 text-right font-normal">Variance</th>
                                     <th className="px-2 py-2 text-right font-normal">Edit</th>
                                 </tr>
@@ -1350,6 +1427,8 @@ export default function Strategy() {
                                 ) : rows.map((line) => {
                                     const variance = Number(line.amount || 0) - Number(line.actual || 0);
                                     const isRecurringControlled = line.source === 'recurrence';
+                                    const suggestedAmount = Number(line.suggested_amount || 0);
+                                    const hasSuggestedAmount = usesSuggestedColumn && line.suggested_source && suggestedAmount > 0;
                                     return (
                                         <tr key={line.local_id} className="hover:bg-slate-800/30 group">
                                             <td className="px-2 py-2 text-slate-400">{line.line_type.replace('_', ' ')}</td>
@@ -1370,14 +1449,33 @@ export default function Strategy() {
                                                     className={`w-24 bg-transparent border-b text-right font-mono-nums outline-none ${isRecurringControlled ? 'border-transparent text-slate-500' : 'border-slate-700 focus:border-cyan-500'}`}
                                                 />
                                             </td>
-                                            <td className={`px-2 py-2 text-right font-mono-nums ${(line.recurring_amount || 0) > 0 ? 'text-cyan-300' : 'text-slate-600'}`}>
-                                                {(line.recurring_amount || 0) > 0 ? formatCurrency(line.recurring_amount) : '-'}
+                                            <td className="px-2 py-2 text-right">
+                                                {hasSuggestedAmount ? (
+                                                    <div className="space-y-0.5">
+                                                        <p className="font-mono-nums text-cyan-300">{formatCurrency(suggestedAmount)}</p>
+                                                        <p className="text-[9px] uppercase text-slate-500">{line.suggested_source === 'product_reserve' ? 'Product Reserve' : line.suggested_source}</p>
+                                                    </div>
+                                                ) : (
+                                                    <span className={`font-mono-nums ${(line.recurring_amount || 0) > 0 ? 'text-cyan-300' : 'text-slate-600'}`}>
+                                                        {(line.recurring_amount || 0) > 0 ? formatCurrency(line.recurring_amount) : '-'}
+                                                    </span>
+                                                )}
                                             </td>
                                             <td className={`px-2 py-2 text-right font-mono-nums ${variance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(variance)}</td>
                                             <td className="px-2 py-2 text-right">
                                                 <div className="flex items-center justify-end gap-2">
                                                     {line.recurring_transaction_id && (
                                                         <button type="button" title={line.sync_status === 'synced' ? 'Synced with recurrence' : 'Sync with recurrence'} onClick={() => syncRecurringPlanLine(line)} className={line.sync_status === 'synced' ? 'text-cyan-400 hover:text-cyan-200' : 'text-amber-400 hover:text-amber-200'}>
+                                                            <RefreshCw size={12} />
+                                                        </button>
+                                                    )}
+                                                    {hasSuggestedAmount && (
+                                                        <button
+                                                            type="button"
+                                                            title={line.suggested_status === 'synced' ? 'Synced with suggested amount' : 'Sync with suggested amount'}
+                                                            onClick={() => syncSuggestedPlanLine(line)}
+                                                            className={line.suggested_status === 'synced' ? 'text-cyan-400 hover:text-cyan-200' : 'text-amber-400 hover:text-amber-200'}
+                                                        >
                                                             <RefreshCw size={12} />
                                                         </button>
                                                     )}
@@ -1399,7 +1497,7 @@ export default function Strategy() {
                                     <td className="px-2 py-2 text-slate-500">{title}</td>
                                     <td className="px-2 py-2 text-right font-mono-nums text-slate-300">{formatCurrency(totalActual)}</td>
                                     <td className="px-2 py-2 text-right font-mono-nums text-slate-200">{formatCurrency(totalPlan)}</td>
-                                    <td className="px-2 py-2 text-right font-mono-nums text-cyan-300">{formatCurrency(totalRecurring)}</td>
+                                    <td className="px-2 py-2 text-right font-mono-nums text-cyan-300">{formatCurrency(usesSuggestedColumn ? totalSuggested : totalRecurring)}</td>
                                     <td colSpan={2} />
                                 </tr>
                             </tbody>
@@ -1791,7 +1889,7 @@ export default function Strategy() {
                                                 </button>
                                                 <button
                                                     type="button"
-                                                    title={`Sync all recurrence differences for ${row.period}`}
+                                                    title={`Sync budget setup differences for ${row.period}`}
                                                     onClick={() => syncAllRecurrencesForPeriod(row.period)}
                                                     className={(row.setup_warnings?.length ?? 0) > 0 ? 'text-amber-400 hover:text-amber-200' : 'text-slate-500 hover:text-amber-300'}
                                                 >
@@ -1825,6 +1923,43 @@ export default function Strategy() {
         );
     };
 
+    const capsuleIsProtected = (capsule: Capsule) => Boolean(
+        capsule.life_event_id || (capsule.linked_products?.length ?? 0) > 0,
+    );
+
+    const visibleCapsules = [...capsules]
+        .filter((capsule) => {
+            const query = capsuleSearch.trim().toLowerCase();
+            if (!query) return true;
+            return [
+                capsule.name,
+                capsule.capsule_type,
+                capsule.life_event_id ? 'life event' : '',
+                capsule.capsule_type === 'product_pool' ? 'product reserve' : '',
+            ].some((value) => (value || '').toLowerCase().includes(query));
+        })
+        .sort((a, b) => {
+            if (capsuleSort === 'name') return a.name.localeCompare(b.name);
+            if (capsuleSort === 'target') return Number(b.target_amount || 0) - Number(a.target_amount || 0);
+            if (capsuleSort === 'progress') {
+                const progressA = a.target_amount > 0 ? a.current_balance / a.target_amount : 0;
+                const progressB = b.target_amount > 0 ? b.current_balance / b.target_amount : 0;
+                return progressB - progressA;
+            }
+            const rank = (capsule: Capsule) => (
+                capsule.life_event_id ? 0 : capsule.capsule_type === 'product_pool' ? 1 : 2
+            );
+            return rank(a) - rank(b) || a.name.localeCompare(b.name);
+        });
+
+    const renderCapsuleForm = () => (
+        <div className="border border-purple-800/50 bg-purple-900/10 p-3 space-y-2">
+            <input value={capsuleForm.name} onChange={(event) => setCapsuleForm({ ...capsuleForm, name: event.target.value })} placeholder="Name" className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs" />
+            <input type="number" value={capsuleForm.target_amount} onChange={(event) => setCapsuleForm({ ...capsuleForm, target_amount: event.target.value })} placeholder="Target amount" className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums" />
+            <div className="flex gap-2"><button onClick={saveCapsule} className="flex-1 bg-purple-600 hover:bg-purple-500 text-white py-2 text-xs">Save</button><button onClick={() => setShowCapsuleForm(false)} className="px-3 bg-slate-800 text-slate-400 text-xs">Cancel</button></div>
+        </div>
+    );
+
     const renderCapsules = () => (
         <div className="grid grid-cols-1 min-[960px]:grid-cols-[340px_1fr] gap-4 p-4">
             <section className="bg-slate-900/60 border border-slate-800 p-4 space-y-3">
@@ -1832,13 +1967,7 @@ export default function Strategy() {
                 <button onClick={() => openCapsuleForm()} className="w-full bg-purple-900/40 hover:bg-purple-900/60 border border-purple-800 py-2 text-xs text-purple-200 flex items-center justify-center gap-2"><Plus size={14} /> New Capsule</button>
                 <button onClick={processCapsules} className="w-full bg-slate-800 hover:bg-slate-700 border border-slate-700 py-2 text-xs text-slate-300 flex items-center justify-center gap-2"><Sparkles size={14} /> Process Contributions</button>
                 <button onClick={() => setShowRuleForm(!showRuleForm)} className="w-full bg-slate-800 hover:bg-slate-700 border border-slate-700 py-2 text-xs text-slate-300 flex items-center justify-center gap-2"><Plus size={14} /> Auto Rule</button>
-                {showCapsuleForm && (
-                    <div className="border border-purple-800/50 bg-purple-900/10 p-3 space-y-2">
-                        <input value={capsuleForm.name} onChange={(event) => setCapsuleForm({ ...capsuleForm, name: event.target.value })} placeholder="Name" className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs" />
-                        <input type="number" value={capsuleForm.target_amount} onChange={(event) => setCapsuleForm({ ...capsuleForm, target_amount: event.target.value })} placeholder="Target amount" className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums" />
-                        <div className="flex gap-2"><button onClick={saveCapsule} className="flex-1 bg-purple-600 hover:bg-purple-500 text-white py-2 text-xs">Save</button><button onClick={() => setShowCapsuleForm(false)} className="px-3 bg-slate-800 text-slate-400 text-xs">Cancel</button></div>
-                    </div>
-                )}
+                {showCapsuleForm && editingCapsuleId === null && renderCapsuleForm()}
                 {showRuleForm && (
                     <div className="border border-cyan-800/50 bg-cyan-900/10 p-3 space-y-2">
                         <select value={ruleForm.capsule_id} onChange={(event) => setRuleForm({ ...ruleForm, capsule_id: event.target.value })} className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs">
@@ -1875,20 +2004,77 @@ export default function Strategy() {
             </section>
 
             <section className="bg-slate-900/60 border border-slate-800 p-4 overflow-auto">
-                <h2 className="text-xs text-slate-400 uppercase tracking-wider mb-3">Capsules</h2>
+                <div className="flex items-center justify-between gap-3 mb-3">
+                    <h2 className="text-xs text-slate-400 uppercase tracking-wider">Capsules</h2>
+                    <button type="button" title="Search and sort capsules" onClick={() => setShowCapsuleFilters((value) => !value)} className="text-slate-500 hover:text-cyan-300">
+                        <Search size={14} />
+                    </button>
+                </div>
+                {showCapsuleFilters && (
+                    <div className="mb-3 grid grid-cols-1 sm:grid-cols-[1fr_160px] gap-2">
+                        <input
+                            value={capsuleSearch}
+                            onChange={(event) => setCapsuleSearch(event.target.value)}
+                            placeholder="Search capsules..."
+                            className="bg-slate-950 border border-slate-700 px-2 py-1.5 text-xs"
+                        />
+                        <select
+                            value={capsuleSort}
+                            onChange={(event) => setCapsuleSort(event.target.value as typeof capsuleSort)}
+                            className="bg-slate-950 border border-slate-700 px-2 py-1.5 text-xs"
+                        >
+                            <option value="type">Type</option>
+                            <option value="name">Name</option>
+                            <option value="target">Target</option>
+                            <option value="progress">Progress</option>
+                        </select>
+                    </div>
+                )}
                 <div className="grid grid-cols-1 min-[1120px]:grid-cols-2 gap-3">
-                    {capsules.length === 0 ? <p className="text-xs text-slate-600">No capsules yet.</p> : capsules.map((capsule) => {
+                    {visibleCapsules.length === 0 ? <p className="text-xs text-slate-600">No capsules found.</p> : visibleCapsules.map((capsule) => {
                         const progress = capsule.target_amount > 0 ? Math.min(100, (capsule.current_balance / capsule.target_amount) * 100) : 0;
                         const holdingsExpanded = expandedHoldingCapsules.has(capsule.id);
                         const holdingForm = holdingForms[capsule.id] ?? { account_id: '', held_amount: '' };
                         const holdingsTotal = (capsule.holdings ?? []).reduce((s, h) => s + h.held_amount, 0);
+                        const protectedCapsule = capsuleIsProtected(capsule);
                         return (
                             <div key={capsule.id} className="bg-slate-800/30 border border-slate-700 p-3 space-y-3">
                                 <div className="flex justify-between gap-3">
-                                    <div><p className="text-sm text-slate-100 flex items-center gap-2"><Archive size={14} className="text-purple-400" /> {capsule.name}</p><p className="text-[10px] text-slate-500">Target {formatCurrency(capsule.target_amount)}</p></div>
+                                    <div>
+                                        <p className="text-sm text-slate-100 flex items-center gap-2"><Archive size={14} className="text-purple-400" /> {capsule.name}</p>
+                                        <p className="text-[10px] text-slate-500">
+                                            Target {formatCurrency(capsule.target_amount)}
+                                            {capsule.capsule_type === 'product_pool' ? ` / Product Pool` : ''}
+                                        </p>
+                                    </div>
                                     <div className="text-right"><p className="text-lg font-mono-nums text-purple-400">{formatCurrency(capsule.current_balance)}</p><p className="text-[10px] text-slate-500">{Math.round(progress)}%</p></div>
                                 </div>
+                                {capsule.capsule_type === 'product_pool' && (
+                                    <div className="grid grid-cols-2 gap-2 text-[10px]">
+                                        <div className="border border-slate-800 bg-slate-900/50 p-2">
+                                            <p className="text-slate-500 uppercase">Suggested / Mo</p>
+                                            <p className="font-mono-nums text-cyan-300">{formatCurrency(capsule.recommended_monthly_contribution ?? 0)}</p>
+                                        </div>
+                                        <div className="border border-slate-800 bg-slate-900/50 p-2">
+                                            <p className="text-slate-500 uppercase">Linked Products</p>
+                                            <p className="font-mono-nums text-slate-300">{capsule.linked_products?.length ?? 0}</p>
+                                        </div>
+                                    </div>
+                                )}
+                                {capsule.capsule_type === 'product_pool' && (
+                                    <div className="flex justify-end">
+                                        <button
+                                            type="button"
+                                            title="Sync this product reserve pool"
+                                            onClick={syncReservePools}
+                                            className="text-cyan-400 hover:text-cyan-200 flex items-center gap-1 text-[10px]"
+                                        >
+                                            <RefreshCw size={10} /> Sync Reserve
+                                        </button>
+                                    </div>
+                                )}
                                 <div className="h-1.5 bg-slate-900 rounded-full overflow-hidden"><div className="h-full bg-purple-500" style={{ width: `${progress}%` }} /></div>
+                                {showCapsuleForm && editingCapsuleId === capsule.id && renderCapsuleForm()}
                                 <div>
                                     <button
                                         type="button"
@@ -1937,7 +2123,17 @@ export default function Strategy() {
                                         </div>
                                     )}
                                 </div>
-                                <div className="flex justify-end gap-3 text-[10px]"><button onClick={() => openCapsuleForm(capsule)} className="text-slate-400 hover:text-white flex items-center gap-1"><Edit2 size={10} /> Edit</button><button onClick={() => openCapsuleDeleteModal(capsule)} className="text-slate-400 hover:text-rose-400 flex items-center gap-1"><Trash2 size={10} /> Delete</button></div>
+                                <div className="flex justify-end gap-3 text-[10px]">
+                                    <button onClick={() => openCapsuleForm(capsule)} className="text-slate-400 hover:text-white flex items-center gap-1"><Edit2 size={10} /> Edit</button>
+                                    <button
+                                        onClick={() => openCapsuleDeleteModal(capsule)}
+                                        disabled={protectedCapsule}
+                                        title={protectedCapsule ? 'Managed capsules cannot be deleted directly' : 'Delete capsule'}
+                                        className={`flex items-center gap-1 ${protectedCapsule ? 'text-slate-700 cursor-not-allowed' : 'text-slate-400 hover:text-rose-400'}`}
+                                    >
+                                        <Trash2 size={10} /> Delete
+                                    </button>
+                                </div>
                             </div>
                         );
                     })}

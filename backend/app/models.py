@@ -161,11 +161,15 @@ class Product(Base):
     last_purchase_date = Column(Date, nullable=True)
     is_asset = Column(Boolean, default=False)
     lifespan_months = Column(Integer, nullable=True)
+    budget_account_id = Column(Integer, ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True)
+    funding_capsule_id = Column(Integer, ForeignKey("capsules.id", ondelete="SET NULL"), nullable=True)
     # Depreciation tracking
     purchase_price = Column(Float, nullable=True)
     purchase_date = Column(Date, nullable=True)
 
     client = relationship("Client", back_populates="products")
+    budget_account = relationship("Account", foreign_keys=[budget_account_id])
+    funding_capsule = relationship("Capsule", foreign_keys=[funding_capsule_id])
 
 class SimulationConfig(Base):
     __tablename__ = "simulation_configs"
@@ -367,6 +371,9 @@ class Capsule(Base):
     monthly_contribution = Column(Float)
     current_balance = Column(Float, default=0.0)
     account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
+    capsule_type = Column(String, default="manual", server_default="manual", nullable=False)
+    target_amount_source = Column(String, default="manual", server_default="manual", nullable=False)
+    monthly_contribution_source = Column(String, default="manual", server_default="manual", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     client = relationship("Client", back_populates="capsules")

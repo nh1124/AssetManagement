@@ -215,6 +215,43 @@ def test_capsule_allocation_actual_uses_current_holding_balance() -> None:
         db.close()
 
 
+def test_product_reserve_capsule_allocation_exposes_suggested_amount() -> None:
+    db = _session()
+    try:
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        capsule = models.Capsule(
+            client_id=1,
+            name="Item Reserve",
+            target_amount=12000,
+            monthly_contribution=3000,
+            capsule_type="product_pool",
+            target_amount_source="linked_products",
+            monthly_contribution_source="linked_products",
+        )
+        db.add_all([client, capsule])
+        db.flush()
+        db.add(models.MonthlyPlanLine(
+            client_id=1,
+            target_period="2026-05",
+            line_type="allocation",
+            target_type="capsule",
+            target_id=capsule.id,
+            name=capsule.name,
+            amount=1000,
+        ))
+        db.commit()
+
+        summary = get_budget_summary(db, client_id=1, period="2026-05")
+        line = next(item for item in summary["plan_lines"] if item["target_type"] == "capsule")
+
+        assert line["amount"] == 1000
+        assert line["suggested_amount"] == 3000
+        assert line["suggested_source"] == "product_reserve"
+        assert line["suggested_status"] == "diff"
+    finally:
+        db.close()
+
+
 def test_life_event_allocation_is_presented_as_capsule() -> None:
     db = _session()
     try:
@@ -336,6 +373,69 @@ def test_cash_flow_projection_warns_about_unsynced_yearly_income() -> None:
         assert june["inflow"] == 0
         assert june["setup_warnings"][0]["type"] == "missing_budget"
         assert june["setup_warnings"][0]["amount"] == 600000
+    finally:
+        db.close()
+
+
+def test_cash_flow_projection_warns_about_unsynced_product_reserve_capsule() -> None:
+    db = _session()
+    try:
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        capsule = models.Capsule(
+            client_id=1,
+            name="Item Reserve",
+            target_amount=12000,
+            monthly_contribution=3000,
+            capsule_type="product_pool",
+            target_amount_source="linked_products",
+            monthly_contribution_source="linked_products",
+        )
+        db.add_all([client, capsule])
+        db.commit()
+
+        summary = get_budget_summary(db, client_id=1, period="2026-05")
+        warning = summary["cash_flow_projection"][0]["setup_warnings"][0]
+
+        assert warning["type"] == "missing_product_reserve"
+        assert warning["source"] == "product_reserve"
+        assert warning["capsule_id"] == capsule.id
+        assert warning["amount"] == 3000
+    finally:
+        db.close()
+
+
+def test_cash_flow_projection_warns_about_product_reserve_amount_diff() -> None:
+    db = _session()
+    try:
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        capsule = models.Capsule(
+            client_id=1,
+            name="Item Reserve",
+            target_amount=12000,
+            monthly_contribution=3000,
+            capsule_type="product_pool",
+            target_amount_source="linked_products",
+            monthly_contribution_source="linked_products",
+        )
+        db.add_all([client, capsule])
+        db.flush()
+        db.add(models.MonthlyPlanLine(
+            client_id=1,
+            target_period="2026-05",
+            line_type="allocation",
+            target_type="capsule",
+            target_id=capsule.id,
+            name=capsule.name,
+            amount=1000,
+        ))
+        db.commit()
+
+        summary = get_budget_summary(db, client_id=1, period="2026-05")
+        warning = summary["cash_flow_projection"][0]["setup_warnings"][0]
+
+        assert warning["type"] == "product_reserve_diff"
+        assert warning["budget_amount"] == 1000
+        assert warning["amount"] == 3000
     finally:
         db.close()
 

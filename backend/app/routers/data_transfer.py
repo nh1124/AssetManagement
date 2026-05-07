@@ -111,6 +111,8 @@ def export_client_data(
                         "last_purchase_date",
                         "is_asset",
                         "lifespan_months",
+                        "budget_account_id",
+                        "funding_capsule_id",
                         "purchase_price",
                         "purchase_date",
                     ],
@@ -316,6 +318,9 @@ def export_client_data(
                         "current_balance",
                         "account_id",
                         "life_event_id",
+                        "capsule_type",
+                        "target_amount_source",
+                        "monthly_contribution_source",
                         "created_at",
                     ],
                 )
@@ -448,6 +453,7 @@ def import_client_data(
             account.parent_id = account_map.get(old_parent_id)
 
         product_map: dict[int, int] = {}
+        product_funding_updates: list[tuple[models.Product, int]] = []
         for item in data.get("products", []):
             old_id = int(item["id"])
             product = models.Product(
@@ -461,12 +467,15 @@ def import_client_data(
                 last_purchase_date=_parse_date(item.get("last_purchase_date")),
                 is_asset=item.get("is_asset", False),
                 lifespan_months=item.get("lifespan_months"),
+                budget_account_id=account_map.get(item.get("budget_account_id")),
                 purchase_price=item.get("purchase_price"),
                 purchase_date=_parse_date(item.get("purchase_date")),
             )
             db.add(product)
             db.flush()
             product_map[old_id] = product.id
+            if item.get("funding_capsule_id"):
+                product_funding_updates.append((product, int(item["funding_capsule_id"])))
 
         for item in data.get("simulation_configs", []):
             db.add(
@@ -615,11 +624,17 @@ def import_client_data(
                 current_balance=item.get("current_balance") or 0,
                 account_id=account_map.get(item.get("account_id")),
                 life_event_id=event_map.get(item.get("life_event_id")),
+                capsule_type=item.get("capsule_type") or ("life_event" if item.get("life_event_id") else "manual"),
+                target_amount_source=item.get("target_amount_source") or "manual",
+                monthly_contribution_source=item.get("monthly_contribution_source") or "manual",
                 created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
             )
             db.add(capsule)
             db.flush()
             capsule_map[old_id] = capsule.id
+
+        for product, old_capsule_id in product_funding_updates:
+            product.funding_capsule_id = capsule_map.get(old_capsule_id)
 
         # LifeEvent ごとに紐づく Capsule+Account が存在しない場合は自動生成する
         # （通常の POST /life-events/ と同じ動作を import でも再現する）

@@ -93,6 +93,12 @@ export interface Product {
     last_purchase_date?: string;
     is_asset: boolean;
     lifespan_months?: number;
+    budget_account_id?: number | null;
+    budget_account_name?: string | null;
+    funding_capsule_id?: number | null;
+    funding_capsule_name?: string | null;
+    reserve_target_amount?: number;
+    recommended_monthly_reserve?: number;
     purchase_price?: number;
     purchase_date?: string;
     monthly_cost: number;
@@ -119,6 +125,9 @@ export interface MonthlyPlanLine {
     actual?: number;
     variance?: number;
     recurring_amount?: number;
+    suggested_amount?: number;
+    suggested_source?: 'product_reserve' | string | null;
+    suggested_status?: 'synced' | 'diff' | null;
     sync_status?: 'synced' | 'missing' | 'diff' | null;
     recurring_transaction_ids?: number[];
     recurring_items?: Array<{
@@ -415,6 +424,17 @@ export interface Capsule {
     monthly_contribution: number;
     current_balance: number;
     account_id?: number;
+    capsule_type?: string;
+    target_amount_source?: string;
+    monthly_contribution_source?: string;
+    recommended_monthly_contribution?: number;
+    linked_products?: Array<{
+        id: number;
+        name: string;
+        is_asset: boolean;
+        reserve_target_amount: number;
+        recommended_monthly_reserve: number;
+    }>;
     holdings: CapsuleHolding[];
 }
 

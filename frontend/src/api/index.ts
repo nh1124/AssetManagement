@@ -718,6 +718,16 @@ export const processCapsuleContributions = async () => {
     return response.data;
 };
 
+export const createProductReservePools = async () => {
+    const response = await api.post('/capsules/product-reserve-pools');
+    return response.data;
+};
+
+export const syncProductReserves = async () => {
+    const response = await api.post('/capsules/sync-product-reserves');
+    return response.data;
+};
+
 export const contributeToCapsule = async (
     capsuleId: number,
     payload: { amount: number; from_account_id: number; contribution_date?: string }

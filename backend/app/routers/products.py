@@ -9,8 +9,39 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
+from ..services.product_reserve_service import ensure_default_product_reserve_pools, product_reserve_values
 
 router = APIRouter(prefix="/products", tags=["products"])
+
+
+def validate_budget_account(db: Session, client_id: int, budget_account_id: int | None) -> None:
+    if budget_account_id is None:
+        return
+    account = db.query(models.Account).filter(
+        models.Account.id == budget_account_id,
+        models.Account.client_id == client_id,
+        models.Account.account_type == "expense",
+    ).first()
+    if not account:
+        raise HTTPException(status_code=400, detail="Budget account must be an expense account for this client")
+
+
+def validate_funding_capsule(db: Session, client_id: int, funding_capsule_id: int | None) -> None:
+    if funding_capsule_id is None:
+        return
+    capsule = db.query(models.Capsule).filter(
+        models.Capsule.id == funding_capsule_id,
+        models.Capsule.client_id == client_id,
+        models.Capsule.life_event_id.is_(None),
+    ).first()
+    if not capsule:
+        raise HTTPException(status_code=400, detail="Funding capsule must be a non-LifeEvent capsule for this client")
+
+
+def default_funding_capsule_id(db: Session, client_id: int, is_asset: bool) -> int:
+    pools = ensure_default_product_reserve_pools(db, client_id)
+    target_name = "Fixed Asset Reserve" if is_asset else "Item Reserve"
+    return next(pool.id for pool in pools if pool.name == target_name)
 
 
 def enrich_product(product: models.Product) -> dict:
@@ -29,6 +60,7 @@ def enrich_product(product: models.Product) -> dict:
             product.last_purchase_date + timedelta(days=product.frequency_days)
         ).isoformat()
 
+    reserve_values = product_reserve_values(product)
     return {
         "id": product.id,
         "name": product.name,
@@ -41,6 +73,11 @@ def enrich_product(product: models.Product) -> dict:
         "last_purchase_date": product.last_purchase_date,
         "is_asset": product.is_asset,
         "lifespan_months": product.lifespan_months,
+        "budget_account_id": product.budget_account_id,
+        "budget_account_name": product.budget_account.name if product.budget_account else None,
+        "funding_capsule_id": product.funding_capsule_id,
+        "funding_capsule_name": product.funding_capsule.name if product.funding_capsule else None,
+        **reserve_values,
         "purchase_price": product.purchase_price,
         "purchase_date": product.purchase_date,
         "monthly_cost": round(monthly_cost, 2),
@@ -72,7 +109,13 @@ def create_product(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    db_product = models.Product(**product.model_dump(), client_id=current_client.id)
+    data = product.model_dump()
+    validate_budget_account(db, current_client.id, data.get("budget_account_id"))
+    if data.get("funding_capsule_id") is None:
+        data["funding_capsule_id"] = default_funding_capsule_id(db, current_client.id, data.get("is_asset", False))
+    else:
+        validate_funding_capsule(db, current_client.id, data.get("funding_capsule_id"))
+    db_product = models.Product(**data, client_id=current_client.id)
     db.add(db_product)
     db.commit()
     db.refresh(db_product)
@@ -94,6 +137,8 @@ def update_product(
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
 
+    validate_budget_account(db, current_client.id, product.budget_account_id)
+    validate_funding_capsule(db, current_client.id, product.funding_capsule_id)
     for key, value in product.model_dump().items():
         setattr(db_product, key, value)
     db.commit()

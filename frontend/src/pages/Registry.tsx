@@ -5,12 +5,14 @@ import {
     autoUpdateExchangeRates,
     createAccount,
     createExchangeRate,
+    createProductReservePools,
     createProduct,
     deleteAccount,
     deleteExchangeRate,
     deleteProduct,
     getAccounts,
     getAccountTree,
+    getCapsules,
     getExchangeRates,
     getProducts,
     getUnitEconomicsSummary,
@@ -21,7 +23,7 @@ import {
 import { useToast } from '../components/Toast';
 import { useClient } from '../context/ClientContext';
 import { formatCurrency as formatCurrencyWithSetting } from '../utils/currency';
-import type { Account, AccountRole, AccountTreeNode, ExchangeRate, Product } from '../types';
+import type { Account, AccountRole, AccountTreeNode, Capsule, ExchangeRate, Product } from '../types';
 
 const TABS = [
     { id: 'accounts', label: 'Accounts' },
@@ -53,6 +55,8 @@ const EMPTY_PRODUCT_FORM = {
     purchase_price: '',
     purchase_date: '',
     lifespan_months: '',
+    budget_account_id: '',
+    funding_capsule_id: '',
     last_unit_price: '',
     units_per_purchase: '1',
     frequency_days: '',
@@ -70,6 +74,8 @@ function productToForm(product: Product): ProductForm {
         purchase_price: product.purchase_price != null ? String(product.purchase_price) : '',
         purchase_date: product.purchase_date ?? '',
         lifespan_months: product.lifespan_months != null ? String(product.lifespan_months) : '',
+        budget_account_id: product.budget_account_id != null ? String(product.budget_account_id) : '',
+        funding_capsule_id: product.funding_capsule_id != null ? String(product.funding_capsule_id) : '',
         last_unit_price: product.last_unit_price != null ? String(product.last_unit_price) : '',
         units_per_purchase: product.units_per_purchase != null ? String(product.units_per_purchase) : '1',
         frequency_days: product.frequency_days != null ? String(product.frequency_days) : '',
@@ -93,6 +99,8 @@ function toProductPayload(form: ProductForm) {
         last_purchase_date: form.last_purchase_date || null,
         is_asset: form.is_asset,
         lifespan_months: form.lifespan_months ? parseInt(form.lifespan_months, 10) : null,
+        budget_account_id: form.budget_account_id ? parseInt(form.budget_account_id, 10) : null,
+        funding_capsule_id: form.funding_capsule_id ? parseInt(form.funding_capsule_id, 10) : null,
         purchase_price: purchasePrice,
         purchase_date: form.purchase_date || null,
     };
@@ -101,11 +109,13 @@ function toProductPayload(form: ProductForm) {
 interface ProductModalProps {
     initialType: 'asset' | 'item';
     product: Product | null;
+    budgetAccounts: Account[];
+    fundingCapsules: Capsule[];
     onClose: () => void;
     onSaved: () => void;
 }
 
-function ProductModal({ initialType, product, onClose, onSaved }: ProductModalProps) {
+function ProductModal({ initialType, product, budgetAccounts, fundingCapsules, onClose, onSaved }: ProductModalProps) {
     const [form, setForm] = useState<ProductForm>(() => {
         if (product) return productToForm(product);
         return { ...EMPTY_PRODUCT_FORM, is_asset: initialType === 'asset' };
@@ -209,6 +219,32 @@ function ProductModal({ initialType, product, onClose, onSaved }: ProductModalPr
                                 onChange={(event) => set('category', event.target.value)}
                                 placeholder="Electronics"
                             />
+                        )}
+                        {field(
+                            'Budget Category',
+                            <select
+                                className={inputClass}
+                                value={form.budget_account_id}
+                                onChange={(event) => set('budget_account_id', event.target.value)}
+                            >
+                                <option value="">Not linked</option>
+                                {budgetAccounts.map((account) => (
+                                    <option key={account.id} value={account.id}>{account.name}</option>
+                                ))}
+                            </select>
+                        )}
+                        {field(
+                            'Funding Capsule',
+                            <select
+                                className={inputClass}
+                                value={form.funding_capsule_id}
+                                onChange={(event) => set('funding_capsule_id', event.target.value)}
+                            >
+                                <option value="">Not linked</option>
+                                {fundingCapsules.map((capsule) => (
+                                    <option key={capsule.id} value={capsule.id}>{capsule.name}</option>
+                                ))}
+                            </select>
                         )}
                         {field(
                             'Location / Store',
@@ -341,6 +377,7 @@ function ProductModal({ initialType, product, onClose, onSaved }: ProductModalPr
 export default function Registry() {
     const [activeTab, setActiveTab] = useState('accounts');
     const [products, setProducts] = useState<Product[]>([]);
+    const [capsules, setCapsules] = useState<Capsule[]>([]);
     const [unitSummary, setUnitSummary] = useState<any>(null);
     const [accounts, setAccounts] = useState<Account[]>([]);
     const [accountTree, setAccountTree] = useState<Record<string, AccountTreeNode[]>>({});
@@ -397,18 +434,20 @@ export default function Registry() {
     const fetchData = async () => {
         try {
             setLoadingProducts(true);
-            const [productsData, summaryData, accountsData, treeData, ratesData] = await Promise.all([
+            const [productsData, summaryData, accountsData, treeData, ratesData, capsulesData] = await Promise.all([
                 getProducts(),
                 getUnitEconomicsSummary(),
                 getAccounts(),
                 getAccountTree(),
                 getExchangeRates(),
+                getCapsules(),
             ]);
             setProducts(productsData);
             setUnitSummary(summaryData);
             setAccounts(accountsData);
             setAccountTree(treeData);
             setExchangeRates(ratesData);
+            setCapsules(capsulesData);
         } catch (error) {
             console.error('Failed to fetch registry data:', error);
             try {
@@ -443,6 +482,16 @@ export default function Registry() {
             fetchData();
         } catch (error) {
             showToast('Failed to create account', 'error');
+        }
+    };
+
+    const ensureProductReservePools = async () => {
+        try {
+            await createProductReservePools();
+            showToast('Product reserve capsules are ready', 'success');
+            await fetchData();
+        } catch (error) {
+            showToast('Failed to create reserve capsules', 'error');
         }
     };
 
@@ -541,6 +590,13 @@ export default function Registry() {
                     </div>
                     <div className="flex gap-2">
                         <button
+                            onClick={ensureProductReservePools}
+                            className="px-3 py-1.5 border border-purple-800 text-purple-200 hover:bg-purple-900/40 text-xs flex items-center gap-1"
+                        >
+                            <Wallet size={12} />
+                            Reserve Pools
+                        </button>
+                        <button
                             onClick={() => setProductModal({ type: kind, product: null })}
                             className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs flex items-center gap-1"
                         >
@@ -588,6 +644,9 @@ export default function Registry() {
                             <tr className="border-b border-slate-800">
                                 <th className="p-2 text-left text-slate-500 uppercase font-medium">Name</th>
                                 <th className="p-2 text-left text-slate-500 uppercase font-medium">Category</th>
+                                <th className="p-2 text-left text-slate-500 uppercase font-medium">Budget</th>
+                                <th className="p-2 text-left text-slate-500 uppercase font-medium">Funding Capsule</th>
+                                <th className="p-2 text-right text-slate-500 uppercase font-medium">Reserve / Mo</th>
                                 <th className="p-2 text-left text-slate-500 uppercase font-medium">Location</th>
                                 <th className="p-2 text-right text-slate-500 uppercase font-medium">Price</th>
                                 <th className="p-2 text-right text-slate-500 uppercase font-medium">{kind === 'asset' ? 'Monthly Dep.' : 'Monthly Cost'}</th>
@@ -597,9 +656,9 @@ export default function Registry() {
                         </thead>
                         <tbody>
                             {loadingProducts ? (
-                                <tr><td colSpan={7} className="p-4 text-slate-500">Loading...</td></tr>
+                                <tr><td colSpan={10} className="p-4 text-slate-500">Loading...</td></tr>
                             ) : rows.length === 0 ? (
-                                <tr><td colSpan={7} className="p-6 text-center text-slate-500">No records yet.</td></tr>
+                                <tr><td colSpan={10} className="p-6 text-center text-slate-500">No records yet.</td></tr>
                             ) : (
                                 rows.map((product) => {
                                     const price = product.purchase_price ?? product.last_unit_price ?? 0;
@@ -616,6 +675,9 @@ export default function Registry() {
                                                 </div>
                                             </td>
                                             <td className="p-2 text-slate-400">{product.category}</td>
+                                            <td className="p-2 text-slate-500">{product.budget_account_name || '-'}</td>
+                                            <td className="p-2 text-slate-500">{product.funding_capsule_name || '-'}</td>
+                                            <td className="p-2 text-right font-mono-nums text-purple-300">{formatCurrency(product.recommended_monthly_reserve ?? 0)}</td>
                                             <td className="p-2 text-slate-500">{product.location || '-'}</td>
                                             <td className="p-2 text-right font-mono-nums text-slate-300">{formatCurrency(price)}</td>
                                             <td className="p-2 text-right font-mono-nums text-cyan-400">
@@ -987,6 +1049,8 @@ export default function Registry() {
                 <ProductModal
                     initialType={productModal.type}
                     product={productModal.product}
+                    budgetAccounts={accounts.filter((account) => account.account_type === 'expense')}
+                    fundingCapsules={capsules.filter((capsule) => capsule.life_event_id == null)}
                     onClose={() => setProductModal(null)}
                     onSaved={fetchData}
                 />

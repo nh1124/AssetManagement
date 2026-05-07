@@ -248,6 +248,9 @@ def _serialize_plan_line(
         "actual": round(actual, 0),
         "variance": round((line.amount or 0.0) - actual, 0),
         "recurring_amount": 0.0,
+        "suggested_amount": 0.0,
+        "suggested_source": None,
+        "suggested_status": None,
         "priority": line.priority,
         "note": line.note,
         "is_active": line.is_active,
@@ -279,6 +282,10 @@ def _virtual_capsule_line(
         "amount": round(capsule.monthly_contribution or 0.0, 0),
         "planned_date": None,
         "recurring_amount": 0.0,
+        "suggested_amount": round(capsule.monthly_contribution or 0.0, 0)
+        if capsule.capsule_type == "product_pool" else 0.0,
+        "suggested_source": "product_reserve" if capsule.capsule_type == "product_pool" else None,
+        "suggested_status": "synced" if capsule.capsule_type == "product_pool" else None,
         "priority": 2,
         "note": None,
         "is_active": True,
@@ -290,6 +297,19 @@ def _virtual_capsule_line(
     line["actual"] = round(actual, 0)
     line["variance"] = round((capsule.monthly_contribution or 0.0) - actual, 0)
     return line
+
+
+def _attach_capsule_suggestions(plan_lines: list[dict], capsule_by_id: dict[int, models.Capsule]) -> None:
+    for line in plan_lines:
+        if line.get("line_type") != "allocation" or line.get("target_type") != "capsule":
+            continue
+        capsule = capsule_by_id.get(line.get("target_id"))
+        if not capsule or capsule.capsule_type != "product_pool":
+            continue
+        suggested = round(capsule.monthly_contribution or 0.0, 0)
+        line["suggested_amount"] = suggested
+        line["suggested_source"] = "product_reserve"
+        line["suggested_status"] = "synced" if round(line.get("amount") or 0.0, 0) == suggested else "diff"
 
 
 def _sum_lines(lines: Iterable[dict], *line_types: str) -> float:
@@ -486,6 +506,7 @@ def get_budget_summary(
     name_maps = _target_name_maps(db, client_id)
     capsules = db.query(models.Capsule).filter(models.Capsule.client_id == client_id).all()
     capsule_accounts = {capsule.id: capsule.account_id for capsule in capsules}
+    capsule_by_id = {capsule.id: capsule for capsule in capsules}
     capsule_by_life_event_id = {
         capsule.life_event_id: capsule
         for capsule in capsules
@@ -515,6 +536,7 @@ def get_budget_summary(
                 line["actual"] = round(actual, 0)
                 line["variance"] = round((line.get("amount") or 0.0) - actual, 0)
 
+    _attach_capsule_suggestions(plan_lines, capsule_by_id)
     existing_capsule_ids = {
         line.get("target_id")
         for line in plan_lines
@@ -666,7 +688,7 @@ def get_cash_flow_projection(
         )
         net = income - expense - allocation - debt
         cash += net
-        setup_warnings = recurrence_setup_warnings(db, client_id, period, lines)
+        setup_warnings = budget_setup_warnings(db, client_id, period, lines)
         rows.append({
             "period": period,
             "inflow": round(income, 0),
@@ -679,6 +701,18 @@ def get_cash_flow_projection(
             "setup_warnings": setup_warnings,
         })
     return rows
+
+
+def budget_setup_warnings(
+    db: Session,
+    client_id: int,
+    period: str,
+    plan_models: list[models.MonthlyPlanLine],
+) -> list[dict]:
+    return [
+        *recurrence_setup_warnings(db, client_id, period, plan_models),
+        *product_reserve_setup_warnings(db, client_id, plan_models),
+    ]
 
 
 def recurrence_setup_warnings(
@@ -711,6 +745,7 @@ def recurrence_setup_warnings(
             warnings.append({
                 "type": "missing_budget",
                 "recurring_transaction_id": recurring_line["recurring_transaction_id"],
+                "source": "recurrence",
                 "name": recurring_line["name"],
                 "amount": recurring_line["recurring_amount"],
             })
@@ -719,9 +754,56 @@ def recurrence_setup_warnings(
             warnings.append({
                 "type": "amount_diff",
                 "recurring_transaction_id": recurring_line["recurring_transaction_id"],
+                "source": "recurrence",
                 "name": recurring_line["name"],
                 "amount": recurring_line["recurring_amount"],
                 "budget_amount": round(matched.amount or 0.0, 0),
+            })
+    return warnings
+
+
+def product_reserve_setup_warnings(
+    db: Session,
+    client_id: int,
+    plan_models: list[models.MonthlyPlanLine],
+) -> list[dict]:
+    capsules = db.query(models.Capsule).filter(
+        models.Capsule.client_id == client_id,
+        models.Capsule.capsule_type == "product_pool",
+        models.Capsule.monthly_contribution > 0,
+    ).all()
+    plan_by_capsule_id = {
+        line.target_id: line
+        for line in plan_models
+        if line.line_type == "allocation"
+        and line.target_type == "capsule"
+        and line.target_id is not None
+    }
+    warnings = []
+    for capsule in capsules:
+        expected = round(capsule.monthly_contribution or 0.0, 0)
+        matched = plan_by_capsule_id.get(capsule.id)
+        if not matched:
+            warnings.append({
+                "type": "missing_product_reserve",
+                "source": "product_reserve",
+                "capsule_id": capsule.id,
+                "account_id": capsule.account_id,
+                "name": capsule.name,
+                "amount": expected,
+            })
+            continue
+        budget_amount = round(matched.amount or 0.0, 0)
+        if budget_amount != expected:
+            warnings.append({
+                "type": "product_reserve_diff",
+                "source": "product_reserve",
+                "capsule_id": capsule.id,
+                "account_id": capsule.account_id,
+                "plan_line_id": matched.id,
+                "name": capsule.name,
+                "amount": expected,
+                "budget_amount": budget_amount,
             })
     return warnings
 

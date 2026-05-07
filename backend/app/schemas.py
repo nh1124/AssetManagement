@@ -113,6 +113,8 @@ class ProductBase(BaseModel):
     last_purchase_date: Optional[date] = None
     is_asset: bool = False
     lifespan_months: Optional[int] = None
+    budget_account_id: Optional[int] = None
+    funding_capsule_id: Optional[int] = None
     purchase_price: Optional[float] = None
     purchase_date: Optional[date] = None
 
@@ -124,6 +126,10 @@ class Product(ProductBase):
     unit_cost: float = 0.0
     monthly_cost: float = 0.0
     next_purchase_date: Optional[str] = None
+    budget_account_name: Optional[str] = None
+    funding_capsule_name: Optional[str] = None
+    reserve_target_amount: float = 0.0
+    recommended_monthly_reserve: float = 0.0
 
     class Config:
         from_attributes = True
@@ -260,6 +266,9 @@ class MonthlyPlanLine(MonthlyPlanLineBase):
     actual: float = 0.0
     variance: float = 0.0
     recurring_amount: float = 0.0
+    suggested_amount: float = 0.0
+    suggested_source: Optional[str] = None
+    suggested_status: Optional[str] = None
     sync_status: Optional[str] = None
     recurring_transaction_ids: Optional[list[int]] = None
     recurring_items: Optional[list[dict]] = None
@@ -459,6 +468,9 @@ class CapsuleBase(BaseModel):
     monthly_contribution: float
     current_balance: float = 0.0
     life_event_id: Optional[int] = None
+    capsule_type: str = "manual"
+    target_amount_source: str = "manual"
+    monthly_contribution_source: str = "manual"
 
 class CapsuleCreate(CapsuleBase):
     pass
@@ -469,10 +481,15 @@ class CapsuleUpdate(BaseModel):
     monthly_contribution: Optional[float] = None
     current_balance: Optional[float] = None
     life_event_id: Optional[int] = None
+    capsule_type: Optional[str] = None
+    target_amount_source: Optional[str] = None
+    monthly_contribution_source: Optional[str] = None
 
 class Capsule(CapsuleBase):
     id: int
     account_id: Optional[int] = None
+    recommended_monthly_contribution: float = 0.0
+    linked_products: list[dict[str, Any]] = []
     created_at: datetime
     holdings: list["CapsuleHolding"] = []
 
