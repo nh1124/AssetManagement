@@ -282,3 +282,41 @@ def test_cash_flow_summary_reports_buffer_and_shortfall_month() -> None:
         assert summary["cash_flow_projection"][0]["setup_warnings"][0]["type"] == "missing_budget"
     finally:
         db.close()
+
+
+def test_recurring_budget_context_converts_currency_to_client_currency() -> None:
+    db = _session()
+    try:
+        client = models.Client(id=1, name="test", general_settings={"currency": "JPY"}, ai_config={})
+        cash = models.Account(client_id=1, name="cash", account_type="asset")
+        subscription = models.Account(client_id=1, name="subscription", account_type="expense")
+        db.add_all([client, cash, subscription])
+        db.flush()
+        db.add(models.ExchangeRate(
+            client_id=1,
+            base_currency="USD",
+            quote_currency="JPY",
+            rate=150,
+            as_of_date=date(2026, 5, 1),
+            source="manual",
+        ))
+        db.add(models.RecurringTransaction(
+            client_id=1,
+            name="AI Subscription",
+            amount=20,
+            currency="USD",
+            type="Expense",
+            from_account_id=cash.id,
+            to_account_id=subscription.id,
+            frequency="Monthly",
+            is_active=True,
+        ))
+        db.commit()
+
+        summary = get_budget_summary(db, client_id=1, period="2026-05")
+        account = next(item for item in summary["expense_accounts"] if item["name"] == "subscription")
+
+        assert account["recurring_amount"] == 3000
+        assert account["sync_status"] == "missing"
+    finally:
+        db.close()

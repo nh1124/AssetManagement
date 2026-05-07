@@ -166,6 +166,7 @@ export default function Journal() {
     const [newRecurring, setNewRecurring] = useState({
         name: '',
         amount: '',
+        currency: currentCurrency,
         type: 'Expense' as TransactionKind,
         from_account_id: '',
         to_account_id: '',
@@ -353,6 +354,7 @@ export default function Journal() {
                     await createRecurringTransaction({
                         name: suggestion.description,
                         amount: suggestion.amount,
+                        currency: suggestion.currency || currentCurrency,
                         type: txType,
                         from_account_id: fromAccountId ?? null,
                         to_account_id: toAccountId ?? null,
@@ -441,6 +443,7 @@ export default function Journal() {
             const payload = {
                 name: newRecurring.name,
                 amount: parseFloat(newRecurring.amount),
+                currency: newRecurring.currency,
                 type: newRecurring.type,
                 from_account_id: parseInt(newRecurring.from_account_id) || null,
                 to_account_id: parseInt(newRecurring.to_account_id) || null,
@@ -466,6 +469,7 @@ export default function Journal() {
             setEditingRecurringId(null);
             setNewRecurring({
                 name: '', amount: '', type: 'Expense', from_account_id: '',
+                currency: currentCurrency,
                 to_account_id: '', frequency: 'Monthly', day_of_month: '1', month_of_year: '1',
                 start_period: '', end_period: '', auto_post: true,
             });
@@ -481,6 +485,7 @@ export default function Journal() {
         setNewRecurring({
             name: item.name,
             amount: item.amount.toString(),
+            currency: item.currency || currentCurrency,
             type: item.type as TransactionKind,
             from_account_id: item.from_account_id ? item.from_account_id.toString() : '',
             to_account_id: item.to_account_id ? item.to_account_id.toString() : '',
@@ -751,6 +756,7 @@ export default function Journal() {
                                     setEditingRecurringId(null);
                                     setNewRecurring({
                                         name: '', amount: '', type: 'Expense', from_account_id: '',
+                                        currency: currentCurrency,
                                         to_account_id: '', frequency: 'Monthly', day_of_month: '1', month_of_year: '1',
                                         start_period: '', end_period: '', auto_post: true,
                                     });
@@ -768,7 +774,7 @@ export default function Journal() {
                                     <div>
                                         <p className="text-xs font-medium">{item.name}</p>
                                         <p className="text-[10px] text-slate-500">
-                                            {item.frequency} / {formatCurrency(item.amount)}
+                                            {item.frequency} / {formatCurrencyWithSetting(item.amount, item.currency || currentCurrency)}
                                             {(item.start_period || item.end_period) && ` / ${item.start_period || '...'}-${item.end_period || '...'}`}
                                             {!item.auto_post && ' / no auto-post'}
                                         </p>
@@ -826,7 +832,7 @@ export default function Journal() {
                                     <div>
                                         <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Amount</label>
                                         <div className="relative">
-                                            <span className="absolute left-2 top-1.5 text-slate-500 text-xs">{getCurrencySymbol(currentCurrency)}</span>
+                                            <span className="absolute left-2 top-1.5 text-slate-500 text-xs">{getCurrencySymbol(newRecurring.currency)}</span>
                                             <input
                                                 type="number"
                                                 value={newRecurring.amount}
@@ -834,6 +840,19 @@ export default function Journal() {
                                                 className="w-full bg-slate-900 border border-slate-700 pl-6 pr-2 py-1.5 text-xs font-mono-nums focus:border-cyan-500 focus:outline-none"
                                             />
                                         </div>
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Currency</label>
+                                        <select
+                                            value={newRecurring.currency}
+                                            onChange={e => setNewRecurring({ ...newRecurring, currency: e.target.value })}
+                                            className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs focus:border-cyan-500 focus:outline-none"
+                                        >
+                                            {CURRENCIES.map((currency) => (
+                                                <option key={currency} value={currency}>{currency}</option>
+                                            ))}
+                                        </select>
                                     </div>
 
                                     <div>

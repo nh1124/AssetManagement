@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from .capsule_service import capsule_balance
-from .fx_service import calculate_account_valued_balance, convert_transaction_amount
+from .fx_service import calculate_account_valued_balance, convert_amount, convert_transaction_amount
 from .goal_service import get_life_events_with_progress
 
 
@@ -79,7 +79,13 @@ def recurring_totals(db: Session, client_id: int, period: str) -> dict[str, floa
     for rec in rows:
         if not _recurring_in_period_range(rec, period) or not _month_matches_recurring(rec, period_start):
             continue
-        amount = _recurring_amount_for_period(rec, period_start)
+        amount = convert_amount(
+            db,
+            client_id,
+            _recurring_amount_for_period(rec, period_start),
+            rec.currency,
+            as_of_date=period_start,
+        )
         tx_type = (rec.type or "").lower()
         if tx_type == "income":
             totals["income"] += amount
@@ -321,6 +327,7 @@ def _plan_match_key(line_type: str | None, target_type: str | None, account_id: 
 
 
 def _recurring_plan_line(
+    db: Session,
     rec: models.RecurringTransaction,
     period: str,
     name_maps: dict[str, dict[int, str]],
@@ -330,7 +337,14 @@ def _recurring_plan_line(
     line_type = _recurring_line_type(rec)
     if not line_type:
         return None
-    amount = _recurring_amount_for_period(rec, period_to_range(period)[0])
+    period_start, _ = period_to_range(period)
+    amount = convert_amount(
+        db,
+        rec.client_id,
+        _recurring_amount_for_period(rec, period_start),
+        rec.currency,
+        as_of_date=period_start,
+    )
     account_id = _recurring_account_id(rec, line_type)
     return {
         "id": None,
@@ -363,7 +377,7 @@ def recurring_plan_lines(db: Session, client_id: int, period: str) -> list[dict]
         models.RecurringTransaction.client_id == client_id,
         models.RecurringTransaction.is_active.is_(True),
     ).all()
-    lines = [_recurring_plan_line(rec, period, name_maps) for rec in recurrences]
+    lines = [_recurring_plan_line(db, rec, period, name_maps) for rec in recurrences]
     return [line for line in lines if line is not None]
 
 

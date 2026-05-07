@@ -189,6 +189,7 @@ class RecurringTransaction(Base):
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
     name = Column(String, index=True)
     amount = Column(Float)
+    currency = Column(String, default="JPY", server_default="JPY", nullable=False)
     type = Column(String)  # Income, Expense, Transfer, LiabilityPayment, Borrowing, CreditExpense, CreditAssetPurchase
     from_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     to_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)

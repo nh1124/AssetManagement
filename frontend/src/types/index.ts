@@ -139,6 +139,7 @@ export interface RecurringTransaction {
     id: number;
     name: string;
     amount: number;
+    currency: string;
     type: Transaction['type'];
     from_account_id?: number | null;
     to_account_id?: number | null;

@@ -172,6 +172,7 @@ class AnalysisSummary(BaseModel):
 class RecurringTransactionBase(BaseModel):
     name: str
     amount: float
+    currency: str = "JPY"
     type: TransactionTypeLiteral
     from_account_id: Optional[int] = None
     to_account_id: Optional[int] = None

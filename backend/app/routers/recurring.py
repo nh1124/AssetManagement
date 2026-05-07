@@ -118,6 +118,7 @@ def process_recurring_transaction(
         date=date.today(),
         description=db_recurring.name,
         amount=db_recurring.amount,
+        currency=db_recurring.currency,
         type=db_recurring.type,
         from_account_id=db_recurring.from_account_id,
         to_account_id=db_recurring.to_account_id,
