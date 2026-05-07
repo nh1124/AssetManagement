@@ -153,6 +153,9 @@ def export_client_data(
                         "day_of_month",
                         "month_of_year",
                         "next_due_date",
+                        "start_period",
+                        "end_period",
+                        "auto_post",
                         "is_active",
                         "created_at",
                     ],
@@ -233,6 +236,8 @@ def export_client_data(
                         "amount",
                         "priority",
                         "note",
+                        "source",
+                        "recurring_transaction_id",
                         "is_active",
                         "created_at",
                         "updated_at",
@@ -372,6 +377,7 @@ def import_client_data(
     account_map: dict[int, int] = {}
     transaction_map: dict[int, int] = {}
     event_map: dict[int, int] = {}
+    recurring_map: dict[int, int] = {}
 
     try:
         tx_ids = [
@@ -475,22 +481,27 @@ def import_client_data(
             )
 
         for item in data.get("recurring_transactions", []):
-            db.add(
-                models.RecurringTransaction(
-                    client_id=current_client.id,
-                    name=item["name"],
-                    amount=item.get("amount") or 0,
-                    type=item["type"],
-                    from_account_id=account_map.get(item.get("from_account_id")),
-                    to_account_id=account_map.get(item.get("to_account_id")),
-                    frequency=item["frequency"],
-                    day_of_month=item.get("day_of_month") or 1,
-                    month_of_year=item.get("month_of_year"),
-                    next_due_date=_parse_date(item.get("next_due_date")),
-                    is_active=item.get("is_active", True),
-                    created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
-                )
+            old_id = int(item["id"])
+            recurring = models.RecurringTransaction(
+                client_id=current_client.id,
+                name=item["name"],
+                amount=item.get("amount") or 0,
+                type=item["type"],
+                from_account_id=account_map.get(item.get("from_account_id")),
+                to_account_id=account_map.get(item.get("to_account_id")),
+                frequency=item["frequency"],
+                day_of_month=item.get("day_of_month") or 1,
+                month_of_year=item.get("month_of_year"),
+                next_due_date=_parse_date(item.get("next_due_date")),
+                start_period=item.get("start_period"),
+                end_period=item.get("end_period"),
+                auto_post=item.get("auto_post", True),
+                is_active=item.get("is_active", True),
+                created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
             )
+            db.add(recurring)
+            db.flush()
+            recurring_map[old_id] = recurring.id
 
         for item in data.get("life_events", []):
             old_id = int(item["id"])
@@ -659,6 +670,8 @@ def import_client_data(
                     amount=item.get("amount") or 0,
                     priority=item.get("priority") or 2,
                     note=item.get("note"),
+                    source=item.get("source") or "manual",
+                    recurring_transaction_id=recurring_map.get(item.get("recurring_transaction_id")),
                     is_active=item.get("is_active", True),
                     created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
                     updated_at=_parse_datetime(item.get("updated_at")),

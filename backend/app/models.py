@@ -196,6 +196,9 @@ class RecurringTransaction(Base):
     day_of_month = Column(Integer, default=1)
     month_of_year = Column(Integer, nullable=True)  # For Yearly frequency
     next_due_date = Column(Date, nullable=True)  # Calculated by system
+    start_period = Column(String, nullable=True)  # Format: "YYYY-MM"; included from this month
+    end_period = Column(String, nullable=True)  # Format: "YYYY-MM"; included through this month
+    auto_post = Column(Boolean, default=True, server_default="true", nullable=False)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -241,6 +244,8 @@ class MonthlyPlanLine(Base):
     amount = Column(Float, default=0.0, nullable=False)
     priority = Column(Integer, default=2, server_default="2", nullable=False)
     note = Column(Text, nullable=True)
+    source = Column(String, default="manual", server_default="manual", nullable=False)
+    recurring_transaction_id = Column(Integer, ForeignKey("recurring_transactions.id"), nullable=True)
     is_active = Column(Boolean, default=True, server_default="true", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -248,6 +253,7 @@ class MonthlyPlanLine(Base):
     client = relationship("Client", back_populates="monthly_plan_lines")
     account = relationship("Account", foreign_keys=[account_id])
     source_account = relationship("Account", foreign_keys=[source_account_id])
+    recurring_transaction = relationship("RecurringTransaction", foreign_keys=[recurring_transaction_id])
 
 class MonthlyReview(Base):
     """PDCA review notes for a specific month."""

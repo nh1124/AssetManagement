@@ -371,8 +371,17 @@ export const deleteGoal = deleteLifeEvent;
 
 
 // Budget Builder
-export const getBudgetSummary = async (period?: string) => {
-    const response = await api.get('/life-events/budget-summary', { params: { period } });
+export const getBudgetSummary = async (
+    period?: string,
+    options: { cash_flow_start_period?: string; cash_flow_months?: number } = {},
+) => {
+    const response = await api.get('/life-events/budget-summary', {
+        params: {
+            period,
+            cash_flow_start_period: options.cash_flow_start_period,
+            cash_flow_months: options.cash_flow_months,
+        },
+    });
     return response.data;
 };
 
@@ -388,6 +397,8 @@ export const saveMonthlyPlanLines = async (lines: Array<{
     amount: number;
     priority?: number;
     note?: string | null;
+    source?: string;
+    recurring_transaction_id?: number | null;
     is_active?: boolean;
 }>) => {
     const response = await api.post('/life-events/monthly-plan-lines/batch', lines);

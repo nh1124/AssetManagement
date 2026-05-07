@@ -80,13 +80,21 @@ def get_dashboard(
 @router.get("/budget-summary")
 def get_budget_summary(
     period: Optional[str] = Query(None, description="Format: YYYY-MM"),
+    cash_flow_start_period: Optional[str] = Query(None, description="Format: YYYY-MM"),
+    cash_flow_months: int = Query(12, ge=1, le=36),
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
     """Get monthly cash-flow plan summary."""
     if not period:
         period = datetime.now().strftime("%Y-%m")
-    return build_budget_summary(db, current_client.id, period)
+    return build_budget_summary(
+        db,
+        current_client.id,
+        period,
+        cash_flow_start_period=cash_flow_start_period,
+        cash_flow_months=cash_flow_months,
+    )
 
 
 @router.get("/monthly-plan-lines")

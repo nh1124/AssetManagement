@@ -117,8 +117,11 @@ export interface MonthlyPlanLine {
     amount: number;
     actual?: number;
     variance?: number;
+    recurring_amount?: number;
+    sync_status?: 'synced' | 'missing' | 'diff' | null;
     priority?: number;
     note?: string | null;
+    recurring_transaction_id?: number | null;
     is_active?: boolean;
     source?: string;
 }
@@ -143,6 +146,9 @@ export interface RecurringTransaction {
     day_of_month: number;
     month_of_year?: number | null;
     next_due_date?: string | null;
+    start_period?: string | null;
+    end_period?: string | null;
+    auto_post: boolean;
     is_active: boolean;
 }
 

@@ -111,12 +111,15 @@ def test_budget_summary_combines_income_spending_allocations_and_debt() -> None:
 
         summary = get_budget_summary(db, client_id=1, period="2026-05")
 
-        assert summary["total_expected_inflow"] == 300000
+        assert summary["total_expected_inflow"] == 100000
         assert summary["monthly_fixed_costs"] == 80000
         assert summary["total_variable_budget"] == 30000
         assert summary["total_allocation_plan"] == 50000
         assert summary["total_debt_plan"] == 20000
-        assert summary["remaining_balance"] == 120000
+        assert summary["remaining_balance"] == 0
+        food_budget = next(account for account in summary["expense_accounts"] if account["name"] == "food")
+        assert food_budget["recurring_amount"] == 80000
+        assert food_budget["sync_status"] == "diff"
         nisa_line = next(line for line in summary["plan_lines"] if line["target_name"] == "NISA")
         assert nisa_line["actual"] == 50000
         assert nisa_line["variance"] == 0
@@ -124,7 +127,7 @@ def test_budget_summary_combines_income_spending_allocations_and_debt() -> None:
         db.close()
 
 
-def test_save_plan_lines_updates_capsule_contribution_and_legacy_budget() -> None:
+def test_save_plan_lines_updates_capsule_contribution_and_monthly_plan_line() -> None:
     db = _session()
     try:
         client = models.Client(id=1, name="test", general_settings={}, ai_config={})
@@ -212,7 +215,7 @@ def test_capsule_allocation_actual_uses_current_holding_balance() -> None:
         db.close()
 
 
-def test_cash_flow_projection_places_yearly_income_in_matching_month() -> None:
+def test_cash_flow_projection_warns_about_unsynced_yearly_income() -> None:
     db = _session()
     try:
         client = models.Client(id=1, name="test", general_settings={}, ai_config={})
@@ -240,7 +243,9 @@ def test_cash_flow_projection_places_yearly_income_in_matching_month() -> None:
         assert may["period"] == "2026-05"
         assert may["inflow"] == 0
         assert june["period"] == "2026-06"
-        assert june["inflow"] == 600000
+        assert june["inflow"] == 0
+        assert june["setup_warnings"][0]["type"] == "missing_budget"
+        assert june["setup_warnings"][0]["amount"] == 600000
     finally:
         db.close()
 
@@ -268,11 +273,12 @@ def test_cash_flow_summary_reports_buffer_and_shortfall_month() -> None:
         summary = get_budget_summary(db, client_id=1, period="2026-05")
 
         assert summary["cash_flow_summary"] == {
-            "runway_months": 0,
-            "lowest_cash": -960000,
-            "required_buffer": 960000,
-            "shortfall_month": "2026-05",
+            "runway_months": 12,
+            "lowest_cash": 0,
+            "required_buffer": 0,
+            "shortfall_month": None,
             "horizon_months": 12,
         }
+        assert summary["cash_flow_projection"][0]["setup_warnings"][0]["type"] == "missing_budget"
     finally:
         db.close()

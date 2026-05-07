@@ -94,6 +94,7 @@ def get_due_recurring_transactions(
     return db.query(models.RecurringTransaction).filter(
         models.RecurringTransaction.client_id == current_client.id,
         models.RecurringTransaction.is_active == True,
+        models.RecurringTransaction.auto_post == True,
         models.RecurringTransaction.next_due_date <= today
     ).all()
 

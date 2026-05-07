@@ -179,6 +179,9 @@ class RecurringTransactionBase(BaseModel):
     day_of_month: int = 1
     month_of_year: Optional[int] = None  # Used for Yearly frequency
     next_due_date: Optional[date] = None  # Calculated by system
+    start_period: Optional[str] = None
+    end_period: Optional[str] = None
+    auto_post: bool = True
     is_active: bool = True
 
 class RecurringTransactionCreate(RecurringTransactionBase):
@@ -221,6 +224,8 @@ class MonthlyPlanLineBase(BaseModel):
     amount: float = 0.0
     priority: int = 2
     note: Optional[str] = None
+    source: str = "manual"
+    recurring_transaction_id: Optional[int] = None
     is_active: bool = True
 
 
@@ -239,6 +244,8 @@ class MonthlyPlanLineUpdate(BaseModel):
     amount: Optional[float] = None
     priority: Optional[int] = None
     note: Optional[str] = None
+    source: Optional[str] = None
+    recurring_transaction_id: Optional[int] = None
     is_active: Optional[bool] = None
 
 
@@ -249,6 +256,8 @@ class MonthlyPlanLine(MonthlyPlanLineBase):
     source_account_name: Optional[str] = None
     actual: float = 0.0
     variance: float = 0.0
+    recurring_amount: float = 0.0
+    sync_status: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

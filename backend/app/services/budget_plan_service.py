@@ -40,6 +40,19 @@ def _month_matches_recurring(rec: models.RecurringTransaction, period_start: dat
     return False
 
 
+def _recurring_in_period_range(rec: models.RecurringTransaction, period: str) -> bool:
+    if rec.start_period and period < rec.start_period:
+        return False
+    if rec.end_period and period > rec.end_period:
+        return False
+    return True
+
+
+def _recurring_applies_to_period(rec: models.RecurringTransaction, period: str) -> bool:
+    period_start, _ = period_to_range(period)
+    return bool(rec.is_active) and _recurring_in_period_range(rec, period) and _month_matches_recurring(rec, period_start)
+
+
 def _recurring_amount_for_period(rec: models.RecurringTransaction, period_start: date) -> float:
     if rec.frequency == "Monthly":
         return rec.amount or 0.0
@@ -64,7 +77,7 @@ def recurring_totals(db: Session, client_id: int, period: str) -> dict[str, floa
         "borrowing": 0.0,
     }
     for rec in rows:
-        if not _month_matches_recurring(rec, period_start):
+        if not _recurring_in_period_range(rec, period) or not _month_matches_recurring(rec, period_start):
             continue
         amount = _recurring_amount_for_period(rec, period_start)
         tx_type = (rec.type or "").lower()
@@ -227,10 +240,13 @@ def _serialize_plan_line(
         "amount": round(line.amount or 0.0, 0),
         "actual": round(actual, 0),
         "variance": round((line.amount or 0.0) - actual, 0),
+        "recurring_amount": 0.0,
         "priority": line.priority,
         "note": line.note,
         "is_active": line.is_active,
-        "source": "plan_line",
+        "source": line.source or "manual",
+        "recurring_transaction_id": line.recurring_transaction_id,
+        "sync_status": None,
     }
 
 
@@ -254,10 +270,13 @@ def _virtual_capsule_line(
         "account_name": capsule.account.name if capsule.account else None,
         "source_account_name": None,
         "amount": round(capsule.monthly_contribution or 0.0, 0),
+        "recurring_amount": 0.0,
         "priority": 2,
         "note": None,
         "is_active": True,
         "source": "capsule",
+        "recurring_transaction_id": None,
+        "sync_status": None,
     }
     actual = actual_for_plan_line(db, client_id, line, period, capsule_accounts)
     line["actual"] = round(actual, 0)
@@ -275,6 +294,117 @@ def _sum_actual(lines: Iterable[dict], *line_types: str) -> float:
     return sum((line.get("actual") or 0.0) for line in lines if line.get("line_type") in wanted)
 
 
+def _recurring_line_type(rec: models.RecurringTransaction) -> str | None:
+    tx_type = (rec.type or "").lower()
+    if tx_type == "income":
+        return "income"
+    if tx_type == "borrowing":
+        return "borrowing"
+    if tx_type in {"expense", "creditexpense"}:
+        return "expense"
+    if tx_type in {"transfer", "creditassetpurchase"}:
+        return "allocation"
+    if tx_type == "liabilitypayment":
+        return "debt_payment"
+    return None
+
+
+def _recurring_account_id(rec: models.RecurringTransaction, line_type: str) -> int | None:
+    if line_type in {"income", "borrowing", "drawdown"}:
+        return rec.from_account_id
+    return rec.to_account_id
+
+
+def _plan_match_key(line_type: str | None, target_type: str | None, account_id: int | None, name: str | None) -> tuple:
+    normalized_name = "" if account_id else (name or "").strip().lower()
+    return (line_type or "", target_type or "manual", account_id or 0, normalized_name)
+
+
+def _recurring_plan_line(
+    rec: models.RecurringTransaction,
+    period: str,
+    name_maps: dict[str, dict[int, str]],
+) -> dict | None:
+    if not _recurring_applies_to_period(rec, period):
+        return None
+    line_type = _recurring_line_type(rec)
+    if not line_type:
+        return None
+    amount = _recurring_amount_for_period(rec, period_to_range(period)[0])
+    account_id = _recurring_account_id(rec, line_type)
+    return {
+        "id": None,
+        "target_period": period,
+        "line_type": line_type,
+        "target_type": "account" if account_id else "manual",
+        "target_id": None,
+        "account_id": account_id,
+        "source_account_id": rec.from_account_id if line_type in {"expense", "allocation", "debt_payment"} else rec.to_account_id,
+        "name": rec.name,
+        "target_name": name_maps["account"].get(account_id, rec.name) if account_id else rec.name,
+        "account_name": name_maps["account"].get(account_id) if account_id else None,
+        "source_account_name": name_maps["account"].get(rec.from_account_id) if rec.from_account_id else None,
+        "amount": 0.0,
+        "actual": 0.0,
+        "variance": 0.0,
+        "recurring_amount": round(amount, 0),
+        "priority": 2,
+        "note": None,
+        "source": "recurrence",
+        "recurring_transaction_id": rec.id,
+        "sync_status": "missing",
+        "is_active": True,
+    }
+
+
+def recurring_plan_lines(db: Session, client_id: int, period: str) -> list[dict]:
+    name_maps = _target_name_maps(db, client_id)
+    recurrences = db.query(models.RecurringTransaction).filter(
+        models.RecurringTransaction.client_id == client_id,
+        models.RecurringTransaction.is_active.is_(True),
+    ).all()
+    lines = [_recurring_plan_line(rec, period, name_maps) for rec in recurrences]
+    return [line for line in lines if line is not None]
+
+
+def _merge_recurring_context(plan_lines: list[dict], recurrence_lines: list[dict]) -> list[dict]:
+    recurrence_by_id = {line["recurring_transaction_id"]: line for line in recurrence_lines}
+    recurrence_by_key = {
+        _plan_match_key(line["line_type"], line["target_type"], line["account_id"], line["name"]): line
+        for line in recurrence_lines
+    }
+    matched_recurring_ids: set[int] = set()
+
+    for line in plan_lines:
+        recurring = None
+        recurring_id = line.get("recurring_transaction_id")
+        linked_by_id = False
+        if recurring_id:
+            recurring = recurrence_by_id.get(recurring_id)
+            linked_by_id = recurring is not None
+        if not recurring:
+            recurring = recurrence_by_key.get(
+                _plan_match_key(line.get("line_type"), line.get("target_type"), line.get("account_id"), line.get("name") or line.get("target_name"))
+            )
+        recurring_amount = round((recurring or {}).get("recurring_amount") or 0.0, 0)
+        if recurring:
+            matched_recurring_ids.add(recurring["recurring_transaction_id"])
+            line["recurring_transaction_id"] = line.get("recurring_transaction_id") or recurring["recurring_transaction_id"]
+        line["recurring_amount"] = recurring_amount
+        if not recurring:
+            line["sync_status"] = None
+        elif linked_by_id and line.get("source") == "recurrence" and round(line.get("amount") or 0.0, 0) == recurring_amount:
+            line["sync_status"] = "synced"
+        else:
+            line["sync_status"] = "diff"
+
+    plan_lines.extend([
+        line for line in recurrence_lines
+        if line["recurring_transaction_id"] not in matched_recurring_ids
+    ])
+    return plan_lines
+
+
 def _liquid_cash(db: Session, client_id: int) -> float:
     accounts = db.query(models.Account).filter(
         models.Account.client_id == client_id,
@@ -285,7 +415,13 @@ def _liquid_cash(db: Session, client_id: int) -> float:
     return sum(calculate_account_valued_balance(db, account) for account in accounts)
 
 
-def get_budget_summary(db: Session, client_id: int, period: str) -> dict:
+def get_budget_summary(
+    db: Session,
+    client_id: int,
+    period: str,
+    cash_flow_start_period: str | None = None,
+    cash_flow_months: int = 12,
+) -> dict:
     events_with_progress = get_life_events_with_progress(db, client_id=client_id)
     total_gap = sum(max(0, e["gap"]) for e in events_with_progress)
     avg_years = (
@@ -317,6 +453,7 @@ def get_budget_summary(db: Session, client_id: int, period: str) -> dict:
     for capsule in capsules:
         if capsule.id not in existing_capsule_ids:
             plan_lines.append(_virtual_capsule_line(db, client_id, capsule, period, capsule_accounts))
+    plan_lines = _merge_recurring_context(plan_lines, recurring_plan_lines(db, client_id, period))
 
     expense_lines = [line for line in plan_lines if line["line_type"] == "expense"]
     allocation_lines = [line for line in plan_lines if line["line_type"] == "allocation"]
@@ -326,19 +463,18 @@ def get_budget_summary(db: Session, client_id: int, period: str) -> dict:
 
     monthly_income = recurring["income"]
     total_income_plan = _sum_lines(inflow_lines, "income")
-    total_borrowing_plan = recurring["borrowing"] + _sum_lines(inflow_lines, "borrowing")
+    total_borrowing_plan = _sum_lines(inflow_lines, "borrowing")
     total_drawdown_plan = _sum_lines(inflow_lines, "drawdown")
-    total_expected_inflow = monthly_income + total_income_plan + total_borrowing_plan + total_drawdown_plan
+    total_expected_inflow = total_income_plan + total_borrowing_plan + total_drawdown_plan
 
     total_variable_budget = _sum_lines(expense_lines, "expense")
-    total_allocation_plan = recurring["allocations"] + _sum_lines(allocation_lines, "allocation")
-    total_debt_plan = recurring["debt_payments"] + _sum_lines(debt_lines, "debt_payment")
+    total_allocation_plan = _sum_lines(allocation_lines, "allocation")
+    total_debt_plan = _sum_lines(debt_lines, "debt_payment")
     total_capsule_plan = _sum_lines(capsule_lines, "allocation")
     total_capsule_actual = _sum_actual(capsule_lines, "allocation")
 
     remaining = (
         total_expected_inflow
-        - recurring["fixed_costs"]
         - total_variable_budget
         - total_allocation_plan
         - total_debt_plan
@@ -352,8 +488,9 @@ def get_budget_summary(db: Session, client_id: int, period: str) -> dict:
     if ending_cash_after_plan < minimum_operating_cash:
         feasibility_status = "shortfall"
 
-    projection = get_cash_flow_projection(db, client_id, period, months=12, starting_cash=starting_cash)
-    cash_flow_summary = summarize_cash_flow_projection(projection, starting_cash, period)
+    projection_start = cash_flow_start_period or period
+    projection = get_cash_flow_projection(db, client_id, projection_start, months=cash_flow_months, starting_cash=starting_cash)
+    cash_flow_summary = summarize_cash_flow_projection(projection, starting_cash, projection_start)
 
     return {
         "period": period,
@@ -378,11 +515,16 @@ def get_budget_summary(db: Session, client_id: int, period: str) -> dict:
         "plan_lines": plan_lines,
         "expense_accounts": [
             {
-                "id": line["account_id"] or 0,
+                "id": line["account_id"] or line["id"] or -(line.get("recurring_transaction_id") or 0),
+                "account_id": line["account_id"],
                 "name": line["target_name"],
                 "amount": line["amount"],
                 "balance": line["actual"],
                 "plan_line_id": line.get("id"),
+                "recurring_amount": line.get("recurring_amount", 0.0),
+                "source": line.get("source"),
+                "sync_status": line.get("sync_status"),
+                "recurring_transaction_id": line.get("recurring_transaction_id"),
             }
             for line in expense_lines
         ],
@@ -427,26 +569,26 @@ def get_cash_flow_projection(
     rows = []
     for idx in range(months):
         period = add_months(start_period, idx)
-        recurring = recurring_totals(db, client_id, period)
         lines = db.query(models.MonthlyPlanLine).filter(
             models.MonthlyPlanLine.client_id == client_id,
             models.MonthlyPlanLine.target_period == period,
             models.MonthlyPlanLine.is_active.is_(True),
         ).all()
-        income = recurring["income"] + recurring["borrowing"] + sum(
+        income = sum(
             line.amount or 0.0 for line in lines if line.line_type in INFLOW_LINE_TYPES
         )
-        expense = recurring["fixed_costs"] + sum(
+        expense = sum(
             line.amount or 0.0 for line in lines if line.line_type == "expense"
         )
-        allocation = recurring["allocations"] + sum(
+        allocation = sum(
             line.amount or 0.0 for line in lines if line.line_type == "allocation"
         )
-        debt = recurring["debt_payments"] + sum(
+        debt = sum(
             line.amount or 0.0 for line in lines if line.line_type == "debt_payment"
         )
         net = income - expense - allocation - debt
         cash += net
+        setup_warnings = recurrence_setup_warnings(db, client_id, period, lines)
         rows.append({
             "period": period,
             "inflow": round(income, 0),
@@ -455,9 +597,55 @@ def get_cash_flow_projection(
             "debt": round(debt, 0),
             "net_cash": round(net, 0),
             "ending_cash": round(cash, 0),
-            "status": "shortfall" if cash < 0 else ("warning" if net < 0 else "ok"),
+            "status": "shortfall" if cash < 0 else ("warning" if setup_warnings or net < 0 else "ok"),
+            "setup_warnings": setup_warnings,
         })
     return rows
+
+
+def recurrence_setup_warnings(
+    db: Session,
+    client_id: int,
+    period: str,
+    plan_models: list[models.MonthlyPlanLine],
+) -> list[dict]:
+    recurrence_lines = recurring_plan_lines(db, client_id, period)
+    plan_by_recurring_id = {
+        line.recurring_transaction_id: line
+        for line in plan_models
+        if line.recurring_transaction_id
+    }
+    plan_by_key = {
+        _plan_match_key(line.line_type, line.target_type, line.account_id, line.name): line
+        for line in plan_models
+    }
+    warnings = []
+    for recurring_line in recurrence_lines:
+        matched = plan_by_recurring_id.get(recurring_line["recurring_transaction_id"])
+        if not matched:
+            matched = plan_by_key.get(_plan_match_key(
+                recurring_line["line_type"],
+                recurring_line["target_type"],
+                recurring_line["account_id"],
+                recurring_line["name"],
+            ))
+        if not matched:
+            warnings.append({
+                "type": "missing_budget",
+                "recurring_transaction_id": recurring_line["recurring_transaction_id"],
+                "name": recurring_line["name"],
+                "amount": recurring_line["recurring_amount"],
+            })
+            continue
+        if round(matched.amount or 0.0, 0) != round(recurring_line["recurring_amount"], 0):
+            warnings.append({
+                "type": "amount_diff",
+                "recurring_transaction_id": recurring_line["recurring_transaction_id"],
+                "name": recurring_line["name"],
+                "amount": recurring_line["recurring_amount"],
+                "budget_amount": round(matched.amount or 0.0, 0),
+            })
+    return warnings
 
 
 def summarize_cash_flow_projection(

@@ -14,7 +14,7 @@ import {
 import { useToast } from '../components/Toast';
 import { useClient } from '../context/ClientContext';
 import { formatCurrency as formatCurrencyWithSetting, getCurrencySymbol } from '../utils/currency';
-import type { Transaction } from '../types';
+import type { RecurringTransaction, Transaction } from '../types';
 
 const MAIN_TABS = [
     { id: 'transaction', label: 'Transaction' },
@@ -135,7 +135,7 @@ export default function Journal() {
     const [filters, setFilters] = useState(loadStoredFilters);
     const [showFilters, setShowFilters] = useState(false);
     const [editingTransactionId, setEditingTransactionId] = useState<number | null>(null);
-    const [recurringItems, setRecurringItems] = useState<any[]>([]);
+    const [recurringItems, setRecurringItems] = useState<RecurringTransaction[]>([]);
     const [accounts, setAccounts] = useState<AccountItem[]>([]);
     const [isProcessing, setIsProcessing] = useState(false);
     const { showToast } = useToast();
@@ -172,6 +172,9 @@ export default function Journal() {
         frequency: 'Monthly',
         day_of_month: '1',
         month_of_year: '1',
+        start_period: '',
+        end_period: '',
+        auto_post: true,
     });
 
     const fromAccounts = accounts.filter((a) => ACCOUNT_RULES[formData.type].fromTypes.includes(a.account_type));
@@ -444,6 +447,9 @@ export default function Journal() {
                 frequency: newRecurring.frequency,
                 day_of_month: parseInt(newRecurring.day_of_month),
                 month_of_year: newRecurring.frequency === 'Yearly' ? parseInt(newRecurring.month_of_year) : null,
+                start_period: newRecurring.start_period || null,
+                end_period: newRecurring.end_period || null,
+                auto_post: newRecurring.auto_post,
             };
 
             if (editingRecurringId) {
@@ -461,6 +467,7 @@ export default function Journal() {
             setNewRecurring({
                 name: '', amount: '', type: 'Expense', from_account_id: '',
                 to_account_id: '', frequency: 'Monthly', day_of_month: '1', month_of_year: '1',
+                start_period: '', end_period: '', auto_post: true,
             });
             const recs = await getRecurringTransactions();
             setRecurringItems(recs);
@@ -480,6 +487,9 @@ export default function Journal() {
             frequency: item.frequency,
             day_of_month: item.day_of_month.toString(),
             month_of_year: item.month_of_year ? item.month_of_year.toString() : '1',
+            start_period: item.start_period || '',
+            end_period: item.end_period || '',
+            auto_post: item.auto_post ?? true,
         });
         setEditingRecurringId(item.id);
         setShowAddRecurring(true);
@@ -742,6 +752,7 @@ export default function Journal() {
                                     setNewRecurring({
                                         name: '', amount: '', type: 'Expense', from_account_id: '',
                                         to_account_id: '', frequency: 'Monthly', day_of_month: '1', month_of_year: '1',
+                                        start_period: '', end_period: '', auto_post: true,
                                     });
                                 }}
                                 className="p-1 bg-cyan-600 hover:bg-cyan-500 text-white rounded"
@@ -753,12 +764,16 @@ export default function Journal() {
                         </div>
                         <div className="space-y-2">
                             {recurringItems.map((item) => (
-                                <div key={item.id} className="flex items-center justify-between py-2 px-3 bg-slate-800/30 border border-slate-700 group">
+                                <div key={item.id} className="flex items-center justify-between py-2 px-3 bg-slate-800/30 border border-slate-700">
                                     <div>
                                         <p className="text-xs font-medium">{item.name}</p>
-                                        <p className="text-[10px] text-slate-500">{item.frequency} / {formatCurrency(item.amount)}</p>
+                                        <p className="text-[10px] text-slate-500">
+                                            {item.frequency} / {formatCurrency(item.amount)}
+                                            {(item.start_period || item.end_period) && ` / ${item.start_period || '...'}-${item.end_period || '...'}`}
+                                            {!item.auto_post && ' / no auto-post'}
+                                        </p>
                                     </div>
-                                    <div className="flex gap-1 opacity-0 group-hover:opacity-100">
+                                    <div className="flex gap-1">
                                         <button
                                             type="button"
                                             onClick={() => handleEditRecurring(item)}
@@ -928,6 +943,36 @@ export default function Journal() {
                                             </div>
                                         </>
                                     )}
+
+                                    <div>
+                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Start Month</label>
+                                        <input
+                                            type="month"
+                                            value={newRecurring.start_period}
+                                            onChange={e => setNewRecurring({ ...newRecurring, start_period: e.target.value })}
+                                            className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums focus:border-cyan-500 focus:outline-none"
+                                        />
+                                    </div>
+
+                                    <div>
+                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">End Month</label>
+                                        <input
+                                            type="month"
+                                            value={newRecurring.end_period}
+                                            onChange={e => setNewRecurring({ ...newRecurring, end_period: e.target.value })}
+                                            className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums focus:border-cyan-500 focus:outline-none"
+                                        />
+                                    </div>
+
+                                    <label className="col-span-2 flex items-center gap-2 text-xs text-slate-300">
+                                        <input
+                                            type="checkbox"
+                                            checked={newRecurring.auto_post}
+                                            onChange={e => setNewRecurring({ ...newRecurring, auto_post: e.target.checked })}
+                                            className="accent-cyan-500"
+                                        />
+                                        Auto post journal entries
+                                    </label>
                                 </div>
 
                                 <div className="flex gap-2 pt-2">
@@ -940,7 +985,6 @@ export default function Journal() {
                         )}
                     </div>
                 )}
-
             </div>
         </TabPanel>
     );

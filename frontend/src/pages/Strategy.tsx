@@ -1,5 +1,5 @@
 ﻿import { useEffect, useState } from 'react';
-import { Archive, ChevronLeft, ChevronRight, Copy, Edit2, Info, Plus, Save, Sparkles, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Archive, ChevronLeft, ChevronRight, Copy, Edit2, Info, Plus, RefreshCw, Save, SlidersHorizontal, Sparkles, Trash2, Unlink, X } from 'lucide-react';
 import TabPanel from '../components/TabPanel';
 import { useToast } from '../components/Toast';
 import { useClient } from '../context/ClientContext';
@@ -39,10 +39,15 @@ import type {
 
 interface BudgetAccount {
     id: number;
+    account_id?: number | null;
     name: string;
     amount: number;
     balance: number;
     plan_line_id?: number | null;
+    recurring_amount?: number;
+    recurring_transaction_id?: number | null;
+    source?: string | null;
+    sync_status?: 'synced' | 'missing' | 'diff' | null;
 }
 
 interface BudgetSummary {
@@ -75,6 +80,13 @@ interface BudgetSummary {
         net_cash: number;
         ending_cash: number;
         status: 'ok' | 'warning' | 'shortfall';
+        setup_warnings?: Array<{
+            type: 'missing_budget' | 'amount_diff';
+            recurring_transaction_id: number;
+            name: string;
+            amount: number;
+            budget_amount?: number;
+        }>;
     }>;
     cash_flow_summary?: {
         runway_months: number;
@@ -112,6 +124,9 @@ export default function Strategy() {
     const { currentClient } = useClient();
     const [activeTab, setActiveTab] = useState('budgeting');
     const [currentPeriod, setCurrentPeriod] = useState(new Date().toISOString().slice(0, 7));
+    const [cashFlowStartPeriod, setCashFlowStartPeriod] = useState(new Date().toISOString().slice(0, 7));
+    const [cashFlowMonths, setCashFlowMonths] = useState(12);
+    const [showCashFlowSettings, setShowCashFlowSettings] = useState(false);
     const [budgetSummary, setBudgetSummary] = useState<BudgetSummary | null>(null);
     const [budgetEdits, setBudgetEdits] = useState<Record<number, number>>({});
     const [showBudgetCategoryForm, setShowBudgetCategoryForm] = useState(false);
@@ -176,7 +191,10 @@ export default function Strategy() {
 
     const fetchBudgetSummary = async (period = currentPeriod) => {
         try {
-            const summary = await getBudgetSummary(period);
+            const summary = await getBudgetSummary(period, {
+                cash_flow_start_period: cashFlowStartPeriod,
+                cash_flow_months: cashFlowMonths,
+            });
             const edits: Record<number, number> = {};
             summary.expense_accounts.forEach((account: BudgetAccount) => {
                 edits[account.id] = account.amount;
@@ -235,7 +253,7 @@ export default function Strategy() {
             fetchBudgetReferences();
         }
         if (activeTab === 'capsules') fetchCapsules();
-    }, [activeTab, currentPeriod]);
+    }, [activeTab, currentPeriod, cashFlowStartPeriod, cashFlowMonths]);
 
     const changePeriod = (delta: number) => {
         const [year, month] = currentPeriod.split('-').map(Number);
@@ -271,24 +289,29 @@ export default function Strategy() {
 
     const saveBudget = async () => {
         try {
-            const expenseLines = Object.entries(budgetEdits).map(([accountId, amount]) => {
+            const expenseLines = Object.entries(budgetEdits).flatMap(([accountId, amount]) => {
                 const account = budgetSummary?.expense_accounts.find((item) => item.id === Number(accountId));
-                return {
+                if (account?.source === 'recurrence' && !account.plan_line_id) return [];
+                return [{
                     id: account?.plan_line_id ?? null,
                     target_period: currentPeriod,
                     line_type: 'expense',
                     target_type: 'account',
                     target_id: null,
-                    account_id: Number(accountId),
+                    account_id: account?.account_id ?? Number(accountId),
                     source_account_id: null,
                     name: account?.name ?? null,
                     amount,
                     priority: 2,
                     note: null,
+                    source: account?.source === 'recurrence' ? 'recurrence' : 'manual',
+                    recurring_transaction_id: account?.recurring_transaction_id ?? null,
                     is_active: true,
-                };
+                }];
             });
-            const otherLines = planLineDrafts.map((line) => ({
+            const otherLines = planLineDrafts
+                .filter((line) => !(line.source === 'recurrence' && !line.id))
+                .map((line) => ({
                 id: line.id ?? null,
                 target_period: currentPeriod,
                 line_type: line.line_type,
@@ -300,6 +323,8 @@ export default function Strategy() {
                 amount: Number(line.amount || 0),
                 priority: line.priority ?? 2,
                 note: line.note ?? null,
+                source: line.source === 'recurrence' ? 'recurrence' : 'manual',
+                recurring_transaction_id: line.recurring_transaction_id ?? null,
                 is_active: true,
             }));
             await saveMonthlyPlanLines([...expenseLines, ...otherLines]);
@@ -440,6 +465,115 @@ export default function Strategy() {
         )));
     };
 
+    const syncRecurringBudgetAccount = async (account: BudgetAccount) => {
+        if (!account.recurring_transaction_id) return;
+        try {
+            await saveMonthlyPlanLines([{
+                id: account.plan_line_id ?? null,
+                target_period: currentPeriod,
+                line_type: 'expense',
+                target_type: 'account',
+                target_id: null,
+                account_id: account.account_id ?? account.id ?? null,
+                source_account_id: null,
+                name: account.name,
+                amount: Number(account.recurring_amount || 0),
+                priority: 2,
+                note: null,
+                source: 'recurrence',
+                recurring_transaction_id: account.recurring_transaction_id,
+                is_active: true,
+            }]);
+            showToast('Synced with recurrence', 'success');
+            await fetchBudgetSummary();
+        } catch (error) {
+            showToast('Failed to sync recurrence', 'error');
+        }
+    };
+
+    const syncRecurringPlanLine = async (line: EditablePlanLine) => {
+        if (!line.recurring_transaction_id) return;
+        try {
+            await saveMonthlyPlanLines([{
+                id: line.id ?? null,
+                target_period: currentPeriod,
+                line_type: line.line_type,
+                target_type: line.target_type,
+                target_id: line.target_id ?? null,
+                account_id: line.account_id ?? null,
+                source_account_id: line.source_account_id ?? null,
+                name: line.name || line.target_name || null,
+                amount: Number(line.recurring_amount || 0),
+                priority: line.priority ?? 2,
+                note: line.note ?? null,
+                source: 'recurrence',
+                recurring_transaction_id: line.recurring_transaction_id,
+                is_active: true,
+            }]);
+            showToast('Synced with recurrence', 'success');
+            await fetchBudgetSummary();
+        } catch (error) {
+            showToast('Failed to sync recurrence', 'error');
+        }
+    };
+
+    const unlinkRecurringBudgetAccount = async (account: BudgetAccount) => {
+        if (!account.plan_line_id) return;
+        try {
+            await saveMonthlyPlanLines([{
+                id: account.plan_line_id,
+                target_period: currentPeriod,
+                line_type: 'expense',
+                target_type: 'account',
+                target_id: null,
+                account_id: account.account_id ?? account.id ?? null,
+                source_account_id: null,
+                name: account.name,
+                amount: Number(budgetEdits[account.id] ?? account.amount ?? 0),
+                priority: 2,
+                note: null,
+                source: 'manual',
+                recurring_transaction_id: null,
+                is_active: true,
+            }]);
+            showToast('Recurrence sync removed', 'info');
+            await fetchBudgetSummary();
+        } catch (error) {
+            showToast('Failed to remove recurrence sync', 'error');
+        }
+    };
+
+    const unlinkRecurringPlanLine = async (line: EditablePlanLine) => {
+        if (!line.id) return;
+        try {
+            await saveMonthlyPlanLines([{
+                id: line.id,
+                target_period: currentPeriod,
+                line_type: line.line_type,
+                target_type: line.target_type,
+                target_id: line.target_id ?? null,
+                account_id: line.account_id ?? null,
+                source_account_id: line.source_account_id ?? null,
+                name: line.name || line.target_name || null,
+                amount: Number(line.amount || 0),
+                priority: line.priority ?? 2,
+                note: line.note ?? null,
+                source: 'manual',
+                recurring_transaction_id: null,
+                is_active: true,
+            }]);
+            showToast('Recurrence sync removed', 'info');
+            await fetchBudgetSummary();
+        } catch (error) {
+            showToast('Failed to remove recurrence sync', 'error');
+        }
+    };
+
+    const jumpToCashFlowPeriod = (period: string) => {
+        setCurrentPeriod(period);
+        setCashFlowStartPeriod(period);
+    };
+
     const addPlanLine = () => {
         const amount = Number(planLineForm.amount || '0') || 0;
         let targetType = planLineForm.target_type;
@@ -483,6 +617,10 @@ export default function Strategy() {
                 actual: 0,
                 variance: amount,
                 priority: 2,
+                source: 'manual',
+                recurring_transaction_id: null,
+                recurring_amount: 0,
+                sync_status: null,
                 is_active: true,
             },
         ]));
@@ -682,6 +820,7 @@ export default function Strategy() {
     const renderBudgeting = () => {
         const variableActualTotal = (budgetSummary?.expense_accounts ?? []).reduce((sum, account) => sum + (account.balance || 0), 0);
         const variableVarianceTotal = variableBudgetTotal - variableActualTotal;
+        const variableRecurringTotal = (budgetSummary?.expense_accounts ?? []).reduce((sum, account) => sum + Number(account.recurring_amount || 0), 0);
         const cashFlowSummary = budgetSummary?.cash_flow_summary;
         const cashFlowHorizon = cashFlowSummary?.horizon_months ?? budgetSummary?.cash_flow_projection?.length ?? 12;
         const runwayLabel = cashFlowSummary
@@ -826,6 +965,7 @@ export default function Strategy() {
             const rows = planLinesFor(types);
             const totalActual = planGroupActual(types);
             const totalPlan = planGroupTotal(types);
+            const totalRecurring = rows.reduce((sum, line) => sum + Number(line.recurring_amount || 0), 0);
             return (
                 <div className="mt-6">
                     <div className="flex items-center justify-between mb-3">
@@ -849,15 +989,17 @@ export default function Strategy() {
                                     <th className="px-2 py-2 text-left font-normal">Target</th>
                                     <th className="px-2 py-2 text-right font-normal">{actualLabel}</th>
                                     <th className="px-2 py-2 text-right font-normal">Plan</th>
+                                    <th className="px-2 py-2 text-right font-normal">Recurrence</th>
                                     <th className="px-2 py-2 text-right font-normal">Variance</th>
                                     <th className="px-2 py-2 text-right font-normal">Edit</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-800/70">
                                 {rows.length === 0 ? (
-                                    <tr><td colSpan={6} className="px-2 py-4 text-slate-600">{emptyText}</td></tr>
+                                    <tr><td colSpan={7} className="px-2 py-4 text-slate-600">{emptyText}</td></tr>
                                 ) : rows.map((line) => {
                                     const variance = Number(line.amount || 0) - Number(line.actual || 0);
+                                    const isRecurringControlled = line.source === 'recurrence';
                                     return (
                                         <tr key={line.local_id} className="hover:bg-slate-800/30 group">
                                             <td className="px-2 py-2 text-slate-400">{line.line_type.replace('_', ' ')}</td>
@@ -868,13 +1010,31 @@ export default function Strategy() {
                                                     type="number"
                                                     step="1000"
                                                     value={line.amount}
+                                                    disabled={isRecurringControlled}
                                                     onChange={(event) => updatePlanLineAmount(line.local_id, Number(event.target.value) || 0)}
-                                                    className="w-24 bg-transparent border-b border-slate-700 focus:border-cyan-500 text-right font-mono-nums outline-none"
+                                                    className={`w-24 bg-transparent border-b text-right font-mono-nums outline-none ${isRecurringControlled ? 'border-transparent text-slate-500' : 'border-slate-700 focus:border-cyan-500'}`}
                                                 />
+                                            </td>
+                                            <td className={`px-2 py-2 text-right font-mono-nums ${(line.recurring_amount || 0) > 0 ? 'text-cyan-300' : 'text-slate-600'}`}>
+                                                {(line.recurring_amount || 0) > 0 ? formatCurrency(line.recurring_amount) : '-'}
                                             </td>
                                             <td className={`px-2 py-2 text-right font-mono-nums ${variance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(variance)}</td>
                                             <td className="px-2 py-2 text-right">
-                                                <button type="button" title="Remove line" onClick={() => removePlanLine(line)} className="text-slate-500 hover:text-rose-400 opacity-0 group-hover:opacity-100"><Trash2 size={12} /></button>
+                                                <div className="flex items-center justify-end gap-2">
+                                                    {line.recurring_transaction_id && (
+                                                        <button type="button" title={line.sync_status === 'synced' ? 'Synced with recurrence' : 'Sync with recurrence'} onClick={() => syncRecurringPlanLine(line)} className={line.sync_status === 'synced' ? 'text-cyan-400 hover:text-cyan-200' : 'text-amber-400 hover:text-amber-200'}>
+                                                            <RefreshCw size={12} />
+                                                        </button>
+                                                    )}
+                                                    {line.source === 'recurrence' && line.id && (
+                                                        <button type="button" title="Remove recurrence sync" onClick={() => unlinkRecurringPlanLine(line)} className="text-slate-500 hover:text-amber-300">
+                                                            <Unlink size={12} />
+                                                        </button>
+                                                    )}
+                                                    {!isRecurringControlled && (
+                                                        <button type="button" title="Remove line" onClick={() => removePlanLine(line)} className="text-slate-500 hover:text-rose-400"><Trash2 size={12} /></button>
+                                                    )}
+                                                </div>
                                             </td>
                                         </tr>
                                     );
@@ -884,6 +1044,7 @@ export default function Strategy() {
                                     <td className="px-2 py-2 text-slate-500">{title}</td>
                                     <td className="px-2 py-2 text-right font-mono-nums text-slate-300">{formatCurrency(totalActual)}</td>
                                     <td className="px-2 py-2 text-right font-mono-nums text-slate-200">{formatCurrency(totalPlan)}</td>
+                                    <td className="px-2 py-2 text-right font-mono-nums text-cyan-300">{formatCurrency(totalRecurring)}</td>
                                     <td colSpan={2} />
                                 </tr>
                             </tbody>
@@ -1020,6 +1181,7 @@ export default function Strategy() {
                                 <th className="px-2 py-2 text-left font-normal">Category</th>
                                 <th className="px-2 py-2 text-right font-normal">Actual</th>
                                 <th className="px-2 py-2 text-right font-normal">Budget</th>
+                                <th className="px-2 py-2 text-right font-normal">Recurrence</th>
                                 <th className="px-2 py-2 text-right font-normal">Variance</th>
                                 <th className="px-2 py-2 text-right font-normal">Edit</th>
                             </tr>
@@ -1027,7 +1189,7 @@ export default function Strategy() {
                         <tbody className="divide-y divide-slate-800/70">
                             {(budgetSummary?.expense_accounts ?? []).length === 0 && (
                                 <tr>
-                                    <td colSpan={5} className="px-2 py-8 text-center text-slate-600 text-xs">
+                                    <td colSpan={6} className="px-2 py-8 text-center text-slate-600 text-xs">
                                         費目が追加されていません。右上の+から追加してください。
                                     </td>
                                 </tr>
@@ -1035,15 +1197,27 @@ export default function Strategy() {
                             {(budgetSummary?.expense_accounts ?? []).map((account) => {
                                 const limit = budgetEdits[account.id] ?? 0;
                                 const variance = limit - (account.balance || 0);
+                                const isRecurringControlled = account.source === 'recurrence';
                                 return (
                                     <tr key={account.id} className="hover:bg-slate-800/30 group">
                                         <td className="px-2 py-2 text-slate-300">{account.name}</td>
                                         <td className="px-2 py-2 text-right font-mono-nums text-slate-500">{formatCurrency(account.balance)}</td>
-                                        <td className="px-2 py-2 text-right"><input type="number" step="1000" value={limit} onChange={(event) => setBudgetEdits({ ...budgetEdits, [account.id]: Number(event.target.value) || 0 })} className="w-24 bg-transparent border-b border-slate-700 focus:border-cyan-500 text-right font-mono-nums outline-none" /></td>
+                                        <td className="px-2 py-2 text-right"><input type="number" step="1000" value={limit} disabled={isRecurringControlled} onChange={(event) => setBudgetEdits({ ...budgetEdits, [account.id]: Number(event.target.value) || 0 })} className={`w-24 bg-transparent border-b text-right font-mono-nums outline-none ${isRecurringControlled ? 'border-transparent text-slate-500' : 'border-slate-700 focus:border-cyan-500'}`} /></td>
+                                        <td className={`px-2 py-2 text-right font-mono-nums ${(account.recurring_amount || 0) > 0 ? 'text-cyan-300' : 'text-slate-600'}`}>{(account.recurring_amount || 0) > 0 ? formatCurrency(account.recurring_amount) : '-'}</td>
                                         <td className={`px-2 py-2 text-right font-mono-nums ${variance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(variance)}</td>
                                         <td className="px-2 py-2 text-right flex items-center justify-end gap-2">
-                                            <button type="button" title="Edit category" onClick={() => openBudgetCategoryForm(account)} className="text-slate-500 hover:text-cyan-400 opacity-0 group-hover:opacity-100"><Edit2 size={12} /></button>
-                                            <button type="button" title="Remove from budget" onClick={() => removeBudgetCategory(account.id, account.plan_line_id)} className="text-slate-500 hover:text-rose-400 opacity-0 group-hover:opacity-100"><Trash2 size={12} /></button>
+                                            {account.recurring_transaction_id && (
+                                                <button type="button" title={account.sync_status === 'synced' ? 'Synced with recurrence' : 'Sync with recurrence'} onClick={() => syncRecurringBudgetAccount(account)} className={account.sync_status === 'synced' ? 'text-cyan-400 hover:text-cyan-200' : 'text-amber-400 hover:text-amber-200'}><RefreshCw size={12} /></button>
+                                            )}
+                                            {account.source === 'recurrence' && account.plan_line_id && (
+                                                <button type="button" title="Remove recurrence sync" onClick={() => unlinkRecurringBudgetAccount(account)} className="text-slate-500 hover:text-amber-300"><Unlink size={12} /></button>
+                                            )}
+                                            {!isRecurringControlled && (
+                                                <>
+                                                    <button type="button" title="Edit category" onClick={() => openBudgetCategoryForm(account)} className="text-slate-500 hover:text-cyan-400"><Edit2 size={12} /></button>
+                                                    <button type="button" title="Remove from budget" onClick={() => removeBudgetCategory(account.id, account.plan_line_id)} className="text-slate-500 hover:text-rose-400"><Trash2 size={12} /></button>
+                                                </>
+                                            )}
                                         </td>
                                     </tr>
                                 );
@@ -1052,7 +1226,7 @@ export default function Strategy() {
                                 <tr className="hover:bg-slate-800/30 opacity-60">
                                     <td className="px-2 py-2 text-slate-500 italic">others</td>
                                     <td className="px-2 py-2 text-right font-mono-nums text-slate-500">{formatCurrency(budgetSummary!.others_actual)}</td>
-                                    <td colSpan={2} className="px-2 py-2 text-right text-[9px] text-slate-600">未予算費目の合計</td>
+                                    <td colSpan={3} className="px-2 py-2 text-right text-[9px] text-slate-600">未予算費目の合計</td>
                                     <td className="px-2 py-2" />
                                 </tr>
                             )}
@@ -1060,6 +1234,7 @@ export default function Strategy() {
                                 <td className="px-2 py-2 text-slate-100 font-medium">Total</td>
                                 <td className="px-2 py-2 text-right font-mono-nums text-slate-300">{formatCurrency(variableActualTotal)}</td>
                                 <td className="px-2 py-2 text-right font-mono-nums text-slate-200">{formatCurrency(variableBudgetTotal)}</td>
+                                <td className="px-2 py-2 text-right font-mono-nums text-cyan-300">{formatCurrency(variableRecurringTotal)}</td>
                                 <td className={`px-2 py-2 text-right font-mono-nums ${variableVarianceTotal >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>{formatCurrency(variableVarianceTotal)}</td>
                                 <td className="px-2 py-2" />
                             </tr>
@@ -1073,8 +1248,39 @@ export default function Strategy() {
                 <div className="mt-6">
                     <div className="flex items-center justify-between mb-3">
                         {renderTitleWithInfo('12 Month Cash Flow', 'projection')}
-                        <span className="text-xs text-slate-500 font-mono-nums">Start {formatCurrency(budgetSummary?.starting_cash)}</span>
+                        <div className="flex items-center gap-3">
+                            <span className="text-xs text-slate-500 font-mono-nums">Start {formatCurrency(budgetSummary?.starting_cash)}</span>
+                            <button type="button" title="Cash flow settings" onClick={() => setShowCashFlowSettings(!showCashFlowSettings)} className="text-slate-500 hover:text-cyan-400">
+                                <SlidersHorizontal size={14} />
+                            </button>
+                        </div>
                     </div>
+                    {showCashFlowSettings && (
+                        <div className="mb-3 border border-slate-800 bg-slate-950/40 p-3">
+                            <div className="grid grid-cols-2 gap-3 text-xs max-w-md">
+                                <label className="space-y-1 text-slate-500">
+                                    <span className="block text-[10px] uppercase">Start Month</span>
+                                    <input
+                                        type="month"
+                                        value={cashFlowStartPeriod}
+                                        onChange={(event) => setCashFlowStartPeriod(event.target.value || currentPeriod)}
+                                        className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-slate-200 font-mono-nums"
+                                    />
+                                </label>
+                                <label className="space-y-1 text-slate-500">
+                                    <span className="block text-[10px] uppercase">Months</span>
+                                    <input
+                                        type="number"
+                                        min={1}
+                                        max={36}
+                                        value={cashFlowMonths}
+                                        onChange={(event) => setCashFlowMonths(Math.min(36, Math.max(1, Number(event.target.value) || 12)))}
+                                        className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-slate-200 font-mono-nums"
+                                    />
+                                </label>
+                            </div>
+                        </div>
+                    )}
                     <div className="grid grid-cols-2 min-[1280px]:grid-cols-4 gap-2 mb-3">
                         <div className="border border-slate-800 bg-slate-950/40 px-3 py-2">
                             <p className="text-[10px] uppercase text-slate-500">Runway</p>
@@ -1117,7 +1323,21 @@ export default function Strategy() {
                             <tbody className="divide-y divide-slate-800/70">
                                 {(budgetSummary?.cash_flow_projection ?? []).map((row) => (
                                     <tr key={row.period} className="hover:bg-slate-800/30">
-                                        <td className="px-2 py-2 text-slate-300">{row.period}</td>
+                                        <td className="px-2 py-2 text-slate-300">
+                                            <div className="flex items-center gap-2">
+                                                <span>{row.period}</span>
+                                                {(row.setup_warnings?.length ?? 0) > 0 && (
+                                                    <button
+                                                        type="button"
+                                                        title={`${row.setup_warnings?.length ?? 0} recurrence item(s) need budget sync`}
+                                                        onClick={() => jumpToCashFlowPeriod(row.period)}
+                                                        className="text-amber-400 hover:text-amber-200"
+                                                    >
+                                                        <AlertTriangle size={12} />
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </td>
                                         <td className="px-2 py-2 text-right font-mono-nums text-emerald-400">{formatCurrency(row.inflow)}</td>
                                         <td className="px-2 py-2 text-right font-mono-nums text-amber-300">{formatCurrency(row.expense)}</td>
                                         <td className="px-2 py-2 text-right font-mono-nums text-cyan-300">{formatCurrency(row.allocation)}</td>
