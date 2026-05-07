@@ -134,6 +134,12 @@ def actual_for_plan_line(
     needle = name.lower()
 
     if target_type == "capsule" and target_id:
+        capsule = db.query(models.Capsule).filter(
+            models.Capsule.id == target_id,
+            models.Capsule.client_id == client_id,
+        ).first()
+        if capsule and line_type == "allocation":
+            return capsule_balance(db, capsule)
         account_id = capsule_accounts.get(target_id)
 
     if line_type == "income":
@@ -347,6 +353,7 @@ def get_budget_summary(db: Session, client_id: int, period: str) -> dict:
         feasibility_status = "shortfall"
 
     projection = get_cash_flow_projection(db, client_id, period, months=12, starting_cash=starting_cash)
+    cash_flow_summary = summarize_cash_flow_projection(projection, starting_cash, period)
 
     return {
         "period": period,
@@ -403,6 +410,7 @@ def get_budget_summary(db: Session, client_id: int, period: str) -> dict:
             for line in capsule_lines
         ],
         "cash_flow_projection": projection,
+        "cash_flow_summary": cash_flow_summary,
         "goals_count": len(events_with_progress),
         "total_goal_gap": round(total_gap, 0),
     }
@@ -450,6 +458,32 @@ def get_cash_flow_projection(
             "status": "shortfall" if cash < 0 else ("warning" if net < 0 else "ok"),
         })
     return rows
+
+
+def summarize_cash_flow_projection(
+    projection: list[dict],
+    starting_cash: float,
+    start_period: str,
+) -> dict[str, float | int | str | None]:
+    cash_points = [round(starting_cash, 0)] + [row["ending_cash"] for row in projection]
+    lowest_cash = min(cash_points) if cash_points else round(starting_cash, 0)
+    shortfall_month = start_period if starting_cash < 0 else None
+    runway_months = 0 if starting_cash < 0 else len(projection)
+
+    if starting_cash >= 0:
+        for index, row in enumerate(projection):
+            if row["ending_cash"] < 0:
+                shortfall_month = row["period"]
+                runway_months = index
+                break
+
+    return {
+        "runway_months": runway_months,
+        "lowest_cash": round(lowest_cash, 0),
+        "required_buffer": round(max(0.0, -lowest_cash), 0),
+        "shortfall_month": shortfall_month,
+        "horizon_months": len(projection),
+    }
 
 
 def save_plan_lines(db: Session, client_id: int, payloads: list) -> list[models.MonthlyPlanLine]:

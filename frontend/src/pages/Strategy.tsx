@@ -1,5 +1,5 @@
 ﻿import { useEffect, useState } from 'react';
-import { Archive, ChevronLeft, ChevronRight, Copy, Edit2, Plus, Save, Sparkles, Trash2, X } from 'lucide-react';
+import { Archive, ChevronLeft, ChevronRight, Copy, Edit2, Info, Plus, Save, Sparkles, Trash2, X } from 'lucide-react';
 import TabPanel from '../components/TabPanel';
 import { useToast } from '../components/Toast';
 import { useClient } from '../context/ClientContext';
@@ -76,6 +76,13 @@ interface BudgetSummary {
         ending_cash: number;
         status: 'ok' | 'warning' | 'shortfall';
     }>;
+    cash_flow_summary?: {
+        runway_months: number;
+        lowest_cash: number;
+        required_buffer: number;
+        shortfall_month?: string | null;
+        horizon_months: number;
+    };
     others_actual: number;
     sinking_funds: Array<{
         id: number;
@@ -675,6 +682,49 @@ export default function Strategy() {
     const renderBudgeting = () => {
         const variableActualTotal = (budgetSummary?.expense_accounts ?? []).reduce((sum, account) => sum + (account.balance || 0), 0);
         const variableVarianceTotal = variableBudgetTotal - variableActualTotal;
+        const cashFlowSummary = budgetSummary?.cash_flow_summary;
+        const cashFlowHorizon = cashFlowSummary?.horizon_months ?? budgetSummary?.cash_flow_projection?.length ?? 12;
+        const runwayLabel = cashFlowSummary
+            ? cashFlowSummary.shortfall_month
+                ? `${cashFlowSummary.runway_months} mo`
+                : `${cashFlowHorizon}+ mo`
+            : '-';
+        const language = String(currentClient?.general_settings?.language || 'ja').toLowerCase();
+        const isJapanese = language.startsWith('ja');
+        const tableHelp = {
+            income: {
+                en: 'Planned cash inflows for this month, including income, borrowing, and asset drawdowns.',
+                ja: '今月の資金流入計画です。収入、借入、資産取り崩しを含みます。',
+            },
+            variable: {
+                en: 'Flexible spending limits for expense categories. These reduce available monthly cash.',
+                ja: '費用カテゴリごとの変動支出予算です。今月使える現金を減らします。',
+            },
+            allocation: {
+                en: 'Planned transfers into assets, capsules, life events, reserves, or registry items.',
+                ja: '資産、Capsule、LifeEvent、予備費、Registry項目への配分計画です。',
+            },
+            debt: {
+                en: 'Planned cash outflows for loan, credit, or other liability repayments.',
+                ja: 'ローン、クレジット、その他負債の返済による資金流出計画です。',
+            },
+            projection: {
+                en: 'A twelve-month cash forecast based on recurring transactions and monthly plan lines.',
+                ja: '定期取引と月次計画行にもとづく12か月のキャッシュ予測です。',
+            },
+        };
+        const helpText = (key: keyof typeof tableHelp) => tableHelp[key][isJapanese ? 'ja' : 'en'];
+        const renderTitleWithInfo = (title: string, helpKey: keyof typeof tableHelp) => (
+            <div className="flex items-center gap-1.5">
+                <h2 className="text-xs text-slate-400 uppercase tracking-wider">{title}</h2>
+                <span className="relative inline-flex group">
+                    <Info size={12} className="text-slate-500 group-hover:text-cyan-400" />
+                    <span className="pointer-events-none absolute left-1/2 top-5 z-20 hidden w-64 -translate-x-1/2 border border-slate-700 bg-slate-950 px-3 py-2 text-[10px] leading-relaxed text-slate-300 shadow-xl group-hover:block">
+                        {helpText(helpKey)}
+                    </span>
+                </span>
+            </div>
+        );
         const targetOptions = (() => {
             if (planLineForm.target_type === 'account') {
                 const allowedTypes =
@@ -771,6 +821,7 @@ export default function Strategy() {
             types: MonthlyPlanLineType[],
             addType: MonthlyPlanLineType,
             emptyText: string,
+            actualLabel = 'Actual',
         ) => {
             const rows = planLinesFor(types);
             const totalActual = planGroupActual(types);
@@ -778,7 +829,10 @@ export default function Strategy() {
             return (
                 <div className="mt-6">
                     <div className="flex items-center justify-between mb-3">
-                        <h2 className="text-xs text-slate-400 uppercase tracking-wider">{title}</h2>
+                        {renderTitleWithInfo(
+                            title,
+                            addType === 'income' ? 'income' : addType === 'allocation' ? 'allocation' : 'debt',
+                        )}
                         <div className="flex items-center gap-3">
                             <span className="text-xs text-slate-500 font-mono-nums">Total {formatCurrency(totalPlan)}</span>
                             <button type="button" title={`Add ${title}`} onClick={() => openPlanLineForm(addType)} className="text-slate-500 hover:text-cyan-400">
@@ -793,7 +847,7 @@ export default function Strategy() {
                                 <tr>
                                     <th className="px-2 py-2 text-left font-normal">Type</th>
                                     <th className="px-2 py-2 text-left font-normal">Target</th>
-                                    <th className="px-2 py-2 text-right font-normal">Actual</th>
+                                    <th className="px-2 py-2 text-right font-normal">{actualLabel}</th>
                                     <th className="px-2 py-2 text-right font-normal">Plan</th>
                                     <th className="px-2 py-2 text-right font-normal">Variance</th>
                                     <th className="px-2 py-2 text-right font-normal">Edit</th>
@@ -870,10 +924,12 @@ export default function Strategy() {
             </section>
 
             <section className="bg-slate-900/60 border border-slate-800 p-4 overflow-auto">
-                {renderPlanSection('Income Plan', ['income', 'borrowing', 'drawdown'], 'income', 'No expected inflows yet.')}
+                <div className="mb-8">
+                    {renderPlanSection('Income Plan', ['income', 'borrowing', 'drawdown'], 'income', 'No expected inflows yet.')}
+                </div>
 
                 <div className="flex items-center justify-between mb-3">
-                    <h2 className="text-xs text-slate-400 uppercase tracking-wider">Variable Budget</h2>
+                    {renderTitleWithInfo('Variable Budget', 'variable')}
                     <div className="flex items-center gap-3">
                         <span className="text-xs text-slate-500 font-mono-nums">Total {formatCurrency(variableBudgetTotal)}</span>
                         <button type="button" title="Add category" onClick={() => openBudgetCategoryForm()} className="text-slate-500 hover:text-emerald-400">
@@ -1011,13 +1067,39 @@ export default function Strategy() {
                     </table>
                 </div>
 
-                {renderPlanSection('Allocation Plan', ['allocation'], 'allocation', 'No asset allocations yet.')}
+                {renderPlanSection('Allocation Plan', ['allocation'], 'allocation', 'No asset allocations yet.', 'Allocated')}
                 {renderPlanSection('Debt Plan', ['debt_payment'], 'debt_payment', 'No planned debt payments yet.')}
 
                 <div className="mt-6">
                     <div className="flex items-center justify-between mb-3">
-                        <h2 className="text-xs text-slate-400 uppercase tracking-wider">12 Month Cash Flow</h2>
+                        {renderTitleWithInfo('12 Month Cash Flow', 'projection')}
                         <span className="text-xs text-slate-500 font-mono-nums">Start {formatCurrency(budgetSummary?.starting_cash)}</span>
+                    </div>
+                    <div className="grid grid-cols-2 min-[1280px]:grid-cols-4 gap-2 mb-3">
+                        <div className="border border-slate-800 bg-slate-950/40 px-3 py-2">
+                            <p className="text-[10px] uppercase text-slate-500">Runway</p>
+                            <p className={`mt-1 font-mono-nums text-sm ${cashFlowSummary?.shortfall_month ? 'text-amber-300' : 'text-emerald-300'}`}>
+                                {runwayLabel}
+                            </p>
+                        </div>
+                        <div className="border border-slate-800 bg-slate-950/40 px-3 py-2">
+                            <p className="text-[10px] uppercase text-slate-500">Lowest Cash</p>
+                            <p className={`mt-1 font-mono-nums text-sm ${(cashFlowSummary?.lowest_cash ?? 0) >= 0 ? 'text-slate-200' : 'text-rose-400'}`}>
+                                {formatCurrency(cashFlowSummary?.lowest_cash)}
+                            </p>
+                        </div>
+                        <div className="border border-slate-800 bg-slate-950/40 px-3 py-2">
+                            <p className="text-[10px] uppercase text-slate-500">Required Buffer</p>
+                            <p className={`mt-1 font-mono-nums text-sm ${(cashFlowSummary?.required_buffer ?? 0) > 0 ? 'text-amber-300' : 'text-slate-200'}`}>
+                                {formatCurrency(cashFlowSummary?.required_buffer)}
+                            </p>
+                        </div>
+                        <div className="border border-slate-800 bg-slate-950/40 px-3 py-2">
+                            <p className="text-[10px] uppercase text-slate-500">Shortfall Month</p>
+                            <p className={`mt-1 font-mono-nums text-sm ${cashFlowSummary?.shortfall_month ? 'text-rose-400' : 'text-emerald-300'}`}>
+                                {cashFlowSummary?.shortfall_month ?? 'None'}
+                            </p>
+                        </div>
                     </div>
                     <div className="overflow-x-auto border border-slate-800">
                         <table className="w-full text-[10px]">

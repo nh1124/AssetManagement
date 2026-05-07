@@ -175,6 +175,43 @@ def test_save_plan_lines_updates_capsule_contribution_and_legacy_budget() -> Non
         db.close()
 
 
+def test_capsule_allocation_actual_uses_current_holding_balance() -> None:
+    db = _session()
+    try:
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        account = models.Account(client_id=1, name="bank", account_type="asset")
+        db.add_all([client, account])
+        db.flush()
+        capsule = models.Capsule(
+            client_id=1,
+            name="Emergency Fund",
+            target_amount=300000,
+            monthly_contribution=0,
+            account_id=account.id,
+        )
+        db.add(capsule)
+        db.flush()
+        db.add(models.CapsuleHolding(capsule_id=capsule.id, account_id=account.id, held_amount=120000))
+        db.add(models.MonthlyPlanLine(
+            client_id=1,
+            target_period="2026-05",
+            line_type="allocation",
+            target_type="capsule",
+            target_id=capsule.id,
+            account_id=account.id,
+            name=capsule.name,
+            amount=50000,
+        ))
+        db.commit()
+
+        summary = get_budget_summary(db, client_id=1, period="2026-05")
+        line = next(item for item in summary["plan_lines"] if item["target_type"] == "capsule")
+
+        assert line["actual"] == 120000
+    finally:
+        db.close()
+
+
 def test_cash_flow_projection_places_yearly_income_in_matching_month() -> None:
     db = _session()
     try:
@@ -204,5 +241,38 @@ def test_cash_flow_projection_places_yearly_income_in_matching_month() -> None:
         assert may["inflow"] == 0
         assert june["period"] == "2026-06"
         assert june["inflow"] == 600000
+    finally:
+        db.close()
+
+
+def test_cash_flow_summary_reports_buffer_and_shortfall_month() -> None:
+    db = _session()
+    try:
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        cash = models.Account(client_id=1, name="cash", account_type="asset")
+        rent = models.Account(client_id=1, name="rent", account_type="expense")
+        db.add_all([client, cash, rent])
+        db.flush()
+        db.add(models.RecurringTransaction(
+            client_id=1,
+            name="rent",
+            amount=80000,
+            type="Expense",
+            from_account_id=cash.id,
+            to_account_id=rent.id,
+            frequency="Monthly",
+            is_active=True,
+        ))
+        db.commit()
+
+        summary = get_budget_summary(db, client_id=1, period="2026-05")
+
+        assert summary["cash_flow_summary"] == {
+            "runway_months": 0,
+            "lowest_cash": -960000,
+            "required_buffer": 960000,
+            "shortfall_month": "2026-05",
+            "horizon_months": 12,
+        }
     finally:
         db.close()
