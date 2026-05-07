@@ -259,6 +259,8 @@ class MonthlyPlanLine(MonthlyPlanLineBase):
     variance: float = 0.0
     recurring_amount: float = 0.0
     sync_status: Optional[str] = None
+    recurring_transaction_ids: Optional[list[int]] = None
+    recurring_items: Optional[list[dict]] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

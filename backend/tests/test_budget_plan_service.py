@@ -311,12 +311,26 @@ def test_recurring_budget_context_converts_currency_to_client_currency() -> None
             frequency="Monthly",
             is_active=True,
         ))
+        db.add(models.RecurringTransaction(
+            client_id=1,
+            name="Storage Subscription",
+            amount=1000,
+            currency="JPY",
+            type="Expense",
+            from_account_id=cash.id,
+            to_account_id=subscription.id,
+            frequency="Monthly",
+            is_active=True,
+        ))
         db.commit()
 
         summary = get_budget_summary(db, client_id=1, period="2026-05")
-        account = next(item for item in summary["expense_accounts"] if item["name"] == "subscription")
+        subscription_accounts = [item for item in summary["expense_accounts"] if item["name"] == "subscription"]
+        account = subscription_accounts[0]
 
-        assert account["recurring_amount"] == 3000
+        assert len(subscription_accounts) == 1
+        assert account["recurring_amount"] == 4000
         assert account["sync_status"] == "missing"
+        assert len(account["recurring_transaction_ids"]) == 2
     finally:
         db.close()

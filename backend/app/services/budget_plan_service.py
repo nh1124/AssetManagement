@@ -366,6 +366,14 @@ def _recurring_plan_line(
         "note": None,
         "source": "recurrence",
         "recurring_transaction_id": rec.id,
+        "recurring_transaction_ids": [rec.id],
+        "recurring_items": [{
+            "id": rec.id,
+            "name": rec.name,
+            "amount": round(amount, 0),
+            "original_amount": round(rec.amount or 0.0, 0),
+            "currency": rec.currency,
+        }],
         "sync_status": "missing",
         "is_active": True,
     }
@@ -377,12 +385,37 @@ def recurring_plan_lines(db: Session, client_id: int, period: str) -> list[dict]
         models.RecurringTransaction.client_id == client_id,
         models.RecurringTransaction.is_active.is_(True),
     ).all()
-    lines = [_recurring_plan_line(db, rec, period, name_maps) for rec in recurrences]
-    return [line for line in lines if line is not None]
+    lines = [line for rec in recurrences if (line := _recurring_plan_line(db, rec, period, name_maps)) is not None]
+    aggregated: dict[tuple, dict] = {}
+    for line in lines:
+        key = _plan_match_key(line["line_type"], line["target_type"], line["account_id"], line["name"])
+        if key not in aggregated:
+            item = dict(line)
+            if item["account_id"]:
+                item["name"] = item["account_name"] or item["target_name"]
+                item["target_name"] = item["account_name"] or item["target_name"]
+            aggregated[key] = item
+            continue
+        existing = aggregated[key]
+        existing["recurring_amount"] = round((existing.get("recurring_amount") or 0.0) + (line.get("recurring_amount") or 0.0), 0)
+        existing["recurring_transaction_ids"] = [
+            *existing.get("recurring_transaction_ids", []),
+            *line.get("recurring_transaction_ids", []),
+        ]
+        existing["recurring_items"] = [
+            *existing.get("recurring_items", []),
+            *line.get("recurring_items", []),
+        ]
+    return list(aggregated.values())
 
 
 def _merge_recurring_context(plan_lines: list[dict], recurrence_lines: list[dict]) -> list[dict]:
-    recurrence_by_id = {line["recurring_transaction_id"]: line for line in recurrence_lines}
+    recurrence_by_id = {
+        recurring_id: line
+        for line in recurrence_lines
+        for recurring_id in line.get("recurring_transaction_ids", [line.get("recurring_transaction_id")])
+        if recurring_id is not None
+    }
     recurrence_by_key = {
         _plan_match_key(line["line_type"], line["target_type"], line["account_id"], line["name"]): line
         for line in recurrence_lines
@@ -402,19 +435,21 @@ def _merge_recurring_context(plan_lines: list[dict], recurrence_lines: list[dict
             )
         recurring_amount = round((recurring or {}).get("recurring_amount") or 0.0, 0)
         if recurring:
-            matched_recurring_ids.add(recurring["recurring_transaction_id"])
+            matched_recurring_ids.update(recurring.get("recurring_transaction_ids", [recurring["recurring_transaction_id"]]))
             line["recurring_transaction_id"] = line.get("recurring_transaction_id") or recurring["recurring_transaction_id"]
+            line["recurring_transaction_ids"] = recurring.get("recurring_transaction_ids", [recurring["recurring_transaction_id"]])
+            line["recurring_items"] = recurring.get("recurring_items", [])
         line["recurring_amount"] = recurring_amount
         if not recurring:
             line["sync_status"] = None
-        elif linked_by_id and line.get("source") == "recurrence" and round(line.get("amount") or 0.0, 0) == recurring_amount:
+        elif line.get("source") == "recurrence" and round(line.get("amount") or 0.0, 0) == recurring_amount:
             line["sync_status"] = "synced"
         else:
             line["sync_status"] = "diff"
 
     plan_lines.extend([
         line for line in recurrence_lines
-        if line["recurring_transaction_id"] not in matched_recurring_ids
+        if not set(line.get("recurring_transaction_ids", [line["recurring_transaction_id"]])).intersection(matched_recurring_ids)
     ])
     return plan_lines
 
@@ -539,6 +574,8 @@ def get_budget_summary(
                 "source": line.get("source"),
                 "sync_status": line.get("sync_status"),
                 "recurring_transaction_id": line.get("recurring_transaction_id"),
+                "recurring_transaction_ids": line.get("recurring_transaction_ids", []),
+                "recurring_items": line.get("recurring_items", []),
             }
             for line in expense_lines
         ],

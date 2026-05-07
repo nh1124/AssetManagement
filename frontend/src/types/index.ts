@@ -119,6 +119,14 @@ export interface MonthlyPlanLine {
     variance?: number;
     recurring_amount?: number;
     sync_status?: 'synced' | 'missing' | 'diff' | null;
+    recurring_transaction_ids?: number[];
+    recurring_items?: Array<{
+        id: number;
+        name: string;
+        amount: number;
+        original_amount: number;
+        currency: string;
+    }>;
     priority?: number;
     note?: string | null;
     recurring_transaction_id?: number | null;

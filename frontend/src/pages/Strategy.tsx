@@ -46,6 +46,14 @@ interface BudgetAccount {
     plan_line_id?: number | null;
     recurring_amount?: number;
     recurring_transaction_id?: number | null;
+    recurring_transaction_ids?: number[];
+    recurring_items?: Array<{
+        id: number;
+        name: string;
+        amount: number;
+        original_amount: number;
+        currency: string;
+    }>;
     source?: string | null;
     sync_status?: 'synced' | 'missing' | 'diff' | null;
 }
@@ -459,6 +467,20 @@ export default function Strategy() {
 
     const planTargetLabel = (line: MonthlyPlanLine) => line.target_name || line.name || line.account_name || 'Manual line';
 
+    const planLineKey = (line: Partial<MonthlyPlanLine> & { name?: string | null }) => {
+        const accountId = line.account_id ?? 0;
+        const targetId = line.target_id ?? 0;
+        const name = accountId || targetId ? '' : (line.name || line.target_name || '').trim().toLowerCase();
+        return `${line.line_type || ''}|${line.target_type || 'manual'}|${accountId}|${targetId}|${name}`;
+    };
+
+    const recurringContextFor = (line: Partial<MonthlyPlanLine>) => {
+        const key = planLineKey(line);
+        return [...planLineDrafts, ...(budgetSummary?.plan_lines ?? [])].find((candidate) => (
+            candidate.recurring_transaction_id && planLineKey(candidate) === key
+        ));
+    };
+
     const updatePlanLineAmount = (localId: string, amount: number) => {
         setPlanLineDrafts((prev) => prev.map((line) => (
             line.local_id === localId ? { ...line, amount } : line
@@ -491,6 +513,38 @@ export default function Strategy() {
         }
     };
 
+    const syncRecurringBudgetAccounts = async (accountsToSync: BudgetAccount[]) => {
+        const payload = accountsToSync
+            .filter((account) => account.recurring_transaction_id && account.sync_status !== 'synced')
+            .map((account) => ({
+                id: account.plan_line_id ?? null,
+                target_period: currentPeriod,
+                line_type: 'expense',
+                target_type: 'account',
+                target_id: null,
+                account_id: account.account_id ?? account.id ?? null,
+                source_account_id: null,
+                name: account.name,
+                amount: Number(account.recurring_amount || 0),
+                priority: 2,
+                note: null,
+                source: 'recurrence',
+                recurring_transaction_id: account.recurring_transaction_id ?? null,
+                is_active: true,
+            }));
+        if (payload.length === 0) {
+            showToast('No recurrence differences to sync', 'info');
+            return;
+        }
+        try {
+            await saveMonthlyPlanLines(payload);
+            showToast(`Synced ${payload.length} recurrence item${payload.length === 1 ? '' : 's'}`, 'success');
+            await fetchBudgetSummary();
+        } catch (error) {
+            showToast('Failed to sync recurrences', 'error');
+        }
+    };
+
     const syncRecurringPlanLine = async (line: EditablePlanLine) => {
         if (!line.recurring_transaction_id) return;
         try {
@@ -514,6 +568,93 @@ export default function Strategy() {
             await fetchBudgetSummary();
         } catch (error) {
             showToast('Failed to sync recurrence', 'error');
+        }
+    };
+
+    const syncRecurringPlanLines = async (lines: EditablePlanLine[]) => {
+        const payload = lines
+            .filter((line) => line.recurring_transaction_id && line.sync_status !== 'synced')
+            .map((line) => ({
+                id: line.id ?? null,
+                target_period: currentPeriod,
+                line_type: line.line_type,
+                target_type: line.target_type,
+                target_id: line.target_id ?? null,
+                account_id: line.account_id ?? null,
+                source_account_id: line.source_account_id ?? null,
+                name: line.name || line.target_name || null,
+                amount: Number(line.recurring_amount || 0),
+                priority: line.priority ?? 2,
+                note: line.note ?? null,
+                source: 'recurrence',
+                recurring_transaction_id: line.recurring_transaction_id ?? null,
+                is_active: true,
+            }));
+        if (payload.length === 0) {
+            showToast('No recurrence differences to sync', 'info');
+            return;
+        }
+        try {
+            await saveMonthlyPlanLines(payload);
+            showToast(`Synced ${payload.length} recurrence item${payload.length === 1 ? '' : 's'}`, 'success');
+            await fetchBudgetSummary();
+        } catch (error) {
+            showToast('Failed to sync recurrences', 'error');
+        }
+    };
+
+    const syncAllRecurrencesForPeriod = async (period: string) => {
+        try {
+            const summary = period === currentPeriod
+                ? budgetSummary
+                : await getBudgetSummary(period, { cash_flow_start_period: period, cash_flow_months: 1 });
+            if (!summary) return;
+            const expensePayload = (summary.expense_accounts ?? [])
+                .filter((account: BudgetAccount) => account.recurring_transaction_id && account.sync_status !== 'synced')
+                .map((account: BudgetAccount) => ({
+                    id: account.plan_line_id ?? null,
+                    target_period: period,
+                    line_type: 'expense',
+                    target_type: 'account',
+                    target_id: null,
+                    account_id: account.account_id ?? account.id ?? null,
+                    source_account_id: null,
+                    name: account.name,
+                    amount: Number(account.recurring_amount || 0),
+                    priority: 2,
+                    note: null,
+                    source: 'recurrence',
+                    recurring_transaction_id: account.recurring_transaction_id ?? null,
+                    is_active: true,
+                }));
+            const planPayload = (summary.plan_lines ?? [])
+                .filter((line: MonthlyPlanLine) => line.line_type !== 'expense' && line.recurring_transaction_id && line.sync_status !== 'synced')
+                .map((line: MonthlyPlanLine) => ({
+                    id: line.id ?? null,
+                    target_period: period,
+                    line_type: line.line_type,
+                    target_type: line.target_type,
+                    target_id: line.target_id ?? null,
+                    account_id: line.account_id ?? null,
+                    source_account_id: line.source_account_id ?? null,
+                    name: line.name || line.target_name || null,
+                    amount: Number(line.recurring_amount || 0),
+                    priority: line.priority ?? 2,
+                    note: line.note ?? null,
+                    source: 'recurrence',
+                    recurring_transaction_id: line.recurring_transaction_id ?? null,
+                    is_active: true,
+                }));
+            const payload = [...expensePayload, ...planPayload];
+            if (payload.length === 0) {
+                showToast('No recurrence differences to sync', 'info');
+                return;
+            }
+            await saveMonthlyPlanLines(payload);
+            showToast(`Synced ${payload.length} recurrence item${payload.length === 1 ? '' : 's'} for ${period}`, 'success');
+            await fetchBudgetSummary();
+        } catch (error) {
+            showToast('Failed to sync recurrences', 'error');
         }
     };
 
@@ -574,6 +715,80 @@ export default function Strategy() {
         setCashFlowStartPeriod(period);
     };
 
+    const copyCurrentBudgetToPeriod = async (targetPeriod: string) => {
+        if (targetPeriod === currentPeriod) {
+            showToast('Already on this month', 'info');
+            return;
+        }
+        try {
+            const targetSummary = await getBudgetSummary(targetPeriod, { cash_flow_start_period: targetPeriod, cash_flow_months: 1 });
+            const targetByKey = new Map<string, MonthlyPlanLine>();
+            (targetSummary.plan_lines ?? []).forEach((line: MonthlyPlanLine) => {
+                if (line.id) targetByKey.set(planLineKey(line), line);
+            });
+
+            const expensePayload = (budgetSummary?.expense_accounts ?? [])
+                .filter((account) => account.plan_line_id)
+                .map((account) => {
+                    const sourceLine = {
+                        line_type: 'expense' as MonthlyPlanLineType,
+                        target_type: 'account' as MonthlyPlanTargetType,
+                        account_id: account.account_id ?? account.id ?? null,
+                        target_id: null,
+                        name: account.name,
+                    };
+                    const targetLine = targetByKey.get(planLineKey(sourceLine));
+                    return {
+                        id: targetLine?.id ?? null,
+                        target_period: targetPeriod,
+                        line_type: 'expense',
+                        target_type: 'account',
+                        target_id: null,
+                        account_id: account.account_id ?? account.id ?? null,
+                        source_account_id: null,
+                        name: account.name,
+                        amount: Number(budgetEdits[account.id] ?? account.amount ?? 0),
+                        priority: 2,
+                        note: null,
+                        source: account.source === 'recurrence' ? 'recurrence' : 'manual',
+                        recurring_transaction_id: account.source === 'recurrence' ? account.recurring_transaction_id ?? null : null,
+                        is_active: true,
+                    };
+                });
+            const planPayload = planLineDrafts
+                .filter((line) => line.id && line.line_type !== 'expense')
+                .map((line) => {
+                    const targetLine = targetByKey.get(planLineKey(line));
+                    return {
+                        id: targetLine?.id ?? null,
+                        target_period: targetPeriod,
+                        line_type: line.line_type,
+                        target_type: line.target_type,
+                        target_id: line.target_id ?? null,
+                        account_id: line.account_id ?? null,
+                        source_account_id: line.source_account_id ?? null,
+                        name: line.name || line.target_name || null,
+                        amount: Number(line.amount || 0),
+                        priority: line.priority ?? 2,
+                        note: line.note ?? null,
+                        source: line.source === 'recurrence' ? 'recurrence' : 'manual',
+                        recurring_transaction_id: line.source === 'recurrence' ? line.recurring_transaction_id ?? null : null,
+                        is_active: true,
+                    };
+                });
+            const payload = [...expensePayload, ...planPayload];
+            if (payload.length === 0) {
+                showToast('Save this month before copying', 'info');
+                return;
+            }
+            await saveMonthlyPlanLines(payload);
+            showToast(`Copied current budget to ${targetPeriod}`, 'success');
+            await fetchBudgetSummary();
+        } catch (error) {
+            showToast('Failed to copy budget to month', 'error');
+        }
+    };
+
     const addPlanLine = () => {
         const amount = Number(planLineForm.amount || '0') || 0;
         let targetType = planLineForm.target_type;
@@ -602,6 +817,14 @@ export default function Strategy() {
 
         if (!name && targetType === 'manual') return;
         const localId = `new-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        const recurringContext = recurringContextFor({
+            target_period: currentPeriod,
+            line_type: planLineForm.line_type,
+            target_type: targetType,
+            target_id: targetId,
+            account_id: accountId,
+            name,
+        });
         setPlanLineDrafts((prev) => ([
             ...prev,
             {
@@ -618,9 +841,11 @@ export default function Strategy() {
                 variance: amount,
                 priority: 2,
                 source: 'manual',
-                recurring_transaction_id: null,
-                recurring_amount: 0,
-                sync_status: null,
+                recurring_transaction_id: recurringContext?.recurring_transaction_id ?? null,
+                recurring_transaction_ids: recurringContext?.recurring_transaction_ids ?? [],
+                recurring_items: recurringContext?.recurring_items ?? [],
+                recurring_amount: recurringContext?.recurring_amount ?? 0,
+                sync_status: recurringContext ? 'diff' : null,
                 is_active: true,
             },
         ]));
@@ -821,6 +1046,7 @@ export default function Strategy() {
         const variableActualTotal = (budgetSummary?.expense_accounts ?? []).reduce((sum, account) => sum + (account.balance || 0), 0);
         const variableVarianceTotal = variableBudgetTotal - variableActualTotal;
         const variableRecurringTotal = (budgetSummary?.expense_accounts ?? []).reduce((sum, account) => sum + Number(account.recurring_amount || 0), 0);
+        const variableSyncableAccounts = (budgetSummary?.expense_accounts ?? []).filter((account) => account.recurring_transaction_id && account.sync_status !== 'synced');
         const cashFlowSummary = budgetSummary?.cash_flow_summary;
         const cashFlowHorizon = cashFlowSummary?.horizon_months ?? budgetSummary?.cash_flow_projection?.length ?? 12;
         const runwayLabel = cashFlowSummary
@@ -966,6 +1192,7 @@ export default function Strategy() {
             const totalActual = planGroupActual(types);
             const totalPlan = planGroupTotal(types);
             const totalRecurring = rows.reduce((sum, line) => sum + Number(line.recurring_amount || 0), 0);
+            const syncableRows = rows.filter((line) => line.recurring_transaction_id && line.sync_status !== 'synced');
             return (
                 <div className="mt-6">
                     <div className="flex items-center justify-between mb-3">
@@ -975,6 +1202,15 @@ export default function Strategy() {
                         )}
                         <div className="flex items-center gap-3">
                             <span className="text-xs text-slate-500 font-mono-nums">Total {formatCurrency(totalPlan)}</span>
+                            <button
+                                type="button"
+                                title="Sync all recurrence differences"
+                                disabled={syncableRows.length === 0}
+                                onClick={() => syncRecurringPlanLines(syncableRows)}
+                                className={`text-slate-500 ${syncableRows.length > 0 ? 'hover:text-amber-300' : 'opacity-30 cursor-not-allowed'}`}
+                            >
+                                <RefreshCw size={14} />
+                            </button>
                             <button type="button" title={`Add ${title}`} onClick={() => openPlanLineForm(addType)} className="text-slate-500 hover:text-cyan-400">
                                 <Plus size={14} />
                             </button>
@@ -1093,6 +1329,15 @@ export default function Strategy() {
                     {renderTitleWithInfo('Variable Budget', 'variable')}
                     <div className="flex items-center gap-3">
                         <span className="text-xs text-slate-500 font-mono-nums">Total {formatCurrency(variableBudgetTotal)}</span>
+                        <button
+                            type="button"
+                            title="Sync all recurrence differences"
+                            disabled={variableSyncableAccounts.length === 0}
+                            onClick={() => syncRecurringBudgetAccounts(variableSyncableAccounts)}
+                            className={`text-slate-500 ${variableSyncableAccounts.length > 0 ? 'hover:text-amber-300' : 'opacity-30 cursor-not-allowed'}`}
+                        >
+                            <RefreshCw size={14} />
+                        </button>
                         <button type="button" title="Add category" onClick={() => openBudgetCategoryForm()} className="text-slate-500 hover:text-emerald-400">
                             <Plus size={14} />
                         </button>
@@ -1326,16 +1571,44 @@ export default function Strategy() {
                                         <td className="px-2 py-2 text-slate-300">
                                             <div className="flex items-center gap-2">
                                                 <span>{row.period}</span>
-                                                {(row.setup_warnings?.length ?? 0) > 0 && (
+                                                {(row.setup_warnings?.length ?? 0) > 0 ? (
                                                     <button
                                                         type="button"
-                                                        title={`${row.setup_warnings?.length ?? 0} recurrence item(s) need budget sync`}
+                                                        title={(row.setup_warnings ?? []).map((warning) => `${warning.name}: ${formatCurrency(warning.amount)}`).join('\n')}
                                                         onClick={() => jumpToCashFlowPeriod(row.period)}
                                                         className="text-amber-400 hover:text-amber-200"
                                                     >
                                                         <AlertTriangle size={12} />
                                                     </button>
+                                                ) : (
+                                                    <span title="No recurrence warnings" className="text-slate-700">
+                                                        <AlertTriangle size={12} />
+                                                    </span>
                                                 )}
+                                                <button
+                                                    type="button"
+                                                    title={`Jump to ${row.period}`}
+                                                    onClick={() => jumpToCashFlowPeriod(row.period)}
+                                                    className="text-slate-500 hover:text-cyan-300"
+                                                >
+                                                    <ChevronRight size={12} />
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    title={`Sync all recurrence differences for ${row.period}`}
+                                                    onClick={() => syncAllRecurrencesForPeriod(row.period)}
+                                                    className={(row.setup_warnings?.length ?? 0) > 0 ? 'text-amber-400 hover:text-amber-200' : 'text-slate-500 hover:text-amber-300'}
+                                                >
+                                                    <RefreshCw size={12} />
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    title={`Copy current month budget to ${row.period}`}
+                                                    onClick={() => copyCurrentBudgetToPeriod(row.period)}
+                                                    className="text-slate-500 hover:text-emerald-300"
+                                                >
+                                                    <Copy size={12} />
+                                                </button>
                                             </div>
                                         </td>
                                         <td className="px-2 py-2 text-right font-mono-nums text-emerald-400">{formatCurrency(row.inflow)}</td>
