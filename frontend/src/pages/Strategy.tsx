@@ -1,5 +1,5 @@
 ﻿import { useEffect, useState } from 'react';
-import { AlertTriangle, Archive, ChevronLeft, ChevronRight, Copy, Edit2, Info, Plus, RefreshCw, Save, SlidersHorizontal, Sparkles, Trash2, Unlink, X } from 'lucide-react';
+import { AlertTriangle, Archive, CalendarDays, ChevronLeft, ChevronRight, Copy, Edit2, Info, Plus, RefreshCw, Save, SlidersHorizontal, Sparkles, Trash2, Unlink, X } from 'lucide-react';
 import TabPanel from '../components/TabPanel';
 import { useToast } from '../components/Toast';
 import { useClient } from '../context/ClientContext';
@@ -133,12 +133,14 @@ const TABS = [
     { id: 'capsules', label: 'Capsules' },
 ];
 
+const monthKey = (date = new Date()) => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+
 export default function Strategy() {
     const { showToast } = useToast();
     const { currentClient } = useClient();
     const [activeTab, setActiveTab] = useState('budgeting');
-    const [currentPeriod, setCurrentPeriod] = useState(new Date().toISOString().slice(0, 7));
-    const [cashFlowStartPeriod, setCashFlowStartPeriod] = useState(new Date().toISOString().slice(0, 7));
+    const [currentPeriod, setCurrentPeriod] = useState(monthKey());
+    const [cashFlowStartPeriod, setCashFlowStartPeriod] = useState(monthKey());
     const [cashFlowMonths, setCashFlowMonths] = useState(12);
     const [showCashFlowSettings, setShowCashFlowSettings] = useState(false);
     const [budgetSummary, setBudgetSummary] = useState<BudgetSummary | null>(null);
@@ -277,6 +279,10 @@ export default function Strategy() {
         const [year, month] = currentPeriod.split('-').map(Number);
         const date = new Date(year, month - 1 + delta, 1);
         setCurrentPeriod(`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`);
+    };
+
+    const jumpToCurrentMonth = () => {
+        setCurrentPeriod(monthKey());
     };
 
     const shiftPlannedDateToPeriod = (plannedDate: string | null | undefined, period: string) => {
@@ -1187,6 +1193,7 @@ export default function Strategy() {
             planLinesFor(types).reduce((sum, line) => sum + Number(line.amount || 0), 0);
         const planGroupActual = (types: MonthlyPlanLineType[]) =>
             planLinesFor(types).reduce((sum, line) => sum + Number(line.actual || 0), 0);
+        const isCurrentMonth = currentPeriod === monthKey();
         const renderPlanLineForm = (lineType: MonthlyPlanLineType) => (
             expandedPlanForm === lineType && (
                 <div className="mb-3 border border-cyan-800/40 bg-cyan-900/10 p-3">
@@ -1380,10 +1387,29 @@ export default function Strategy() {
             <section className="space-y-4">
                 <div className="bg-slate-900/60 border border-slate-800 p-4">
                     <h2 className="text-xs text-slate-400 uppercase tracking-wider mb-3">Monthly Frame</h2>
-                    <div className="flex items-center justify-between bg-slate-800/40 border border-slate-700 px-3 py-2 mb-3">
-                        <button onClick={() => changePeriod(-1)} className="p-1 hover:bg-slate-700 text-slate-400"><ChevronLeft size={16} /></button>
-                        <span className="text-sm font-medium font-mono-nums">{currentPeriod}</span>
-                        <button onClick={() => changePeriod(1)} className="p-1 hover:bg-slate-700 text-slate-400"><ChevronRight size={16} /></button>
+                    <div className="flex items-center gap-2 bg-slate-800/40 border border-slate-700 px-2 py-2 mb-3">
+                        <button type="button" title="Previous month" onClick={() => changePeriod(-1)} className="p-1 hover:bg-slate-700 text-slate-400"><ChevronLeft size={16} /></button>
+                        <label className="relative flex-1">
+                            <CalendarDays size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+                            <input
+                                type="month"
+                                value={currentPeriod}
+                                onChange={(event) => {
+                                    if (event.target.value) setCurrentPeriod(event.target.value);
+                                }}
+                                className="w-full bg-slate-950/60 border border-slate-700 py-1.5 pl-7 pr-2 text-center text-sm font-medium font-mono-nums text-slate-100 outline-none focus:border-cyan-500"
+                            />
+                        </label>
+                        <button
+                            type="button"
+                            title="Jump to current month"
+                            disabled={isCurrentMonth}
+                            onClick={jumpToCurrentMonth}
+                            className={`px-2 py-1 text-[10px] border ${isCurrentMonth ? 'border-slate-800 text-slate-600 cursor-not-allowed' : 'border-slate-700 text-slate-400 hover:border-cyan-600 hover:text-cyan-300'}`}
+                        >
+                            Today
+                        </button>
+                        <button type="button" title="Next month" onClick={() => changePeriod(1)} className="p-1 hover:bg-slate-700 text-slate-400"><ChevronRight size={16} /></button>
                     </div>
                     <div className="grid grid-cols-2 gap-2 text-xs">
                         <div className="bg-slate-800/50 border border-slate-700 p-2"><p className="text-slate-500">Income</p><p className="font-mono-nums text-emerald-400">{formatCurrency(budgetSummary?.monthly_income)}</p></div>
@@ -1586,10 +1612,12 @@ export default function Strategy() {
 
                 {renderPlanSection('Allocation Plan', ['allocation'], 'allocation', 'No asset allocations yet.', 'Allocated')}
                 {renderPlanSection('Debt Plan', ['debt_payment'], 'debt_payment', 'No planned debt payments yet.')}
+            </section>
 
-                <div className="mt-6">
+            <section className="min-[960px]:col-span-2 bg-slate-900/60 border border-slate-800 p-4 overflow-auto">
+                <div>
                     <div className="flex items-center justify-between mb-3">
-                        {renderTitleWithInfo('12 Month Cash Flow', 'projection')}
+                        {renderTitleWithInfo('Cash Flow', 'projection')}
                         <div className="flex items-center gap-3">
                             <span className="text-xs text-slate-500 font-mono-nums">Start {formatCurrency(budgetSummary?.starting_cash)}</span>
                             <button type="button" title="Cash flow settings" onClick={() => setShowCashFlowSettings(!showCashFlowSettings)} className="text-slate-500 hover:text-cyan-400">
