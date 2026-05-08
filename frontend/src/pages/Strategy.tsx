@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from 'react';
+﻿import { Fragment, useEffect, useState } from 'react';
 import { AlertTriangle, Archive, CalendarDays, ChevronLeft, ChevronRight, Copy, Edit2, Info, Plus, RefreshCw, Save, Search, SlidersHorizontal, Sparkles, Trash2, Unlink, X } from 'lucide-react';
 import TabPanel from '../components/TabPanel';
 import { useToast } from '../components/Toast';
@@ -69,6 +69,12 @@ interface BudgetAccount {
     }>;
     suggested_amount?: number;
     suggested_source?: 'recurrence' | 'product_expense' | 'recurrence_product_expense' | string | null;
+    suggested_items?: Array<{
+        id: number;
+        name: string;
+        amount: number;
+        source?: string;
+    }>;
     suggested_status?: 'synced' | 'missing' | 'diff' | null;
     source?: string | null;
     sync_status?: 'synced' | 'missing' | 'diff' | null;
@@ -162,6 +168,7 @@ export default function Strategy() {
     const [showCashFlowSettings, setShowCashFlowSettings] = useState(false);
     const [budgetSummary, setBudgetSummary] = useState<BudgetSummary | null>(null);
     const [budgetEdits, setBudgetEdits] = useState<Record<number, number>>({});
+    const [expandedSourceRows, setExpandedSourceRows] = useState<Set<string>>(new Set());
     const [showBudgetCategoryForm, setShowBudgetCategoryForm] = useState(false);
     const [expandedPlanForm, setExpandedPlanForm] = useState<MonthlyPlanLineType | null>(null);
     const [editingBudgetAccount, setEditingBudgetAccount] = useState<BudgetAccount | null>(null);
@@ -233,6 +240,113 @@ export default function Strategy() {
     const calculatedRemaining = budgetSummary?.remaining_balance ?? 0;
     const formatCurrency = (value: number | undefined | null) =>
         formatCurrencyWithSetting(value, currentClient?.general_settings?.currency);
+    type SourceDetail = {
+        id: string;
+        kind: 'recurrence' | 'product_expense' | 'product_reserve';
+        label: string;
+        amount: number;
+        conflict: boolean;
+    };
+
+    const toggleSourceRow = (key: string) => {
+        setExpandedSourceRows((prev) => {
+            const next = new Set(prev);
+            if (next.has(key)) next.delete(key);
+            else next.add(key);
+            return next;
+        });
+    };
+
+    const sourceKindLabel = (kind: SourceDetail['kind']) => {
+        if (kind === 'product_expense') return 'Expense Item';
+        if (kind === 'product_reserve') return 'Product Reserve';
+        return 'Recurrence';
+    };
+
+    const detailsHaveConflict = (details: SourceDetail[]) => (
+        new Set(details.filter((detail) => detail.amount > 0).map((detail) => detail.kind)).size > 1
+    );
+
+    const budgetSourceDetails = (account: BudgetAccount): SourceDetail[] => {
+        const recurring = (account.recurring_items ?? []).map((item) => ({
+            id: `recurrence-${item.id}`,
+            kind: 'recurrence' as const,
+            label: item.name,
+            amount: Number(item.amount || 0),
+            conflict: false,
+        }));
+        const products = (account.product_expense_items ?? []).map((item) => ({
+            id: `product-expense-${item.id}`,
+            kind: 'product_expense' as const,
+            label: item.name,
+            amount: Number(item.amount || 0),
+            conflict: false,
+        }));
+        const details = [...recurring, ...products];
+        const conflict = detailsHaveConflict(details);
+        return details.map((detail) => ({ ...detail, conflict }));
+    };
+
+    const planSourceDetails = (line: MonthlyPlanLine): SourceDetail[] => {
+        const recurring = (line.recurring_items ?? []).map((item) => ({
+            id: `recurrence-${item.id}`,
+            kind: 'recurrence' as const,
+            label: item.name,
+            amount: Number(item.amount || 0),
+            conflict: false,
+        }));
+        const suggested = (line.suggested_items ?? []).map((item) => ({
+            id: `suggested-${item.source ?? 'product'}-${item.id}`,
+            kind: (item.source === 'product_reserve' ? 'product_reserve' : 'product_expense') as SourceDetail['kind'],
+            label: item.name,
+            amount: Number(item.amount || 0),
+            conflict: false,
+        }));
+        const details = [...recurring, ...suggested];
+        const conflict = detailsHaveConflict(details);
+        return details.map((detail) => ({ ...detail, conflict }));
+    };
+
+    const renderSourceToggle = (rowKey: string, details: SourceDetail[]) => {
+        if (details.length === 0) return null;
+        const conflict = details.some((detail) => detail.conflict);
+        return (
+            <button
+                type="button"
+                title={conflict ? 'Show source details and possible conflicts' : 'Show source details'}
+                onClick={() => toggleSourceRow(rowKey)}
+                className={`inline-flex items-center gap-1 ${conflict ? 'text-amber-300 hover:text-amber-100' : 'text-slate-500 hover:text-cyan-300'}`}
+            >
+                {conflict && <AlertTriangle size={11} />}
+                <ChevronRight size={11} className={`transition-transform ${expandedSourceRows.has(rowKey) ? 'rotate-90' : ''}`} />
+            </button>
+        );
+    };
+
+    const renderSourceDetailsRow = (rowKey: string, details: SourceDetail[], colSpan: number) => {
+        if (!expandedSourceRows.has(rowKey) || details.length === 0) return null;
+        return (
+            <tr className="bg-slate-950/50">
+                <td colSpan={colSpan} className="px-3 py-2">
+                    <div className="space-y-1">
+                        {details.map((detail) => (
+                            <div key={detail.id} className="grid grid-cols-[auto_1fr_auto] items-center gap-2 text-[10px]">
+                                <span className={`inline-flex items-center gap-1 uppercase ${detail.conflict ? 'text-amber-300' : 'text-slate-500'}`}>
+                                    {detail.conflict && <AlertTriangle size={10} />}
+                                    {sourceKindLabel(detail.kind)}
+                                </span>
+                                <span className="truncate text-slate-300">{detail.label}</span>
+                                <span className="font-mono-nums text-cyan-300">{formatCurrency(detail.amount)}</span>
+                            </div>
+                        ))}
+                        {details.some((detail) => detail.conflict) && (
+                            <p className="text-[10px] text-amber-300">Multiple source types are included here. Check for possible double counting.</p>
+                        )}
+                    </div>
+                </td>
+            </tr>
+        );
+    };
 
     const fetchBudgetSummary = async (period = currentPeriod) => {
         try {
@@ -1537,88 +1651,104 @@ export default function Strategy() {
                                     const adjustment = Number(line.amount || 0) - sourceAmount;
                                     const hasSuggestedAmount = usesSuggestedColumn && sourceAmount > 0;
                                     const sourceSynced = isPlanLineSourceSynced(line);
+                                    const rowKey = `plan-${line.local_id}`;
+                                    const sourceDetails = usesSuggestedColumn
+                                        ? planSourceDetails(line)
+                                        : (line.recurring_items ?? []).map((item) => ({
+                                            id: `recurrence-${item.id}`,
+                                            kind: 'recurrence' as const,
+                                            label: item.name,
+                                            amount: Number(item.amount || 0),
+                                            conflict: false,
+                                        }));
                                     const sourceLabel = line.suggested_source === 'product_reserve'
                                         ? 'Product Reserve'
                                         : line.suggested_source || (Number(line.recurring_amount || 0) > 0 ? 'Recurrence' : '');
                                     return (
-                                        <tr key={line.local_id} className="hover:bg-slate-800/30 group">
-                                            <td className="px-2 py-2 text-slate-400">{line.line_type.replace('_', ' ')}</td>
-                                            <td className="px-2 py-2 text-slate-300">
-                                                {planTargetLabel(line)}
-                                                {line.source === 'one_time' && line.planned_date && (
-                                                    <span className="ml-2 text-[9px] text-cyan-500 font-mono-nums">{line.planned_date}</span>
-                                                )}
-                                            </td>
-                                            <td className="px-2 py-2 text-right font-mono-nums text-slate-500">{formatCurrency(line.actual)}</td>
-                                            <td className="px-2 py-2 text-right">
-                                                {hasSuggestedAmount ? (
-                                                    <div className="space-y-0.5">
-                                                        <p className="font-mono-nums text-cyan-300">{formatCurrency(sourceAmount)}</p>
-                                                        <p className="text-[9px] uppercase text-slate-500">{sourceLabel}</p>
-                                                    </div>
-                                                ) : (
-                                                    <span className={`font-mono-nums ${(line.recurring_amount || 0) > 0 ? 'text-cyan-300' : 'text-slate-600'}`}>
-                                                        {(line.recurring_amount || 0) > 0 ? formatCurrency(line.recurring_amount) : '-'}
-                                                    </span>
-                                                )}
-                                            </td>
-                                            {usesSuggestedColumn && (
-                                                <td className="px-2 py-2 text-right">
-                                                    <input
-                                                        type="number"
-                                                        step="1000"
-                                                        value={adjustment}
-                                                        onChange={(event) => {
-                                                            const nextAdjustment = Number(event.target.value) || 0;
-                                                            updatePlanLineAmount(line.local_id, sourceAmount + nextAdjustment);
-                                                        }}
-                                                        className="w-20 bg-transparent border-b border-slate-700 text-right font-mono-nums outline-none focus:border-cyan-500"
-                                                    />
+                                        <Fragment key={line.local_id}>
+                                            <tr className="hover:bg-slate-800/30 group">
+                                                <td className="px-2 py-2 text-slate-400">{line.line_type.replace('_', ' ')}</td>
+                                                <td className="px-2 py-2 text-slate-300">
+                                                    {planTargetLabel(line)}
+                                                    {line.source === 'one_time' && line.planned_date && (
+                                                        <span className="ml-2 text-[9px] text-cyan-500 font-mono-nums">{line.planned_date}</span>
+                                                    )}
                                                 </td>
-                                            )}
-                                            <td className="px-2 py-2 text-right">
-                                                {usesSuggestedColumn ? (
-                                                    <span className="font-mono-nums text-slate-200">{formatCurrency(line.amount)}</span>
-                                                ) : (
-                                                    <input
-                                                        type="number"
-                                                        step="1000"
-                                                        value={line.amount}
-                                                        disabled={isRecurringControlled}
-                                                        onChange={(event) => updatePlanLineAmount(line.local_id, Number(event.target.value) || 0)}
-                                                        className={`w-24 bg-transparent border-b text-right font-mono-nums outline-none ${isRecurringControlled ? 'border-transparent text-slate-500' : 'border-slate-700 focus:border-cyan-500'}`}
-                                                    />
+                                                <td className="px-2 py-2 text-right font-mono-nums text-slate-500">{formatCurrency(line.actual)}</td>
+                                                <td className="px-2 py-2 text-right">
+                                                    <div className="flex items-center justify-end gap-1.5">
+                                                        {renderSourceToggle(rowKey, sourceDetails)}
+                                                        {hasSuggestedAmount ? (
+                                                            <div className="space-y-0.5">
+                                                                <p className="font-mono-nums text-cyan-300">{formatCurrency(sourceAmount)}</p>
+                                                                <p className="text-[9px] uppercase text-slate-500">{sourceLabel}</p>
+                                                            </div>
+                                                        ) : (
+                                                            <span className={`font-mono-nums ${(line.recurring_amount || 0) > 0 ? 'text-cyan-300' : 'text-slate-600'}`}>
+                                                                {(line.recurring_amount || 0) > 0 ? formatCurrency(line.recurring_amount) : '-'}
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                </td>
+                                                {usesSuggestedColumn && (
+                                                    <td className="px-2 py-2 text-right">
+                                                        <input
+                                                            type="number"
+                                                            step="1000"
+                                                            value={adjustment}
+                                                            onChange={(event) => {
+                                                                const nextAdjustment = Number(event.target.value) || 0;
+                                                                updatePlanLineAmount(line.local_id, sourceAmount + nextAdjustment);
+                                                            }}
+                                                            className="w-20 bg-transparent border-b border-slate-700 text-right font-mono-nums outline-none focus:border-cyan-500"
+                                                        />
+                                                    </td>
                                                 )}
-                                            </td>
-                                            <td className={`px-2 py-2 text-right font-mono-nums ${variance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(variance)}</td>
-                                            <td className="px-2 py-2 text-right">
-                                                <div className="flex items-center justify-end gap-2">
-                                                    {!usesSuggestedColumn && line.recurring_transaction_id && (
-                                                        <button type="button" title={line.sync_status === 'synced' ? 'Synced with recurrence' : 'Sync with recurrence'} onClick={() => syncRecurringPlanLine(line)} className={line.sync_status === 'synced' ? 'text-cyan-400 hover:text-cyan-200' : 'text-amber-400 hover:text-amber-200'}>
-                                                            <RefreshCw size={12} />
-                                                        </button>
+                                                <td className="px-2 py-2 text-right">
+                                                    {usesSuggestedColumn ? (
+                                                        <span className="font-mono-nums text-slate-200">{formatCurrency(line.amount)}</span>
+                                                    ) : (
+                                                        <input
+                                                            type="number"
+                                                            step="1000"
+                                                            value={line.amount}
+                                                            disabled={isRecurringControlled}
+                                                            onChange={(event) => updatePlanLineAmount(line.local_id, Number(event.target.value) || 0)}
+                                                            className={`w-24 bg-transparent border-b text-right font-mono-nums outline-none ${isRecurringControlled ? 'border-transparent text-slate-500' : 'border-slate-700 focus:border-cyan-500'}`}
+                                                        />
                                                     )}
-                                                    {hasSuggestedAmount && (
-                                                        <button
-                                                            type="button"
-                                                            title="Sync source amount while keeping adjust"
-                                                            onClick={() => syncSuggestedPlanLine(line)}
-                                                            className={sourceSynced ? 'text-cyan-400 hover:text-cyan-200' : 'text-amber-400 hover:text-amber-200'}
-                                                        >
-                                                            <RefreshCw size={12} />
-                                                        </button>
-                                                    )}
-                                                    {sourceSynced && (
-                                                        <button type="button" title="Remove source sync" onClick={() => unlinkRecurringPlanLine(line)} className="text-slate-500 hover:text-amber-300">
-                                                            <Unlink size={12} />
-                                                        </button>
-                                                    )}
-                                                    {!isRecurringControlled && (
-                                                        <button type="button" title="Remove line" onClick={() => removePlanLine(line)} className="text-slate-500 hover:text-rose-400"><Trash2 size={12} /></button>
-                                                    )}
-                                                </div>
-                                            </td>
-                                        </tr>
+                                                </td>
+                                                <td className={`px-2 py-2 text-right font-mono-nums ${variance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(variance)}</td>
+                                                <td className="px-2 py-2 text-right">
+                                                    <div className="flex items-center justify-end gap-2">
+                                                        {!usesSuggestedColumn && line.recurring_transaction_id && (
+                                                            <button type="button" title={line.sync_status === 'synced' ? 'Synced with recurrence' : 'Sync with recurrence'} onClick={() => syncRecurringPlanLine(line)} className={line.sync_status === 'synced' ? 'text-cyan-400 hover:text-cyan-200' : 'text-amber-400 hover:text-amber-200'}>
+                                                                <RefreshCw size={12} />
+                                                            </button>
+                                                        )}
+                                                        {hasSuggestedAmount && (
+                                                            <button
+                                                                type="button"
+                                                                title="Sync source amount while keeping adjust"
+                                                                onClick={() => syncSuggestedPlanLine(line)}
+                                                                className={sourceSynced ? 'text-cyan-400 hover:text-cyan-200' : 'text-amber-400 hover:text-amber-200'}
+                                                            >
+                                                                <RefreshCw size={12} />
+                                                            </button>
+                                                        )}
+                                                        {sourceSynced && (
+                                                            <button type="button" title="Remove source sync" onClick={() => unlinkRecurringPlanLine(line)} className="text-slate-500 hover:text-amber-300">
+                                                                <Unlink size={12} />
+                                                            </button>
+                                                        )}
+                                                        {!isRecurringControlled && (
+                                                            <button type="button" title="Remove line" onClick={() => removePlanLine(line)} className="text-slate-500 hover:text-rose-400"><Trash2 size={12} /></button>
+                                                        )}
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                            {renderSourceDetailsRow(rowKey, sourceDetails, usesSuggestedColumn ? 8 : 7)}
+                                        </Fragment>
                                     );
                                 })}
                                 <tr className="border-t border-slate-700 bg-slate-800/40">
@@ -1860,6 +1990,8 @@ export default function Strategy() {
                                 const adjustment = limit - suggestedAmount;
                                 const hasSuggestion = Boolean(account.suggested_source && suggestedAmount > 0);
                                 const sourceSynced = isBudgetSourceSynced(account);
+                                const rowKey = `budget-${account.id}`;
+                                const sourceDetails = budgetSourceDetails(account);
                                 const sourceLabel = account.suggested_source === 'recurrence_product_expense'
                                     ? 'Recurrence + Items'
                                     : account.suggested_source === 'product_expense'
@@ -1868,51 +2000,57 @@ export default function Strategy() {
                                             ? 'Recurrence'
                                             : '';
                                 return (
-                                    <tr key={account.id} className="hover:bg-slate-800/30 group">
-                                        <td className="px-2 py-2 text-slate-300">
-                                            {account.name}
-                                            {account.source === 'one_time' && account.planned_date && (
-                                                <span className="ml-2 text-[9px] text-cyan-500 font-mono-nums">{account.planned_date}</span>
-                                            )}
-                                        </td>
-                                        <td className="px-2 py-2 text-right font-mono-nums text-slate-500">{formatCurrency(account.balance)}</td>
-                                        <td className="px-2 py-2 text-right">
-                                            {hasSuggestion ? (
-                                                <div className="space-y-0.5">
-                                                    <p className="font-mono-nums text-cyan-300">{formatCurrency(suggestedAmount)}</p>
-                                                    <p className="text-[9px] uppercase text-slate-500">{sourceLabel}</p>
+                                    <Fragment key={account.id}>
+                                        <tr className="hover:bg-slate-800/30 group">
+                                            <td className="px-2 py-2 text-slate-300">
+                                                {account.name}
+                                                {account.source === 'one_time' && account.planned_date && (
+                                                    <span className="ml-2 text-[9px] text-cyan-500 font-mono-nums">{account.planned_date}</span>
+                                                )}
+                                            </td>
+                                            <td className="px-2 py-2 text-right font-mono-nums text-slate-500">{formatCurrency(account.balance)}</td>
+                                            <td className="px-2 py-2 text-right">
+                                                <div className="flex items-center justify-end gap-1.5">
+                                                    {renderSourceToggle(rowKey, sourceDetails)}
+                                                    {hasSuggestion ? (
+                                                        <div className="space-y-0.5">
+                                                            <p className="font-mono-nums text-cyan-300">{formatCurrency(suggestedAmount)}</p>
+                                                            <p className="text-[9px] uppercase text-slate-500">{sourceLabel}</p>
+                                                        </div>
+                                                    ) : (
+                                                        <span className="font-mono-nums text-slate-600">-</span>
+                                                    )}
                                                 </div>
-                                            ) : (
-                                                <span className="font-mono-nums text-slate-600">-</span>
-                                            )}
-                                        </td>
-                                        <td className="px-2 py-2 text-right">
-                                            <input
-                                                type="number"
-                                                step="1000"
-                                                value={adjustment}
-                                                onChange={(event) => {
-                                                    const nextAdjustment = Number(event.target.value) || 0;
-                                                    setBudgetEdits({ ...budgetEdits, [account.id]: suggestedAmount + nextAdjustment });
-                                                }}
-                                                className="w-20 bg-transparent border-b border-slate-700 text-right font-mono-nums outline-none focus:border-cyan-500"
-                                            />
-                                        </td>
-                                        <td className="px-2 py-2 text-right font-mono-nums text-slate-200">{formatCurrency(limit)}</td>
-                                        <td className={`px-2 py-2 text-right font-mono-nums ${variance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(variance)}</td>
-                                        <td className="px-2 py-2 text-right flex items-center justify-end gap-2">
-                                            {hasSuggestion && (
-                                                <button type="button" title="Sync source budget while keeping adjust" onClick={() => syncSuggestedBudgetAccount(account)} className={sourceSynced ? 'text-cyan-400 hover:text-cyan-200' : 'text-amber-400 hover:text-amber-200'}><RefreshCw size={12} /></button>
-                                            )}
-                                            {sourceSynced && (
-                                                <button type="button" title="Remove source sync" onClick={() => unlinkRecurringBudgetAccount(account)} className="text-slate-500 hover:text-amber-300"><Unlink size={12} /></button>
-                                            )}
-                                            {account.source !== 'one_time' && (
-                                                <button type="button" title="Edit category" onClick={() => openBudgetCategoryForm(account)} className="text-slate-500 hover:text-cyan-400"><Edit2 size={12} /></button>
-                                            )}
-                                            <button type="button" title="Remove from budget" onClick={() => removeBudgetCategory(account.id, account.plan_line_id)} className="text-slate-500 hover:text-rose-400"><Trash2 size={12} /></button>
-                                        </td>
-                                    </tr>
+                                            </td>
+                                            <td className="px-2 py-2 text-right">
+                                                <input
+                                                    type="number"
+                                                    step="1000"
+                                                    value={adjustment}
+                                                    onChange={(event) => {
+                                                        const nextAdjustment = Number(event.target.value) || 0;
+                                                        setBudgetEdits({ ...budgetEdits, [account.id]: suggestedAmount + nextAdjustment });
+                                                    }}
+                                                    className="w-20 bg-transparent border-b border-slate-700 text-right font-mono-nums outline-none focus:border-cyan-500"
+                                                />
+                                            </td>
+                                            <td className="px-2 py-2 text-right font-mono-nums text-slate-200">{formatCurrency(limit)}</td>
+                                            <td className={`px-2 py-2 text-right font-mono-nums ${variance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(variance)}</td>
+                                            <td className="px-2 py-2 text-right flex items-center justify-end gap-2">
+                                                {hasSuggestion && (
+                                                    <button type="button" title="Sync source budget while keeping adjust" onClick={() => syncSuggestedBudgetAccount(account)} className={sourceSynced ? 'text-cyan-400 hover:text-cyan-200' : 'text-amber-400 hover:text-amber-200'}><RefreshCw size={12} /></button>
+                                                )}
+                                                {sourceSynced && (
+                                                    <button type="button" title="Remove source sync" onClick={() => unlinkRecurringBudgetAccount(account)} className="text-slate-500 hover:text-amber-300"><Unlink size={12} /></button>
+                                                )}
+                                                {account.source !== 'one_time' && (
+                                                    <button type="button" title="Edit category" onClick={() => openBudgetCategoryForm(account)} className="text-slate-500 hover:text-cyan-400"><Edit2 size={12} /></button>
+                                                )}
+                                                <button type="button" title="Remove from budget" onClick={() => removeBudgetCategory(account.id, account.plan_line_id)} className="text-slate-500 hover:text-rose-400"><Trash2 size={12} /></button>
+                                            </td>
+                                        </tr>
+                                        {renderSourceDetailsRow(rowKey, sourceDetails, 7)}
+                                    </Fragment>
                                 );
                             })}
                             {(budgetSummary?.others_actual ?? 0) > 0 && (

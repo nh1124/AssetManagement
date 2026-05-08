@@ -12,7 +12,7 @@ from .. import models
 from .capsule_service import capsule_balance
 from .fx_service import calculate_account_valued_balance, convert_amount, convert_transaction_amount
 from .goal_service import get_life_events_with_progress
-from .product_reserve_service import effective_budget_treatment
+from .product_reserve_service import effective_budget_treatment, product_reserve_values
 
 
 LIQUID_ACCOUNT_NAMES = {"cash", "bank", "savings"}
@@ -251,6 +251,7 @@ def _serialize_plan_line(
         "recurring_amount": 0.0,
         "suggested_amount": 0.0,
         "suggested_source": None,
+        "suggested_items": [],
         "suggested_status": None,
         "priority": line.priority,
         "note": line.note,
@@ -286,6 +287,7 @@ def _virtual_capsule_line(
         "suggested_amount": round(capsule.monthly_contribution or 0.0, 0)
         if capsule.capsule_type == "product_pool" else 0.0,
         "suggested_source": "product_reserve" if capsule.capsule_type == "product_pool" else None,
+        "suggested_items": product_reserve_source_items(db, capsule) if capsule.capsule_type == "product_pool" else [],
         "suggested_status": "synced" if capsule.capsule_type == "product_pool" else None,
         "priority": 2,
         "note": None,
@@ -300,7 +302,26 @@ def _virtual_capsule_line(
     return line
 
 
-def _attach_capsule_suggestions(plan_lines: list[dict], capsule_by_id: dict[int, models.Capsule]) -> None:
+def product_reserve_source_items(db: Session, capsule: models.Capsule) -> list[dict]:
+    products = db.query(models.Product).filter(
+        models.Product.client_id == capsule.client_id,
+        models.Product.funding_capsule_id == capsule.id,
+    ).order_by(models.Product.name).all()
+    items = []
+    for product in products:
+        if effective_budget_treatment(product) not in {"reserve_allocation", "asset_replacement"}:
+            continue
+        values = product_reserve_values(product)
+        items.append({
+            "id": product.id,
+            "name": product.name,
+            "amount": values["recommended_monthly_reserve"],
+            "source": "product_reserve",
+        })
+    return items
+
+
+def _attach_capsule_suggestions(db: Session, plan_lines: list[dict], capsule_by_id: dict[int, models.Capsule]) -> None:
     for line in plan_lines:
         if line.get("line_type") != "allocation" or line.get("target_type") != "capsule":
             continue
@@ -310,6 +331,7 @@ def _attach_capsule_suggestions(plan_lines: list[dict], capsule_by_id: dict[int,
         suggested = round(capsule.monthly_contribution or 0.0, 0)
         line["suggested_amount"] = suggested
         line["suggested_source"] = "product_reserve"
+        line["suggested_items"] = product_reserve_source_items(db, capsule)
         line["suggested_status"] = (
             "synced"
             if line.get("source") == "capsule" and round(line.get("amount") or 0.0, 0) == suggested
@@ -641,7 +663,7 @@ def get_budget_summary(
                 line["actual"] = round(actual, 0)
                 line["variance"] = round((line.get("amount") or 0.0) - actual, 0)
 
-    _attach_capsule_suggestions(plan_lines, capsule_by_id)
+    _attach_capsule_suggestions(db, plan_lines, capsule_by_id)
     existing_capsule_ids = {
         line.get("target_id")
         for line in plan_lines

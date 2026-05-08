@@ -230,6 +230,17 @@ def test_product_reserve_capsule_allocation_exposes_suggested_amount() -> None:
         )
         db.add_all([client, capsule])
         db.flush()
+        db.add(models.Product(
+            client_id=1,
+            name="Quarterly filter",
+            category="home",
+            last_unit_price=9000,
+            units_per_purchase=1,
+            frequency_days=90,
+            is_asset=False,
+            funding_capsule_id=capsule.id,
+            budget_treatment="reserve_allocation",
+        ))
         db.add(models.MonthlyPlanLine(
             client_id=1,
             target_period="2026-05",
@@ -248,6 +259,12 @@ def test_product_reserve_capsule_allocation_exposes_suggested_amount() -> None:
         assert line["suggested_amount"] == 3000
         assert line["suggested_source"] == "product_reserve"
         assert line["suggested_status"] == "diff"
+        assert line["suggested_items"] == [{
+            "id": 1,
+            "name": "Quarterly filter",
+            "amount": 3000,
+            "source": "product_reserve",
+        }]
     finally:
         db.close()
 
@@ -277,6 +294,11 @@ def test_expense_only_products_are_variable_budget_suggestions() -> None:
 
         assert account["amount"] == 0
         assert account["product_expense_amount"] == 30000
+        assert account["product_expense_items"] == [{
+            "id": 1,
+            "name": "Meal replacement",
+            "amount": 30000,
+        }]
         assert account["suggested_amount"] == 30000
         assert account["suggested_source"] == "product_expense"
         assert account["suggested_status"] == "missing"

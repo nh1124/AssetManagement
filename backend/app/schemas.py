@@ -273,6 +273,7 @@ class MonthlyPlanLine(MonthlyPlanLineBase):
     product_expense_items: Optional[list[dict[str, Any]]] = None
     suggested_amount: float = 0.0
     suggested_source: Optional[str] = None
+    suggested_items: Optional[list[dict[str, Any]]] = None
     suggested_status: Optional[str] = None
     sync_status: Optional[str] = None
     recurring_transaction_ids: Optional[list[int]] = None

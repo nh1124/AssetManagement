@@ -129,6 +129,12 @@ export interface MonthlyPlanLine {
     recurring_amount?: number;
     suggested_amount?: number;
     suggested_source?: 'product_reserve' | string | null;
+    suggested_items?: Array<{
+        id: number;
+        name: string;
+        amount: number;
+        source?: string;
+    }>;
     suggested_status?: 'synced' | 'diff' | null;
     sync_status?: 'synced' | 'missing' | 'diff' | null;
     recurring_transaction_ids?: number[];
