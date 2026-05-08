@@ -113,6 +113,7 @@ def export_client_data(
                         "lifespan_months",
                         "budget_account_id",
                         "funding_capsule_id",
+                        "budget_treatment",
                         "purchase_price",
                         "purchase_date",
                     ],
@@ -468,6 +469,7 @@ def import_client_data(
                 is_asset=item.get("is_asset", False),
                 lifespan_months=item.get("lifespan_months"),
                 budget_account_id=account_map.get(item.get("budget_account_id")),
+                budget_treatment=item.get("budget_treatment") or "auto",
                 purchase_price=item.get("purchase_price"),
                 purchase_date=_parse_date(item.get("purchase_date")),
             )

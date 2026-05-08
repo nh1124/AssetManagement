@@ -57,6 +57,7 @@ const EMPTY_PRODUCT_FORM = {
     lifespan_months: '',
     budget_account_id: '',
     funding_capsule_id: '',
+    budget_treatment: 'auto',
     last_unit_price: '',
     units_per_purchase: '1',
     frequency_days: '',
@@ -76,6 +77,7 @@ function productToForm(product: Product): ProductForm {
         lifespan_months: product.lifespan_months != null ? String(product.lifespan_months) : '',
         budget_account_id: product.budget_account_id != null ? String(product.budget_account_id) : '',
         funding_capsule_id: product.funding_capsule_id != null ? String(product.funding_capsule_id) : '',
+        budget_treatment: product.budget_treatment ?? 'auto',
         last_unit_price: product.last_unit_price != null ? String(product.last_unit_price) : '',
         units_per_purchase: product.units_per_purchase != null ? String(product.units_per_purchase) : '1',
         frequency_days: product.frequency_days != null ? String(product.frequency_days) : '',
@@ -101,6 +103,7 @@ function toProductPayload(form: ProductForm) {
         lifespan_months: form.lifespan_months ? parseInt(form.lifespan_months, 10) : null,
         budget_account_id: form.budget_account_id ? parseInt(form.budget_account_id, 10) : null,
         funding_capsule_id: form.funding_capsule_id ? parseInt(form.funding_capsule_id, 10) : null,
+        budget_treatment: form.budget_treatment,
         purchase_price: purchasePrice,
         purchase_date: form.purchase_date || null,
     };
@@ -212,15 +215,6 @@ function ProductModal({ initialType, product, budgetAccounts, fundingCapsules, o
                             </select>
                         )}
                         {field(
-                            'Category',
-                            <input
-                                className={inputClass}
-                                value={form.category}
-                                onChange={(event) => set('category', event.target.value)}
-                                placeholder="Electronics"
-                            />
-                        )}
-                        {field(
                             'Budget Category',
                             <select
                                 className={inputClass}
@@ -234,13 +228,27 @@ function ProductModal({ initialType, product, budgetAccounts, fundingCapsules, o
                             </select>
                         )}
                         {field(
+                            'Budget Treatment',
+                            <select
+                                className={inputClass}
+                                value={form.budget_treatment}
+                                onChange={(event) => set('budget_treatment', event.target.value)}
+                            >
+                                <option value="auto">Auto</option>
+                                <option value="expense_only">Expense only</option>
+                                <option value="reserve_allocation">Reserve allocation</option>
+                                <option value="asset_replacement">Asset replacement</option>
+                            </select>
+                        )}
+                        {field(
                             'Funding Capsule',
                             <select
                                 className={inputClass}
                                 value={form.funding_capsule_id}
                                 onChange={(event) => set('funding_capsule_id', event.target.value)}
+                                disabled={form.budget_treatment === 'expense_only'}
                             >
-                                <option value="">Not linked</option>
+                                <option value="">{form.budget_treatment === 'expense_only' ? 'Not used for expense only' : 'Not linked'}</option>
                                 {fundingCapsules.map((capsule) => (
                                     <option key={capsule.id} value={capsule.id}>{capsule.name}</option>
                                 ))}
@@ -643,8 +651,8 @@ export default function Registry() {
                         <thead className="bg-slate-900 sticky top-0">
                             <tr className="border-b border-slate-800">
                                 <th className="p-2 text-left text-slate-500 uppercase font-medium">Name</th>
-                                <th className="p-2 text-left text-slate-500 uppercase font-medium">Category</th>
                                 <th className="p-2 text-left text-slate-500 uppercase font-medium">Budget</th>
+                                <th className="p-2 text-left text-slate-500 uppercase font-medium">Treatment</th>
                                 <th className="p-2 text-left text-slate-500 uppercase font-medium">Funding Capsule</th>
                                 <th className="p-2 text-right text-slate-500 uppercase font-medium">Reserve / Mo</th>
                                 <th className="p-2 text-left text-slate-500 uppercase font-medium">Location</th>
@@ -674,8 +682,13 @@ export default function Registry() {
                                                     <span className="text-slate-200">{product.name}</span>
                                                 </div>
                                             </td>
-                                            <td className="p-2 text-slate-400">{product.category}</td>
                                             <td className="p-2 text-slate-500">{product.budget_account_name || '-'}</td>
+                                            <td className="p-2 text-slate-500">
+                                                <div className="space-y-0.5">
+                                                    <p>{(product.effective_budget_treatment || product.budget_treatment || 'auto').replace('_', ' ')}</p>
+                                                    {product.budget_treatment === 'auto' && <p className="text-[9px] text-slate-600">Auto</p>}
+                                                </div>
+                                            </td>
                                             <td className="p-2 text-slate-500">{product.funding_capsule_name || '-'}</td>
                                             <td className="p-2 text-right font-mono-nums text-purple-300">{formatCurrency(product.recommended_monthly_reserve ?? 0)}</td>
                                             <td className="p-2 text-slate-500">{product.location || '-'}</td>

@@ -9,7 +9,12 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
-from ..services.product_reserve_service import ensure_default_product_reserve_pools, product_reserve_values
+from ..services.product_reserve_service import (
+    effective_budget_treatment,
+    ensure_default_product_reserve_pools,
+    product_reserve_values,
+    should_use_reserve,
+)
 
 router = APIRouter(prefix="/products", tags=["products"])
 
@@ -44,6 +49,29 @@ def default_funding_capsule_id(db: Session, client_id: int, is_asset: bool) -> i
     return next(pool.id for pool in pools if pool.name == target_name)
 
 
+def normalize_product_data(db: Session, client_id: int, data: dict) -> dict:
+    validate_budget_account(db, client_id, data.get("budget_account_id"))
+    validate_funding_capsule(db, client_id, data.get("funding_capsule_id"))
+
+    if data.get("budget_account_id"):
+        account = db.query(models.Account).filter(
+            models.Account.id == data["budget_account_id"],
+            models.Account.client_id == client_id,
+        ).first()
+        if account:
+            data["category"] = account.name
+    else:
+        data["category"] = data.get("category") or "Uncategorized"
+
+    probe = models.Product(**{key: value for key, value in data.items() if hasattr(models.Product, key)})
+    if should_use_reserve(probe):
+        if data.get("funding_capsule_id") is None:
+            data["funding_capsule_id"] = default_funding_capsule_id(db, client_id, data.get("is_asset", False))
+    else:
+        data["funding_capsule_id"] = None
+    return data
+
+
 def enrich_product(product: models.Product) -> dict:
     """Return product with unit economics fields."""
     units = product.units_per_purchase or 1
@@ -61,6 +89,7 @@ def enrich_product(product: models.Product) -> dict:
         ).isoformat()
 
     reserve_values = product_reserve_values(product)
+    effective_treatment = effective_budget_treatment(product)
     return {
         "id": product.id,
         "name": product.name,
@@ -77,6 +106,8 @@ def enrich_product(product: models.Product) -> dict:
         "budget_account_name": product.budget_account.name if product.budget_account else None,
         "funding_capsule_id": product.funding_capsule_id,
         "funding_capsule_name": product.funding_capsule.name if product.funding_capsule else None,
+        "budget_treatment": product.budget_treatment or "auto",
+        "effective_budget_treatment": effective_treatment,
         **reserve_values,
         "purchase_price": product.purchase_price,
         "purchase_date": product.purchase_date,
@@ -110,11 +141,7 @@ def create_product(
     current_client: models.Client = Depends(get_current_client),
 ):
     data = product.model_dump()
-    validate_budget_account(db, current_client.id, data.get("budget_account_id"))
-    if data.get("funding_capsule_id") is None:
-        data["funding_capsule_id"] = default_funding_capsule_id(db, current_client.id, data.get("is_asset", False))
-    else:
-        validate_funding_capsule(db, current_client.id, data.get("funding_capsule_id"))
+    data = normalize_product_data(db, current_client.id, data)
     db_product = models.Product(**data, client_id=current_client.id)
     db.add(db_product)
     db.commit()
@@ -137,9 +164,8 @@ def update_product(
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
 
-    validate_budget_account(db, current_client.id, product.budget_account_id)
-    validate_funding_capsule(db, current_client.id, product.funding_capsule_id)
-    for key, value in product.model_dump().items():
+    data = normalize_product_data(db, current_client.id, product.model_dump())
+    for key, value in data.items():
         setattr(db_product, key, value)
     db.commit()
     db.refresh(db_product)
@@ -187,7 +213,7 @@ def get_unit_economics_summary(
         items.append(
             {
                 "name": product.name,
-                "category": product.category,
+                "category": product.budget_account.name if product.budget_account else product.category,
                 "unit_cost": round(unit_cost, 2),
                 "monthly_cost": round(monthly_cost, 2),
             }

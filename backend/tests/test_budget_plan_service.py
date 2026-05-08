@@ -252,6 +252,38 @@ def test_product_reserve_capsule_allocation_exposes_suggested_amount() -> None:
         db.close()
 
 
+def test_expense_only_products_are_variable_budget_suggestions() -> None:
+    db = _session()
+    try:
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        food = models.Account(client_id=1, name="food", account_type="expense")
+        db.add_all([client, food])
+        db.flush()
+        db.add(models.Product(
+            client_id=1,
+            name="Meal replacement",
+            category="food",
+            last_unit_price=30000,
+            units_per_purchase=1,
+            frequency_days=30,
+            is_asset=False,
+            budget_account_id=food.id,
+            budget_treatment="auto",
+        ))
+        db.commit()
+
+        summary = get_budget_summary(db, client_id=1, period="2026-05")
+        account = next(item for item in summary["expense_accounts"] if item["account_id"] == food.id)
+
+        assert account["amount"] == 0
+        assert account["product_expense_amount"] == 30000
+        assert account["suggested_amount"] == 30000
+        assert account["suggested_source"] == "product_expense"
+        assert account["suggested_status"] == "missing"
+    finally:
+        db.close()
+
+
 def test_life_event_allocation_is_presented_as_capsule() -> None:
     db = _session()
     try:

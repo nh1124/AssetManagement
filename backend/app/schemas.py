@@ -12,6 +12,7 @@ TransactionTypeLiteral = Literal[
     'CreditExpense',
     'CreditAssetPurchase',
 ]
+ProductBudgetTreatmentLiteral = Literal["auto", "expense_only", "reserve_allocation", "asset_replacement"]
 
 # Account Schemas
 class AccountBase(BaseModel):
@@ -105,7 +106,7 @@ class ExchangeRate(ExchangeRateBase):
 # Product Schemas
 class ProductBase(BaseModel):
     name: str
-    category: str
+    category: str = "Uncategorized"
     location: Optional[str] = None
     last_unit_price: float
     units_per_purchase: int = 1
@@ -115,6 +116,7 @@ class ProductBase(BaseModel):
     lifespan_months: Optional[int] = None
     budget_account_id: Optional[int] = None
     funding_capsule_id: Optional[int] = None
+    budget_treatment: ProductBudgetTreatmentLiteral = "auto"
     purchase_price: Optional[float] = None
     purchase_date: Optional[date] = None
 
@@ -128,6 +130,7 @@ class Product(ProductBase):
     next_purchase_date: Optional[str] = None
     budget_account_name: Optional[str] = None
     funding_capsule_name: Optional[str] = None
+    effective_budget_treatment: str = "expense_only"
     reserve_target_amount: float = 0.0
     recommended_monthly_reserve: float = 0.0
 
@@ -266,6 +269,8 @@ class MonthlyPlanLine(MonthlyPlanLineBase):
     actual: float = 0.0
     variance: float = 0.0
     recurring_amount: float = 0.0
+    product_expense_amount: float = 0.0
+    product_expense_items: Optional[list[dict[str, Any]]] = None
     suggested_amount: float = 0.0
     suggested_source: Optional[str] = None
     suggested_status: Optional[str] = None

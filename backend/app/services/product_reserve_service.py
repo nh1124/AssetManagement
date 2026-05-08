@@ -12,6 +12,8 @@ DEFAULT_PRODUCT_RESERVE_POOLS = (
     ("Item Reserve", False),
 )
 
+RESERVE_TREATMENTS = {"reserve_allocation", "asset_replacement"}
+
 
 def _add_months(value: date, months: int) -> date:
     month_index = value.month - 1 + months
@@ -29,6 +31,12 @@ def _months_until(target: date, reference_date: date) -> int:
 
 
 def product_reserve_values(product: models.Product, reference_date: date | None = None) -> dict:
+    if effective_budget_treatment(product) not in RESERVE_TREATMENTS:
+        return {
+            "reserve_target_amount": 0.0,
+            "recommended_monthly_reserve": 0.0,
+        }
+
     reference_date = reference_date or date.today()
     if product.is_asset:
         target_amount = float(product.purchase_price or product.last_unit_price or 0.0)
@@ -50,6 +58,21 @@ def product_reserve_values(product: models.Product, reference_date: date | None 
         "reserve_target_amount": round(product.last_unit_price or 0.0, 0),
         "recommended_monthly_reserve": round(monthly, 0),
     }
+
+
+def effective_budget_treatment(product: models.Product) -> str:
+    treatment = product.budget_treatment or "auto"
+    if treatment != "auto":
+        return treatment
+    if product.is_asset:
+        return "asset_replacement"
+    if product.frequency_days and product.frequency_days <= 45:
+        return "expense_only"
+    return "reserve_allocation"
+
+
+def should_use_reserve(product: models.Product) -> bool:
+    return effective_budget_treatment(product) in RESERVE_TREATMENTS
 
 
 def ensure_default_product_reserve_pools(db: Session, client_id: int) -> list[models.Capsule]:
@@ -85,6 +108,7 @@ def sync_product_reserve_capsules(db: Session, client_id: int) -> dict:
         models.Product.client_id == client_id,
         models.Product.funding_capsule_id.isnot(None),
     ).all()
+    products = [product for product in products if should_use_reserve(product)]
     capsule_ids = {product.funding_capsule_id for product in products if product.funding_capsule_id}
     capsules = db.query(models.Capsule).filter(
         models.Capsule.client_id == client_id,

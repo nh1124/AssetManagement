@@ -49,14 +49,27 @@ def test_product_reserve_values_for_asset_and_item() -> None:
         frequency_days=30,
         is_asset=False,
     )
+    reserve_item = models.Product(
+        client_id=1,
+        name="Water filter",
+        category="Kitchen",
+        last_unit_price=6000,
+        units_per_purchase=1,
+        frequency_days=180,
+        is_asset=False,
+    )
 
     assert product_reserve_values(asset, reference_date=date(2026, 1, 1)) == {
         "reserve_target_amount": 120000,
         "recommended_monthly_reserve": 5000,
     }
     assert product_reserve_values(item, reference_date=date(2026, 1, 1)) == {
-        "reserve_target_amount": 3000,
-        "recommended_monthly_reserve": 3000,
+        "reserve_target_amount": 0.0,
+        "recommended_monthly_reserve": 0.0,
+    }
+    assert product_reserve_values(reserve_item, reference_date=date(2026, 1, 1)) == {
+        "reserve_target_amount": 6000,
+        "recommended_monthly_reserve": 1000,
     }
 
 
@@ -85,7 +98,7 @@ def test_sync_product_reserve_capsules_rolls_up_linked_products() -> None:
                 category="Grocery",
                 last_unit_price=3000,
                 units_per_purchase=1,
-                frequency_days=30,
+                frequency_days=180,
                 is_asset=False,
                 funding_capsule_id=item_pool.id,
             ),
@@ -102,6 +115,6 @@ def test_sync_product_reserve_capsules_rolls_up_linked_products() -> None:
         assert fixed_pool.target_amount == 120000
         assert fixed_pool.monthly_contribution > 0
         assert item_pool.target_amount == 3000
-        assert item_pool.monthly_contribution == 3000
+        assert item_pool.monthly_contribution == 500
     finally:
         db.close()

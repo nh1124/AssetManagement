@@ -163,6 +163,7 @@ class Product(Base):
     lifespan_months = Column(Integer, nullable=True)
     budget_account_id = Column(Integer, ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True)
     funding_capsule_id = Column(Integer, ForeignKey("capsules.id", ondelete="SET NULL"), nullable=True)
+    budget_treatment = Column(String, nullable=False, default="auto")
     # Depreciation tracking
     purchase_price = Column(Float, nullable=True)
     purchase_date = Column(Date, nullable=True)

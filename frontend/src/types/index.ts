@@ -97,6 +97,8 @@ export interface Product {
     budget_account_name?: string | null;
     funding_capsule_id?: number | null;
     funding_capsule_name?: string | null;
+    budget_treatment?: 'auto' | 'expense_only' | 'reserve_allocation' | 'asset_replacement';
+    effective_budget_treatment?: string;
     reserve_target_amount?: number;
     recommended_monthly_reserve?: number;
     purchase_price?: number;

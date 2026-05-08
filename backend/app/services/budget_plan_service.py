@@ -12,6 +12,7 @@ from .. import models
 from .capsule_service import capsule_balance
 from .fx_service import calculate_account_valued_balance, convert_amount, convert_transaction_amount
 from .goal_service import get_life_events_with_progress
+from .product_reserve_service import effective_budget_treatment
 
 
 LIQUID_ACCOUNT_NAMES = {"cash", "bank", "savings"}
@@ -477,6 +478,102 @@ def _merge_recurring_context(plan_lines: list[dict], recurrence_lines: list[dict
     return plan_lines
 
 
+def expense_only_product_budget_lines(db: Session, client_id: int, period: str) -> list[dict]:
+    products = db.query(models.Product).filter(
+        models.Product.client_id == client_id,
+        models.Product.is_asset.is_(False),
+        models.Product.budget_account_id.isnot(None),
+        models.Product.frequency_days > 0,
+    ).all()
+    totals: dict[int, dict] = {}
+    for product in products:
+        if effective_budget_treatment(product) != "expense_only":
+            continue
+        units = product.units_per_purchase or 1
+        unit_cost = (product.last_unit_price or 0.0) / units if units else (product.last_unit_price or 0.0)
+        monthly_cost = unit_cost * (30 / product.frequency_days)
+        account_id = product.budget_account_id
+        if not account_id:
+            continue
+        if account_id not in totals:
+            totals[account_id] = {"account": product.budget_account, "amount": 0.0, "items": []}
+        totals[account_id]["amount"] += monthly_cost
+        totals[account_id]["items"].append({
+            "id": product.id,
+            "name": product.name,
+            "amount": round(monthly_cost, 0),
+        })
+
+    rows = []
+    for account_id, item in totals.items():
+        account = item["account"]
+        name = account.name if account else "Product Expense"
+        amount = round(item["amount"], 0)
+        rows.append({
+            "id": None,
+            "target_period": period,
+            "line_type": "expense",
+            "target_type": "account",
+            "target_id": None,
+            "account_id": account_id,
+            "source_account_id": None,
+            "name": name,
+            "target_name": name,
+            "account_name": name,
+            "source_account_name": None,
+            "amount": 0.0,
+            "planned_date": None,
+            "actual": 0.0,
+            "variance": 0.0,
+            "recurring_amount": 0.0,
+            "product_expense_amount": amount,
+            "product_expense_items": item["items"],
+            "suggested_amount": amount,
+            "suggested_source": "product_expense",
+            "suggested_status": "missing",
+            "priority": 2,
+            "note": None,
+            "source": "product_expense",
+            "recurring_transaction_id": None,
+            "sync_status": None,
+            "is_active": True,
+        })
+    return rows
+
+
+def _merge_product_expense_context(plan_lines: list[dict], product_lines: list[dict]) -> list[dict]:
+    product_by_account_id = {line["account_id"]: line for line in product_lines if line.get("account_id")}
+    matched_account_ids: set[int] = set()
+    for line in plan_lines:
+        if line.get("line_type") != "expense" or not line.get("account_id"):
+            continue
+        product_line = product_by_account_id.get(line["account_id"])
+        product_amount = round((product_line or {}).get("product_expense_amount") or 0.0, 0)
+        if product_line:
+            matched_account_ids.add(line["account_id"])
+        line["product_expense_amount"] = product_amount
+        line["product_expense_items"] = (product_line or {}).get("product_expense_items", [])
+        recurring_amount = round(line.get("recurring_amount") or 0.0, 0)
+        suggested = recurring_amount + product_amount
+        line["suggested_amount"] = suggested
+        if suggested <= 0:
+            line["suggested_source"] = None
+            line["suggested_status"] = None
+            continue
+        if recurring_amount > 0 and product_amount > 0:
+            line["suggested_source"] = "recurrence_product_expense"
+        elif product_amount > 0:
+            line["suggested_source"] = "product_expense"
+        else:
+            line["suggested_source"] = "recurrence"
+        line["suggested_status"] = "synced" if round(line.get("amount") or 0.0, 0) == suggested else "diff"
+
+    plan_lines.extend([
+        line for line in product_lines if line.get("account_id") not in matched_account_ids
+    ])
+    return plan_lines
+
+
 def _liquid_cash(db: Session, client_id: int) -> float:
     accounts = db.query(models.Account).filter(
         models.Account.client_id == client_id,
@@ -546,6 +643,7 @@ def get_budget_summary(
         if capsule.id not in existing_capsule_ids:
             plan_lines.append(_virtual_capsule_line(db, client_id, capsule, period, capsule_accounts))
     plan_lines = _merge_recurring_context(plan_lines, recurring_plan_lines(db, client_id, period))
+    plan_lines = _merge_product_expense_context(plan_lines, expense_only_product_budget_lines(db, client_id, period))
 
     expense_lines = [line for line in plan_lines if line["line_type"] == "expense"]
     allocation_lines = [line for line in plan_lines if line["line_type"] == "allocation"]
@@ -620,6 +718,11 @@ def get_budget_summary(
                 "priority": line.get("priority", 2),
                 "note": line.get("note"),
                 "recurring_amount": line.get("recurring_amount", 0.0),
+                "product_expense_amount": line.get("product_expense_amount", 0.0),
+                "product_expense_items": line.get("product_expense_items", []),
+                "suggested_amount": line.get("suggested_amount", 0.0),
+                "suggested_source": line.get("suggested_source"),
+                "suggested_status": line.get("suggested_status"),
                 "source": line.get("source"),
                 "sync_status": line.get("sync_status"),
                 "recurring_transaction_id": line.get("recurring_transaction_id"),
