@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import {
     Trash2, Plus, Sparkles, Send, Loader2, ImagePlus, X,
-    ArrowUpCircle, ArrowDownCircle, RefreshCw, Edit, SlidersHorizontal
+    ArrowUpCircle, ArrowDownCircle, RefreshCw, Edit, SlidersHorizontal,
 } from 'lucide-react';
 import TabPanel from '../components/TabPanel';
 import SplitView from '../components/SplitView';
@@ -16,10 +16,27 @@ import { useToast } from '../components/Toast';
 import { useClient } from '../context/ClientContext';
 import { formatCurrency as formatCurrencyWithSetting, getCurrencySymbol } from '../utils/currency';
 import type { QuickTemplate, RecurringTransaction, Transaction } from '../types';
+import {
+    buildQuickTransactions,
+    configAccountId,
+    InfoTip,
+    QUICK_KIND_RULES,
+    QUICK_PRESETS,
+    QUICK_TEMPLATE_KINDS,
+    quickHelp,
+    quickKindLabel,
+    quickText,
+    type AccountItem,
+    type LanguageCode,
+    type QuickEntry,
+    type QuickTemplateDraft,
+    type QuickTemplateKind,
+} from '../features/journal/quick';
+import QuickTemplateTile from '../features/journal/QuickTemplateTile';
 
 const MAIN_TABS = [
-    { id: 'transaction', label: 'Transaction' },
     { id: 'quick', label: 'Quick' },
+    { id: 'transaction', label: 'Transaction' },
     { id: 'recurring', label: 'Recurring' },
     { id: 'ai', label: 'AI' },
 ];
@@ -35,13 +52,6 @@ type TransactionKind =
     | 'Borrowing'
     | 'CreditExpense'
     | 'CreditAssetPurchase';
-
-interface AccountItem {
-    id: number;
-    name: string;
-    account_type: string;
-    balance?: number;
-}
 
 const TRANSACTION_TYPES: Array<{
     value: TransactionKind;
@@ -108,35 +118,6 @@ const ACCOUNT_RULES = Object.fromEntries(
 const typeDescription = (type: string) =>
     TRANSACTION_TYPES.find((option) => option.value === type)?.description ?? '';
 
-type QuickTemplateKind =
-    | 'simple_expense'
-    | 'credit_expense'
-    | 'expense_with_advance'
-    | 'reimbursement'
-    | 'transfer'
-    | 'debt_payment';
-
-const QUICK_TEMPLATE_KINDS: Array<{
-    value: QuickTemplateKind;
-    label: string;
-    fromTypes: string[];
-    toTypes: string[];
-}> = [
-    { value: 'simple_expense', label: 'Expense', fromTypes: ['asset', 'item', 'liability'], toTypes: ['expense', 'item'] },
-    { value: 'credit_expense', label: 'Credit Expense', fromTypes: ['liability'], toTypes: ['expense', 'item'] },
-    { value: 'expense_with_advance', label: 'Expense + Advance', fromTypes: ['asset', 'item', 'liability'], toTypes: ['expense', 'item'] },
-    { value: 'reimbursement', label: 'Reimbursement', fromTypes: ['asset', 'item'], toTypes: ['asset', 'item'] },
-    { value: 'transfer', label: 'Transfer', fromTypes: ['asset', 'item'], toTypes: ['asset', 'item'] },
-    { value: 'debt_payment', label: 'Debt Payment', fromTypes: ['asset', 'item'], toTypes: ['liability'] },
-];
-
-const QUICK_KIND_RULES = Object.fromEntries(
-    QUICK_TEMPLATE_KINDS.map(({ value, fromTypes, toTypes }) => [value, { fromTypes, toTypes }])
-) as Record<QuickTemplateKind, { fromTypes: string[]; toTypes: string[] }>;
-
-const quickKindLabel = (kind: string) =>
-    QUICK_TEMPLATE_KINDS.find((option) => option.value === kind)?.label ?? kind;
-
 const defaultFilters = {
     startDate: '',
     endDate: '',
@@ -159,7 +140,7 @@ const loadStoredFilters = () => {
 export default function Journal() {
     const [activeTab, setActiveTab] = useState(() => {
         const stored = localStorage.getItem('finance_journal_tab');
-        return stored === 'quick' || stored === 'recurring' || stored === 'ai' ? stored : 'transaction';
+        return stored === 'transaction' || stored === 'recurring' || stored === 'ai' ? stored : 'quick';
     });
     const [transactions, setTransactions] = useState<Transaction[]>([]);
     const [transactionTotal, setTransactionTotal] = useState(0);
@@ -174,8 +155,9 @@ export default function Journal() {
     const [accounts, setAccounts] = useState<AccountItem[]>([]);
     const [isProcessing, setIsProcessing] = useState(false);
     const { showToast } = useToast();
-    const { currentClient } = useClient();
+    const { clientId, currentClient } = useClient();
     const currentCurrency = currentClient?.general_settings?.currency || 'JPY';
+    const language: LanguageCode = String(currentClient?.general_settings?.language || 'ja').toLowerCase().startsWith('ja') ? 'ja' : 'en';
     const formatCurrency = (value: number | undefined | null) => formatCurrencyWithSetting(value, currentCurrency);
 
     // Manual Input State
@@ -190,7 +172,7 @@ export default function Journal() {
         toAccountId: '',
     });
 
-    const [quickTemplateDraft, setQuickTemplateDraft] = useState({
+    const [quickTemplateDraft, setQuickTemplateDraft] = useState<QuickTemplateDraft>({
         tray: 'Food',
         name: '',
         template_kind: 'simple_expense' as QuickTemplateKind,
@@ -202,7 +184,7 @@ export default function Journal() {
         reimbursement_account_id: '',
     });
 
-    const [quickEntry, setQuickEntry] = useState({
+    const [quickEntry, setQuickEntry] = useState<QuickEntry>({
         date: new Date().toISOString().split('T')[0],
         description: '',
         amount: '',
@@ -248,6 +230,9 @@ export default function Journal() {
     const quickDraftToAccounts = accounts.filter((a) => quickDraftRules.toTypes.includes(a.account_type));
     const assetAccounts = accounts.filter((a) => ['asset', 'item'].includes(a.account_type));
 
+    const text = quickText(language);
+    const help = quickHelp(language);
+
     useEffect(() => {
         fetchInitialData();
         localStorage.removeItem('finance_journal_tab');
@@ -266,6 +251,69 @@ export default function Journal() {
             setSelectedQuickTemplateId(null);
         }
     }, [quickTemplates, activeQuickTray, selectedQuickTemplateId]);
+
+    useEffect(() => {
+        const seedKey = `finance_quick_seeded_${clientId}`;
+        if (!accounts.length || localStorage.getItem(seedKey) === '1') return;
+        const existingPresetKeys = new Set(
+            quickTemplates
+                .map((template) => typeof template.config?.preset_key === 'string' ? template.config.preset_key : template.name)
+                .filter(Boolean)
+        );
+        const missingPresets = QUICK_PRESETS.filter((preset) =>
+            !existingPresetKeys.has(preset.key) && !existingPresetKeys.has(preset.name)
+        );
+        if (!missingPresets.length) {
+            localStorage.setItem(seedKey, '1');
+            return;
+        }
+
+        const matchAccount = (types: string[], hints: string[]) => {
+            const normalizedHints = hints.map((hint) => hint.toLowerCase());
+            return accounts.find((account) =>
+                types.includes(account.account_type)
+                && normalizedHints.some((hint) => account.name.toLowerCase().includes(hint))
+            ) || accounts.find((account) => types.includes(account.account_type));
+        };
+
+        const seedQuickTemplates = async () => {
+            const paymentAccount = matchAccount(['asset', 'item'], ['cash', 'bank', '現金', '銀行']);
+            try {
+                const created = await Promise.all(missingPresets.map((preset, index) => {
+                    const expenseAccount = matchAccount(['expense', 'item'], preset.accountHints);
+                    return createQuickTemplate({
+                        tray: preset.tray,
+                        name: preset.name,
+                        template_kind: preset.template_kind,
+                        description: preset.description[language],
+                        category: preset.category,
+                        default_currency: currentCurrency,
+                        default_from_account_id: paymentAccount?.id ?? null,
+                        default_to_account_id: expenseAccount?.id ?? null,
+                        config: {
+                            preset_key: preset.key,
+                            receivable_account_id: null,
+                            reimbursement_account_id: paymentAccount?.id ?? null,
+                        },
+                        sort_order: quickTemplates.length + index,
+                        is_active: true,
+                    });
+                }));
+                localStorage.setItem(seedKey, '1');
+                const templates = await getQuickTemplates();
+                setQuickTemplates(templates);
+                if (created[0]) {
+                    setActiveQuickTray(created[0].tray);
+                    setSelectedQuickTemplateId(created[0].id);
+                    selectQuickTemplate(created[0]);
+                }
+            } catch (error) {
+                console.error('Failed to seed quick templates:', error);
+            }
+        };
+
+        seedQuickTemplates();
+    }, [accounts, quickTemplates.length, clientId, currentCurrency, language]);
 
     useEffect(() => {
         setFormData((prev) => {
@@ -361,13 +409,6 @@ export default function Journal() {
         return accounts.find((account) => account.id === Number(id));
     };
 
-    const configAccountId = (template: QuickTemplate | undefined, key: string) => {
-        const value = template?.config?.[key];
-        if (typeof value === 'number') return value;
-        if (typeof value === 'string' && value) return Number(value);
-        return undefined;
-    };
-
     const selectedQuickTemplate = selectedQuickTemplateId
         ? quickTemplates.find((template) => template.id === selectedQuickTemplateId)
         : undefined;
@@ -403,131 +444,12 @@ export default function Journal() {
         }));
     };
 
-    const buildQuickTransactions = (): { transactions: Array<Omit<Transaction, 'id'>>; error?: string } => {
-        if (!selectedQuickTemplate) return { transactions: [], error: 'Select a quick template' };
-        const kind = selectedQuickTemplate.template_kind as QuickTemplateKind;
-        const amount = Number(quickEntry.amount || 0);
-        const ownAmount = Number(quickEntry.ownAmount || 0);
-        const advanceAmount = Number(quickEntry.advanceAmount || 0);
-        const paymentAccount = accountById(quickEntry.payment_account_id);
-        const expenseAccount = accountById(quickEntry.expense_account_id);
-        const receivableAccount = accountById(quickEntry.receivable_account_id || quickEntry.payment_account_id);
-        const reimbursementAccount = accountById(quickEntry.reimbursement_account_id || quickEntry.expense_account_id);
-        const description = quickEntry.description.trim() || selectedQuickTemplate.name;
-        const category = selectedQuickTemplate.category || expenseAccount?.name || selectedQuickTemplate.tray;
-        const base = {
-            date: quickEntry.date,
-            currency: quickEntry.currency || selectedQuickTemplate.default_currency || currentCurrency,
-        };
-
-        if (!amount || amount <= 0) return { transactions: [], error: 'Amount is required' };
-
-        if (kind === 'reimbursement') {
-            if (!receivableAccount || !reimbursementAccount) return { transactions: [], error: 'Receivable and deposit accounts are required' };
-            return {
-                transactions: [{
-                    ...base,
-                    description,
-                    amount,
-                    type: 'Transfer',
-                    category: selectedQuickTemplate.category || 'reimbursement',
-                    from_account_id: receivableAccount.id,
-                    to_account_id: reimbursementAccount.id,
-                }],
-            };
-        }
-
-        if (kind === 'transfer') {
-            if (!paymentAccount || !expenseAccount) return { transactions: [], error: 'From and to accounts are required' };
-            return {
-                transactions: [{
-                    ...base,
-                    description,
-                    amount,
-                    type: 'Transfer',
-                    category: selectedQuickTemplate.category || 'transfer',
-                    from_account_id: paymentAccount.id,
-                    to_account_id: expenseAccount.id,
-                }],
-            };
-        }
-
-        if (kind === 'debt_payment') {
-            if (!paymentAccount || !expenseAccount) return { transactions: [], error: 'Payment and debt accounts are required' };
-            return {
-                transactions: [{
-                    ...base,
-                    description,
-                    amount,
-                    type: 'LiabilityPayment',
-                    category: selectedQuickTemplate.category || expenseAccount.name,
-                    from_account_id: paymentAccount.id,
-                    to_account_id: expenseAccount.id,
-                }],
-            };
-        }
-
-        if (!paymentAccount || !expenseAccount) return { transactions: [], error: 'Payment and expense accounts are required' };
-        const isCreditPayment = paymentAccount.account_type === 'liability';
-
-        if (kind === 'expense_with_advance') {
-            const resolvedAdvance = advanceAmount > 0 ? advanceAmount : Math.max(0, amount - ownAmount);
-            const resolvedOwn = ownAmount > 0 ? ownAmount : Math.max(0, amount - resolvedAdvance);
-            if (resolvedOwn + resolvedAdvance <= 0) return { transactions: [], error: 'Own share or advance amount is required' };
-            if (resolvedAdvance > 0 && !receivableAccount) return { transactions: [], error: 'Receivable account is required' };
-
-            const transactions: Array<Omit<Transaction, 'id'>> = [];
-            if (resolvedOwn > 0) {
-                transactions.push({
-                    ...base,
-                    description: `${description} own share`,
-                    amount: resolvedOwn,
-                    type: isCreditPayment ? 'CreditExpense' : 'Expense',
-                    category,
-                    from_account_id: paymentAccount.id,
-                    to_account_id: expenseAccount.id,
-                });
-            }
-            if (resolvedAdvance > 0 && receivableAccount) {
-                transactions.push({
-                    ...base,
-                    description: `${description} advance`,
-                    amount: resolvedAdvance,
-                    type: isCreditPayment ? 'CreditAssetPurchase' : 'Transfer',
-                    category: 'advance',
-                    from_account_id: paymentAccount.id,
-                    to_account_id: receivableAccount.id,
-                });
-            }
-            if (quickEntry.reimbursementReceived && resolvedAdvance > 0) {
-                if (!receivableAccount || !reimbursementAccount) return { transactions: [], error: 'Deposit account is required for reimbursement' };
-                transactions.push({
-                    ...base,
-                    description: `${description} reimbursement`,
-                    amount: resolvedAdvance,
-                    type: 'Transfer',
-                    category: 'reimbursement',
-                    from_account_id: receivableAccount.id,
-                    to_account_id: reimbursementAccount.id,
-                });
-            }
-            return { transactions };
-        }
-
-        return {
-            transactions: [{
-                ...base,
-                description,
-                amount,
-                type: kind === 'credit_expense' || isCreditPayment ? 'CreditExpense' : 'Expense',
-                category,
-                from_account_id: paymentAccount.id,
-                to_account_id: expenseAccount.id,
-            }],
-        };
-    };
-
-    const quickPreview = buildQuickTransactions();
+    const quickPreview = buildQuickTransactions({
+        selectedTemplate: selectedQuickTemplate,
+        quickEntry,
+        accounts,
+        currentCurrency,
+    });
 
     const handleCreateQuickTemplate = async () => {
         if (!quickTemplateDraft.tray.trim() || !quickTemplateDraft.name.trim()) {
@@ -996,7 +918,10 @@ export default function Journal() {
                 {activeTab === 'quick' && (
                     <div className="space-y-4 pt-2">
                         <div className="flex items-center justify-between">
-                            <h3 className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Quick Trays</h3>
+                            <h3 className="text-[10px] text-slate-500 uppercase tracking-wider font-bold flex items-center gap-1">
+                                {text.quickTemplates}
+                                <InfoTip text={language === 'ja' ? 'よく使う生活支出をタイルから選び、必要なTransactionをまとめて生成します。' : 'Choose daily spending tiles and generate the needed transactions together.'} />
+                            </h3>
                             <button
                                 type="button"
                                 onClick={() => setShowQuickTemplateForm((value) => !value)}
@@ -1012,7 +937,7 @@ export default function Journal() {
                             <div className="border border-emerald-800/50 bg-emerald-900/10 p-3 space-y-3">
                                 <div className="grid grid-cols-2 gap-3">
                                     <div>
-                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Tray</label>
+                                        <label className="flex items-center gap-1 text-[10px] text-slate-500 uppercase tracking-wider mb-1">{text.tray}<InfoTip text={help.tray} /></label>
                                         <input
                                             type="text"
                                             value={quickTemplateDraft.tray}
@@ -1021,7 +946,7 @@ export default function Journal() {
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Name</label>
+                                        <label className="flex items-center gap-1 text-[10px] text-slate-500 uppercase tracking-wider mb-1">{text.templateName}<InfoTip text={help.templateName} /></label>
                                         <input
                                             type="text"
                                             value={quickTemplateDraft.name}
@@ -1031,7 +956,7 @@ export default function Journal() {
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Kind</label>
+                                        <label className="flex items-center gap-1 text-[10px] text-slate-500 uppercase tracking-wider mb-1">{text.kind}<InfoTip text={help.kind} /></label>
                                         <select
                                             value={quickTemplateDraft.template_kind}
                                             onChange={(e) => setQuickTemplateDraft({
@@ -1048,7 +973,7 @@ export default function Journal() {
                                         </select>
                                     </div>
                                     <div>
-                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Currency</label>
+                                        <label className="flex items-center gap-1 text-[10px] text-slate-500 uppercase tracking-wider mb-1">{text.currency}<InfoTip text={help.currency} /></label>
                                         <select
                                             value={quickTemplateDraft.default_currency}
                                             onChange={(e) => setQuickTemplateDraft({ ...quickTemplateDraft, default_currency: e.target.value })}
@@ -1060,7 +985,7 @@ export default function Journal() {
                                         </select>
                                     </div>
                                     <div>
-                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">From</label>
+                                        <label className="flex items-center gap-1 text-[10px] text-slate-500 uppercase tracking-wider mb-1">{text.from}<InfoTip text={help.from} /></label>
                                         <select
                                             value={quickTemplateDraft.default_from_account_id}
                                             onChange={(e) => setQuickTemplateDraft({ ...quickTemplateDraft, default_from_account_id: e.target.value })}
@@ -1073,7 +998,7 @@ export default function Journal() {
                                         </select>
                                     </div>
                                     <div>
-                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">To</label>
+                                        <label className="flex items-center gap-1 text-[10px] text-slate-500 uppercase tracking-wider mb-1">{text.to}<InfoTip text={help.to} /></label>
                                         <select
                                             value={quickTemplateDraft.default_to_account_id}
                                             onChange={(e) => setQuickTemplateDraft({ ...quickTemplateDraft, default_to_account_id: e.target.value })}
@@ -1086,7 +1011,7 @@ export default function Journal() {
                                         </select>
                                     </div>
                                     <div>
-                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Category</label>
+                                        <label className="flex items-center gap-1 text-[10px] text-slate-500 uppercase tracking-wider mb-1">{text.category}<InfoTip text={help.category} /></label>
                                         <input
                                             type="text"
                                             value={quickTemplateDraft.category}
@@ -1095,7 +1020,7 @@ export default function Journal() {
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Receivable</label>
+                                        <label className="flex items-center gap-1 text-[10px] text-slate-500 uppercase tracking-wider mb-1">{text.receivable}<InfoTip text={help.receivable} /></label>
                                         <select
                                             value={quickTemplateDraft.receivable_account_id}
                                             onChange={(e) => setQuickTemplateDraft({ ...quickTemplateDraft, receivable_account_id: e.target.value })}
@@ -1108,7 +1033,7 @@ export default function Journal() {
                                         </select>
                                     </div>
                                     <div className="col-span-2">
-                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Reimbursement Deposit</label>
+                                        <label className="flex items-center gap-1 text-[10px] text-slate-500 uppercase tracking-wider mb-1">{text.deposit}<InfoTip text={help.deposit} /></label>
                                         <select
                                             value={quickTemplateDraft.reimbursement_account_id}
                                             onChange={(e) => setQuickTemplateDraft({ ...quickTemplateDraft, reimbursement_account_id: e.target.value })}
@@ -1127,7 +1052,7 @@ export default function Journal() {
                                         onClick={handleCreateQuickTemplate}
                                         className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-2 text-xs font-bold"
                                     >
-                                        Create Template
+                                        {text.newTemplate}
                                     </button>
                                     <button
                                         type="button"
@@ -1156,24 +1081,19 @@ export default function Journal() {
                                 </div>
                                 <div className="grid grid-cols-2 gap-2">
                                     {visibleQuickTemplates.map((template) => (
-                                        <button
-                                            type="button"
+                                        <QuickTemplateTile
                                             key={template.id}
-                                            onClick={() => selectQuickTemplate(template)}
-                                            className={`min-h-16 border px-3 py-2 text-left transition-colors ${selectedQuickTemplateId === template.id ? 'border-emerald-500 bg-emerald-950/30' : 'border-slate-700 bg-slate-800/50 hover:border-slate-500'}`}
-                                        >
-                                            <span className="block text-xs font-medium text-white truncate">{template.name}</span>
-                                            <span className="block text-[10px] text-slate-500 truncate">{quickKindLabel(template.template_kind)}</span>
-                                            <span className="block text-[10px] text-slate-600 truncate">
-                                                {template.default_from_account_name || '...'} → {template.default_to_account_name || '...'}
-                                            </span>
-                                        </button>
+                                            template={template}
+                                            language={language}
+                                            selected={selectedQuickTemplateId === template.id}
+                                            onSelect={selectQuickTemplate}
+                                        />
                                     ))}
                                 </div>
                             </>
                         ) : (
                             <div className="border border-dashed border-slate-700 bg-slate-900/40 p-4 text-center">
-                                <p className="text-xs text-slate-500">No quick templates yet</p>
+                                <p className="text-xs text-slate-500">{text.noTemplates}</p>
                                 <button
                                     type="button"
                                     onClick={() => setShowQuickTemplateForm(true)}
@@ -1213,7 +1133,7 @@ export default function Journal() {
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Currency</label>
+                                        <label className="flex items-center gap-1 text-[10px] text-slate-500 uppercase tracking-wider mb-1">{text.currency}<InfoTip text={help.currency} /></label>
                                         <select
                                             value={quickEntry.currency}
                                             onChange={(e) => setQuickEntry({ ...quickEntry, currency: e.target.value })}
@@ -1234,7 +1154,7 @@ export default function Journal() {
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Amount</label>
+                                        <label className="flex items-center gap-1 text-[10px] text-slate-500 uppercase tracking-wider mb-1">{text.amount}<InfoTip text={help.amount} /></label>
                                         <input
                                             type="number"
                                             value={quickEntry.amount}
@@ -1245,7 +1165,7 @@ export default function Journal() {
                                     {(selectedQuickTemplate.template_kind === 'expense_with_advance') && (
                                         <>
                                             <div>
-                                                <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Own Share</label>
+                                                <label className="flex items-center gap-1 text-[10px] text-slate-500 uppercase tracking-wider mb-1">{text.ownShare}<InfoTip text={help.ownShare} /></label>
                                                 <input
                                                     type="number"
                                                     value={quickEntry.ownAmount}
@@ -1254,7 +1174,7 @@ export default function Journal() {
                                                 />
                                             </div>
                                             <div>
-                                                <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Advance</label>
+                                                <label className="flex items-center gap-1 text-[10px] text-slate-500 uppercase tracking-wider mb-1">{text.advance}<InfoTip text={help.advance} /></label>
                                                 <input
                                                     type="number"
                                                     value={quickEntry.advanceAmount}
@@ -1265,8 +1185,9 @@ export default function Journal() {
                                         </>
                                     )}
                                     <div>
-                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">
-                                            {selectedQuickTemplate.template_kind === 'reimbursement' ? 'Receivable' : 'From'}
+                                        <label className="flex items-center gap-1 text-[10px] text-slate-500 uppercase tracking-wider mb-1">
+                                            {selectedQuickTemplate.template_kind === 'reimbursement' ? text.receivable : text.from}
+                                            <InfoTip text={selectedQuickTemplate.template_kind === 'reimbursement' ? help.receivable : help.from} />
                                         </label>
                                         <select
                                             value={quickEntry.payment_account_id}
@@ -1282,8 +1203,9 @@ export default function Journal() {
                                         </select>
                                     </div>
                                     <div>
-                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">
-                                            {selectedQuickTemplate.template_kind === 'debt_payment' ? 'Debt' : selectedQuickTemplate.template_kind === 'transfer' || selectedQuickTemplate.template_kind === 'reimbursement' ? 'To' : 'Expense'}
+                                        <label className="flex items-center gap-1 text-[10px] text-slate-500 uppercase tracking-wider mb-1">
+                                            {selectedQuickTemplate.template_kind === 'debt_payment' ? (language === 'ja' ? '負債' : 'Debt') : selectedQuickTemplate.template_kind === 'transfer' || selectedQuickTemplate.template_kind === 'reimbursement' ? text.to : (language === 'ja' ? '費目' : 'Expense')}
+                                            <InfoTip text={help.to} />
                                         </label>
                                         <select
                                             value={quickEntry.expense_account_id}
@@ -1301,7 +1223,7 @@ export default function Journal() {
                                     {selectedQuickTemplate.template_kind === 'expense_with_advance' && (
                                         <>
                                             <div>
-                                                <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Receivable</label>
+                                                <label className="flex items-center gap-1 text-[10px] text-slate-500 uppercase tracking-wider mb-1">{text.receivable}<InfoTip text={help.receivable} /></label>
                                                 <select
                                                     value={quickEntry.receivable_account_id}
                                                     onChange={(e) => setQuickEntry({ ...quickEntry, receivable_account_id: e.target.value })}
@@ -1320,11 +1242,11 @@ export default function Journal() {
                                                     onChange={(e) => setQuickEntry({ ...quickEntry, reimbursementReceived: e.target.checked })}
                                                     className="accent-emerald-500"
                                                 />
-                                                Reimbursed
+                                                {text.reimbursed}<InfoTip text={help.reimbursed} />
                                             </label>
                                             {quickEntry.reimbursementReceived && (
                                                 <div className="col-span-2">
-                                                    <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Deposit Account</label>
+                                                    <label className="flex items-center gap-1 text-[10px] text-slate-500 uppercase tracking-wider mb-1">{text.deposit}<InfoTip text={help.deposit} /></label>
                                                     <select
                                                         value={quickEntry.reimbursement_account_id}
                                                         onChange={(e) => setQuickEntry({ ...quickEntry, reimbursement_account_id: e.target.value })}
@@ -1342,7 +1264,7 @@ export default function Journal() {
                                 </div>
 
                                 <div className="space-y-2">
-                                    <h4 className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Preview</h4>
+                                    <h4 className="text-[10px] text-slate-500 uppercase tracking-wider font-bold flex items-center gap-1">{text.preview}<InfoTip text={help.preview} /></h4>
                                     {quickPreview.transactions.length > 0 ? (
                                         <div className="space-y-1">
                                             {quickPreview.transactions.map((tx, index) => (
@@ -1371,7 +1293,7 @@ export default function Journal() {
                                     className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white py-2.5 flex items-center justify-center gap-2 text-xs font-bold transition-colors"
                                 >
                                     {isProcessing ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
-                                    Post {quickPreview.transactions.length || ''} Transactions
+                                    {text.post} {quickPreview.transactions.length || ''}
                                 </button>
                             </div>
                         )}
