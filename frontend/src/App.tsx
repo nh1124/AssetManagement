@@ -1,23 +1,15 @@
-import { useState } from 'react';
 import './index.css';
-import Layout from './components/Layout';
-import QuickInputDrawer from './components/QuickInputDrawer';
 import { ToastProvider } from './components/Toast';
 import { ClientProvider } from './context/ClientContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
-import Journal from './pages/Journal';
-import Goal from './pages/Goal';
-import Portfolio from './pages/Portfolio';
-import Review from './pages/Review';
-import Strategy from './pages/Strategy';
-import Registry from './pages/Registry';
-import SettingsPage from './pages/Settings';
 import LoginPage from './pages/Login';
+import DesktopApp from './desktop/DesktopApp';
+import MobileApp from './mobile/MobileApp';
+import { useShellMode } from './shared/useShellMode';
 
 function AppContent() {
   const { isAuthenticated, isLoading } = useAuth();
-  const [currentPage, setCurrentPage] = useState('journal');
-  const [isQuickInputOpen, setIsQuickInputOpen] = useState(false);
+  const shellMode = useShellMode();
 
   if (isLoading) {
     return (
@@ -31,41 +23,10 @@ function AppContent() {
     return <LoginPage />;
   }
 
-  const renderPage = () => {
-    switch (currentPage) {
-      case 'journal':
-        return <Journal />;
-      case 'goal':
-        return <Goal />;
-      case 'portfolio':
-        return <Portfolio onNavigate={setCurrentPage} />;
-      case 'review':
-        return <Review onNavigate={setCurrentPage} />;
-      case 'strategy':
-        return <Strategy />;
-      case 'registry':
-        return <Registry />;
-      case 'settings':
-        return <SettingsPage />;
-      default:
-        return <Journal />;
-    }
-  };
-
   return (
     <ClientProvider>
       <ToastProvider>
-        <Layout
-          currentPage={currentPage}
-          onNavigate={setCurrentPage}
-          onOpenQuickInput={() => setIsQuickInputOpen(true)}
-        >
-          {renderPage()}
-        </Layout>
-        <QuickInputDrawer
-          isOpen={isQuickInputOpen}
-          onClose={() => setIsQuickInputOpen(false)}
-        />
+        {shellMode === 'mobile' ? <MobileApp /> : <DesktopApp />}
       </ToastProvider>
     </ClientProvider>
   );

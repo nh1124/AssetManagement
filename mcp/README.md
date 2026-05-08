@@ -82,13 +82,18 @@ Tools cover:
 
 - accounts and net worth
 - transactions
+- quick templates and transaction batches
 - analysis
 - reports and period reviews
+- monthly planning and monthly reviews
 - action bridges
 - recurring transactions
 - roadmap and milestones
 - products and unit economics
 - capsules, life events, and financial calculators
+- simulation config, Monte Carlo runs, and saved scenarios
+- exchange rates
+- client settings, data export/import, and AI helper endpoints
 
 Resources:
 

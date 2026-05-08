@@ -1,0 +1,178 @@
+// ============================================================
+// Monthly planning and review tools
+// ============================================================
+
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { z } from "zod";
+import { api } from "../api-client.js";
+import { toStructured } from "../utils.js";
+
+const periodSchema = z.string().regex(/^\d{4}-\d{2}$/);
+
+const planLineTypeSchema = z.enum(["income", "expense", "allocation", "debt_payment", "borrowing", "drawdown"]);
+const planTargetTypeSchema = z.enum(["account", "capsule", "life_event", "product", "manual"]);
+
+const monthlyPlanLineSchema = z
+  .object({
+    target_period: periodSchema.describe("Target period, YYYY-MM"),
+    line_type: planLineTypeSchema.describe("Monthly plan line type"),
+    target_type: planTargetTypeSchema.optional().default("manual").describe("Target entity kind"),
+    target_id: z.number().int().min(1).optional().describe("Target entity ID"),
+    account_id: z.number().int().min(1).optional().describe("Account ID"),
+    source_account_id: z.number().int().min(1).optional().describe("Source account ID"),
+    name: z.string().optional().describe("Display name"),
+    amount: z.number().optional().default(0).describe("Plan amount"),
+    planned_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Planned date, YYYY-MM-DD"),
+    priority: z.number().int().min(1).max(3).optional().default(2).describe("Priority"),
+    note: z.string().optional().describe("Note"),
+    source: z.string().optional().default("manual").describe("Source marker"),
+    recurring_transaction_id: z.number().int().min(1).optional().describe("Linked recurring transaction ID"),
+    is_active: z.boolean().optional().default(true).describe("Whether the line is active"),
+  })
+  .strict();
+
+export function registerMonthlyPlanningTools(server: McpServer): void {
+  server.registerTool(
+    "monthly_plan_summary",
+    {
+      title: "Get monthly plan summary",
+      description: "Returns monthly cash-flow plan summary and projected cash flow.",
+      inputSchema: z
+        .object({
+          period: periodSchema.optional().describe("Target period, YYYY-MM"),
+          cash_flow_start_period: periodSchema.optional().describe("Projection start period, YYYY-MM"),
+          cash_flow_months: z.number().int().min(1).max(36).optional().default(12),
+        })
+        .strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ period, cash_flow_start_period, cash_flow_months = 12 }) => {
+      try {
+        const params = new URLSearchParams();
+        if (period !== undefined) params.append("period", period);
+        if (cash_flow_start_period !== undefined) params.append("cash_flow_start_period", cash_flow_start_period);
+        params.append("cash_flow_months", String(cash_flow_months));
+        const data = await api.get<unknown>(`/life-events/budget-summary?${params.toString()}`);
+        return {
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+          structuredContent: toStructured(data),
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
+      }
+    },
+  );
+
+  server.registerTool(
+    "monthly_plan_lines_list",
+    {
+      title: "List monthly plan lines",
+      description: "Returns monthly plan lines for a period.",
+      inputSchema: z.object({ period: periodSchema.optional().describe("Target period, YYYY-MM") }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ period }) => {
+      try {
+        const query = period ? `?period=${encodeURIComponent(period)}` : "";
+        const data = await api.get<unknown>(`/life-events/monthly-plan-lines${query}`);
+        return {
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+          structuredContent: toStructured({ plan_lines: data }),
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
+      }
+    },
+  );
+
+  server.registerTool(
+    "monthly_plan_lines_save_batch",
+    {
+      title: "Save monthly plan lines",
+      description: "Creates or updates monthly plan lines in a batch.",
+      inputSchema: z.object({ lines: z.array(monthlyPlanLineSchema).min(1) }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ lines }) => {
+      try {
+        const data = await api.post<unknown>("/life-events/monthly-plan-lines/batch", lines);
+        return {
+          content: [{ type: "text", text: `Saved monthly plan lines:\n${JSON.stringify(data, null, 2)}` }],
+          structuredContent: toStructured(data),
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
+      }
+    },
+  );
+
+  server.registerTool(
+    "monthly_plan_lines_delete",
+    {
+      title: "Delete monthly plan line",
+      description: "Soft-deletes one monthly plan line.",
+      inputSchema: z.object({ id: z.number().int().min(1).describe("Plan line ID") }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ id }) => {
+      try {
+        const data = await api.delete<unknown>(`/life-events/monthly-plan-lines/${id}`);
+        return {
+          content: [{ type: "text", text: `Deleted monthly plan line ${id}:\n${JSON.stringify(data, null, 2)}` }],
+          structuredContent: toStructured(data),
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
+      }
+    },
+  );
+
+  server.registerTool(
+    "monthly_reviews_get",
+    {
+      title: "Get monthly review",
+      description: "Returns the monthly review for a period or an empty draft.",
+      inputSchema: z.object({ period: periodSchema.optional().describe("Target period, YYYY-MM") }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ period }) => {
+      try {
+        const query = period ? `?period=${encodeURIComponent(period)}` : "";
+        const data = await api.get<unknown>(`/monthly-reviews/${query}`);
+        return {
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+          structuredContent: toStructured(data),
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
+      }
+    },
+  );
+
+  server.registerTool(
+    "monthly_reviews_upsert",
+    {
+      title: "Upsert monthly review",
+      description: "Creates or updates reflection and next actions for one month.",
+      inputSchema: z
+        .object({
+          target_period: periodSchema.describe("Target period, YYYY-MM"),
+          reflection: z.string().optional().default("").describe("Reflection text"),
+          next_actions: z.string().optional().default("").describe("Next action text"),
+        })
+        .strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        const data = await api.put<unknown>("/monthly-reviews/", input);
+        return {
+          content: [{ type: "text", text: `Saved monthly review:\n${JSON.stringify(data, null, 2)}` }],
+          structuredContent: toStructured(data),
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
+      }
+    },
+  );
+}

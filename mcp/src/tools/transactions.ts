@@ -116,6 +116,64 @@ export function registerTransactionTools(server: McpServer): void {
   );
 
   server.registerTool(
+    "transactions_update",
+    {
+      title: "Update transaction",
+      description: "Updates a transaction and lets the backend rebuild its journal entries and account balances.",
+      inputSchema: z
+        .object({
+          id: z.number().int().min(1).describe("Transaction ID"),
+          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Transaction date, YYYY-MM-DD"),
+          description: z.string().min(1).optional().describe("Description"),
+          amount: z.number().min(0).optional().describe("Amount"),
+          type: transactionTypeSchema.optional().describe("Transaction type"),
+          category: z.string().optional().describe("Category"),
+          from_account_id: z.number().int().min(1).optional().describe("Source account ID"),
+          to_account_id: z.number().int().min(1).optional().describe("Destination account ID"),
+          currency: z.string().optional().describe("Currency"),
+        })
+        .strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ id, ...patch }) => {
+      try {
+        const data = await api.put<Transaction>(`/transactions/${id}`, patch);
+        return {
+          content: [{ type: "text", text: `Updated transaction:\n${JSON.stringify(data, null, 2)}` }],
+          structuredContent: toStructured(data),
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
+      }
+    },
+  );
+
+  server.registerTool(
+    "transactions_delete",
+    {
+      title: "Delete transaction",
+      description: "Deletes a transaction and reverts its journal entries through the backend.",
+      inputSchema: z
+        .object({
+          id: z.number().int().min(1).describe("Transaction ID"),
+        })
+        .strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ id }) => {
+      try {
+        const data = await api.delete<unknown>(`/transactions/${id}`);
+        return {
+          content: [{ type: "text", text: `Deleted transaction ${id}:\n${JSON.stringify(data, null, 2)}` }],
+          structuredContent: toStructured(data),
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
+      }
+    },
+  );
+
+  server.registerTool(
     "transactions_recent",
     {
       title: "Show recent transactions",

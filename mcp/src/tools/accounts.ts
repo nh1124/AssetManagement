@@ -45,6 +45,40 @@ export function registerAccountTools(server: McpServer): void {
   );
 
   server.registerTool(
+    "accounts_create",
+    {
+      title: "Create account",
+      description:
+        "Creates an account. Opening balances must be created through transactions; this tool sends balance=0.",
+      inputSchema: z
+        .object({
+          name: z.string().min(1).describe("Account name"),
+          account_type: z.enum(["asset", "liability", "income", "expense"]).describe("Account type"),
+          parent_id: z.number().int().min(1).optional().describe("Parent account ID"),
+          expected_return: z.number().optional().default(0).describe("Expected annual return percentage"),
+          role: accountRoleSchema.optional().default("unassigned").describe("Planning role"),
+          role_target_amount: z.number().nullable().optional().describe("Target amount for the planning role"),
+        })
+        .strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ name, account_type, parent_id, expected_return = 0, role = "unassigned", role_target_amount }) => {
+      try {
+        const body: Record<string, unknown> = { name, account_type, balance: 0, expected_return, role };
+        if (parent_id !== undefined) body.parent_id = parent_id;
+        if (role_target_amount !== undefined) body.role_target_amount = role_target_amount;
+        const data = await api.post<Account>("/accounts/", body);
+        return {
+          content: [{ type: "text", text: `Created account:\n${JSON.stringify(data, null, 2)}` }],
+          structuredContent: toStructured(data),
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
+      }
+    },
+  );
+
+  server.registerTool(
     "accounts_update",
     {
       title: "Update account metadata",
@@ -76,6 +110,48 @@ export function registerAccountTools(server: McpServer): void {
         const data = await api.put<Account>(`/accounts/${id}`, body);
         return {
           content: [{ type: "text", text: `Updated account ${id}:\n${JSON.stringify(data, null, 2)}` }],
+          structuredContent: toStructured(data),
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
+      }
+    },
+  );
+
+  server.registerTool(
+    "accounts_delete",
+    {
+      title: "Deactivate account",
+      description: "Soft-deletes an account by marking it inactive. The backend rejects accounts with active children or template references.",
+      inputSchema: z.object({ id: z.number().int().min(1).describe("Account ID") }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ id }) => {
+      try {
+        const data = await api.delete<unknown>(`/accounts/${id}`);
+        return {
+          content: [{ type: "text", text: `Deactivated account ${id}:\n${JSON.stringify(data, null, 2)}` }],
+          structuredContent: toStructured(data),
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
+      }
+    },
+  );
+
+  server.registerTool(
+    "accounts_seed_defaults",
+    {
+      title: "Seed default accounts",
+      description: "Creates any missing default accounts for the current client.",
+      inputSchema: z.object({}).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async () => {
+      try {
+        const data = await api.post<unknown>("/accounts/seed-defaults", {});
+        return {
+          content: [{ type: "text", text: `Seeded default accounts:\n${JSON.stringify(data, null, 2)}` }],
           structuredContent: toStructured(data),
         };
       } catch (err) {
