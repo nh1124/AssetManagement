@@ -23,7 +23,7 @@ export default function Layout({ children, currentPage, onNavigate, onOpenQuickI
     const { user, logout } = useAuth();
 
     return (
-        <div className="min-h-screen bg-slate-900 text-slate-50 flex flex-col">
+        <div className="h-screen min-h-0 bg-slate-900 text-slate-50 flex flex-col overflow-hidden">
             {/* Top Navigation */}
             <nav className="bg-slate-900 border-b border-slate-800 flex-shrink-0">
                 <div className="px-3">
@@ -75,7 +75,7 @@ export default function Layout({ children, currentPage, onNavigate, onOpenQuickI
 
 
             {/* Main Content */}
-            <main className="flex-1 overflow-hidden relative">
+            <main className="flex-1 min-h-0 overflow-hidden relative">
                 {children}
 
                 {/* Floating Action Button for Quick Input */}

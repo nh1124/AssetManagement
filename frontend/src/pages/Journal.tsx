@@ -10,7 +10,7 @@ import {
     createRecurringTransaction, deleteRecurringTransaction, updateRecurringTransaction,
     getAccounts, createTransaction, deleteTransaction, updateTransaction, getTransactionsPage,
     analyzeWithBackend,
-    getQuickTemplates, createQuickTemplate, deleteQuickTemplate, createTransactionBatch,
+    getQuickTemplates, createQuickTemplate, updateQuickTemplate, deleteQuickTemplate, createTransactionBatch,
 } from '../api';
 import { useToast } from '../components/Toast';
 import { useClient } from '../context/ClientContext';
@@ -152,6 +152,7 @@ export default function Journal() {
     const [activeQuickTray, setActiveQuickTray] = useState('');
     const [selectedQuickTemplateId, setSelectedQuickTemplateId] = useState<number | null>(null);
     const [showQuickTemplateForm, setShowQuickTemplateForm] = useState(false);
+    const [editingQuickTemplateId, setEditingQuickTemplateId] = useState<number | null>(null);
     const [accounts, setAccounts] = useState<AccountItem[]>([]);
     const [isProcessing, setIsProcessing] = useState(false);
     const { showToast } = useToast();
@@ -416,7 +417,26 @@ export default function Journal() {
     const quickTrays = Array.from(new Set(quickTemplates.map((template) => template.tray)));
     const visibleQuickTemplates = quickTemplates.filter((template) => !activeQuickTray || template.tray === activeQuickTray);
 
+    const resetQuickTemplateDraft = (tray = activeQuickTray || 'Food') => {
+        setEditingQuickTemplateId(null);
+        setQuickTemplateDraft({
+            tray,
+            name: '',
+            template_kind: 'simple_expense',
+            category: '',
+            default_currency: currentCurrency,
+            default_from_account_id: '',
+            default_to_account_id: '',
+            receivable_account_id: '',
+            reimbursement_account_id: '',
+        });
+    };
+
     const selectQuickTemplate = (template: QuickTemplate) => {
+        if (selectedQuickTemplateId === template.id) {
+            setSelectedQuickTemplateId(null);
+            return;
+        }
         setSelectedQuickTemplateId(template.id);
         setQuickEntry((prev) => ({
             ...prev,
@@ -431,6 +451,26 @@ export default function Journal() {
                 ? String(configAccountId(template, 'reimbursement_account_id'))
                 : '',
         }));
+    };
+
+    const handleEditQuickTemplate = (template: QuickTemplate) => {
+        setEditingQuickTemplateId(template.id);
+        setShowQuickTemplateForm(true);
+        setQuickTemplateDraft({
+            tray: template.tray,
+            name: template.name,
+            template_kind: template.template_kind as QuickTemplateKind,
+            category: template.category || '',
+            default_currency: template.default_currency || currentCurrency,
+            default_from_account_id: template.default_from_account_id ? String(template.default_from_account_id) : '',
+            default_to_account_id: template.default_to_account_id ? String(template.default_to_account_id) : '',
+            receivable_account_id: configAccountId(template, 'receivable_account_id')
+                ? String(configAccountId(template, 'receivable_account_id'))
+                : '',
+            reimbursement_account_id: configAccountId(template, 'reimbursement_account_id')
+                ? String(configAccountId(template, 'reimbursement_account_id'))
+                : '',
+        });
     };
 
     const resetQuickEntryAmounts = () => {
@@ -451,13 +491,13 @@ export default function Journal() {
         currentCurrency,
     });
 
-    const handleCreateQuickTemplate = async () => {
+    const handleSaveQuickTemplate = async () => {
         if (!quickTemplateDraft.tray.trim() || !quickTemplateDraft.name.trim()) {
             showToast('Tray and template name are required', 'error');
             return;
         }
         try {
-            const template = await createQuickTemplate({
+            const payload = {
                 tray: quickTemplateDraft.tray.trim(),
                 name: quickTemplateDraft.name.trim(),
                 template_kind: quickTemplateDraft.template_kind,
@@ -472,27 +512,32 @@ export default function Journal() {
                 },
                 sort_order: quickTemplates.length,
                 is_active: true,
-            });
-            showToast('Quick template created', 'success');
+            };
+            const template = editingQuickTemplateId
+                ? await updateQuickTemplate(editingQuickTemplateId, payload)
+                : await createQuickTemplate(payload);
+            showToast(editingQuickTemplateId ? 'Quick template updated' : 'Quick template created', 'success');
             setShowQuickTemplateForm(false);
-            setQuickTemplateDraft({
-                tray: template.tray,
-                name: '',
-                template_kind: 'simple_expense',
-                category: '',
-                default_currency: currentCurrency,
-                default_from_account_id: '',
-                default_to_account_id: '',
-                receivable_account_id: '',
-                reimbursement_account_id: '',
-            });
+            resetQuickTemplateDraft(template.tray);
             await fetchQuickTemplatesOnly();
             setActiveQuickTray(template.tray);
             setSelectedQuickTemplateId(template.id);
-            selectQuickTemplate(template);
+            setQuickEntry((prev) => ({
+                ...prev,
+                description: template.name,
+                currency: template.default_currency || currentCurrency,
+                payment_account_id: template.default_from_account_id ? String(template.default_from_account_id) : '',
+                expense_account_id: template.default_to_account_id ? String(template.default_to_account_id) : '',
+                receivable_account_id: configAccountId(template, 'receivable_account_id')
+                    ? String(configAccountId(template, 'receivable_account_id'))
+                    : '',
+                reimbursement_account_id: configAccountId(template, 'reimbursement_account_id')
+                    ? String(configAccountId(template, 'reimbursement_account_id'))
+                    : '',
+            }));
         } catch (error) {
             console.error(error);
-            showToast('Failed to create quick template', 'error');
+            showToast('Failed to save quick template', 'error');
         }
     };
 
@@ -500,6 +545,11 @@ export default function Journal() {
         try {
             await deleteQuickTemplate(id);
             showToast('Quick template deleted', 'info');
+            if (selectedQuickTemplateId === id) setSelectedQuickTemplateId(null);
+            if (editingQuickTemplateId === id) {
+                setShowQuickTemplateForm(false);
+                resetQuickTemplateDraft();
+            }
             await fetchQuickTemplatesOnly();
         } catch (error) {
             console.error(error);
@@ -924,7 +974,14 @@ export default function Journal() {
                             </h3>
                             <button
                                 type="button"
-                                onClick={() => setShowQuickTemplateForm((value) => !value)}
+                                onClick={() => {
+                                    if (showQuickTemplateForm && !editingQuickTemplateId) {
+                                        setShowQuickTemplateForm(false);
+                                        return;
+                                    }
+                                    resetQuickTemplateDraft();
+                                    setShowQuickTemplateForm(true);
+                                }}
                                 className="p-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded"
                                 aria-label="Add quick template"
                                 title="Add quick template"
@@ -934,7 +991,34 @@ export default function Journal() {
                         </div>
 
                         {showQuickTemplateForm && (
-                            <div className="border border-emerald-800/50 bg-emerald-900/10 p-3 space-y-3">
+                            <div
+                                className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 px-4 py-6"
+                                onMouseDown={() => {
+                                    setShowQuickTemplateForm(false);
+                                    resetQuickTemplateDraft();
+                                }}
+                            >
+                            <div
+                                className="w-full max-w-2xl max-h-[88vh] overflow-auto border border-emerald-800/50 bg-slate-950 p-4 space-y-3 shadow-2xl"
+                                onMouseDown={(event) => event.stopPropagation()}
+                            >
+                                <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                                    <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">
+                                        {editingQuickTemplateId ? (language === 'ja' ? 'テンプレート編集' : 'Edit Template') : text.newTemplate}
+                                    </span>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setShowQuickTemplateForm(false);
+                                            resetQuickTemplateDraft();
+                                        }}
+                                        className="p-1 text-slate-500 hover:text-white"
+                                        aria-label="Close quick template form"
+                                        title="Close"
+                                    >
+                                        <X size={14} />
+                                    </button>
+                                </div>
                                 <div className="grid grid-cols-2 gap-3">
                                     <div>
                                         <label className="flex items-center gap-1 text-[10px] text-slate-500 uppercase tracking-wider mb-1">{text.tray}<InfoTip text={help.tray} /></label>
@@ -1049,19 +1133,23 @@ export default function Journal() {
                                 <div className="flex gap-2">
                                     <button
                                         type="button"
-                                        onClick={handleCreateQuickTemplate}
+                                        onClick={handleSaveQuickTemplate}
                                         className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-2 text-xs font-bold"
                                     >
-                                        {text.newTemplate}
+                                        {editingQuickTemplateId ? (language === 'ja' ? 'テンプレート更新' : 'Update Template') : text.newTemplate}
                                     </button>
                                     <button
                                         type="button"
-                                        onClick={() => setShowQuickTemplateForm(false)}
+                                        onClick={() => {
+                                            setShowQuickTemplateForm(false);
+                                            resetQuickTemplateDraft();
+                                        }}
                                         className="px-4 bg-slate-800 hover:bg-slate-700 py-2 text-xs font-bold text-slate-400"
                                     >
                                         Cancel
                                     </button>
                                 </div>
+                            </div>
                             </div>
                         )}
 
@@ -1096,7 +1184,10 @@ export default function Journal() {
                                 <p className="text-xs text-slate-500">{text.noTemplates}</p>
                                 <button
                                     type="button"
-                                    onClick={() => setShowQuickTemplateForm(true)}
+                                    onClick={() => {
+                                        resetQuickTemplateDraft();
+                                        setShowQuickTemplateForm(true);
+                                    }}
                                     className="mt-3 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold"
                                 >
                                     New Template
@@ -1111,15 +1202,26 @@ export default function Journal() {
                                         <p className="text-xs font-bold text-white">{selectedQuickTemplate.name}</p>
                                         <p className="text-[10px] text-slate-500">{selectedQuickTemplate.tray} / {quickKindLabel(selectedQuickTemplate.template_kind)}</p>
                                     </div>
-                                    <button
-                                        type="button"
-                                        onClick={() => handleDeleteQuickTemplate(selectedQuickTemplate.id)}
-                                        className="p-1 text-slate-500 hover:text-rose-400"
-                                        aria-label="Delete quick template"
-                                        title="Delete quick template"
-                                    >
-                                        <Trash2 size={13} />
-                                    </button>
+                                    <div className="flex gap-1">
+                                        <button
+                                            type="button"
+                                            onClick={() => handleEditQuickTemplate(selectedQuickTemplate)}
+                                            className="p-1 text-slate-500 hover:text-emerald-300"
+                                            aria-label="Edit quick template"
+                                            title="Edit quick template"
+                                        >
+                                            <Edit size={13} />
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleDeleteQuickTemplate(selectedQuickTemplate.id)}
+                                            className="p-1 text-slate-500 hover:text-rose-400"
+                                            aria-label="Delete quick template"
+                                            title="Delete quick template"
+                                        >
+                                            <Trash2 size={13} />
+                                        </button>
+                                    </div>
                                 </div>
 
                                 <div className="grid grid-cols-2 gap-3">
@@ -1665,8 +1767,8 @@ export default function Journal() {
     );
 
     const rightPane = (
-        <div className="space-y-3 h-full flex flex-col">
-            <div className="border border-slate-800 bg-slate-900/70 p-3 space-y-3">
+        <div className="space-y-3 h-full min-h-0 flex flex-col overflow-hidden">
+            <div className="border border-slate-800 bg-slate-900/70 p-3 space-y-3 flex-shrink-0">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="grid grid-cols-2 xl:grid-cols-4 gap-x-4 gap-y-1 text-[10px] text-slate-400 flex-1">
                         <span>{transactionTotal} results</span>
@@ -1769,7 +1871,7 @@ export default function Journal() {
                     </>
                 )}
             </div>
-            <div className="flex-1 overflow-auto space-y-0.5">
+            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden space-y-0.5 pr-1">
                 {transactions.length === 0 ? (
                     <p className="text-slate-600 text-xs py-8 text-center">No transactions yet</p>
                 ) : (
