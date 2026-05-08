@@ -310,7 +310,11 @@ def _attach_capsule_suggestions(plan_lines: list[dict], capsule_by_id: dict[int,
         suggested = round(capsule.monthly_contribution or 0.0, 0)
         line["suggested_amount"] = suggested
         line["suggested_source"] = "product_reserve"
-        line["suggested_status"] = "synced" if round(line.get("amount") or 0.0, 0) == suggested else "diff"
+        line["suggested_status"] = (
+            "synced"
+            if line.get("source") == "capsule" and round(line.get("amount") or 0.0, 0) == suggested
+            else "diff"
+        )
 
 
 def _sum_lines(lines: Iterable[dict], *line_types: str) -> float:
@@ -566,7 +570,11 @@ def _merge_product_expense_context(plan_lines: list[dict], product_lines: list[d
             line["suggested_source"] = "product_expense"
         else:
             line["suggested_source"] = "recurrence"
-        line["suggested_status"] = "synced" if round(line.get("amount") or 0.0, 0) == suggested else "diff"
+        line["suggested_status"] = (
+            "synced"
+            if line.get("source") == line["suggested_source"] and round(line.get("amount") or 0.0, 0) == suggested
+            else "diff"
+        )
 
     plan_lines.extend([
         line for line in product_lines if line.get("account_id") not in matched_account_ids
