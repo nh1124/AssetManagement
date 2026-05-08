@@ -844,7 +844,7 @@ export default function Journal() {
         : 0;
 
     const leftPane = (
-        <TabPanel tabs={MAIN_TABS} activeTab={activeTab} onTabChange={setActiveTab}>
+        <TabPanel tabs={MAIN_TABS} activeTab={activeTab} onTabChange={setActiveTab} scrollContent={false}>
             <div className="py-2">
                 {activeTab === 'transaction' && (
                     <form onSubmit={handleRecordSubmit} className="space-y-4 pt-2">
@@ -1871,7 +1871,7 @@ export default function Journal() {
                     </>
                 )}
             </div>
-            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden space-y-0.5 pr-1">
+            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden space-y-0.5 pr-1 scrollbar-subtle">
                 {transactions.length === 0 ? (
                     <p className="text-slate-600 text-xs py-8 text-center">No transactions yet</p>
                 ) : (
@@ -1926,10 +1926,11 @@ export default function Journal() {
     );
 
     return (
-        <div className="h-full flex flex-col p-2 overflow-hidden">
+        <div className="min-h-full flex flex-col p-2">
             <SplitView
                 left={leftPane}
                 right={rightPane}
+                pageScroll
             />
         </div>
     );

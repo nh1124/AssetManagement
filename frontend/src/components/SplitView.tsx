@@ -5,9 +5,38 @@ interface SplitViewProps {
     right: ReactNode;
     leftTitle?: string;
     rightTitle?: string;
+    pageScroll?: boolean;
 }
 
-export default function SplitView({ left, right, leftTitle, rightTitle }: SplitViewProps) {
+export default function SplitView({ left, right, leftTitle, rightTitle, pageScroll = false }: SplitViewProps) {
+    if (pageScroll) {
+        return (
+            <div className="grid grid-cols-1 min-[900px]:grid-cols-2 min-h-full">
+                <div className="border-r border-slate-800 flex flex-col min-h-0">
+                    {leftTitle && (
+                        <div className="px-3 py-2 border-b border-slate-800 bg-slate-900 flex-shrink-0">
+                            <h2 className="text-xs font-medium text-slate-400 uppercase tracking-wider">{leftTitle}</h2>
+                        </div>
+                    )}
+                    <div className="p-3">
+                        {left}
+                    </div>
+                </div>
+
+                <div className="flex flex-col h-[calc(100vh-2.5rem)] min-h-0 min-[900px]:sticky min-[900px]:top-0 overflow-hidden">
+                    {rightTitle && (
+                        <div className="px-3 py-2 border-b border-slate-800 bg-slate-900 flex-shrink-0">
+                            <h2 className="text-xs font-medium text-slate-400 uppercase tracking-wider">{rightTitle}</h2>
+                        </div>
+                    )}
+                    <div className="flex-1 min-h-0 overflow-hidden p-3">
+                        {right}
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="grid grid-cols-1 grid-rows-[minmax(0,1fr)_minmax(0,1fr)] min-[900px]:grid-cols-2 min-[900px]:grid-rows-1 h-full min-h-0">
             {/* Left Pane - Independent scroll */}

@@ -10,9 +10,10 @@ interface TabPanelProps {
     activeTab: string;
     onTabChange: (tabId: string) => void;
     children: ReactNode;
+    scrollContent?: boolean;
 }
 
-export default function TabPanel({ tabs, activeTab, onTabChange, children }: TabPanelProps) {
+export default function TabPanel({ tabs, activeTab, onTabChange, children, scrollContent = true }: TabPanelProps) {
     return (
         <div className="flex flex-col h-full">
             {/* Tab Bar */}
@@ -32,7 +33,7 @@ export default function TabPanel({ tabs, activeTab, onTabChange, children }: Tab
             </div>
 
             {/* Tab Content */}
-            <div className="flex-1 overflow-auto p-3">
+            <div className={`flex-1 p-3 ${scrollContent ? 'overflow-auto' : 'overflow-visible'}`}>
                 {children}
             </div>
         </div>

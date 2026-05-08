@@ -75,7 +75,7 @@ export default function Layout({ children, currentPage, onNavigate, onOpenQuickI
 
 
             {/* Main Content */}
-            <main className="flex-1 min-h-0 overflow-hidden relative">
+            <main className="flex-1 min-h-0 overflow-auto relative">
                 {children}
 
                 {/* Floating Action Button for Quick Input */}
