@@ -430,14 +430,24 @@ export default function Strategy() {
         return `${period}-${day}`;
     };
 
+    const SYNCED_SOURCES = new Set(['recurrence', 'product_expense', 'recurrence_product_expense', 'capsule']);
+
+    const suggestedBudgetSource = (account: BudgetAccount) => {
+        if (account.suggested_source === 'recurrence') return 'recurrence';
+        if (account.suggested_source === 'product_expense') return 'product_expense';
+        if (account.suggested_source === 'recurrence_product_expense') return 'recurrence_product_expense';
+        return 'manual';
+    };
+
     const budgetAccountPlanPayload = (account: BudgetAccount, amount: number, period = currentPeriod) => {
         const suggestedAmount = Number(account.suggested_amount || 0);
-        const followsRecurringSuggestion = account.suggested_source === 'recurrence' && Math.round(amount) === Math.round(suggestedAmount);
         const source = account.source === 'one_time'
             ? 'one_time'
-            : followsRecurringSuggestion
-                ? 'recurrence'
-                : 'manual';
+            : account.source && SYNCED_SOURCES.has(account.source)
+                ? account.source
+                : account.suggested_source && Math.round(amount) === Math.round(suggestedAmount)
+                    ? suggestedBudgetSource(account)
+                    : 'manual';
         return {
             id: account.plan_line_id ?? null,
             target_period: period,
@@ -452,7 +462,7 @@ export default function Strategy() {
             priority: account.priority ?? 2,
             note: account.note ?? null,
             source,
-            recurring_transaction_id: source === 'recurrence' ? account.recurring_transaction_id ?? null : null,
+            recurring_transaction_id: source.includes('recurrence') ? account.recurring_transaction_id ?? null : null,
             is_active: true,
         };
     };
@@ -501,8 +511,8 @@ export default function Strategy() {
                 planned_date: line.source === 'one_time' ? line.planned_date ?? `${currentPeriod}-01` : null,
                 priority: line.priority ?? 2,
                 note: line.note ?? null,
-                source: line.source === 'recurrence' ? 'recurrence' : line.source === 'one_time' ? 'one_time' : 'manual',
-                recurring_transaction_id: line.source === 'recurrence' ? line.recurring_transaction_id ?? null : null,
+                source: line.source && SYNCED_SOURCES.has(line.source) ? line.source : line.source === 'one_time' ? 'one_time' : 'manual',
+                recurring_transaction_id: line.source?.includes('recurrence') ? line.recurring_transaction_id ?? null : null,
                 is_active: true,
             }));
             await saveMonthlyPlanLines([...expenseLines, ...otherLines]);
@@ -680,15 +690,6 @@ export default function Strategy() {
         setPlanLineDrafts((prev) => prev.map((line) => (
             line.local_id === localId ? { ...line, amount } : line
         )));
-    };
-
-    const SYNCED_SOURCES = new Set(['recurrence', 'product_expense', 'recurrence_product_expense', 'capsule']);
-
-    const suggestedBudgetSource = (account: BudgetAccount) => {
-        if (account.suggested_source === 'recurrence') return 'recurrence';
-        if (account.suggested_source === 'product_expense') return 'product_expense';
-        if (account.suggested_source === 'recurrence_product_expense') return 'recurrence_product_expense';
-        return 'manual';
     };
 
     const budgetSourceAmount = (account: BudgetAccount) => Number(account.suggested_amount || account.recurring_amount || 0);
@@ -1102,8 +1103,8 @@ export default function Strategy() {
                         planned_date: line.source === 'one_time' ? shiftPlannedDateToPeriod(line.planned_date, targetPeriod) : null,
                         priority: line.priority ?? 2,
                         note: line.note ?? null,
-                        source: line.source === 'recurrence' ? 'recurrence' : line.source === 'one_time' ? 'one_time' : 'manual',
-                        recurring_transaction_id: line.source === 'recurrence' ? line.recurring_transaction_id ?? null : null,
+                        source: line.source && SYNCED_SOURCES.has(line.source) ? line.source : line.source === 'one_time' ? 'one_time' : 'manual',
+                        recurring_transaction_id: line.source?.includes('recurrence') ? line.recurring_transaction_id ?? null : null,
                         is_active: true,
                     };
                 });
