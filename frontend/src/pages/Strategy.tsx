@@ -439,6 +439,40 @@ export default function Strategy() {
         return 'manual';
     };
 
+    const budgetSourceAmount = (account: BudgetAccount) => Number(account.suggested_amount || account.recurring_amount || 0);
+
+    const budgetAccountKey = (account: BudgetAccount) => planLineKey({
+        line_type: 'expense',
+        target_type: account.target_type ?? (account.account_id ? 'account' : 'manual'),
+        account_id: account.account_id ?? (account.target_type === 'account' ? account.id : null),
+        target_id: account.target_id ?? null,
+        name: account.name,
+    });
+
+    const budgetAmountWithCopiedAdjustment = (
+        sourceAccount: BudgetAccount,
+        targetAccount: BudgetAccount | undefined,
+        sourceAmount: number,
+    ) => {
+        const adjustment = sourceAmount - budgetSourceAmount(sourceAccount);
+        return (targetAccount ? budgetSourceAmount(targetAccount) : budgetSourceAmount(sourceAccount)) + adjustment;
+    };
+
+    const budgetAccountForCopy = (sourceAccount: BudgetAccount, targetAccount: BudgetAccount | undefined) => {
+        const targetSource = targetAccount?.suggested_source ? suggestedBudgetSource(targetAccount) : null;
+        const source = sourceAccount.source && SYNCED_SOURCES.has(sourceAccount.source)
+            ? targetSource ?? sourceAccount.source
+            : sourceAccount.source;
+        return {
+            ...sourceAccount,
+            suggested_amount: targetAccount?.suggested_amount ?? sourceAccount.suggested_amount,
+            suggested_source: targetAccount?.suggested_source ?? sourceAccount.suggested_source,
+            recurring_amount: targetAccount?.recurring_amount ?? sourceAccount.recurring_amount,
+            recurring_transaction_id: targetAccount?.recurring_transaction_id ?? sourceAccount.recurring_transaction_id,
+            source,
+        };
+    };
+
     const budgetAccountPlanPayload = (account: BudgetAccount, amount: number, period = currentPeriod) => {
         const suggestedAmount = Number(account.suggested_amount || 0);
         const source = account.source === 'one_time'
@@ -477,10 +511,19 @@ export default function Strategy() {
                 showToast('前月に予算設定がありません', 'info');
                 return;
             }
-            await saveMonthlyPlanLines(previousSummary.expense_accounts.map((account: BudgetAccount) => ({
-                ...budgetAccountPlanPayload(account, account.amount, currentPeriod),
-                id: null,
-            })));
+            const targetSummary = budgetSummary ?? await getBudgetSummary(currentPeriod);
+            const targetAccountByKey = new Map<string, BudgetAccount>();
+            (targetSummary.expense_accounts ?? []).forEach((account: BudgetAccount) => {
+                targetAccountByKey.set(budgetAccountKey(account), account);
+            });
+            await saveMonthlyPlanLines(previousSummary.expense_accounts.map((account: BudgetAccount) => {
+                const targetAccount = targetAccountByKey.get(budgetAccountKey(account));
+                const amount = budgetAmountWithCopiedAdjustment(account, targetAccount, Number(account.amount || 0));
+                return {
+                    ...budgetAccountPlanPayload(budgetAccountForCopy(account, targetAccount), amount, currentPeriod),
+                    id: null,
+                };
+            }));
             showToast(`Copied from ${previousPeriod}`, 'info');
             await fetchBudgetSummary();
         } catch (error) {
@@ -692,7 +735,6 @@ export default function Strategy() {
         )));
     };
 
-    const budgetSourceAmount = (account: BudgetAccount) => Number(account.suggested_amount || account.recurring_amount || 0);
     const budgetAmountWithExistingAdjustment = (account: BudgetAccount) => {
         const sourceAmount = budgetSourceAmount(account);
         const currentAmount = Number(budgetEdits[account.id] ?? account.amount ?? 0);
@@ -1067,22 +1109,33 @@ export default function Strategy() {
             const targetSummary = await getBudgetSummary(targetPeriod, { cash_flow_start_period: targetPeriod, cash_flow_months: 1 });
             const targetByKey = new Map<string, MonthlyPlanLine>();
             (targetSummary.plan_lines ?? []).forEach((line: MonthlyPlanLine) => {
-                if (line.id) targetByKey.set(planLineKey(line), line);
+                targetByKey.set(planLineKey(line), line);
+            });
+            const targetAccountByKey = new Map<string, BudgetAccount>();
+            (targetSummary.expense_accounts ?? []).forEach((account: BudgetAccount) => {
+                targetAccountByKey.set(budgetAccountKey(account), account);
             });
 
             const expensePayload = (budgetSummary?.expense_accounts ?? [])
                 .filter((account) => account.plan_line_id)
                 .map((account) => {
-                    const sourceLine = {
-                        line_type: 'expense' as MonthlyPlanLineType,
-                        target_type: account.target_type ?? 'account',
-                        account_id: account.account_id ?? (account.target_type === 'account' ? account.id : null),
-                        target_id: account.target_id ?? null,
-                        name: account.name,
-                    };
-                    const targetLine = targetByKey.get(planLineKey(sourceLine));
+                    const targetAccount = targetAccountByKey.get(budgetAccountKey(account));
+                    const targetLine = targetAccount?.plan_line_id
+                        ? targetByKey.get(planLineKey({
+                            line_type: 'expense',
+                            target_type: targetAccount.target_type ?? 'account',
+                            account_id: targetAccount.account_id ?? (targetAccount.target_type === 'account' ? targetAccount.id : null),
+                            target_id: targetAccount.target_id ?? null,
+                            name: targetAccount.name,
+                        }))
+                        : undefined;
+                    const amount = budgetAmountWithCopiedAdjustment(
+                        account,
+                        targetAccount,
+                        Number(budgetEdits[account.id] ?? account.amount ?? 0),
+                    );
                     return {
-                        ...budgetAccountPlanPayload(account, Number(budgetEdits[account.id] ?? account.amount ?? 0), targetPeriod),
+                        ...budgetAccountPlanPayload(budgetAccountForCopy(account, targetAccount), amount, targetPeriod),
                         id: targetLine?.id ?? null,
                     };
                 });
@@ -1090,6 +1143,18 @@ export default function Strategy() {
                 .filter((line) => line.id && line.line_type !== 'expense')
                 .map((line) => {
                     const targetLine = targetByKey.get(planLineKey(line));
+                    const sourceAmount = Number(line.amount || 0);
+                    const adjustment = sourceAmount - planLineSourceAmount(line);
+                    const targetSourceAmount = targetLine ? planLineSourceAmount(targetLine) : planLineSourceAmount(line);
+                    const copiedSource = line.source && SYNCED_SOURCES.has(line.source)
+                        ? targetLine?.suggested_source === 'product_reserve'
+                            ? 'capsule'
+                            : targetLine?.recurring_transaction_id
+                                ? 'recurrence'
+                                : line.source
+                        : line.source === 'one_time'
+                            ? 'one_time'
+                            : 'manual';
                     return {
                         id: targetLine?.id ?? null,
                         target_period: targetPeriod,
@@ -1099,12 +1164,12 @@ export default function Strategy() {
                         account_id: line.account_id ?? null,
                         source_account_id: line.source_account_id ?? null,
                         name: line.name || line.target_name || null,
-                        amount: Number(line.amount || 0),
+                        amount: targetSourceAmount + adjustment,
                         planned_date: line.source === 'one_time' ? shiftPlannedDateToPeriod(line.planned_date, targetPeriod) : null,
                         priority: line.priority ?? 2,
                         note: line.note ?? null,
-                        source: line.source && SYNCED_SOURCES.has(line.source) ? line.source : line.source === 'one_time' ? 'one_time' : 'manual',
-                        recurring_transaction_id: line.source?.includes('recurrence') ? line.recurring_transaction_id ?? null : null,
+                        source: copiedSource,
+                        recurring_transaction_id: copiedSource.includes('recurrence') ? targetLine?.recurring_transaction_id ?? line.recurring_transaction_id ?? null : null,
                         is_active: true,
                     };
                 });
