@@ -1711,7 +1711,9 @@ export default function Strategy() {
                                 {rows.length === 0 ? (
                                     <tr><td colSpan={usesSuggestedColumn ? 8 : 7} className="px-2 py-4 text-slate-600">{emptyText}</td></tr>
                                 ) : rows.map((line) => {
-                                    const variance = Number(line.amount || 0) - Number(line.actual || 0);
+                                    const variance = addType === 'allocation'
+                                        ? Number(line.actual || 0) - Number(line.amount || 0)
+                                        : Number(line.amount || 0) - Number(line.actual || 0);
                                     const isRecurringControlled = line.source === 'recurrence';
                                     const sourceAmount = usesSuggestedColumn ? planLineSourceAmount(line) : Number(line.recurring_amount || 0);
                                     const adjustment = Number(line.amount || 0) - sourceAmount;
