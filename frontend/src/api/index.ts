@@ -16,6 +16,7 @@ import type {
     MilestoneSimulationRequest,
     PeriodReview,
     NetWorthHistoryPoint,
+    QuickTemplate,
     ReconcileResponse,
     RecurringTransaction,
     ReviewActionCreate,
@@ -24,6 +25,7 @@ import type {
     SimulationScenarioCompareItem,
     SimulationScenarioCreatePayload,
     Transaction,
+    TransactionBatch,
 } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:18100';
@@ -296,6 +298,59 @@ export const updateTransaction = async (
 
 export const deleteTransaction = async (id: number) => {
     const response = await api.delete(`/transactions/${id}`);
+    return response.data;
+};
+
+export type QuickTemplatePayload = Omit<
+    QuickTemplate,
+    'id' | 'default_from_account_name' | 'default_to_account_name' | 'created_at' | 'updated_at'
+>;
+
+export const getQuickTemplates = async (params?: { tray?: string; includeInactive?: boolean }): Promise<QuickTemplate[]> => {
+    const query = new URLSearchParams();
+    if (params?.tray) query.append('tray', params.tray);
+    if (params?.includeInactive) query.append('include_inactive', 'true');
+    const suffix = query.toString() ? `?${query.toString()}` : '';
+    const response = await api.get(`/quick-templates/${suffix}`);
+    return response.data;
+};
+
+export const createQuickTemplate = async (template: QuickTemplatePayload): Promise<QuickTemplate> => {
+    const response = await api.post('/quick-templates/', template);
+    return response.data;
+};
+
+export const updateQuickTemplate = async (
+    id: number,
+    template: Partial<QuickTemplatePayload>
+): Promise<QuickTemplate> => {
+    const response = await api.put(`/quick-templates/${id}`, template);
+    return response.data;
+};
+
+export const deleteQuickTemplate = async (id: number) => {
+    const response = await api.delete(`/quick-templates/${id}`);
+    return response.data;
+};
+
+export const createTransactionBatch = async (payload: {
+    quick_template_id?: number | null;
+    label?: string | null;
+    source?: string;
+    input_payload?: Record<string, unknown>;
+    transactions: Array<Omit<Transaction, 'id'>>;
+}): Promise<TransactionBatch> => {
+    const response = await api.post('/transaction-batches/', payload);
+    return response.data;
+};
+
+export const getTransactionBatches = async (params?: { limit?: number; offset?: number }): Promise<TransactionBatch[]> => {
+    const response = await api.get('/transaction-batches/', { params });
+    return response.data;
+};
+
+export const getTransactionBatch = async (id: number): Promise<TransactionBatch> => {
+    const response = await api.get(`/transaction-batches/${id}`);
     return response.data;
 };
 

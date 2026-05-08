@@ -267,6 +267,20 @@ def delete_account(
     ).count()
     if child_count:
         raise HTTPException(status_code=400, detail="Account has child accounts")
+
+    template_count = db.query(models.QuickTemplate).filter(
+        models.QuickTemplate.client_id == current_client.id,
+        models.QuickTemplate.is_active == True,
+        (
+            (models.QuickTemplate.default_from_account_id == account_id)
+            | (models.QuickTemplate.default_to_account_id == account_id)
+        ),
+    ).count()
+    if template_count:
+        raise HTTPException(
+            status_code=400,
+            detail="Account is used by active quick templates. Delete or update those templates first.",
+        )
         
     db_account.is_active = False
     db.commit()

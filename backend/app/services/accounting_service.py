@@ -252,6 +252,11 @@ def process_transaction(db: Session, transaction: models.Transaction) -> None:
     db.commit()
 
 
+def post_transaction_journal(db: Session, transaction: models.Transaction) -> None:
+    """Post a transaction with double-entry bookkeeping without committing."""
+    _post_transaction_journal(db, transaction)
+
+
 def _rollback_transaction_effects(db: Session, transaction: models.Transaction) -> None:
     """
     Revert the impact of a transaction on account balances without committing.

@@ -10,14 +10,16 @@ import {
     createRecurringTransaction, deleteRecurringTransaction, updateRecurringTransaction,
     getAccounts, createTransaction, deleteTransaction, updateTransaction, getTransactionsPage,
     analyzeWithBackend,
+    getQuickTemplates, createQuickTemplate, deleteQuickTemplate, createTransactionBatch,
 } from '../api';
 import { useToast } from '../components/Toast';
 import { useClient } from '../context/ClientContext';
 import { formatCurrency as formatCurrencyWithSetting, getCurrencySymbol } from '../utils/currency';
-import type { RecurringTransaction, Transaction } from '../types';
+import type { QuickTemplate, RecurringTransaction, Transaction } from '../types';
 
 const MAIN_TABS = [
     { id: 'transaction', label: 'Transaction' },
+    { id: 'quick', label: 'Quick' },
     { id: 'recurring', label: 'Recurring' },
     { id: 'ai', label: 'AI' },
 ];
@@ -106,6 +108,35 @@ const ACCOUNT_RULES = Object.fromEntries(
 const typeDescription = (type: string) =>
     TRANSACTION_TYPES.find((option) => option.value === type)?.description ?? '';
 
+type QuickTemplateKind =
+    | 'simple_expense'
+    | 'credit_expense'
+    | 'expense_with_advance'
+    | 'reimbursement'
+    | 'transfer'
+    | 'debt_payment';
+
+const QUICK_TEMPLATE_KINDS: Array<{
+    value: QuickTemplateKind;
+    label: string;
+    fromTypes: string[];
+    toTypes: string[];
+}> = [
+    { value: 'simple_expense', label: 'Expense', fromTypes: ['asset', 'item', 'liability'], toTypes: ['expense', 'item'] },
+    { value: 'credit_expense', label: 'Credit Expense', fromTypes: ['liability'], toTypes: ['expense', 'item'] },
+    { value: 'expense_with_advance', label: 'Expense + Advance', fromTypes: ['asset', 'item', 'liability'], toTypes: ['expense', 'item'] },
+    { value: 'reimbursement', label: 'Reimbursement', fromTypes: ['asset', 'item'], toTypes: ['asset', 'item'] },
+    { value: 'transfer', label: 'Transfer', fromTypes: ['asset', 'item'], toTypes: ['asset', 'item'] },
+    { value: 'debt_payment', label: 'Debt Payment', fromTypes: ['asset', 'item'], toTypes: ['liability'] },
+];
+
+const QUICK_KIND_RULES = Object.fromEntries(
+    QUICK_TEMPLATE_KINDS.map(({ value, fromTypes, toTypes }) => [value, { fromTypes, toTypes }])
+) as Record<QuickTemplateKind, { fromTypes: string[]; toTypes: string[] }>;
+
+const quickKindLabel = (kind: string) =>
+    QUICK_TEMPLATE_KINDS.find((option) => option.value === kind)?.label ?? kind;
+
 const defaultFilters = {
     startDate: '',
     endDate: '',
@@ -128,7 +159,7 @@ const loadStoredFilters = () => {
 export default function Journal() {
     const [activeTab, setActiveTab] = useState(() => {
         const stored = localStorage.getItem('finance_journal_tab');
-        return stored === 'recurring' || stored === 'ai' ? stored : 'transaction';
+        return stored === 'quick' || stored === 'recurring' || stored === 'ai' ? stored : 'transaction';
     });
     const [transactions, setTransactions] = useState<Transaction[]>([]);
     const [transactionTotal, setTransactionTotal] = useState(0);
@@ -136,6 +167,10 @@ export default function Journal() {
     const [showFilters, setShowFilters] = useState(false);
     const [editingTransactionId, setEditingTransactionId] = useState<number | null>(null);
     const [recurringItems, setRecurringItems] = useState<RecurringTransaction[]>([]);
+    const [quickTemplates, setQuickTemplates] = useState<QuickTemplate[]>([]);
+    const [activeQuickTray, setActiveQuickTray] = useState('');
+    const [selectedQuickTemplateId, setSelectedQuickTemplateId] = useState<number | null>(null);
+    const [showQuickTemplateForm, setShowQuickTemplateForm] = useState(false);
     const [accounts, setAccounts] = useState<AccountItem[]>([]);
     const [isProcessing, setIsProcessing] = useState(false);
     const { showToast } = useToast();
@@ -153,6 +188,32 @@ export default function Journal() {
         currency: 'JPY',
         fromAccountId: '',
         toAccountId: '',
+    });
+
+    const [quickTemplateDraft, setQuickTemplateDraft] = useState({
+        tray: 'Food',
+        name: '',
+        template_kind: 'simple_expense' as QuickTemplateKind,
+        category: '',
+        default_currency: currentCurrency,
+        default_from_account_id: '',
+        default_to_account_id: '',
+        receivable_account_id: '',
+        reimbursement_account_id: '',
+    });
+
+    const [quickEntry, setQuickEntry] = useState({
+        date: new Date().toISOString().split('T')[0],
+        description: '',
+        amount: '',
+        ownAmount: '',
+        advanceAmount: '',
+        currency: currentCurrency,
+        payment_account_id: '',
+        expense_account_id: '',
+        receivable_account_id: '',
+        reimbursement_account_id: '',
+        reimbursementReceived: false,
     });
 
     // AI State
@@ -182,11 +243,29 @@ export default function Journal() {
     const toAccounts = accounts.filter((a) => ACCOUNT_RULES[formData.type].toTypes.includes(a.account_type));
     const recurringFromAccounts = accounts.filter((a) => ACCOUNT_RULES[newRecurring.type].fromTypes.includes(a.account_type));
     const recurringToAccounts = accounts.filter((a) => ACCOUNT_RULES[newRecurring.type].toTypes.includes(a.account_type));
+    const quickDraftRules = QUICK_KIND_RULES[quickTemplateDraft.template_kind];
+    const quickDraftFromAccounts = accounts.filter((a) => quickDraftRules.fromTypes.includes(a.account_type));
+    const quickDraftToAccounts = accounts.filter((a) => quickDraftRules.toTypes.includes(a.account_type));
+    const assetAccounts = accounts.filter((a) => ['asset', 'item'].includes(a.account_type));
 
     useEffect(() => {
         fetchInitialData();
         localStorage.removeItem('finance_journal_tab');
     }, []);
+
+    useEffect(() => {
+        if (!quickTemplates.length) {
+            setActiveQuickTray('');
+            setSelectedQuickTemplateId(null);
+            return;
+        }
+        if (!activeQuickTray || !quickTemplates.some((template) => template.tray === activeQuickTray)) {
+            setActiveQuickTray(quickTemplates[0].tray);
+        }
+        if (selectedQuickTemplateId && !quickTemplates.some((template) => template.id === selectedQuickTemplateId)) {
+            setSelectedQuickTemplateId(null);
+        }
+    }, [quickTemplates, activeQuickTray, selectedQuickTemplateId]);
 
     useEffect(() => {
         setFormData((prev) => {
@@ -210,18 +289,30 @@ export default function Journal() {
 
     const fetchInitialData = async () => {
         try {
-            const [txPage, recs, accs] = await Promise.all([
+            const [txPage, recs, accs, templates] = await Promise.all([
                 getTransactionsPage({ ...filters, limit: PAGE_SIZE, offset: 0 }),
                 getRecurringTransactions(),
                 getAccounts(),
+                getQuickTemplates(),
             ]);
             setTransactions(txPage.items);
             setTransactionTotal(txPage.total);
             setRecurringItems(recs);
             setAccounts(accs);
+            setQuickTemplates(templates);
         } catch (error) {
             console.error('Failed to fetch journal data:', error);
             showToast('Failed to load data', 'error');
+        }
+    };
+
+    const fetchQuickTemplatesOnly = async () => {
+        try {
+            const templates = await getQuickTemplates();
+            setQuickTemplates(templates);
+        } catch (error) {
+            console.error('Failed to update quick templates:', error);
+            showToast('Failed to load quick templates', 'error');
         }
     };
 
@@ -263,6 +354,264 @@ export default function Journal() {
         localStorage.removeItem(FILTER_STORAGE_KEY);
         setFilters(defaultFilters);
         fetchTransactionsOnly(defaultFilters, false);
+    };
+
+    const accountById = (id: number | string | null | undefined) => {
+        if (id === null || id === undefined || id === '') return undefined;
+        return accounts.find((account) => account.id === Number(id));
+    };
+
+    const configAccountId = (template: QuickTemplate | undefined, key: string) => {
+        const value = template?.config?.[key];
+        if (typeof value === 'number') return value;
+        if (typeof value === 'string' && value) return Number(value);
+        return undefined;
+    };
+
+    const selectedQuickTemplate = selectedQuickTemplateId
+        ? quickTemplates.find((template) => template.id === selectedQuickTemplateId)
+        : undefined;
+
+    const quickTrays = Array.from(new Set(quickTemplates.map((template) => template.tray)));
+    const visibleQuickTemplates = quickTemplates.filter((template) => !activeQuickTray || template.tray === activeQuickTray);
+
+    const selectQuickTemplate = (template: QuickTemplate) => {
+        setSelectedQuickTemplateId(template.id);
+        setQuickEntry((prev) => ({
+            ...prev,
+            description: prev.description || template.name,
+            currency: template.default_currency || currentCurrency,
+            payment_account_id: template.default_from_account_id ? String(template.default_from_account_id) : '',
+            expense_account_id: template.default_to_account_id ? String(template.default_to_account_id) : '',
+            receivable_account_id: configAccountId(template, 'receivable_account_id')
+                ? String(configAccountId(template, 'receivable_account_id'))
+                : '',
+            reimbursement_account_id: configAccountId(template, 'reimbursement_account_id')
+                ? String(configAccountId(template, 'reimbursement_account_id'))
+                : '',
+        }));
+    };
+
+    const resetQuickEntryAmounts = () => {
+        setQuickEntry((prev) => ({
+            ...prev,
+            amount: '',
+            ownAmount: '',
+            advanceAmount: '',
+            description: selectedQuickTemplate?.name || '',
+            reimbursementReceived: false,
+        }));
+    };
+
+    const buildQuickTransactions = (): { transactions: Array<Omit<Transaction, 'id'>>; error?: string } => {
+        if (!selectedQuickTemplate) return { transactions: [], error: 'Select a quick template' };
+        const kind = selectedQuickTemplate.template_kind as QuickTemplateKind;
+        const amount = Number(quickEntry.amount || 0);
+        const ownAmount = Number(quickEntry.ownAmount || 0);
+        const advanceAmount = Number(quickEntry.advanceAmount || 0);
+        const paymentAccount = accountById(quickEntry.payment_account_id);
+        const expenseAccount = accountById(quickEntry.expense_account_id);
+        const receivableAccount = accountById(quickEntry.receivable_account_id || quickEntry.payment_account_id);
+        const reimbursementAccount = accountById(quickEntry.reimbursement_account_id || quickEntry.expense_account_id);
+        const description = quickEntry.description.trim() || selectedQuickTemplate.name;
+        const category = selectedQuickTemplate.category || expenseAccount?.name || selectedQuickTemplate.tray;
+        const base = {
+            date: quickEntry.date,
+            currency: quickEntry.currency || selectedQuickTemplate.default_currency || currentCurrency,
+        };
+
+        if (!amount || amount <= 0) return { transactions: [], error: 'Amount is required' };
+
+        if (kind === 'reimbursement') {
+            if (!receivableAccount || !reimbursementAccount) return { transactions: [], error: 'Receivable and deposit accounts are required' };
+            return {
+                transactions: [{
+                    ...base,
+                    description,
+                    amount,
+                    type: 'Transfer',
+                    category: selectedQuickTemplate.category || 'reimbursement',
+                    from_account_id: receivableAccount.id,
+                    to_account_id: reimbursementAccount.id,
+                }],
+            };
+        }
+
+        if (kind === 'transfer') {
+            if (!paymentAccount || !expenseAccount) return { transactions: [], error: 'From and to accounts are required' };
+            return {
+                transactions: [{
+                    ...base,
+                    description,
+                    amount,
+                    type: 'Transfer',
+                    category: selectedQuickTemplate.category || 'transfer',
+                    from_account_id: paymentAccount.id,
+                    to_account_id: expenseAccount.id,
+                }],
+            };
+        }
+
+        if (kind === 'debt_payment') {
+            if (!paymentAccount || !expenseAccount) return { transactions: [], error: 'Payment and debt accounts are required' };
+            return {
+                transactions: [{
+                    ...base,
+                    description,
+                    amount,
+                    type: 'LiabilityPayment',
+                    category: selectedQuickTemplate.category || expenseAccount.name,
+                    from_account_id: paymentAccount.id,
+                    to_account_id: expenseAccount.id,
+                }],
+            };
+        }
+
+        if (!paymentAccount || !expenseAccount) return { transactions: [], error: 'Payment and expense accounts are required' };
+        const isCreditPayment = paymentAccount.account_type === 'liability';
+
+        if (kind === 'expense_with_advance') {
+            const resolvedAdvance = advanceAmount > 0 ? advanceAmount : Math.max(0, amount - ownAmount);
+            const resolvedOwn = ownAmount > 0 ? ownAmount : Math.max(0, amount - resolvedAdvance);
+            if (resolvedOwn + resolvedAdvance <= 0) return { transactions: [], error: 'Own share or advance amount is required' };
+            if (resolvedAdvance > 0 && !receivableAccount) return { transactions: [], error: 'Receivable account is required' };
+
+            const transactions: Array<Omit<Transaction, 'id'>> = [];
+            if (resolvedOwn > 0) {
+                transactions.push({
+                    ...base,
+                    description: `${description} own share`,
+                    amount: resolvedOwn,
+                    type: isCreditPayment ? 'CreditExpense' : 'Expense',
+                    category,
+                    from_account_id: paymentAccount.id,
+                    to_account_id: expenseAccount.id,
+                });
+            }
+            if (resolvedAdvance > 0 && receivableAccount) {
+                transactions.push({
+                    ...base,
+                    description: `${description} advance`,
+                    amount: resolvedAdvance,
+                    type: isCreditPayment ? 'CreditAssetPurchase' : 'Transfer',
+                    category: 'advance',
+                    from_account_id: paymentAccount.id,
+                    to_account_id: receivableAccount.id,
+                });
+            }
+            if (quickEntry.reimbursementReceived && resolvedAdvance > 0) {
+                if (!receivableAccount || !reimbursementAccount) return { transactions: [], error: 'Deposit account is required for reimbursement' };
+                transactions.push({
+                    ...base,
+                    description: `${description} reimbursement`,
+                    amount: resolvedAdvance,
+                    type: 'Transfer',
+                    category: 'reimbursement',
+                    from_account_id: receivableAccount.id,
+                    to_account_id: reimbursementAccount.id,
+                });
+            }
+            return { transactions };
+        }
+
+        return {
+            transactions: [{
+                ...base,
+                description,
+                amount,
+                type: kind === 'credit_expense' || isCreditPayment ? 'CreditExpense' : 'Expense',
+                category,
+                from_account_id: paymentAccount.id,
+                to_account_id: expenseAccount.id,
+            }],
+        };
+    };
+
+    const quickPreview = buildQuickTransactions();
+
+    const handleCreateQuickTemplate = async () => {
+        if (!quickTemplateDraft.tray.trim() || !quickTemplateDraft.name.trim()) {
+            showToast('Tray and template name are required', 'error');
+            return;
+        }
+        try {
+            const template = await createQuickTemplate({
+                tray: quickTemplateDraft.tray.trim(),
+                name: quickTemplateDraft.name.trim(),
+                template_kind: quickTemplateDraft.template_kind,
+                description: null,
+                category: quickTemplateDraft.category.trim() || null,
+                default_currency: quickTemplateDraft.default_currency || currentCurrency,
+                default_from_account_id: quickTemplateDraft.default_from_account_id ? Number(quickTemplateDraft.default_from_account_id) : null,
+                default_to_account_id: quickTemplateDraft.default_to_account_id ? Number(quickTemplateDraft.default_to_account_id) : null,
+                config: {
+                    receivable_account_id: quickTemplateDraft.receivable_account_id ? Number(quickTemplateDraft.receivable_account_id) : null,
+                    reimbursement_account_id: quickTemplateDraft.reimbursement_account_id ? Number(quickTemplateDraft.reimbursement_account_id) : null,
+                },
+                sort_order: quickTemplates.length,
+                is_active: true,
+            });
+            showToast('Quick template created', 'success');
+            setShowQuickTemplateForm(false);
+            setQuickTemplateDraft({
+                tray: template.tray,
+                name: '',
+                template_kind: 'simple_expense',
+                category: '',
+                default_currency: currentCurrency,
+                default_from_account_id: '',
+                default_to_account_id: '',
+                receivable_account_id: '',
+                reimbursement_account_id: '',
+            });
+            await fetchQuickTemplatesOnly();
+            setActiveQuickTray(template.tray);
+            setSelectedQuickTemplateId(template.id);
+            selectQuickTemplate(template);
+        } catch (error) {
+            console.error(error);
+            showToast('Failed to create quick template', 'error');
+        }
+    };
+
+    const handleDeleteQuickTemplate = async (id: number) => {
+        try {
+            await deleteQuickTemplate(id);
+            showToast('Quick template deleted', 'info');
+            await fetchQuickTemplatesOnly();
+        } catch (error) {
+            console.error(error);
+            showToast('Failed to delete quick template', 'error');
+        }
+    };
+
+    const handlePostQuickBatch = async () => {
+        if (quickPreview.error || quickPreview.transactions.length === 0) {
+            showToast(quickPreview.error || 'No transactions to post', 'error');
+            return;
+        }
+        setIsProcessing(true);
+        try {
+            await createTransactionBatch({
+                quick_template_id: selectedQuickTemplate?.id ?? null,
+                label: quickEntry.description || selectedQuickTemplate?.name || 'Quick entry',
+                source: 'quick',
+                input_payload: {
+                    template_kind: selectedQuickTemplate?.template_kind,
+                    tray: selectedQuickTemplate?.tray,
+                    entry: quickEntry,
+                },
+                transactions: quickPreview.transactions,
+            });
+            showToast(`Posted ${quickPreview.transactions.length} transactions`, 'success');
+            resetQuickEntryAmounts();
+            fetchTransactionsOnly();
+        } catch (error) {
+            console.error(error);
+            showToast('Failed to post quick transactions', 'error');
+        } finally {
+            setIsProcessing(false);
+        }
     };
 
     const handleRecordSubmit = async (e: React.FormEvent) => {
@@ -642,6 +991,391 @@ export default function Journal() {
                             )}
                         </div>
                     </form>
+                )}
+
+                {activeTab === 'quick' && (
+                    <div className="space-y-4 pt-2">
+                        <div className="flex items-center justify-between">
+                            <h3 className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Quick Trays</h3>
+                            <button
+                                type="button"
+                                onClick={() => setShowQuickTemplateForm((value) => !value)}
+                                className="p-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded"
+                                aria-label="Add quick template"
+                                title="Add quick template"
+                            >
+                                <Plus size={14} />
+                            </button>
+                        </div>
+
+                        {showQuickTemplateForm && (
+                            <div className="border border-emerald-800/50 bg-emerald-900/10 p-3 space-y-3">
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Tray</label>
+                                        <input
+                                            type="text"
+                                            value={quickTemplateDraft.tray}
+                                            onChange={(e) => setQuickTemplateDraft({ ...quickTemplateDraft, tray: e.target.value })}
+                                            className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Name</label>
+                                        <input
+                                            type="text"
+                                            value={quickTemplateDraft.name}
+                                            onChange={(e) => setQuickTemplateDraft({ ...quickTemplateDraft, name: e.target.value })}
+                                            placeholder="Lunch"
+                                            className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Kind</label>
+                                        <select
+                                            value={quickTemplateDraft.template_kind}
+                                            onChange={(e) => setQuickTemplateDraft({
+                                                ...quickTemplateDraft,
+                                                template_kind: e.target.value as QuickTemplateKind,
+                                                default_from_account_id: '',
+                                                default_to_account_id: '',
+                                            })}
+                                            className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none"
+                                        >
+                                            {QUICK_TEMPLATE_KINDS.map((option) => (
+                                                <option key={option.value} value={option.value}>{option.label}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Currency</label>
+                                        <select
+                                            value={quickTemplateDraft.default_currency}
+                                            onChange={(e) => setQuickTemplateDraft({ ...quickTemplateDraft, default_currency: e.target.value })}
+                                            className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none"
+                                        >
+                                            {CURRENCIES.map((currency) => (
+                                                <option key={currency} value={currency}>{currency}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">From</label>
+                                        <select
+                                            value={quickTemplateDraft.default_from_account_id}
+                                            onChange={(e) => setQuickTemplateDraft({ ...quickTemplateDraft, default_from_account_id: e.target.value })}
+                                            className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none"
+                                        >
+                                            <option value="">Select...</option>
+                                            {quickDraftFromAccounts.map((account) => (
+                                                <option key={account.id} value={account.id}>{account.name}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">To</label>
+                                        <select
+                                            value={quickTemplateDraft.default_to_account_id}
+                                            onChange={(e) => setQuickTemplateDraft({ ...quickTemplateDraft, default_to_account_id: e.target.value })}
+                                            className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none"
+                                        >
+                                            <option value="">Select...</option>
+                                            {quickDraftToAccounts.map((account) => (
+                                                <option key={account.id} value={account.id}>{account.name}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Category</label>
+                                        <input
+                                            type="text"
+                                            value={quickTemplateDraft.category}
+                                            onChange={(e) => setQuickTemplateDraft({ ...quickTemplateDraft, category: e.target.value })}
+                                            className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Receivable</label>
+                                        <select
+                                            value={quickTemplateDraft.receivable_account_id}
+                                            onChange={(e) => setQuickTemplateDraft({ ...quickTemplateDraft, receivable_account_id: e.target.value })}
+                                            className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none"
+                                        >
+                                            <option value="">Select...</option>
+                                            {assetAccounts.map((account) => (
+                                                <option key={account.id} value={account.id}>{account.name}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div className="col-span-2">
+                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Reimbursement Deposit</label>
+                                        <select
+                                            value={quickTemplateDraft.reimbursement_account_id}
+                                            onChange={(e) => setQuickTemplateDraft({ ...quickTemplateDraft, reimbursement_account_id: e.target.value })}
+                                            className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none"
+                                        >
+                                            <option value="">Select...</option>
+                                            {assetAccounts.map((account) => (
+                                                <option key={account.id} value={account.id}>{account.name}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                </div>
+                                <div className="flex gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={handleCreateQuickTemplate}
+                                        className="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white py-2 text-xs font-bold"
+                                    >
+                                        Create Template
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowQuickTemplateForm(false)}
+                                        className="px-4 bg-slate-800 hover:bg-slate-700 py-2 text-xs font-bold text-slate-400"
+                                    >
+                                        Cancel
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+
+                        {quickTemplates.length > 0 ? (
+                            <>
+                                <div className="flex gap-1 overflow-x-auto pb-1">
+                                    {quickTrays.map((tray) => (
+                                        <button
+                                            type="button"
+                                            key={tray}
+                                            onClick={() => setActiveQuickTray(tray)}
+                                            className={`px-3 py-1.5 text-xs border whitespace-nowrap ${activeQuickTray === tray ? 'border-emerald-600 bg-emerald-950/40 text-emerald-300' : 'border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
+                                        >
+                                            {tray}
+                                        </button>
+                                    ))}
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {visibleQuickTemplates.map((template) => (
+                                        <button
+                                            type="button"
+                                            key={template.id}
+                                            onClick={() => selectQuickTemplate(template)}
+                                            className={`min-h-16 border px-3 py-2 text-left transition-colors ${selectedQuickTemplateId === template.id ? 'border-emerald-500 bg-emerald-950/30' : 'border-slate-700 bg-slate-800/50 hover:border-slate-500'}`}
+                                        >
+                                            <span className="block text-xs font-medium text-white truncate">{template.name}</span>
+                                            <span className="block text-[10px] text-slate-500 truncate">{quickKindLabel(template.template_kind)}</span>
+                                            <span className="block text-[10px] text-slate-600 truncate">
+                                                {template.default_from_account_name || '...'} → {template.default_to_account_name || '...'}
+                                            </span>
+                                        </button>
+                                    ))}
+                                </div>
+                            </>
+                        ) : (
+                            <div className="border border-dashed border-slate-700 bg-slate-900/40 p-4 text-center">
+                                <p className="text-xs text-slate-500">No quick templates yet</p>
+                                <button
+                                    type="button"
+                                    onClick={() => setShowQuickTemplateForm(true)}
+                                    className="mt-3 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold"
+                                >
+                                    New Template
+                                </button>
+                            </div>
+                        )}
+
+                        {selectedQuickTemplate && (
+                            <div className="border border-slate-700 bg-slate-900/60 p-3 space-y-3">
+                                <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-2">
+                                    <div>
+                                        <p className="text-xs font-bold text-white">{selectedQuickTemplate.name}</p>
+                                        <p className="text-[10px] text-slate-500">{selectedQuickTemplate.tray} / {quickKindLabel(selectedQuickTemplate.template_kind)}</p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => handleDeleteQuickTemplate(selectedQuickTemplate.id)}
+                                        className="p-1 text-slate-500 hover:text-rose-400"
+                                        aria-label="Delete quick template"
+                                        title="Delete quick template"
+                                    >
+                                        <Trash2 size={13} />
+                                    </button>
+                                </div>
+
+                                <div className="grid grid-cols-2 gap-3">
+                                    <div>
+                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Date</label>
+                                        <input
+                                            type="date"
+                                            value={quickEntry.date}
+                                            onChange={(e) => setQuickEntry({ ...quickEntry, date: e.target.value })}
+                                            className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Currency</label>
+                                        <select
+                                            value={quickEntry.currency}
+                                            onChange={(e) => setQuickEntry({ ...quickEntry, currency: e.target.value })}
+                                            className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
+                                        >
+                                            {CURRENCIES.map((currency) => (
+                                                <option key={currency} value={currency}>{currency}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div className="col-span-2">
+                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Description</label>
+                                        <input
+                                            type="text"
+                                            value={quickEntry.description}
+                                            onChange={(e) => setQuickEntry({ ...quickEntry, description: e.target.value })}
+                                            className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Amount</label>
+                                        <input
+                                            type="number"
+                                            value={quickEntry.amount}
+                                            onChange={(e) => setQuickEntry({ ...quickEntry, amount: e.target.value })}
+                                            className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums focus:outline-none focus:border-emerald-500"
+                                        />
+                                    </div>
+                                    {(selectedQuickTemplate.template_kind === 'expense_with_advance') && (
+                                        <>
+                                            <div>
+                                                <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Own Share</label>
+                                                <input
+                                                    type="number"
+                                                    value={quickEntry.ownAmount}
+                                                    onChange={(e) => setQuickEntry({ ...quickEntry, ownAmount: e.target.value })}
+                                                    className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums focus:outline-none focus:border-emerald-500"
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Advance</label>
+                                                <input
+                                                    type="number"
+                                                    value={quickEntry.advanceAmount}
+                                                    onChange={(e) => setQuickEntry({ ...quickEntry, advanceAmount: e.target.value })}
+                                                    className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums focus:outline-none focus:border-emerald-500"
+                                                />
+                                            </div>
+                                        </>
+                                    )}
+                                    <div>
+                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">
+                                            {selectedQuickTemplate.template_kind === 'reimbursement' ? 'Receivable' : 'From'}
+                                        </label>
+                                        <select
+                                            value={quickEntry.payment_account_id}
+                                            onChange={(e) => setQuickEntry({ ...quickEntry, payment_account_id: e.target.value })}
+                                            className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
+                                        >
+                                            <option value="">Select...</option>
+                                            {accounts
+                                                .filter((account) => QUICK_KIND_RULES[selectedQuickTemplate.template_kind as QuickTemplateKind].fromTypes.includes(account.account_type))
+                                                .map((account) => (
+                                                    <option key={account.id} value={account.id}>{account.name}</option>
+                                                ))}
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">
+                                            {selectedQuickTemplate.template_kind === 'debt_payment' ? 'Debt' : selectedQuickTemplate.template_kind === 'transfer' || selectedQuickTemplate.template_kind === 'reimbursement' ? 'To' : 'Expense'}
+                                        </label>
+                                        <select
+                                            value={quickEntry.expense_account_id}
+                                            onChange={(e) => setQuickEntry({ ...quickEntry, expense_account_id: e.target.value })}
+                                            className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
+                                        >
+                                            <option value="">Select...</option>
+                                            {accounts
+                                                .filter((account) => QUICK_KIND_RULES[selectedQuickTemplate.template_kind as QuickTemplateKind].toTypes.includes(account.account_type))
+                                                .map((account) => (
+                                                    <option key={account.id} value={account.id}>{account.name}</option>
+                                                ))}
+                                        </select>
+                                    </div>
+                                    {selectedQuickTemplate.template_kind === 'expense_with_advance' && (
+                                        <>
+                                            <div>
+                                                <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Receivable</label>
+                                                <select
+                                                    value={quickEntry.receivable_account_id}
+                                                    onChange={(e) => setQuickEntry({ ...quickEntry, receivable_account_id: e.target.value })}
+                                                    className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
+                                                >
+                                                    <option value="">Select...</option>
+                                                    {assetAccounts.map((account) => (
+                                                        <option key={account.id} value={account.id}>{account.name}</option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                            <label className="flex items-end gap-2 text-xs text-slate-300 pb-1">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={quickEntry.reimbursementReceived}
+                                                    onChange={(e) => setQuickEntry({ ...quickEntry, reimbursementReceived: e.target.checked })}
+                                                    className="accent-emerald-500"
+                                                />
+                                                Reimbursed
+                                            </label>
+                                            {quickEntry.reimbursementReceived && (
+                                                <div className="col-span-2">
+                                                    <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Deposit Account</label>
+                                                    <select
+                                                        value={quickEntry.reimbursement_account_id}
+                                                        onChange={(e) => setQuickEntry({ ...quickEntry, reimbursement_account_id: e.target.value })}
+                                                        className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
+                                                    >
+                                                        <option value="">Select...</option>
+                                                        {assetAccounts.map((account) => (
+                                                            <option key={account.id} value={account.id}>{account.name}</option>
+                                                        ))}
+                                                    </select>
+                                                </div>
+                                            )}
+                                        </>
+                                    )}
+                                </div>
+
+                                <div className="space-y-2">
+                                    <h4 className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Preview</h4>
+                                    {quickPreview.transactions.length > 0 ? (
+                                        <div className="space-y-1">
+                                            {quickPreview.transactions.map((tx, index) => (
+                                                <div key={`${tx.description}-${index}`} className="flex items-center justify-between gap-2 bg-slate-800/50 border border-slate-700 px-2 py-1.5">
+                                                    <div className="min-w-0">
+                                                        <p className="text-[11px] text-slate-200 truncate">{tx.description}</p>
+                                                        <p className="text-[10px] text-slate-500 truncate">
+                                                            {tx.type} / {accountById(tx.from_account_id)?.name || '...'} → {accountById(tx.to_account_id)?.name || '...'}
+                                                        </p>
+                                                    </div>
+                                                    <span className="text-[11px] font-mono-nums text-emerald-300 whitespace-nowrap">
+                                                        {formatCurrencyWithSetting(tx.amount, tx.currency || currentCurrency)}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <p className="text-xs text-slate-600 border border-dashed border-slate-800 px-2 py-3 text-center">{quickPreview.error || 'No preview'}</p>
+                                    )}
+                                </div>
+
+                                <button
+                                    type="button"
+                                    onClick={handlePostQuickBatch}
+                                    disabled={isProcessing || quickPreview.transactions.length === 0}
+                                    className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white py-2.5 flex items-center justify-center gap-2 text-xs font-bold transition-colors"
+                                >
+                                    {isProcessing ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
+                                    Post {quickPreview.transactions.length || ''} Transactions
+                                </button>
+                            </div>
+                        )}
+                    </div>
                 )}
 
                 {activeTab === 'ai' && (

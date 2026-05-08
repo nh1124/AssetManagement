@@ -20,6 +20,7 @@ from .routers import (
     monthly_reviews,
     period_reviews,
     products,
+    quick_templates,
     recurring,
     reports,
     roadmap,
@@ -88,6 +89,8 @@ def startup_event():
         for table in [
             "accounts",
             "transactions",
+            "transaction_batches",
+            "quick_templates",
             "products",
             "life_events",
             "simulation_configs",
@@ -121,6 +124,8 @@ app.add_middleware(
 # Include routers
 app.include_router(analysis.router)
 app.include_router(transactions.router)
+app.include_router(quick_templates.router)
+app.include_router(quick_templates.batch_router)
 app.include_router(products.router)
 app.include_router(life_events.router)
 app.include_router(monthly_reviews.router)

@@ -169,6 +169,48 @@ def export_client_data(
                 .order_by(models.RecurringTransaction.id)
                 .all()
             ],
+            "quick_templates": [
+                _row(
+                    item,
+                    [
+                        "id",
+                        "tray",
+                        "name",
+                        "template_kind",
+                        "description",
+                        "category",
+                        "default_currency",
+                        "default_from_account_id",
+                        "default_to_account_id",
+                        "config",
+                        "sort_order",
+                        "is_active",
+                        "created_at",
+                        "updated_at",
+                    ],
+                )
+                for item in db.query(models.QuickTemplate)
+                .filter(models.QuickTemplate.client_id == current_client.id)
+                .order_by(models.QuickTemplate.id)
+                .all()
+            ],
+            "transaction_batches": [
+                _row(
+                    item,
+                    [
+                        "id",
+                        "quick_template_id",
+                        "label",
+                        "source",
+                        "input_payload",
+                        "created_at",
+                    ],
+                )
+                for item in db.query(models.TransactionBatch)
+                .filter(models.TransactionBatch.client_id == current_client.id)
+                .order_by(models.TransactionBatch.id)
+                .all()
+            ],
             "life_events": [
                 _row(
                     event,
@@ -210,6 +252,7 @@ def export_client_data(
                         "currency",
                         "from_account_id",
                         "to_account_id",
+                        "batch_id",
                         "created_at",
                     ],
                 )
@@ -384,7 +427,9 @@ def import_client_data(
     data = payload.data or {}
     account_map: dict[int, int] = {}
     transaction_map: dict[int, int] = {}
+    batch_map: dict[int, int] = {}
     event_map: dict[int, int] = {}
+    quick_template_map: dict[int, int] = {}
     recurring_map: dict[int, int] = {}
 
     try:
@@ -422,6 +467,8 @@ def import_client_data(
             models.SimulationConfig,
             models.Product,
             models.Transaction,
+            models.TransactionBatch,
+            models.QuickTemplate,
             models.LifeEvent,
             models.Account,
         ]:
@@ -517,6 +564,42 @@ def import_client_data(
             db.flush()
             recurring_map[old_id] = recurring.id
 
+        for item in data.get("quick_templates", []):
+            old_id = int(item["id"])
+            template = models.QuickTemplate(
+                client_id=current_client.id,
+                tray=item["tray"],
+                name=item["name"],
+                template_kind=item["template_kind"],
+                description=item.get("description"),
+                category=item.get("category"),
+                default_currency=item.get("default_currency") or "JPY",
+                default_from_account_id=account_map.get(item.get("default_from_account_id")),
+                default_to_account_id=account_map.get(item.get("default_to_account_id")),
+                config=item.get("config") or {},
+                sort_order=item.get("sort_order") or 0,
+                is_active=item.get("is_active", True),
+                created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
+                updated_at=_parse_datetime(item.get("updated_at")),
+            )
+            db.add(template)
+            db.flush()
+            quick_template_map[old_id] = template.id
+
+        for item in data.get("transaction_batches", []):
+            old_id = int(item["id"])
+            batch = models.TransactionBatch(
+                client_id=current_client.id,
+                quick_template_id=quick_template_map.get(item.get("quick_template_id")),
+                label=item.get("label"),
+                source=item.get("source") or "quick",
+                input_payload=item.get("input_payload") or {},
+                created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
+            )
+            db.add(batch)
+            db.flush()
+            batch_map[old_id] = batch.id
+
         for item in data.get("life_events", []):
             old_id = int(item["id"])
             event = models.LifeEvent(
@@ -556,6 +639,7 @@ def import_client_data(
                 currency=item.get("currency") or "JPY",
                 from_account_id=account_map.get(item.get("from_account_id")),
                 to_account_id=account_map.get(item.get("to_account_id")),
+                batch_id=batch_map.get(item.get("batch_id")),
                 created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
             )
             db.add(transaction)

@@ -30,6 +30,7 @@ def _serialize_transaction(tx: models.Transaction) -> dict:
         "currency": tx.currency,
         "from_account_id": tx.from_account_id,
         "to_account_id": tx.to_account_id,
+        "batch_id": tx.batch_id,
         "from_account_name": tx.from_account_rel.name if tx.from_account_rel else None,
         "to_account_name": tx.to_account_rel.name if tx.to_account_rel else None,
     }
