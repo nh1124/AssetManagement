@@ -96,7 +96,10 @@ def _period_contribution_from_schedule(
             # Count distinct months in [period_start, period_end)
             y, m = period_start.year, period_start.month
             while date(y, m, 1) < period_end:
-                total += amount
+                month_start = date(y, m, 1)
+                month_end = date(y + 1, 1, 1) if m == 12 else date(y, m + 1, 1)
+                if _schedule_period_overlaps(item, month_start, month_end):
+                    total += amount
                 m += 1
                 if m > 12:
                     m = 1
@@ -108,7 +111,7 @@ def _period_contribution_from_schedule(
                     bonus_date = date(year, bonus_month, 1)
                 except (ValueError, TypeError):
                     continue
-                if period_start <= bonus_date < period_end:
+                if period_start <= bonus_date < period_end and _schedule_date_is_active(item, bonus_date):
                     total += amount
         elif kind == "one_time":
             item_date = _coerce_schedule_date(item.get("date"))
@@ -136,6 +139,35 @@ def _coerce_schedule_date(value: Any) -> date | None:
         return None
 
 
+def _schedule_date_is_active(item: dict[str, Any], occurrence_date: date) -> bool:
+    start = _coerce_schedule_date(item.get("start_date"))
+    end = _coerce_schedule_date(item.get("end_date"))
+    if start and occurrence_date < start:
+        return False
+    if end and occurrence_date > end:
+        return False
+    return True
+
+
+def _schedule_period_overlaps(item: dict[str, Any], period_start: date, period_end: date) -> bool:
+    start = _coerce_schedule_date(item.get("start_date"))
+    end = _coerce_schedule_date(item.get("end_date"))
+    if start and period_end <= start:
+        return False
+    if end and period_start > end:
+        return False
+    return True
+
+
+def _schedule_uses_effective_dates(contribution_schedule: list[dict[str, Any]]) -> bool:
+    return any(
+        isinstance(item, dict)
+        and item.get("kind") in {"monthly", "yearly"}
+        and (item.get("start_date") or item.get("end_date"))
+        for item in contribution_schedule
+    )
+
+
 def monthly_equivalent_from_contribution_schedule(
     contribution_schedule: list[dict[str, Any]] | None,
     reference_date: date,
@@ -153,6 +185,19 @@ def monthly_equivalent_from_contribution_schedule(
     horizon_years = max((target_date - reference_date).days / 365.25, 1 / 12)
     total = 0.0
     has_valid_item = False
+    uses_effective_dates = _schedule_uses_effective_dates(contribution_schedule)
+
+    if uses_effective_dates:
+        has_valid_item = any(
+            isinstance(item, dict)
+            and item.get("kind") in {"monthly", "yearly", "one_time"}
+            and _coerce_schedule_amount(item.get("amount")) > 0
+            for item in contribution_schedule
+        )
+        if not has_valid_item:
+            return None
+        total = _period_contribution_from_schedule(contribution_schedule, reference_date, target_date)
+        return total / horizon_years / 12
 
     for item in contribution_schedule:
         if not isinstance(item, dict):

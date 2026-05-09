@@ -50,7 +50,6 @@ interface BudgetAccount {
     amount: number;
     balance: number;
     plan_line_id?: number | null;
-    planned_date?: string | null;
     priority?: number;
     note?: string | null;
     recurring_amount?: number;
@@ -176,8 +175,6 @@ export default function Strategy() {
     const [budgetCategoryForm, setBudgetCategoryForm] = useState({
         name: '',
         amount: '',
-        source: 'manual' as 'manual' | 'one_time',
-        planned_date: `${currentPeriod}-01`,
     });
     const [budgetThinking, setBudgetThinking] = useState(false);
     const [allExpenseAccounts, setAllExpenseAccounts] = useState<Account[]>([]);
@@ -192,8 +189,6 @@ export default function Strategy() {
         account_id: string;
         name: string;
         amount: string;
-        source: 'manual' | 'one_time';
-        planned_date: string;
     }>({
         line_type: 'allocation',
         target_type: 'account',
@@ -201,8 +196,6 @@ export default function Strategy() {
         account_id: '',
         name: '',
         amount: '',
-        source: 'manual',
-        planned_date: `${currentPeriod}-01`,
     });
     const [products, setProducts] = useState<Product[]>([]);
     const [lifeEvents, setLifeEvents] = useState<LifeEvent[]>([]);
@@ -440,12 +433,6 @@ export default function Strategy() {
         setCurrentPeriod(monthKey());
     };
 
-    const shiftPlannedDateToPeriod = (plannedDate: string | null | undefined, period: string) => {
-        if (!plannedDate) return null;
-        const day = plannedDate.slice(8, 10) || '01';
-        return `${period}-${day}`;
-    };
-
     const SYNCED_SOURCES = new Set(['recurrence', 'product_expense', 'recurrence_product_expense', 'capsule']);
 
     const suggestedBudgetSource = (account: BudgetAccount) => {
@@ -478,7 +465,7 @@ export default function Strategy() {
         const targetSource = targetAccount?.suggested_source ? suggestedBudgetSource(targetAccount) : null;
         const source = sourceAccount.source && SYNCED_SOURCES.has(sourceAccount.source)
             ? targetSource ?? sourceAccount.source
-            : sourceAccount.source;
+            : 'manual';
         return {
             ...sourceAccount,
             suggested_amount: targetAccount?.suggested_amount ?? sourceAccount.suggested_amount,
@@ -492,13 +479,11 @@ export default function Strategy() {
 
     const budgetAccountPlanPayload = (account: BudgetAccount, amount: number, period = currentPeriod): EditablePlanLinePayload => {
         const suggestedAmount = Number(account.suggested_amount || 0);
-        const source = account.source === 'one_time'
-            ? 'one_time'
-            : account.source && SYNCED_SOURCES.has(account.source)
-                ? account.source
-                : account.suggested_source && Math.round(amount) === Math.round(suggestedAmount)
-                    ? suggestedBudgetSource(account)
-                    : 'manual';
+        const source = account.source && SYNCED_SOURCES.has(account.source)
+            ? account.source
+            : account.suggested_source && Math.round(amount) === Math.round(suggestedAmount)
+                ? suggestedBudgetSource(account)
+                : 'manual';
         const payload: MonthlyPlanLinePayload = {
             target_period: period,
             line_type: 'expense',
@@ -508,7 +493,6 @@ export default function Strategy() {
             source_account_id: account.source_account_id ?? null,
             name: account.name ?? null,
             amount,
-            planned_date: account.source === 'one_time' ? shiftPlannedDateToPeriod(account.planned_date, period) : null,
             priority: account.priority ?? 2,
             note: account.note ?? null,
             source,
@@ -568,10 +552,9 @@ export default function Strategy() {
                 source_account_id: line.source_account_id ?? null,
                 name: line.name || line.target_name || null,
                 amount: Number(line.amount || 0),
-                planned_date: line.source === 'one_time' ? line.planned_date ?? `${currentPeriod}-01` : null,
                 priority: line.priority ?? 2,
                 note: line.note ?? null,
-                source: line.source && SYNCED_SOURCES.has(line.source) ? line.source : line.source === 'one_time' ? 'one_time' : 'manual',
+                source: line.source && SYNCED_SOURCES.has(line.source) ? line.source : 'manual',
                 recurring_transaction_id: line.source?.includes('recurrence') ? line.recurring_transaction_id ?? null : null,
                 is_active: true,
             }));
@@ -615,10 +598,8 @@ export default function Strategy() {
             ? {
                 name: account.name,
                 amount: String(budgetEdits[account.id] ?? account.amount ?? 0),
-                source: account.source === 'one_time' ? 'one_time' : 'manual',
-                planned_date: account.planned_date ?? `${currentPeriod}-01`,
             }
-            : { name: '', amount: '', source: 'manual', planned_date: `${currentPeriod}-01` });
+            : { name: '', amount: '' });
         setCategorySearch('');
         setSelectedAccountId(null);
         setShowCategoryDropdown(false);
@@ -644,8 +625,7 @@ export default function Strategy() {
                     target_type: 'account',
                     name,
                     amount,
-                    planned_date: budgetCategoryForm.source === 'one_time' ? budgetCategoryForm.planned_date : null,
-                    source: budgetCategoryForm.source,
+                    source: 'manual',
                 }]);
                 showToast('Budget category updated', 'success');
             } else if (selectedAccountId !== null) {
@@ -657,41 +637,26 @@ export default function Strategy() {
                     target_type: 'account',
                     name: account?.name ?? null,
                     amount,
-                    planned_date: budgetCategoryForm.source === 'one_time' ? budgetCategoryForm.planned_date : null,
-                    source: budgetCategoryForm.source,
+                    source: 'manual',
                 }]);
                 showToast('Budget category added', 'success');
             } else {
                 const name = categorySearch.trim();
                 if (!name) return;
-                if (budgetCategoryForm.source === 'one_time') {
-                    await persistMonthlyPlanLines([{
-                        account_id: null,
-                        target_period: currentPeriod,
-                        line_type: 'expense',
-                        target_type: 'manual',
-                        name,
-                        amount,
-                        planned_date: budgetCategoryForm.planned_date,
-                        source: 'one_time',
-                    }]);
-                    showToast('One-time expense added', 'success');
-                } else {
-                    const created = await createAccount({ name, account_type: 'expense', balance: 0 });
-                    await persistMonthlyPlanLines([{
-                        account_id: created.id,
-                        target_period: currentPeriod,
-                        line_type: 'expense',
-                        target_type: 'account',
-                        name: created.name,
-                        amount,
-                    }]);
-                    showToast('Budget category added', 'success');
-                }
+                const created = await createAccount({ name, account_type: 'expense', balance: 0 });
+                await persistMonthlyPlanLines([{
+                    account_id: created.id,
+                    target_period: currentPeriod,
+                    line_type: 'expense',
+                    target_type: 'account',
+                    name: created.name,
+                    amount,
+                }]);
+                showToast('Budget category added', 'success');
             }
             setShowBudgetCategoryForm(false);
             setEditingBudgetAccount(null);
-            setBudgetCategoryForm({ name: '', amount: '', source: 'manual', planned_date: `${currentPeriod}-01` });
+            setBudgetCategoryForm({ name: '', amount: '' });
             setCategorySearch('');
             setSelectedAccountId(null);
             await fetchBudgetSummary();
@@ -725,8 +690,6 @@ export default function Strategy() {
             account_id: '',
             name: '',
             amount: '',
-            source: 'manual',
-            planned_date: `${currentPeriod}-01`,
         });
     };
 
@@ -775,7 +738,6 @@ export default function Strategy() {
                 source_account_id: account.source_account_id ?? null,
                 name: account.name,
                 amount: budgetAmountWithExistingAdjustment(account),
-                planned_date: null,
                 priority: account.priority ?? 2,
                 note: account.note ?? null,
                 source: suggestedBudgetSource(account),
@@ -802,7 +764,6 @@ export default function Strategy() {
                 source_account_id: account.source_account_id ?? null,
                 name: account.name,
                 amount: budgetAmountWithExistingAdjustment(account),
-                planned_date: null,
                 priority: account.priority ?? 2,
                 note: account.note ?? null,
                 source: suggestedBudgetSource(account),
@@ -835,7 +796,6 @@ export default function Strategy() {
                 source_account_id: line.source_account_id ?? null,
                 name: line.name || line.target_name || null,
                 amount: Number(line.recurring_amount || 0),
-                planned_date: null,
                 priority: line.priority ?? 2,
                 note: line.note ?? null,
                 source: 'recurrence',
@@ -862,7 +822,6 @@ export default function Strategy() {
                 source_account_id: line.source_account_id ?? null,
                 name: line.name || line.target_name || null,
                 amount: Number(line.recurring_amount || 0),
-                planned_date: null,
                 priority: line.priority ?? 2,
                 note: line.note ?? null,
                 source: 'recurrence',
@@ -911,7 +870,6 @@ export default function Strategy() {
                 source_account_id: line.source_account_id ?? null,
                 name: line.name || line.target_name || null,
                 amount: planLineAmountWithExistingAdjustment(line),
-                planned_date: null,
                 priority: line.priority ?? 2,
                 note: line.note ?? null,
                 source: line.suggested_source === 'product_reserve' ? 'capsule' : line.recurring_transaction_id ? 'recurrence' : line.source ?? 'manual',
@@ -938,7 +896,6 @@ export default function Strategy() {
                 source_account_id: line.source_account_id ?? null,
                 name: line.name || line.target_name || null,
                 amount: planLineAmountWithExistingAdjustment(line),
-                planned_date: null,
                 priority: line.priority ?? 2,
                 note: line.note ?? null,
                 source: line.suggested_source === 'product_reserve' ? 'capsule' : line.recurring_transaction_id ? 'recurrence' : line.source ?? 'manual',
@@ -983,7 +940,6 @@ export default function Strategy() {
                         const adjustment = account.plan_line_id ? Number(account.amount || 0) - sourceAmount : 0;
                         return sourceAmount + adjustment;
                     })(),
-                    planned_date: null,
                     priority: 2,
                     note: null,
                     source: suggestedBudgetSource(account),
@@ -1010,7 +966,6 @@ export default function Strategy() {
                         const adjustment = line.id ? Number(line.amount || 0) - sourceAmount : 0;
                         return sourceAmount + adjustment;
                     })(),
-                    planned_date: null,
                     priority: line.priority ?? 2,
                     note: line.note ?? null,
                     source: line.suggested_source === 'product_reserve' ? 'capsule' : 'recurrence',
@@ -1038,7 +993,6 @@ export default function Strategy() {
                         source_account_id: null,
                         name: warning.name,
                         amount: Number(warning.amount || 0) + (existing?.id ? Number(existing.amount || 0) - Number(warning.amount || 0) : 0),
-                        planned_date: null,
                         priority: 2,
                         note: null,
                         source: 'capsule',
@@ -1072,7 +1026,6 @@ export default function Strategy() {
                 source_account_id: account.source_account_id ?? null,
                 name: account.name,
                 amount: Number(budgetEdits[account.id] ?? account.amount ?? 0),
-                planned_date: null,
                 priority: 2,
                 note: null,
                 source: 'manual',
@@ -1099,7 +1052,6 @@ export default function Strategy() {
                 source_account_id: line.source_account_id ?? null,
                 name: line.name || line.target_name || null,
                 amount: Number(line.amount || 0),
-                planned_date: null,
                 priority: line.priority ?? 2,
                 note: line.note ?? null,
                 source: 'manual',
@@ -1170,9 +1122,7 @@ export default function Strategy() {
                             : targetLine?.recurring_transaction_id
                                 ? 'recurrence'
                                 : line.source
-                        : line.source === 'one_time'
-                            ? 'one_time'
-                            : 'manual';
+                        : 'manual';
                     return {
                         ...(typeof targetLine?.id === 'number' ? { id: targetLine.id } : {}),
                         target_period: targetPeriod,
@@ -1183,7 +1133,6 @@ export default function Strategy() {
                         source_account_id: line.source_account_id ?? null,
                         name: line.name || line.target_name || null,
                         amount: targetSourceAmount + adjustment,
-                        planned_date: line.source === 'one_time' ? shiftPlannedDateToPeriod(line.planned_date, targetPeriod) : null,
                         priority: line.priority ?? 2,
                         note: line.note ?? null,
                         source: copiedSource,
@@ -1242,10 +1191,9 @@ export default function Strategy() {
                     source_account_id: null,
                     name,
                     amount,
-                    planned_date: planLineForm.source === 'one_time' ? planLineForm.planned_date || `${currentPeriod}-01` : null,
                     priority: 2,
                     note: null,
-                    source: planLineForm.source,
+                    source: 'manual',
                     recurring_transaction_id: null,
                     is_active: true,
                 }]);
@@ -1256,8 +1204,6 @@ export default function Strategy() {
                     account_id: '',
                     name: '',
                     amount: '',
-                    source: 'manual',
-                    planned_date: `${currentPeriod}-01`,
                 });
                 setExpandedPlanForm(null);
                 await fetchBudgetSummary();
@@ -1288,11 +1234,10 @@ export default function Strategy() {
                 name,
                 target_name: name,
                 amount,
-                planned_date: planLineForm.source === 'one_time' ? planLineForm.planned_date || `${currentPeriod}-01` : null,
                 actual: 0,
                 variance: amount,
                 priority: 2,
-                source: planLineForm.source,
+                source: 'manual',
                 recurring_transaction_id: recurringContext?.recurring_transaction_id ?? null,
                 recurring_transaction_ids: recurringContext?.recurring_transaction_ids ?? [],
                 recurring_items: recurringContext?.recurring_items ?? [],
@@ -1308,8 +1253,6 @@ export default function Strategy() {
             account_id: '',
             name: '',
             amount: '',
-            source: 'manual',
-            planned_date: `${currentPeriod}-01`,
         });
         setExpandedPlanForm(null);
     };
@@ -1643,29 +1586,6 @@ export default function Strategy() {
                             Add
                         </button>
                     </div>
-                    <div className="mt-2 flex flex-wrap items-center gap-3 text-[10px] text-slate-500">
-                        <label className="inline-flex items-center gap-2 text-slate-400">
-                            <input
-                                type="checkbox"
-                                checked={planLineForm.source === 'one_time'}
-                                onChange={(event) => setPlanLineForm({
-                                    ...planLineForm,
-                                    source: event.target.checked ? 'one_time' : 'manual',
-                                    planned_date: event.target.checked ? planLineForm.planned_date || `${currentPeriod}-01` : `${currentPeriod}-01`,
-                                })}
-                                className="h-3 w-3 accent-cyan-500"
-                            />
-                            One-time
-                        </label>
-                        {planLineForm.source === 'one_time' && (
-                            <input
-                                type="date"
-                                value={planLineForm.planned_date}
-                                onChange={(event) => setPlanLineForm({ ...planLineForm, planned_date: event.target.value })}
-                                className="bg-slate-900 border border-slate-700 px-2 py-1 text-xs text-slate-300"
-                            />
-                        )}
-                    </div>
                 </div>
             )
         );
@@ -1755,9 +1675,6 @@ export default function Strategy() {
                                                 <td className="px-2 py-2 text-slate-400">{line.line_type.replace('_', ' ')}</td>
                                                 <td className="px-2 py-2 text-slate-300">
                                                     {planTargetLabel(line)}
-                                                    {line.source === 'one_time' && line.planned_date && (
-                                                        <span className="ml-2 text-[9px] text-cyan-500 font-mono-nums">{line.planned_date}</span>
-                                                    )}
                                                 </td>
                                                 <td className="px-2 py-2 text-right font-mono-nums text-slate-500">{formatCurrency(line.actual)}</td>
                                                 <td className="px-2 py-2 text-right">
@@ -2015,33 +1932,10 @@ export default function Strategy() {
                                     setShowBudgetCategoryForm(false);
                                     setShowCategoryDropdown(false);
                                     setEditingBudgetAccount(null);
-                                    setBudgetCategoryForm({ name: '', amount: '', source: 'manual', planned_date: `${currentPeriod}-01` });
+                                    setBudgetCategoryForm({ name: '', amount: '' });
                                 }} className="col-span-2 bg-slate-800 hover:bg-slate-700 text-slate-300 py-1.5 text-xs">
                                     Cancel
                                 </button>
-                            </div>
-                            <div className="flex flex-wrap items-center gap-3 text-[10px] text-slate-500">
-                                <label className="inline-flex items-center gap-2 text-slate-400">
-                                    <input
-                                        type="checkbox"
-                                        checked={budgetCategoryForm.source === 'one_time'}
-                                        onChange={(event) => setBudgetCategoryForm({
-                                            ...budgetCategoryForm,
-                                            source: event.target.checked ? 'one_time' : 'manual',
-                                            planned_date: event.target.checked ? budgetCategoryForm.planned_date || `${currentPeriod}-01` : `${currentPeriod}-01`,
-                                        })}
-                                        className="h-3 w-3 accent-emerald-500"
-                                    />
-                                    One-time
-                                </label>
-                                {budgetCategoryForm.source === 'one_time' && (
-                                    <input
-                                        type="date"
-                                        value={budgetCategoryForm.planned_date}
-                                        onChange={(event) => setBudgetCategoryForm({ ...budgetCategoryForm, planned_date: event.target.value })}
-                                        className="bg-slate-900 border border-slate-700 px-2 py-1 text-xs text-slate-300"
-                                    />
-                                )}
                             </div>
                         </div>
                     );
@@ -2089,9 +1983,6 @@ export default function Strategy() {
                                         <tr className="hover:bg-slate-800/30 group">
                                             <td className="px-2 py-2 text-slate-300">
                                                 {account.name}
-                                                {account.source === 'one_time' && account.planned_date && (
-                                                    <span className="ml-2 text-[9px] text-cyan-500 font-mono-nums">{account.planned_date}</span>
-                                                )}
                                             </td>
                                             <td className="px-2 py-2 text-right font-mono-nums text-slate-500">{formatCurrency(account.balance)}</td>
                                             <td className="px-2 py-2 text-right">
@@ -2128,9 +2019,7 @@ export default function Strategy() {
                                                 {sourceSynced && (
                                                     <button type="button" title="Remove source sync" onClick={() => unlinkRecurringBudgetAccount(account)} className="text-slate-500 hover:text-amber-300"><Unlink size={12} /></button>
                                                 )}
-                                                {account.source !== 'one_time' && (
-                                                    <button type="button" title="Edit category" onClick={() => openBudgetCategoryForm(account)} className="text-slate-500 hover:text-cyan-400"><Edit2 size={12} /></button>
-                                                )}
+                                                <button type="button" title="Edit category" onClick={() => openBudgetCategoryForm(account)} className="text-slate-500 hover:text-cyan-400"><Edit2 size={12} /></button>
                                                 <button type="button" title="Remove from budget" onClick={() => removeBudgetCategory(account.id, account.plan_line_id)} className="text-slate-500 hover:text-rose-400"><Trash2 size={12} /></button>
                                             </td>
                                         </tr>

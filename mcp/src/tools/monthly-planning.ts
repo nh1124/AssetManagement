@@ -24,7 +24,6 @@ const monthlyPlanLineSchema = z
     source_account_id: z.number().int().min(1).optional().describe("Source account ID"),
     name: z.string().optional().describe("Display name"),
     amount: z.number().optional().default(0).describe("Plan amount"),
-    planned_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Planned date, YYYY-MM-DD"),
     priority: z.number().int().min(1).max(3).optional().default(2).describe("Priority"),
     note: z.string().optional().describe("Note"),
     source: z.string().optional().default("manual").describe("Source marker"),

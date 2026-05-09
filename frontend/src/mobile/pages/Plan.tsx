@@ -62,7 +62,6 @@ interface BudgetAccount {
     amount: number;
     balance: number;
     plan_line_id?: number | null;
-    planned_date?: string | null;
     priority?: number;
     note?: string | null;
     suggested_amount?: number;
@@ -335,7 +334,6 @@ function BudgetPanel({
                 account_id: row.account_id ?? null,
                 source_account_id: row.source_account_id ?? null,
                 plan_line_id: row.plan_line_id ?? null,
-                planned_date: row.planned_date ?? null,
                 priority: row.priority ?? 2,
                 note: row.note ?? null,
                 source: row.source ?? 'manual',
@@ -360,7 +358,6 @@ function BudgetPanel({
                 account_id: line.account_id ?? null,
                 source_account_id: line.source_account_id ?? null,
                 plan_line_id: line.id ?? null,
-                planned_date: line.planned_date ?? null,
                 priority: line.priority ?? 2,
                 note: line.note ?? null,
                 source: line.source ?? 'manual',
@@ -448,7 +445,6 @@ function BudgetPanel({
             source_account_id: row.source_account_id ?? null,
             name: row.name,
             amount,
-            planned_date: null,
             priority: row.priority ?? 2,
             note: row.note ?? null,
             source: 'manual',
@@ -495,7 +491,6 @@ function BudgetPanel({
                     account_id: Number(addForm.account_id),
                     name: account?.name ?? null,
                     amount,
-                    planned_date: null,
                     source: 'manual',
                     is_active: true,
                 }]);
@@ -508,7 +503,6 @@ function BudgetPanel({
                     account_id: created.id,
                     name: created.name,
                     amount,
-                    planned_date: null,
                     source: 'manual',
                     is_active: true,
                 }]);
@@ -520,7 +514,6 @@ function BudgetPanel({
                     account_id: null,
                     name: addForm.name.trim(),
                     amount,
-                    planned_date: null,
                     source: 'manual',
                     is_active: true,
                 }]);

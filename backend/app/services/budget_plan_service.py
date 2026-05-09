@@ -245,7 +245,6 @@ def _serialize_plan_line(
         "account_name": name_maps["account"].get(line.account_id) if line.account_id else None,
         "source_account_name": name_maps["account"].get(line.source_account_id) if line.source_account_id else None,
         "amount": round(line.amount or 0.0, 0),
-        "planned_date": line.planned_date.isoformat() if line.planned_date else None,
         "actual": round(actual, 0),
         "variance": round((line.amount or 0.0) - actual, 0),
         "recurring_amount": 0.0,
@@ -282,7 +281,6 @@ def _virtual_capsule_line(
         "account_name": capsule.account.name if capsule.account else None,
         "source_account_name": None,
         "amount": round(capsule.monthly_contribution or 0.0, 0),
-        "planned_date": None,
         "recurring_amount": 0.0,
         "suggested_amount": round(capsule.monthly_contribution or 0.0, 0)
         if capsule.capsule_type == "product_pool" else 0.0,
@@ -377,10 +375,6 @@ def _plan_match_key(line_type: str | None, target_type: str | None, account_id: 
 
 def _line_identity_key(line: models.MonthlyPlanLine | dict) -> tuple:
     getter = line.get if isinstance(line, dict) else lambda key, default=None: getattr(line, key, default)
-    source = getter("source")
-    planned_date = getter("planned_date") if source == "one_time" else None
-    if hasattr(planned_date, "isoformat"):
-        planned_date = planned_date.isoformat()
     account_id = getter("account_id")
     target_id = getter("target_id")
     name = "" if account_id or target_id else (getter("name") or "").strip().lower()
@@ -391,7 +385,6 @@ def _line_identity_key(line: models.MonthlyPlanLine | dict) -> tuple:
         account_id or 0,
         target_id or 0,
         name,
-        planned_date or "",
     )
 
 
@@ -470,7 +463,6 @@ def _recurring_plan_line(
         "account_name": name_maps["account"].get(account_id) if account_id else None,
         "source_account_name": name_maps["account"].get(rec.from_account_id) if rec.from_account_id else None,
         "amount": 0.0,
-        "planned_date": None,
         "actual": 0.0,
         "variance": 0.0,
         "recurring_amount": round(amount, 0),
@@ -610,7 +602,6 @@ def expense_only_product_budget_lines(db: Session, client_id: int, period: str) 
             "account_name": name,
             "source_account_name": None,
             "amount": 0.0,
-            "planned_date": None,
             "actual": 0.0,
             "variance": 0.0,
             "recurring_amount": 0.0,
@@ -798,7 +789,7 @@ def get_budget_summary(
         "plan_lines": plan_lines,
         "expense_accounts": [
             {
-                "id": line["id"] if line.get("source") == "one_time" and line.get("id") else line["account_id"] or line["id"] or -(line.get("recurring_transaction_id") or 0),
+                "id": line["account_id"] or line["id"] or -(line.get("recurring_transaction_id") or 0),
                 "account_id": line["account_id"],
                 "target_type": line.get("target_type"),
                 "target_id": line.get("target_id"),
@@ -807,7 +798,6 @@ def get_budget_summary(
                 "amount": line["amount"],
                 "balance": line["actual"],
                 "plan_line_id": line.get("id"),
-                "planned_date": line.get("planned_date"),
                 "priority": line.get("priority", 2),
                 "note": line.get("note"),
                 "recurring_amount": line.get("recurring_amount", 0.0),

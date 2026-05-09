@@ -298,7 +298,6 @@ class MonthlyPlanLineBase(BaseModel):
     source_account_id: Optional[int] = None
     name: Optional[str] = None
     amount: float = 0.0
-    planned_date: Optional[date] = None
     priority: int = 2
     note: Optional[str] = None
     source: str = "manual"
@@ -325,7 +324,6 @@ class MonthlyPlanLineUpdate(BaseModel):
     source_account_id: Optional[int] = None
     name: Optional[str] = None
     amount: Optional[float] = None
-    planned_date: Optional[date] = None
     priority: Optional[int] = None
     note: Optional[str] = None
     source: Optional[str] = None
@@ -643,6 +641,8 @@ class ContributionScheduleItem(BaseModel):
     amount: float = Field(ge=0)
     month: Optional[int] = Field(default=None, ge=1, le=12)
     date: Optional[DateType] = None
+    start_date: Optional[DateType] = None
+    end_date: Optional[DateType] = None
     note: Optional[str] = None
 
 

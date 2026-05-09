@@ -76,6 +76,8 @@ type ProjectionView = 'projection' | 'monteCarlo' | 'combined';
 type AllRoadmapView = 'roadmap' | 'riskBand' | 'combined';
 type ContributionDraft = ContributionScheduleItem & { id: string };
 
+const YEAR_MS = 365.25 * 24 * 60 * 60 * 1000;
+
 const GOAL_TABS: Array<{ id: GoalTab; label: string }> = [
     { id: 'summary', label: 'Summary' },
     { id: 'simulation', label: 'Simulation' },
@@ -101,6 +103,20 @@ const statusTone = (status?: string) => {
 const getErrorDetail = (error: unknown, fallback: string) => {
     const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
     return detail || fallback;
+};
+
+const parseScheduleDate = (value?: string | null) => {
+    if (!value) return null;
+    const date = new Date(`${value}T00:00:00`);
+    return Number.isNaN(date.getTime()) ? null : date;
+};
+
+const maxDate = (a: Date, b: Date) => (a.getTime() > b.getTime() ? a : b);
+const minDate = (a: Date, b: Date) => (a.getTime() < b.getTime() ? a : b);
+
+const scheduleWindowLabel = (item: ContributionScheduleItem) => {
+    if (item.kind === 'one_time' || (!item.start_date && !item.end_date)) return '';
+    return ` (${item.start_date || 'now'} - ${item.end_date || 'target'})`;
 };
 
 export default function Goal() {
@@ -182,6 +198,8 @@ export default function Goal() {
                 amount: Math.max(0, Number(item.amount) || 0),
                 month: item.kind === 'yearly' ? (item.month ?? 6) : null,
                 date: item.kind === 'one_time' ? (item.date || null) : null,
+                start_date: item.kind === 'monthly' || item.kind === 'yearly' ? (item.start_date || null) : null,
+                end_date: item.kind === 'monthly' || item.kind === 'yearly' ? (item.end_date || null) : null,
                 note: item.note || null,
             })),
     [contributions]);
@@ -196,10 +214,26 @@ export default function Goal() {
         if (!selectedGoal) return baseMonthlyEquivalent;
         const targetDate = new Date(`${selectedGoal.target_date}T00:00:00`);
         const now = new Date();
-        const horizonYears = Math.max((targetDate.getTime() - now.getTime()) / (365.25 * 24 * 60 * 60 * 1000), 1 / 12);
+        const horizonYears = Math.max((targetDate.getTime() - now.getTime()) / YEAR_MS, 1 / 12);
         const total = simulationContributionSchedule.reduce((sum, item) => {
-            if (item.kind === 'monthly') return sum + item.amount * 12 * horizonYears;
-            if (item.kind === 'yearly') return sum + item.amount * horizonYears;
+            if (item.kind === 'monthly') {
+                const start = maxDate(now, parseScheduleDate(item.start_date) ?? now);
+                const end = minDate(targetDate, parseScheduleDate(item.end_date) ?? targetDate);
+                if (end < start) return sum;
+                const activeYears = Math.max((end.getTime() - start.getTime()) / YEAR_MS, 0);
+                return sum + item.amount * 12 * activeYears;
+            }
+            if (item.kind === 'yearly') {
+                if (!item.start_date && !item.end_date) return sum + item.amount * horizonYears;
+                const start = maxDate(now, parseScheduleDate(item.start_date) ?? now);
+                const end = minDate(targetDate, parseScheduleDate(item.end_date) ?? targetDate);
+                let bonusTotal = 0;
+                for (let year = start.getFullYear(); year <= end.getFullYear(); year += 1) {
+                    const bonusDate = new Date(year, (item.month ?? 6) - 1, 1);
+                    if (bonusDate >= start && bonusDate <= end) bonusTotal += item.amount;
+                }
+                return sum + bonusTotal;
+            }
             if (item.kind === 'one_time') {
                 if (!item.date) return sum + item.amount;
                 const itemDate = new Date(`${item.date}T00:00:00`);
@@ -294,6 +328,8 @@ export default function Goal() {
                 amount: Number(it.amount) || 0,
                 month: it.month ?? null,
                 date: it.date ?? null,
+                start_date: it.start_date ?? null,
+                end_date: it.end_date ?? null,
                 note: it.note ?? '',
             }))
             : [{ id: 'base-monthly', kind: 'monthly', amount: 0, note: '' }]
@@ -922,6 +958,8 @@ export default function Goal() {
                 amount: 0,
                 month: kind === 'yearly' ? 6 : null,
                 date: kind === 'one_time' ? new Date().toISOString().slice(0, 10) : null,
+                start_date: null,
+                end_date: null,
                 note: '',
             },
         ]);
@@ -1354,14 +1392,17 @@ export default function Goal() {
                                     </div>
                                 </div>
                                 {contributions.map((item) => (
-                                    <div key={item.id} className="grid grid-cols-[72px_1fr_28px] gap-1.5 items-center">
+                                    <div key={item.id} className="border border-slate-800 bg-slate-900/30 p-2 space-y-1.5">
+                                        <div className="grid grid-cols-[72px_1fr_28px] gap-1.5 items-center">
                                         <select
                                             value={item.kind}
-                                            title="Contribution type"
+                                            title={`Contribution type${scheduleWindowLabel(item)}`}
                                             onChange={(event) => updateContribution(item.id, {
                                                 kind: event.target.value as ContributionScheduleKind,
                                                 month: event.target.value === 'yearly' ? (item.month ?? 6) : null,
                                                 date: event.target.value === 'one_time' ? (item.date || new Date().toISOString().slice(0, 10)) : null,
+                                                start_date: event.target.value === 'one_time' ? null : (item.start_date ?? null),
+                                                end_date: event.target.value === 'one_time' ? null : (item.end_date ?? null),
                                             })}
                                             className="bg-slate-900 border border-slate-700 px-1.5 py-1.5 text-[10px]"
                                         >
@@ -1404,6 +1445,27 @@ export default function Goal() {
                                         <button onClick={() => removeContribution(item.id)} className="h-full border border-slate-700 text-slate-500 hover:text-rose-300 hover:border-rose-800" title="Remove">
                                             <Trash2 size={11} className="mx-auto" />
                                         </button>
+                                        </div>
+                                        {item.kind !== 'one_time' && (
+                                            <div className="grid grid-cols-2 gap-1.5">
+                                                <input
+                                                    type="date"
+                                                    title="Effective start date"
+                                                    aria-label="Effective start date"
+                                                    value={item.start_date || ''}
+                                                    onChange={(event) => updateContribution(item.id, { start_date: event.target.value || null })}
+                                                    className="bg-slate-950 border border-slate-800 px-1.5 py-1.5 text-[10px] text-slate-300"
+                                                />
+                                                <input
+                                                    type="date"
+                                                    title="Effective end date"
+                                                    aria-label="Effective end date"
+                                                    value={item.end_date || ''}
+                                                    onChange={(event) => updateContribution(item.id, { end_date: event.target.value || null })}
+                                                    className="bg-slate-950 border border-slate-800 px-1.5 py-1.5 text-[10px] text-slate-300"
+                                                />
+                                            </div>
+                                        )}
                                     </div>
                                 ))}
                             </div>
@@ -1704,8 +1766,8 @@ export default function Goal() {
                                         <div className="flex flex-wrap gap-1.5">
                                             {(snap.contribution_schedule as ContributionScheduleItem[]).map((item, idx) => (
                                                 <span key={idx} className="bg-slate-800 border border-slate-700 px-1.5 py-0.5">
-                                                    {item.kind === 'monthly' && `${formatCurrency(item.amount)}/mo`}
-                                                    {item.kind === 'yearly' && `${formatCurrency(item.amount)} bonus (${item.month}月)`}
+                                                    {item.kind === 'monthly' && `${formatCurrency(item.amount)}/mo${scheduleWindowLabel(item)}`}
+                                                    {item.kind === 'yearly' && `${formatCurrency(item.amount)} bonus (${item.month ?? 6}月)${scheduleWindowLabel(item)}`}
                                                     {item.kind === 'one_time' && `${formatCurrency(item.amount)} on ${item.date}`}
                                                 </span>
                                             ))}

@@ -83,6 +83,27 @@ def test_monthly_equivalent_yearly_bonus_adds_to_monthly():
     assert abs(result - 100_000.0) < 1.0
 
 
+def test_monthly_equivalent_monthly_respects_effective_period():
+    ref = date(2026, 5, 1)
+    target = date(2028, 5, 1)
+    schedule = [{"kind": "monthly", "amount": 50000, "start_date": "2027-05-01"}]
+    result = monthly_equivalent_from_contribution_schedule(schedule, ref, target)
+    assert result is not None
+    assert abs(result - 25_000.0) < 100.0
+
+
+def test_monthly_equivalent_bonus_respects_effective_period():
+    ref = date(2026, 5, 1)
+    target = date(2028, 5, 1)
+    schedule = [
+        {"kind": "monthly", "amount": 50000},
+        {"kind": "yearly", "amount": 600000, "month": 6, "start_date": "2027-01-01", "end_date": "2027-12-31"},
+    ]
+    result = monthly_equivalent_from_contribution_schedule(schedule, ref, target)
+    assert result is not None
+    assert abs(result - 75_000.0) < 100.0
+
+
 def test_monthly_equivalent_one_time_within_horizon():
     ref = date(2026, 5, 1)
     target = date(2028, 5, 1)
@@ -167,6 +188,18 @@ def test_period_contribution_mixed_monthly_and_bonus():
     # May: only monthly
     may = _period_contribution_from_schedule(schedule, date(2026, 5, 1), date(2026, 6, 1))
     assert may == 50000.0
+
+
+def test_period_contribution_monthly_effective_window():
+    schedule = [{"kind": "monthly", "amount": 50000, "start_date": "2026-06-01", "end_date": "2026-07-31"}]
+    may_to_aug = _period_contribution_from_schedule(schedule, date(2026, 5, 1), date(2026, 8, 1))
+    assert may_to_aug == 100000.0
+
+
+def test_period_contribution_bonus_effective_window():
+    schedule = [{"kind": "yearly", "amount": 600000, "month": 6, "start_date": "2027-01-01", "end_date": "2027-12-31"}]
+    two_years = _period_contribution_from_schedule(schedule, date(2026, 5, 1), date(2028, 5, 1))
+    assert two_years == 600000.0
 
 
 # ---------------------------------------------------------------------------

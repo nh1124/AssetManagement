@@ -443,50 +443,6 @@ def test_life_event_allocation_is_presented_as_capsule() -> None:
         db.close()
 
 
-def test_one_time_plan_line_is_saved_and_returned_with_planned_date() -> None:
-    db = _session()
-    try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
-        db.add(client)
-        db.commit()
-
-        saved = create_plan_lines(db, client_id=1, payloads=[
-            MonthlyPlanLineCreate(
-                target_period="2026-05",
-                line_type="expense",
-                target_type="manual",
-                name="one-time repair",
-                amount=45000,
-                planned_date=date(2026, 5, 20),
-                source="one_time",
-            ),
-            MonthlyPlanLineCreate(
-                target_period="2026-05",
-                line_type="income",
-                target_type="manual",
-                name="one-time refund",
-                amount=12000,
-                planned_date=date(2026, 5, 22),
-                source="one_time",
-            ),
-        ])
-
-        summary = get_budget_summary(db, client_id=1, period="2026-05")
-        expense = next(account for account in summary["expense_accounts"] if account["name"] == "one-time repair")
-        income = next(line for line in summary["plan_lines"] if line["name"] == "one-time refund")
-
-        assert len(saved) == 2
-        assert summary["total_variable_budget"] == 45000
-        assert summary["total_expected_inflow"] == 12000
-        assert expense["source"] == "one_time"
-        assert expense["planned_date"] == "2026-05-20"
-        assert expense["plan_line_id"] == saved[0].id
-        assert income["source"] == "one_time"
-        assert income["planned_date"] == "2026-05-22"
-    finally:
-        db.close()
-
-
 def test_cash_flow_projection_warns_about_unsynced_yearly_income() -> None:
     db = _session()
     try:
