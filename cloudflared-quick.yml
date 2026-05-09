@@ -1,0 +1,15 @@
+# ============================================================
+# Cloudflare Quick Tunnel - AssetManagement
+# ============================================================
+# This file is used to overwrite a config file (i.e. ~/.cloudflared/config.yml)
+#
+# How to use:
+#   start_tunnel.bat          # recommend（port number will be automatically set in .env）
+#   or manually:
+#   cloudflared tunnel --config cloudflared-quick.yml --url http://127.0.0.1:15173
+#
+# FRONTEND_PORT is set in .env (default: 15173)
+# ============================================================
+
+ingress:
+  - service: http://127.0.0.1:15173
