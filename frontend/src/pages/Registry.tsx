@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Cpu, Edit, Package, Plus, RefreshCw, Save, Trash2, Wallet, X } from 'lucide-react';
+import { Cpu, Edit, Package, Plus, RefreshCw, Save, SlidersHorizontal, Trash2, Wallet, X } from 'lucide-react';
 import TabPanel from '../components/TabPanel';
 import {
     autoUpdateExchangeRates,
@@ -15,7 +15,6 @@ import {
     getCapsules,
     getExchangeRates,
     getProducts,
-    getUnitEconomicsSummary,
     seedDefaultAccounts,
     updateAccount,
     updateProduct,
@@ -65,6 +64,113 @@ const EMPTY_PRODUCT_FORM = {
 };
 
 type ProductForm = typeof EMPTY_PRODUCT_FORM;
+type ProductKind = 'asset' | 'item';
+
+const PRODUCT_FILTER_STORAGE_KEY = 'finance_registry_product_filters';
+
+const defaultProductFilters = {
+    q: '',
+    category: '',
+    budgetAccountId: '',
+    fundingCapsuleId: '',
+    location: '',
+    treatment: '',
+    dateFrom: '',
+    dateTo: '',
+    amountMin: '',
+    amountMax: '',
+};
+
+type ProductFilters = typeof defaultProductFilters;
+
+const emptyProductFilterSet = (): Record<ProductKind, ProductFilters> => ({
+    asset: { ...defaultProductFilters },
+    item: { ...defaultProductFilters },
+});
+
+const loadStoredProductFilters = (): Record<ProductKind, ProductFilters> => {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(PRODUCT_FILTER_STORAGE_KEY) || '{}');
+        return {
+            asset: { ...defaultProductFilters, ...(parsed.asset ?? {}) },
+            item: { ...defaultProductFilters, ...(parsed.item ?? {}) },
+        };
+    } catch {
+        return emptyProductFilterSet();
+    }
+};
+
+const productPrice = (product: Product) => product.purchase_price ?? product.last_unit_price ?? 0;
+const productMonthlyValue = (product: Product, kind: ProductKind) => {
+    const price = productPrice(product);
+    return kind === 'asset'
+        ? product.lifespan_months ? price / product.lifespan_months : 0
+        : product.monthly_cost ?? 0;
+};
+const productCategoryLabel = (product: Product) => product.budget_account_name || product.category || 'Uncategorized';
+const productDate = (product: Product, kind: ProductKind) => (
+    kind === 'asset'
+        ? product.purchase_date || product.last_purchase_date || ''
+        : product.next_purchase_date || product.last_purchase_date || ''
+);
+const productTreatment = (product: Product) => product.effective_budget_treatment || product.budget_treatment || 'auto';
+
+const matchesProductFilters = (product: Product, filters: ProductFilters, kind: ProductKind) => {
+    const query = filters.q.trim().toLowerCase();
+    if (query) {
+        const haystack = [
+            product.name,
+            product.category,
+            product.budget_account_name,
+            product.funding_capsule_name,
+            product.location,
+        ].filter(Boolean).join(' ').toLowerCase();
+        if (!haystack.includes(query)) return false;
+    }
+
+    if (filters.category && productCategoryLabel(product) !== filters.category) return false;
+    if (filters.budgetAccountId && String(product.budget_account_id ?? '') !== filters.budgetAccountId) return false;
+    if (filters.fundingCapsuleId && String(product.funding_capsule_id ?? '') !== filters.fundingCapsuleId) return false;
+    if (filters.location && (product.location || '') !== filters.location) return false;
+    if (filters.treatment && productTreatment(product) !== filters.treatment) return false;
+
+    const date = productDate(product, kind);
+    if (filters.dateFrom && (!date || date < filters.dateFrom)) return false;
+    if (filters.dateTo && (!date || date > filters.dateTo)) return false;
+
+    const amount = productPrice(product);
+    if (filters.amountMin && amount < Number(filters.amountMin)) return false;
+    if (filters.amountMax && amount > Number(filters.amountMax)) return false;
+
+    return true;
+};
+
+const summarizeProducts = (rows: Product[], kind: ProductKind) => {
+    const categories = new Map<string, { count: number; value: number; monthly: number }>();
+    let totalValue = 0;
+    let monthlyTotal = 0;
+
+    rows.forEach((product) => {
+        const value = productPrice(product);
+        const monthly = productMonthlyValue(product, kind);
+        const category = productCategoryLabel(product);
+        const current = categories.get(category) ?? { count: 0, value: 0, monthly: 0 };
+        current.count += 1;
+        current.value += value;
+        current.monthly += monthly;
+        categories.set(category, current);
+        totalValue += value;
+        monthlyTotal += monthly;
+    });
+
+    return {
+        totalValue,
+        monthlyTotal,
+        categoryBreakdown: Array.from(categories.entries())
+            .map(([category, values]) => ({ category, ...values }))
+            .sort((a, b) => b.value - a.value),
+    };
+};
 
 function productToForm(product: Product): ProductForm {
     return {
@@ -386,7 +492,6 @@ export default function Registry() {
     const [activeTab, setActiveTab] = useState('accounts');
     const [products, setProducts] = useState<Product[]>([]);
     const [capsules, setCapsules] = useState<Capsule[]>([]);
-    const [unitSummary, setUnitSummary] = useState<any>(null);
     const [accounts, setAccounts] = useState<Account[]>([]);
     const [accountTree, setAccountTree] = useState<Record<string, AccountTreeNode[]>>({});
     const [exchangeRates, setExchangeRates] = useState<ExchangeRate[]>([]);
@@ -416,6 +521,9 @@ export default function Registry() {
     const [showAddAccount, setShowAddAccount] = useState(false);
     const [productModal, setProductModal] = useState<{ type: 'asset' | 'item'; product: Product | null } | null>(null);
     const [loadingProducts, setLoadingProducts] = useState(false);
+    const [productFilters, setProductFilters] = useState<Record<ProductKind, ProductFilters>>(() => loadStoredProductFilters());
+    const [productFilterDrafts, setProductFilterDrafts] = useState<Record<ProductKind, ProductFilters>>(() => loadStoredProductFilters());
+    const [showProductFilters, setShowProductFilters] = useState<Record<ProductKind, boolean>>({ asset: false, item: false });
     const { showToast } = useToast();
     const { currentClient } = useClient();
 
@@ -442,16 +550,14 @@ export default function Registry() {
     const fetchData = async () => {
         try {
             setLoadingProducts(true);
-            const [productsData, summaryData, accountsData, treeData, ratesData, capsulesData] = await Promise.all([
+            const [productsData, accountsData, treeData, ratesData, capsulesData] = await Promise.all([
                 getProducts(),
-                getUnitEconomicsSummary(),
                 getAccounts(),
                 getAccountTree(),
                 getExchangeRates(),
                 getCapsules(),
             ]);
             setProducts(productsData);
-            setUnitSummary(summaryData);
             setAccounts(accountsData);
             setAccountTree(treeData);
             setExchangeRates(ratesData);
@@ -501,6 +607,27 @@ export default function Registry() {
         } catch (error) {
             showToast('Failed to create reserve capsules', 'error');
         }
+    };
+
+    const setProductFilterDraft = (kind: ProductKind, key: keyof ProductFilters, value: string) => {
+        setProductFilterDrafts((prev) => ({
+            ...prev,
+            [kind]: { ...prev[kind], [key]: value },
+        }));
+    };
+
+    const applyProductFilters = (kind: ProductKind) => {
+        const next = { ...productFilters, [kind]: { ...productFilterDrafts[kind] } };
+        setProductFilters(next);
+        localStorage.setItem(PRODUCT_FILTER_STORAGE_KEY, JSON.stringify(next));
+    };
+
+    const clearProductFilters = (kind: ProductKind) => {
+        const cleared = { ...defaultProductFilters };
+        const next = { ...productFilters, [kind]: cleared };
+        setProductFilters(next);
+        setProductFilterDrafts((prev) => ({ ...prev, [kind]: cleared }));
+        localStorage.setItem(PRODUCT_FILTER_STORAGE_KEY, JSON.stringify(next));
     };
 
     const handleUpdateAccount = async (id: number) => {
@@ -581,9 +708,31 @@ export default function Registry() {
         }
     };
 
-    const renderProducts = (kind: 'asset' | 'item') => {
-        const rows = kind === 'asset' ? assets : items;
+    const renderProducts = (kind: ProductKind) => {
+        const allRows = kind === 'asset' ? assets : items;
+        const filters = productFilters[kind];
+        const draft = productFilterDrafts[kind];
+        const rows = allRows.filter((product) => matchesProductFilters(product, filters, kind));
+        const summary = summarizeProducts(rows, kind);
+        const activeFilterCount = Object.values(filters).filter(Boolean).length;
         const title = kind === 'asset' ? 'Fixed Assets' : 'Consumable Items';
+        const categoryOptions = Array.from(new Set(allRows.map(productCategoryLabel))).sort();
+        const budgetOptions = Array.from(
+            new Map(
+                allRows
+                    .filter((product) => product.budget_account_id && product.budget_account_name)
+                    .map((product) => [String(product.budget_account_id), product.budget_account_name as string])
+            ).entries()
+        ).sort((a, b) => a[1].localeCompare(b[1]));
+        const fundingOptions = Array.from(
+            new Map(
+                allRows
+                    .filter((product) => product.funding_capsule_id && product.funding_capsule_name)
+                    .map((product) => [String(product.funding_capsule_id), product.funding_capsule_name as string])
+            ).entries()
+        ).sort((a, b) => a[1].localeCompare(b[1]));
+        const locationOptions = Array.from(new Set(allRows.map((product) => product.location).filter(Boolean) as string[])).sort();
+        const treatmentOptions = Array.from(new Set(allRows.map(productTreatment))).sort();
 
         return (
             <div className="space-y-4">
@@ -620,30 +769,150 @@ export default function Registry() {
                     </div>
                 </div>
 
-                <div className="grid grid-cols-3 gap-0 border border-slate-800">
-                    <div className="border-r border-slate-800 p-3">
-                        <p className="text-[10px] text-slate-500 uppercase">Records</p>
-                        <p className="text-xl font-mono-nums text-slate-200">{rows.length}</p>
+                <div className="border border-slate-800 bg-slate-900/60 p-3 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-1 text-[10px] text-slate-400 flex-1">
+                            <span>
+                                {rows.length} / {allRows.length} records
+                                {activeFilterCount > 0 && <span className="text-emerald-400"> filtered</span>}
+                            </span>
+                            <span className="font-mono-nums text-slate-200">
+                                Value {formatCurrency(summary.totalValue)}
+                            </span>
+                            <span className={`font-mono-nums ${kind === 'asset' ? 'text-cyan-400' : 'text-amber-400'}`}>
+                                {kind === 'asset' ? 'Monthly Dep.' : 'Monthly Cost'} {formatCurrency(summary.monthlyTotal)}
+                            </span>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => setShowProductFilters((prev) => ({ ...prev, [kind]: !prev[kind] }))}
+                            className={`p-1.5 border text-slate-300 hover:text-emerald-300 ${showProductFilters[kind] ? 'border-emerald-700 bg-emerald-950/30' : 'border-slate-700 bg-slate-800 hover:bg-slate-700'}`}
+                            aria-label={`Toggle ${kind} filters`}
+                            title={`${title} filters`}
+                        >
+                            <SlidersHorizontal size={14} />
+                        </button>
                     </div>
-                    <div className="border-r border-slate-800 p-3">
-                        <p className="text-[10px] text-slate-500 uppercase">{kind === 'asset' ? 'Asset Value' : 'Monthly Cost'}</p>
-                        <p className={`text-xl font-mono-nums ${kind === 'asset' ? 'text-emerald-400' : 'text-amber-400'}`}>
-                            {kind === 'asset'
-                                ? formatCurrency(rows.reduce((sum, item) => sum + (item.purchase_price ?? item.last_unit_price ?? 0), 0))
-                                : formatCurrency(unitSummary?.total_monthly_cost ?? 0)}
-                        </p>
-                    </div>
-                    <div className="p-3">
-                        <p className="text-[10px] text-slate-500 uppercase">{kind === 'asset' ? 'Monthly Depreciation' : 'Top Category'}</p>
-                        <p className="text-xl font-mono-nums text-cyan-400">
-                            {kind === 'asset'
-                                ? formatCurrency(rows.reduce((sum, item) => {
-                                    const price = item.purchase_price ?? item.last_unit_price ?? 0;
-                                    return sum + (item.lifespan_months ? price / item.lifespan_months : 0);
-                                }, 0))
-                                : unitSummary?.category_breakdown?.[0]?.category ?? '-'}
-                        </p>
-                    </div>
+
+                    {showProductFilters[kind] && (
+                        <>
+                            <div className="grid grid-cols-2 xl:grid-cols-5 gap-2">
+                                <input
+                                    type="text"
+                                    value={draft.q}
+                                    onChange={(event) => setProductFilterDraft(kind, 'q', event.target.value)}
+                                    placeholder="Name / memo"
+                                    className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs"
+                                />
+                                <select
+                                    value={draft.category}
+                                    onChange={(event) => setProductFilterDraft(kind, 'category', event.target.value)}
+                                    className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs"
+                                    title="Budget category"
+                                >
+                                    <option value="">All categories</option>
+                                    {categoryOptions.map((category) => (
+                                        <option key={category} value={category}>{category}</option>
+                                    ))}
+                                </select>
+                                <select
+                                    value={draft.budgetAccountId}
+                                    onChange={(event) => setProductFilterDraft(kind, 'budgetAccountId', event.target.value)}
+                                    className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs"
+                                    title="Budget account"
+                                >
+                                    <option value="">All budgets</option>
+                                    {budgetOptions.map(([id, name]) => (
+                                        <option key={id} value={id}>{name}</option>
+                                    ))}
+                                </select>
+                                <select
+                                    value={draft.fundingCapsuleId}
+                                    onChange={(event) => setProductFilterDraft(kind, 'fundingCapsuleId', event.target.value)}
+                                    className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs"
+                                    title="Funding capsule"
+                                >
+                                    <option value="">All capsules</option>
+                                    {fundingOptions.map(([id, name]) => (
+                                        <option key={id} value={id}>{name}</option>
+                                    ))}
+                                </select>
+                                <select
+                                    value={draft.treatment}
+                                    onChange={(event) => setProductFilterDraft(kind, 'treatment', event.target.value)}
+                                    className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs"
+                                    title="Budget treatment"
+                                >
+                                    <option value="">All treatments</option>
+                                    {treatmentOptions.map((treatment) => (
+                                        <option key={treatment} value={treatment}>{treatment.replace('_', ' ')}</option>
+                                    ))}
+                                </select>
+                                <select
+                                    value={draft.location}
+                                    onChange={(event) => setProductFilterDraft(kind, 'location', event.target.value)}
+                                    className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs"
+                                    title="Location"
+                                >
+                                    <option value="">All locations</option>
+                                    {locationOptions.map((location) => (
+                                        <option key={location} value={location}>{location}</option>
+                                    ))}
+                                </select>
+                                <input
+                                    type="date"
+                                    value={draft.dateFrom}
+                                    onChange={(event) => setProductFilterDraft(kind, 'dateFrom', event.target.value)}
+                                    className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs"
+                                    title={kind === 'asset' ? 'Purchase date from' : 'Next purchase from'}
+                                />
+                                <input
+                                    type="date"
+                                    value={draft.dateTo}
+                                    onChange={(event) => setProductFilterDraft(kind, 'dateTo', event.target.value)}
+                                    className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs"
+                                    title={kind === 'asset' ? 'Purchase date to' : 'Next purchase to'}
+                                />
+                                <input
+                                    type="number"
+                                    value={draft.amountMin}
+                                    onChange={(event) => setProductFilterDraft(kind, 'amountMin', event.target.value)}
+                                    placeholder="Min price"
+                                    className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs"
+                                />
+                                <input
+                                    type="number"
+                                    value={draft.amountMax}
+                                    onChange={(event) => setProductFilterDraft(kind, 'amountMax', event.target.value)}
+                                    placeholder="Max price"
+                                    className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs"
+                                />
+                            </div>
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="flex flex-wrap gap-1 text-[10px] text-slate-500">
+                                    {summary.categoryBreakdown.slice(0, 4).map((row) => (
+                                        <span key={row.category} className="border border-slate-700 bg-slate-950/50 px-2 py-1">
+                                            {row.category}: {row.count} / {formatCurrency(row.value)}
+                                        </span>
+                                    ))}
+                                    {rows.length === 0 && <span>No matching records</span>}
+                                </div>
+                                <div className="flex gap-2">
+                                    <button onClick={() => applyProductFilters(kind)} className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white text-[10px] font-bold">Apply</button>
+                                    <button onClick={() => clearProductFilters(kind)} className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold">Clear</button>
+                                </div>
+                            </div>
+                        </>
+                    )}
+                    {!showProductFilters[kind] && summary.categoryBreakdown.length > 0 && (
+                        <div className="flex flex-wrap gap-1 border-t border-slate-800 pt-2 text-[10px] text-slate-500">
+                            {summary.categoryBreakdown.slice(0, 4).map((row) => (
+                                <span key={row.category} className="border border-slate-800 bg-slate-950/40 px-2 py-1">
+                                    {row.category}: {row.count}
+                                </span>
+                            ))}
+                        </div>
+                    )}
                 </div>
 
                 <div className="border border-slate-800 overflow-auto">
@@ -651,7 +920,7 @@ export default function Registry() {
                         <thead className="bg-slate-900 sticky top-0">
                             <tr className="border-b border-slate-800">
                                 <th className="p-2 text-left text-slate-500 uppercase font-medium">Name</th>
-                                <th className="p-2 text-left text-slate-500 uppercase font-medium">Budget</th>
+                                <th className="p-2 text-left text-slate-500 uppercase font-medium">Budget / Category</th>
                                 <th className="p-2 text-left text-slate-500 uppercase font-medium">Treatment</th>
                                 <th className="p-2 text-left text-slate-500 uppercase font-medium">Funding Capsule</th>
                                 <th className="p-2 text-right text-slate-500 uppercase font-medium">Reserve / Mo</th>
@@ -666,11 +935,11 @@ export default function Registry() {
                             {loadingProducts ? (
                                 <tr><td colSpan={10} className="p-4 text-slate-500">Loading...</td></tr>
                             ) : rows.length === 0 ? (
-                                <tr><td colSpan={10} className="p-6 text-center text-slate-500">No records yet.</td></tr>
+                                <tr><td colSpan={10} className="p-6 text-center text-slate-500">No matching records.</td></tr>
                             ) : (
                                 rows.map((product) => {
-                                    const price = product.purchase_price ?? product.last_unit_price ?? 0;
-                                    const monthlyDep = product.lifespan_months ? price / product.lifespan_months : 0;
+                                    const price = productPrice(product);
+                                    const monthlyValue = productMonthlyValue(product, kind);
 
                                     return (
                                         <tr key={product.id} className="border-b border-slate-800/50 hover:bg-slate-800/30 group">
@@ -682,10 +951,10 @@ export default function Registry() {
                                                     <span className="text-slate-200">{product.name}</span>
                                                 </div>
                                             </td>
-                                            <td className="p-2 text-slate-500">{product.budget_account_name || '-'}</td>
+                                            <td className="p-2 text-slate-500">{productCategoryLabel(product)}</td>
                                             <td className="p-2 text-slate-500">
                                                 <div className="space-y-0.5">
-                                                    <p>{(product.effective_budget_treatment || product.budget_treatment || 'auto').replace('_', ' ')}</p>
+                                                    <p>{productTreatment(product).replace('_', ' ')}</p>
                                                     {product.budget_treatment === 'auto' && <p className="text-[9px] text-slate-600">Auto</p>}
                                                 </div>
                                             </td>
@@ -694,12 +963,10 @@ export default function Registry() {
                                             <td className="p-2 text-slate-500">{product.location || '-'}</td>
                                             <td className="p-2 text-right font-mono-nums text-slate-300">{formatCurrency(price)}</td>
                                             <td className="p-2 text-right font-mono-nums text-cyan-400">
-                                                {kind === 'asset' ? formatCurrency(monthlyDep) : formatCurrency(product.monthly_cost)}
+                                                {formatCurrency(monthlyValue)}
                                             </td>
                                             <td className="p-2 text-slate-500">
-                                                {kind === 'asset'
-                                                    ? product.purchase_date || product.last_purchase_date || '-'
-                                                    : product.next_purchase_date || '-'}
+                                                {productDate(product, kind) || '-'}
                                             </td>
                                             <td className="p-2 text-right">
                                                 <button
@@ -716,23 +983,6 @@ export default function Registry() {
                         </tbody>
                     </table>
                 </div>
-
-                {kind === 'item' && (
-                    <div className="border border-slate-800 p-3">
-                        <p className="text-[10px] text-slate-500 uppercase mb-2">Top Consumable Categories</p>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-                            {(unitSummary?.category_breakdown ?? []).slice(0, 3).map((row: any) => (
-                                <div key={row.category} className="bg-slate-900/60 border border-slate-700 p-2">
-                                    <p className="text-xs text-slate-300">{row.category}</p>
-                                    <p className="text-sm font-mono-nums text-amber-400">{formatCurrency(row.monthly_cost)} / mo</p>
-                                </div>
-                            ))}
-                            {!unitSummary?.category_breakdown?.length && (
-                                <p className="text-xs text-slate-500">Add replenishment frequency to see category run-rates.</p>
-                            )}
-                        </div>
-                    </div>
-                )}
             </div>
         );
     };
