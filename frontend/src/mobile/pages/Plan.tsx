@@ -24,10 +24,18 @@ import {
 } from '../../api';
 import { useToast } from '../../components/Toast';
 import { useClient } from '../../context/ClientContext';
-import type { Account, LifeEvent, Milestone } from '../../types';
+import type { Account, LifeEvent, Milestone, MonthlyPlanLine, MonthlyPlanLineType } from '../../types';
 import { formatCurrency } from '../../utils/currency';
 
 type PlanTab = 'goals' | 'capsules' | 'budget';
+type BudgetGroup = 'income' | 'variable' | 'allocation' | 'debt';
+
+const BUDGET_GROUPS: Array<[BudgetGroup, string]> = [
+    ['income', 'INCOME'],
+    ['variable', 'VARIABLE'],
+    ['allocation', 'ALLOCATION'],
+    ['debt', 'DEBT'],
+];
 
 interface BudgetSummary {
     period?: string;
@@ -40,6 +48,7 @@ interface BudgetSummary {
     available_cash_flow?: number;
     free_cash_flow?: number;
     expense_accounts?: BudgetAccount[];
+    plan_lines?: MonthlyPlanLine[];
     others_actual?: number;
 }
 
@@ -304,27 +313,96 @@ function BudgetPanel({
     onChanged: () => Promise<void>;
 }) {
     const { showToast } = useToast();
-    const rows = budget?.expense_accounts ?? [];
+    const variableRows = budget?.expense_accounts ?? [];
+    const planLines = budget?.plan_lines ?? [];
+    const [activeBudgetGroup, setActiveBudgetGroup] = useState<BudgetGroup>('variable');
     const [edits, setEdits] = useState<Record<string, string>>({});
-    const [addForm, setAddForm] = useState({ account_id: '', name: '', amount: '', one_time: false });
+    const [showAddForm, setShowAddForm] = useState(false);
+    const [addForm, setAddForm] = useState({ account_id: '', name: '', amount: '' });
     const [isSaving, setIsSaving] = useState(false);
     const [touchStartX, setTouchStartX] = useState<number | null>(null);
 
+    const rows = useMemo(() => {
+        if (activeBudgetGroup === 'variable') {
+            return variableRows.map((row) => ({
+                key: `variable-${row.id}`,
+                name: row.name,
+                amount: Number(row.amount ?? 0),
+                actual: Number(row.balance ?? 0),
+                line_type: 'expense' as MonthlyPlanLineType,
+                target_type: row.target_type ?? (row.account_id ? 'account' : 'manual'),
+                target_id: row.target_id ?? null,
+                account_id: row.account_id ?? null,
+                source_account_id: row.source_account_id ?? null,
+                plan_line_id: row.plan_line_id ?? null,
+                planned_date: row.planned_date ?? null,
+                priority: row.priority ?? 2,
+                note: row.note ?? null,
+                source: row.source ?? 'manual',
+                raw_id: row.id,
+            }));
+        }
+        const lineTypes: MonthlyPlanLineType[] = activeBudgetGroup === 'income'
+            ? ['income', 'borrowing', 'drawdown']
+            : activeBudgetGroup === 'allocation'
+                ? ['allocation']
+                : ['debt_payment'];
+        return planLines
+            .filter((line) => lineTypes.includes(line.line_type))
+            .map((line) => ({
+                key: `line-${line.id ?? `${line.line_type}-${line.target_type}-${line.account_id ?? line.target_id ?? line.name}`}`,
+                name: line.target_name || line.name || line.account_name || line.line_type.replace('_', ' '),
+                amount: Number(line.amount ?? 0),
+                actual: Number(line.actual ?? 0),
+                line_type: line.line_type,
+                target_type: line.target_type,
+                target_id: line.target_id ?? null,
+                account_id: line.account_id ?? null,
+                source_account_id: line.source_account_id ?? null,
+                plan_line_id: line.id ?? null,
+                planned_date: line.planned_date ?? null,
+                priority: line.priority ?? 2,
+                note: line.note ?? null,
+                source: line.source ?? 'manual',
+                raw_id: line.id ?? 0,
+            }));
+    }, [activeBudgetGroup, planLines, variableRows]);
+
+    const allRows = useMemo(() => {
+        const result: Array<{ key: string; amount: number }> = [];
+        variableRows.forEach((row) => result.push({ key: `variable-${row.id}`, amount: Number(row.amount ?? 0) }));
+        planLines
+            .filter((line) => line.line_type !== 'expense')
+            .forEach((line) => result.push({
+                key: `line-${line.id ?? `${line.line_type}-${line.target_type}-${line.account_id ?? line.target_id ?? line.name}`}`,
+                amount: Number(line.amount ?? 0),
+            }));
+        return result;
+    }, [planLines, variableRows]);
+
     useEffect(() => {
         const next: Record<string, string> = {};
-        rows.forEach((row) => {
-            next[String(row.id)] = String(Number(row.amount ?? 0));
+        allRows.forEach((row) => {
+            next[row.key] = String(Number(row.amount ?? 0));
         });
         setEdits(next);
-    }, [budget?.period, rows.length]);
+    }, [budget?.period, allRows.length]);
 
-    const budgetTotal = rows.reduce((sum, row) => sum + Number(edits[String(row.id)] ?? row.amount ?? 0), 0);
-    const actualTotal = rows.reduce((sum, row) => sum + Number(row.balance ?? 0), 0);
-    const varianceTotal = budgetTotal - actualTotal;
+    const budgetTotal = rows.reduce((sum, row) => sum + Number(edits[row.key] ?? row.amount ?? 0), 0);
+    const actualTotal = rows.reduce((sum, row) => sum + Number(row.actual ?? 0), 0);
+    const varianceTotal = activeBudgetGroup === 'income' ? actualTotal - budgetTotal : budgetTotal - actualTotal;
     const usedRate = budgetTotal > 0 ? Math.min(999, Math.round((actualTotal / budgetTotal) * 100)) : 0;
-    const currentAccountIds = new Set(rows.map((row) => row.account_id).filter(Boolean));
-    const availableExpenseAccounts = accounts.filter((account) => (
-        account.account_type === 'expense' && !currentAccountIds.has(account.id)
+    const currentAccountIds = new Set(variableRows.map((row) => row.account_id).filter(Boolean));
+    const targetAccountType = activeBudgetGroup === 'income'
+        ? 'income'
+        : activeBudgetGroup === 'allocation'
+            ? 'asset'
+            : activeBudgetGroup === 'debt'
+                ? 'liability'
+                : 'expense';
+    const availableTargetAccounts = accounts.filter((account) => (
+        account.account_type === targetAccountType
+        && (activeBudgetGroup !== 'variable' || !currentAccountIds.has(account.id))
     ));
     const isJapanese = language.toLowerCase().startsWith('ja');
     const [periodYear, periodMonth] = period.split('-').map(Number);
@@ -350,7 +428,7 @@ function BudgetPanel({
             const { id, ...payload } = line;
             if (typeof id === 'number') {
                 updates.push({ id, ...payload });
-            } else if (payload.amount > 0 || payload.source === 'one_time') {
+            } else if (payload.amount > 0) {
                 creates.push(payload);
             }
         });
@@ -358,23 +436,22 @@ function BudgetPanel({
         if (updates.length > 0) await updateMonthlyPlanLines(updates);
     };
 
-    const budgetPayload = (row: BudgetAccount, amount: number): EditablePlanLinePayload => {
+    const budgetPayload = (row: typeof rows[number], amount: number): EditablePlanLinePayload => {
         const targetType = row.target_type ?? (row.account_id ? 'account' : 'manual');
-        const source = row.source === 'one_time' ? 'one_time' : 'manual';
         return {
             ...(typeof row.plan_line_id === 'number' ? { id: row.plan_line_id } : {}),
             target_period: period,
-            line_type: 'expense',
+            line_type: row.line_type,
             target_type: targetType,
             target_id: row.target_id ?? null,
-            account_id: row.account_id ?? (targetType === 'account' && row.id > 0 ? row.id : null),
+            account_id: row.account_id ?? (targetType === 'account' && row.raw_id > 0 ? row.raw_id : null),
             source_account_id: row.source_account_id ?? null,
             name: row.name,
             amount,
-            planned_date: source === 'one_time' ? row.planned_date ?? `${period}-01` : null,
+            planned_date: null,
             priority: row.priority ?? 2,
             note: row.note ?? null,
-            source,
+            source: 'manual',
             recurring_transaction_id: null,
             is_active: true,
         };
@@ -383,7 +460,7 @@ function BudgetPanel({
     const saveBudget = async () => {
         setIsSaving(true);
         try {
-            await persistLines(rows.map((row) => budgetPayload(row, Number(edits[String(row.id)] || 0))));
+            await persistLines(rows.map((row) => budgetPayload(row, Number(edits[row.key] || 0))));
             await onChanged();
             showToast('Budget saved', 'success');
         } catch {
@@ -391,6 +468,13 @@ function BudgetPanel({
         } finally {
             setIsSaving(false);
         }
+    };
+
+    const lineTypeForActiveGroup = (): MonthlyPlanLineType => {
+        if (activeBudgetGroup === 'income') return 'income';
+        if (activeBudgetGroup === 'allocation') return 'allocation';
+        if (activeBudgetGroup === 'debt') return 'debt_payment';
+        return 'expense';
     };
 
     const addBudgetLine = async () => {
@@ -401,11 +485,12 @@ function BudgetPanel({
         }
         setIsSaving(true);
         try {
+            const lineType = lineTypeForActiveGroup();
             if (addForm.account_id) {
                 const account = accounts.find((item) => item.id === Number(addForm.account_id));
                 await persistLines([{
                     target_period: period,
-                    line_type: 'expense',
+                    line_type: lineType,
                     target_type: 'account',
                     account_id: Number(addForm.account_id),
                     name: account?.name ?? null,
@@ -414,23 +499,11 @@ function BudgetPanel({
                     source: 'manual',
                     is_active: true,
                 }]);
-            } else if (addForm.one_time) {
-                await persistLines([{
-                    target_period: period,
-                    line_type: 'expense',
-                    target_type: 'manual',
-                    account_id: null,
-                    name: addForm.name.trim(),
-                    amount,
-                    planned_date: `${period}-01`,
-                    source: 'one_time',
-                    is_active: true,
-                }]);
-            } else {
+            } else if (activeBudgetGroup === 'variable') {
                 const created = await createAccount({ name: addForm.name.trim(), account_type: 'expense', balance: 0 });
                 await persistLines([{
                     target_period: period,
-                    line_type: 'expense',
+                    line_type: lineType,
                     target_type: 'account',
                     account_id: created.id,
                     name: created.name,
@@ -439,8 +512,21 @@ function BudgetPanel({
                     source: 'manual',
                     is_active: true,
                 }]);
+            } else {
+                await persistLines([{
+                    target_period: period,
+                    line_type: lineType,
+                    target_type: 'manual',
+                    account_id: null,
+                    name: addForm.name.trim(),
+                    amount,
+                    planned_date: null,
+                    source: 'manual',
+                    is_active: true,
+                }]);
             }
-            setAddForm({ account_id: '', name: '', amount: '', one_time: false });
+            setAddForm({ account_id: '', name: '', amount: '' });
+            setShowAddForm(false);
             await onChanged();
             showToast('Budget line added', 'success');
         } catch {
@@ -450,9 +536,9 @@ function BudgetPanel({
         }
     };
 
-    const removeBudgetLine = async (row: BudgetAccount) => {
+    const removeBudgetLine = async (row: typeof rows[number]) => {
         if (!row.plan_line_id) {
-            setEdits((prev) => ({ ...prev, [String(row.id)]: '0' }));
+            setEdits((prev) => ({ ...prev, [row.key]: '0' }));
             showToast('Set this budget to zero, then save.', 'info');
             return;
         }
@@ -508,16 +594,80 @@ function BudgetPanel({
                 </div>
             </div>
 
+            <div className="flex items-center gap-2">
+                <div className="scrollbar-none flex min-w-0 flex-1 gap-1 overflow-x-auto">
+                    {BUDGET_GROUPS.map(([group, label]) => (
+                        <button
+                            key={group}
+                            type="button"
+                            onClick={() => {
+                                setActiveBudgetGroup(group);
+                                setShowAddForm(false);
+                                setAddForm({ account_id: '', name: '', amount: '' });
+                            }}
+                            className={`h-8 shrink-0 border-b px-2 text-[10px] font-medium tracking-wide ${activeBudgetGroup === group
+                                ? 'border-emerald-400 text-emerald-300'
+                                : 'border-slate-800 text-slate-500'
+                                }`}
+                        >
+                            {label}
+                        </button>
+                    ))}
+                </div>
+                <button
+                    type="button"
+                    onClick={() => setShowAddForm((value) => !value)}
+                    className={`flex h-8 w-8 shrink-0 items-center justify-center border ${showAddForm ? 'border-emerald-500 text-emerald-300' : 'border-slate-800 text-slate-500'}`}
+                    aria-label="Add budget line"
+                >
+                    <Plus size={15} />
+                </button>
+            </div>
+
+            {showAddForm && (
+                <div className="space-y-2 border border-slate-800 bg-slate-900/60 p-3">
+                    <select
+                        value={addForm.account_id}
+                        onChange={(event) => setAddForm({ ...addForm, account_id: event.target.value, name: event.target.value ? '' : addForm.name })}
+                        className="h-10 w-full border border-slate-700 bg-slate-950 px-3 text-sm text-slate-100"
+                    >
+                        <option value="">New manual item...</option>
+                        {availableTargetAccounts.map((account) => (
+                            <option key={account.id} value={account.id}>{account.name}</option>
+                        ))}
+                    </select>
+                    {!addForm.account_id && (
+                        <input
+                            value={addForm.name}
+                            onChange={(event) => setAddForm({ ...addForm, name: event.target.value })}
+                            placeholder="Item name"
+                            className="h-10 w-full border-0 border-b border-slate-700 bg-transparent px-1 text-sm text-slate-100 outline-none focus:border-emerald-400"
+                        />
+                    )}
+                    <input
+                        type="number"
+                        inputMode="decimal"
+                        value={addForm.amount}
+                        onChange={(event) => setAddForm({ ...addForm, amount: event.target.value })}
+                        placeholder="Budget amount"
+                        className="h-10 w-full border-0 border-b border-slate-700 bg-transparent px-1 text-sm font-mono-nums text-slate-100 outline-none focus:border-emerald-400"
+                    />
+                    <button type="button" onClick={addBudgetLine} disabled={isSaving} className="flex h-10 w-full items-center justify-center gap-2 bg-cyan-600 text-sm font-semibold text-white disabled:opacity-50">
+                        <Plus size={15} /> Add
+                    </button>
+                </div>
+            )}
+
             <div className="space-y-1.5">
                 {rows.length === 0 ? (
                     <EmptyBlock text="No budget lines for this month." />
                 ) : rows.map((row) => {
-                    const planned = Number(edits[String(row.id)] || 0);
-                    const actual = Number(row.balance || 0);
-                    const left = planned - actual;
+                    const planned = Number(edits[row.key] || 0);
+                    const actual = Number(row.actual || 0);
+                    const left = activeBudgetGroup === 'income' ? actual - planned : planned - actual;
                     const usage = planned > 0 ? Math.min(100, (actual / planned) * 100) : 0;
                     return (
-                        <div key={`${row.id}-${row.plan_line_id ?? 'virtual'}`} className="border border-slate-800 bg-slate-900/70 px-3 py-2.5">
+                        <div key={row.key} className="border border-slate-800 bg-slate-900/70 px-3 py-2.5">
                             <div className="flex items-center justify-between gap-3">
                                 <div className="min-w-0">
                                     <p className="truncate text-sm font-medium text-slate-100">{row.name}</p>
@@ -534,8 +684,8 @@ function BudgetPanel({
                                 <input
                                     type="number"
                                     inputMode="decimal"
-                                    value={edits[String(row.id)] ?? ''}
-                                    onChange={(event) => setEdits((prev) => ({ ...prev, [String(row.id)]: event.target.value }))}
+                                    value={edits[row.key] ?? ''}
+                                    onChange={(event) => setEdits((prev) => ({ ...prev, [row.key]: event.target.value }))}
                                     className="h-8 w-full border-0 border-b border-slate-600 bg-transparent px-1 text-right text-sm font-mono-nums text-slate-100 outline-none focus:border-emerald-400"
                                 />
                             </div>
@@ -552,50 +702,6 @@ function BudgetPanel({
                     Uncategorized actual {formatCurrency(budget?.others_actual ?? 0, currency)}
                 </div>
             )}
-
-            <div className="space-y-2 border border-slate-800 bg-slate-900/60 p-3">
-                <select
-                    value={addForm.account_id}
-                    onChange={(event) => setAddForm({ ...addForm, account_id: event.target.value, name: event.target.value ? '' : addForm.name })}
-                    className="h-11 w-full border border-slate-700 bg-slate-950 px-3 text-sm text-slate-100"
-                >
-                    <option value="">New or one-time category...</option>
-                    {availableExpenseAccounts.map((account) => (
-                        <option key={account.id} value={account.id}>{account.name}</option>
-                    ))}
-                </select>
-                {!addForm.account_id && (
-                    <input
-                        value={addForm.name}
-                        onChange={(event) => setAddForm({ ...addForm, name: event.target.value })}
-                        placeholder="Category name"
-                        className="h-10 w-full border-0 border-b border-slate-700 bg-transparent px-1 text-sm text-slate-100 outline-none focus:border-emerald-400"
-                    />
-                )}
-                <div className="grid grid-cols-[1fr_auto] gap-2">
-                    <input
-                        type="number"
-                        inputMode="decimal"
-                        value={addForm.amount}
-                        onChange={(event) => setAddForm({ ...addForm, amount: event.target.value })}
-                        placeholder="Budget amount"
-                        className="h-10 min-w-0 border-0 border-b border-slate-700 bg-transparent px-1 text-sm font-mono-nums text-slate-100 outline-none focus:border-emerald-400"
-                    />
-                    <label className="flex h-11 items-center gap-2 border border-slate-700 px-3 text-xs text-slate-400">
-                        <input
-                            type="checkbox"
-                            checked={addForm.one_time}
-                            disabled={Boolean(addForm.account_id)}
-                            onChange={(event) => setAddForm({ ...addForm, one_time: event.target.checked })}
-                            className="h-4 w-4 accent-emerald-500"
-                        />
-                        One-time
-                    </label>
-                </div>
-                <button type="button" onClick={addBudgetLine} disabled={isSaving} className="flex h-11 w-full items-center justify-center gap-2 bg-cyan-600 text-sm font-semibold text-white disabled:opacity-50">
-                    <Plus size={15} /> Add Budget
-                </button>
-            </div>
 
             <button type="button" onClick={saveBudget} disabled={isSaving} className="flex h-11 w-full items-center justify-center gap-2 bg-emerald-600 text-sm font-semibold text-white disabled:opacity-50">
                 {isSaving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
