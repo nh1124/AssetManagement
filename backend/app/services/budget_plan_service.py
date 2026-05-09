@@ -13,6 +13,12 @@ from .capsule_service import capsule_balance
 from .fx_service import calculate_account_valued_balance, convert_amount, convert_transaction_amount
 from .goal_service import get_life_events_with_progress
 from .product_reserve_service import effective_budget_treatment, product_reserve_values
+from .registry_service import (
+    ensure_registry_entries,
+    registry_entry_amount_for_period,
+    registry_source_account_id,
+    registry_target_account_id,
+)
 
 
 LIQUID_ACCOUNT_NAMES = {"cash", "bank", "savings"}
@@ -513,6 +519,145 @@ def recurring_plan_lines(db: Session, client_id: int, period: str) -> list[dict]
     return list(aggregated.values())
 
 
+def _registry_plan_line(
+    db: Session,
+    entry: models.RegistryEntry,
+    period: str,
+    name_maps: dict[str, dict[int, str]],
+) -> dict | None:
+    period_start, _ = period_to_range(period)
+    amount = registry_entry_amount_for_period(db, entry, period, period_start, entry.client_id)
+    if amount <= 0:
+        return None
+    line_type = entry.line_type or "expense"
+    account_id = registry_target_account_id(entry)
+    source_account_id = registry_source_account_id(entry)
+    target_type = "account" if account_id else "manual"
+    target_name = name_maps["account"].get(account_id, entry.name) if account_id else entry.name
+    return {
+        "id": None,
+        "target_period": period,
+        "line_type": line_type,
+        "target_type": target_type,
+        "target_id": None,
+        "account_id": account_id,
+        "source_account_id": source_account_id,
+        "name": entry.name,
+        "target_name": target_name,
+        "account_name": name_maps["account"].get(account_id) if account_id else None,
+        "source_account_name": name_maps["account"].get(source_account_id) if source_account_id else None,
+        "amount": 0.0,
+        "actual": 0.0,
+        "variance": 0.0,
+        "recurring_amount": round(amount, 0),
+        "suggested_amount": round(amount, 0),
+        "suggested_source": "registry",
+        "suggested_status": "missing",
+        "registry_amount": round(amount, 0),
+        "registry_entry_id": entry.id,
+        "registry_entry_ids": [entry.id],
+        "registry_items": [{
+            "id": entry.id,
+            "name": entry.name,
+            "amount": round(amount, 0),
+            "source": "registry",
+            "entry_type": entry.entry_type,
+        }],
+        "product_expense_amount": round(amount, 0) if entry.source_product_id and line_type == "expense" else 0.0,
+        "product_expense_items": [{
+            "id": entry.source_product_id,
+            "name": entry.name,
+            "amount": round(amount, 0),
+        }] if entry.source_product_id and line_type == "expense" else [],
+        "priority": 2,
+        "note": entry.note,
+        "source": "registry",
+        "recurring_transaction_id": entry.source_recurring_transaction_id,
+        "recurring_transaction_ids": [entry.source_recurring_transaction_id] if entry.source_recurring_transaction_id else [],
+        "recurring_items": [{
+            "id": entry.source_recurring_transaction_id,
+            "name": entry.name,
+            "amount": round(amount, 0),
+            "original_amount": round(entry.amount or 0.0, 0),
+            "currency": entry.currency,
+        }] if entry.source_recurring_transaction_id else [],
+        "sync_status": "missing",
+        "is_active": True,
+    }
+
+
+def registry_plan_lines(db: Session, client_id: int, period: str) -> list[dict]:
+    ensure_registry_entries(db, client_id)
+    name_maps = _target_name_maps(db, client_id)
+    entries = db.query(models.RegistryEntry).filter(
+        models.RegistryEntry.client_id == client_id,
+        models.RegistryEntry.is_active.is_(True),
+        models.RegistryEntry.budget_active.is_(True),
+    ).all()
+    lines = [line for entry in entries if (line := _registry_plan_line(db, entry, period, name_maps)) is not None]
+    aggregated: dict[tuple, dict] = {}
+    for line in lines:
+        key = _plan_match_key(line["line_type"], line["target_type"], line["account_id"], line["name"])
+        if key not in aggregated:
+            item = dict(line)
+            if item["account_id"]:
+                item["name"] = item["account_name"] or item["target_name"]
+                item["target_name"] = item["account_name"] or item["target_name"]
+            aggregated[key] = item
+            continue
+        existing = aggregated[key]
+        existing["recurring_amount"] = round((existing.get("recurring_amount") or 0.0) + (line.get("recurring_amount") or 0.0), 0)
+        existing["suggested_amount"] = round((existing.get("suggested_amount") or 0.0) + (line.get("suggested_amount") or 0.0), 0)
+        existing["registry_amount"] = round((existing.get("registry_amount") or 0.0) + (line.get("registry_amount") or 0.0), 0)
+        existing["registry_entry_ids"] = [
+            *existing.get("registry_entry_ids", []),
+            *line.get("registry_entry_ids", []),
+        ]
+        existing["registry_items"] = [
+            *existing.get("registry_items", []),
+            *line.get("registry_items", []),
+        ]
+        existing["product_expense_amount"] = round((existing.get("product_expense_amount") or 0.0) + (line.get("product_expense_amount") or 0.0), 0)
+        existing["product_expense_items"] = [
+            *existing.get("product_expense_items", []),
+            *line.get("product_expense_items", []),
+        ]
+        existing["recurring_transaction_ids"] = [
+            *existing.get("recurring_transaction_ids", []),
+            *line.get("recurring_transaction_ids", []),
+        ]
+        existing["recurring_items"] = [
+            *existing.get("recurring_items", []),
+            *line.get("recurring_items", []),
+        ]
+        existing["recurring_transaction_id"] = existing.get("recurring_transaction_id") or line.get("recurring_transaction_id")
+    return list(aggregated.values())
+
+
+def registry_totals(db: Session, client_id: int, period: str) -> dict[str, float]:
+    totals = {
+        "income": 0.0,
+        "fixed_costs": 0.0,
+        "debt_payments": 0.0,
+        "allocations": 0.0,
+        "borrowing": 0.0,
+    }
+    for line in registry_plan_lines(db, client_id, period):
+        amount = line.get("registry_amount") or line.get("suggested_amount") or 0.0
+        line_type = line.get("line_type")
+        if line_type == "income":
+            totals["income"] += amount
+        elif line_type == "expense":
+            totals["fixed_costs"] += amount
+        elif line_type == "debt_payment":
+            totals["debt_payments"] += amount
+        elif line_type == "allocation":
+            totals["allocations"] += amount
+        elif line_type == "borrowing":
+            totals["borrowing"] += amount
+    return totals
+
+
 def _merge_recurring_context(plan_lines: list[dict], recurrence_lines: list[dict]) -> list[dict]:
     recurrence_by_id = {
         recurring_id: line
@@ -554,6 +699,47 @@ def _merge_recurring_context(plan_lines: list[dict], recurrence_lines: list[dict
     plan_lines.extend([
         line for line in recurrence_lines
         if not set(line.get("recurring_transaction_ids", [line["recurring_transaction_id"]])).intersection(matched_recurring_ids)
+    ])
+    return plan_lines
+
+
+def _merge_registry_context(plan_lines: list[dict], registry_lines: list[dict]) -> list[dict]:
+    registry_by_key = {
+        _plan_match_key(line["line_type"], line["target_type"], line["account_id"], line["name"]): line
+        for line in registry_lines
+    }
+    matched_keys: set[tuple] = set()
+    for line in plan_lines:
+        registry_line = registry_by_key.get(
+            _plan_match_key(line.get("line_type"), line.get("target_type"), line.get("account_id"), line.get("name") or line.get("target_name"))
+        )
+        registry_amount = round((registry_line or {}).get("registry_amount") or 0.0, 0)
+        if registry_line:
+            matched_keys.add(_plan_match_key(registry_line["line_type"], registry_line["target_type"], registry_line["account_id"], registry_line["name"]))
+            line["registry_amount"] = registry_amount
+            line["registry_entry_ids"] = registry_line.get("registry_entry_ids", [])
+            line["registry_items"] = registry_line.get("registry_items", [])
+            line["product_expense_amount"] = registry_line.get("product_expense_amount", 0.0)
+            line["product_expense_items"] = registry_line.get("product_expense_items", [])
+            line["recurring_transaction_ids"] = registry_line.get("recurring_transaction_ids", [])
+            line["recurring_items"] = registry_line.get("recurring_items", [])
+            line["recurring_amount"] = registry_amount
+            line["suggested_amount"] = registry_amount
+            line["suggested_source"] = "registry"
+            line["recurring_transaction_id"] = line.get("recurring_transaction_id") or registry_line.get("recurring_transaction_id")
+            line["sync_status"] = (
+                "synced"
+                if line.get("source") == "registry" and round(line.get("amount") or 0.0, 0) == registry_amount
+                else "diff"
+            )
+        else:
+            line["registry_amount"] = 0.0
+            if line.get("suggested_source") is None:
+                line["sync_status"] = None
+
+    plan_lines.extend([
+        line for line in registry_lines
+        if _plan_match_key(line["line_type"], line["target_type"], line["account_id"], line["name"]) not in matched_keys
     ])
     return plan_lines
 
@@ -674,6 +860,7 @@ def get_budget_summary(
     cash_flow_start_period: str | None = None,
     cash_flow_months: int = 12,
 ) -> dict:
+    ensure_registry_entries(db, client_id)
     events_with_progress = get_life_events_with_progress(db, client_id=client_id)
     total_gap = sum(max(0, e["gap"]) for e in events_with_progress)
     avg_years = (
@@ -682,7 +869,7 @@ def get_budget_summary(
     )
     required_monthly_savings = total_gap / (avg_years * 12) if avg_years > 0 else 0
 
-    recurring = recurring_totals(db, client_id, period)
+    recurring = registry_totals(db, client_id, period)
     name_maps = _target_name_maps(db, client_id)
     capsules = db.query(models.Capsule).filter(models.Capsule.client_id == client_id).all()
     capsule_accounts = {capsule.id: capsule.account_id for capsule in capsules}
@@ -726,8 +913,7 @@ def get_budget_summary(
     for capsule in capsules:
         if capsule.id not in existing_capsule_ids:
             plan_lines.append(_virtual_capsule_line(db, client_id, capsule, period, capsule_accounts))
-    plan_lines = _merge_recurring_context(plan_lines, recurring_plan_lines(db, client_id, period))
-    plan_lines = _merge_product_expense_context(plan_lines, expense_only_product_budget_lines(db, client_id, period))
+    plan_lines = _merge_registry_context(plan_lines, registry_plan_lines(db, client_id, period))
 
     expense_lines = [line for line in plan_lines if line["line_type"] == "expense"]
     allocation_lines = [line for line in plan_lines if line["line_type"] == "allocation"]
@@ -803,6 +989,9 @@ def get_budget_summary(
                 "recurring_amount": line.get("recurring_amount", 0.0),
                 "product_expense_amount": line.get("product_expense_amount", 0.0),
                 "product_expense_items": line.get("product_expense_items", []),
+                "registry_amount": line.get("registry_amount", 0.0),
+                "registry_entry_ids": line.get("registry_entry_ids", []),
+                "registry_items": line.get("registry_items", []),
                 "suggested_amount": line.get("suggested_amount", 0.0),
                 "suggested_source": line.get("suggested_source"),
                 "suggested_status": line.get("suggested_status"),
@@ -908,42 +1097,37 @@ def recurrence_setup_warnings(
     period: str,
     plan_models: list[models.MonthlyPlanLine],
 ) -> list[dict]:
-    recurrence_lines = recurring_plan_lines(db, client_id, period)
-    plan_by_recurring_id = {
-        line.recurring_transaction_id: line
-        for line in plan_models
-        if line.recurring_transaction_id
-    }
+    registry_lines = registry_plan_lines(db, client_id, period)
     plan_by_key = {
         _plan_match_key(line.line_type, line.target_type, line.account_id, line.name): line
         for line in plan_models
     }
     warnings = []
-    for recurring_line in recurrence_lines:
-        matched = plan_by_recurring_id.get(recurring_line["recurring_transaction_id"])
-        if not matched:
-            matched = plan_by_key.get(_plan_match_key(
-                recurring_line["line_type"],
-                recurring_line["target_type"],
-                recurring_line["account_id"],
-                recurring_line["name"],
-            ))
+    for registry_line in registry_lines:
+        matched = plan_by_key.get(_plan_match_key(
+            registry_line["line_type"],
+            registry_line["target_type"],
+            registry_line["account_id"],
+            registry_line["name"],
+        ))
         if not matched:
             warnings.append({
                 "type": "missing_budget",
-                "recurring_transaction_id": recurring_line["recurring_transaction_id"],
-                "source": "recurrence",
-                "name": recurring_line["name"],
-                "amount": recurring_line["recurring_amount"],
+                "recurring_transaction_id": registry_line.get("recurring_transaction_id"),
+                "registry_entry_ids": registry_line.get("registry_entry_ids", []),
+                "source": "registry",
+                "name": registry_line["name"],
+                "amount": registry_line["registry_amount"],
             })
             continue
-        if round(matched.amount or 0.0, 0) != round(recurring_line["recurring_amount"], 0):
+        if round(matched.amount or 0.0, 0) != round(registry_line["registry_amount"], 0):
             warnings.append({
                 "type": "amount_diff",
-                "recurring_transaction_id": recurring_line["recurring_transaction_id"],
-                "source": "recurrence",
-                "name": recurring_line["name"],
-                "amount": recurring_line["recurring_amount"],
+                "recurring_transaction_id": registry_line.get("recurring_transaction_id"),
+                "registry_entry_ids": registry_line.get("registry_entry_ids", []),
+                "source": "registry",
+                "name": registry_line["name"],
+                "amount": registry_line["registry_amount"],
                 "budget_amount": round(matched.amount or 0.0, 0),
             })
     return warnings

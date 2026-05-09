@@ -7,28 +7,33 @@ import {
     createExchangeRate,
     createProductReservePools,
     createProduct,
+    createRegistryEntry,
     deleteAccount,
     deleteExchangeRate,
     deleteProduct,
+    deleteRegistryEntry,
     getAccounts,
     getAccountTree,
     getCapsules,
     getExchangeRates,
     getProducts,
+    getRegistryEntries,
     seedDefaultAccounts,
     updateAccount,
     updateProduct,
+    updateRegistryEntry,
 } from '../api';
 import { useToast } from '../components/Toast';
 import { useClient } from '../context/ClientContext';
 import { formatCurrency as formatCurrencyWithSetting } from '../utils/currency';
-import type { Account, AccountRole, AccountTreeNode, Capsule, ExchangeRate, Product } from '../types';
+import type { Account, AccountRole, AccountTreeNode, Capsule, ExchangeRate, Product, RegistryEntry } from '../types';
 
 const TABS = [
     { id: 'accounts', label: 'Accounts' },
     { id: 'exchange-rates', label: 'Exchange Rates' },
     { id: 'assets', label: 'Assets' },
     { id: 'items', label: 'Items' },
+    { id: 'sources', label: 'Sources' },
 ];
 
 const ACCOUNT_TYPES = [
@@ -61,6 +66,30 @@ const EMPTY_PRODUCT_FORM = {
     units_per_purchase: '1',
     frequency_days: '',
     last_purchase_date: '',
+};
+
+const EMPTY_REGISTRY_FORM = {
+    name: '',
+    entry_type: 'service',
+    category: '',
+    amount: '',
+    currency: 'JPY',
+    frequency: 'Monthly',
+    frequency_days: '',
+    day_of_month: '1',
+    month_of_year: '1',
+    transaction_type: 'Expense',
+    line_type: 'expense',
+    budget_account_id: '',
+    source_account_id: '',
+    destination_account_id: '',
+    budget_treatment: 'expense_only',
+    generate_recurring: true,
+    budget_active: true,
+    is_active: true,
+    start_period: '',
+    end_period: '',
+    note: '',
 };
 
 type ProductForm = typeof EMPTY_PRODUCT_FORM;
@@ -491,6 +520,7 @@ function ProductModal({ initialType, product, budgetAccounts, fundingCapsules, o
 export default function Registry() {
     const [activeTab, setActiveTab] = useState('accounts');
     const [products, setProducts] = useState<Product[]>([]);
+    const [registryEntries, setRegistryEntries] = useState<RegistryEntry[]>([]);
     const [capsules, setCapsules] = useState<Capsule[]>([]);
     const [accounts, setAccounts] = useState<Account[]>([]);
     const [accountTree, setAccountTree] = useState<Record<string, AccountTreeNode[]>>({});
@@ -524,6 +554,9 @@ export default function Registry() {
     const [productFilters, setProductFilters] = useState<Record<ProductKind, ProductFilters>>(() => loadStoredProductFilters());
     const [productFilterDrafts, setProductFilterDrafts] = useState<Record<ProductKind, ProductFilters>>(() => loadStoredProductFilters());
     const [showProductFilters, setShowProductFilters] = useState<Record<ProductKind, boolean>>({ asset: false, item: false });
+    const [showRegistryForm, setShowRegistryForm] = useState(false);
+    const [editingRegistryId, setEditingRegistryId] = useState<number | null>(null);
+    const [registryForm, setRegistryForm] = useState({ ...EMPTY_REGISTRY_FORM });
     const { showToast } = useToast();
     const { currentClient } = useClient();
 
@@ -550,18 +583,20 @@ export default function Registry() {
     const fetchData = async () => {
         try {
             setLoadingProducts(true);
-            const [productsData, accountsData, treeData, ratesData, capsulesData] = await Promise.all([
+            const [productsData, accountsData, treeData, ratesData, capsulesData, registryData] = await Promise.all([
                 getProducts(),
                 getAccounts(),
                 getAccountTree(),
                 getExchangeRates(),
                 getCapsules(),
+                getRegistryEntries(),
             ]);
             setProducts(productsData);
             setAccounts(accountsData);
             setAccountTree(treeData);
             setExchangeRates(ratesData);
             setCapsules(capsulesData);
+            setRegistryEntries(registryData);
         } catch (error) {
             console.error('Failed to fetch registry data:', error);
             try {
@@ -579,6 +614,96 @@ export default function Registry() {
 
     const formatCurrency = (value: number | null | undefined) =>
         formatCurrencyWithSetting(value, currentClient?.general_settings?.currency);
+
+    const registryPayload = () => ({
+        name: registryForm.name.trim(),
+        entry_type: registryForm.entry_type,
+        category: registryForm.category.trim() || null,
+        amount: Number(registryForm.amount || 0),
+        currency: registryForm.currency || currentClient?.general_settings?.currency || 'JPY',
+        frequency: registryForm.frequency,
+        frequency_days: registryForm.frequency === 'EveryNDays' && registryForm.frequency_days ? Number(registryForm.frequency_days) : null,
+        day_of_month: Number(registryForm.day_of_month || 1),
+        month_of_year: registryForm.frequency === 'Yearly' ? Number(registryForm.month_of_year || 1) : null,
+        transaction_type: registryForm.transaction_type,
+        line_type: registryForm.line_type,
+        budget_account_id: registryForm.budget_account_id ? Number(registryForm.budget_account_id) : null,
+        source_account_id: registryForm.source_account_id ? Number(registryForm.source_account_id) : null,
+        destination_account_id: registryForm.destination_account_id ? Number(registryForm.destination_account_id) : null,
+        budget_treatment: registryForm.budget_treatment,
+        generate_recurring: registryForm.generate_recurring,
+        budget_active: registryForm.budget_active,
+        is_active: registryForm.is_active,
+        start_period: registryForm.start_period || null,
+        end_period: registryForm.end_period || null,
+        note: registryForm.note.trim() || null,
+    });
+
+    const resetRegistryForm = () => {
+        setEditingRegistryId(null);
+        setRegistryForm({ ...EMPTY_REGISTRY_FORM, currency: currentClient?.general_settings?.currency || 'JPY' });
+        setShowRegistryForm(false);
+    };
+
+    const editRegistryEntry = (entry: RegistryEntry) => {
+        setEditingRegistryId(entry.id);
+        setRegistryForm({
+            name: entry.name,
+            entry_type: entry.entry_type,
+            category: entry.category || '',
+            amount: String(entry.amount ?? 0),
+            currency: entry.currency || currentClient?.general_settings?.currency || 'JPY',
+            frequency: entry.frequency,
+            frequency_days: entry.frequency_days != null ? String(entry.frequency_days) : '',
+            day_of_month: String(entry.day_of_month ?? 1),
+            month_of_year: String(entry.month_of_year ?? 1),
+            transaction_type: entry.transaction_type,
+            line_type: entry.line_type,
+            budget_account_id: entry.budget_account_id ? String(entry.budget_account_id) : '',
+            source_account_id: entry.source_account_id ? String(entry.source_account_id) : '',
+            destination_account_id: entry.destination_account_id ? String(entry.destination_account_id) : '',
+            budget_treatment: entry.budget_treatment || 'expense_only',
+            generate_recurring: entry.generate_recurring,
+            budget_active: entry.budget_active,
+            is_active: entry.is_active,
+            start_period: entry.start_period || '',
+            end_period: entry.end_period || '',
+            note: entry.note || '',
+        });
+        setShowRegistryForm(true);
+        setActiveTab('sources');
+    };
+
+    const saveRegistryEntry = async () => {
+        if (!registryForm.name.trim() || !Number(registryForm.amount || 0)) {
+            showToast('Name and amount are required', 'warning');
+            return;
+        }
+        try {
+            const payload = registryPayload();
+            if (editingRegistryId) {
+                await updateRegistryEntry(editingRegistryId, payload as any);
+                showToast('Registry source updated', 'success');
+            } else {
+                await createRegistryEntry(payload as any);
+                showToast('Registry source created', 'success');
+            }
+            resetRegistryForm();
+            await fetchData();
+        } catch {
+            showToast('Failed to save registry source', 'error');
+        }
+    };
+
+    const removeRegistryEntry = async (entry: RegistryEntry) => {
+        try {
+            await deleteRegistryEntry(entry.id);
+            showToast('Registry source deactivated', 'info');
+            await fetchData();
+        } catch {
+            showToast('Failed to deactivate registry source', 'error');
+        }
+    };
 
     const handleAddAccount = async () => {
         if (!newAccount.name.trim()) return;
@@ -1100,6 +1225,125 @@ export default function Registry() {
         </div>
     );
 
+    const renderSources = () => {
+        const sourceAccounts = accounts.filter((account) => account.account_type === 'asset');
+        const budgetAccounts = accounts.filter((account) => account.account_type === 'expense' || account.account_type === 'liability');
+        const destinationAccounts = accounts.filter((account) => account.account_type === 'asset' || account.account_type === 'liability' || account.account_type === 'expense');
+        return (
+            <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                    <div>
+                        <h2 className="text-sm font-semibold text-slate-100">Cashflow Sources</h2>
+                        <p className="text-[10px] text-slate-500">Budget suggestions and optional recurring rules are generated from these registry entries.</p>
+                    </div>
+                    <button type="button" onClick={() => {
+                        setEditingRegistryId(null);
+                        setRegistryForm({ ...EMPTY_REGISTRY_FORM, currency: currentClient?.general_settings?.currency || 'JPY' });
+                        setShowRegistryForm((value) => !value);
+                    }} className="flex items-center gap-1 bg-cyan-700 px-3 py-1.5 text-xs text-white hover:bg-cyan-600">
+                        <Plus size={13} /> Source
+                    </button>
+                </div>
+
+                {showRegistryForm && (
+                    <div className="border border-cyan-900/50 bg-cyan-950/10 p-3 space-y-3">
+                        <div className="grid grid-cols-6 gap-2">
+                            <input value={registryForm.name} onChange={(event) => setRegistryForm({ ...registryForm, name: event.target.value })} placeholder="Name" className="col-span-2 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs" />
+                            <select value={registryForm.entry_type} onChange={(event) => setRegistryForm({ ...registryForm, entry_type: event.target.value })} className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs">
+                                <option value="service">Service</option>
+                                <option value="income">Income</option>
+                                <option value="allocation">Allocation</option>
+                                <option value="debt">Debt</option>
+                                <option value="item">Item</option>
+                                <option value="asset">Asset</option>
+                            </select>
+                            <select value={registryForm.line_type} onChange={(event) => setRegistryForm({ ...registryForm, line_type: event.target.value })} className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs">
+                                <option value="expense">Expense</option>
+                                <option value="income">Income</option>
+                                <option value="allocation">Allocation</option>
+                                <option value="debt_payment">Debt</option>
+                                <option value="borrowing">Borrowing</option>
+                                <option value="drawdown">Drawdown</option>
+                            </select>
+                            <input type="number" value={registryForm.amount} onChange={(event) => setRegistryForm({ ...registryForm, amount: event.target.value })} placeholder="Amount" className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums" />
+                            <input value={registryForm.currency} onChange={(event) => setRegistryForm({ ...registryForm, currency: event.target.value })} placeholder="JPY" className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs" />
+                            <select value={registryForm.frequency} onChange={(event) => setRegistryForm({ ...registryForm, frequency: event.target.value })} className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs">
+                                <option value="Monthly">Monthly</option>
+                                <option value="Yearly">Yearly</option>
+                                <option value="EveryNDays">Every N Days</option>
+                                <option value="Irregular">Irregular</option>
+                            </select>
+                            {registryForm.frequency === 'EveryNDays' ? (
+                                <input type="number" value={registryForm.frequency_days} onChange={(event) => setRegistryForm({ ...registryForm, frequency_days: event.target.value })} placeholder="Days" className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums" />
+                            ) : registryForm.frequency === 'Yearly' ? (
+                                <input type="number" min="1" max="12" value={registryForm.month_of_year} onChange={(event) => setRegistryForm({ ...registryForm, month_of_year: event.target.value })} placeholder="Month" className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums" />
+                            ) : (
+                                <input type="number" min="1" max="31" value={registryForm.day_of_month} onChange={(event) => setRegistryForm({ ...registryForm, day_of_month: event.target.value })} placeholder="Day" className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums" />
+                            )}
+                            <select value={registryForm.source_account_id} onChange={(event) => setRegistryForm({ ...registryForm, source_account_id: event.target.value })} className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs">
+                                <option value="">Source...</option>
+                                {sourceAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+                            </select>
+                            <select value={registryForm.budget_account_id} onChange={(event) => setRegistryForm({ ...registryForm, budget_account_id: event.target.value })} className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs">
+                                <option value="">Budget target...</option>
+                                {budgetAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+                            </select>
+                            <select value={registryForm.destination_account_id} onChange={(event) => setRegistryForm({ ...registryForm, destination_account_id: event.target.value })} className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs">
+                                <option value="">Destination...</option>
+                                {destinationAccounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+                            </select>
+                            <input type="month" value={registryForm.start_period} onChange={(event) => setRegistryForm({ ...registryForm, start_period: event.target.value })} className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs" />
+                            <input type="month" value={registryForm.end_period} onChange={(event) => setRegistryForm({ ...registryForm, end_period: event.target.value })} className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs" />
+                        </div>
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                            <div className="flex flex-wrap gap-4 text-xs text-slate-300">
+                                <label className="flex items-center gap-2"><input type="checkbox" checked={registryForm.budget_active} onChange={(event) => setRegistryForm({ ...registryForm, budget_active: event.target.checked })} /> Budget active</label>
+                                <label className="flex items-center gap-2"><input type="checkbox" checked={registryForm.generate_recurring} onChange={(event) => setRegistryForm({ ...registryForm, generate_recurring: event.target.checked })} /> Generate recurring</label>
+                                <label className="flex items-center gap-2"><input type="checkbox" checked={registryForm.is_active} onChange={(event) => setRegistryForm({ ...registryForm, is_active: event.target.checked })} /> Active</label>
+                            </div>
+                            <div className="flex gap-2">
+                                <button type="button" onClick={saveRegistryEntry} className="bg-cyan-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-cyan-600">{editingRegistryId ? 'Update' : 'Create'}</button>
+                                <button type="button" onClick={resetRegistryForm} className="bg-slate-800 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-700">Cancel</button>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                <div className="border border-slate-800 overflow-auto">
+                    <table className="w-full text-[10px]">
+                        <thead className="bg-slate-900 text-slate-500 uppercase">
+                            <tr>
+                                <th className="p-2 text-left font-normal">Name</th>
+                                <th className="p-2 text-left font-normal">Kind</th>
+                                <th className="p-2 text-right font-normal">Amount</th>
+                                <th className="p-2 text-left font-normal">Budget Target</th>
+                                <th className="p-2 text-left font-normal">State</th>
+                                <th className="p-2" />
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {registryEntries.map((entry) => (
+                                <tr key={entry.id} className="border-t border-slate-800 hover:bg-slate-800/30">
+                                    <td className="p-2 text-slate-200">{entry.name}</td>
+                                    <td className="p-2 text-slate-400">{entry.entry_type} / {entry.line_type}</td>
+                                    <td className="p-2 text-right font-mono-nums text-cyan-300">{formatCurrency(entry.amount)}</td>
+                                    <td className="p-2 text-slate-400">{entry.budget_account_name || entry.destination_account_name || entry.source_account_name || '-'}</td>
+                                    <td className="p-2 text-slate-500">
+                                        {entry.budget_active ? 'budget' : 'no budget'} / {entry.generate_recurring ? 'recurring' : 'manual'} / {entry.is_active ? 'active' : 'inactive'}
+                                    </td>
+                                    <td className="p-2 text-right">
+                                        <button type="button" onClick={() => editRegistryEntry(entry)} className="p-1 text-slate-500 hover:text-cyan-400" title="Edit source"><Edit size={12} /></button>
+                                        <button type="button" onClick={() => removeRegistryEntry(entry)} className="p-1 text-slate-500 hover:text-rose-400" title="Deactivate source"><Trash2 size={12} /></button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        );
+    };
+
     const renderAccounts = () => {
         const renderNode = (account: AccountTreeNode, depth: number) => {
             const parentOptions = accounts.filter((candidate) => (
@@ -1305,6 +1549,7 @@ export default function Registry() {
                     {activeTab === 'exchange-rates' && renderExchangeRates()}
                     {activeTab === 'assets' && renderProducts('asset')}
                     {activeTab === 'items' && renderProducts('item')}
+                    {activeTab === 'sources' && renderSources()}
                 </div>
             </TabPanel>
 

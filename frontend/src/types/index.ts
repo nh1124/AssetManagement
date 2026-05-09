@@ -137,6 +137,42 @@ export interface Product {
     next_purchase_date?: string;
 }
 
+export type RegistryEntryType = 'asset' | 'item' | 'service' | 'income' | 'allocation' | 'debt';
+export type RegistryFrequency = 'Monthly' | 'Yearly' | 'EveryNDays' | 'Irregular';
+
+export interface RegistryEntry {
+    id: number;
+    name: string;
+    entry_type: RegistryEntryType;
+    category?: string | null;
+    amount: number;
+    currency: string;
+    frequency: RegistryFrequency;
+    frequency_days?: number | null;
+    day_of_month: number;
+    month_of_year?: number | null;
+    transaction_type: Transaction['type'];
+    line_type: MonthlyPlanLineType;
+    budget_account_id?: number | null;
+    budget_account_name?: string | null;
+    source_account_id?: number | null;
+    source_account_name?: string | null;
+    destination_account_id?: number | null;
+    destination_account_name?: string | null;
+    funding_capsule_id?: number | null;
+    funding_capsule_name?: string | null;
+    budget_treatment?: 'auto' | 'expense_only' | 'reserve_allocation' | 'asset_replacement';
+    generate_recurring: boolean;
+    budget_active: boolean;
+    is_active: boolean;
+    source_product_id?: number | null;
+    source_recurring_transaction_id?: number | null;
+    recurring_transaction_id?: number | null;
+    note?: string | null;
+    start_period?: string | null;
+    end_period?: string | null;
+}
+
 export type MonthlyPlanLineType = 'income' | 'expense' | 'allocation' | 'debt_payment' | 'borrowing' | 'drawdown';
 export type MonthlyPlanTargetType = 'account' | 'capsule' | 'life_event' | 'product' | 'manual';
 
@@ -174,6 +210,15 @@ export interface MonthlyPlanLine {
         original_amount: number;
         currency: string;
     }>;
+    registry_amount?: number;
+    registry_entry_ids?: number[];
+    registry_items?: Array<{
+        id: number;
+        name: string;
+        amount: number;
+        source?: string;
+        entry_type?: string;
+    }>;
     priority?: number;
     note?: string | null;
     recurring_transaction_id?: number | null;
@@ -206,6 +251,8 @@ export interface RecurringTransaction {
     end_period?: string | null;
     auto_post: boolean;
     is_active: boolean;
+    source_registry_entry_id?: number | null;
+    source_registry_entry_name?: string | null;
 }
 
 export interface AnalysisSummary {

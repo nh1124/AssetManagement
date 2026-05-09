@@ -19,6 +19,7 @@ import type {
     QuickTemplate,
     ReconcileResponse,
     RecurringTransaction,
+    RegistryEntry,
     ReviewActionCreate,
     RoadmapProjection,
     SimulationScenario,
@@ -533,6 +534,25 @@ export const updateProduct = async (id: number, product: any) => {
 
 export const deleteProduct = async (id: number) => {
     await api.delete(`/products/${id}`);
+};
+
+export const getRegistryEntries = async (): Promise<RegistryEntry[]> => {
+    const response = await api.get('/registry-entries/');
+    return response.data;
+};
+
+export const createRegistryEntry = async (entry: Partial<RegistryEntry>) => {
+    const response = await api.post('/registry-entries/', entry);
+    return response.data;
+};
+
+export const updateRegistryEntry = async (id: number, entry: Partial<RegistryEntry>) => {
+    const response = await api.put(`/registry-entries/${id}`, entry);
+    return response.data;
+};
+
+export const deleteRegistryEntry = async (id: number) => {
+    await api.delete(`/registry-entries/${id}`);
 };
 
 // AI/Analysis backend-side

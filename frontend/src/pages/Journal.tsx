@@ -1545,6 +1545,7 @@ export default function Journal() {
                                             {item.frequency} / {formatCurrencyWithSetting(item.amount, item.currency || currentCurrency)}
                                             {(item.start_period || item.end_period) && ` / ${item.start_period || '...'}-${item.end_period || '...'}`}
                                             {!item.auto_post && ' / no auto-post'}
+                                            {item.source_registry_entry_name && ` / registry: ${item.source_registry_entry_name}`}
                                         </p>
                                     </div>
                                     <div className="flex gap-1">

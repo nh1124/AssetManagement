@@ -161,12 +161,51 @@ def export_client_data(
                         "end_period",
                         "auto_post",
                         "is_active",
+                        "source_registry_entry_id",
                         "created_at",
                     ],
                 )
                 for item in db.query(models.RecurringTransaction)
                 .filter(models.RecurringTransaction.client_id == current_client.id)
                 .order_by(models.RecurringTransaction.id)
+                .all()
+            ],
+            "registry_entries": [
+                _row(
+                    item,
+                    [
+                        "id",
+                        "name",
+                        "entry_type",
+                        "category",
+                        "amount",
+                        "currency",
+                        "frequency",
+                        "frequency_days",
+                        "day_of_month",
+                        "month_of_year",
+                        "transaction_type",
+                        "line_type",
+                        "budget_account_id",
+                        "source_account_id",
+                        "destination_account_id",
+                        "funding_capsule_id",
+                        "budget_treatment",
+                        "generate_recurring",
+                        "budget_active",
+                        "is_active",
+                        "source_product_id",
+                        "source_recurring_transaction_id",
+                        "note",
+                        "start_period",
+                        "end_period",
+                        "created_at",
+                        "updated_at",
+                    ],
+                )
+                for item in db.query(models.RegistryEntry)
+                .filter(models.RegistryEntry.client_id == current_client.id)
+                .order_by(models.RegistryEntry.id)
                 .all()
             ],
             "quick_templates": [
@@ -430,6 +469,7 @@ def import_client_data(
     event_map: dict[int, int] = {}
     quick_template_map: dict[int, int] = {}
     recurring_map: dict[int, int] = {}
+    capsule_map: dict[int, int] = {}
 
     try:
         tx_ids = [
@@ -462,6 +502,7 @@ def import_client_data(
             models.Capsule,
             models.ExchangeRate,
             models.Milestone,
+            models.RegistryEntry,
             models.RecurringTransaction,
             models.SimulationConfig,
             models.Product,
@@ -562,6 +603,55 @@ def import_client_data(
             db.add(recurring)
             db.flush()
             recurring_map[old_id] = recurring.id
+
+        registry_map: dict[int, int] = {}
+        registry_funding_updates: list[tuple[models.RegistryEntry, int]] = []
+        for item in data.get("registry_entries", []):
+            old_id = int(item["id"])
+            entry = models.RegistryEntry(
+                client_id=current_client.id,
+                name=item["name"],
+                entry_type=item.get("entry_type") or "service",
+                category=item.get("category"),
+                amount=item.get("amount") or 0,
+                currency=item.get("currency") or "JPY",
+                frequency=item.get("frequency") or "Monthly",
+                frequency_days=item.get("frequency_days"),
+                day_of_month=item.get("day_of_month") or 1,
+                month_of_year=item.get("month_of_year"),
+                transaction_type=item.get("transaction_type") or "Expense",
+                line_type=item.get("line_type") or "expense",
+                budget_account_id=account_map.get(item.get("budget_account_id")),
+                source_account_id=account_map.get(item.get("source_account_id")),
+                destination_account_id=account_map.get(item.get("destination_account_id")),
+                funding_capsule_id=capsule_map.get(item.get("funding_capsule_id")),
+                budget_treatment=item.get("budget_treatment") or "expense_only",
+                generate_recurring=item.get("generate_recurring", False),
+                budget_active=item.get("budget_active", True),
+                is_active=item.get("is_active", True),
+                source_product_id=product_map.get(item.get("source_product_id")),
+                source_recurring_transaction_id=recurring_map.get(item.get("source_recurring_transaction_id")),
+                note=item.get("note"),
+                start_period=item.get("start_period"),
+                end_period=item.get("end_period"),
+                created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
+                updated_at=_parse_datetime(item.get("updated_at")),
+            )
+            db.add(entry)
+            db.flush()
+            registry_map[old_id] = entry.id
+            if item.get("funding_capsule_id"):
+                registry_funding_updates.append((entry, int(item["funding_capsule_id"])))
+
+        for item in data.get("recurring_transactions", []):
+            source_registry_id = registry_map.get(item.get("source_registry_entry_id"))
+            if source_registry_id and (recurring_id := recurring_map.get(int(item["id"]))):
+                recurring = db.query(models.RecurringTransaction).filter(
+                    models.RecurringTransaction.id == recurring_id,
+                    models.RecurringTransaction.client_id == current_client.id,
+                ).first()
+                if recurring:
+                    recurring.source_registry_entry_id = source_registry_id
 
         for item in data.get("quick_templates", []):
             old_id = int(item["id"])
@@ -698,7 +788,6 @@ def import_client_data(
                 )
             )
 
-        capsule_map: dict[int, int] = {}
         for item in data.get("capsules", []):
             old_id = int(item["id"])
             capsule = models.Capsule(
@@ -720,6 +809,9 @@ def import_client_data(
 
         for product, old_capsule_id in product_funding_updates:
             product.funding_capsule_id = capsule_map.get(old_capsule_id)
+
+        for registry_entry, old_capsule_id in registry_funding_updates:
+            registry_entry.funding_capsule_id = capsule_map.get(old_capsule_id)
 
         # LifeEvent ごとに紐づく Capsule+Account が存在しない場合は自動生成する
         # （通常の POST /life-events/ と同じ動作を import でも再現する）

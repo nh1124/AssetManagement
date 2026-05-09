@@ -21,6 +21,7 @@ from .routers import (
     period_reviews,
     products,
     quick_templates,
+    registry_entries,
     recurring,
     reports,
     roadmap,
@@ -92,6 +93,7 @@ def startup_event():
             "transaction_batches",
             "quick_templates",
             "products",
+            "registry_entries",
             "life_events",
             "simulation_configs",
             "recurring_transactions",
@@ -127,6 +129,7 @@ app.include_router(transactions.router)
 app.include_router(quick_templates.router)
 app.include_router(quick_templates.batch_router)
 app.include_router(products.router)
+app.include_router(registry_entries.router, dependencies=[Depends(get_current_client)])
 app.include_router(life_events.router)
 app.include_router(monthly_reviews.router)
 app.include_router(period_reviews.router)

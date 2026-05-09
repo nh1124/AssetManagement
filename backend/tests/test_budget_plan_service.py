@@ -391,7 +391,7 @@ def test_expense_only_products_are_variable_budget_suggestions() -> None:
             "amount": 30000,
         }]
         assert account["suggested_amount"] == 30000
-        assert account["suggested_source"] == "product_expense"
+        assert account["suggested_source"] == "registry"
         assert account["suggested_status"] == "missing"
     finally:
         db.close()

@@ -7,6 +7,7 @@ from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.accounting_service import process_transaction
+from ..services.registry_service import detach_registry_from_recurring, sync_registry_from_recurring
 
 router = APIRouter(prefix="/recurring", tags=["recurring"])
 
@@ -25,9 +26,16 @@ def get_recurring_transactions(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
-    return db.query(models.RecurringTransaction).filter(
+    rows = db.query(models.RecurringTransaction).filter(
         models.RecurringTransaction.client_id == current_client.id
     ).all()
+    return [
+        {
+            **{column.name: getattr(row, column.name) for column in models.RecurringTransaction.__table__.columns},
+            "source_registry_entry_name": row.source_registry_entry.name if row.source_registry_entry else None,
+        }
+        for row in rows
+    ]
 
 @router.post("/", response_model=schemas.RecurringTransaction)
 def create_recurring_transaction(
@@ -40,6 +48,8 @@ def create_recurring_transaction(
         client_id=current_client.id
     )
     db.add(db_recurring)
+    db.flush()
+    sync_registry_from_recurring(db, db_recurring)
     db.commit()
     db.refresh(db_recurring)
     return db_recurring
@@ -62,6 +72,7 @@ def update_recurring_transaction(
     update_data = recurring_update.model_dump(exclude_unset=True)
     for key, value in update_data.items():
         setattr(db_recurring, key, value)
+    sync_registry_from_recurring(db, db_recurring)
 
     db.commit()
     db.refresh(db_recurring)
@@ -81,6 +92,7 @@ def delete_recurring_transaction(
     if not db_recurring:
         raise HTTPException(status_code=404, detail="Recurring transaction not found")
 
+    detach_registry_from_recurring(db, db_recurring)
     db.delete(db_recurring)
     db.commit()
     return {"message": "Recurring transaction deleted"}

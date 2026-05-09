@@ -15,6 +15,7 @@ from ..services.product_reserve_service import (
     product_reserve_values,
     should_use_reserve,
 )
+from ..services.registry_service import sync_registry_from_product
 
 router = APIRouter(prefix="/products", tags=["products"])
 
@@ -144,6 +145,8 @@ def create_product(
     data = normalize_product_data(db, current_client.id, data)
     db_product = models.Product(**data, client_id=current_client.id)
     db.add(db_product)
+    db.flush()
+    sync_registry_from_product(db, db_product)
     db.commit()
     db.refresh(db_product)
     return enrich_product(db_product)
@@ -167,6 +170,7 @@ def update_product(
     data = normalize_product_data(db, current_client.id, product.model_dump())
     for key, value in data.items():
         setattr(db_product, key, value)
+    sync_registry_from_product(db, db_product)
     db.commit()
     db.refresh(db_product)
     return enrich_product(db_product)
@@ -186,6 +190,14 @@ def delete_product(
     if not db_product:
         raise HTTPException(status_code=404, detail="Product not found")
 
+    registry = db.query(models.RegistryEntry).filter(
+        models.RegistryEntry.client_id == current_client.id,
+        models.RegistryEntry.source_product_id == db_product.id,
+    ).first()
+    if registry:
+        registry.budget_active = False
+        registry.is_active = False
+        registry.source_product_id = None
     db.delete(db_product)
     db.commit()
 

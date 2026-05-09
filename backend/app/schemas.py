@@ -13,6 +13,9 @@ TransactionTypeLiteral = Literal[
     'CreditAssetPurchase',
 ]
 ProductBudgetTreatmentLiteral = Literal["auto", "expense_only", "reserve_allocation", "asset_replacement"]
+RegistryEntryTypeLiteral = Literal["asset", "item", "service", "income", "allocation", "debt"]
+RegistryFrequencyLiteral = Literal["Monthly", "Yearly", "EveryNDays", "Irregular"]
+RegistryLineTypeLiteral = Literal["income", "expense", "allocation", "debt_payment", "borrowing", "drawdown"]
 
 # Account Schemas
 class AccountBase(BaseModel):
@@ -203,6 +206,51 @@ class Product(ProductBase):
     class Config:
         from_attributes = True
 
+
+class RegistryEntryBase(BaseModel):
+    name: str
+    entry_type: RegistryEntryTypeLiteral = "service"
+    category: Optional[str] = None
+    amount: float = 0.0
+    currency: str = "JPY"
+    frequency: RegistryFrequencyLiteral = "Monthly"
+    frequency_days: Optional[int] = None
+    day_of_month: int = 1
+    month_of_year: Optional[int] = None
+    transaction_type: TransactionTypeLiteral = "Expense"
+    line_type: RegistryLineTypeLiteral = "expense"
+    budget_account_id: Optional[int] = None
+    source_account_id: Optional[int] = None
+    destination_account_id: Optional[int] = None
+    funding_capsule_id: Optional[int] = None
+    budget_treatment: ProductBudgetTreatmentLiteral = "expense_only"
+    generate_recurring: bool = False
+    budget_active: bool = True
+    is_active: bool = True
+    source_product_id: Optional[int] = None
+    source_recurring_transaction_id: Optional[int] = None
+    note: Optional[str] = None
+    start_period: Optional[str] = None
+    end_period: Optional[str] = None
+
+
+class RegistryEntryCreate(RegistryEntryBase):
+    model_config = ConfigDict(extra="forbid")
+
+
+class RegistryEntry(RegistryEntryBase):
+    id: int
+    budget_account_name: Optional[str] = None
+    source_account_name: Optional[str] = None
+    destination_account_name: Optional[str] = None
+    funding_capsule_name: Optional[str] = None
+    recurring_transaction_id: Optional[int] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
 # Simulation Config
 class SimulationConfigBase(BaseModel):
     annual_return: float = 5.0
@@ -259,12 +307,14 @@ class RecurringTransactionBase(BaseModel):
     end_period: Optional[str] = None
     auto_post: bool = True
     is_active: bool = True
+    source_registry_entry_id: Optional[int] = None
 
 class RecurringTransactionCreate(RecurringTransactionBase):
     pass
 
 class RecurringTransaction(RecurringTransactionBase):
     id: int
+    source_registry_entry_name: Optional[str] = None
 
     class Config:
         from_attributes = True

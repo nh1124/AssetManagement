@@ -62,6 +62,15 @@ interface BudgetAccount {
         original_amount: number;
         currency: string;
     }>;
+    registry_amount?: number;
+    registry_entry_ids?: number[];
+    registry_items?: Array<{
+        id: number;
+        name: string;
+        amount: number;
+        source?: string;
+        entry_type?: string;
+    }>;
     product_expense_amount?: number;
     product_expense_items?: Array<{
         id: number;
@@ -83,7 +92,7 @@ interface BudgetAccount {
 
 interface CashFlowSetupWarning {
     type: 'missing_budget' | 'amount_diff' | 'missing_product_reserve' | 'product_reserve_diff';
-    source?: 'recurrence' | 'product_reserve';
+    source?: 'registry' | 'recurrence' | 'product_reserve';
     recurring_transaction_id?: number;
     capsule_id?: number;
     account_id?: number | null;
@@ -251,7 +260,7 @@ export default function Strategy() {
     };
     type SourceDetail = {
         id: string;
-        kind: 'recurrence' | 'product_expense' | 'product_reserve';
+        kind: 'registry' | 'recurrence' | 'product_expense' | 'product_reserve';
         label: string;
         amount: number;
         conflict: boolean;
@@ -267,6 +276,7 @@ export default function Strategy() {
     };
 
     const sourceKindLabel = (kind: SourceDetail['kind']) => {
+        if (kind === 'registry') return 'Registry';
         if (kind === 'product_expense') return 'Expense Item';
         if (kind === 'product_reserve') return 'Product Reserve';
         return 'Recurrence';
@@ -277,6 +287,13 @@ export default function Strategy() {
     );
 
     const budgetSourceDetails = (account: BudgetAccount): SourceDetail[] => {
+        const registry = (account.registry_items ?? []).map((item) => ({
+            id: `registry-${item.id}`,
+            kind: 'registry' as const,
+            label: item.name,
+            amount: Number(item.amount || 0),
+            conflict: false,
+        }));
         const recurring = (account.recurring_items ?? []).map((item) => ({
             id: `recurrence-${item.id}`,
             kind: 'recurrence' as const,
@@ -291,12 +308,19 @@ export default function Strategy() {
             amount: Number(item.amount || 0),
             conflict: false,
         }));
-        const details = [...recurring, ...products];
+        const details = [...registry, ...recurring, ...products];
         const conflict = detailsHaveConflict(details);
         return details.map((detail) => ({ ...detail, conflict }));
     };
 
     const planSourceDetails = (line: MonthlyPlanLine): SourceDetail[] => {
+        const registry = (line.registry_items ?? []).map((item) => ({
+            id: `registry-${item.id}`,
+            kind: 'registry' as const,
+            label: item.name,
+            amount: Number(item.amount || 0),
+            conflict: false,
+        }));
         const recurring = (line.recurring_items ?? []).map((item) => ({
             id: `recurrence-${item.id}`,
             kind: 'recurrence' as const,
@@ -311,7 +335,7 @@ export default function Strategy() {
             amount: Number(item.amount || 0),
             conflict: false,
         }));
-        const details = [...recurring, ...suggested];
+        const details = [...registry, ...recurring, ...suggested];
         const conflict = detailsHaveConflict(details);
         return details.map((detail) => ({ ...detail, conflict }));
     };
@@ -433,9 +457,10 @@ export default function Strategy() {
         setCurrentPeriod(monthKey());
     };
 
-    const SYNCED_SOURCES = new Set(['recurrence', 'product_expense', 'recurrence_product_expense', 'capsule']);
+    const SYNCED_SOURCES = new Set(['registry', 'recurrence', 'product_expense', 'recurrence_product_expense', 'capsule']);
 
     const suggestedBudgetSource = (account: BudgetAccount) => {
+        if (account.suggested_source === 'registry') return 'registry';
         if (account.suggested_source === 'recurrence') return 'recurrence';
         if (account.suggested_source === 'product_expense') return 'product_expense';
         if (account.suggested_source === 'recurrence_product_expense') return 'recurrence_product_expense';
@@ -798,7 +823,7 @@ export default function Strategy() {
                 amount: Number(line.recurring_amount || 0),
                 priority: line.priority ?? 2,
                 note: line.note ?? null,
-                source: 'recurrence',
+                source: line.suggested_source === 'registry' ? 'registry' : 'recurrence',
                 recurring_transaction_id: line.recurring_transaction_id,
                 is_active: true,
             }]);
@@ -824,7 +849,7 @@ export default function Strategy() {
                 amount: Number(line.recurring_amount || 0),
                 priority: line.priority ?? 2,
                 note: line.note ?? null,
-                source: 'recurrence',
+                source: line.suggested_source === 'registry' ? 'registry' : 'recurrence',
                 recurring_transaction_id: line.recurring_transaction_id ?? null,
                 is_active: true,
             }));
@@ -872,7 +897,7 @@ export default function Strategy() {
                 amount: planLineAmountWithExistingAdjustment(line),
                 priority: line.priority ?? 2,
                 note: line.note ?? null,
-                source: line.suggested_source === 'product_reserve' ? 'capsule' : line.recurring_transaction_id ? 'recurrence' : line.source ?? 'manual',
+                source: line.suggested_source === 'product_reserve' ? 'capsule' : line.suggested_source === 'registry' ? 'registry' : line.recurring_transaction_id ? 'recurrence' : line.source ?? 'manual',
                 recurring_transaction_id: line.recurring_transaction_id ?? null,
                 is_active: true,
             }]);
@@ -898,7 +923,7 @@ export default function Strategy() {
                 amount: planLineAmountWithExistingAdjustment(line),
                 priority: line.priority ?? 2,
                 note: line.note ?? null,
-                source: line.suggested_source === 'product_reserve' ? 'capsule' : line.recurring_transaction_id ? 'recurrence' : line.source ?? 'manual',
+                source: line.suggested_source === 'product_reserve' ? 'capsule' : line.suggested_source === 'registry' ? 'registry' : line.recurring_transaction_id ? 'recurrence' : line.source ?? 'manual',
                 recurring_transaction_id: line.recurring_transaction_id ?? null,
                 is_active: true,
             }));
@@ -968,7 +993,7 @@ export default function Strategy() {
                     })(),
                     priority: line.priority ?? 2,
                     note: line.note ?? null,
-                    source: line.suggested_source === 'product_reserve' ? 'capsule' : 'recurrence',
+                    source: line.suggested_source === 'product_reserve' ? 'capsule' : line.suggested_source === 'registry' ? 'registry' : 'recurrence',
                     recurring_transaction_id: line.recurring_transaction_id ?? null,
                     is_active: true,
                 }));
@@ -1605,7 +1630,7 @@ export default function Strategy() {
             const syncableRows = usesSuggestedColumn
                 ? rows.filter((line) => planLineSourceAmount(line) > 0 && !isPlanLineSourceSynced(line))
                 : rows.filter((line) => line.recurring_transaction_id && line.sync_status !== 'synced');
-            const sourceColumnLabel = usesSuggestedColumn ? 'Source / Suggested' : 'Recurrence';
+            const sourceColumnLabel = usesSuggestedColumn ? 'Source / Suggested' : 'Registry';
             return (
                 <div className="mt-6">
                     <div className="flex items-center justify-between mb-3">
@@ -1657,18 +1682,12 @@ export default function Strategy() {
                                     const hasSuggestedAmount = usesSuggestedColumn && sourceAmount > 0;
                                     const sourceSynced = isPlanLineSourceSynced(line);
                                     const rowKey = `plan-${line.local_id}`;
-                                    const sourceDetails = usesSuggestedColumn
-                                        ? planSourceDetails(line)
-                                        : (line.recurring_items ?? []).map((item) => ({
-                                            id: `recurrence-${item.id}`,
-                                            kind: 'recurrence' as const,
-                                            label: item.name,
-                                            amount: Number(item.amount || 0),
-                                            conflict: false,
-                                        }));
-                                    const sourceLabel = line.suggested_source === 'product_reserve'
+                                    const sourceDetails = planSourceDetails(line);
+                                    const sourceLabel = line.suggested_source === 'registry'
+                                        ? 'Registry'
+                                        : line.suggested_source === 'product_reserve'
                                         ? 'Product Reserve'
-                                        : line.suggested_source || (Number(line.recurring_amount || 0) > 0 ? 'Recurrence' : '');
+                                        : line.suggested_source || (Number(line.recurring_amount || 0) > 0 ? 'Registry' : '');
                                     return (
                                         <Fragment key={line.local_id}>
                                             <tr className="hover:bg-slate-800/30 group">
@@ -1971,7 +1990,9 @@ export default function Strategy() {
                                 const sourceSynced = isBudgetSourceSynced(account);
                                 const rowKey = `budget-${account.id}`;
                                 const sourceDetails = budgetSourceDetails(account);
-                                const sourceLabel = account.suggested_source === 'recurrence_product_expense'
+                                const sourceLabel = account.suggested_source === 'registry'
+                                    ? 'Registry'
+                                    : account.suggested_source === 'recurrence_product_expense'
                                     ? 'Recurrence + Items'
                                     : account.suggested_source === 'product_expense'
                                         ? 'Expense Items'
