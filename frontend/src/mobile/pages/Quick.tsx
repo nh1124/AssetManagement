@@ -29,10 +29,13 @@ import { formatCurrency } from '../../utils/currency';
 import {
     buildQuickTransactions,
     QUICK_KIND_RULES,
+    QUICK_TEMPLATE_GROUPS,
     quickKindLabel,
+    quickKindGroup,
     quickPresetFor,
     type AccountItem,
     type QuickEntry,
+    type QuickTemplateGroup,
     type QuickTemplateKind,
 } from '../../features/journal/quick';
 
@@ -71,11 +74,13 @@ export default function MobileQuickPage() {
     const [actions, setActions] = useState<MonthlyAction[]>([]);
     const [recentTransactions, setRecentTransactions] = useState<Transaction[]>([]);
     const [selectedTemplate, setSelectedTemplate] = useState<QuickTemplate | null>(null);
+    const [activeGroup, setActiveGroup] = useState<QuickTemplateGroup>('expense');
     const [isLoading, setIsLoading] = useState(true);
     const [busyKey, setBusyKey] = useState<string | null>(null);
 
     const currentCurrency = currentClient?.general_settings?.currency || 'JPY';
     const approvalCount = dueRecurring.length + pendingActions(actions).length;
+    const visibleTemplates = templates.filter((template) => quickKindGroup(template.template_kind) === activeGroup);
 
     const loadQuickData = async () => {
         setIsLoading(true);
@@ -182,13 +187,30 @@ export default function MobileQuickPage() {
             <section className="space-y-2">
                 <div className="flex items-center justify-between">
                     <h2 className="text-sm font-medium text-slate-100">Quick Templates</h2>
-                    <span className="text-[10px] text-slate-500">{templates.length} active</span>
+                    <span className="text-[10px] text-slate-500">{visibleTemplates.length}/{templates.length}</span>
+                </div>
+                <div className="edge-fade-x scrollbar-none flex gap-2 overflow-x-auto pb-1">
+                    {QUICK_TEMPLATE_GROUPS.map((group) => (
+                        <button
+                            key={group.value}
+                            type="button"
+                            onClick={() => setActiveGroup(group.value)}
+                            className={`h-9 shrink-0 border px-3 text-xs ${activeGroup === group.value
+                                ? 'border-emerald-500 bg-emerald-950/30 text-emerald-200'
+                                : 'border-slate-800 bg-slate-900 text-slate-400'
+                                }`}
+                        >
+                            {group.label}
+                        </button>
+                    ))}
                 </div>
                 {templates.length === 0 ? (
                     <EmptyState text="No quick templates yet. Create them from the desktop Journal screen." />
+                ) : visibleTemplates.length === 0 ? (
+                    <EmptyState text={`No ${activeGroup} templates yet.`} />
                 ) : (
                     <div className="grid grid-cols-2 gap-2">
-                        {templates.map((template) => (
+                        {visibleTemplates.map((template) => (
                             <TemplateButton
                                 key={template.id}
                                 template={template}
@@ -395,7 +417,7 @@ function MobileQuickEntrySheet({
         });
 
         const resolvedTransactions = error && isMissingAccountError(error)
-            ? [buildFallbackTransaction(template, resolvedEntry, currentCurrency)]
+            ? [buildFallbackTransaction(template, resolvedEntry, accountItems, currentCurrency)]
             : transactions;
 
         if (error && resolvedTransactions.length === 0) {
@@ -512,8 +534,10 @@ function isMissingAccountError(error: string) {
     return error.toLowerCase().includes('account');
 }
 
-function fallbackTransactionType(kind: string): Transaction['type'] {
-    if (kind === 'credit_expense') return 'CreditExpense';
+function fallbackTransactionType(kind: string, paymentAccount?: AccountItem): Transaction['type'] {
+    if (kind === 'income') return 'Income';
+    if (kind === 'credit_expense' && paymentAccount?.account_type === 'liability') return 'CreditExpense';
+    if (paymentAccount?.account_type === 'liability') return 'CreditExpense';
     if (kind === 'transfer') return 'Transfer';
     if (kind === 'debt_payment') return 'LiabilityPayment';
     return 'Expense';
@@ -522,13 +546,15 @@ function fallbackTransactionType(kind: string): Transaction['type'] {
 function buildFallbackTransaction(
     template: QuickTemplate,
     entry: QuickEntry,
+    accounts: AccountItem[],
     currentCurrency: string,
 ): Omit<Transaction, 'id'> {
+    const paymentAccount = accounts.find((account) => account.id === Number(entry.payment_account_id));
     return {
         date: entry.date,
         description: entry.description.trim() || template.name,
         amount: Number(entry.amount || 0),
-        type: fallbackTransactionType(template.template_kind),
+        type: fallbackTransactionType(template.template_kind, paymentAccount),
         category: template.category || template.tray || template.name,
         currency: entry.currency || template.default_currency || currentCurrency,
         from_account_id: entry.payment_account_id ? Number(entry.payment_account_id) : undefined,
@@ -559,8 +585,9 @@ function PaymentChip({
     );
 }
 
-function defaultAccountId(accounts: AccountItem[], allowedTypes: string[]) {
-    return accounts.find((account) => allowedTypes.includes(account.account_type))?.id;
+function defaultAccountId(accounts: AccountItem[], allowedTypes: string[], preferredTypes: string[] = []) {
+    return accounts.find((account) => preferredTypes.includes(account.account_type))?.id
+        ?? accounts.find((account) => allowedTypes.includes(account.account_type))?.id;
 }
 
 function paymentMethodsFor(template: QuickTemplate | null, accounts: AccountItem[]) {
@@ -588,7 +615,12 @@ function resolveEntryAccounts(
 function makeEntry(template: QuickTemplate | null, currentCurrency: string, accounts: AccountItem[]): QuickEntry {
     const kind = template?.template_kind as QuickTemplateKind | undefined;
     const rules = kind ? QUICK_KIND_RULES[kind] : undefined;
-    const fallbackFromId = rules ? defaultAccountId(accounts, rules.fromTypes) : undefined;
+    const preferredFromTypes = kind === 'credit_expense'
+        ? ['liability']
+        : kind === 'income'
+            ? ['income']
+            : ['asset', 'item'];
+    const fallbackFromId = rules ? defaultAccountId(accounts, rules.fromTypes, preferredFromTypes) : undefined;
     const fallbackToId = rules ? defaultAccountId(accounts, rules.toTypes) : undefined;
 
     return {

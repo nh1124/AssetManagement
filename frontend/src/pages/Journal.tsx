@@ -22,8 +22,10 @@ import {
     InfoTip,
     QUICK_KIND_RULES,
     QUICK_PRESETS,
+    QUICK_TEMPLATE_GROUPS,
     QUICK_TEMPLATE_KINDS,
     quickHelp,
+    quickKindGroup,
     quickKindLabel,
     quickText,
     type AccountItem,
@@ -63,8 +65,8 @@ const TRANSACTION_TYPES: Array<{
     {
         value: 'Expense',
         label: 'Expense',
-        description: 'Pay cash/bank/card asset now. Dr expense or item, Cr asset.',
-        fromTypes: ['asset', 'item'],
+        description: 'Record spending from cash, card liability, or income deduction.',
+        fromTypes: ['asset', 'item', 'liability', 'income'],
         toTypes: ['expense', 'item'],
     },
     {
@@ -77,9 +79,9 @@ const TRANSACTION_TYPES: Array<{
     {
         value: 'Transfer',
         label: 'Transfer',
-        description: 'Move value between asset accounts. Dr destination asset, Cr source asset.',
-        fromTypes: ['asset', 'item'],
-        toTypes: ['asset', 'item'],
+        description: 'Move value between accounts.',
+        fromTypes: ['asset', 'item', 'liability', 'income'],
+        toTypes: ['asset', 'item', 'liability', 'income'],
     },
     {
         value: 'Borrowing',
@@ -92,7 +94,7 @@ const TRANSACTION_TYPES: Array<{
         value: 'CreditExpense',
         label: 'Credit Expense',
         description: 'Buy expenses on credit. Dr expense, Cr liability.',
-        fromTypes: ['liability'],
+        fromTypes: ['asset', 'item', 'liability', 'income'],
         toTypes: ['expense', 'item'],
     },
     {
@@ -1051,8 +1053,14 @@ export default function Journal() {
                                             })}
                                             className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none"
                                         >
-                                            {QUICK_TEMPLATE_KINDS.map((option) => (
-                                                <option key={option.value} value={option.value}>{option.label}</option>
+                                            {QUICK_TEMPLATE_GROUPS.map((group) => (
+                                                <optgroup key={group.value} label={group.label}>
+                                                    {QUICK_TEMPLATE_KINDS
+                                                        .filter((option) => option.group === group.value)
+                                                        .map((option) => (
+                                                            <option key={option.value} value={option.value}>{option.label}</option>
+                                                        ))}
+                                                </optgroup>
                                             ))}
                                         </select>
                                     </div>
@@ -1200,7 +1208,9 @@ export default function Journal() {
                                 <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-2">
                                     <div>
                                         <p className="text-xs font-bold text-white">{selectedQuickTemplate.name}</p>
-                                        <p className="text-[10px] text-slate-500">{selectedQuickTemplate.tray} / {quickKindLabel(selectedQuickTemplate.template_kind)}</p>
+                                        <p className="text-[10px] text-slate-500">
+                                            {quickKindGroup(selectedQuickTemplate.template_kind)} / {selectedQuickTemplate.tray} / {quickKindLabel(selectedQuickTemplate.template_kind)}
+                                        </p>
                                     </div>
                                     <div className="flex gap-1">
                                         <button

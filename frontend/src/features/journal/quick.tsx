@@ -15,9 +15,12 @@ export type QuickTemplateKind =
     | 'simple_expense'
     | 'credit_expense'
     | 'expense_with_advance'
+    | 'income'
     | 'reimbursement'
     | 'transfer'
     | 'debt_payment';
+
+export type QuickTemplateGroup = 'expense' | 'income' | 'transfer';
 
 export type QuickTemplateDraft = {
     tray: string;
@@ -60,15 +63,17 @@ export type QuickPreset = {
 export const QUICK_TEMPLATE_KINDS: Array<{
     value: QuickTemplateKind;
     label: string;
+    group: QuickTemplateGroup;
     fromTypes: string[];
     toTypes: string[];
 }> = [
-    { value: 'simple_expense', label: 'Expense', fromTypes: ['asset', 'item', 'liability'], toTypes: ['expense', 'item'] },
-    { value: 'credit_expense', label: 'Credit Expense', fromTypes: ['liability'], toTypes: ['expense', 'item'] },
-    { value: 'expense_with_advance', label: 'Expense + Advance', fromTypes: ['asset', 'item', 'liability'], toTypes: ['expense', 'item'] },
-    { value: 'reimbursement', label: 'Reimbursement', fromTypes: ['asset', 'item'], toTypes: ['asset', 'item'] },
-    { value: 'transfer', label: 'Transfer', fromTypes: ['asset', 'item'], toTypes: ['asset', 'item'] },
-    { value: 'debt_payment', label: 'Debt Payment', fromTypes: ['asset', 'item'], toTypes: ['liability'] },
+    { value: 'simple_expense', label: 'Expense', group: 'expense', fromTypes: ['asset', 'item', 'liability', 'income'], toTypes: ['expense', 'item'] },
+    { value: 'credit_expense', label: 'Expense (credit default)', group: 'expense', fromTypes: ['asset', 'item', 'liability', 'income'], toTypes: ['expense', 'item'] },
+    { value: 'expense_with_advance', label: 'Expense + Advance', group: 'expense', fromTypes: ['asset', 'item', 'liability', 'income'], toTypes: ['expense', 'item'] },
+    { value: 'income', label: 'Income', group: 'income', fromTypes: ['income'], toTypes: ['asset', 'item', 'liability'] },
+    { value: 'reimbursement', label: 'Reimbursement', group: 'transfer', fromTypes: ['asset', 'item'], toTypes: ['asset', 'item'] },
+    { value: 'transfer', label: 'Transfer', group: 'transfer', fromTypes: ['asset', 'item', 'liability', 'income'], toTypes: ['asset', 'item', 'liability', 'income'] },
+    { value: 'debt_payment', label: 'Debt Payment', group: 'transfer', fromTypes: ['asset', 'item', 'income'], toTypes: ['liability'] },
 ];
 
 export const QUICK_KIND_RULES = Object.fromEntries(
@@ -77,6 +82,15 @@ export const QUICK_KIND_RULES = Object.fromEntries(
 
 export const quickKindLabel = (kind: string) =>
     QUICK_TEMPLATE_KINDS.find((option) => option.value === kind)?.label ?? kind;
+
+export const QUICK_TEMPLATE_GROUPS: Array<{ value: QuickTemplateGroup; label: string }> = [
+    { value: 'expense', label: 'Expense' },
+    { value: 'income', label: 'Income' },
+    { value: 'transfer', label: 'Transfer' },
+];
+
+export const quickKindGroup = (kind: string): QuickTemplateGroup =>
+    QUICK_TEMPLATE_KINDS.find((option) => option.value === kind)?.group ?? 'expense';
 
 export const QUICK_PRESETS: QuickPreset[] = [
     {
@@ -357,6 +371,21 @@ export const buildQuickTransactions = ({
         };
     }
 
+    if (kind === 'income') {
+        if (!paymentAccount || !expenseAccount) return { transactions: [], error: 'Income source and destination accounts are required' };
+        return {
+            transactions: [{
+                ...base,
+                description,
+                amount,
+                type: 'Income',
+                category: selectedTemplate.category || paymentAccount.name,
+                from_account_id: paymentAccount.id,
+                to_account_id: expenseAccount.id,
+            }],
+        };
+    }
+
     if (!paymentAccount || !expenseAccount) return { transactions: [], error: 'Payment and expense accounts are required' };
     const isCreditPayment = paymentAccount.account_type === 'liability';
 
@@ -409,7 +438,7 @@ export const buildQuickTransactions = ({
             ...base,
             description,
             amount,
-            type: kind === 'credit_expense' || isCreditPayment ? 'CreditExpense' : 'Expense',
+            type: isCreditPayment ? 'CreditExpense' : 'Expense',
             category,
             from_account_id: paymentAccount.id,
             to_account_id: expenseAccount.id,
