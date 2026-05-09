@@ -797,6 +797,13 @@ export const contributeToCapsule = async (
     return response.data;
 };
 
+export const getCapsuleHoldings = async (
+    capsuleId: number
+): Promise<Array<{ id: number; account_id: number; account_name?: string | null; held_amount: number; note?: string | null }>> => {
+    const response = await api.get(`/capsules/${capsuleId}/holdings`);
+    return response.data;
+};
+
 export const getReconcileStatus = async (): Promise<ReconcileResponse> => {
     const response = await api.get('/analysis/reconcile');
     return response.data;
