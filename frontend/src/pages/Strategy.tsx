@@ -1,5 +1,5 @@
 ﻿import { Fragment, useEffect, useState } from 'react';
-import { AlertTriangle, Archive, CalendarDays, ChevronLeft, ChevronRight, Copy, Edit2, Info, Plus, RefreshCw, Save, Search, SlidersHorizontal, Sparkles, Trash2, Unlink, X } from 'lucide-react';
+import { AlertTriangle, Archive, CalendarDays, ChevronLeft, ChevronRight, Copy, Edit2, Info, Plus, RefreshCw, Save, Search, Sparkles, Trash2, Unlink, X } from 'lucide-react';
 import TabPanel from '../components/TabPanel';
 import { useToast } from '../components/Toast';
 import { useClient } from '../context/ClientContext';
@@ -163,9 +163,8 @@ export default function Strategy() {
     const [activeTab, setActiveTab] = useState('budgeting');
     const [activeBudgetingTab, setActiveBudgetingTab] = useState<'plan' | 'cash_flow'>('plan');
     const [currentPeriod, setCurrentPeriod] = useState(monthKey());
-    const [cashFlowStartPeriod, setCashFlowStartPeriod] = useState(monthKey());
-    const [cashFlowMonths, setCashFlowMonths] = useState(12);
-    const [showCashFlowSettings, setShowCashFlowSettings] = useState(false);
+    const [cashFlowStartPeriod] = useState(() => monthKey());
+    const cashFlowMonths = 12;
     const [budgetSummary, setBudgetSummary] = useState<BudgetSummary | null>(null);
     const [budgetEdits, setBudgetEdits] = useState<Record<number, number>>({});
     const [expandedSourceRows, setExpandedSourceRows] = useState<Set<string>>(new Set());
@@ -412,7 +411,7 @@ export default function Strategy() {
             fetchBudgetReferences();
         }
         if (activeTab === 'capsules') fetchCapsules();
-    }, [activeTab, currentPeriod, cashFlowStartPeriod, cashFlowMonths]);
+    }, [activeTab, currentPeriod, cashFlowStartPeriod]);
 
     const changePeriod = (delta: number) => {
         const [year, month] = currentPeriod.split('-').map(Number);
@@ -1097,7 +1096,7 @@ export default function Strategy() {
 
     const jumpToCashFlowPeriod = (period: string) => {
         setCurrentPeriod(period);
-        setCashFlowStartPeriod(period);
+        setActiveBudgetingTab('plan');
     };
 
     const copyCurrentBudgetToPeriod = async (targetPeriod: string) => {
@@ -2153,38 +2152,12 @@ export default function Strategy() {
                     <div className="flex items-center justify-between mb-3">
                         {renderTitleWithInfo('Cash Flow', 'projection')}
                         <div className="flex items-center gap-3">
+                            <span className="text-xs text-slate-500 font-mono-nums">
+                                {cashFlowStartPeriod} / {cashFlowMonths} mo
+                            </span>
                             <span className="text-xs text-slate-500 font-mono-nums">Start {formatCurrency(budgetSummary?.starting_cash)}</span>
-                            <button type="button" title="Cash flow settings" onClick={() => setShowCashFlowSettings(!showCashFlowSettings)} className="text-slate-500 hover:text-cyan-400">
-                                <SlidersHorizontal size={14} />
-                            </button>
                         </div>
                     </div>
-                    {showCashFlowSettings && (
-                        <div className="mb-3 border border-slate-800 bg-slate-950/40 p-3">
-                            <div className="grid grid-cols-2 gap-3 text-xs max-w-md">
-                                <label className="space-y-1 text-slate-500">
-                                    <span className="block text-[10px] uppercase">Start Month</span>
-                                    <input
-                                        type="month"
-                                        value={cashFlowStartPeriod}
-                                        onChange={(event) => setCashFlowStartPeriod(event.target.value || currentPeriod)}
-                                        className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-slate-200 font-mono-nums"
-                                    />
-                                </label>
-                                <label className="space-y-1 text-slate-500">
-                                    <span className="block text-[10px] uppercase">Months</span>
-                                    <input
-                                        type="number"
-                                        min={1}
-                                        max={36}
-                                        value={cashFlowMonths}
-                                        onChange={(event) => setCashFlowMonths(Math.min(36, Math.max(1, Number(event.target.value) || 12)))}
-                                        className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-slate-200 font-mono-nums"
-                                    />
-                                </label>
-                            </div>
-                        </div>
-                    )}
                     <div className="grid grid-cols-2 min-[1280px]:grid-cols-4 gap-2 mb-3">
                         <div className="border border-slate-800 bg-slate-950/40 px-3 py-2">
                             <p className="text-[10px] uppercase text-slate-500">Runway</p>
