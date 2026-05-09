@@ -5,6 +5,10 @@ import { VitePWA } from 'vite-plugin-pwa'
 
 // https://vite.dev/config/
 export default defineConfig({
+  server: {
+    host: true,   // for Cloudflare Tunnel
+    port: 15173,
+  },
   plugins: [
     react(),
     tailwindcss(),
