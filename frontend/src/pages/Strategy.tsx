@@ -5,6 +5,7 @@ import { useToast } from '../components/Toast';
 import { useClient } from '../context/ClientContext';
 import {
     createAccount,
+    createMonthlyPlanLines,
     createCapsule,
     createCapsuleHolding,
     createCapsuleRule,
@@ -19,11 +20,12 @@ import {
     getLifeEvents,
     getProducts,
     processCapsuleContributions,
-    saveMonthlyPlanLines,
     suggestBudget,
     syncProductReserves,
+    type MonthlyPlanLinePayload,
     updateAccount,
     updateCapsule,
+    updateMonthlyPlanLines,
 } from '../api';
 import { formatCurrency as formatCurrencyWithSetting } from '../utils/currency';
 import type {
@@ -239,6 +241,21 @@ export default function Strategy() {
     const calculatedRemaining = budgetSummary?.remaining_balance ?? 0;
     const formatCurrency = (value: number | undefined | null) =>
         formatCurrencyWithSetting(value, currentClient?.general_settings?.currency);
+    type EditablePlanLinePayload = MonthlyPlanLinePayload & { id?: number };
+    const persistMonthlyPlanLines = async (lines: EditablePlanLinePayload[]) => {
+        const creates: MonthlyPlanLinePayload[] = [];
+        const updates: Array<MonthlyPlanLinePayload & { id: number }> = [];
+        lines.forEach((line) => {
+            const { id, ...payload } = line;
+            if (typeof id === 'number') {
+                updates.push({ id, ...payload });
+            } else {
+                creates.push(payload);
+            }
+        });
+        if (creates.length > 0) await createMonthlyPlanLines(creates);
+        if (updates.length > 0) await updateMonthlyPlanLines(updates);
+    };
     type SourceDetail = {
         id: string;
         kind: 'recurrence' | 'product_expense' | 'product_reserve';
@@ -468,11 +485,12 @@ export default function Strategy() {
             suggested_source: targetAccount?.suggested_source ?? sourceAccount.suggested_source,
             recurring_amount: targetAccount?.recurring_amount ?? sourceAccount.recurring_amount,
             recurring_transaction_id: targetAccount?.recurring_transaction_id ?? sourceAccount.recurring_transaction_id,
+            plan_line_id: targetAccount?.plan_line_id ?? null,
             source,
         };
     };
 
-    const budgetAccountPlanPayload = (account: BudgetAccount, amount: number, period = currentPeriod) => {
+    const budgetAccountPlanPayload = (account: BudgetAccount, amount: number, period = currentPeriod): EditablePlanLinePayload => {
         const suggestedAmount = Number(account.suggested_amount || 0);
         const source = account.source === 'one_time'
             ? 'one_time'
@@ -481,8 +499,7 @@ export default function Strategy() {
                 : account.suggested_source && Math.round(amount) === Math.round(suggestedAmount)
                     ? suggestedBudgetSource(account)
                     : 'manual';
-        return {
-            id: account.plan_line_id ?? null,
+        const payload: MonthlyPlanLinePayload = {
             target_period: period,
             line_type: 'expense',
             target_type: account.target_type ?? 'account',
@@ -497,6 +514,10 @@ export default function Strategy() {
             source,
             recurring_transaction_id: source.includes('recurrence') ? account.recurring_transaction_id ?? null : null,
             is_active: true,
+        };
+        return {
+            ...(typeof account.plan_line_id === 'number' ? { id: account.plan_line_id } : {}),
+            ...payload,
         };
     };
 
@@ -515,13 +536,10 @@ export default function Strategy() {
             (targetSummary.expense_accounts ?? []).forEach((account: BudgetAccount) => {
                 targetAccountByKey.set(budgetAccountKey(account), account);
             });
-            await saveMonthlyPlanLines(previousSummary.expense_accounts.map((account: BudgetAccount) => {
+            await persistMonthlyPlanLines(previousSummary.expense_accounts.map((account: BudgetAccount) => {
                 const targetAccount = targetAccountByKey.get(budgetAccountKey(account));
                 const amount = budgetAmountWithCopiedAdjustment(account, targetAccount, Number(account.amount || 0));
-                return {
-                    ...budgetAccountPlanPayload(budgetAccountForCopy(account, targetAccount), amount, currentPeriod),
-                    id: null,
-                };
+                return budgetAccountPlanPayload(budgetAccountForCopy(account, targetAccount), amount, currentPeriod);
             }));
             showToast(`Copied from ${previousPeriod}`, 'info');
             await fetchBudgetSummary();
@@ -541,7 +559,7 @@ export default function Strategy() {
             const otherLines = planLineDrafts
                 .filter((line) => !(line.source === 'recurrence' && !line.id))
                 .map((line) => ({
-                id: line.id ?? null,
+                ...(typeof line.id === 'number' ? { id: line.id } : {}),
                 target_period: currentPeriod,
                 line_type: line.line_type,
                 target_type: line.target_type,
@@ -557,7 +575,7 @@ export default function Strategy() {
                 recurring_transaction_id: line.source?.includes('recurrence') ? line.recurring_transaction_id ?? null : null,
                 is_active: true,
             }));
-            await saveMonthlyPlanLines([...expenseLines, ...otherLines]);
+            await persistMonthlyPlanLines([...expenseLines, ...otherLines]);
             showToast('Monthly budget saved', 'success');
             await fetchBudgetSummary();
         } catch (error) {
@@ -618,8 +636,8 @@ export default function Strategy() {
                 const name = budgetCategoryForm.name.trim();
                 if (!name) return;
                 await updateAccount(editingBudgetAccount.id, { name });
-                await saveMonthlyPlanLines([{
-                    id: editingBudgetAccount.plan_line_id ?? null,
+                await persistMonthlyPlanLines([{
+                    ...(typeof editingBudgetAccount.plan_line_id === 'number' ? { id: editingBudgetAccount.plan_line_id } : {}),
                     account_id: editingBudgetAccount.id,
                     target_period: currentPeriod,
                     line_type: 'expense',
@@ -632,7 +650,7 @@ export default function Strategy() {
                 showToast('Budget category updated', 'success');
             } else if (selectedAccountId !== null) {
                 const account = allExpenseAccounts.find((item) => item.id === selectedAccountId);
-                await saveMonthlyPlanLines([{
+                await persistMonthlyPlanLines([{
                     account_id: selectedAccountId,
                     target_period: currentPeriod,
                     line_type: 'expense',
@@ -647,7 +665,7 @@ export default function Strategy() {
                 const name = categorySearch.trim();
                 if (!name) return;
                 if (budgetCategoryForm.source === 'one_time') {
-                    await saveMonthlyPlanLines([{
+                    await persistMonthlyPlanLines([{
                         account_id: null,
                         target_period: currentPeriod,
                         line_type: 'expense',
@@ -660,7 +678,7 @@ export default function Strategy() {
                     showToast('One-time expense added', 'success');
                 } else {
                     const created = await createAccount({ name, account_type: 'expense', balance: 0 });
-                    await saveMonthlyPlanLines([{
+                    await persistMonthlyPlanLines([{
                         account_id: created.id,
                         target_period: currentPeriod,
                         line_type: 'expense',
@@ -747,8 +765,8 @@ export default function Strategy() {
     const syncSuggestedBudgetAccount = async (account: BudgetAccount) => {
         if (!account.suggested_source || account.suggested_amount == null) return;
         try {
-            await saveMonthlyPlanLines([{
-                id: account.plan_line_id ?? null,
+            await persistMonthlyPlanLines([{
+                ...(typeof account.plan_line_id === 'number' ? { id: account.plan_line_id } : {}),
                 target_period: currentPeriod,
                 line_type: 'expense',
                 target_type: account.target_type ?? (account.account_id ? 'account' : 'manual'),
@@ -775,7 +793,7 @@ export default function Strategy() {
         const payload = accountsToSync
             .filter((account) => account.suggested_source && !isBudgetSourceSynced(account))
             .map((account) => ({
-                id: account.plan_line_id ?? null,
+                ...(typeof account.plan_line_id === 'number' ? { id: account.plan_line_id } : {}),
                 target_period: currentPeriod,
                 line_type: 'expense',
                 target_type: account.target_type ?? (account.account_id ? 'account' : 'manual'),
@@ -796,7 +814,7 @@ export default function Strategy() {
             return;
         }
         try {
-            await saveMonthlyPlanLines(payload);
+            await persistMonthlyPlanLines(payload);
             showToast(`Synced ${payload.length} budget item${payload.length === 1 ? '' : 's'}`, 'success');
             await fetchBudgetSummary();
         } catch (error) {
@@ -807,8 +825,8 @@ export default function Strategy() {
     const syncRecurringPlanLine = async (line: EditablePlanLine) => {
         if (!line.recurring_transaction_id) return;
         try {
-            await saveMonthlyPlanLines([{
-                id: line.id ?? null,
+            await persistMonthlyPlanLines([{
+                ...(typeof line.id === 'number' ? { id: line.id } : {}),
                 target_period: currentPeriod,
                 line_type: line.line_type,
                 target_type: line.target_type,
@@ -835,7 +853,7 @@ export default function Strategy() {
         const payload = lines
             .filter((line) => line.recurring_transaction_id && line.sync_status !== 'synced')
             .map((line) => ({
-                id: line.id ?? null,
+                ...(typeof line.id === 'number' ? { id: line.id } : {}),
                 target_period: currentPeriod,
                 line_type: line.line_type,
                 target_type: line.target_type,
@@ -856,7 +874,7 @@ export default function Strategy() {
             return;
         }
         try {
-            await saveMonthlyPlanLines(payload);
+            await persistMonthlyPlanLines(payload);
             showToast(`Synced ${payload.length} recurrence item${payload.length === 1 ? '' : 's'}`, 'success');
             await fetchBudgetSummary();
         } catch (error) {
@@ -883,8 +901,8 @@ export default function Strategy() {
         const sourceAmount = planLineSourceAmount(line);
         if (sourceAmount <= 0) return;
         try {
-            await saveMonthlyPlanLines([{
-                id: line.id ?? null,
+            await persistMonthlyPlanLines([{
+                ...(typeof line.id === 'number' ? { id: line.id } : {}),
                 target_period: currentPeriod,
                 line_type: line.line_type,
                 target_type: line.target_type,
@@ -911,7 +929,7 @@ export default function Strategy() {
         const payload = lines
             .filter((line) => planLineSourceAmount(line) > 0 && !isPlanLineSourceSynced(line))
             .map((line) => ({
-                id: line.id ?? null,
+                ...(typeof line.id === 'number' ? { id: line.id } : {}),
                 target_period: currentPeriod,
                 line_type: line.line_type,
                 target_type: line.target_type,
@@ -932,7 +950,7 @@ export default function Strategy() {
             return;
         }
         try {
-            await saveMonthlyPlanLines(payload);
+            await persistMonthlyPlanLines(payload);
             showToast(`Synced ${payload.length} source item${payload.length === 1 ? '' : 's'}`, 'success');
             await fetchBudgetSummary();
         } catch (error) {
@@ -952,7 +970,7 @@ export default function Strategy() {
                     || (account.recurring_transaction_id && !(account.plan_line_id && account.source && SYNCED_SOURCES.has(account.source)))
                 ))
                 .map((account: BudgetAccount) => ({
-                    id: account.plan_line_id ?? null,
+                    ...(typeof account.plan_line_id === 'number' ? { id: account.plan_line_id } : {}),
                     target_period: period,
                     line_type: 'expense',
                     target_type: account.target_type ?? (account.account_id ? 'account' : 'manual'),
@@ -979,7 +997,7 @@ export default function Strategy() {
                     && !(line.id && line.source && SYNCED_SOURCES.has(line.source))
                 ))
                 .map((line: MonthlyPlanLine) => ({
-                    id: line.id ?? null,
+                    ...(typeof line.id === 'number' ? { id: line.id } : {}),
                     target_period: period,
                     line_type: line.line_type,
                     target_type: line.target_type,
@@ -1009,8 +1027,9 @@ export default function Strategy() {
                         && line.target_type === 'capsule'
                         && line.target_id === warning.capsule_id
                     ));
+                    const existingId = existing?.id ?? warning.plan_line_id;
                     return {
-                        id: existing?.id ?? warning.plan_line_id ?? null,
+                        ...(typeof existingId === 'number' ? { id: existingId } : {}),
                         target_period: period,
                         line_type: 'allocation',
                         target_type: 'capsule',
@@ -1032,7 +1051,7 @@ export default function Strategy() {
                 showToast('No recurrence differences to sync', 'info');
                 return;
             }
-            await saveMonthlyPlanLines(payload);
+            await persistMonthlyPlanLines(payload);
             showToast(`Synced ${payload.length} recurrence item${payload.length === 1 ? '' : 's'} for ${period}`, 'success');
             await fetchBudgetSummary();
         } catch (error) {
@@ -1043,7 +1062,7 @@ export default function Strategy() {
     const unlinkRecurringBudgetAccount = async (account: BudgetAccount) => {
         if (!account.plan_line_id) return;
         try {
-            await saveMonthlyPlanLines([{
+            await persistMonthlyPlanLines([{
                 id: account.plan_line_id,
                 target_period: currentPeriod,
                 line_type: 'expense',
@@ -1070,7 +1089,7 @@ export default function Strategy() {
     const unlinkRecurringPlanLine = async (line: EditablePlanLine) => {
         if (!line.id) return;
         try {
-            await saveMonthlyPlanLines([{
+            await persistMonthlyPlanLines([{
                 id: line.id,
                 target_period: currentPeriod,
                 line_type: line.line_type,
@@ -1135,7 +1154,7 @@ export default function Strategy() {
                     );
                     return {
                         ...budgetAccountPlanPayload(budgetAccountForCopy(account, targetAccount), amount, targetPeriod),
-                        id: targetLine?.id ?? null,
+                        ...(typeof targetLine?.id === 'number' ? { id: targetLine.id } : {}),
                     };
                 });
             const planPayload = planLineDrafts
@@ -1155,7 +1174,7 @@ export default function Strategy() {
                             ? 'one_time'
                             : 'manual';
                     return {
-                        id: targetLine?.id ?? null,
+                        ...(typeof targetLine?.id === 'number' ? { id: targetLine.id } : {}),
                         target_period: targetPeriod,
                         line_type: line.line_type,
                         target_type: line.target_type,
@@ -1177,7 +1196,7 @@ export default function Strategy() {
                 showToast('Save this month before copying', 'info');
                 return;
             }
-            await saveMonthlyPlanLines(payload);
+            await persistMonthlyPlanLines(payload);
             showToast(`Copied current budget to ${targetPeriod}`, 'success');
             await fetchBudgetSummary();
         } catch (error) {
@@ -1214,8 +1233,7 @@ export default function Strategy() {
         if (!name && targetType === 'manual') return;
         if (planLineForm.line_type === 'expense') {
             try {
-                await saveMonthlyPlanLines([{
-                    id: null,
+                await persistMonthlyPlanLines([{
                     target_period: currentPeriod,
                     line_type: 'expense',
                     target_type: targetType,
@@ -1304,7 +1322,7 @@ export default function Strategy() {
                 return;
             }
             if (line.source === 'capsule' && line.target_type === 'capsule' && line.target_id) {
-                await saveMonthlyPlanLines([{
+                await persistMonthlyPlanLines([{
                     target_period: currentPeriod,
                     line_type: 'allocation',
                     target_type: 'capsule',
@@ -2539,7 +2557,7 @@ export default function Strategy() {
                         {capsuleDeleteModal.currentBalance > 0 && (
                             <div className="mb-5">
                                 <p className="text-[10px] text-amber-400 uppercase tracking-wider mb-2">
-                                    ⚠ Balance detected — select transfer destination
+                                    ? Balance detected ? select transfer destination
                                 </p>
                                 <p className="text-[10px] text-slate-500 mb-2">
                                     The accumulated balance will be transferred to the selected account before deletion.
@@ -2590,3 +2608,4 @@ export default function Strategy() {
         </div>
     );
 }
+

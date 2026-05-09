@@ -8,15 +8,15 @@ from sqlalchemy.orm import sessionmaker
 try:
     from backend.app import models
     from backend.app.database import Base
-    from backend.app.schemas import MonthlyPlanLineCreate
+    from backend.app.schemas import MonthlyPlanLineBatchUpdate, MonthlyPlanLineCreate
     from backend.app.services.accounting_service import process_transaction
-    from backend.app.services.budget_plan_service import get_budget_summary, save_plan_lines
+    from backend.app.services.budget_plan_service import create_plan_lines, get_budget_summary, update_plan_lines
 except ModuleNotFoundError:
     from app import models  # type: ignore[no-redef]
     from app.database import Base  # type: ignore[no-redef]
-    from app.schemas import MonthlyPlanLineCreate  # type: ignore[no-redef]
+    from app.schemas import MonthlyPlanLineBatchUpdate, MonthlyPlanLineCreate  # type: ignore[no-redef]
     from app.services.accounting_service import process_transaction  # type: ignore[no-redef]
-    from app.services.budget_plan_service import get_budget_summary, save_plan_lines  # type: ignore[no-redef]
+    from app.services.budget_plan_service import create_plan_lines, get_budget_summary, update_plan_lines  # type: ignore[no-redef]
 
 
 def _session():
@@ -146,7 +146,7 @@ def test_save_plan_lines_updates_capsule_contribution_and_monthly_plan_line() ->
         db.add(capsule)
         db.commit()
 
-        saved = save_plan_lines(db, client_id=1, payloads=[
+        saved = create_plan_lines(db, client_id=1, payloads=[
             MonthlyPlanLineCreate(
                 target_period="2026-05",
                 line_type="allocation",
@@ -174,6 +174,97 @@ def test_save_plan_lines_updates_capsule_contribution_and_monthly_plan_line() ->
         assert len(saved) == 2
         assert capsule.monthly_contribution == 40000
         assert expense_line.amount == 25000
+    finally:
+        db.close()
+
+
+def test_update_plan_lines_requires_existing_id() -> None:
+    db = _session()
+    try:
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        food = models.Account(client_id=1, name="food", account_type="expense")
+        db.add_all([client, food])
+        db.commit()
+
+        try:
+            update_plan_lines(db, client_id=1, payloads=[
+                MonthlyPlanLineCreate(
+                    target_period="2026-05",
+                    line_type="expense",
+                    target_type="account",
+                    account_id=food.id,
+                    amount=12000,
+                )
+            ])
+        except ValueError as exc:
+            assert "id is required" in str(exc)
+        else:
+            raise AssertionError("update_plan_lines accepted an id-less payload")
+
+        created = create_plan_lines(db, client_id=1, payloads=[
+            MonthlyPlanLineCreate(
+                target_period="2026-05",
+                line_type="expense",
+                target_type="account",
+                account_id=food.id,
+                amount=12000,
+            )
+        ])[0]
+        updated = update_plan_lines(db, client_id=1, payloads=[
+            MonthlyPlanLineBatchUpdate(
+                id=created.id,
+                target_period="2026-05",
+                line_type="expense",
+                target_type="account",
+                account_id=food.id,
+                amount=18000,
+            )
+        ])[0]
+
+        assert updated.id == created.id
+        assert updated.amount == 18000
+    finally:
+        db.close()
+
+
+def test_budget_summary_deactivates_duplicate_expense_lines() -> None:
+    db = _session()
+    try:
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        food = models.Account(client_id=1, name="food", account_type="expense")
+        db.add_all([client, food])
+        db.flush()
+        older = models.MonthlyPlanLine(
+            client_id=1,
+            target_period="2026-05",
+            line_type="expense",
+            target_type="account",
+            account_id=food.id,
+            name=food.name,
+            amount=10000,
+        )
+        newer = models.MonthlyPlanLine(
+            client_id=1,
+            target_period="2026-05",
+            line_type="expense",
+            target_type="account",
+            account_id=food.id,
+            name=food.name,
+            amount=15000,
+        )
+        db.add_all([older, newer])
+        db.commit()
+
+        summary = get_budget_summary(db, client_id=1, period="2026-05")
+        accounts = [account for account in summary["expense_accounts"] if account["account_id"] == food.id]
+        db.refresh(older)
+        db.refresh(newer)
+
+        assert len(accounts) == 1
+        assert accounts[0]["plan_line_id"] == newer.id
+        assert accounts[0]["amount"] == 15000
+        assert older.is_active is False
+        assert newer.is_active is True
     finally:
         db.close()
 
@@ -359,7 +450,7 @@ def test_one_time_plan_line_is_saved_and_returned_with_planned_date() -> None:
         db.add(client)
         db.commit()
 
-        saved = save_plan_lines(db, client_id=1, payloads=[
+        saved = create_plan_lines(db, client_id=1, payloads=[
             MonthlyPlanLineCreate(
                 target_period="2026-05",
                 line_type="expense",

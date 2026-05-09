@@ -14,7 +14,7 @@ from ..services.goal_service import (
 )
 from ..services.capsule_service import create_capsule_for_goal, capsule_balance
 from ..services.accounting_service import process_transaction
-from ..services.budget_plan_service import get_budget_summary as build_budget_summary, save_plan_lines
+from ..services.budget_plan_service import create_plan_lines, get_budget_summary as build_budget_summary, update_plan_lines
 
 router = APIRouter(prefix="/life-events", tags=["life_events"])
 
@@ -108,13 +108,29 @@ def get_monthly_plan_lines(
     return build_budget_summary(db, current_client.id, period)["plan_lines"]
 
 
-@router.post("/monthly-plan-lines/batch")
-def save_monthly_plan_lines(
+@router.post("/monthly-plan-lines")
+def create_monthly_plan_lines(
     lines: List[schemas.MonthlyPlanLineCreate],
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    saved = save_plan_lines(db, current_client.id, lines)
+    try:
+        saved = create_plan_lines(db, current_client.id, lines)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"status": "success", "ids": [line.id for line in saved]}
+
+
+@router.put("/monthly-plan-lines/batch")
+def update_monthly_plan_lines(
+    lines: List[schemas.MonthlyPlanLineBatchUpdate],
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    try:
+        saved = update_plan_lines(db, current_client.id, lines)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"status": "success", "ids": [line.id for line in saved]}
 
 

@@ -1,7 +1,7 @@
 """Monthly cash-flow planning and budget summary helpers."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Iterable
 
 from dateutil.relativedelta import relativedelta
@@ -375,6 +375,68 @@ def _plan_match_key(line_type: str | None, target_type: str | None, account_id: 
     return (line_type or "", target_type or "manual", account_id or 0, normalized_name)
 
 
+def _line_identity_key(line: models.MonthlyPlanLine | dict) -> tuple:
+    getter = line.get if isinstance(line, dict) else lambda key, default=None: getattr(line, key, default)
+    source = getter("source")
+    planned_date = getter("planned_date") if source == "one_time" else None
+    if hasattr(planned_date, "isoformat"):
+        planned_date = planned_date.isoformat()
+    account_id = getter("account_id")
+    target_id = getter("target_id")
+    name = "" if account_id or target_id else (getter("name") or "").strip().lower()
+    return (
+        getter("target_period"),
+        getter("line_type"),
+        getter("target_type") or "manual",
+        account_id or 0,
+        target_id or 0,
+        name,
+        planned_date or "",
+    )
+
+
+def _newest_line_key(line: models.MonthlyPlanLine) -> tuple:
+    return (
+        line.updated_at or line.created_at or datetime.min,
+        line.created_at or datetime.min,
+        line.id or 0,
+    )
+
+
+def _deduplicate_active_plan_models(db: Session, plan_models: list[models.MonthlyPlanLine]) -> list[models.MonthlyPlanLine]:
+    grouped: dict[tuple, list[models.MonthlyPlanLine]] = {}
+    for line in plan_models:
+        grouped.setdefault(_line_identity_key(line), []).append(line)
+
+    deduped: list[models.MonthlyPlanLine] = []
+    changed = False
+    for lines in grouped.values():
+        if len(lines) == 1:
+            deduped.append(lines[0])
+            continue
+        keeper = max(lines, key=_newest_line_key)
+        deduped.append(keeper)
+        for duplicate in lines:
+            if duplicate.id != keeper.id:
+                duplicate.is_active = False
+                changed = True
+
+    if changed:
+        db.commit()
+    return sorted(deduped, key=lambda line: (line.line_type, line.priority, line.id))
+
+
+def _active_line_with_identity(db: Session, client_id: int, data: dict) -> models.MonthlyPlanLine | None:
+    key = _line_identity_key({**data, "target_period": data.get("target_period")})
+    rows = db.query(models.MonthlyPlanLine).filter(
+        models.MonthlyPlanLine.client_id == client_id,
+        models.MonthlyPlanLine.target_period == data.get("target_period"),
+        models.MonthlyPlanLine.line_type == data.get("line_type"),
+        models.MonthlyPlanLine.is_active.is_(True),
+    ).all()
+    return next((line for line in rows if _line_identity_key(line) == key), None)
+
+
 def _recurring_plan_line(
     db: Session,
     rec: models.RecurringTransaction,
@@ -645,6 +707,7 @@ def get_budget_summary(
         models.MonthlyPlanLine.target_period == period,
         models.MonthlyPlanLine.is_active.is_(True),
     ).order_by(models.MonthlyPlanLine.line_type, models.MonthlyPlanLine.priority, models.MonthlyPlanLine.id).all()
+    plan_models = _deduplicate_active_plan_models(db, plan_models)
     plan_lines = [
         _serialize_plan_line(db, client_id, line, name_maps, capsule_accounts)
         for line in plan_models
@@ -807,6 +870,7 @@ def get_cash_flow_projection(
             models.MonthlyPlanLine.target_period == period,
             models.MonthlyPlanLine.is_active.is_(True),
         ).all()
+        lines = _deduplicate_active_plan_models(db, lines)
         income = sum(
             line.amount or 0.0 for line in lines if line.line_type in INFLOW_LINE_TYPES
         )
@@ -967,41 +1031,70 @@ def summarize_cash_flow_projection(
     }
 
 
-def save_plan_lines(db: Session, client_id: int, payloads: list) -> list[models.MonthlyPlanLine]:
+def _payload_data(payload) -> dict:
+    return payload.model_dump(exclude_unset=True) if hasattr(payload, "model_dump") else dict(payload)
+
+
+def _apply_plan_line_data(db: Session, client_id: int, line: models.MonthlyPlanLine, data: dict) -> None:
+    for key, value in data.items():
+        if key != "id":
+            setattr(line, key, value)
+    if line.target_type == "account" and line.account_id and not line.name:
+        account = db.query(models.Account).filter(
+            models.Account.id == line.account_id,
+            models.Account.client_id == client_id,
+        ).first()
+        if account:
+            line.name = account.name
+    if line.target_type == "capsule" and line.target_id:
+        capsule = db.query(models.Capsule).filter(
+            models.Capsule.id == line.target_id,
+            models.Capsule.client_id == client_id,
+        ).first()
+        if capsule:
+            line.name = capsule.name
+            line.account_id = capsule.account_id
+            capsule.monthly_contribution = line.amount or 0.0
+
+
+def create_plan_lines(db: Session, client_id: int, payloads: list) -> list[models.MonthlyPlanLine]:
+    created: list[models.MonthlyPlanLine] = []
+    for payload in payloads:
+        data = _payload_data(payload)
+        data.pop("id", None)
+        if _active_line_with_identity(db, client_id, data):
+            raise ValueError("Monthly plan line already exists for this period and target")
+        line = models.MonthlyPlanLine(client_id=client_id)
+        db.add(line)
+        _apply_plan_line_data(db, client_id, line, data)
+        created.append(line)
+    db.commit()
+    for line in created:
+        db.refresh(line)
+    return created
+
+
+def update_plan_lines(db: Session, client_id: int, payloads: list) -> list[models.MonthlyPlanLine]:
     saved: list[models.MonthlyPlanLine] = []
     for payload in payloads:
-        data = payload.model_dump(exclude_unset=True) if hasattr(payload, "model_dump") else dict(payload)
+        data = _payload_data(payload)
         line_id = data.pop("id", None)
-        line = None
-        if line_id:
-            line = db.query(models.MonthlyPlanLine).filter(
-                models.MonthlyPlanLine.id == line_id,
-                models.MonthlyPlanLine.client_id == client_id,
-            ).first()
+        if not line_id:
+            raise ValueError("Monthly plan line id is required")
+        line = db.query(models.MonthlyPlanLine).filter(
+            models.MonthlyPlanLine.id == line_id,
+            models.MonthlyPlanLine.client_id == client_id,
+        ).first()
         if not line:
-            line = models.MonthlyPlanLine(client_id=client_id)
-            db.add(line)
-        for key, value in data.items():
-            setattr(line, key, value)
-        if line.target_type == "account" and line.account_id and not line.name:
-            account = db.query(models.Account).filter(
-                models.Account.id == line.account_id,
-                models.Account.client_id == client_id,
-            ).first()
-            if account:
-                line.name = account.name
-        if line.target_type == "capsule" and line.target_id:
-            capsule = db.query(models.Capsule).filter(
-                models.Capsule.id == line.target_id,
-                models.Capsule.client_id == client_id,
-            ).first()
-            if capsule:
-                line.name = capsule.name
-                line.account_id = capsule.account_id
-                capsule.monthly_contribution = line.amount or 0.0
+            raise ValueError("Monthly plan line not found")
+        _apply_plan_line_data(db, client_id, line, data)
         saved.append(line)
     db.commit()
     for line in saved:
         db.refresh(line)
-    db.commit()
     return saved
+
+
+def save_plan_lines(db: Session, client_id: int, payloads: list) -> list[models.MonthlyPlanLine]:
+    """Backward-compatible alias for id-required batch updates."""
+    return update_plan_lines(db, client_id, payloads)

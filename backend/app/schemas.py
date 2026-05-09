@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from datetime import date, datetime
 from datetime import date as DateType
 from typing import Any, Optional, Literal
@@ -307,7 +307,13 @@ class MonthlyPlanLineBase(BaseModel):
 
 
 class MonthlyPlanLineCreate(MonthlyPlanLineBase):
-    id: Optional[int] = None
+    model_config = ConfigDict(extra="forbid")
+
+
+class MonthlyPlanLineBatchUpdate(MonthlyPlanLineBase):
+    model_config = ConfigDict(extra="forbid")
+
+    id: int
 
 
 class MonthlyPlanLineUpdate(BaseModel):

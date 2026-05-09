@@ -440,8 +440,7 @@ export const getBudgetSummary = async (
     return response.data;
 };
 
-export const saveMonthlyPlanLines = async (lines: Array<{
-    id?: number | null;
+export type MonthlyPlanLinePayload = {
     target_period: string;
     line_type: string;
     target_type: string;
@@ -456,8 +455,15 @@ export const saveMonthlyPlanLines = async (lines: Array<{
     source?: string;
     recurring_transaction_id?: number | null;
     is_active?: boolean;
-}>) => {
-    const response = await api.post('/life-events/monthly-plan-lines/batch', lines);
+};
+
+export const createMonthlyPlanLines = async (lines: MonthlyPlanLinePayload[]) => {
+    const response = await api.post('/life-events/monthly-plan-lines', lines);
+    return response.data;
+};
+
+export const updateMonthlyPlanLines = async (lines: Array<MonthlyPlanLinePayload & { id: number }>) => {
+    const response = await api.put('/life-events/monthly-plan-lines/batch', lines);
     return response.data;
 };
 

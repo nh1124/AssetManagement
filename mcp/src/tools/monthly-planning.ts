@@ -15,6 +15,7 @@ const planTargetTypeSchema = z.enum(["account", "capsule", "life_event", "produc
 
 const monthlyPlanLineSchema = z
   .object({
+    id: z.number().int().min(1).optional().describe("Existing monthly plan line ID. Required for updates; omit for creates."),
     target_period: periodSchema.describe("Target period, YYYY-MM"),
     line_type: planLineTypeSchema.describe("Monthly plan line type"),
     target_type: planTargetTypeSchema.optional().default("manual").describe("Target entity kind"),
@@ -90,13 +91,21 @@ export function registerMonthlyPlanningTools(server: McpServer): void {
     "monthly_plan_lines_save_batch",
     {
       title: "Save monthly plan lines",
-      description: "Creates or updates monthly plan lines in a batch.",
+      description: "Creates monthly plan lines without id and updates lines with id. Updates require an existing id.",
       inputSchema: z.object({ lines: z.array(monthlyPlanLineSchema).min(1) }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
     async ({ lines }) => {
       try {
-        const data = await api.post<unknown>("/life-events/monthly-plan-lines/batch", lines);
+        const creates = lines.map(({ id, ...line }) => (id === undefined ? line : null)).filter((line) => line !== null);
+        const updates = lines.filter((line) => line.id !== undefined);
+        const created = creates.length > 0
+          ? await api.post<unknown>("/life-events/monthly-plan-lines", creates)
+          : null;
+        const updated = updates.length > 0
+          ? await api.put<unknown>("/life-events/monthly-plan-lines/batch", updates)
+          : null;
+        const data = { created, updated };
         return {
           content: [{ type: "text", text: `Saved monthly plan lines:\n${JSON.stringify(data, null, 2)}` }],
           structuredContent: toStructured(data),
