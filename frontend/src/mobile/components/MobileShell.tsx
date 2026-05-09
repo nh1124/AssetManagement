@@ -44,7 +44,7 @@ export default function MobileShell({ children, currentPage, onNavigate }: Mobil
                 </div>
             </header>
 
-            <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden pb-[calc(4rem+env(safe-area-inset-bottom))]">
+            <main className="scrollbar-none flex-1 min-h-0 overflow-y-auto overflow-x-hidden pb-[calc(4rem+env(safe-area-inset-bottom))]">
                 {children}
             </main>
             <MobileBottomNav currentPage={currentPage} onNavigate={onNavigate} />

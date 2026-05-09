@@ -5,6 +5,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { api } from "../api-client.js";
+import { fetchAccounts, previewTransactionPayload } from "../domain-guidance.js";
 import { toStructured } from "../utils.js";
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
@@ -22,9 +23,10 @@ const recurringInputSchema = z
   .object({
     name: z.string().min(1).describe("Name"),
     amount: z.number().min(0).describe("Amount"),
+    currency: z.string().optional().default("JPY").describe("Currency"),
     type: transactionTypeSchema.describe("Transaction type"),
-    from_account_id: z.number().int().min(1).nullable().optional().describe("Source account ID"),
-    to_account_id: z.number().int().min(1).nullable().optional().describe("Destination account ID"),
+    from_account_id: z.number().int().min(1).optional().describe("Source account ID"),
+    to_account_id: z.number().int().min(1).optional().describe("Destination account ID"),
     frequency: z.enum(["Monthly", "Yearly"]).describe("Frequency"),
     day_of_month: z.number().int().min(1).max(31).optional().default(1).describe("Due day of month"),
     month_of_year: z.number().int().min(1).max(12).nullable().optional().describe("Month for yearly frequency"),
@@ -87,6 +89,55 @@ export function registerRecurringTools(server: McpServer): void {
     async (input) => {
       try {
         const data = await api.post<unknown>("/recurring/", input);
+        return {
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+          structuredContent: toStructured(data),
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
+      }
+    },
+  );
+
+  server.registerTool(
+    "recurring_preview",
+    {
+      title: "Preview recurring transaction",
+      description:
+        "Validates a recurring transaction definition and previews the transaction it would post when processed. Does not save or post anything.",
+      inputSchema: recurringInputSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        const accounts = await fetchAccounts();
+        const transactionPreview = previewTransactionPayload(
+          {
+            description: input.name,
+            amount: input.amount,
+            type: input.type,
+            category: undefined,
+            from_account_id: input.from_account_id,
+            to_account_id: input.to_account_id,
+            currency: input.currency ?? "JPY",
+          },
+          accounts,
+        );
+        const data = {
+          ok_to_submit: transactionPreview.ok_to_submit,
+          schedule_preview: {
+            frequency: input.frequency,
+            day_of_month: input.day_of_month ?? 1,
+            month_of_year: input.month_of_year ?? null,
+            next_due_date: input.next_due_date ?? null,
+            is_active: input.is_active ?? true,
+          },
+          transaction_preview: transactionPreview,
+          warnings: [
+            ...(transactionPreview.validation.warnings ?? []),
+            "recurring_create saves a definition only. Use recurring_process to post an actual transaction when due.",
+          ],
+        };
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
           structuredContent: toStructured(data),

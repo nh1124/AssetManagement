@@ -1,6 +1,6 @@
-import { ClipboardCheck, Grid2X2, List, MoreHorizontal, Target } from 'lucide-react';
+import { ClipboardCheck, Grid2X2, List, Target, WalletCards } from 'lucide-react';
 
-export type MobilePage = 'quick' | 'journal' | 'plan' | 'review' | 'more';
+export type MobilePage = 'quick' | 'journal' | 'portfolio' | 'plan' | 'review' | 'more';
 
 interface MobileBottomNavProps {
     currentPage: MobilePage;
@@ -10,9 +10,9 @@ interface MobileBottomNavProps {
 const navItems = [
     { id: 'quick', label: 'Quick', icon: Grid2X2 },
     { id: 'journal', label: 'Journal', icon: List },
+    { id: 'portfolio', label: 'Portfolio', icon: WalletCards },
     { id: 'plan', label: 'Plan', icon: Target },
     { id: 'review', label: 'Review', icon: ClipboardCheck },
-    { id: 'more', label: 'More', icon: MoreHorizontal },
 ] satisfies Array<{ id: MobilePage; label: string; icon: typeof Grid2X2 }>;
 
 export default function MobileBottomNav({ currentPage, onNavigate }: MobileBottomNavProps) {

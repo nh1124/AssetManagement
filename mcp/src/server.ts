@@ -12,6 +12,7 @@ import { registerCapsuleTools } from "./tools/capsules.js";
 import { registerClientTools } from "./tools/clients.js";
 import { registerDataTransferTools } from "./tools/data-transfer.js";
 import { registerExchangeRateTools } from "./tools/exchange-rates.js";
+import { registerGuidanceTools } from "./tools/guidance.js";
 import { registerLifeEventTools } from "./tools/life-events.js";
 import { registerMonthlyPlanningTools } from "./tools/monthly-planning.js";
 import { registerPeriodReviewTools } from "./tools/period-reviews.js";
@@ -32,6 +33,7 @@ export function buildMcpServer(): McpServer {
   });
 
   registerAccountTools(server);
+  registerGuidanceTools(server);
   registerCapsuleTools(server);
   registerLifeEventTools(server);
   registerAnalysisTools(server);

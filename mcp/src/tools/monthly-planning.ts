@@ -5,6 +5,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { api } from "../api-client.js";
+import { fetchAccounts } from "../domain-guidance.js";
 import { toStructured } from "../utils.js";
 
 const periodSchema = z.string().regex(/^\d{4}-\d{2}$/);
@@ -98,6 +99,57 @@ export function registerMonthlyPlanningTools(server: McpServer): void {
         const data = await api.post<unknown>("/life-events/monthly-plan-lines/batch", lines);
         return {
           content: [{ type: "text", text: `Saved monthly plan lines:\n${JSON.stringify(data, null, 2)}` }],
+          structuredContent: toStructured(data),
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
+      }
+    },
+  );
+
+  server.registerTool(
+    "monthly_plan_lines_preview",
+    {
+      title: "Preview monthly plan lines",
+      description: "Validates monthly plan lines without saving them. Use before monthly_plan_lines_save_batch.",
+      inputSchema: z.object({ lines: z.array(monthlyPlanLineSchema).min(1) }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ lines }) => {
+      try {
+        const accounts = await fetchAccounts();
+        const accountById = new Map(accounts.map((account) => [account.id, account]));
+        const previews = lines.map((line, index) => {
+          const errors: string[] = [];
+          const warnings: string[] = [];
+          const account = line.account_id ? accountById.get(line.account_id) : undefined;
+          const sourceAccount = line.source_account_id ? accountById.get(line.source_account_id) : undefined;
+          if (line.account_id && !account) errors.push(`account_id ${line.account_id} was not found.`);
+          if (line.source_account_id && !sourceAccount) errors.push(`source_account_id ${line.source_account_id} was not found.`);
+          if (line.line_type === "expense" && account && account.account_type !== "expense") {
+            warnings.push(`Expense plan line points to ${account.account_type} account "${account.name}".`);
+          }
+          if (line.line_type === "allocation" && account && account.account_type !== "asset") {
+            warnings.push(`Allocation plan line usually points to an asset account or capsule, not ${account.account_type}.`);
+          }
+          if (line.amount < 0) warnings.push("Negative amount is unusual for monthly plan lines.");
+          return {
+            index,
+            ok_to_submit: errors.length === 0,
+            line,
+            account: account ? { id: account.id, name: account.name, account_type: account.account_type } : null,
+            source_account: sourceAccount ? { id: sourceAccount.id, name: sourceAccount.name, account_type: sourceAccount.account_type } : null,
+            validation: { ok: errors.length === 0, errors, warnings },
+          };
+        });
+        const data = {
+          ok_to_submit: previews.every((preview) => preview.ok_to_submit),
+          line_count: lines.length,
+          total_amount: lines.reduce((sum, line) => sum + line.amount, 0),
+          previews,
+        };
+        return {
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
           structuredContent: toStructured(data),
         };
       } catch (err) {

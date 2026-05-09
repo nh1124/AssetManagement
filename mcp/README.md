@@ -97,6 +97,12 @@ Tools cover:
 
 Resources:
 
+- `asset-management://guide/overview`
+- `asset-management://guide/accounting-rules`
+- `asset-management://guide/data-entry`
+- `asset-management://guide/recurring`
+- `asset-management://guide/product-reserve`
+- `asset-management://guide/dangerous-operations`
 - `asset-management://summary`
 - `asset-management://transactions/recent`
 
@@ -108,3 +114,13 @@ Prompts:
 ## Safety Notes
 
 Some tools write data: creating transactions, processing recurring transactions, applying report actions, updating reviews, and generating milestones. Read tool annotations before allowing automatic tool use.
+
+For agent safety, prefer these before write operations:
+
+- `help_choose_transaction_type`
+- `validate_transaction_payload`
+- `transactions_preview`
+- `recurring_preview`
+- `transaction_batches_preview`
+- `products_preview`
+- `monthly_plan_lines_preview`

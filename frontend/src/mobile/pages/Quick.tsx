@@ -209,7 +209,7 @@ export default function MobileQuickPage() {
                             <ApprovalCard
                                 key={`recurring-${item.id}`}
                                 title={item.name}
-                                meta={`Recurring · ${item.next_due_date ?? 'due'}`}
+                                meta={`Recurring - ${item.next_due_date ?? 'due'}`}
                                 amount={formatCurrency(item.amount, item.currency)}
                                 isApplying={busyKey === `recurring:${item.id}:apply`}
                                 isSkipping={busyKey === `recurring:${item.id}:skip`}
@@ -243,7 +243,7 @@ export default function MobileQuickPage() {
                             <div key={tx.id} className="flex items-center justify-between gap-3 px-3 py-2">
                                 <div className="min-w-0">
                                     <p className="truncate text-sm text-slate-100">{tx.description}</p>
-                                    <p className="text-[10px] text-slate-500">{tx.date} · {tx.type}</p>
+                                    <p className="text-[10px] text-slate-500">{tx.date} - {tx.type}</p>
                                 </div>
                                 <p className="shrink-0 font-mono-nums text-xs text-slate-200">
                                     {formatCurrency(tx.amount, tx.currency)}
@@ -296,7 +296,7 @@ function TemplateButton({ template, onSelect }: { template: QuickTemplate; onSel
                 <ChevronRight size={15} className="text-slate-600" />
             </div>
             <p className="mt-3 truncate text-sm font-medium text-slate-100">{template.name}</p>
-            <p className="mt-1 truncate text-[10px] text-slate-500">{template.tray} · {quickKindLabel(template.template_kind)}</p>
+            <p className="mt-1 truncate text-[10px] text-slate-500">{template.tray} - {quickKindLabel(template.template_kind)}</p>
         </button>
     );
 }
@@ -374,6 +374,7 @@ function MobileQuickEntrySheet({
 }) {
     const { showToast } = useToast();
     const accountItems = useMemo(() => toAccountItems(accounts), [accounts]);
+    const paymentAccounts = useMemo(() => paymentMethodsFor(template, accountItems), [template, accountItems]);
     const [entry, setEntry] = useState<QuickEntry>(() => makeEntry(template, currentCurrency, accountItems));
     const [isSaving, setIsSaving] = useState(false);
 
@@ -385,14 +386,19 @@ function MobileQuickEntrySheet({
 
     const save = async () => {
         const ownAmount = entry.ownAmount || entry.amount;
+        const resolvedEntry = resolveEntryAccounts(entry, template, accountItems, currentCurrency);
         const { transactions, error } = buildQuickTransactions({
             selectedTemplate: template,
-            quickEntry: { ...entry, ownAmount },
+            quickEntry: { ...resolvedEntry, ownAmount },
             accounts: accountItems,
             currentCurrency,
         });
 
-        if (error) {
+        const resolvedTransactions = error && isMissingAccountError(error)
+            ? [buildFallbackTransaction(template, resolvedEntry, currentCurrency)]
+            : transactions;
+
+        if (error && resolvedTransactions.length === 0) {
             showToast(error, 'warning');
             return;
         }
@@ -403,8 +409,14 @@ function MobileQuickEntrySheet({
                 quick_template_id: template.id,
                 label: template.name,
                 source: 'mobile_quick',
-                input_payload: { amount: entry.amount, date: entry.date, description: entry.description },
-                transactions,
+                input_payload: {
+                    amount: entry.amount,
+                    date: entry.date,
+                    description: entry.description,
+                    payment_account_id: resolvedEntry.payment_account_id || null,
+                    fallback_account_resolution: Boolean(error),
+                },
+                transactions: resolvedTransactions,
             });
             showToast(`Saved ${template.name}`, 'success');
             onClose();
@@ -451,6 +463,27 @@ function MobileQuickEntrySheet({
                             placeholder={template.name}
                         />
                     </label>
+                    <div>
+                        <div className="mb-1 flex items-center justify-between">
+                            <span className="text-[10px] uppercase tracking-wide text-slate-500">Payment</span>
+                            <span className="text-[10px] text-slate-600">Auto is allowed</span>
+                        </div>
+                        <div className="edge-fade-x scrollbar-none flex gap-2 overflow-x-auto pb-1">
+                            <PaymentChip
+                                label="Auto"
+                                selected={!entry.payment_account_id}
+                                onClick={() => setEntry({ ...entry, payment_account_id: '' })}
+                            />
+                            {paymentAccounts.map((account) => (
+                                <PaymentChip
+                                    key={account.id}
+                                    label={account.name.replace(/_/g, ' ')}
+                                    selected={entry.payment_account_id === String(account.id)}
+                                    onClick={() => setEntry({ ...entry, payment_account_id: String(account.id) })}
+                                />
+                            ))}
+                        </div>
+                    </div>
                     <label className="block">
                         <span className="text-[10px] uppercase tracking-wide text-slate-500">Date</span>
                         <input
@@ -475,8 +508,81 @@ function MobileQuickEntrySheet({
     );
 }
 
+function isMissingAccountError(error: string) {
+    return error.toLowerCase().includes('account');
+}
+
+function fallbackTransactionType(kind: string): Transaction['type'] {
+    if (kind === 'credit_expense') return 'CreditExpense';
+    if (kind === 'transfer') return 'Transfer';
+    if (kind === 'debt_payment') return 'LiabilityPayment';
+    return 'Expense';
+}
+
+function buildFallbackTransaction(
+    template: QuickTemplate,
+    entry: QuickEntry,
+    currentCurrency: string,
+): Omit<Transaction, 'id'> {
+    return {
+        date: entry.date,
+        description: entry.description.trim() || template.name,
+        amount: Number(entry.amount || 0),
+        type: fallbackTransactionType(template.template_kind),
+        category: template.category || template.tray || template.name,
+        currency: entry.currency || template.default_currency || currentCurrency,
+        from_account_id: entry.payment_account_id ? Number(entry.payment_account_id) : undefined,
+        to_account_id: entry.expense_account_id ? Number(entry.expense_account_id) : undefined,
+    };
+}
+
+function PaymentChip({
+    label,
+    selected,
+    onClick,
+}: {
+    label: string;
+    selected: boolean;
+    onClick: () => void;
+}) {
+    return (
+        <button
+            type="button"
+            onClick={onClick}
+            className={`h-10 shrink-0 border px-3 text-xs capitalize ${selected
+                ? 'border-emerald-500 bg-emerald-950/30 text-emerald-200'
+                : 'border-slate-700 bg-slate-900 text-slate-400'
+                }`}
+        >
+            {label}
+        </button>
+    );
+}
+
 function defaultAccountId(accounts: AccountItem[], allowedTypes: string[]) {
     return accounts.find((account) => allowedTypes.includes(account.account_type))?.id;
+}
+
+function paymentMethodsFor(template: QuickTemplate | null, accounts: AccountItem[]) {
+    const kind = template?.template_kind as QuickTemplateKind | undefined;
+    const allowedTypes = kind && QUICK_KIND_RULES[kind] ? QUICK_KIND_RULES[kind].fromTypes : ['asset', 'liability'];
+    return accounts.filter((account) => allowedTypes.includes(account.account_type));
+}
+
+function resolveEntryAccounts(
+    entry: QuickEntry,
+    template: QuickTemplate | null,
+    accounts: AccountItem[],
+    currentCurrency: string,
+) {
+    const fallback = makeEntry(template, currentCurrency, accounts);
+    return {
+        ...entry,
+        payment_account_id: entry.payment_account_id || fallback.payment_account_id,
+        expense_account_id: entry.expense_account_id || fallback.expense_account_id,
+        receivable_account_id: entry.receivable_account_id || fallback.receivable_account_id,
+        reimbursement_account_id: entry.reimbursement_account_id || fallback.reimbursement_account_id,
+    };
 }
 
 function makeEntry(template: QuickTemplate | null, currentCurrency: string, accounts: AccountItem[]): QuickEntry {

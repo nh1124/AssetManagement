@@ -5,6 +5,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { api } from "../api-client.js";
+import { fetchAccounts, previewTransactionPayload, transactionPayloadSchema } from "../domain-guidance.js";
 import { toStructured } from "../utils.js";
 
 const transactionTypeSchema = z.enum([
@@ -107,6 +108,29 @@ export function registerTransactionTools(server: McpServer): void {
         const data = await api.post<Transaction>("/transactions/", body);
         return {
           content: [{ type: "text", text: `Created transaction:\n${JSON.stringify(data, null, 2)}` }],
+          structuredContent: toStructured(data),
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
+      }
+    },
+  );
+
+  server.registerTool(
+    "transactions_preview",
+    {
+      title: "Preview transaction",
+      description:
+        "Validates and previews journal entries and balance effects for a transaction without saving it. Use before transactions_create.",
+      inputSchema: transactionPayloadSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (input) => {
+      try {
+        const accounts = await fetchAccounts();
+        const data = previewTransactionPayload(input, accounts);
+        return {
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
           structuredContent: toStructured(data),
         };
       } catch (err) {

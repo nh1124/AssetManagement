@@ -5,6 +5,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { api } from "../api-client.js";
+import { effectiveBudgetTreatment, fetchAccounts } from "../domain-guidance.js";
 import { toStructured } from "../utils.js";
 
 const productInputSchema = z
@@ -81,6 +82,69 @@ export function registerProductTools(server: McpServer): void {
         const data = await api.post<unknown>("/products/", input);
         return {
           content: [{ type: "text", text: `Created product:\n${JSON.stringify(data, null, 2)}` }],
+          structuredContent: toStructured(data),
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
+      }
+    },
+  );
+
+  server.registerTool(
+    "products_preview",
+    {
+      title: "Preview product",
+      description:
+        "Previews Product/Item unit economics, reserve behavior, and account validation without saving it. Use before products_create.",
+      inputSchema: productInputSchema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (input: ProductInput) => {
+      try {
+        const accounts = await fetchAccounts();
+        const budgetAccount = input.budget_account_id
+          ? accounts.find((account) => account.id === input.budget_account_id)
+          : undefined;
+        const errors: string[] = [];
+        const warnings: string[] = [];
+        if (input.budget_account_id && !budgetAccount) {
+          errors.push(`budget_account_id ${input.budget_account_id} was not found among active accounts.`);
+        }
+        if (budgetAccount && budgetAccount.account_type !== "expense") {
+          errors.push(`budget_account_id ${budgetAccount.id} (${budgetAccount.name}) is ${budgetAccount.account_type}; Product budget account must be expense.`);
+        }
+        if (input.is_asset && !input.lifespan_months) {
+          warnings.push("Fixed assets should usually include lifespan_months for replacement reserve planning.");
+        }
+        if (!input.is_asset && (!input.frequency_days || input.frequency_days <= 0)) {
+          warnings.push("Consumables should include frequency_days when monthly unit economics or reserve planning matters.");
+        }
+
+        const units = input.units_per_purchase || 1;
+        const unitCost = input.last_unit_price / units;
+        const monthlyCost = !input.is_asset && input.frequency_days && input.frequency_days > 0
+          ? unitCost * (30 / input.frequency_days)
+          : 0;
+        const treatment = effectiveBudgetTreatment(input);
+        const data = {
+          ok_to_submit: errors.length === 0,
+          product: input,
+          unit_economics: {
+            unit_cost: Math.round(unitCost * 100) / 100,
+            monthly_cost: Math.round(monthlyCost * 100) / 100,
+          },
+          reserve_preview: {
+            effective_budget_treatment: treatment,
+            uses_reserve: treatment === "reserve_allocation" || treatment === "asset_replacement",
+            expected_default_pool: input.is_asset ? "Fixed Asset Reserve" : "Item Reserve",
+          },
+          budget_account: budgetAccount
+            ? { id: budgetAccount.id, name: budgetAccount.name, account_type: budgetAccount.account_type }
+            : null,
+          validation: { ok: errors.length === 0, errors, warnings },
+        };
+        return {
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
           structuredContent: toStructured(data),
         };
       } catch (err) {
