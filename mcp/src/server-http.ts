@@ -351,6 +351,29 @@ function normalizeMcpAccept(req: Request, _res: Response, next: NextFunction): v
 }
 
 async function handleMcpPost(req: Request, res: Response): Promise<void> {
+  const body = req.body as Record<string, unknown>;
+  const method = Array.isArray(body) ? "(batch)" : (body?.method as string | undefined) ?? "(unknown)";
+  console.info("[mcp] req", { method, id: body?.id });
+
+  // Capture response body by intercepting Node.js write/end
+  const chunks: Buffer[] = [];
+  const origWrite = res.write.bind(res) as typeof res.write;
+  const origEnd = res.end.bind(res) as typeof res.end;
+  (res as unknown as { write: typeof res.write }).write = (chunk: unknown, ...args: unknown[]) => {
+    if (Buffer.isBuffer(chunk)) chunks.push(chunk);
+    else if (typeof chunk === "string") chunks.push(Buffer.from(chunk));
+    return (origWrite as (...a: unknown[]) => boolean)(chunk, ...args);
+  };
+  (res as unknown as { end: typeof res.end }).end = (chunk?: unknown, ...args: unknown[]) => {
+    if (chunk) {
+      if (Buffer.isBuffer(chunk)) chunks.push(chunk);
+      else if (typeof chunk === "string") chunks.push(Buffer.from(chunk));
+    }
+    const body = Buffer.concat(chunks).toString("utf8");
+    console.info("[mcp] resp", { status: res.statusCode, body: body.slice(0, 400) });
+    return (origEnd as (...a: unknown[]) => Response)(chunk, ...args);
+  };
+
   const server = buildMcpServer();
   try {
     const transport = new StreamableHTTPServerTransport({
@@ -358,7 +381,7 @@ async function handleMcpPost(req: Request, res: Response): Promise<void> {
       enableJsonResponse: true,
     });
     await server.connect(transport);
-    await transport.handleRequest(req, res, req.body);
+    await transport.handleRequest(req, res, body);
     res.on("close", () => {
       transport.close();
       server.close();
