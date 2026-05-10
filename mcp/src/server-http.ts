@@ -332,24 +332,25 @@ function requireBearer(req: Request, res: Response, next: NextFunction): void {
 
 // ─── MCP Endpoint ─────────────────────────────────────────
 
-// Ensure Accept header has both application/json and text/event-stream (required by MCP SDK).
-// Some MCP clients (e.g. ChatGPT) omit text/event-stream when using enableJsonResponse mode.
-app.use("/mcp", (req: Request, _res: Response, next: NextFunction) => {
+// Shared Accept-header normalizer: MCP SDK requires both application/json and
+// text/event-stream. ChatGPT's client omits text/event-stream, causing 406.
+function normalizeMcpAccept(req: Request, _res: Response, next: NextFunction): void {
   if (req.method === "POST") {
     const accept = req.headers.accept ?? "";
     if (!accept.includes("text/event-stream")) {
       req.headers.accept = accept ? `${accept}, text/event-stream` : "application/json, text/event-stream";
     }
-    console.info("[mcp] POST request", {
+    console.info("[mcp] POST", {
+      path: req.path,
       accept: req.headers.accept,
       has_auth: !!req.headers.authorization,
-      content_type: req.headers["content-type"],
+      ua: req.headers["user-agent"]?.slice(0, 40),
     });
   }
   next();
-});
+}
 
-app.post("/mcp", requireBearer, async (req, res) => {
+async function handleMcpPost(req: Request, res: Response): Promise<void> {
   const server = buildMcpServer();
   try {
     const transport = new StreamableHTTPServerTransport({
@@ -366,11 +367,19 @@ app.post("/mcp", requireBearer, async (req, res) => {
     console.error("[mcp] error:", err);
     if (!res.headersSent) res.status(500).json({ error: "internal_server_error" });
   }
-});
+}
 
-app.get("/mcp", requireBearer, (_req, res) => {
+function handleMcpGet(_req: Request, res: Response): void {
   res.status(405).set("Allow", "POST").send("Method Not Allowed");
-});
+}
+
+// ChatGPT sends MCP requests to root "/" (the URL the user configured, without path)
+app.post("/", normalizeMcpAccept, requireBearer, handleMcpPost);
+app.get("/", requireBearer, handleMcpGet);
+
+// Also serve at /mcp for clients that append the path themselves
+app.post("/mcp", normalizeMcpAccept, requireBearer, handleMcpPost);
+app.get("/mcp", requireBearer, handleMcpGet);
 
 // ─── Health ───────────────────────────────────────────────
 
