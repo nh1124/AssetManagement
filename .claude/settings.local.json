@@ -18,7 +18,18 @@
       "Bash(./node_modules/.bin/tsc --noEmit)",
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(python -m alembic upgrade head)",
+      "PowerShell(Get-Command python3 -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-Command python -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-Command alembic -ErrorAction SilentlyContinue)",
+      "PowerShell($env:PYTHONPATH = \"c:\\\\Users\\\\nh112\\\\programming\\\\project\\\\AssetManagement\\\\backend\"; Set-Location \"c:\\\\Users\\\\nh112\\\\programming\\\\project\\\\AssetManagement\\\\backend\"; & \"C:\\\\Users\\\\nh112\\\\programming\\\\tool\\\\anaconda3\\\\Scripts\\\\alembic.exe\" upgrade head 2>&1)",
+      "PowerShell($alembicPath = \\(Get-Command alembic.exe\\).Source; Write-Output $alembicPath)",
+      "PowerShell(head -10)",
+      "PowerShell(docker exec finance-backend alembic upgrade head 2>&1)",
+      "PowerShell(docker exec finance-backend alembic current 2>&1)",
+      "PowerShell(docker exec finance-db psql -U finance -d finance -c \"\\\\d monthly_plan_lines\" 2>&1)",
+      "PowerShell(docker exec finance-backend python -c \"from app.database import engine; from sqlalchemy import inspect; cols = [c['name'] for c in inspect\\(engine\\).get_columns\\('monthly_plan_lines'\\)]; print\\(cols\\)\" 2>&1)"
     ]
   }
 }

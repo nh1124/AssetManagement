@@ -57,13 +57,10 @@ interface BudgetAccount {
     account_id?: number | null;
     target_type?: 'account' | 'capsule' | 'life_event' | 'product' | 'manual' | null;
     target_id?: number | null;
-    source_account_id?: number | null;
     name: string;
     amount: number;
     balance: number;
     plan_line_id?: number | null;
-    priority?: number;
-    note?: string | null;
     suggested_amount?: number;
     suggested_source?: string | null;
     source?: string | null;
@@ -332,10 +329,7 @@ function BudgetPanel({
                 target_type: row.target_type ?? (row.account_id ? 'account' : 'manual'),
                 target_id: row.target_id ?? null,
                 account_id: row.account_id ?? null,
-                source_account_id: row.source_account_id ?? null,
                 plan_line_id: row.plan_line_id ?? null,
-                priority: row.priority ?? 2,
-                note: row.note ?? null,
                 source: row.source ?? 'manual',
                 raw_id: row.id,
             }));
@@ -358,8 +352,6 @@ function BudgetPanel({
                 account_id: line.account_id ?? null,
                 source_account_id: line.source_account_id ?? null,
                 plan_line_id: line.id ?? null,
-                priority: line.priority ?? 2,
-                note: line.note ?? null,
                 source: line.source ?? 'manual',
                 raw_id: line.id ?? 0,
             }));
@@ -442,11 +434,8 @@ function BudgetPanel({
             target_type: targetType,
             target_id: row.target_id ?? null,
             account_id: row.account_id ?? (targetType === 'account' && row.raw_id > 0 ? row.raw_id : null),
-            source_account_id: row.source_account_id ?? null,
             name: row.name,
             amount,
-            priority: row.priority ?? 2,
-            note: row.note ?? null,
             source: 'manual',
             recurring_transaction_id: null,
             is_active: true,

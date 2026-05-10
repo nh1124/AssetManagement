@@ -187,7 +187,6 @@ export interface MonthlyPlanLine {
     name?: string | null;
     target_name?: string | null;
     account_name?: string | null;
-    source_account_name?: string | null;
     amount: number;
     actual?: number;
     variance?: number;
@@ -202,14 +201,6 @@ export interface MonthlyPlanLine {
     }>;
     suggested_status?: 'synced' | 'diff' | null;
     sync_status?: 'synced' | 'missing' | 'diff' | null;
-    recurring_transaction_ids?: number[];
-    recurring_items?: Array<{
-        id: number;
-        name: string;
-        amount: number;
-        original_amount: number;
-        currency: string;
-    }>;
     registry_amount?: number;
     registry_entry_ids?: number[];
     registry_items?: Array<{
@@ -219,8 +210,6 @@ export interface MonthlyPlanLine {
         source?: string;
         entry_type?: string;
     }>;
-    priority?: number;
-    note?: string | null;
     recurring_transaction_id?: number | null;
     is_active?: boolean;
     source?: string;

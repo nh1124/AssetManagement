@@ -348,8 +348,6 @@ class MonthlyPlanLineBase(BaseModel):
     source_account_id: Optional[int] = None
     name: Optional[str] = None
     amount: float = 0.0
-    priority: int = 2
-    note: Optional[str] = None
     source: str = "manual"
     recurring_transaction_id: Optional[int] = None
     is_active: bool = True
@@ -374,8 +372,6 @@ class MonthlyPlanLineUpdate(BaseModel):
     source_account_id: Optional[int] = None
     name: Optional[str] = None
     amount: Optional[float] = None
-    priority: Optional[int] = None
-    note: Optional[str] = None
     source: Optional[str] = None
     recurring_transaction_id: Optional[int] = None
     is_active: Optional[bool] = None
@@ -385,19 +381,17 @@ class MonthlyPlanLine(MonthlyPlanLineBase):
     id: int
     target_name: Optional[str] = None
     account_name: Optional[str] = None
-    source_account_name: Optional[str] = None
     actual: float = 0.0
     variance: float = 0.0
     recurring_amount: float = 0.0
-    product_expense_amount: float = 0.0
-    product_expense_items: Optional[list[dict[str, Any]]] = None
     suggested_amount: float = 0.0
     suggested_source: Optional[str] = None
     suggested_items: Optional[list[dict[str, Any]]] = None
     suggested_status: Optional[str] = None
+    registry_amount: Optional[float] = None
+    registry_entry_ids: Optional[list[int]] = None
+    registry_items: Optional[list[dict[str, Any]]] = None
     sync_status: Optional[str] = None
-    recurring_transaction_ids: Optional[list[int]] = None
-    recurring_items: Optional[list[dict]] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
 

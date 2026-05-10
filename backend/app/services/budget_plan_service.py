@@ -177,7 +177,6 @@ def _serialize_plan_line(
         "name": line.name,
         "target_name": target_name,
         "account_name": name_maps["account"].get(line.account_id) if line.account_id else None,
-        "source_account_name": name_maps["account"].get(line.source_account_id) if line.source_account_id else None,
         "amount": round(line.amount or 0.0, 0),
         "actual": round(actual, 0),
         "variance": round((line.amount or 0.0) - actual, 0),
@@ -186,8 +185,6 @@ def _serialize_plan_line(
         "suggested_source": None,
         "suggested_items": [],
         "suggested_status": None,
-        "priority": line.priority,
-        "note": line.note,
         "is_active": line.is_active,
         "source": line.source or "manual",
         "recurring_transaction_id": line.recurring_transaction_id,
@@ -213,7 +210,6 @@ def _virtual_capsule_line(
         "name": capsule.name,
         "target_name": capsule.name,
         "account_name": capsule.account.name if capsule.account else None,
-        "source_account_name": None,
         "amount": round(capsule.monthly_contribution or 0.0, 0),
         "recurring_amount": 0.0,
         "suggested_amount": round(capsule.monthly_contribution or 0.0, 0)
@@ -221,8 +217,6 @@ def _virtual_capsule_line(
         "suggested_source": "product_reserve" if capsule.capsule_type == "product_pool" else None,
         "suggested_items": product_reserve_source_items(db, capsule) if capsule.capsule_type == "product_pool" else [],
         "suggested_status": "synced" if capsule.capsule_type == "product_pool" else None,
-        "priority": 2,
-        "note": None,
         "is_active": True,
         "source": "capsule",
         "recurring_transaction_id": None,
@@ -329,7 +323,7 @@ def _deduplicate_active_plan_models(db: Session, plan_models: list[models.Monthl
 
     if changed:
         db.commit()
-    return sorted(deduped, key=lambda line: (line.line_type, line.priority, line.id))
+    return sorted(deduped, key=lambda line: (line.line_type, line.id))
 
 
 def _active_line_with_identity(db: Session, client_id: int, data: dict) -> models.MonthlyPlanLine | None:
@@ -371,7 +365,6 @@ def _registry_plan_line(
         "name": entry.name,
         "target_name": target_name,
         "account_name": name_maps["account"].get(account_id) if account_id else None,
-        "source_account_name": name_maps["account"].get(source_account_id) if source_account_id else None,
         "amount": 0.0,
         "actual": 0.0,
         "variance": 0.0,
@@ -389,14 +382,8 @@ def _registry_plan_line(
             "source": "registry",
             "entry_type": entry.entry_type,
         }],
-        "product_expense_amount": 0.0,
-        "product_expense_items": [],
-        "priority": 2,
-        "note": entry.note,
         "source": "registry",
         "recurring_transaction_id": entry.source_recurring_transaction_id,
-        "recurring_transaction_ids": [],
-        "recurring_items": [],
         "sync_status": "missing",
         "is_active": True,
     }
@@ -432,19 +419,6 @@ def registry_plan_lines(db: Session, client_id: int, period: str) -> list[dict]:
         existing["registry_items"] = [
             *existing.get("registry_items", []),
             *line.get("registry_items", []),
-        ]
-        existing["product_expense_amount"] = round((existing.get("product_expense_amount") or 0.0) + (line.get("product_expense_amount") or 0.0), 0)
-        existing["product_expense_items"] = [
-            *existing.get("product_expense_items", []),
-            *line.get("product_expense_items", []),
-        ]
-        existing["recurring_transaction_ids"] = [
-            *existing.get("recurring_transaction_ids", []),
-            *line.get("recurring_transaction_ids", []),
-        ]
-        existing["recurring_items"] = [
-            *existing.get("recurring_items", []),
-            *line.get("recurring_items", []),
         ]
         existing["recurring_transaction_id"] = existing.get("recurring_transaction_id") or line.get("recurring_transaction_id")
     return list(aggregated.values())
@@ -503,10 +477,6 @@ def _merge_registry_context(plan_lines: list[dict], registry_lines: list[dict]) 
             line["registry_amount"] = registry_amount
             line["registry_entry_ids"] = registry_line.get("registry_entry_ids", [])
             line["registry_items"] = registry_line.get("registry_items", [])
-            line["product_expense_amount"] = 0.0
-            line["product_expense_items"] = []
-            line["recurring_transaction_ids"] = []
-            line["recurring_items"] = []
             line["recurring_amount"] = registry_amount
             line["suggested_amount"] = registry_amount
             line["suggested_source"] = "registry"
@@ -569,7 +539,7 @@ def get_budget_summary(
         models.MonthlyPlanLine.client_id == client_id,
         models.MonthlyPlanLine.target_period == period,
         models.MonthlyPlanLine.is_active.is_(True),
-    ).order_by(models.MonthlyPlanLine.line_type, models.MonthlyPlanLine.priority, models.MonthlyPlanLine.id).all()
+    ).order_by(models.MonthlyPlanLine.line_type, models.MonthlyPlanLine.id).all()
     plan_models = _deduplicate_active_plan_models(db, plan_models)
     plan_lines = [
         _serialize_plan_line(db, client_id, line, name_maps, capsule_accounts)
@@ -664,16 +634,11 @@ def get_budget_summary(
                 "account_id": line["account_id"],
                 "target_type": line.get("target_type"),
                 "target_id": line.get("target_id"),
-                "source_account_id": line.get("source_account_id"),
                 "name": line["target_name"],
                 "amount": line["amount"],
                 "balance": line["actual"],
                 "plan_line_id": line.get("id"),
-                "priority": line.get("priority", 2),
-                "note": line.get("note"),
                 "recurring_amount": line.get("recurring_amount", 0.0),
-                "product_expense_amount": line.get("product_expense_amount", 0.0),
-                "product_expense_items": line.get("product_expense_items", []),
                 "registry_amount": line.get("registry_amount", 0.0),
                 "registry_entry_ids": line.get("registry_entry_ids", []),
                 "registry_items": line.get("registry_items", []),
@@ -683,8 +648,6 @@ def get_budget_summary(
                 "source": line.get("source"),
                 "sync_status": line.get("sync_status"),
                 "recurring_transaction_id": line.get("recurring_transaction_id"),
-                "recurring_transaction_ids": line.get("recurring_transaction_ids", []),
-                "recurring_items": line.get("recurring_items", []),
             }
             for line in expense_lines
         ],

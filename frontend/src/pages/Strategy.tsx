@@ -45,23 +45,12 @@ interface BudgetAccount {
     account_id?: number | null;
     target_type?: MonthlyPlanTargetType | null;
     target_id?: number | null;
-    source_account_id?: number | null;
     name: string;
     amount: number;
     balance: number;
     plan_line_id?: number | null;
-    priority?: number;
-    note?: string | null;
     recurring_amount?: number;
     recurring_transaction_id?: number | null;
-    recurring_transaction_ids?: number[];
-    recurring_items?: Array<{
-        id: number;
-        name: string;
-        amount: number;
-        original_amount: number;
-        currency: string;
-    }>;
     registry_amount?: number;
     registry_entry_ids?: number[];
     registry_items?: Array<{
@@ -71,20 +60,8 @@ interface BudgetAccount {
         source?: string;
         entry_type?: string;
     }>;
-    product_expense_amount?: number;
-    product_expense_items?: Array<{
-        id: number;
-        name: string;
-        amount: number;
-    }>;
     suggested_amount?: number;
-    suggested_source?: 'recurrence' | 'product_expense' | 'recurrence_product_expense' | string | null;
-    suggested_items?: Array<{
-        id: number;
-        name: string;
-        amount: number;
-        source?: string;
-    }>;
+    suggested_source?: string | null;
     suggested_status?: 'synced' | 'missing' | 'diff' | null;
     source?: string | null;
     sync_status?: 'synced' | 'missing' | 'diff' | null;
@@ -287,28 +264,13 @@ export default function Strategy() {
     );
 
     const budgetSourceDetails = (account: BudgetAccount): SourceDetail[] => {
-        const registry = (account.registry_items ?? []).map((item) => ({
+        const details = (account.registry_items ?? []).map((item) => ({
             id: `registry-${item.id}`,
             kind: 'registry' as const,
             label: item.name,
             amount: Number(item.amount || 0),
             conflict: false,
         }));
-        const recurring = (account.recurring_items ?? []).map((item) => ({
-            id: `recurrence-${item.id}`,
-            kind: 'recurrence' as const,
-            label: item.name,
-            amount: Number(item.amount || 0),
-            conflict: false,
-        }));
-        const products = (account.product_expense_items ?? []).map((item) => ({
-            id: `product-expense-${item.id}`,
-            kind: 'product_expense' as const,
-            label: item.name,
-            amount: Number(item.amount || 0),
-            conflict: false,
-        }));
-        const details = [...registry, ...recurring, ...products];
         const conflict = detailsHaveConflict(details);
         return details.map((detail) => ({ ...detail, conflict }));
     };
@@ -321,13 +283,6 @@ export default function Strategy() {
             amount: Number(item.amount || 0),
             conflict: false,
         }));
-        const recurring = (line.recurring_items ?? []).map((item) => ({
-            id: `recurrence-${item.id}`,
-            kind: 'recurrence' as const,
-            label: item.name,
-            amount: Number(item.amount || 0),
-            conflict: false,
-        }));
         const suggested = (line.suggested_items ?? []).map((item) => ({
             id: `suggested-${item.source ?? 'product'}-${item.id}`,
             kind: (item.source === 'product_reserve' ? 'product_reserve' : 'product_expense') as SourceDetail['kind'],
@@ -335,7 +290,7 @@ export default function Strategy() {
             amount: Number(item.amount || 0),
             conflict: false,
         }));
-        const details = [...registry, ...recurring, ...suggested];
+        const details = [...registry, ...suggested];
         const conflict = detailsHaveConflict(details);
         return details.map((detail) => ({ ...detail, conflict }));
     };
@@ -515,11 +470,8 @@ export default function Strategy() {
             target_type: account.target_type ?? 'account',
             target_id: account.target_id ?? null,
             account_id: account.account_id ?? (account.target_type === 'account' ? account.id : null),
-            source_account_id: account.source_account_id ?? null,
             name: account.name ?? null,
             amount,
-            priority: account.priority ?? 2,
-            note: account.note ?? null,
             source,
             recurring_transaction_id: source.includes('recurrence') ? account.recurring_transaction_id ?? null : null,
             is_active: true,
@@ -577,8 +529,6 @@ export default function Strategy() {
                 source_account_id: line.source_account_id ?? null,
                 name: line.name || line.target_name || null,
                 amount: Number(line.amount || 0),
-                priority: line.priority ?? 2,
-                note: line.note ?? null,
                 source: line.source && SYNCED_SOURCES.has(line.source) ? line.source : 'manual',
                 recurring_transaction_id: line.source?.includes('recurrence') ? line.recurring_transaction_id ?? null : null,
                 is_active: true,
@@ -760,11 +710,8 @@ export default function Strategy() {
                 target_type: account.target_type ?? (account.account_id ? 'account' : 'manual'),
                 target_id: account.target_id ?? null,
                 account_id: account.account_id ?? null,
-                source_account_id: account.source_account_id ?? null,
                 name: account.name,
                 amount: budgetAmountWithExistingAdjustment(account),
-                priority: account.priority ?? 2,
-                note: account.note ?? null,
                 source: suggestedBudgetSource(account),
                 recurring_transaction_id: account.suggested_source?.includes('recurrence') ? account.recurring_transaction_id ?? null : null,
                 is_active: true,
@@ -786,11 +733,8 @@ export default function Strategy() {
                 target_type: account.target_type ?? (account.account_id ? 'account' : 'manual'),
                 target_id: account.target_id ?? null,
                 account_id: account.account_id ?? null,
-                source_account_id: account.source_account_id ?? null,
                 name: account.name,
                 amount: budgetAmountWithExistingAdjustment(account),
-                priority: account.priority ?? 2,
-                note: account.note ?? null,
                 source: suggestedBudgetSource(account),
                 recurring_transaction_id: account.suggested_source?.includes('recurrence') ? account.recurring_transaction_id ?? null : null,
                 is_active: true,
@@ -805,64 +749,6 @@ export default function Strategy() {
             await fetchBudgetSummary();
         } catch (error) {
             showToast('Failed to sync budget suggestions', 'error');
-        }
-    };
-
-    const syncRecurringPlanLine = async (line: EditablePlanLine) => {
-        if (!line.recurring_transaction_id) return;
-        try {
-            await persistMonthlyPlanLines([{
-                ...(typeof line.id === 'number' ? { id: line.id } : {}),
-                target_period: currentPeriod,
-                line_type: line.line_type,
-                target_type: line.target_type,
-                target_id: line.target_id ?? null,
-                account_id: line.account_id ?? null,
-                source_account_id: line.source_account_id ?? null,
-                name: line.name || line.target_name || null,
-                amount: Number(line.recurring_amount || 0),
-                priority: line.priority ?? 2,
-                note: line.note ?? null,
-                source: line.suggested_source === 'registry' ? 'registry' : 'recurrence',
-                recurring_transaction_id: line.recurring_transaction_id,
-                is_active: true,
-            }]);
-            showToast('Synced with recurrence', 'success');
-            await fetchBudgetSummary();
-        } catch (error) {
-            showToast('Failed to sync recurrence', 'error');
-        }
-    };
-
-    const syncRecurringPlanLines = async (lines: EditablePlanLine[]) => {
-        const payload = lines
-            .filter((line) => line.recurring_transaction_id && line.sync_status !== 'synced')
-            .map((line) => ({
-                ...(typeof line.id === 'number' ? { id: line.id } : {}),
-                target_period: currentPeriod,
-                line_type: line.line_type,
-                target_type: line.target_type,
-                target_id: line.target_id ?? null,
-                account_id: line.account_id ?? null,
-                source_account_id: line.source_account_id ?? null,
-                name: line.name || line.target_name || null,
-                amount: Number(line.recurring_amount || 0),
-                priority: line.priority ?? 2,
-                note: line.note ?? null,
-                source: line.suggested_source === 'registry' ? 'registry' : 'recurrence',
-                recurring_transaction_id: line.recurring_transaction_id ?? null,
-                is_active: true,
-            }));
-        if (payload.length === 0) {
-            showToast('No recurrence differences to sync', 'info');
-            return;
-        }
-        try {
-            await persistMonthlyPlanLines(payload);
-            showToast(`Synced ${payload.length} recurrence item${payload.length === 1 ? '' : 's'}`, 'success');
-            await fetchBudgetSummary();
-        } catch (error) {
-            showToast('Failed to sync recurrences', 'error');
         }
     };
 
@@ -895,8 +781,6 @@ export default function Strategy() {
                 source_account_id: line.source_account_id ?? null,
                 name: line.name || line.target_name || null,
                 amount: planLineAmountWithExistingAdjustment(line),
-                priority: line.priority ?? 2,
-                note: line.note ?? null,
                 source: line.suggested_source === 'product_reserve' ? 'capsule' : line.suggested_source === 'registry' ? 'registry' : line.recurring_transaction_id ? 'recurrence' : line.source ?? 'manual',
                 recurring_transaction_id: line.recurring_transaction_id ?? null,
                 is_active: true,
@@ -921,8 +805,6 @@ export default function Strategy() {
                 source_account_id: line.source_account_id ?? null,
                 name: line.name || line.target_name || null,
                 amount: planLineAmountWithExistingAdjustment(line),
-                priority: line.priority ?? 2,
-                note: line.note ?? null,
                 source: line.suggested_source === 'product_reserve' ? 'capsule' : line.suggested_source === 'registry' ? 'registry' : line.recurring_transaction_id ? 'recurrence' : line.source ?? 'manual',
                 recurring_transaction_id: line.recurring_transaction_id ?? null,
                 is_active: true,
@@ -958,15 +840,12 @@ export default function Strategy() {
                     target_type: account.target_type ?? (account.account_id ? 'account' : 'manual'),
                     target_id: account.target_id ?? null,
                     account_id: account.account_id ?? null,
-                    source_account_id: account.source_account_id ?? null,
                     name: account.name,
                     amount: (() => {
                         const sourceAmount = Number(account.suggested_amount || account.recurring_amount || 0);
                         const adjustment = account.plan_line_id ? Number(account.amount || 0) - sourceAmount : 0;
                         return sourceAmount + adjustment;
                     })(),
-                    priority: 2,
-                    note: null,
                     source: suggestedBudgetSource(account),
                     recurring_transaction_id: account.suggested_source?.includes('recurrence') ? account.recurring_transaction_id ?? null : null,
                     is_active: true,
@@ -991,8 +870,6 @@ export default function Strategy() {
                         const adjustment = line.id ? Number(line.amount || 0) - sourceAmount : 0;
                         return sourceAmount + adjustment;
                     })(),
-                    priority: line.priority ?? 2,
-                    note: line.note ?? null,
                     source: line.suggested_source === 'product_reserve' ? 'capsule' : line.suggested_source === 'registry' ? 'registry' : 'recurrence',
                     recurring_transaction_id: line.recurring_transaction_id ?? null,
                     is_active: true,
@@ -1015,11 +892,8 @@ export default function Strategy() {
                         target_type: 'capsule',
                         target_id: warning.capsule_id ?? null,
                         account_id: warning.account_id ?? null,
-                        source_account_id: null,
                         name: warning.name,
                         amount: Number(warning.amount || 0) + (existing?.id ? Number(existing.amount || 0) - Number(warning.amount || 0) : 0),
-                        priority: 2,
-                        note: null,
                         source: 'capsule',
                         recurring_transaction_id: null,
                         is_active: true,
@@ -1048,11 +922,8 @@ export default function Strategy() {
                 target_type: account.target_type ?? (account.account_id ? 'account' : 'manual'),
                 target_id: account.target_id ?? null,
                 account_id: account.account_id ?? null,
-                source_account_id: account.source_account_id ?? null,
                 name: account.name,
                 amount: Number(budgetEdits[account.id] ?? account.amount ?? 0),
-                priority: 2,
-                note: null,
                 source: 'manual',
                 recurring_transaction_id: null,
                 is_active: true,
@@ -1077,8 +948,6 @@ export default function Strategy() {
                 source_account_id: line.source_account_id ?? null,
                 name: line.name || line.target_name || null,
                 amount: Number(line.amount || 0),
-                priority: line.priority ?? 2,
-                note: line.note ?? null,
                 source: 'manual',
                 recurring_transaction_id: null,
                 is_active: true,
@@ -1158,8 +1027,6 @@ export default function Strategy() {
                         source_account_id: line.source_account_id ?? null,
                         name: line.name || line.target_name || null,
                         amount: targetSourceAmount + adjustment,
-                        priority: line.priority ?? 2,
-                        note: line.note ?? null,
                         source: copiedSource,
                         recurring_transaction_id: copiedSource.includes('recurrence') ? targetLine?.recurring_transaction_id ?? line.recurring_transaction_id ?? null : null,
                         is_active: true,
@@ -1213,11 +1080,8 @@ export default function Strategy() {
                     target_type: targetType,
                     target_id: targetId,
                     account_id: accountId,
-                    source_account_id: null,
                     name,
                     amount,
-                    priority: 2,
-                    note: null,
                     source: 'manual',
                     recurring_transaction_id: null,
                     is_active: true,
@@ -1261,11 +1125,8 @@ export default function Strategy() {
                 amount,
                 actual: 0,
                 variance: amount,
-                priority: 2,
                 source: 'manual',
                 recurring_transaction_id: recurringContext?.recurring_transaction_id ?? null,
-                recurring_transaction_ids: recurringContext?.recurring_transaction_ids ?? [],
-                recurring_items: recurringContext?.recurring_items ?? [],
                 recurring_amount: recurringContext?.recurring_amount ?? 0,
                 sync_status: recurringContext ? 'diff' : null,
                 is_active: true,
@@ -1298,7 +1159,6 @@ export default function Strategy() {
                     account_id: line.account_id ?? null,
                     name: line.name || line.target_name || null,
                     amount: 0,
-                    priority: line.priority ?? 2,
                     is_active: true,
                 }]);
                 await fetchBudgetSummary();
@@ -1619,18 +1479,12 @@ export default function Strategy() {
             types: MonthlyPlanLineType[],
             addType: MonthlyPlanLineType,
             emptyText: string,
-            actualLabel = 'Actual',
         ) => {
             const rows = planLinesFor(types);
-            const usesSuggestedColumn = addType === 'allocation';
             const totalActual = planGroupActual(types);
             const totalPlan = planGroupTotal(types);
             const totalSuggested = rows.reduce((sum, line) => sum + planLineSourceAmount(line), 0);
-            const totalRecurring = rows.reduce((sum, line) => sum + Number(line.recurring_amount || 0), 0);
-            const syncableRows = usesSuggestedColumn
-                ? rows.filter((line) => planLineSourceAmount(line) > 0 && !isPlanLineSourceSynced(line))
-                : rows.filter((line) => line.recurring_transaction_id && line.sync_status !== 'synced');
-            const sourceColumnLabel = usesSuggestedColumn ? 'Source / Suggested' : 'Registry';
+            const syncableRows = rows.filter((line) => planLineSourceAmount(line) > 0 && !isPlanLineSourceSynced(line));
             return (
                 <div className="mt-6">
                     <div className="flex items-center justify-between mb-3">
@@ -1642,9 +1496,9 @@ export default function Strategy() {
                             <span className="text-xs text-slate-500 font-mono-nums">Total {formatCurrency(totalPlan)}</span>
                             <button
                                 type="button"
-                                title="Sync all recurrence differences"
+                                title="Sync all registry differences"
                                 disabled={syncableRows.length === 0}
-                                onClick={() => usesSuggestedColumn ? syncSuggestedPlanLines(syncableRows) : syncRecurringPlanLines(syncableRows)}
+                                onClick={() => syncSuggestedPlanLines(syncableRows)}
                                 className={`text-slate-500 ${syncableRows.length > 0 ? 'hover:text-amber-300' : 'opacity-30 cursor-not-allowed'}`}
                             >
                                 <RefreshCw size={14} />
@@ -1659,98 +1513,71 @@ export default function Strategy() {
                         <table className="w-full text-[10px]">
                             <thead className="text-slate-500 uppercase border-b border-slate-700 bg-slate-800/50">
                                 <tr>
-                                    <th className="px-2 py-2 text-left font-normal">Type</th>
-                                    <th className="px-2 py-2 text-left font-normal">Target</th>
-                                    <th className="px-2 py-2 text-right font-normal">{actualLabel}</th>
-                                    <th className="px-2 py-2 text-right font-normal">{sourceColumnLabel}</th>
-                                    {usesSuggestedColumn && <th className="px-2 py-2 text-right font-normal">Adjust</th>}
+                                    <th className="px-2 py-2 text-left font-normal">Name</th>
+                                    <th className="px-2 py-2 text-right font-normal">Actual</th>
+                                    <th className="px-2 py-2 text-right font-normal">Registry</th>
+                                    <th className="px-2 py-2 text-right font-normal">Adjust</th>
                                     <th className="px-2 py-2 text-right font-normal">Plan</th>
                                     <th className="px-2 py-2 text-right font-normal">Variance</th>
-                                    <th className="px-2 py-2 text-right font-normal">Edit</th>
+                                    <th className="px-2 py-2 sr-only">Actions</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-800/70">
                                 {rows.length === 0 ? (
-                                    <tr><td colSpan={usesSuggestedColumn ? 8 : 7} className="px-2 py-4 text-slate-600">{emptyText}</td></tr>
+                                    <tr><td colSpan={7} className="px-2 py-4 text-slate-600">{emptyText}</td></tr>
                                 ) : rows.map((line) => {
-                                    const variance = addType === 'allocation'
-                                        ? Number(line.actual || 0) - Number(line.amount || 0)
-                                        : Number(line.amount || 0) - Number(line.actual || 0);
-                                    const isRecurringControlled = line.source === 'recurrence';
-                                    const sourceAmount = usesSuggestedColumn ? planLineSourceAmount(line) : Number(line.recurring_amount || 0);
+                                    const variance = Number(line.actual || 0) - Number(line.amount || 0);
+                                    const sourceAmount = planLineSourceAmount(line);
                                     const adjustment = Number(line.amount || 0) - sourceAmount;
-                                    const hasSuggestedAmount = usesSuggestedColumn && sourceAmount > 0;
                                     const sourceSynced = isPlanLineSourceSynced(line);
                                     const rowKey = `plan-${line.local_id}`;
                                     const sourceDetails = planSourceDetails(line);
-                                    const sourceLabel = line.suggested_source === 'registry'
-                                        ? 'Registry'
-                                        : line.suggested_source === 'product_reserve'
-                                        ? 'Product Reserve'
-                                        : line.suggested_source || (Number(line.recurring_amount || 0) > 0 ? 'Registry' : '');
                                     return (
                                         <Fragment key={line.local_id}>
                                             <tr className="hover:bg-slate-800/30 group">
-                                                <td className="px-2 py-2 text-slate-400">{line.line_type.replace('_', ' ')}</td>
                                                 <td className="px-2 py-2 text-slate-300">
-                                                    {planTargetLabel(line)}
+                                                    <div>
+                                                        <p>{planTargetLabel(line)}</p>
+                                                        <p className="text-[9px] text-slate-600 uppercase">{line.line_type.replace('_', ' ')}</p>
+                                                    </div>
                                                 </td>
                                                 <td className="px-2 py-2 text-right font-mono-nums text-slate-500">{formatCurrency(line.actual)}</td>
                                                 <td className="px-2 py-2 text-right">
                                                     <div className="flex items-center justify-end gap-1.5">
                                                         {renderSourceToggle(rowKey, sourceDetails)}
-                                                        {hasSuggestedAmount ? (
+                                                        {sourceAmount > 0 ? (
                                                             <div className="space-y-0.5">
                                                                 <p className="font-mono-nums text-cyan-300">{formatCurrency(sourceAmount)}</p>
-                                                                <p className="text-[9px] uppercase text-slate-500">{sourceLabel}</p>
+                                                                <p className="text-[9px] uppercase text-slate-500">Registry</p>
                                                             </div>
                                                         ) : (
-                                                            <span className={`font-mono-nums ${(line.recurring_amount || 0) > 0 ? 'text-cyan-300' : 'text-slate-600'}`}>
-                                                                {(line.recurring_amount || 0) > 0 ? formatCurrency(line.recurring_amount) : '-'}
-                                                            </span>
+                                                            <span className="font-mono-nums text-slate-600">-</span>
                                                         )}
                                                     </div>
                                                 </td>
-                                                {usesSuggestedColumn && (
-                                                    <td className="px-2 py-2 text-right">
-                                                        <input
-                                                            type="number"
-                                                            step="1000"
-                                                            value={adjustment}
-                                                            onChange={(event) => {
-                                                                const nextAdjustment = Number(event.target.value) || 0;
-                                                                updatePlanLineAmount(line.local_id, sourceAmount + nextAdjustment);
-                                                            }}
-                                                            className="w-20 bg-transparent border-b border-slate-700 text-right font-mono-nums outline-none focus:border-cyan-500"
-                                                        />
-                                                    </td>
-                                                )}
                                                 <td className="px-2 py-2 text-right">
-                                                    {usesSuggestedColumn ? (
-                                                        <span className="font-mono-nums text-slate-200">{formatCurrency(line.amount)}</span>
-                                                    ) : (
-                                                        <input
-                                                            type="number"
-                                                            step="1000"
-                                                            value={line.amount}
-                                                            disabled={isRecurringControlled}
-                                                            onChange={(event) => updatePlanLineAmount(line.local_id, Number(event.target.value) || 0)}
-                                                            className={`w-24 bg-transparent border-b text-right font-mono-nums outline-none ${isRecurringControlled ? 'border-transparent text-slate-500' : 'border-slate-700 focus:border-cyan-500'}`}
-                                                        />
-                                                    )}
+                                                    <input
+                                                        type="number"
+                                                        step="1000"
+                                                        title="Adjust plan amount"
+                                                        value={adjustment}
+                                                        onChange={(event) => {
+                                                            const nextAdjustment = Number(event.target.value) || 0;
+                                                            updatePlanLineAmount(line.local_id, sourceAmount + nextAdjustment);
+                                                        }}
+                                                        className="w-20 bg-transparent border-b border-slate-700 text-right font-mono-nums outline-none focus:border-cyan-500"
+                                                    />
+                                                </td>
+                                                <td className="px-2 py-2 text-right">
+                                                    <span className="font-mono-nums text-slate-200">{formatCurrency(line.amount)}</span>
                                                 </td>
                                                 <td className={`px-2 py-2 text-right font-mono-nums ${variance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(variance)}</td>
                                                 <td className="px-2 py-2 text-right">
                                                     <div className="flex items-center justify-end gap-2">
-                                                        {!usesSuggestedColumn && line.recurring_transaction_id && (
-                                                            <button type="button" title={line.sync_status === 'synced' ? 'Synced with recurrence' : 'Sync with recurrence'} onClick={() => syncRecurringPlanLine(line)} className={line.sync_status === 'synced' ? 'text-cyan-400 hover:text-cyan-200' : 'text-amber-400 hover:text-amber-200'}>
-                                                                <RefreshCw size={12} />
-                                                            </button>
-                                                        )}
-                                                        {hasSuggestedAmount && (
+                                                        {sourceAmount > 0 && (
                                                             <button
                                                                 type="button"
-                                                                title="Sync source amount while keeping adjust"
+                                                                title={sourceSynced ? 'Synced with registry' : 'Sync with registry'}
                                                                 onClick={() => syncSuggestedPlanLine(line)}
                                                                 className={sourceSynced ? 'text-cyan-400 hover:text-cyan-200' : 'text-amber-400 hover:text-amber-200'}
                                                             >
@@ -1762,22 +1589,19 @@ export default function Strategy() {
                                                                 <Unlink size={12} />
                                                             </button>
                                                         )}
-                                                        {!isRecurringControlled && (
-                                                            <button type="button" title="Remove line" onClick={() => removePlanLine(line)} className="text-slate-500 hover:text-rose-400"><Trash2 size={12} /></button>
-                                                        )}
+                                                        <button type="button" title="Remove line" onClick={() => removePlanLine(line)} className="text-slate-500 hover:text-rose-400"><Trash2 size={12} /></button>
                                                     </div>
                                                 </td>
                                             </tr>
-                                            {renderSourceDetailsRow(rowKey, sourceDetails, usesSuggestedColumn ? 8 : 7)}
+                                            {renderSourceDetailsRow(rowKey, sourceDetails, 7)}
                                         </Fragment>
                                     );
                                 })}
                                 <tr className="border-t border-slate-700 bg-slate-800/40">
                                     <td className="px-2 py-2 text-slate-100 font-medium">Total</td>
-                                    <td className="px-2 py-2 text-slate-500">{title}</td>
                                     <td className="px-2 py-2 text-right font-mono-nums text-slate-300">{formatCurrency(totalActual)}</td>
-                                    <td className="px-2 py-2 text-right font-mono-nums text-cyan-300">{formatCurrency(usesSuggestedColumn ? totalSuggested : totalRecurring)}</td>
-                                    {usesSuggestedColumn && <td className="px-2 py-2 text-right font-mono-nums text-slate-300">{formatCurrency(totalPlan - totalSuggested)}</td>}
+                                    <td className="px-2 py-2 text-right font-mono-nums text-cyan-300">{formatCurrency(totalSuggested)}</td>
+                                    <td className="px-2 py-2 text-right font-mono-nums text-slate-300">{formatCurrency(totalPlan - totalSuggested)}</td>
                                     <td className="px-2 py-2 text-right font-mono-nums text-slate-200">{formatCurrency(totalPlan)}</td>
                                     <td colSpan={2} />
                                 </tr>
@@ -1970,7 +1794,7 @@ export default function Strategy() {
                                 <th className="px-2 py-2 text-right font-normal">Adjust</th>
                                 <th className="px-2 py-2 text-right font-normal">Budget</th>
                                 <th className="px-2 py-2 text-right font-normal">Variance</th>
-                                <th className="px-2 py-2 text-right font-normal">Edit</th>
+                                <th className="px-2 py-2 sr-only">Actions</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-800/70">
@@ -1990,15 +1814,7 @@ export default function Strategy() {
                                 const sourceSynced = isBudgetSourceSynced(account);
                                 const rowKey = `budget-${account.id}`;
                                 const sourceDetails = budgetSourceDetails(account);
-                                const sourceLabel = account.suggested_source === 'registry'
-                                    ? 'Registry'
-                                    : account.suggested_source === 'recurrence_product_expense'
-                                    ? 'Recurrence + Items'
-                                    : account.suggested_source === 'product_expense'
-                                        ? 'Expense Items'
-                                        : account.suggested_source === 'recurrence'
-                                            ? 'Recurrence'
-                                            : '';
+                                const sourceLabel = suggestedAmount > 0 ? 'Registry' : '';
                                 return (
                                     <Fragment key={account.id}>
                                         <tr className="hover:bg-slate-800/30 group">
@@ -2040,7 +1856,6 @@ export default function Strategy() {
                                                 {sourceSynced && (
                                                     <button type="button" title="Remove source sync" onClick={() => unlinkRecurringBudgetAccount(account)} className="text-slate-500 hover:text-amber-300"><Unlink size={12} /></button>
                                                 )}
-                                                <button type="button" title="Edit category" onClick={() => openBudgetCategoryForm(account)} className="text-slate-500 hover:text-cyan-400"><Edit2 size={12} /></button>
                                                 <button type="button" title="Remove from budget" onClick={() => removeBudgetCategory(account.id, account.plan_line_id)} className="text-slate-500 hover:text-rose-400"><Trash2 size={12} /></button>
                                             </td>
                                         </tr>
@@ -2069,7 +1884,7 @@ export default function Strategy() {
                     </table>
                 </div>
 
-                {renderPlanSection('Allocation Plan', ['allocation'], 'allocation', 'No asset allocations yet.', 'Allocated')}
+                {renderPlanSection('Allocation Plan', ['allocation'], 'allocation', 'No asset allocations yet.')}
                 {renderPlanSection('Debt Plan', ['debt_payment'], 'debt_payment', 'No planned debt payments yet.')}
             </section>
         </div>
