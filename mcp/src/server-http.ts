@@ -17,11 +17,22 @@ import {
 } from "./auth.js";
 
 const PORT = parseInt(process.env.PORT ?? "3000");
-const MCP_PASSWORD = process.env.MCP_PASSWORD ?? "";
-const MCP_USERNAME = process.env.MCP_USERNAME?.trim() || "admin";
+const BACKEND_URL = (process.env.BACKEND_URL ?? "http://backend:8000").replace(/\/$/, "");
 
-if (!MCP_PASSWORD) {
-  console.warn("⚠️  MCP_PASSWORD is not set. Set it in your .env file before production use.");
+async function validateUserCredentials(username: string, password: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return null;
+    return username.toLowerCase();
+  } catch (err) {
+    console.warn("[auth] backend login error", (err as Error).message);
+    return null;
+  }
 }
 
 // ─── Issuer / Resource helpers ────────────────────────────
@@ -223,8 +234,8 @@ app.post("/authorize", async (req, res) => {
   if (!client) { res.status(400).json({ error: "invalid_client" }); return; }
   if (!client.redirect_uris.includes(redirect_uri)) { res.status(400).json({ error: "invalid_redirect_uri" }); return; }
 
-  const credentialsValid = MCP_PASSWORD && username === MCP_USERNAME && password === MCP_PASSWORD;
-  if (!credentialsValid) {
+  const validUsername = await validateUserCredentials(username ?? "", password ?? "");
+  if (!validUsername) {
     res.status(401).setHeader("Content-Type", "text/html; charset=utf-8").send(renderLoginForm({
       client_id,
       client_name: client.client_name,
@@ -239,7 +250,7 @@ app.post("/authorize", async (req, res) => {
     return;
   }
 
-  console.info("[oauth] authorize POST success", { client_id, username, resource });
+  console.info("[oauth] authorize POST success", { client_id, username: validUsername, resource });
 
   const code = createAuthCode({
     client_id,
@@ -250,7 +261,7 @@ app.post("/authorize", async (req, res) => {
     state,
     resource,
     allow_refresh_token: client.grant_types.includes("refresh_token"),
-    username,
+    username: validUsername,
   });
 
   const redirectUrl = new URL(redirect_uri);
