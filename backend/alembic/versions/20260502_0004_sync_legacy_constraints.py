@@ -25,7 +25,7 @@ def upgrade() -> None:
             ADD CONSTRAINT _goal_allocation_event_account_uc
             UNIQUE (life_event_id, account_id);
         EXCEPTION
-            WHEN duplicate_object THEN NULL;
+            WHEN duplicate_object OR duplicate_table THEN NULL;
         END $$;
         """
     )
@@ -39,7 +39,7 @@ def upgrade() -> None:
             REFERENCES life_events(id)
             ON DELETE CASCADE;
         EXCEPTION
-            WHEN duplicate_object THEN NULL;
+            WHEN duplicate_object OR duplicate_table THEN NULL;
         END $$;
         """
     )
