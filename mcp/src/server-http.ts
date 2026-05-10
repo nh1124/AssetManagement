@@ -49,11 +49,20 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+// Request logger
+app.use((req: Request, _res: Response, next: NextFunction) => {
+  console.info(`[http] ${req.method} ${req.path}`, {
+    user_agent: req.headers["user-agent"]?.slice(0, 60) ?? "(none)",
+    has_auth: !!req.headers.authorization,
+  });
+  next();
+});
+
 // CORS
 app.use((_req: Request, res: Response, next: NextFunction) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS, DELETE");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Mcp-Session-Id, Last-Event-ID");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Mcp-Session-Id, Last-Event-ID, Mcp-Protocol-Version");
   next();
 });
 app.use((req: Request, res: Response, next: NextFunction) => {
