@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
+    ArrowLeft,
     ArrowRightLeft,
     Check,
     ChevronRight,
@@ -62,10 +63,29 @@ export default function MobileQuickPage() {
     const [recentTransactions, setRecentTransactions] = useState<Transaction[]>([]);
     const [selectedTemplate, setSelectedTemplate] = useState<QuickTemplate | null>(null);
     const [activeGroup, setActiveGroup] = useState<QuickTemplateGroup>('expense');
+    const [activeTray, setActiveTray] = useState('');
     const [, setIsLoading] = useState(true);
 
     const currentCurrency = currentClient?.general_settings?.currency || 'JPY';
-    const visibleTemplates = templates.filter((template) => quickKindGroup(template.template_kind) === activeGroup);
+    const trayTiles = Array.from(new Set(
+        templates
+            .filter((template) => quickKindGroup(template.template_kind) === activeGroup)
+            .map((template) => template.tray)
+    )).map((tray) => {
+        const trayTemplates = templates.filter((template) =>
+            template.tray === tray && quickKindGroup(template.template_kind) === activeGroup
+        );
+        const preset = trayTemplates[0] ? quickPresetFor(trayTemplates[0]) : undefined;
+        return {
+            tray,
+            count: trayTemplates.length,
+            icon: preset?.icon ?? ArrowRightLeft,
+            tone: preset?.color ?? 'text-emerald-300',
+        };
+    });
+    const visibleTemplates = activeTray
+        ? templates.filter((template) => template.tray === activeTray && quickKindGroup(template.template_kind) === activeGroup)
+        : [];
 
     const loadQuickData = async () => {
         setIsLoading(true);
@@ -79,7 +99,7 @@ export default function MobileQuickPage() {
             ]);
             setSummary(summaryData);
             setPl(plData);
-            setTemplates(templateData.filter((template) => template.is_active).slice(0, 12));
+            setTemplates(templateData.filter((template) => template.is_active));
             setAccounts(accountData);
             setRecentTransactions(txData.items);
         } catch {
@@ -113,20 +133,47 @@ export default function MobileQuickPage() {
                         <button
                             key={group.value}
                             type="button"
-                            onClick={() => setActiveGroup(group.value)}
-                            className={`h-8 rounded-full px-4 text-xs transition-colors ${activeGroup === group.value
-                                ? 'bg-emerald-500 text-slate-950'
-                                : 'text-slate-500'
-                                }`}
+                            onClick={() => { setActiveGroup(group.value); setActiveTray(''); }}
+                            className={`h-8 rounded-full px-4 text-xs transition-colors ${activeGroup === group.value ? 'bg-emerald-500 text-slate-950' : 'text-slate-500'}`}
                         >
                             {group.label}
                         </button>
                     ))}
                 </div>
+                {activeTray && (
+                    <div className="relative flex min-h-8 items-center justify-center">
+                        <button
+                            type="button"
+                            onClick={() => setActiveTray('')}
+                            className="absolute left-0 top-0 flex h-8 w-8 items-center justify-center rounded-full border border-slate-800 bg-slate-900/80 text-slate-400 active:text-slate-100"
+                            aria-label="Back to tray list"
+                        >
+                            <ArrowLeft size={14} />
+                        </button>
+                        <p className="text-sm font-medium text-slate-100">{activeTray}</p>
+                    </div>
+                )}
                 {templates.length === 0 ? (
                     <EmptyState text="No quick templates yet. Create them from the desktop Journal screen." />
+                ) : !activeTray ? (
+                    trayTiles.length === 0 ? (
+                        <EmptyState text={`No ${activeGroup} categories yet.`} />
+                    ) : (
+                        <div className="flex flex-wrap justify-center gap-2">
+                            {trayTiles.map((tray) => (
+                                <CategoryButton
+                                    key={tray.tray}
+                                    label={tray.tray}
+                                    meta={`${tray.count} templates`}
+                                    icon={tray.icon}
+                                    tone={tray.tone}
+                                    onSelect={() => setActiveTray(tray.tray)}
+                                />
+                            ))}
+                        </div>
+                    )
                 ) : visibleTemplates.length === 0 ? (
-                    <EmptyState text={`No ${activeGroup} templates yet.`} />
+                    <EmptyState text={`No templates in ${activeTray}.`} />
                 ) : (
                     <div className="flex flex-wrap justify-center gap-2">
                         {visibleTemplates.map((template) => (
@@ -185,6 +232,35 @@ function MetricTile({ label, value, tone = 'neutral' }: { label: string; value: 
             <p className="truncate text-[10px] uppercase tracking-wide text-slate-500">{label}</p>
             <p className={`mt-1 truncate font-mono-nums text-sm ${toneClass}`}>{value}</p>
         </div>
+    );
+}
+
+function CategoryButton({
+    label,
+    meta,
+    icon: Icon,
+    tone,
+    onSelect,
+}: {
+    label: string;
+    meta: string;
+    icon: any;
+    tone: string;
+    onSelect: () => void;
+}) {
+    return (
+        <button
+            type="button"
+            onClick={onSelect}
+            className="h-28 w-28 rounded-2xl border border-slate-800 bg-slate-900/70 p-3 text-left active:border-emerald-500 active:bg-emerald-950/20"
+        >
+            <div className="flex items-start justify-between gap-2">
+                <Icon size={19} className={tone} />
+                <ChevronRight size={15} className="text-slate-600" />
+            </div>
+            <p className="mt-3 truncate text-sm font-medium text-slate-100">{label}</p>
+            <p className="mt-1 truncate text-[10px] text-slate-500">{meta}</p>
+        </button>
     );
 }
 

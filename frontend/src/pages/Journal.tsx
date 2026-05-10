@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import {
     Trash2, Plus, Sparkles, Send, Loader2, ImagePlus, X,
     ArrowUpCircle, ArrowDownCircle, RefreshCw, Edit, SlidersHorizontal,
+    ArrowLeft, ChevronRight,
 } from 'lucide-react';
 import TabPanel from '../components/TabPanel';
 import SplitView from '../components/SplitView';
@@ -27,10 +28,12 @@ import {
     quickHelp,
     quickKindGroup,
     quickKindLabel,
+    quickPresetFor,
     quickText,
     type AccountItem,
     type LanguageCode,
     type QuickEntry,
+    type QuickTemplateGroup,
     type QuickTemplateDraft,
     type QuickTemplateKind,
 } from '../features/journal/quick';
@@ -120,6 +123,35 @@ const ACCOUNT_RULES = Object.fromEntries(
 const typeDescription = (type: string) =>
     TRANSACTION_TYPES.find((option) => option.value === type)?.description ?? '';
 
+function QuickCategoryTile({
+    label,
+    meta,
+    icon: Icon,
+    tone,
+    onClick,
+}: {
+    label: string;
+    meta: string;
+    icon: any;
+    tone: string;
+    onClick: () => void;
+}) {
+    return (
+        <button
+            type="button"
+            onClick={onClick}
+            className="h-28 w-28 rounded-2xl border border-slate-800 bg-slate-900/70 p-3 text-left transition-colors hover:border-slate-600 hover:bg-slate-900"
+        >
+            <div className="flex items-start justify-between gap-2">
+                <Icon size={19} className={tone} />
+                <ChevronRight size={15} className="text-slate-600" />
+            </div>
+            <span className="mt-3 block truncate text-sm font-medium text-slate-100">{label}</span>
+            <span className="mt-1 block truncate text-[10px] text-slate-500">{meta}</span>
+        </button>
+    );
+}
+
 const defaultFilters = {
     startDate: '',
     endDate: '',
@@ -155,6 +187,7 @@ export default function Journal() {
     const [selectedQuickTemplateId, setSelectedQuickTemplateId] = useState<number | null>(null);
     const [showQuickTemplateForm, setShowQuickTemplateForm] = useState(false);
     const [editingQuickTemplateId, setEditingQuickTemplateId] = useState<number | null>(null);
+    const [activeQuickGroup, setActiveQuickGroup] = useState<QuickTemplateGroup>('expense');
     const [accounts, setAccounts] = useState<AccountItem[]>([]);
     const [isProcessing, setIsProcessing] = useState(false);
     const { showToast } = useToast();
@@ -247,8 +280,8 @@ export default function Journal() {
             setSelectedQuickTemplateId(null);
             return;
         }
-        if (!activeQuickTray || !quickTemplates.some((template) => template.tray === activeQuickTray)) {
-            setActiveQuickTray(quickTemplates[0].tray);
+        if (activeQuickTray && !quickTemplates.some((template) => template.tray === activeQuickTray)) {
+            setActiveQuickTray('');
         }
         if (selectedQuickTemplateId && !quickTemplates.some((template) => template.id === selectedQuickTemplateId)) {
             setSelectedQuickTemplateId(null);
@@ -256,7 +289,7 @@ export default function Journal() {
     }, [quickTemplates, activeQuickTray, selectedQuickTemplateId]);
 
     useEffect(() => {
-        const seedKey = `finance_quick_seeded_${clientId}`;
+        const seedKey = `finance_quick_seeded_${clientId}_quick_catalog_v2`;
         if (!accounts.length || localStorage.getItem(seedKey) === '1') return;
         const existingPresetKeys = new Set(
             quickTemplates
@@ -280,10 +313,18 @@ export default function Journal() {
         };
 
         const seedQuickTemplates = async () => {
-            const paymentAccount = matchAccount(['asset', 'item'], ['cash', 'bank', '現金', '銀行']);
+            const paymentHints = ['cash', 'bank', 'wallet', '現金', '銀行', '普通預金', '口座'];
             try {
                 const created = await Promise.all(missingPresets.map((preset, index) => {
-                    const expenseAccount = matchAccount(['expense', 'item'], preset.accountHints);
+                    const rules = QUICK_KIND_RULES[preset.template_kind];
+                    const fromHints = preset.template_kind === 'income'
+                        ? preset.accountHints
+                        : paymentHints;
+                    const toHints = preset.template_kind === 'income'
+                        ? paymentHints
+                        : preset.accountHints;
+                    const fromAccount = matchAccount(rules.fromTypes, fromHints);
+                    const toAccount = matchAccount(rules.toTypes, toHints);
                     return createQuickTemplate({
                         tray: preset.tray,
                         name: preset.name,
@@ -291,12 +332,12 @@ export default function Journal() {
                         description: preset.description[language],
                         category: preset.category,
                         default_currency: currentCurrency,
-                        default_from_account_id: paymentAccount?.id ?? null,
-                        default_to_account_id: expenseAccount?.id ?? null,
+                        default_from_account_id: fromAccount?.id ?? null,
+                        default_to_account_id: toAccount?.id ?? null,
                         config: {
                             preset_key: preset.key,
                             receivable_account_id: null,
-                            reimbursement_account_id: paymentAccount?.id ?? null,
+                            reimbursement_account_id: matchAccount(['asset', 'item'], paymentHints)?.id ?? null,
                         },
                         sort_order: quickTemplates.length + index,
                         is_active: true,
@@ -416,10 +457,32 @@ export default function Journal() {
         ? quickTemplates.find((template) => template.id === selectedQuickTemplateId)
         : undefined;
 
-    const quickTrays = Array.from(new Set(quickTemplates.map((template) => template.tray)));
-    const visibleQuickTemplates = quickTemplates.filter((template) => !activeQuickTray || template.tray === activeQuickTray);
+    const quickTrayTiles = Array.from(new Set(
+        quickTemplates
+            .filter((template) => quickKindGroup(template.template_kind) === activeQuickGroup)
+            .map((template) => template.tray)
+    )).map((tray) => {
+        const trayTemplates = quickTemplates.filter((template) =>
+            template.tray === tray && quickKindGroup(template.template_kind) === activeQuickGroup
+        );
+        const preset = trayTemplates[0] ? quickPresetFor(trayTemplates[0]) : undefined;
+        return {
+            tray,
+            count: trayTemplates.length,
+            icon: preset?.icon || ChevronRight,
+            tone: preset?.color || 'text-emerald-300',
+        };
+    });
+    const visibleQuickTemplates = activeQuickTray
+        ? quickTemplates.filter((template) =>
+            template.tray === activeQuickTray && quickKindGroup(template.template_kind) === activeQuickGroup
+        )
+        : [];
+    const defaultQuickTray = activeQuickTray
+        || quickTemplates.find((template) => quickKindGroup(template.template_kind) === activeQuickGroup)?.tray
+        || '食費';
 
-    const resetQuickTemplateDraft = (tray = activeQuickTray || 'Food') => {
+    const resetQuickTemplateDraft = (tray = defaultQuickTray) => {
         setEditingQuickTemplateId(null);
         setQuickTemplateDraft({
             tray,
@@ -969,11 +1032,19 @@ export default function Journal() {
 
                 {activeTab === 'quick' && (
                     <div className="space-y-4 pt-2">
-                        <div className="flex items-center justify-between">
-                            <h3 className="text-[10px] text-slate-500 uppercase tracking-wider font-bold flex items-center gap-1">
-                                {text.quickTemplates}
-                                <InfoTip text={language === 'ja' ? 'よく使う生活支出をタイルから選び、必要なTransactionをまとめて生成します。' : 'Choose daily spending tiles and generate the needed transactions together.'} />
-                            </h3>
+                        <div className="relative flex items-center justify-center">
+                            <div className="mx-auto flex w-fit rounded-full border border-slate-800 bg-slate-900/80 p-1">
+                                {QUICK_TEMPLATE_GROUPS.map((group) => (
+                                    <button
+                                        key={group.value}
+                                        type="button"
+                                        onClick={() => { setActiveQuickGroup(group.value); setActiveQuickTray(''); setSelectedQuickTemplateId(null); }}
+                                        className={`h-8 rounded-full px-4 text-xs transition-colors ${activeQuickGroup === group.value ? 'bg-emerald-500 text-slate-950' : 'text-slate-500'}`}
+                                    >
+                                        {group.label}
+                                    </button>
+                                ))}
+                            </div>
                             <button
                                 type="button"
                                 onClick={() => {
@@ -984,13 +1055,27 @@ export default function Journal() {
                                     resetQuickTemplateDraft();
                                     setShowQuickTemplateForm(true);
                                 }}
-                                className="p-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded"
+                                className="absolute right-0 top-0 flex h-8 w-8 items-center justify-center rounded-full bg-emerald-600 text-white transition-colors hover:bg-emerald-500"
                                 aria-label="Add quick template"
                                 title="Add quick template"
                             >
                                 <Plus size={14} />
                             </button>
                         </div>
+                        {activeQuickTray && (
+                            <div className="relative flex min-h-8 items-center justify-center">
+                                <button
+                                    type="button"
+                                    onClick={() => { setActiveQuickTray(''); setSelectedQuickTemplateId(null); }}
+                                    className="absolute left-0 top-0 flex h-8 w-8 items-center justify-center rounded-full border border-slate-800 bg-slate-900/80 text-slate-400 transition-colors hover:border-slate-600 hover:text-slate-100"
+                                    aria-label="Back to tray list"
+                                    title="Back"
+                                >
+                                    <ArrowLeft size={14} />
+                                </button>
+                                <p className="text-sm font-medium text-slate-100">{activeQuickTray}</p>
+                            </div>
+                        )}
 
                         {showQuickTemplateForm && (
                             <div
@@ -1162,20 +1247,30 @@ export default function Journal() {
                         )}
 
                         {quickTemplates.length > 0 ? (
-                            <>
-                                <div className="flex gap-1 overflow-x-auto pb-1">
-                                    {quickTrays.map((tray) => (
-                                        <button
-                                            type="button"
-                                            key={tray}
-                                            onClick={() => setActiveQuickTray(tray)}
-                                            className={`px-3 py-1.5 text-xs border whitespace-nowrap ${activeQuickTray === tray ? 'border-emerald-600 bg-emerald-950/40 text-emerald-300' : 'border-slate-700 bg-slate-800 text-slate-300 hover:bg-slate-700'}`}
-                                        >
-                                            {tray}
-                                        </button>
-                                    ))}
-                                </div>
-                                <div className="grid grid-cols-2 gap-2">
+                            !activeQuickTray ? (
+                                quickTrayTiles.length > 0 ? (
+                                    <div className="flex flex-wrap justify-center gap-2">
+                                        {quickTrayTiles.map((tray) => (
+                                            <QuickCategoryTile
+                                                key={tray.tray}
+                                                label={tray.tray}
+                                                meta={`${tray.count} templates`}
+                                                icon={tray.icon}
+                                                tone={tray.tone}
+                                                onClick={() => {
+                                                    setActiveQuickTray(tray.tray);
+                                                    setSelectedQuickTemplateId(null);
+                                                }}
+                                            />
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="border border-dashed border-slate-800 bg-slate-900/40 px-3 py-4 text-sm text-slate-500">
+                                        No {activeQuickGroup} categories yet.
+                                    </div>
+                                )
+                            ) : visibleQuickTemplates.length > 0 ? (
+                                <div className="flex flex-wrap justify-center gap-2">
                                     {visibleQuickTemplates.map((template) => (
                                         <QuickTemplateTile
                                             key={template.id}
@@ -1186,7 +1281,11 @@ export default function Journal() {
                                         />
                                     ))}
                                 </div>
-                            </>
+                            ) : (
+                                <div className="border border-dashed border-slate-800 bg-slate-900/40 px-3 py-4 text-sm text-slate-500">
+                                    No templates in {activeQuickTray}.
+                                </div>
+                            )
                         ) : (
                             <div className="border border-dashed border-slate-700 bg-slate-900/40 p-4 text-center">
                                 <p className="text-xs text-slate-500">{text.noTemplates}</p>

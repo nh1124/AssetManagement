@@ -1,4 +1,4 @@
-import { Gift, Info } from 'lucide-react';
+import { ArrowRightLeft, ChevronRight } from 'lucide-react';
 import type { QuickTemplate } from '../../types';
 import { quickKindLabel, quickPresetFor, type LanguageCode } from './quick';
 
@@ -16,22 +16,22 @@ export default function QuickTemplateTile({
     onSelect,
 }: QuickTemplateTileProps) {
     const preset = quickPresetFor(template);
-    const Icon = preset?.icon || Gift;
+    const Icon = preset?.icon || ArrowRightLeft;
     const infoText = preset?.description[language] || template.description || quickKindLabel(template.template_kind);
 
     return (
         <button
             type="button"
             onClick={() => onSelect(template)}
-            className={`relative min-h-20 border px-3 py-2 text-center transition-colors ${selected ? 'border-emerald-500 bg-emerald-950/30' : 'border-slate-700 bg-slate-800/50 hover:border-slate-500'}`}
+            className={`h-28 w-28 rounded-2xl border p-3 text-left transition-colors ${selected ? 'border-emerald-500 bg-emerald-950/30' : 'border-slate-800 bg-slate-900/70 hover:border-slate-600 hover:bg-slate-900'}`}
             title={infoText}
         >
-            <span className="absolute right-1.5 top-1.5 text-slate-500 hover:text-emerald-300" title={infoText}>
-                <Info size={11} />
-            </span>
-            <Icon size={24} className={`mx-auto mb-1 ${preset?.color || 'text-emerald-400'}`} />
-            <span className="block text-xs font-bold text-white truncate">{template.name}</span>
-            <span className="block text-[10px] text-slate-500 truncate">{quickKindLabel(template.template_kind)}</span>
+            <div className="flex items-start justify-between gap-2">
+                <Icon size={19} className={preset?.color || 'text-emerald-300'} />
+                <ChevronRight size={15} className="text-slate-600" />
+            </div>
+            <span className="mt-3 block truncate text-sm font-medium text-slate-100">{template.name}</span>
+            <span className="mt-1 block truncate text-[10px] text-slate-500">{template.tray} - {quickKindLabel(template.template_kind)}</span>
         </button>
     );
 }
