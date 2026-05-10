@@ -21,11 +21,13 @@ def upgrade() -> None:
         """
         DO $$
         BEGIN
-            ALTER TABLE goal_allocations
-            ADD CONSTRAINT _goal_allocation_event_account_uc
-            UNIQUE (life_event_id, account_id);
-        EXCEPTION
-            WHEN duplicate_object OR duplicate_table THEN NULL;
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint WHERE conname = '_goal_allocation_event_account_uc'
+            ) THEN
+                ALTER TABLE goal_allocations
+                ADD CONSTRAINT _goal_allocation_event_account_uc
+                UNIQUE (life_event_id, account_id);
+            END IF;
         END $$;
         """
     )
@@ -33,13 +35,15 @@ def upgrade() -> None:
         """
         DO $$
         BEGIN
-            ALTER TABLE milestones
-            ADD CONSTRAINT milestones_life_event_id_fkey
-            FOREIGN KEY (life_event_id)
-            REFERENCES life_events(id)
-            ON DELETE CASCADE;
-        EXCEPTION
-            WHEN duplicate_object OR duplicate_table THEN NULL;
+            IF NOT EXISTS (
+                SELECT 1 FROM pg_constraint WHERE conname = 'milestones_life_event_id_fkey'
+            ) THEN
+                ALTER TABLE milestones
+                ADD CONSTRAINT milestones_life_event_id_fkey
+                FOREIGN KEY (life_event_id)
+                REFERENCES life_events(id)
+                ON DELETE CASCADE;
+            END IF;
         END $$;
         """
     )
