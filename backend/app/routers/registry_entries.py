@@ -85,6 +85,14 @@ def registry_to_recurring_data(entry: models.RegistryEntry) -> dict:
 
 def sync_recurring_from_registry(db: Session, entry: models.RegistryEntry) -> None:
     if not entry.generate_recurring:
+        if entry.source_recurring_transaction_id:
+            recurring = db.query(models.RecurringTransaction).filter(
+                models.RecurringTransaction.id == entry.source_recurring_transaction_id,
+                models.RecurringTransaction.client_id == entry.client_id,
+            ).first()
+            entry.source_recurring_transaction_id = None
+            if recurring:
+                db.delete(recurring)
         return
     recurring = None
     if entry.source_recurring_transaction_id:
@@ -165,6 +173,14 @@ def delete_registry_entry(
     ).first()
     if not entry:
         raise HTTPException(status_code=404, detail="Registry entry not found")
+    if entry.source_recurring_transaction_id:
+        recurring = db.query(models.RecurringTransaction).filter(
+            models.RecurringTransaction.id == entry.source_recurring_transaction_id,
+            models.RecurringTransaction.client_id == current_client.id,
+        ).first()
+        entry.source_recurring_transaction_id = None
+        if recurring:
+            db.delete(recurring)
     entry.is_active = False
     entry.budget_active = False
     entry.generate_recurring = False

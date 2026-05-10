@@ -324,19 +324,24 @@ function requireBearer(req: Request, res: Response, next: NextFunction): void {
 app.post("/mcp", requireBearer, async (req, res) => {
   const server = buildMcpServer();
   try {
-    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    const transport = new StreamableHTTPServerTransport({
+      sessionIdGenerator: undefined,
+      enableJsonResponse: true,
+    });
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
+    res.on("close", () => {
+      transport.close();
+      server.close();
+    });
   } catch (err) {
     console.error("[mcp] error:", err);
     if (!res.headersSent) res.status(500).json({ error: "internal_server_error" });
-  } finally {
-    res.on("finish", () => void server.close());
   }
 });
 
 app.get("/mcp", requireBearer, (_req, res) => {
-  res.status(405).json({ error: "method_not_allowed", hint: "Use POST /mcp" });
+  res.status(405).set("Allow", "POST").send("Method Not Allowed");
 });
 
 // ─── Health ───────────────────────────────────────────────

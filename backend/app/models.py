@@ -340,7 +340,7 @@ class MonthlyPlanLine(Base):
     priority = Column(Integer, default=2, server_default="2", nullable=False)
     note = Column(Text, nullable=True)
     source = Column(String, default="manual", server_default="manual", nullable=False)
-    recurring_transaction_id = Column(Integer, ForeignKey("recurring_transactions.id"), nullable=True)
+    recurring_transaction_id = Column(Integer, ForeignKey("recurring_transactions.id", ondelete="SET NULL"), nullable=True)
     is_active = Column(Boolean, default=True, server_default="true", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
