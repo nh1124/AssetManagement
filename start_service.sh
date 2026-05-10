@@ -13,6 +13,7 @@ DB_PORT=${DB_PORT:-${ENV_DB_PORT:-5432}}
 echo "Starting Asset Management System with Docker..."
 echo ""
 
+docker compose --env-file .env down --remove-orphans
 docker compose --env-file .env up --build -d
 
 echo ""
