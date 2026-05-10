@@ -94,12 +94,6 @@ def actual_for_plan_line(
     needle = name.lower()
 
     if target_type == "capsule" and target_id:
-        capsule = db.query(models.Capsule).filter(
-            models.Capsule.id == target_id,
-            models.Capsule.client_id == client_id,
-        ).first()
-        if capsule and line_type == "allocation":
-            return capsule_balance(db, capsule)
         account_id = capsule_accounts.get(target_id)
 
     if line_type == "income":
@@ -485,11 +479,24 @@ def _merge_registry_context(plan_lines: list[dict], registry_lines: list[dict]) 
         _plan_match_key(line["line_type"], line["target_type"], line["account_id"], line["name"]): line
         for line in registry_lines
     }
+    # Secondary index: (line_type, entry_name) for fallback when account_id differs between
+    # an existing DB plan line (account_id=None) and the registry line (account_id set).
+    registry_by_entry_name: dict[tuple, dict] = {}
+    for reg_line in registry_lines:
+        lt = reg_line.get("line_type") or ""
+        for item in reg_line.get("registry_items", []):
+            entry_name = (item.get("name") or "").strip().lower()
+            if entry_name:
+                registry_by_entry_name.setdefault((lt, entry_name), reg_line)
+
     matched_keys: set[tuple] = set()
     for line in plan_lines:
-        registry_line = registry_by_key.get(
-            _plan_match_key(line.get("line_type"), line.get("target_type"), line.get("account_id"), line.get("name") or line.get("target_name"))
-        )
+        primary_key = _plan_match_key(line.get("line_type"), line.get("target_type"), line.get("account_id"), line.get("name") or line.get("target_name"))
+        registry_line = registry_by_key.get(primary_key)
+        if not registry_line:
+            plan_name = (line.get("name") or line.get("target_name") or "").strip().lower()
+            if plan_name:
+                registry_line = registry_by_entry_name.get((line.get("line_type") or "", plan_name))
         registry_amount = round((registry_line or {}).get("registry_amount") or 0.0, 0)
         if registry_line:
             matched_keys.add(_plan_match_key(registry_line["line_type"], registry_line["target_type"], registry_line["account_id"], registry_line["name"]))

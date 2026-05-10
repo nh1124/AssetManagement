@@ -13,7 +13,12 @@
       "Bash(python backend/app/services/budget_plan_service.py)",
       "Bash(python3 -c ' *)",
       "PowerShell(Get-Command py -ErrorAction SilentlyContinue)",
-      "PowerShell(Get-Command uv -ErrorAction SilentlyContinue)"
+      "PowerShell(Get-Command uv -ErrorAction SilentlyContinue)",
+      "Bash(node_modules\\\\.bin\\\\tsc --noEmit)",
+      "Bash(./node_modules/.bin/tsc --noEmit)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)"
     ]
   }
 }
