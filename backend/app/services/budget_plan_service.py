@@ -898,6 +898,20 @@ def _apply_plan_line_data(db: Session, client_id: int, line: models.MonthlyPlanL
     for key, value in data.items():
         if key != "id":
             setattr(line, key, value)
+    # Normalize manual lines: if no account_id is set but the registry has one for
+    # this line_type+name, promote target_type to "account" so future matching works.
+    if (not line.account_id) and line.target_type in (None, "manual") and line.name and line.line_type:
+        registry_entry = db.query(models.RegistryEntry).filter(
+            models.RegistryEntry.client_id == client_id,
+            models.RegistryEntry.is_active.is_(True),
+            models.RegistryEntry.name == line.name,
+            models.RegistryEntry.line_type == line.line_type,
+        ).first()
+        if registry_entry:
+            resolved = registry_target_account_id(registry_entry)
+            if resolved:
+                line.account_id = resolved
+                line.target_type = "account"
     if line.target_type == "account" and line.account_id and not line.name:
         account = db.query(models.Account).filter(
             models.Account.id == line.account_id,
