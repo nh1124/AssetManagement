@@ -7,7 +7,13 @@
       "Bash(Select-Object Name)",
       "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\nh112\\\\programming\\\\project\\\\AssetManagement\\\\backend\" -Filter \"*seed*\" -Recurse)",
       "Bash(Find \"c:\\\\Users\\\\nh112\\\\programming\\\\project\\\\AssetManagement\\\\frontend\\\\src\" -type f -name \"*.tsx\")",
-      "Bash(Select-String -Pattern \"Registry|registry\")"
+      "Bash(Select-String -Pattern \"Registry|registry\")",
+      "Bash(python -m py_compile app/services/budget_plan_service.py)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('app/services/budget_plan_service.py'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python backend/app/services/budget_plan_service.py)",
+      "Bash(python3 -c ' *)",
+      "PowerShell(Get-Command py -ErrorAction SilentlyContinue)",
+      "PowerShell(Get-Command uv -ErrorAction SilentlyContinue)"
     ]
   }
 }

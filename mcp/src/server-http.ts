@@ -309,10 +309,12 @@ function requireBearer(req: Request, res: Response, next: NextFunction): void {
   const issuer = buildOAuthIssuer(req);
   const auth = req.headers.authorization;
   if (!auth?.startsWith("Bearer ")) {
+    console.warn("[mcp] missing Bearer token", { method: req.method, path: req.path });
     res.setHeader("WWW-Authenticate", `Bearer realm="${issuer}", scope="mcp"`).status(401).json({ error: "unauthorized" });
     return;
   }
   if (!validateAccessToken(auth.slice(7))) {
+    console.warn("[mcp] invalid Bearer token", { method: req.method, path: req.path, token_prefix: auth.slice(7, 20) });
     res.setHeader("WWW-Authenticate", `Bearer realm="${issuer}", error="invalid_token"`).status(401).json({ error: "invalid_token" });
     return;
   }
@@ -320,6 +322,23 @@ function requireBearer(req: Request, res: Response, next: NextFunction): void {
 }
 
 // ─── MCP Endpoint ─────────────────────────────────────────
+
+// Ensure Accept header has both application/json and text/event-stream (required by MCP SDK).
+// Some MCP clients (e.g. ChatGPT) omit text/event-stream when using enableJsonResponse mode.
+app.use("/mcp", (req: Request, _res: Response, next: NextFunction) => {
+  if (req.method === "POST") {
+    const accept = req.headers.accept ?? "";
+    if (!accept.includes("text/event-stream")) {
+      req.headers.accept = accept ? `${accept}, text/event-stream` : "application/json, text/event-stream";
+    }
+    console.info("[mcp] POST request", {
+      accept: req.headers.accept,
+      has_auth: !!req.headers.authorization,
+      content_type: req.headers["content-type"],
+    });
+  }
+  next();
+});
 
 app.post("/mcp", requireBearer, async (req, res) => {
   const server = buildMcpServer();

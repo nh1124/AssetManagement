@@ -380,7 +380,8 @@ export function validateAccessToken(token: string): boolean {
   try {
     const payload = jwt.verify(token, JWT_SECRET) as { type?: string };
     return payload.type === "access";
-  } catch {
+  } catch (err) {
+    console.warn("[oauth] token validation failed", { reason: (err as Error).message });
     return false;
   }
 }
