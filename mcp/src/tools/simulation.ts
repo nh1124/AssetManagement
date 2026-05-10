@@ -210,7 +210,7 @@ export function registerSimulationTools(server: McpServer): void {
       inputSchema: z
         .object({
           life_event_id: z.number().int().min(1).describe("Life event ID"),
-          scenario_ids: z.tuple([z.number().int().min(1), z.number().int().min(1)]).describe("Two scenario IDs"),
+          scenario_ids: z.array(z.number().int().min(1)).length(2).describe("Two scenario IDs [id1, id2]"),
         })
         .strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: false },
