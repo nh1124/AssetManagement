@@ -31,10 +31,27 @@ import type { Account, AccountRole, AccountTreeNode, Capsule, ExchangeRate, Prod
 const TABS = [
     { id: 'accounts', label: 'Accounts' },
     { id: 'exchange-rates', label: 'Exchange Rates' },
-    { id: 'assets', label: 'Assets' },
-    { id: 'items', label: 'Items' },
     { id: 'sources', label: 'Sources' },
 ];
+
+const SOURCES_INNER_TABS = [
+    { id: 'service', label: 'Service' },
+    { id: 'income', label: 'Income' },
+    { id: 'debt', label: 'Debt' },
+    { id: 'allocation', label: 'Allocation' },
+    { id: 'assets', label: 'Assets' },
+    { id: 'items', label: 'Items' },
+];
+
+const TAB_DEFAULTS: Record<string, Partial<{
+    entry_type: string; transaction_type: string; line_type: string;
+    generate_recurring: boolean; budget_active: boolean;
+}>> = {
+    service:    { entry_type: 'service',    transaction_type: 'Expense',          line_type: 'expense',      generate_recurring: true,  budget_active: true  },
+    income:     { entry_type: 'income',     transaction_type: 'Income',           line_type: 'income',       generate_recurring: true,  budget_active: true  },
+    debt:       { entry_type: 'debt',       transaction_type: 'LiabilityPayment', line_type: 'debt_payment', generate_recurring: true,  budget_active: true  },
+    allocation: { entry_type: 'allocation', transaction_type: 'Transfer',         line_type: 'allocation',   generate_recurring: false, budget_active: false },
+};
 
 const ACCOUNT_TYPES = [
     { value: 'asset', label: 'Asset', color: 'text-emerald-400' },
@@ -557,6 +574,10 @@ export default function Registry() {
     const [showRegistryForm, setShowRegistryForm] = useState(false);
     const [editingRegistryId, setEditingRegistryId] = useState<number | null>(null);
     const [registryForm, setRegistryForm] = useState({ ...EMPTY_REGISTRY_FORM });
+    const [sourcesTab, setSourcesTab] = useState('service');
+    const [showSourcesFilter, setShowSourcesFilter] = useState(false);
+    const [sourcesFilterDraft, setSourcesFilterDraft] = useState({ q: '', budgetAccountId: '' });
+    const [sourcesFilter, setSourcesFilter] = useState({ q: '', budgetAccountId: '' });
     const { showToast } = useToast();
     const { currentClient } = useClient();
 
@@ -672,6 +693,8 @@ export default function Registry() {
         });
         setShowRegistryForm(true);
         setActiveTab('sources');
+        const typeToTab: Record<string, string> = { service: 'service', income: 'income', debt: 'debt', allocation: 'allocation', asset: 'assets', item: 'items' };
+        setSourcesTab(typeToTab[entry.entry_type] ?? 'service');
     };
 
     const saveRegistryEntry = async () => {
@@ -1225,24 +1248,82 @@ export default function Registry() {
         </div>
     );
 
-    const renderSources = () => {
-        const sourceAccounts = accounts.filter((account) => account.account_type === 'asset');
-        const budgetAccounts = accounts.filter((account) => account.account_type === 'expense' || account.account_type === 'liability');
-        const destinationAccounts = accounts.filter((account) => account.account_type === 'asset' || account.account_type === 'liability' || account.account_type === 'expense');
+    const renderRegistryTab = (entryType: string) => {
+        const sourceAccounts = accounts.filter((a) => a.account_type === 'asset');
+        const budgetAccounts = accounts.filter((a) => a.account_type === 'expense' || a.account_type === 'liability');
+        const destinationAccounts = accounts.filter((a) => ['asset', 'liability', 'expense'].includes(a.account_type));
+        const allRows = registryEntries.filter((e) => e.entry_type === entryType);
+        const filtered = allRows.filter((e) => {
+            if (sourcesFilter.q && !e.name.toLowerCase().includes(sourcesFilter.q.toLowerCase())) return false;
+            if (sourcesFilter.budgetAccountId && String(e.budget_account_id ?? '') !== sourcesFilter.budgetAccountId) return false;
+            return true;
+        });
+        const activeFilterCount = Object.values(sourcesFilter).filter(Boolean).length;
+
         return (
             <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                    <div>
-                        <h2 className="text-sm font-semibold text-slate-100">Cashflow Sources</h2>
-                        <p className="text-[10px] text-slate-500">Budget suggestions and optional recurring rules are generated from these registry entries.</p>
+                <div className="border border-slate-800 bg-slate-900/60 p-3 space-y-3">
+                    <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] text-slate-400">
+                            {filtered.length}{allRows.length !== filtered.length && ` / ${allRows.length}`} entries
+                            {activeFilterCount > 0 && <span className="text-emerald-400 ml-1">filtered</span>}
+                        </span>
+                        <div className="flex gap-2">
+                            <button
+                                type="button"
+                                onClick={() => setShowSourcesFilter((v) => !v)}
+                                className={`p-1.5 border text-slate-300 hover:text-emerald-300 ${showSourcesFilter ? 'border-emerald-700 bg-emerald-950/30' : 'border-slate-700 bg-slate-800 hover:bg-slate-700'}`}
+                                title="Toggle filter"
+                            >
+                                <SlidersHorizontal size={14} />
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setEditingRegistryId(null);
+                                    setRegistryForm({ ...EMPTY_REGISTRY_FORM, ...(TAB_DEFAULTS[entryType] ?? {}), currency: currentClient?.general_settings?.currency || 'JPY' });
+                                    setShowRegistryForm((v) => !v);
+                                }}
+                                className="flex items-center gap-1 bg-cyan-700 px-3 py-1.5 text-xs text-white hover:bg-cyan-600"
+                            >
+                                <Plus size={13} /> Add
+                            </button>
+                        </div>
                     </div>
-                    <button type="button" onClick={() => {
-                        setEditingRegistryId(null);
-                        setRegistryForm({ ...EMPTY_REGISTRY_FORM, currency: currentClient?.general_settings?.currency || 'JPY' });
-                        setShowRegistryForm((value) => !value);
-                    }} className="flex items-center gap-1 bg-cyan-700 px-3 py-1.5 text-xs text-white hover:bg-cyan-600">
-                        <Plus size={13} /> Source
-                    </button>
+
+                    {showSourcesFilter && (
+                        <div className="space-y-2 pt-1 border-t border-slate-700">
+                            <div className="grid grid-cols-2 gap-2">
+                                <input
+                                    type="text"
+                                    value={sourcesFilterDraft.q}
+                                    onChange={(e) => setSourcesFilterDraft((prev) => ({ ...prev, q: e.target.value }))}
+                                    placeholder="Name"
+                                    className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs"
+                                />
+                                <select
+                                    value={sourcesFilterDraft.budgetAccountId}
+                                    onChange={(e) => setSourcesFilterDraft((prev) => ({ ...prev, budgetAccountId: e.target.value }))}
+                                    className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs"
+                                >
+                                    <option value="">Budget account...</option>
+                                    {budgetAccounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                                </select>
+                            </div>
+                            <div className="flex gap-2 justify-end">
+                                <button
+                                    type="button"
+                                    onClick={() => setSourcesFilter({ ...sourcesFilterDraft })}
+                                    className="bg-cyan-700 px-3 py-1 text-xs text-white hover:bg-cyan-600"
+                                >Apply</button>
+                                <button
+                                    type="button"
+                                    onClick={() => { const c = { q: '', budgetAccountId: '' }; setSourcesFilter(c); setSourcesFilterDraft(c); }}
+                                    className="bg-slate-700 px-3 py-1 text-xs text-slate-300 hover:bg-slate-600"
+                                >Clear</button>
+                            </div>
+                        </div>
+                    )}
                 </div>
 
                 {showRegistryForm && (
@@ -1314,35 +1395,66 @@ export default function Registry() {
                         <thead className="bg-slate-900 text-slate-500 uppercase">
                             <tr>
                                 <th className="p-2 text-left font-normal">Name</th>
-                                <th className="p-2 text-left font-normal">Kind</th>
                                 <th className="p-2 text-right font-normal">Amount</th>
+                                <th className="p-2 text-left font-normal">Frequency</th>
                                 <th className="p-2 text-left font-normal">Budget Target</th>
-                                <th className="p-2 text-left font-normal">State</th>
+                                <th className="p-2 text-left font-normal">Flags</th>
                                 <th className="p-2" />
                             </tr>
                         </thead>
                         <tbody>
-                            {registryEntries.map((entry) => (
+                            {filtered.map((entry) => (
                                 <tr key={entry.id} className="border-t border-slate-800 hover:bg-slate-800/30">
                                     <td className="p-2 text-slate-200">{entry.name}</td>
-                                    <td className="p-2 text-slate-400">{entry.entry_type} / {entry.line_type}</td>
                                     <td className="p-2 text-right font-mono-nums text-cyan-300">{formatCurrency(entry.amount)}</td>
+                                    <td className="p-2 text-slate-400">{entry.frequency}</td>
                                     <td className="p-2 text-slate-400">{entry.budget_account_name || entry.destination_account_name || entry.source_account_name || '-'}</td>
-                                    <td className="p-2 text-slate-500">
-                                        {entry.budget_active ? 'budget' : 'no budget'} / {entry.generate_recurring ? 'recurring' : 'manual'} / {entry.is_active ? 'active' : 'inactive'}
+                                    <td className="p-2 space-x-1">
+                                        {entry.budget_active && <span className="text-emerald-600">budget</span>}
+                                        {entry.generate_recurring && <span className="text-cyan-700">recur</span>}
+                                        {!entry.is_active && <span className="text-rose-700">inactive</span>}
                                     </td>
                                     <td className="p-2 text-right">
-                                        <button type="button" onClick={() => editRegistryEntry(entry)} className="p-1 text-slate-500 hover:text-cyan-400" title="Edit source"><Edit size={12} /></button>
-                                        <button type="button" onClick={() => removeRegistryEntry(entry)} className="p-1 text-slate-500 hover:text-rose-400" title="Deactivate source"><Trash2 size={12} /></button>
+                                        <button type="button" onClick={() => editRegistryEntry(entry)} className="p-1 text-slate-500 hover:text-cyan-400" title="Edit"><Edit size={12} /></button>
+                                        <button type="button" onClick={() => removeRegistryEntry(entry)} className="p-1 text-slate-500 hover:text-rose-400" title="Delete"><Trash2 size={12} /></button>
                                     </td>
                                 </tr>
                             ))}
+                            {filtered.length === 0 && (
+                                <tr><td colSpan={6} className="p-4 text-center text-slate-600">No entries</td></tr>
+                            )}
                         </tbody>
                     </table>
                 </div>
             </div>
         );
     };
+
+    const renderSources = () => (
+        <div className="space-y-4">
+            <div className="flex border-b border-slate-700">
+                {SOURCES_INNER_TABS.map((tab) => (
+                    <button
+                        key={tab.id}
+                        type="button"
+                        onClick={() => { setSourcesTab(tab.id); setShowRegistryForm(false); }}
+                        className={`px-4 py-2 text-xs font-medium border-b-2 -mb-px transition-colors ${
+                            sourcesTab === tab.id
+                                ? 'border-cyan-500 text-cyan-300'
+                                : 'border-transparent text-slate-500 hover:text-slate-300'
+                        }`}
+                    >
+                        {tab.label}
+                    </button>
+                ))}
+            </div>
+            <div>
+                {sourcesTab === 'assets' && renderProducts('asset')}
+                {sourcesTab === 'items' && renderProducts('item')}
+                {sourcesTab !== 'assets' && sourcesTab !== 'items' && renderRegistryTab(sourcesTab)}
+            </div>
+        </div>
+    );
 
     const renderAccounts = () => {
         const renderNode = (account: AccountTreeNode, depth: number) => {
@@ -1547,8 +1659,6 @@ export default function Registry() {
                 <div className="p-4">
                     {activeTab === 'accounts' && renderAccounts()}
                     {activeTab === 'exchange-rates' && renderExchangeRates()}
-                    {activeTab === 'assets' && renderProducts('asset')}
-                    {activeTab === 'items' && renderProducts('item')}
                     {activeTab === 'sources' && renderSources()}
                 </div>
             </TabPanel>
