@@ -18,6 +18,7 @@ import {
 
 const PORT = parseInt(process.env.PORT ?? "3000");
 const MCP_PASSWORD = process.env.MCP_PASSWORD ?? "";
+const MCP_USERNAME = process.env.MCP_USERNAME?.trim() || "admin";
 
 if (!MCP_PASSWORD) {
   console.warn("⚠️  MCP_PASSWORD is not set. Set it in your .env file before production use.");
@@ -140,9 +141,9 @@ function renderLoginForm(params: {
     h1{font-size:1.1rem;color:#111;text-align:center;margin:0 0 .25rem}
     .app-label{font-size:.8rem;color:#666;text-align:center;margin-bottom:1.25rem}
     label{display:block;font-size:.85rem;font-weight:600;color:#333;margin-bottom:.4rem}
-    input[type=password]{width:100%;padding:.75rem 1rem;border:1.5px solid #ddd;border-radius:10px;font-size:1rem;outline:none}
-    input[type=password]:focus{border-color:#0070f3}
-    button{width:100%;padding:.8rem;background:#0070f3;color:#fff;border:none;border-radius:10px;font-size:1rem;font-weight:600;cursor:pointer;margin-top:1rem}
+    input[type=text],input[type=password]{width:100%;padding:.75rem 1rem;border:1.5px solid #ddd;border-radius:10px;font-size:1rem;outline:none;margin-bottom:.75rem}
+    input[type=text]:focus,input[type=password]:focus{border-color:#0070f3}
+    button{width:100%;padding:.8rem;background:#0070f3;color:#fff;border:none;border-radius:10px;font-size:1rem;font-weight:600;cursor:pointer;margin-top:.25rem}
     button:hover{background:#005ed3}
     .note{font-size:.75rem;color:#888;text-align:center;margin-top:1rem}
   </style>
@@ -162,8 +163,10 @@ function renderLoginForm(params: {
       <input type="hidden" name="state"                  value="${esc(params.state ?? "")}">
       <input type="hidden" name="scope"                  value="${esc(params.scope)}">
       <input type="hidden" name="resource"               value="${esc(params.resource)}">
+      <label for="un">ユーザー名</label>
+      <input type="text" id="un" name="username" placeholder="username" autofocus required autocomplete="username">
       <label for="pw">パスワード</label>
-      <input type="password" id="pw" name="password" placeholder="••••••••" autofocus required>
+      <input type="password" id="pw" name="password" placeholder="••••••••" required autocomplete="current-password">
       <button type="submit">ログイン &amp; 許可</button>
     </form>
     <p class="note">スコープ: ${esc(params.scope)}</p>
@@ -201,7 +204,7 @@ app.get("/authorize", async (req, res) => {
 
 app.post("/authorize", async (req, res) => {
   const b = req.body as Record<string, string>;
-  const { response_type, client_id, redirect_uri, code_challenge, code_challenge_method, state, scope, password } = b;
+  const { response_type, client_id, redirect_uri, code_challenge, code_challenge_method, state, scope, username, password } = b;
   const resource = b.resource || buildCanonicalMcpResource(req);
 
   if (response_type !== "code") { res.status(400).json({ error: "unsupported_response_type" }); return; }
@@ -211,7 +214,8 @@ app.post("/authorize", async (req, res) => {
   if (!client) { res.status(400).json({ error: "invalid_client" }); return; }
   if (!client.redirect_uris.includes(redirect_uri)) { res.status(400).json({ error: "invalid_redirect_uri" }); return; }
 
-  if (!MCP_PASSWORD || password !== MCP_PASSWORD) {
+  const credentialsValid = MCP_PASSWORD && username === MCP_USERNAME && password === MCP_PASSWORD;
+  if (!credentialsValid) {
     res.status(401).setHeader("Content-Type", "text/html; charset=utf-8").send(renderLoginForm({
       client_id,
       client_name: client.client_name,
@@ -222,11 +226,11 @@ app.post("/authorize", async (req, res) => {
       scope: scope ?? "mcp",
       resource,
       response_type,
-    }, "パスワードが正しくありません"));
+    }, "ユーザー名またはパスワードが正しくありません"));
     return;
   }
 
-  console.info("[oauth] authorize POST success", { client_id, resource });
+  console.info("[oauth] authorize POST success", { client_id, username, resource });
 
   const code = createAuthCode({
     client_id,
@@ -237,6 +241,7 @@ app.post("/authorize", async (req, res) => {
     state,
     resource,
     allow_refresh_token: client.grant_types.includes("refresh_token"),
+    username,
   });
 
   const redirectUrl = new URL(redirect_uri);

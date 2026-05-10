@@ -57,6 +57,7 @@ services:
     environment:
       - PORT=3000
       - BASE_URL=${MCP_BASE_URL:-http://localhost:13000}
+      - MCP_USERNAME=${MCP_USERNAME:-admin}
       - MCP_PASSWORD=${MCP_PASSWORD:-change-me}
       - JWT_SECRET=${MCP_JWT_SECRET:-change-me-to-a-secret-key-at-least-32-chars}
       - BACKEND_URL=http://backend:8000

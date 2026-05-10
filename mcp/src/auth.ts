@@ -45,6 +45,7 @@ interface PendingAuthCode {
   state?: string;
   resource: string;
   allow_refresh_token: boolean;
+  username: string;
   expires_at: number;
 }
 
@@ -53,6 +54,7 @@ interface OAuthRefreshTokenRecord {
   client_id: string;
   scope: string;
   resource: string;
+  username: string;
   issued_at_ms: number;
   expires_at_ms: number;
   revoked_at_ms?: number;
@@ -224,6 +226,7 @@ export function createAuthCode(params: {
   state?: string;
   resource: string;
   allow_refresh_token: boolean;
+  username: string;
 }): string {
   const code = crypto.randomBytes(32).toString("base64url");
   pendingCodes.set(code, {
@@ -235,6 +238,7 @@ export function createAuthCode(params: {
     state: params.state,
     resource: params.resource,
     allow_refresh_token: params.allow_refresh_token,
+    username: params.username,
     expires_at: Date.now() + AUTH_CODE_TTL_MS,
   });
   return code;
@@ -242,9 +246,9 @@ export function createAuthCode(params: {
 
 // ─── Token Issuance ───────────────────────────────────────
 
-function issueAccessJwt(params: { client_id: string; scope: string; resource: string }): string {
+function issueAccessJwt(params: { client_id: string; scope: string; resource: string; username: string }): string {
   return jwt.sign(
-    { sub: "user", type: "access", client_id: params.client_id, scope: params.scope },
+    { sub: params.username, type: "access", client_id: params.client_id, scope: params.scope, username: params.username },
     JWT_SECRET,
     {
       expiresIn: ACCESS_TOKEN_TTL_SEC,
@@ -253,7 +257,7 @@ function issueAccessJwt(params: { client_id: string; scope: string; resource: st
   );
 }
 
-function issueOpaqueRefreshToken(params: { client_id: string; scope: string; resource: string }): string {
+function issueOpaqueRefreshToken(params: { client_id: string; scope: string; resource: string; username: string }): string {
   const token = crypto.randomBytes(48).toString("base64url");
   const hash = hashToken(token);
   const now = Date.now();
@@ -262,6 +266,7 @@ function issueOpaqueRefreshToken(params: { client_id: string; scope: string; res
     client_id: params.client_id,
     scope: params.scope,
     resource: params.resource,
+    username: params.username,
     issued_at_ms: now,
     expires_at_ms: now + REFRESH_TOKEN_TTL_MS,
   });
@@ -287,28 +292,38 @@ export function exchangeCodeForTokens(params: {
   canonical_resource: string;
 }): TokenResponse | null {
   const entry = pendingCodes.get(params.code);
-  if (!entry) return null;
-  if (entry.expires_at < Date.now()) { pendingCodes.delete(params.code); return null; }
-  if (entry.client_id !== params.client_id) { pendingCodes.delete(params.code); return null; }
-  if (entry.redirect_uri !== params.redirect_uri) { pendingCodes.delete(params.code); return null; }
+  if (!entry) { console.warn("[oauth] code not found"); return null; }
+  if (entry.expires_at < Date.now()) { pendingCodes.delete(params.code); console.warn("[oauth] code expired"); return null; }
+  if (entry.client_id !== params.client_id) { pendingCodes.delete(params.code); console.warn("[oauth] client_id mismatch"); return null; }
+  if (entry.redirect_uri !== params.redirect_uri) {
+    pendingCodes.delete(params.code);
+    console.warn("[oauth] redirect_uri mismatch", { stored: entry.redirect_uri, received: params.redirect_uri });
+    return null;
+  }
 
-  const effectiveResource = params.resource ?? entry.resource;
-  if (effectiveResource !== params.canonical_resource) { pendingCodes.delete(params.code); return null; }
+  // Use the resource negotiated at authorize time; only log a warning on mismatch.
+  const effectiveResource = entry.resource;
+  if (params.resource && params.resource !== effectiveResource) {
+    console.warn("[oauth] resource mismatch (non-fatal)", { token_request: params.resource, stored: effectiveResource });
+  }
 
   if (!verifyPKCE(params.code_verifier, entry.code_challenge, entry.code_challenge_method)) {
     pendingCodes.delete(params.code);
+    console.warn("[oauth] PKCE verification failed");
     return null;
   }
 
   pendingCodes.delete(params.code);
+  console.info("[oauth] code exchanged for tokens", { client_id: params.client_id, username: entry.username });
 
   const access_token = issueAccessJwt({
     client_id: params.client_id,
     scope: entry.scope,
     resource: effectiveResource,
+    username: entry.username,
   });
   const refresh_token = entry.allow_refresh_token
-    ? issueOpaqueRefreshToken({ client_id: params.client_id, scope: entry.scope, resource: effectiveResource })
+    ? issueOpaqueRefreshToken({ client_id: params.client_id, scope: entry.scope, resource: effectiveResource, username: entry.username })
     : undefined;
 
   return { access_token, refresh_token, token_type: "Bearer", expires_in: ACCESS_TOKEN_TTL_SEC, scope: entry.scope };
@@ -321,11 +336,15 @@ export function refreshAccessToken(params: {
 }): TokenResponse | null {
   const hash = hashToken(params.refresh_token);
   const record = refreshTokenStore.get(hash);
-  if (!record) return null;
-  if (record.revoked_at_ms) return null;
-  if (record.expires_at_ms < Date.now()) { refreshTokenStore.delete(hash); return null; }
-  if (record.client_id !== params.client_id) return null;
-  if (record.resource !== params.canonical_resource) return null;
+  if (!record) { console.warn("[oauth] refresh token not found"); return null; }
+  if (record.revoked_at_ms) { console.warn("[oauth] refresh token revoked"); return null; }
+  if (record.expires_at_ms < Date.now()) { refreshTokenStore.delete(hash); console.warn("[oauth] refresh token expired"); return null; }
+  if (record.client_id !== params.client_id) { console.warn("[oauth] refresh token client_id mismatch"); return null; }
+
+  // Non-fatal resource check for refresh (resource may differ across tunnel restarts)
+  if (record.resource !== params.canonical_resource) {
+    console.warn("[oauth] refresh resource mismatch (non-fatal)", { stored: record.resource, canonical: params.canonical_resource });
+  }
 
   // Rotate: mark old token as revoked
   record.revoked_at_ms = Date.now();
@@ -334,6 +353,7 @@ export function refreshAccessToken(params: {
     client_id: params.client_id,
     scope: record.scope,
     resource: record.resource,
+    username: record.username,
   });
   record.replaced_by_hash = hashToken(new_refresh_token);
 
@@ -341,8 +361,10 @@ export function refreshAccessToken(params: {
     client_id: params.client_id,
     scope: record.scope,
     resource: record.resource,
+    username: record.username,
   });
 
+  console.info("[oauth] refresh token rotated", { client_id: params.client_id, username: record.username });
   return {
     access_token,
     refresh_token: new_refresh_token,
