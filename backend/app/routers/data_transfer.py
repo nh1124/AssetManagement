@@ -59,12 +59,6 @@ def export_client_data(
         .filter(models.Transaction.client_id == current_client.id)
         .all()
     ]
-    event_ids = [
-        row[0]
-        for row in db.query(models.LifeEvent.id)
-        .filter(models.LifeEvent.client_id == current_client.id)
-        .all()
-    ]
 
     return {
         "version": 1,
@@ -268,16 +262,6 @@ def export_client_data(
                 .order_by(models.LifeEvent.id)
                 .all()
             ],
-            "goal_allocations": [
-                _row(
-                    allocation,
-                    ["id", "life_event_id", "account_id", "allocation_percentage"],
-                )
-                for allocation in db.query(models.GoalAllocation)
-                .filter(models.GoalAllocation.life_event_id.in_(event_ids or [-1]))
-                .order_by(models.GoalAllocation.id)
-                .all()
-            ],
             "transactions": [
                 _row(
                     transaction,
@@ -478,20 +462,10 @@ def import_client_data(
             .filter(models.Transaction.client_id == current_client.id)
             .all()
         ]
-        event_ids = [
-            row[0]
-            for row in db.query(models.LifeEvent.id)
-            .filter(models.LifeEvent.client_id == current_client.id)
-            .all()
-        ]
 
         if tx_ids:
             db.query(models.JournalEntry).filter(
                 models.JournalEntry.transaction_id.in_(tx_ids)
-            ).delete(synchronize_session=False)
-        if event_ids:
-            db.query(models.GoalAllocation).filter(
-                models.GoalAllocation.life_event_id.in_(event_ids)
             ).delete(synchronize_session=False)
 
         for model in [
@@ -703,18 +677,6 @@ def import_client_data(
             db.add(event)
             db.flush()
             event_map[old_id] = event.id
-
-        for item in data.get("goal_allocations", []):
-            life_event_id = event_map.get(item.get("life_event_id"))
-            account_id = account_map.get(item.get("account_id"))
-            if life_event_id and account_id:
-                db.add(
-                    models.GoalAllocation(
-                        life_event_id=life_event_id,
-                        account_id=account_id,
-                        allocation_percentage=item.get("allocation_percentage") or 0,
-                    )
-                )
 
         for item in data.get("transactions", []):
             old_id = int(item["id"])

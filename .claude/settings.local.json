@@ -4,7 +4,8 @@
       "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\nh112\\\\programming\\\\project\\\\AssetManagement\\\\backend\\\\alembic\\\\versions\\\\\" -Name | Sort-Object)",
       "PowerShell(Get-ChildItem 'c:\\\\Users\\\\nh112\\\\programming\\\\project\\\\AssetManagement\\\\backend\\\\alembic\\\\versions\\\\' | Sort-Object Name | ForEach-Object { $_.Name })",
       "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\nh112\\\\programming\\\\project\\\\AssetManagement\" -Directory)",
-      "Bash(Select-Object Name)"
+      "Bash(Select-Object Name)",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\nh112\\\\programming\\\\project\\\\AssetManagement\\\\backend\" -Filter \"*seed*\" -Recurse)"
     ]
   }
 }
