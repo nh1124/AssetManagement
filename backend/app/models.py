@@ -67,6 +67,7 @@ class Client(Base):
     capsule_rules = relationship("CapsuleRule", back_populates="client")
     monthly_reviews = relationship("MonthlyReview", back_populates="client")
     monthly_plan_lines = relationship("MonthlyPlanLine", back_populates="client")
+    budget_plans = relationship("BudgetPlan", back_populates="client")
     period_reviews = relationship("PeriodReview", back_populates="client")
     monthly_actions = relationship("MonthlyAction", back_populates="client")
     exchange_rates = relationship("ExchangeRate", back_populates="client")
@@ -343,10 +344,13 @@ class MonthlyPlanLine(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    plan_id = Column(Integer, ForeignKey("budget_plans.id", ondelete="SET NULL"), nullable=True)
+
     client = relationship("Client", back_populates="monthly_plan_lines")
     account = relationship("Account", foreign_keys=[account_id])
     source_account = relationship("Account", foreign_keys=[source_account_id])
     recurring_transaction = relationship("RecurringTransaction", foreign_keys=[recurring_transaction_id])
+    budget_plan = relationship("BudgetPlan", back_populates="plan_lines")
 
 class MonthlyReview(Base):
     """PDCA review notes for a specific month."""
@@ -363,6 +367,24 @@ class MonthlyReview(Base):
     __table_args__ = (UniqueConstraint("client_id", "target_period", name="_client_review_period_uc"),)
 
     client = relationship("Client", back_populates="monthly_reviews")
+
+
+class BudgetPlan(Base):
+    """Named cash-flow planning scenario for comparing budget strategies."""
+    __tablename__ = "budget_plans"
+    __table_args__ = (UniqueConstraint("client_id", "name", name="_client_budget_plan_name_uc"),)
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String, nullable=False)
+    description = Column(String, nullable=True)
+    is_default = Column(Boolean, default=False, server_default="false", nullable=False)
+    sort_order = Column(Integer, default=0, server_default="0", nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    client = relationship("Client", back_populates="budget_plans")
+    plan_lines = relationship("MonthlyPlanLine", back_populates="budget_plan")
 
 
 class PeriodReview(Base):

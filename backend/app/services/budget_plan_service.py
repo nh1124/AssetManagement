@@ -26,6 +26,16 @@ INFLOW_LINE_TYPES = {"income", "borrowing", "drawdown"}
 OUTFLOW_LINE_TYPES = {"expense", "allocation", "debt_payment"}
 
 
+def get_or_create_default_plan(db: Session, client_id: int) -> models.BudgetPlan:
+    plan = db.query(models.BudgetPlan).filter_by(client_id=client_id, is_default=True).first()
+    if not plan:
+        plan = models.BudgetPlan(client_id=client_id, name="Baseline", is_default=True, sort_order=0)
+        db.add(plan)
+        db.commit()
+        db.refresh(plan)
+    return plan
+
+
 def period_to_range(period: str) -> tuple[date, date]:
     year, month = [int(part) for part in period.split("-")]
     start = date(year, month, 1)
@@ -286,6 +296,7 @@ def _line_identity_key(line: models.MonthlyPlanLine | dict) -> tuple:
     target_id = getter("target_id")
     name = "" if account_id or target_id else (getter("name") or "").strip().lower()
     return (
+        getter("plan_id") or 0,
         getter("target_period"),
         getter("line_type"),
         getter("target_type") or "manual",
@@ -328,12 +339,16 @@ def _deduplicate_active_plan_models(db: Session, plan_models: list[models.Monthl
 
 def _active_line_with_identity(db: Session, client_id: int, data: dict) -> models.MonthlyPlanLine | None:
     key = _line_identity_key({**data, "target_period": data.get("target_period")})
-    rows = db.query(models.MonthlyPlanLine).filter(
+    q = db.query(models.MonthlyPlanLine).filter(
         models.MonthlyPlanLine.client_id == client_id,
         models.MonthlyPlanLine.target_period == data.get("target_period"),
         models.MonthlyPlanLine.line_type == data.get("line_type"),
         models.MonthlyPlanLine.is_active.is_(True),
-    ).all()
+    )
+    plan_id = data.get("plan_id")
+    if plan_id is not None:
+        q = q.filter(models.MonthlyPlanLine.plan_id == plan_id)
+    rows = q.all()
     return next((line for line in rows if _line_identity_key(line) == key), None)
 
 
@@ -512,9 +527,13 @@ def get_budget_summary(
     db: Session,
     client_id: int,
     period: str,
+    plan_id: int | None = None,
     cash_flow_start_period: str | None = None,
     cash_flow_months: int = 12,
 ) -> dict:
+    if plan_id is None:
+        plan_id = get_or_create_default_plan(db, client_id).id
+
     ensure_registry_entries(db, client_id)
     events_with_progress = get_life_events_with_progress(db, client_id=client_id)
     total_gap = sum(max(0, e["gap"]) for e in events_with_progress)
@@ -539,6 +558,7 @@ def get_budget_summary(
         models.MonthlyPlanLine.client_id == client_id,
         models.MonthlyPlanLine.target_period == period,
         models.MonthlyPlanLine.is_active.is_(True),
+        models.MonthlyPlanLine.plan_id == plan_id,
     ).order_by(models.MonthlyPlanLine.line_type, models.MonthlyPlanLine.id).all()
     plan_models = _deduplicate_active_plan_models(db, plan_models)
     plan_lines = [
@@ -604,11 +624,12 @@ def get_budget_summary(
         feasibility_status = "shortfall"
 
     projection_start = cash_flow_start_period or period
-    projection = get_cash_flow_projection(db, client_id, projection_start, months=cash_flow_months, starting_cash=starting_cash)
+    projection = get_cash_flow_projection(db, client_id, projection_start, months=cash_flow_months, starting_cash=starting_cash, plan_id=plan_id)
     cash_flow_summary = summarize_cash_flow_projection(projection, starting_cash, projection_start)
 
     return {
         "period": period,
+        "plan_id": plan_id,
         "required_monthly_savings": round(required_monthly_savings, 0),
         "monthly_fixed_costs": round(recurring["fixed_costs"], 0),
         "monthly_income": round(monthly_income, 0),
@@ -687,16 +708,21 @@ def get_cash_flow_projection(
     start_period: str,
     months: int = 12,
     starting_cash: float | None = None,
+    plan_id: int | None = None,
 ) -> list[dict]:
+    if plan_id is None:
+        plan_id = get_or_create_default_plan(db, client_id).id
     cash = _liquid_cash(db, client_id) if starting_cash is None else starting_cash
     rows = []
     for idx in range(months):
         period = add_months(start_period, idx)
-        lines = db.query(models.MonthlyPlanLine).filter(
+        q = db.query(models.MonthlyPlanLine).filter(
             models.MonthlyPlanLine.client_id == client_id,
             models.MonthlyPlanLine.target_period == period,
             models.MonthlyPlanLine.is_active.is_(True),
-        ).all()
+            models.MonthlyPlanLine.plan_id == plan_id,
+        )
+        lines = q.all()
         lines = _deduplicate_active_plan_models(db, lines)
         income = sum(
             line.amount or 0.0 for line in lines if line.line_type in INFLOW_LINE_TYPES
@@ -894,10 +920,15 @@ def _apply_plan_line_data(db: Session, client_id: int, line: models.MonthlyPlanL
 
 
 def create_plan_lines(db: Session, client_id: int, payloads: list) -> list[models.MonthlyPlanLine]:
+    default_plan_id: int | None = None
     created: list[models.MonthlyPlanLine] = []
     for payload in payloads:
         data = _payload_data(payload)
         data.pop("id", None)
+        if data.get("plan_id") is None:
+            if default_plan_id is None:
+                default_plan_id = get_or_create_default_plan(db, client_id).id
+            data["plan_id"] = default_plan_id
         if _active_line_with_identity(db, client_id, data):
             raise ValueError("Monthly plan line already exists for this period and target")
         line = models.MonthlyPlanLine(client_id=client_id)

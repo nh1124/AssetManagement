@@ -547,3 +547,25 @@ export interface MonteCarloResult {
     };
     n_simulations: number;
 }
+
+export interface BudgetPlan {
+    id: number;
+    name: string;
+    description?: string | null;
+    is_default: boolean;
+    sort_order: number;
+    created_at?: string | null;
+    updated_at?: string | null;
+}
+
+export interface BudgetPlanCashFlowRow {
+    period: string;
+    ending_cash: number;
+    net_cash: number;
+}
+
+export interface BudgetPlanCompareResult {
+    plan_id: number;
+    plan_name: string;
+    cash_flow: BudgetPlanCashFlowRow[];
+}

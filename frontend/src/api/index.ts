@@ -429,11 +429,12 @@ export const deleteGoal = deleteLifeEvent;
 // Budget Builder
 export const getBudgetSummary = async (
     period?: string,
-    options: { cash_flow_start_period?: string; cash_flow_months?: number } = {},
+    options: { cash_flow_start_period?: string; cash_flow_months?: number; plan_id?: number } = {},
 ) => {
     const response = await api.get('/life-events/budget-summary', {
         params: {
             period,
+            plan_id: options.plan_id,
             cash_flow_start_period: options.cash_flow_start_period,
             cash_flow_months: options.cash_flow_months,
         },
@@ -453,6 +454,7 @@ export type MonthlyPlanLinePayload = {
     source?: string;
     recurring_transaction_id?: number | null;
     is_active?: boolean;
+    plan_id?: number | null;
 };
 
 export const createMonthlyPlanLines = async (lines: MonthlyPlanLinePayload[]) => {
@@ -898,6 +900,57 @@ export const applyPeriodReportAction = async (
 ): Promise<{ status: string; action: MonthlyAction }> => {
     const response = await api.post(`/reports/period/actions/${proposalId}/apply`, null, {
         params: { start_date: startDate, end_date: endDate },
+    });
+    return response.data;
+};
+
+// Budget Plans
+import type { BudgetPlan, BudgetPlanCompareResult } from '../types';
+
+export const getBudgetPlans = async (): Promise<BudgetPlan[]> => {
+    const response = await api.get('/budget-plans');
+    return response.data;
+};
+
+export const createBudgetPlan = async (payload: { name: string; description?: string }): Promise<BudgetPlan> => {
+    const response = await api.post('/budget-plans', payload);
+    return response.data;
+};
+
+export const updateBudgetPlan = async (id: number, payload: { name?: string; sort_order?: number }): Promise<BudgetPlan> => {
+    const response = await api.put(`/budget-plans/${id}`, payload);
+    return response.data;
+};
+
+export const deleteBudgetPlan = async (id: number): Promise<void> => {
+    await api.delete(`/budget-plans/${id}`);
+};
+
+export const copyBudgetPlanFrom = async (targetPlanId: number, sourcePlanId: number): Promise<void> => {
+    await api.post(`/budget-plans/${targetPlanId}/copy-from`, null, {
+        params: { source_plan_id: sourcePlanId },
+    });
+};
+
+export const copyPeriodFullReplace = async (payload: {
+    source_period: string;
+    target_period: string;
+    plan_id?: number;
+}): Promise<void> => {
+    await api.post('/budget-plans/copy-period', payload);
+};
+
+export const compareBudgetPlans = async (
+    planIds: number[],
+    startPeriod: string,
+    months?: number,
+): Promise<BudgetPlanCompareResult[]> => {
+    const response = await api.get('/budget-plans/compare', {
+        params: {
+            plan_ids: planIds.join(','),
+            start_period: startPeriod,
+            months,
+        },
     });
     return response.data;
 };

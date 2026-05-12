@@ -12,6 +12,7 @@ from .routers import (
     ai,
     analysis,
     auth,
+    budget_plans,
     capsules,
     clients,
     data_transfer,
@@ -131,6 +132,7 @@ app.include_router(quick_templates.batch_router)
 app.include_router(products.router)
 app.include_router(registry_entries.router, dependencies=[Depends(get_current_client)])
 app.include_router(life_events.router)
+app.include_router(budget_plans.router, dependencies=[Depends(get_current_client)])
 app.include_router(monthly_reviews.router)
 app.include_router(period_reviews.router)
 app.include_router(simulation.router)

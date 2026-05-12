@@ -351,6 +351,7 @@ class MonthlyPlanLineBase(BaseModel):
     source: str = "manual"
     recurring_transaction_id: Optional[int] = None
     is_active: bool = True
+    plan_id: Optional[int] = None
 
 
 class MonthlyPlanLineCreate(MonthlyPlanLineBase):
@@ -375,6 +376,7 @@ class MonthlyPlanLineUpdate(BaseModel):
     source: Optional[str] = None
     recurring_transaction_id: Optional[int] = None
     is_active: Optional[bool] = None
+    plan_id: Optional[int] = None
 
 
 class MonthlyPlanLine(MonthlyPlanLineBase):
@@ -398,6 +400,54 @@ class MonthlyPlanLine(MonthlyPlanLineBase):
     class Config:
         from_attributes = True
 
+
+# ========== Budget Plans ==========
+
+class BudgetPlanCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    sort_order: int = 0
+    model_config = ConfigDict(extra="forbid")
+
+
+class BudgetPlanUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    sort_order: Optional[int] = None
+
+
+class BudgetPlan(BaseModel):
+    id: int
+    name: str
+    description: Optional[str] = None
+    is_default: bool
+    sort_order: int
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class CopyPeriodRequest(BaseModel):
+    source_period: str
+    target_period: str
+    plan_id: Optional[int] = None
+
+
+class BudgetPlanCashFlowRow(BaseModel):
+    period: str
+    ending_cash: float
+    net_cash: float
+
+
+class BudgetPlanCompareResult(BaseModel):
+    plan_id: int
+    plan_name: str
+    cash_flow: list[BudgetPlanCashFlowRow]
+
+
+# ========== Monthly Reviews ==========
 
 class MonthlyReviewBase(BaseModel):
     target_period: str
