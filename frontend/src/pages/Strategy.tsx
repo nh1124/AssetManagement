@@ -1,6 +1,6 @@
 ﻿import { Fragment, useEffect, useState } from 'react';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { AlertTriangle, Archive, CalendarDays, ChevronLeft, ChevronRight, Copy, Edit2, Info, Plus, RefreshCw, Save, Search, Sparkles, Trash2, Unlink, X } from 'lucide-react';
+import { Bar, BarChart, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { AlertTriangle, Archive, CalendarDays, ChevronLeft, ChevronRight, Copy, Edit2, Info, Plus, RefreshCw, Search, Sparkles, Trash2, Unlink, X } from 'lucide-react';
 import TabPanel from '../components/TabPanel';
 import { useToast } from '../components/Toast';
 import { useClient } from '../context/ClientContext';
@@ -165,7 +165,7 @@ export default function Strategy() {
     const { showToast } = useToast();
     const { currentClient } = useClient();
     const [activeTab, setActiveTab] = useState('budgeting');
-    const [activeBudgetingTab, setActiveBudgetingTab] = useState<'plan' | 'cash_flow' | 'compare'>('plan');
+    const [activeBudgetingTab, setActiveBudgetingTab] = useState<'overview' | 'plan' | 'cash_flow' | 'compare'>('overview');
     const [budgetPlans, setBudgetPlans] = useState<BudgetPlan[]>([]);
     const [activePlanId, setActivePlanId] = useState<number | null>(null);
     const [showPlanNameInput, setShowPlanNameInput] = useState(false);
@@ -544,35 +544,12 @@ export default function Strategy() {
         };
     };
 
-    const saveBudget = async () => {
+    const persistBudgetAccountAmount = async (account: BudgetAccount, amount: number) => {
         try {
-            const expenseLines = Object.entries(budgetEdits).flatMap(([accountId, amount]) => {
-                const account = budgetSummary?.expense_accounts.find((item) => item.id === Number(accountId));
-                if (account?.source === 'recurrence' && !account.plan_line_id) return [];
-                if (!account) return [];
-                return [budgetAccountPlanPayload(account, amount)];
-            });
-            const otherLines = planLineDrafts
-                .filter((line) => !(line.source === 'recurrence' && !line.id))
-                .map((line) => ({
-                ...(typeof line.id === 'number' ? { id: line.id } : {}),
-                target_period: currentPeriod,
-                line_type: line.line_type,
-                target_type: line.target_type,
-                target_id: line.target_id ?? null,
-                account_id: line.account_id ?? null,
-                source_account_id: line.source_account_id ?? null,
-                name: line.name || line.target_name || null,
-                amount: Number(line.amount || 0),
-                source: line.source && SYNCED_SOURCES.has(line.source) ? line.source : 'manual',
-                recurring_transaction_id: line.source?.includes('recurrence') ? line.recurring_transaction_id ?? null : null,
-                is_active: true,
-            }));
-            await persistMonthlyPlanLines([...expenseLines, ...otherLines]);
-            showToast('Monthly budget saved', 'success');
+            await persistMonthlyPlanLines([budgetAccountPlanPayload(account, amount)]);
             await fetchBudgetSummary();
         } catch (error) {
-            showToast('Failed to save budget', 'error');
+            showToast('Failed to save budget change', 'error');
         }
     };
 
@@ -582,6 +559,7 @@ export default function Strategy() {
         try {
             const suggestions = await suggestBudget();
             const edits = { ...budgetEdits };
+            const payload: EditablePlanLinePayload[] = [];
             let applied = 0;
             suggestions.forEach((suggestion: any) => {
                 const account = budgetSummary.expense_accounts.find(
@@ -590,10 +568,15 @@ export default function Strategy() {
                 );
                 if (account) {
                     edits[account.id] = suggestion.suggested_limit;
+                    payload.push(budgetAccountPlanPayload(account, suggestion.suggested_limit));
                     applied += 1;
                 }
             });
             setBudgetEdits(edits);
+            if (payload.length > 0) {
+                await persistMonthlyPlanLines(payload);
+                await fetchBudgetSummary();
+            }
             showToast(applied > 0 ? `Applied ${applied} budget suggestions` : 'No matching categories found', applied > 0 ? 'success' : 'info');
         } catch (error) {
             showToast('Failed to get budget suggestions', 'error');
@@ -723,6 +706,28 @@ export default function Strategy() {
         setPlanLineDrafts((prev) => prev.map((line) => (
             line.local_id === localId ? { ...line, amount } : line
         )));
+    };
+
+    const persistPlanLineAmount = async (line: EditablePlanLine, amount: number) => {
+        try {
+            await persistMonthlyPlanLines([{
+                ...(typeof line.id === 'number' ? { id: line.id } : {}),
+                target_period: currentPeriod,
+                line_type: line.line_type,
+                target_type: line.target_type,
+                target_id: line.target_id ?? null,
+                account_id: line.account_id ?? null,
+                source_account_id: line.source_account_id ?? null,
+                name: line.name || line.target_name || null,
+                amount,
+                source: line.source && SYNCED_SOURCES.has(line.source) ? line.source : 'manual',
+                recurring_transaction_id: line.source?.includes('recurrence') ? line.recurring_transaction_id ?? null : null,
+                is_active: true,
+            }]);
+            await fetchBudgetSummary();
+        } catch (error) {
+            showToast('Failed to save plan change', 'error');
+        }
     };
 
     const budgetAmountWithExistingAdjustment = (account: BudgetAccount) => {
@@ -861,7 +866,7 @@ export default function Strategy() {
         try {
             const summary = period === currentPeriod
                 ? budgetSummary
-                : await getBudgetSummary(period, { cash_flow_start_period: period, cash_flow_months: 1 });
+                : await getBudgetSummary(period, { cash_flow_start_period: period, cash_flow_months: 1, plan_id: activePlanId ?? undefined });
             if (!summary) return;
             const expensePayload = (summary.expense_accounts ?? [])
                 .filter((account: BudgetAccount) => (
@@ -1383,6 +1388,115 @@ export default function Strategy() {
         const planGroupActual = (types: MonthlyPlanLineType[]) =>
             planLinesFor(types).reduce((sum, line) => sum + Number(line.actual || 0), 0);
         const isCurrentMonth = currentPeriod === monthKey();
+        const activePlan = budgetPlans.find((plan) => plan.id === activePlanId) ?? null;
+        const inflowTotal = Number(budgetSummary?.total_expected_inflow ?? 0);
+        const variableTotal = Number(budgetSummary?.total_variable_budget ?? 0);
+        const allocationTotal = Number(budgetSummary?.total_allocation_plan ?? 0);
+        const debtTotal = Number(budgetSummary?.total_debt_plan ?? 0);
+        const overviewBars = [
+            { name: 'Income', amount: inflowTotal, fill: '#34d399' },
+            { name: 'Variable', amount: variableTotal, fill: '#fbbf24' },
+            { name: 'Allocation', amount: allocationTotal, fill: '#67e8f9' },
+            { name: 'Debt', amount: debtTotal, fill: '#fda4af' },
+            { name: 'Remaining', amount: Number(budgetSummary?.remaining_balance ?? 0), fill: '#c084fc' },
+        ];
+        const renderMetricPanel = (label: string, value: number | undefined | null, tone = 'text-slate-200') => (
+            <div className="border border-slate-800 bg-slate-950/40 px-3 py-2 text-center">
+                <p className="text-[10px] uppercase text-slate-500">{label}</p>
+                <p className={`mt-1 font-mono-nums text-sm ${tone}`}>{formatCurrency(value)}</p>
+            </div>
+        );
+        const renderMonthlyFrame = () => (
+            <section className="bg-slate-900/60 border border-slate-800 p-3">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                        <button type="button" title="Previous month" onClick={() => changePeriod(-1)} className="p-1 hover:bg-slate-700 text-slate-400"><ChevronLeft size={16} /></button>
+                        <label className="relative w-40">
+                            <CalendarDays size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
+                            <input
+                                type="month"
+                                value={currentPeriod}
+                                onChange={(event) => {
+                                    if (event.target.value) setCurrentPeriod(event.target.value);
+                                }}
+                                className="w-full bg-slate-950/60 border border-slate-700 py-1.5 pl-7 pr-2 text-center text-sm font-medium font-mono-nums text-slate-100 outline-none focus:border-cyan-500"
+                            />
+                        </label>
+                        <button
+                            type="button"
+                            title="Jump to current month"
+                            disabled={isCurrentMonth}
+                            onClick={jumpToCurrentMonth}
+                            className={`px-2 py-1 text-[10px] border ${isCurrentMonth ? 'border-slate-800 text-slate-600 cursor-not-allowed' : 'border-slate-700 text-slate-400 hover:border-cyan-600 hover:text-cyan-300'}`}
+                        >
+                            Today
+                        </button>
+                        <button type="button" title="Next month" onClick={() => changePeriod(1)} className="p-1 hover:bg-slate-700 text-slate-400"><ChevronRight size={16} /></button>
+                    </div>
+                    <div className="grid flex-1 grid-cols-2 gap-2 text-xs min-[900px]:grid-cols-4 min-[1280px]:grid-cols-8">
+                        {renderMetricPanel('Income', budgetSummary?.monthly_income, 'text-emerald-400')}
+                        {renderMetricPanel('Expected', budgetSummary?.total_expected_inflow, 'text-emerald-300')}
+                        {renderMetricPanel('Goal', budgetSummary?.required_monthly_savings, 'text-cyan-400')}
+                        {renderMetricPanel('Fixed', budgetSummary?.monthly_fixed_costs, 'text-amber-400')}
+                        {renderMetricPanel('Debt', budgetSummary?.total_debt_plan, 'text-rose-300')}
+                        {renderMetricPanel('Allocation', budgetSummary?.total_allocation_plan, 'text-cyan-300')}
+                        {renderMetricPanel('Remaining', calculatedRemaining, calculatedRemaining >= 0 ? 'text-emerald-400' : 'text-rose-400')}
+                        {renderMetricPanel('Ending Cash', budgetSummary?.ending_cash_after_plan, (budgetSummary?.ending_cash_after_plan ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400')}
+                    </div>
+                </div>
+            </section>
+        );
+        const renderOverview = () => (
+            <section className="space-y-4">
+                <div className="grid grid-cols-1 gap-4 min-[1040px]:grid-cols-[1fr_380px]">
+                    <div className="border border-slate-800 bg-slate-900/60 p-4">
+                        <div className="mb-3 flex items-center justify-between">
+                            <h2 className="text-xs text-slate-400 uppercase tracking-wider">Plan Overview</h2>
+                            <span className="text-[10px] text-slate-600 font-mono-nums">{currentPeriod}</span>
+                        </div>
+                        <ResponsiveContainer width="100%" height={240}>
+                            <BarChart data={overviewBars} margin={{ top: 8, right: 8, left: 8, bottom: 0 }}>
+                                <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                                <XAxis dataKey="name" tick={{ fontSize: 10, fill: '#64748b' }} />
+                                <YAxis tickFormatter={(v) => `¥${(Number(v) / 1000).toFixed(0)}k`} tick={{ fontSize: 10, fill: '#64748b' }} width={60} />
+                                <Tooltip
+                                    contentStyle={{ background: '#0f172a', border: '1px solid #1e293b', fontSize: 11 }}
+                                    formatter={(value) => formatCurrency(Number(value))}
+                                />
+                                <Bar dataKey="amount" fill="#67e8f9" radius={[3, 3, 0, 0]} />
+                            </BarChart>
+                        </ResponsiveContainer>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                        {renderMetricPanel('Variable', variableTotal, 'text-amber-300')}
+                        {renderMetricPanel('Allocation', allocationTotal, 'text-cyan-300')}
+                        {renderMetricPanel('Debt', debtTotal, 'text-rose-300')}
+                        {renderMetricPanel('Remaining', calculatedRemaining, calculatedRemaining >= 0 ? 'text-emerald-400' : 'text-rose-400')}
+                        {renderMetricPanel('Start Cash', budgetSummary?.starting_cash, 'text-slate-200')}
+                        {renderMetricPanel('End Cash', budgetSummary?.ending_cash_after_plan, (budgetSummary?.ending_cash_after_plan ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400')}
+                    </div>
+                </div>
+                <div className="border border-slate-800 bg-slate-900/60 p-4">
+                    <div className="mb-3 flex items-center justify-between">
+                        <h2 className="text-xs text-slate-400 uppercase tracking-wider">Cash Path</h2>
+                        <span className="text-[10px] text-slate-600 font-mono-nums">{cashFlowStartPeriod} / {cashFlowMonths} mo</span>
+                    </div>
+                    <ResponsiveContainer width="100%" height={220}>
+                        <LineChart data={budgetSummary?.cash_flow_projection ?? []} margin={{ top: 4, right: 16, left: 8, bottom: 4 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                            <XAxis dataKey="period" tick={{ fontSize: 9, fill: '#64748b' }} />
+                            <YAxis tickFormatter={(v) => `¥${(Number(v) / 1000).toFixed(0)}k`} tick={{ fontSize: 9, fill: '#64748b' }} width={60} />
+                            <Tooltip
+                                contentStyle={{ background: '#0f172a', border: '1px solid #1e293b', fontSize: 11 }}
+                                formatter={(value) => formatCurrency(Number(value))}
+                            />
+                            <Line type="monotone" dataKey="ending_cash" name="Ending Cash" stroke="#67e8f9" strokeWidth={1.5} dot={false} />
+                            <Line type="monotone" dataKey="net_cash" name="Net Cash" stroke="#c084fc" strokeWidth={1.2} dot={false} />
+                        </LineChart>
+                    </ResponsiveContainer>
+                </div>
+            </section>
+        );
         const renderPlanLineForm = (lineType: MonthlyPlanLineType) => (
             expandedPlanForm === lineType && (
                 <div className="mb-3 border border-cyan-800/40 bg-cyan-900/10 p-3">
@@ -1537,6 +1651,13 @@ export default function Strategy() {
                                                             const nextAdjustment = Number(event.target.value) || 0;
                                                             updatePlanLineAmount(line.local_id, sourceAmount + nextAdjustment);
                                                         }}
+                                                        onBlur={(event) => {
+                                                            const nextAdjustment = Number(event.target.value) || 0;
+                                                            persistPlanLineAmount(line, sourceAmount + nextAdjustment);
+                                                        }}
+                                                        onKeyDown={(event) => {
+                                                            if (event.key === 'Enter') (event.target as HTMLInputElement).blur();
+                                                        }}
                                                         className="w-20 bg-transparent border-b border-slate-700 text-right font-mono-nums outline-none focus:border-cyan-500"
                                                     />
                                                 </td>
@@ -1586,7 +1707,15 @@ export default function Strategy() {
 
         return (
         <div className="p-4 space-y-4">
-            <div className="flex border border-slate-800 bg-slate-900/60">
+            <div className="flex flex-wrap items-center justify-between gap-3 border border-slate-800 bg-slate-900/60 p-2">
+                <div className="flex">
+                <button
+                    type="button"
+                    onClick={() => setActiveBudgetingTab('overview')}
+                    className={`px-4 py-2 text-xs font-medium ${activeBudgetingTab === 'overview' ? 'bg-slate-800/70 text-cyan-300' : 'text-slate-500 hover:bg-slate-800/40 hover:text-slate-300'}`}
+                >
+                    Overview
+                </button>
                 <button
                     type="button"
                     onClick={() => setActiveBudgetingTab('plan')}
@@ -1608,173 +1737,137 @@ export default function Strategy() {
                 >
                     Compare
                 </button>
-            </div>
-
-            {activeBudgetingTab === 'plan' ? (
-        <div className="grid grid-cols-1 min-[960px]:grid-cols-[380px_1fr] gap-4">
-            <section className="space-y-4">
-                {/* Plan Selector */}
-                <div className="bg-slate-900/60 border border-slate-800 p-4">
-                    <div className="flex items-center justify-between mb-2">
-                        <h2 className="text-xs text-slate-400 uppercase tracking-wider">Plan</h2>
-                        <button
-                            type="button"
-                            title="New plan"
-                            onClick={() => { setShowPlanNameInput(true); setNewPlanName(''); }}
-                            className="text-slate-500 hover:text-emerald-400"
-                        >
-                            <Plus size={14} />
-                        </button>
-                    </div>
-                    {showPlanNameInput && (
-                        <form
-                            className="flex gap-1 mb-2"
-                            onSubmit={async (e) => {
-                                e.preventDefault();
-                                const name = newPlanName.trim();
-                                if (!name) return;
-                                try {
-                                    const plan = await createBudgetPlan({ name });
-                                    await fetchBudgetPlans();
-                                    setActivePlanId(plan.id);
-                                } catch { showToast('Failed to create plan', 'error'); }
-                                setShowPlanNameInput(false);
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                    {editingPlanId === activePlanId ? (
+                        <input
+                            autoFocus
+                            aria-label="Rename plan"
+                            value={editingPlanName}
+                            onChange={(e) => setEditingPlanName(e.target.value)}
+                            onBlur={async () => {
+                                const name = editingPlanName.trim();
+                                if (activePlanId && name && name !== activePlan?.name) {
+                                    try {
+                                        await updateBudgetPlan(activePlanId, { name });
+                                        await fetchBudgetPlans();
+                                        if (comparePlanIds.includes(activePlanId)) await loadCompareData();
+                                    } catch {
+                                        showToast('Failed to rename plan', 'error');
+                                    }
+                                }
+                                setEditingPlanId(null);
                             }}
+                            onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setEditingPlanId(null); }}
+                            className="w-44 bg-slate-950 border border-cyan-700 px-2 py-1.5 text-xs text-slate-100 outline-none"
+                        />
+                    ) : (
+                        <select
+                            aria-label="Active plan"
+                            value={activePlanId ?? ''}
+                            onChange={(event) => setActivePlanId(event.target.value ? Number(event.target.value) : null)}
+                            className="w-44 bg-slate-950 border border-slate-700 px-2 py-1.5 text-xs text-slate-100 outline-none focus:border-cyan-500"
                         >
-                            <input
-                                autoFocus
-                                value={newPlanName}
-                                onChange={(e) => setNewPlanName(e.target.value)}
-                                placeholder="Plan name"
-                                className="flex-1 bg-slate-900 border border-slate-700 px-2 py-1 text-xs text-slate-100 outline-none focus:border-cyan-500"
-                            />
-                            <button type="submit" className="px-2 py-1 bg-cyan-700 hover:bg-cyan-600 text-xs text-white">Add</button>
-                            <button type="button" title="Cancel" onClick={() => setShowPlanNameInput(false)} className="px-2 py-1 text-slate-500 hover:text-slate-300"><X size={12} /></button>
-                        </form>
+                            {budgetPlans.map((plan) => (
+                                <option key={plan.id} value={plan.id}>{plan.name}{plan.is_default ? ' (default)' : ''}</option>
+                            ))}
+                        </select>
                     )}
-                    <ul className="space-y-0.5">
-                        {budgetPlans.map((plan) => (
-                            <li key={plan.id} className="flex items-center gap-2 group">
-                                <input
-                                    type="checkbox"
-                                    aria-label={`Compare ${plan.name}`}
-                                    checked={comparePlanIds.includes(plan.id)}
-                                    onChange={(e) => {
-                                        setComparePlanIds((prev) =>
-                                            e.target.checked ? [...prev, plan.id] : prev.filter((id) => id !== plan.id)
-                                        );
-                                    }}
-                                    className="accent-cyan-500 shrink-0"
-                                />
-                                <div className="flex-1 min-w-0">
-                                    {editingPlanId === plan.id ? (
-                                        <input
-                                            autoFocus
-                                            aria-label="Rename plan"
-                                            value={editingPlanName}
-                                            onChange={(e) => setEditingPlanName(e.target.value)}
-                                            onBlur={async () => {
-                                                const name = editingPlanName.trim();
-                                                if (name && name !== plan.name) {
-                                                    try {
-                                                        await updateBudgetPlan(plan.id, { name });
-                                                        await fetchBudgetPlans();
-                                                        if (comparePlanIds.includes(plan.id)) await loadCompareData();
-                                                    }
-                                                    catch { showToast('Failed to rename plan', 'error'); }
-                                                }
-                                                setEditingPlanId(null);
-                                            }}
-                                            onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') setEditingPlanId(null); }}
-                                            className="bg-slate-800 border border-cyan-700 px-1 text-xs text-slate-100 outline-none w-full"
-                                        />
-                                    ) : (
-                                        <button
-                                            type="button"
-                                            onClick={() => setActivePlanId(plan.id)}
-                                            className={`w-full text-left text-xs truncate py-0.5 ${activePlanId === plan.id ? 'text-cyan-300 font-medium' : 'text-slate-400 hover:text-slate-200'}`}
-                                        >
-                                            {plan.name}{plan.is_default ? <span className="ml-1 text-[9px] text-slate-600">default</span> : null}
-                                        </button>
-                                    )}
-                                </div>
-                                <div className="hidden group-hover:flex items-center gap-1">
-                                    <button type="button" title="Rename" onClick={() => { setEditingPlanId(plan.id); setEditingPlanName(plan.name); }} className="text-slate-600 hover:text-slate-300"><Edit2 size={11} /></button>
-                                    {!plan.is_default && (
-                                        <button type="button" title="Copy from Baseline" onClick={async () => {
-                                            const baseline = budgetPlans.find((p) => p.is_default);
-                                            if (!baseline) return;
-                                            try {
-                                                await copyBudgetPlanFrom(plan.id, baseline.id);
-                                                showToast('Copied from Baseline', 'success');
-                                                if (activePlanId === plan.id) await fetchBudgetSummary();
-                                                if (comparePlanIds.includes(plan.id)) await loadCompareData();
-                                            }
-                                            catch { showToast('Failed to copy plan', 'error'); }
-                                        }} className="text-slate-600 hover:text-slate-300"><Copy size={11} /></button>
-                                    )}
-                                    {!plan.is_default && (
-                                        <button type="button" title="Delete plan" onClick={async () => {
-                                            try {
-                                                await deleteBudgetPlan(plan.id);
-                                                setComparePlanIds((prev) => prev.filter((id) => id !== plan.id));
-                                                const plans = await fetchBudgetPlans();
-                                                if (activePlanId === plan.id) {
-                                                    const nextPlanId = fallbackPlanId(plans);
-                                                    setActivePlanId(nextPlanId);
-                                                    await fetchBudgetSummary(currentPeriod, nextPlanId);
-                                                }
-                                            }
-                                            catch { showToast('Failed to delete plan', 'error'); }
-                                        }} className="text-slate-600 hover:text-rose-400"><Trash2 size={11} /></button>
-                                    )}
-                                </div>
-                            </li>
-                        ))}
-                    </ul>
-                </div>
-
-                <div className="bg-slate-900/60 border border-slate-800 p-4">
-                    <h2 className="text-xs text-slate-400 uppercase tracking-wider mb-3">Monthly Frame</h2>
-                    <div className="flex items-center gap-2 bg-slate-800/40 border border-slate-700 px-2 py-2 mb-3">
-                        <button type="button" title="Previous month" onClick={() => changePeriod(-1)} className="p-1 hover:bg-slate-700 text-slate-400"><ChevronLeft size={16} /></button>
-                        <label className="relative flex-1">
-                            <CalendarDays size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" />
-                            <input
-                                type="month"
-                                value={currentPeriod}
-                                onChange={(event) => {
-                                    if (event.target.value) setCurrentPeriod(event.target.value);
-                                }}
-                                className="w-full bg-slate-950/60 border border-slate-700 py-1.5 pl-7 pr-2 text-center text-sm font-medium font-mono-nums text-slate-100 outline-none focus:border-cyan-500"
-                            />
-                        </label>
+                    <button
+                        type="button"
+                        title="New plan"
+                        onClick={() => { setShowPlanNameInput(true); setNewPlanName(''); }}
+                        className="p-1.5 text-slate-500 hover:text-emerald-400"
+                    >
+                        <Plus size={14} />
+                    </button>
+                    {activePlan && (
                         <button
                             type="button"
-                            title="Jump to current month"
-                            disabled={isCurrentMonth}
-                            onClick={jumpToCurrentMonth}
-                            className={`px-2 py-1 text-[10px] border ${isCurrentMonth ? 'border-slate-800 text-slate-600 cursor-not-allowed' : 'border-slate-700 text-slate-400 hover:border-cyan-600 hover:text-cyan-300'}`}
+                            title="Rename active plan"
+                            onClick={() => { setEditingPlanId(activePlan.id); setEditingPlanName(activePlan.name); }}
+                            className="p-1.5 text-slate-500 hover:text-slate-300"
                         >
-                            Today
+                            <Edit2 size={13} />
                         </button>
-                        <button type="button" title="Next month" onClick={() => changePeriod(1)} className="p-1 hover:bg-slate-700 text-slate-400"><ChevronRight size={16} /></button>
-                        <button type="button" title={`Save ${currentPeriod}`} onClick={saveBudget} className="p-1 text-cyan-500 hover:text-cyan-300"><Save size={14} /></button>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 text-xs">
-                        <div className="bg-slate-800/50 border border-slate-700 p-2"><p className="text-slate-500">Income</p><p className="font-mono-nums text-emerald-400">{formatCurrency(budgetSummary?.monthly_income)}</p></div>
-                        <div className="bg-slate-800/50 border border-slate-700 p-2"><p className="text-slate-500">Expected Inflow</p><p className="font-mono-nums text-emerald-300">{formatCurrency(budgetSummary?.total_expected_inflow)}</p></div>
-                        <div className="bg-slate-800/50 border border-slate-700 p-2"><p className="text-slate-500">Goal Savings</p><p className="font-mono-nums text-cyan-400">{formatCurrency(budgetSummary?.required_monthly_savings)}</p></div>
-                        <div className="bg-slate-800/50 border border-slate-700 p-2"><p className="text-slate-500">Fixed Costs</p><p className="font-mono-nums text-amber-400">{formatCurrency(budgetSummary?.monthly_fixed_costs)}</p></div>
-                        <div className="bg-slate-800/50 border border-slate-700 p-2"><p className="text-slate-500">Debt Pay</p><p className="font-mono-nums text-rose-300">{formatCurrency(budgetSummary?.total_debt_plan)}</p></div>
-                        <div className="bg-slate-800/50 border border-slate-700 p-2"><p className="text-slate-500">Allocations</p><p className="font-mono-nums text-cyan-300">{formatCurrency(budgetSummary?.total_allocation_plan)}</p></div>
-                        <div className="bg-slate-800/50 border border-slate-700 p-2"><p className="text-slate-500">Remaining</p><p className={`font-mono-nums ${calculatedRemaining >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(calculatedRemaining)}</p></div>
-                        <div className="bg-slate-800/50 border border-slate-700 p-2"><p className="text-slate-500">Ending Cash</p><p className={`font-mono-nums ${(budgetSummary?.ending_cash_after_plan ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(budgetSummary?.ending_cash_after_plan)}</p></div>
-                    </div>
+                    )}
+                    {activePlan && !activePlan.is_default && (
+                        <>
+                            <button
+                                type="button"
+                                title="Copy from Baseline"
+                                onClick={async () => {
+                                    const baseline = budgetPlans.find((p) => p.is_default);
+                                    if (!baseline) return;
+                                    try {
+                                        await copyBudgetPlanFrom(activePlan.id, baseline.id);
+                                        showToast('Copied from Baseline', 'success');
+                                        await fetchBudgetSummary();
+                                        if (comparePlanIds.includes(activePlan.id)) await loadCompareData();
+                                    } catch {
+                                        showToast('Failed to copy plan', 'error');
+                                    }
+                                }}
+                                className="p-1.5 text-slate-500 hover:text-slate-300"
+                            >
+                                <Copy size={13} />
+                            </button>
+                            <button
+                                type="button"
+                                title="Delete active plan"
+                                onClick={async () => {
+                                    try {
+                                        await deleteBudgetPlan(activePlan.id);
+                                        setComparePlanIds((prev) => prev.filter((id) => id !== activePlan.id));
+                                        const plans = await fetchBudgetPlans();
+                                        const nextPlanId = fallbackPlanId(plans);
+                                        setActivePlanId(nextPlanId);
+                                        await fetchBudgetSummary(currentPeriod, nextPlanId);
+                                    } catch {
+                                        showToast('Failed to delete plan', 'error');
+                                    }
+                                }}
+                                className="p-1.5 text-slate-500 hover:text-rose-400"
+                            >
+                                <Trash2 size={13} />
+                            </button>
+                        </>
+                    )}
                 </div>
+            </div>
+            {showPlanNameInput && (
+                <form
+                    className="flex max-w-md gap-2 border border-slate-800 bg-slate-900/60 p-3"
+                    onSubmit={async (e) => {
+                        e.preventDefault();
+                        const name = newPlanName.trim();
+                        if (!name) return;
+                        try {
+                            const plan = await createBudgetPlan({ name });
+                            await fetchBudgetPlans();
+                            setActivePlanId(plan.id);
+                            setShowPlanNameInput(false);
+                        } catch {
+                            showToast('Failed to create plan', 'error');
+                        }
+                    }}
+                >
+                    <input
+                        autoFocus
+                        value={newPlanName}
+                        onChange={(e) => setNewPlanName(e.target.value)}
+                        placeholder="Plan name"
+                        className="flex-1 bg-slate-950 border border-slate-700 px-2 py-1.5 text-xs text-slate-100 outline-none focus:border-cyan-500"
+                    />
+                    <button type="submit" className="px-3 py-1.5 bg-cyan-700 hover:bg-cyan-600 text-xs text-white">Add</button>
+                    <button type="button" title="Cancel" onClick={() => setShowPlanNameInput(false)} className="px-2 py-1.5 text-slate-500 hover:text-slate-300"><X size={12} /></button>
+                </form>
+            )}
+            {renderMonthlyFrame()}
 
-            </section>
-
+            {activeBudgetingTab === 'overview' ? (
+                renderOverview()
+            ) : activeBudgetingTab === 'plan' ? (
             <section className="bg-slate-900/60 border border-slate-800 p-4 overflow-auto">
                 <div className="mb-8">
                     {renderPlanSection('Income Plan', ['income', 'borrowing', 'drawdown'], 'income', 'No expected inflows yet.')}
@@ -1949,6 +2042,13 @@ export default function Strategy() {
                                                         const nextAdjustment = Number(event.target.value) || 0;
                                                         setBudgetEdits({ ...budgetEdits, [account.id]: suggestedAmount + nextAdjustment });
                                                     }}
+                                                    onBlur={(event) => {
+                                                        const nextAdjustment = Number(event.target.value) || 0;
+                                                        persistBudgetAccountAmount(account, suggestedAmount + nextAdjustment);
+                                                    }}
+                                                    onKeyDown={(event) => {
+                                                        if (event.key === 'Enter') (event.target as HTMLInputElement).blur();
+                                                    }}
                                                     className="w-20 bg-transparent border-b border-slate-700 text-right font-mono-nums outline-none focus:border-cyan-500"
                                                 />
                                             </td>
@@ -1992,7 +2092,6 @@ export default function Strategy() {
                 {renderPlanSection('Allocation Plan', ['allocation'], 'allocation', 'No asset allocations yet.')}
                 {renderPlanSection('Debt Plan', ['debt_payment'], 'debt_payment', 'No planned debt payments yet.')}
             </section>
-        </div>
             ) : activeBudgetingTab === 'cash_flow' ? (
 
             <section className="bg-slate-900/60 border border-slate-800 p-4 overflow-auto">
@@ -2108,7 +2207,24 @@ export default function Strategy() {
             <section className="bg-slate-900/60 border border-slate-800 p-4 overflow-auto">
                 <div className="mb-3 flex items-center justify-between">
                     <h2 className="text-xs text-slate-400 uppercase tracking-wider">Plan Comparison</h2>
-                    <span className="text-[10px] text-slate-600">Check plans in the sidebar to compare</span>
+                    <span className="text-[10px] text-slate-600">Select plans to compare</span>
+                </div>
+                <div className="mb-4 flex flex-wrap gap-2">
+                    {budgetPlans.map((plan) => (
+                        <label key={plan.id} className={`inline-flex items-center gap-2 border px-2 py-1 text-xs ${comparePlanIds.includes(plan.id) ? 'border-cyan-700 bg-cyan-950/30 text-cyan-200' : 'border-slate-800 bg-slate-950/40 text-slate-500'}`}>
+                            <input
+                                type="checkbox"
+                                checked={comparePlanIds.includes(plan.id)}
+                                onChange={(event) => {
+                                    setComparePlanIds((prev) =>
+                                        event.target.checked ? [...prev, plan.id] : prev.filter((id) => id !== plan.id)
+                                    );
+                                }}
+                                className="accent-cyan-500"
+                            />
+                            <span>{plan.name}</span>
+                        </label>
+                    ))}
                 </div>
                 {comparePlanIds.length === 0 ? (
                     <p className="text-center text-slate-600 text-xs py-12">No plans selected for comparison.</p>
