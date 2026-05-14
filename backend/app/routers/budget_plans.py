@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
@@ -8,6 +9,7 @@ from ..services.budget_plan_service import (
     get_or_create_default_plan,
     get_cash_flow_projection,
     _liquid_cash,
+    resolve_budget_plan_id,
 )
 
 router = APIRouter(prefix="/budget-plans", tags=["budget_plans"])
@@ -51,7 +53,11 @@ def create_budget_plan(
         sort_order=payload.sort_order,
     )
     db.add(plan)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="A plan with this name already exists") from exc
     db.refresh(plan)
     return plan
 
@@ -68,13 +74,26 @@ def compare_budget_plans(
         id_list = [int(pid.strip()) for pid in plan_ids.split(",") if pid.strip()]
     except ValueError:
         raise HTTPException(status_code=400, detail="plan_ids must be comma-separated integers")
+    if not id_list:
+        raise HTTPException(status_code=400, detail="plan_ids must include at least one plan")
+
+    plans = (
+        db.query(models.BudgetPlan)
+        .filter(
+            models.BudgetPlan.client_id == current_client.id,
+            models.BudgetPlan.id.in_(id_list),
+        )
+        .all()
+    )
+    plans_by_id = {plan.id: plan for plan in plans}
+    missing = [plan_id for plan_id in id_list if plan_id not in plans_by_id]
+    if missing:
+        raise HTTPException(status_code=404, detail="Budget plan not found")
 
     results = []
     starting_cash = _liquid_cash(db, current_client.id)
     for plan_id in id_list:
-        plan = db.query(models.BudgetPlan).filter_by(id=plan_id, client_id=current_client.id).first()
-        if not plan:
-            continue
+        plan = plans_by_id[plan_id]
         projection = get_cash_flow_projection(
             db, current_client.id, start_period, months=months,
             starting_cash=starting_cash, plan_id=plan_id,
@@ -100,12 +119,9 @@ def copy_period_full_replace(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    plan_id = payload.plan_id
-    if plan_id is None:
-        plan_id = get_or_create_default_plan(db, current_client.id).id
-
-    plan = db.query(models.BudgetPlan).filter_by(id=plan_id, client_id=current_client.id).first()
-    if not plan:
+    try:
+        plan_id = resolve_budget_plan_id(db, current_client.id, payload.plan_id)
+    except ValueError as exc:
         raise HTTPException(status_code=404, detail="Budget plan not found")
 
     source_lines = (
@@ -160,6 +176,8 @@ def copy_plan_from(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
+    if plan_id == source_plan_id:
+        raise HTTPException(status_code=400, detail="Cannot copy a budget plan from itself")
     target_plan = db.query(models.BudgetPlan).filter_by(id=plan_id, client_id=current_client.id).first()
     if not target_plan:
         raise HTTPException(status_code=404, detail="Target budget plan not found")
@@ -220,12 +238,23 @@ def update_budget_plan(
     if not plan:
         raise HTTPException(status_code=404, detail="Budget plan not found")
     if payload.name is not None:
+        duplicate = db.query(models.BudgetPlan).filter(
+            models.BudgetPlan.client_id == current_client.id,
+            models.BudgetPlan.name == payload.name,
+            models.BudgetPlan.id != plan_id,
+        ).first()
+        if duplicate:
+            raise HTTPException(status_code=409, detail="A plan with this name already exists")
         plan.name = payload.name
     if payload.description is not None:
         plan.description = payload.description
     if payload.sort_order is not None:
         plan.sort_order = payload.sort_order
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="A plan with this name already exists") from exc
     db.refresh(plan)
     return plan
 

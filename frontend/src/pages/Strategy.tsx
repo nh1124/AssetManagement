@@ -70,6 +70,13 @@ interface BudgetAccount {
         source?: string;
         entry_type?: string;
     }>;
+    product_expense_amount?: number;
+    product_expense_items?: Array<{
+        id: number;
+        name: string;
+        amount: number;
+    }>;
+    recurring_transaction_ids?: number[];
     suggested_amount?: number;
     suggested_source?: string | null;
     suggested_status?: 'synced' | 'missing' | 'diff' | null;
@@ -167,6 +174,8 @@ export default function Strategy() {
     const [editingPlanName, setEditingPlanName] = useState('');
     const [comparePlanIds, setComparePlanIds] = useState<number[]>([]);
     const [compareData, setCompareData] = useState<BudgetPlanCompareResult[]>([]);
+    const [compareLoading, setCompareLoading] = useState(false);
+    const [compareError, setCompareError] = useState<string | null>(null);
     const [currentPeriod, setCurrentPeriod] = useState(monthKey());
     const [cashFlowStartPeriod] = useState(() => monthKey());
     const cashFlowMonths = 12;
@@ -284,13 +293,21 @@ export default function Strategy() {
     );
 
     const budgetSourceDetails = (account: BudgetAccount): SourceDetail[] => {
-        const details = (account.registry_items ?? []).map((item) => ({
+        const registry = (account.registry_items ?? []).map((item) => ({
             id: `registry-${item.id}`,
             kind: 'registry' as const,
             label: item.name,
             amount: Number(item.amount || 0),
             conflict: false,
         }));
+        const productExpenses = (account.product_expense_items ?? []).map((item) => ({
+            id: `product-expense-${item.id}`,
+            kind: 'product_expense' as const,
+            label: item.name,
+            amount: Number(item.amount || 0),
+            conflict: false,
+        }));
+        const details = [...registry, ...productExpenses];
         const conflict = detailsHaveConflict(details);
         return details.map((detail) => ({ ...detail, conflict }));
     };
@@ -356,25 +373,30 @@ export default function Strategy() {
         );
     };
 
+    const fallbackPlanId = (plans: BudgetPlan[]) => plans.find((p) => p.is_default)?.id ?? plans[0]?.id ?? null;
+
     const fetchBudgetPlans = async () => {
         try {
             const plans = await getBudgetPlans();
             setBudgetPlans(plans);
+            setComparePlanIds((prev) => prev.filter((id) => plans.some((plan) => plan.id === id)));
             setActivePlanId((prev) => {
-                if (prev !== null) return prev;
-                return plans.find((p) => p.is_default)?.id ?? plans[0]?.id ?? null;
+                if (prev !== null && plans.some((plan) => plan.id === prev)) return prev;
+                return fallbackPlanId(plans);
             });
+            return plans;
         } catch (error) {
             console.error('Failed to fetch budget plans:', error);
+            return [];
         }
     };
 
-    const fetchBudgetSummary = async (period = currentPeriod) => {
+    const fetchBudgetSummary = async (period = currentPeriod, planId = activePlanId) => {
         try {
             const summary = await getBudgetSummary(period, {
                 cash_flow_start_period: cashFlowStartPeriod,
                 cash_flow_months: cashFlowMonths,
-                plan_id: activePlanId ?? undefined,
+                plan_id: planId ?? undefined,
             });
             const edits: Record<number, number> = {};
             summary.expense_accounts.forEach((account: BudgetAccount) => {
@@ -391,6 +413,28 @@ export default function Strategy() {
         } catch (error) {
             console.error('Failed to fetch budget summary:', error);
             showToast('Failed to load budget summary', 'error');
+        }
+    };
+
+    const loadCompareData = async (planIds = comparePlanIds) => {
+        if (planIds.length === 0) {
+            setCompareData([]);
+            setCompareError(null);
+            setCompareLoading(false);
+            return;
+        }
+        setCompareLoading(true);
+        setCompareError(null);
+        try {
+            const data = await compareBudgetPlans(planIds, cashFlowStartPeriod);
+            setCompareData(data);
+        } catch (error) {
+            console.error('Failed to compare budget plans:', error);
+            setCompareData([]);
+            setCompareError('Failed to load comparison');
+            showToast('Failed to load plan comparison', 'error');
+        } finally {
+            setCompareLoading(false);
         }
     };
 
@@ -430,7 +474,12 @@ export default function Strategy() {
 
     useEffect(() => {
         if (activeTab === 'budgeting') {
-            fetchBudgetPlans().then(() => fetchBudgetSummary());
+            fetchBudgetPlans().then((plans) => {
+                const nextPlanId = activePlanId !== null && plans.some((plan) => plan.id === activePlanId)
+                    ? activePlanId
+                    : fallbackPlanId(plans);
+                fetchBudgetSummary(currentPeriod, nextPlanId);
+            });
             fetchBudgetReferences();
         }
         if (activeTab === 'capsules') fetchCapsules();
@@ -441,6 +490,12 @@ export default function Strategy() {
             fetchBudgetSummary();
         }
     }, [activePlanId]);
+
+    useEffect(() => {
+        if (activeTab === 'budgeting' && activeBudgetingTab === 'compare') {
+            loadCompareData();
+        }
+    }, [activeTab, activeBudgetingTab, comparePlanIds, cashFlowStartPeriod, budgetPlans]);
 
     const changePeriod = (delta: number) => {
         const [year, month] = currentPeriod.split('-').map(Number);
@@ -1548,13 +1603,7 @@ export default function Strategy() {
                 </button>
                 <button
                     type="button"
-                    onClick={async () => {
-                        setActiveBudgetingTab('compare');
-                        if (comparePlanIds.length > 0) {
-                            const data = await compareBudgetPlans(comparePlanIds, cashFlowStartPeriod);
-                            setCompareData(data);
-                        }
-                    }}
+                    onClick={() => setActiveBudgetingTab('compare')}
                     className={`px-4 py-2 text-xs font-medium ${activeBudgetingTab === 'compare' ? 'bg-slate-800/70 text-cyan-300' : 'text-slate-500 hover:bg-slate-800/40 hover:text-slate-300'}`}
                 >
                     Compare
@@ -1627,7 +1676,11 @@ export default function Strategy() {
                                             onBlur={async () => {
                                                 const name = editingPlanName.trim();
                                                 if (name && name !== plan.name) {
-                                                    try { await updateBudgetPlan(plan.id, { name }); await fetchBudgetPlans(); }
+                                                    try {
+                                                        await updateBudgetPlan(plan.id, { name });
+                                                        await fetchBudgetPlans();
+                                                        if (comparePlanIds.includes(plan.id)) await loadCompareData();
+                                                    }
                                                     catch { showToast('Failed to rename plan', 'error'); }
                                                 }
                                                 setEditingPlanId(null);
@@ -1651,13 +1704,27 @@ export default function Strategy() {
                                         <button type="button" title="Copy from Baseline" onClick={async () => {
                                             const baseline = budgetPlans.find((p) => p.is_default);
                                             if (!baseline) return;
-                                            try { await copyBudgetPlanFrom(plan.id, baseline.id); showToast('Copied from Baseline', 'success'); }
+                                            try {
+                                                await copyBudgetPlanFrom(plan.id, baseline.id);
+                                                showToast('Copied from Baseline', 'success');
+                                                if (activePlanId === plan.id) await fetchBudgetSummary();
+                                                if (comparePlanIds.includes(plan.id)) await loadCompareData();
+                                            }
                                             catch { showToast('Failed to copy plan', 'error'); }
                                         }} className="text-slate-600 hover:text-slate-300"><Copy size={11} /></button>
                                     )}
                                     {!plan.is_default && (
                                         <button type="button" title="Delete plan" onClick={async () => {
-                                            try { await deleteBudgetPlan(plan.id); await fetchBudgetPlans(); if (activePlanId === plan.id) setActivePlanId(budgetPlans.find((p) => p.is_default)?.id ?? null); }
+                                            try {
+                                                await deleteBudgetPlan(plan.id);
+                                                setComparePlanIds((prev) => prev.filter((id) => id !== plan.id));
+                                                const plans = await fetchBudgetPlans();
+                                                if (activePlanId === plan.id) {
+                                                    const nextPlanId = fallbackPlanId(plans);
+                                                    setActivePlanId(nextPlanId);
+                                                    await fetchBudgetSummary(currentPeriod, nextPlanId);
+                                                }
+                                            }
                                             catch { showToast('Failed to delete plan', 'error'); }
                                         }} className="text-slate-600 hover:text-rose-400"><Trash2 size={11} /></button>
                                     )}
@@ -2045,8 +2112,12 @@ export default function Strategy() {
                 </div>
                 {comparePlanIds.length === 0 ? (
                     <p className="text-center text-slate-600 text-xs py-12">No plans selected for comparison.</p>
-                ) : compareData.length === 0 ? (
+                ) : compareLoading ? (
                     <p className="text-center text-slate-600 text-xs py-12">Loading…</p>
+                ) : compareError ? (
+                    <p className="text-center text-rose-400 text-xs py-12">{compareError}</p>
+                ) : compareData.length === 0 ? (
+                    <p className="text-center text-slate-600 text-xs py-12">No comparison data.</p>
                 ) : (() => {
                     const CHART_COLORS = ['#67e8f9', '#c084fc', '#fbbf24', '#34d399'];
                     const TABLE_COLORS = ['text-cyan-300', 'text-purple-300', 'text-amber-300', 'text-emerald-300'];
@@ -2054,7 +2125,7 @@ export default function Strategy() {
                     const chartData = periods.map((period) => {
                         const point: Record<string, string | number> = { period };
                         compareData.forEach((plan) => {
-                            point[plan.plan_name] = plan.cash_flow.find((r) => r.period === period)?.ending_cash ?? 0;
+                            point[`plan-${plan.plan_id}`] = plan.cash_flow.find((r) => r.period === period)?.ending_cash ?? 0;
                         });
                         return point;
                     });
@@ -2074,7 +2145,8 @@ export default function Strategy() {
                                         <Line
                                             key={plan.plan_id}
                                             type="monotone"
-                                            dataKey={plan.plan_name}
+                                            dataKey={`plan-${plan.plan_id}`}
+                                            name={plan.plan_name}
                                             stroke={CHART_COLORS[i % CHART_COLORS.length]}
                                             strokeWidth={1.5}
                                             dot={false}

@@ -33,7 +33,27 @@ def get_or_create_default_plan(db: Session, client_id: int) -> models.BudgetPlan
         db.add(plan)
         db.commit()
         db.refresh(plan)
+    changed = db.query(models.MonthlyPlanLine).filter(
+        models.MonthlyPlanLine.client_id == client_id,
+        models.MonthlyPlanLine.plan_id.is_(None),
+        models.MonthlyPlanLine.is_active.is_(True),
+    ).update({"plan_id": plan.id})
+    if changed:
+        db.commit()
+        db.refresh(plan)
     return plan
+
+
+def resolve_budget_plan_id(db: Session, client_id: int, plan_id: int | None = None) -> int:
+    if plan_id is None:
+        return get_or_create_default_plan(db, client_id).id
+    exists = db.query(models.BudgetPlan.id).filter(
+        models.BudgetPlan.id == plan_id,
+        models.BudgetPlan.client_id == client_id,
+    ).first()
+    if not exists:
+        raise ValueError("Budget plan not found")
+    return plan_id
 
 
 def period_to_range(period: str) -> tuple[date, date]:
@@ -104,6 +124,12 @@ def actual_for_plan_line(
     needle = name.lower()
 
     if target_type == "capsule" and target_id:
+        capsule = db.query(models.Capsule).filter(
+            models.Capsule.id == target_id,
+            models.Capsule.client_id == client_id,
+        ).first()
+        if capsule:
+            return capsule_balance(db, capsule)
         account_id = capsule_accounts.get(target_id)
 
     if line_type == "income":
@@ -397,6 +423,14 @@ def _registry_plan_line(
             "source": "registry",
             "entry_type": entry.entry_type,
         }],
+        "recurring_transaction_ids": [entry.source_recurring_transaction_id]
+        if entry.source_recurring_transaction_id else [],
+        "product_expense_amount": round(amount, 0) if entry.source_product_id else 0.0,
+        "product_expense_items": [{
+            "id": entry.source_product_id,
+            "name": entry.name,
+            "amount": round(amount, 0),
+        }] if entry.source_product_id else [],
         "source": "registry",
         "recurring_transaction_id": entry.source_recurring_transaction_id,
         "sync_status": "missing",
@@ -434,6 +468,19 @@ def registry_plan_lines(db: Session, client_id: int, period: str) -> list[dict]:
         existing["registry_items"] = [
             *existing.get("registry_items", []),
             *line.get("registry_items", []),
+        ]
+        existing["recurring_transaction_ids"] = [
+            *existing.get("recurring_transaction_ids", []),
+            *line.get("recurring_transaction_ids", []),
+        ]
+        existing["product_expense_amount"] = round(
+            (existing.get("product_expense_amount") or 0.0)
+            + (line.get("product_expense_amount") or 0.0),
+            0,
+        )
+        existing["product_expense_items"] = [
+            *existing.get("product_expense_items", []),
+            *line.get("product_expense_items", []),
         ]
         existing["recurring_transaction_id"] = existing.get("recurring_transaction_id") or line.get("recurring_transaction_id")
     return list(aggregated.values())
@@ -492,6 +539,9 @@ def _merge_registry_context(plan_lines: list[dict], registry_lines: list[dict]) 
             line["registry_amount"] = registry_amount
             line["registry_entry_ids"] = registry_line.get("registry_entry_ids", [])
             line["registry_items"] = registry_line.get("registry_items", [])
+            line["recurring_transaction_ids"] = registry_line.get("recurring_transaction_ids", [])
+            line["product_expense_amount"] = registry_line.get("product_expense_amount", 0.0)
+            line["product_expense_items"] = registry_line.get("product_expense_items", [])
             line["recurring_amount"] = registry_amount
             line["suggested_amount"] = registry_amount
             line["suggested_source"] = "registry"
@@ -503,6 +553,9 @@ def _merge_registry_context(plan_lines: list[dict], registry_lines: list[dict]) 
             )
         else:
             line["registry_amount"] = 0.0
+            line["recurring_transaction_ids"] = []
+            line["product_expense_amount"] = 0.0
+            line["product_expense_items"] = []
             if line.get("suggested_source") is None:
                 line["sync_status"] = None
 
@@ -531,8 +584,7 @@ def get_budget_summary(
     cash_flow_start_period: str | None = None,
     cash_flow_months: int = 12,
 ) -> dict:
-    if plan_id is None:
-        plan_id = get_or_create_default_plan(db, client_id).id
+    plan_id = resolve_budget_plan_id(db, client_id, plan_id)
 
     ensure_registry_entries(db, client_id)
     events_with_progress = get_life_events_with_progress(db, client_id=client_id)
@@ -663,6 +715,9 @@ def get_budget_summary(
                 "registry_amount": line.get("registry_amount", 0.0),
                 "registry_entry_ids": line.get("registry_entry_ids", []),
                 "registry_items": line.get("registry_items", []),
+                "recurring_transaction_ids": line.get("recurring_transaction_ids", []),
+                "product_expense_amount": line.get("product_expense_amount", 0.0),
+                "product_expense_items": line.get("product_expense_items", []),
                 "suggested_amount": line.get("suggested_amount", 0.0),
                 "suggested_source": line.get("suggested_source"),
                 "suggested_status": line.get("suggested_status"),
@@ -710,8 +765,7 @@ def get_cash_flow_projection(
     starting_cash: float | None = None,
     plan_id: int | None = None,
 ) -> list[dict]:
-    if plan_id is None:
-        plan_id = get_or_create_default_plan(db, client_id).id
+    plan_id = resolve_budget_plan_id(db, client_id, plan_id)
     cash = _liquid_cash(db, client_id) if starting_cash is None else starting_cash
     rows = []
     for idx in range(months):
@@ -920,15 +974,11 @@ def _apply_plan_line_data(db: Session, client_id: int, line: models.MonthlyPlanL
 
 
 def create_plan_lines(db: Session, client_id: int, payloads: list) -> list[models.MonthlyPlanLine]:
-    default_plan_id: int | None = None
     created: list[models.MonthlyPlanLine] = []
     for payload in payloads:
         data = _payload_data(payload)
         data.pop("id", None)
-        if data.get("plan_id") is None:
-            if default_plan_id is None:
-                default_plan_id = get_or_create_default_plan(db, client_id).id
-            data["plan_id"] = default_plan_id
+        data["plan_id"] = resolve_budget_plan_id(db, client_id, data.get("plan_id"))
         if _active_line_with_identity(db, client_id, data):
             raise ValueError("Monthly plan line already exists for this period and target")
         line = models.MonthlyPlanLine(client_id=client_id)
@@ -954,6 +1004,10 @@ def update_plan_lines(db: Session, client_id: int, payloads: list) -> list[model
         ).first()
         if not line:
             raise ValueError("Monthly plan line not found")
+        if "plan_id" in data:
+            data["plan_id"] = resolve_budget_plan_id(db, client_id, data.get("plan_id"))
+        elif line.plan_id is None:
+            data["plan_id"] = resolve_budget_plan_id(db, client_id)
         _apply_plan_line_data(db, client_id, line, data)
         saved.append(line)
     db.commit()

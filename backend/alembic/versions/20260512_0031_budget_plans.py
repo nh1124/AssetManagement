@@ -19,30 +19,38 @@ def upgrade() -> None:
     op.create_table(
         "budget_plans",
         sa.Column("id", sa.Integer(), primary_key=True, index=True),
-        sa.Column("client_id", sa.Integer(), sa.ForeignKey("clients.id", ondelete="CASCADE"), nullable=False),
+        sa.Column("client_id", sa.Integer(), nullable=False),
         sa.Column("name", sa.String(), nullable=False),
         sa.Column("description", sa.String(), nullable=True),
-        sa.Column("is_default", sa.Boolean(), server_default="false", nullable=False),
+        sa.Column("is_default", sa.Boolean(), server_default=sa.false(), nullable=False),
         sa.Column("sort_order", sa.Integer(), server_default="0", nullable=False),
         sa.Column("created_at", sa.DateTime(), nullable=True),
         sa.Column("updated_at", sa.DateTime(), nullable=True),
+        sa.ForeignKeyConstraint(["client_id"], ["clients.id"], name="fk_budget_plans_client_id", ondelete="CASCADE"),
         sa.UniqueConstraint("client_id", "name", name="_client_budget_plan_name_uc"),
     )
     op.create_index("ix_budget_plans_client_id", "budget_plans", ["client_id"])
 
     op.add_column(
         "monthly_plan_lines",
-        sa.Column("plan_id", sa.Integer(), sa.ForeignKey("budget_plans.id", ondelete="SET NULL"), nullable=True),
+        sa.Column("plan_id", sa.Integer(), nullable=True),
+    )
+    op.create_foreign_key(
+        "fk_monthly_plan_lines_plan_id",
+        "monthly_plan_lines",
+        "budget_plans",
+        ["plan_id"],
+        ["id"],
+        ondelete="SET NULL",
     )
     op.create_index("ix_monthly_plan_lines_plan_id", "monthly_plan_lines", ["plan_id"])
 
-    # Data migration: create a default "Baseline" plan for each client that has plan lines
+    # Data migration: create a default "Baseline" plan for every existing client.
     op.execute("""
         INSERT INTO budget_plans (client_id, name, is_default, sort_order, created_at, updated_at)
-        SELECT DISTINCT client_id, 'Baseline', true, 0, NOW(), NOW()
-        FROM monthly_plan_lines
-        WHERE client_id IS NOT NULL
-        ON CONFLICT DO NOTHING
+        SELECT id, 'Baseline', true, 0, NOW(), NOW()
+        FROM clients
+        ON CONFLICT ON CONSTRAINT _client_budget_plan_name_uc DO NOTHING
     """)
 
     # Assign existing lines to their client's default plan
@@ -58,6 +66,7 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("ix_monthly_plan_lines_plan_id", "monthly_plan_lines")
+    op.drop_constraint("fk_monthly_plan_lines_plan_id", "monthly_plan_lines", type_="foreignkey")
     op.drop_column("monthly_plan_lines", "plan_id")
     op.drop_index("ix_budget_plans_client_id", "budget_plans")
     op.drop_table("budget_plans")

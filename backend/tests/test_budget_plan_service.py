@@ -2,19 +2,22 @@ from __future__ import annotations
 
 from datetime import date
 
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 try:
     from backend.app import models
     from backend.app.database import Base
-    from backend.app.schemas import MonthlyPlanLineBatchUpdate, MonthlyPlanLineCreate
+    from backend.app.routers.budget_plans import compare_budget_plans, copy_period_full_replace, copy_plan_from
+    from backend.app.schemas import CopyPeriodRequest, MonthlyPlanLineBatchUpdate, MonthlyPlanLineCreate
     from backend.app.services.accounting_service import process_transaction
     from backend.app.services.budget_plan_service import create_plan_lines, get_budget_summary, update_plan_lines
 except ModuleNotFoundError:
     from app import models  # type: ignore[no-redef]
     from app.database import Base  # type: ignore[no-redef]
-    from app.schemas import MonthlyPlanLineBatchUpdate, MonthlyPlanLineCreate  # type: ignore[no-redef]
+    from app.routers.budget_plans import compare_budget_plans, copy_period_full_replace, copy_plan_from  # type: ignore[no-redef]
+    from app.schemas import CopyPeriodRequest, MonthlyPlanLineBatchUpdate, MonthlyPlanLineCreate  # type: ignore[no-redef]
     from app.services.accounting_service import process_transaction  # type: ignore[no-redef]
     from app.services.budget_plan_service import create_plan_lines, get_budget_summary, update_plan_lines  # type: ignore[no-redef]
 
@@ -623,5 +626,208 @@ def test_recurring_budget_context_converts_currency_to_client_currency() -> None
         assert account["recurring_amount"] == 4000
         assert account["sync_status"] == "missing"
         assert len(account["recurring_transaction_ids"]) == 2
+    finally:
+        db.close()
+
+
+def test_legacy_null_plan_lines_are_backfilled_to_default_plan() -> None:
+    db = _session()
+    try:
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        food = models.Account(client_id=1, name="food", account_type="expense")
+        db.add_all([client, food])
+        db.flush()
+        line = models.MonthlyPlanLine(
+            client_id=1,
+            target_period="2026-05",
+            line_type="expense",
+            target_type="account",
+            account_id=food.id,
+            name="food",
+            amount=12000,
+        )
+        db.add(line)
+        db.commit()
+
+        summary = get_budget_summary(db, client_id=1, period="2026-05")
+        db.refresh(line)
+
+        assert summary["plan_id"] == line.plan_id
+        assert summary["total_variable_budget"] == 12000
+        assert line.plan_id is not None
+    finally:
+        db.close()
+
+
+def test_same_line_identity_is_allowed_across_plans_but_not_within_one_plan() -> None:
+    db = _session()
+    try:
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        baseline = models.BudgetPlan(client_id=1, name="Baseline", is_default=True)
+        house = models.BudgetPlan(client_id=1, name="House")
+        food = models.Account(client_id=1, name="food", account_type="expense")
+        db.add_all([client, baseline, house, food])
+        db.commit()
+
+        payload = {
+            "target_period": "2026-05",
+            "line_type": "expense",
+            "target_type": "account",
+            "account_id": food.id,
+            "amount": 12000,
+        }
+        baseline_line = create_plan_lines(db, 1, [MonthlyPlanLineCreate(**payload, plan_id=baseline.id)])[0]
+        house_line = create_plan_lines(db, 1, [MonthlyPlanLineCreate(**payload, plan_id=house.id)])[0]
+
+        assert baseline_line.plan_id == baseline.id
+        assert house_line.plan_id == house.id
+        try:
+            create_plan_lines(db, 1, [MonthlyPlanLineCreate(**payload, plan_id=baseline.id)])
+        except ValueError as exc:
+            assert "already exists" in str(exc)
+        else:
+            raise AssertionError("duplicate line was accepted within the same budget plan")
+    finally:
+        db.close()
+
+
+def test_plan_line_create_and_update_reject_foreign_or_missing_plan_ids() -> None:
+    db = _session()
+    try:
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        other_client = models.Client(id=2, name="other", general_settings={}, ai_config={})
+        other_plan = models.BudgetPlan(client_id=2, name="Other", is_default=True)
+        food = models.Account(client_id=1, name="food", account_type="expense")
+        db.add_all([client, other_client, other_plan, food])
+        db.commit()
+
+        base_payload = {
+            "target_period": "2026-05",
+            "line_type": "expense",
+            "target_type": "account",
+            "account_id": food.id,
+            "amount": 12000,
+        }
+        for bad_plan_id in (other_plan.id, 9999):
+            try:
+                create_plan_lines(db, 1, [MonthlyPlanLineCreate(**base_payload, plan_id=bad_plan_id)])
+            except ValueError as exc:
+                assert "Budget plan not found" in str(exc)
+            else:
+                raise AssertionError("create accepted an invalid budget plan")
+
+        created = create_plan_lines(db, 1, [MonthlyPlanLineCreate(**base_payload)])[0]
+        try:
+            update_plan_lines(db, 1, [
+                MonthlyPlanLineBatchUpdate(
+                    id=created.id,
+                    **base_payload,
+                    plan_id=other_plan.id,
+                )
+            ])
+        except ValueError as exc:
+            assert "Budget plan not found" in str(exc)
+        else:
+            raise AssertionError("update accepted a foreign budget plan")
+    finally:
+        db.close()
+
+
+def test_budget_plan_router_rejects_invalid_compare_and_self_copy() -> None:
+    db = _session()
+    try:
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        plan = models.BudgetPlan(client_id=1, name="Baseline", is_default=True)
+        db.add_all([client, plan])
+        db.commit()
+
+        for plan_ids in ("", "9999"):
+            try:
+                compare_budget_plans(
+                    plan_ids=plan_ids,
+                    start_period="2026-05",
+                    months=12,
+                    db=db,
+                    current_client=client,
+                )
+            except HTTPException as exc:
+                assert exc.status_code in {400, 404}
+            else:
+                raise AssertionError("compare accepted invalid plan_ids")
+
+        try:
+            copy_plan_from(plan.id, source_plan_id=plan.id, db=db, current_client=client)
+        except HTTPException as exc:
+            assert exc.status_code == 400
+        else:
+            raise AssertionError("copy-from-self was accepted")
+    finally:
+        db.close()
+
+
+def test_copy_period_full_replace_only_affects_selected_plan() -> None:
+    db = _session()
+    try:
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        baseline = models.BudgetPlan(client_id=1, name="Baseline", is_default=True)
+        house = models.BudgetPlan(client_id=1, name="House")
+        food = models.Account(client_id=1, name="food", account_type="expense")
+        db.add_all([client, baseline, house, food])
+        db.flush()
+        db.add_all([
+            models.MonthlyPlanLine(
+                client_id=1,
+                plan_id=baseline.id,
+                target_period="2026-06",
+                line_type="expense",
+                target_type="account",
+                account_id=food.id,
+                name="baseline target",
+                amount=5000,
+            ),
+            models.MonthlyPlanLine(
+                client_id=1,
+                plan_id=house.id,
+                target_period="2026-05",
+                line_type="expense",
+                target_type="account",
+                account_id=food.id,
+                name="house source",
+                amount=15000,
+            ),
+            models.MonthlyPlanLine(
+                client_id=1,
+                plan_id=house.id,
+                target_period="2026-06",
+                line_type="expense",
+                target_type="account",
+                account_id=food.id,
+                name="house old target",
+                amount=7000,
+            ),
+        ])
+        db.commit()
+
+        copy_period_full_replace(
+            CopyPeriodRequest(source_period="2026-05", target_period="2026-06", plan_id=house.id),
+            db=db,
+            current_client=client,
+        )
+
+        baseline_target = db.query(models.MonthlyPlanLine).filter_by(
+            plan_id=baseline.id,
+            target_period="2026-06",
+            is_active=True,
+        ).one()
+        house_targets = db.query(models.MonthlyPlanLine).filter_by(
+            plan_id=house.id,
+            target_period="2026-06",
+            is_active=True,
+        ).all()
+
+        assert baseline_target.amount == 5000
+        assert len(house_targets) == 1
+        assert house_targets[0].name == "house source"
+        assert house_targets[0].amount == 15000
     finally:
         db.close()

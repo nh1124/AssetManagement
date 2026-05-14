@@ -89,14 +89,17 @@ def get_budget_summary(
     """Get monthly cash-flow plan summary."""
     if not period:
         period = datetime.now().strftime("%Y-%m")
-    return build_budget_summary(
-        db,
-        current_client.id,
-        period,
-        plan_id=plan_id,
-        cash_flow_start_period=cash_flow_start_period,
-        cash_flow_months=cash_flow_months,
-    )
+    try:
+        return build_budget_summary(
+            db,
+            current_client.id,
+            period,
+            plan_id=plan_id,
+            cash_flow_start_period=cash_flow_start_period,
+            cash_flow_months=cash_flow_months,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get("/monthly-plan-lines")
@@ -108,7 +111,10 @@ def get_monthly_plan_lines(
 ):
     if not period:
         period = datetime.now().strftime("%Y-%m")
-    return build_budget_summary(db, current_client.id, period, plan_id=plan_id)["plan_lines"]
+    try:
+        return build_budget_summary(db, current_client.id, period, plan_id=plan_id)["plan_lines"]
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.post("/monthly-plan-lines")
