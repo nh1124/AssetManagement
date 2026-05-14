@@ -20,6 +20,7 @@ import type { QuickTemplate, RecurringTransaction, Transaction } from '../types'
 import {
     buildQuickTransactions,
     configAccountId,
+    filterVisibleQuickTemplates,
     InfoTip,
     QUICK_KIND_RULES,
     QUICK_PRESETS,
@@ -29,6 +30,7 @@ import {
     quickKindGroup,
     quickKindLabel,
     quickPresetFor,
+    quickTemplateDisplay,
     quickText,
     type AccountItem,
     type LanguageCode,
@@ -209,7 +211,7 @@ export default function Journal() {
     });
 
     const [quickTemplateDraft, setQuickTemplateDraft] = useState<QuickTemplateDraft>({
-        tray: 'Food',
+        tray: '食費',
         name: '',
         template_kind: 'simple_expense' as QuickTemplateKind,
         category: '',
@@ -280,7 +282,7 @@ export default function Journal() {
             setSelectedQuickTemplateId(null);
             return;
         }
-        if (activeQuickTray && !quickTemplates.some((template) => template.tray === activeQuickTray)) {
+        if (activeQuickTray && !quickTemplates.some((template) => quickTemplateDisplay(template).tray === activeQuickTray)) {
             setActiveQuickTray('');
         }
         if (selectedQuickTemplateId && !quickTemplates.some((template) => template.id === selectedQuickTemplateId)) {
@@ -289,7 +291,7 @@ export default function Journal() {
     }, [quickTemplates, activeQuickTray, selectedQuickTemplateId]);
 
     useEffect(() => {
-        const seedKey = `finance_quick_seeded_${clientId}_quick_catalog_v2`;
+        const seedKey = `finance_quick_seeded_${clientId}_quick_catalog_v4`;
         if (!accounts.length || localStorage.getItem(seedKey) === '1') return;
         const existingPresetKeys = new Set(
             quickTemplates
@@ -345,9 +347,9 @@ export default function Journal() {
                 }));
                 localStorage.setItem(seedKey, '1');
                 const templates = await getQuickTemplates();
-                setQuickTemplates(templates);
+                setQuickTemplates(filterVisibleQuickTemplates(templates));
                 if (created[0]) {
-                    setActiveQuickTray(created[0].tray);
+                    setActiveQuickTray(quickTemplateDisplay(created[0]).tray);
                     setSelectedQuickTemplateId(created[0].id);
                     selectQuickTemplate(created[0]);
                 }
@@ -391,7 +393,7 @@ export default function Journal() {
             setTransactionTotal(txPage.total);
             setRecurringItems(recs);
             setAccounts(accs);
-            setQuickTemplates(templates);
+            setQuickTemplates(filterVisibleQuickTemplates(templates));
         } catch (error) {
             console.error('Failed to fetch journal data:', error);
             showToast('Failed to load data', 'error');
@@ -401,7 +403,7 @@ export default function Journal() {
     const fetchQuickTemplatesOnly = async () => {
         try {
             const templates = await getQuickTemplates();
-            setQuickTemplates(templates);
+            setQuickTemplates(filterVisibleQuickTemplates(templates));
         } catch (error) {
             console.error('Failed to update quick templates:', error);
             showToast('Failed to load quick templates', 'error');
@@ -460,10 +462,10 @@ export default function Journal() {
     const quickTrayTiles = Array.from(new Set(
         quickTemplates
             .filter((template) => quickKindGroup(template.template_kind) === activeQuickGroup)
-            .map((template) => template.tray)
+            .map((template) => quickTemplateDisplay(template).tray)
     )).map((tray) => {
         const trayTemplates = quickTemplates.filter((template) =>
-            template.tray === tray && quickKindGroup(template.template_kind) === activeQuickGroup
+            quickTemplateDisplay(template).tray === tray && quickKindGroup(template.template_kind) === activeQuickGroup
         );
         const preset = trayTemplates[0] ? quickPresetFor(trayTemplates[0]) : undefined;
         return {
@@ -475,11 +477,13 @@ export default function Journal() {
     });
     const visibleQuickTemplates = activeQuickTray
         ? quickTemplates.filter((template) =>
-            template.tray === activeQuickTray && quickKindGroup(template.template_kind) === activeQuickGroup
+            quickTemplateDisplay(template).tray === activeQuickTray && quickKindGroup(template.template_kind) === activeQuickGroup
         )
         : [];
     const defaultQuickTray = activeQuickTray
-        || quickTemplates.find((template) => quickKindGroup(template.template_kind) === activeQuickGroup)?.tray
+        || (quickTemplates.find((template) => quickKindGroup(template.template_kind) === activeQuickGroup)
+            ? quickTemplateDisplay(quickTemplates.find((template) => quickKindGroup(template.template_kind) === activeQuickGroup)!).tray
+            : undefined)
         || '食費';
 
     const resetQuickTemplateDraft = (tray = defaultQuickTray) => {
@@ -502,10 +506,11 @@ export default function Journal() {
             setSelectedQuickTemplateId(null);
             return;
         }
+        const display = quickTemplateDisplay(template);
         setSelectedQuickTemplateId(template.id);
         setQuickEntry((prev) => ({
             ...prev,
-            description: prev.description || template.name,
+            description: prev.description || display.name,
             currency: template.default_currency || currentCurrency,
             payment_account_id: template.default_from_account_id ? String(template.default_from_account_id) : '',
             expense_account_id: template.default_to_account_id ? String(template.default_to_account_id) : '',
@@ -519,13 +524,14 @@ export default function Journal() {
     };
 
     const handleEditQuickTemplate = (template: QuickTemplate) => {
+        const display = quickTemplateDisplay(template);
         setEditingQuickTemplateId(template.id);
         setShowQuickTemplateForm(true);
         setQuickTemplateDraft({
-            tray: template.tray,
-            name: template.name,
+            tray: display.tray,
+            name: display.name,
             template_kind: template.template_kind as QuickTemplateKind,
-            category: template.category || '',
+            category: display.category,
             default_currency: template.default_currency || currentCurrency,
             default_from_account_id: template.default_from_account_id ? String(template.default_from_account_id) : '',
             default_to_account_id: template.default_to_account_id ? String(template.default_to_account_id) : '',
@@ -544,7 +550,7 @@ export default function Journal() {
             amount: '',
             ownAmount: '',
             advanceAmount: '',
-            description: selectedQuickTemplate?.name || '',
+            description: selectedQuickTemplate ? quickTemplateDisplay(selectedQuickTemplate).name : '',
             reimbursementReceived: false,
         }));
     };
@@ -581,15 +587,16 @@ export default function Journal() {
             const template = editingQuickTemplateId
                 ? await updateQuickTemplate(editingQuickTemplateId, payload)
                 : await createQuickTemplate(payload);
+            const display = quickTemplateDisplay(template);
             showToast(editingQuickTemplateId ? 'Quick template updated' : 'Quick template created', 'success');
             setShowQuickTemplateForm(false);
-            resetQuickTemplateDraft(template.tray);
+            resetQuickTemplateDraft(display.tray);
             await fetchQuickTemplatesOnly();
-            setActiveQuickTray(template.tray);
+            setActiveQuickTray(display.tray);
             setSelectedQuickTemplateId(template.id);
             setQuickEntry((prev) => ({
                 ...prev,
-                description: template.name,
+                description: display.name,
                 currency: template.default_currency || currentCurrency,
                 payment_account_id: template.default_from_account_id ? String(template.default_from_account_id) : '',
                 expense_account_id: template.default_to_account_id ? String(template.default_to_account_id) : '',
@@ -631,11 +638,11 @@ export default function Journal() {
         try {
             await createTransactionBatch({
                 quick_template_id: selectedQuickTemplate?.id ?? null,
-                label: quickEntry.description || selectedQuickTemplate?.name || 'Quick entry',
+                label: quickEntry.description || (selectedQuickTemplate ? quickTemplateDisplay(selectedQuickTemplate).name : '') || 'Quick entry',
                 source: 'quick',
                 input_payload: {
                     template_kind: selectedQuickTemplate?.template_kind,
-                    tray: selectedQuickTemplate?.tray,
+                    tray: selectedQuickTemplate ? quickTemplateDisplay(selectedQuickTemplate).tray : undefined,
                     entry: quickEntry,
                 },
                 transactions: quickPreview.transactions,
@@ -1306,9 +1313,9 @@ export default function Journal() {
                             <div className="border border-slate-700 bg-slate-900/60 p-3 space-y-3">
                                 <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-2">
                                     <div>
-                                        <p className="text-xs font-bold text-white">{selectedQuickTemplate.name}</p>
+                                        <p className="text-xs font-bold text-white">{quickTemplateDisplay(selectedQuickTemplate).name}</p>
                                         <p className="text-[10px] text-slate-500">
-                                            {quickKindGroup(selectedQuickTemplate.template_kind)} / {selectedQuickTemplate.tray} / {quickKindLabel(selectedQuickTemplate.template_kind)}
+                                            {quickKindGroup(selectedQuickTemplate.template_kind)} / {quickTemplateDisplay(selectedQuickTemplate).tray} / {quickKindLabel(selectedQuickTemplate.template_kind)}
                                         </p>
                                     </div>
                                     <div className="flex gap-1">

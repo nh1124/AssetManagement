@@ -21,11 +21,13 @@ import type { Account, AnalysisSummary, QuickTemplate, Transaction } from '../..
 import { formatCurrency } from '../../utils/currency';
 import {
     buildQuickTransactions,
+    filterVisibleQuickTemplates,
     QUICK_KIND_RULES,
     QUICK_TEMPLATE_GROUPS,
     quickKindLabel,
     quickKindGroup,
     quickPresetFor,
+    quickTemplateDisplay,
     type AccountItem,
     type QuickEntry,
     type QuickTemplateGroup,
@@ -70,10 +72,10 @@ export default function MobileQuickPage() {
     const trayTiles = Array.from(new Set(
         templates
             .filter((template) => quickKindGroup(template.template_kind) === activeGroup)
-            .map((template) => template.tray)
+            .map((template) => quickTemplateDisplay(template).tray)
     )).map((tray) => {
         const trayTemplates = templates.filter((template) =>
-            template.tray === tray && quickKindGroup(template.template_kind) === activeGroup
+            quickTemplateDisplay(template).tray === tray && quickKindGroup(template.template_kind) === activeGroup
         );
         const preset = trayTemplates[0] ? quickPresetFor(trayTemplates[0]) : undefined;
         return {
@@ -84,7 +86,7 @@ export default function MobileQuickPage() {
         };
     });
     const visibleTemplates = activeTray
-        ? templates.filter((template) => template.tray === activeTray && quickKindGroup(template.template_kind) === activeGroup)
+        ? templates.filter((template) => quickTemplateDisplay(template).tray === activeTray && quickKindGroup(template.template_kind) === activeGroup)
         : [];
 
     const loadQuickData = async () => {
@@ -99,7 +101,7 @@ export default function MobileQuickPage() {
             ]);
             setSummary(summaryData);
             setPl(plData);
-            setTemplates(templateData.filter((template) => template.is_active));
+            setTemplates(filterVisibleQuickTemplates(templateData));
             setAccounts(accountData);
             setRecentTransactions(txData.items);
         } catch {
@@ -267,6 +269,7 @@ function CategoryButton({
 function TemplateButton({ template, onSelect }: { template: QuickTemplate; onSelect: () => void }) {
     const preset = quickPresetFor(template);
     const Icon = preset?.icon ?? ArrowRightLeft;
+    const display = quickTemplateDisplay(template);
 
     return (
         <button
@@ -278,8 +281,8 @@ function TemplateButton({ template, onSelect }: { template: QuickTemplate; onSel
                 <Icon size={19} className={preset?.color ?? 'text-emerald-300'} />
                 <ChevronRight size={15} className="text-slate-600" />
             </div>
-            <p className="mt-3 truncate text-sm font-medium text-slate-100">{template.name}</p>
-            <p className="mt-1 truncate text-[10px] text-slate-500">{template.tray} - {quickKindLabel(template.template_kind)}</p>
+            <p className="mt-3 truncate text-sm font-medium text-slate-100">{display.name}</p>
+            <p className="mt-1 truncate text-[10px] text-slate-500">{display.tray} - {quickKindLabel(template.template_kind)}</p>
         </button>
     );
 }
@@ -316,6 +319,7 @@ function MobileQuickEntrySheet({
     }, [template, currentCurrency, accountItems]);
 
     if (!template) return null;
+    const display = quickTemplateDisplay(template);
 
     const save = async () => {
         const ownAmount = entry.ownAmount || entry.amount;
@@ -340,7 +344,7 @@ function MobileQuickEntrySheet({
         try {
             await createTransactionBatch({
                 quick_template_id: template.id,
-                label: template.name,
+                label: display.name,
                 source: 'mobile_quick',
                 input_payload: {
                     amount: entry.amount,
@@ -351,7 +355,7 @@ function MobileQuickEntrySheet({
                 },
                 transactions: resolvedTransactions,
             });
-            showToast(`Saved ${template.name}`, 'success');
+            showToast(`Saved ${display.name}`, 'success');
             onClose();
             await onSaved();
         } catch {
@@ -368,7 +372,7 @@ function MobileQuickEntrySheet({
                 <div className="mb-4 flex items-center justify-between">
                     <div className="min-w-0">
                         <p className="text-[10px] uppercase tracking-wide text-slate-500">{quickKindLabel(template.template_kind)}</p>
-                        <h2 className="truncate text-lg font-semibold text-slate-100">{template.name}</h2>
+                        <h2 className="truncate text-lg font-semibold text-slate-100">{display.name}</h2>
                     </div>
                     <button type="button" onClick={onClose} className="p-2 text-slate-500 active:text-slate-200" aria-label="Close">
                         <X size={20} />
@@ -393,7 +397,7 @@ function MobileQuickEntrySheet({
                             value={entry.description}
                             onChange={(event) => setEntry({ ...entry, description: event.target.value })}
                             className="mt-1 h-11 w-full border border-slate-700 bg-slate-900 px-3 text-sm text-slate-100 outline-none focus:border-emerald-500"
-                            placeholder={template.name}
+                            placeholder={display.name}
                         />
                     </label>
                     <div>
@@ -461,12 +465,13 @@ function buildFallbackTransaction(
     currentCurrency: string,
 ): Omit<Transaction, 'id'> {
     const paymentAccount = accounts.find((account) => account.id === Number(entry.payment_account_id));
+    const display = quickTemplateDisplay(template);
     return {
         date: entry.date,
-        description: entry.description.trim() || template.name,
+        description: entry.description.trim() || display.name,
         amount: Number(entry.amount || 0),
         type: fallbackTransactionType(template.template_kind, paymentAccount),
-        category: template.category || template.tray || template.name,
+        category: display.category,
         currency: entry.currency || template.default_currency || currentCurrency,
         from_account_id: entry.payment_account_id ? Number(entry.payment_account_id) : undefined,
         to_account_id: entry.expense_account_id ? Number(entry.expense_account_id) : undefined,
