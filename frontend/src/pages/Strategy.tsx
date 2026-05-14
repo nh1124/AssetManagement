@@ -266,10 +266,9 @@ export default function Strategy() {
     };
     type SourceDetail = {
         id: string;
-        kind: 'registry' | 'recurrence' | 'product_expense' | 'product_reserve';
+        kind: 'source' | 'product_reserve';
         label: string;
         amount: number;
-        conflict: boolean;
     };
 
     const toggleSourceRow = (key: string) => {
@@ -282,67 +281,56 @@ export default function Strategy() {
     };
 
     const sourceKindLabel = (kind: SourceDetail['kind']) => {
-        if (kind === 'registry') return 'Registry';
-        if (kind === 'product_expense') return 'Expense Item';
         if (kind === 'product_reserve') return 'Product Reserve';
-        return 'Recurrence';
+        return 'Source';
     };
 
-    const detailsHaveConflict = (details: SourceDetail[]) => (
-        new Set(details.filter((detail) => detail.amount > 0).map((detail) => detail.kind)).size > 1
-    );
-
     const budgetSourceDetails = (account: BudgetAccount): SourceDetail[] => {
-        const registry = (account.registry_items ?? []).map((item) => ({
-            id: `registry-${item.id}`,
-            kind: 'registry' as const,
-            label: item.name,
-            amount: Number(item.amount || 0),
-            conflict: false,
-        }));
+        const productKeys = new Set((account.product_expense_items ?? []).map(
+            (item) => `${item.name}|${Number(item.amount || 0)}`,
+        ));
         const productExpenses = (account.product_expense_items ?? []).map((item) => ({
             id: `product-expense-${item.id}`,
-            kind: 'product_expense' as const,
+            kind: 'source' as const,
             label: item.name,
             amount: Number(item.amount || 0),
-            conflict: false,
         }));
-        const details = [...registry, ...productExpenses];
-        const conflict = detailsHaveConflict(details);
-        return details.map((detail) => ({ ...detail, conflict }));
+        const registry = (account.registry_items ?? [])
+            .filter((item) => !productKeys.has(`${item.name}|${Number(item.amount || 0)}`))
+            .map((item) => ({
+            id: `registry-${item.id}`,
+            kind: 'source' as const,
+            label: item.name,
+            amount: Number(item.amount || 0),
+        }));
+        return [...productExpenses, ...registry];
     };
 
     const planSourceDetails = (line: MonthlyPlanLine): SourceDetail[] => {
         const registry = (line.registry_items ?? []).map((item) => ({
             id: `registry-${item.id}`,
-            kind: 'registry' as const,
+            kind: 'source' as const,
             label: item.name,
             amount: Number(item.amount || 0),
-            conflict: false,
         }));
         const suggested = (line.suggested_items ?? []).map((item) => ({
             id: `suggested-${item.source ?? 'product'}-${item.id}`,
-            kind: (item.source === 'product_reserve' ? 'product_reserve' : 'product_expense') as SourceDetail['kind'],
+            kind: (item.source === 'product_reserve' ? 'product_reserve' : 'source') as SourceDetail['kind'],
             label: item.name,
             amount: Number(item.amount || 0),
-            conflict: false,
         }));
-        const details = [...registry, ...suggested];
-        const conflict = detailsHaveConflict(details);
-        return details.map((detail) => ({ ...detail, conflict }));
+        return [...suggested, ...registry];
     };
 
     const renderSourceToggle = (rowKey: string, details: SourceDetail[]) => {
         if (details.length === 0) return null;
-        const conflict = details.some((detail) => detail.conflict);
         return (
             <button
                 type="button"
-                title={conflict ? 'Show source details and possible conflicts' : 'Show source details'}
+                title="Show source details"
                 onClick={() => toggleSourceRow(rowKey)}
-                className={`inline-flex items-center gap-1 ${conflict ? 'text-amber-300 hover:text-amber-100' : 'text-slate-500 hover:text-cyan-300'}`}
+                className="inline-flex items-center gap-1 text-slate-500 hover:text-cyan-300"
             >
-                {conflict && <AlertTriangle size={11} />}
                 <ChevronRight size={11} className={`transition-transform ${expandedSourceRows.has(rowKey) ? 'rotate-90' : ''}`} />
             </button>
         );
@@ -356,17 +344,13 @@ export default function Strategy() {
                     <div className="space-y-1">
                         {details.map((detail) => (
                             <div key={detail.id} className="grid grid-cols-[auto_1fr_auto] items-center gap-2 text-[10px]">
-                                <span className={`inline-flex items-center gap-1 uppercase ${detail.conflict ? 'text-amber-300' : 'text-slate-500'}`}>
-                                    {detail.conflict && <AlertTriangle size={10} />}
+                                <span className="inline-flex items-center gap-1 uppercase text-slate-500">
                                     {sourceKindLabel(detail.kind)}
                                 </span>
                                 <span className="truncate text-slate-300">{detail.label}</span>
                                 <span className="font-mono-nums text-cyan-300">{formatCurrency(detail.amount)}</span>
                             </div>
                         ))}
-                        {details.some((detail) => detail.conflict) && (
-                            <p className="text-[10px] text-amber-300">Multiple source types are included here. Check for possible double counting.</p>
-                        )}
                     </div>
                 </td>
             </tr>
@@ -1632,10 +1616,7 @@ export default function Strategy() {
                                                     <div className="flex items-center justify-end gap-1.5">
                                                         {renderSourceToggle(rowKey, sourceDetails)}
                                                         {sourceAmount > 0 ? (
-                                                            <div className="space-y-0.5">
-                                                                <p className="font-mono-nums text-cyan-300">{formatCurrency(sourceAmount)}</p>
-                                                                <p className="text-[9px] uppercase text-slate-500">Registry</p>
-                                                            </div>
+                                                            <p className="font-mono-nums text-cyan-300">{formatCurrency(sourceAmount)}</p>
                                                         ) : (
                                                             <span className="font-mono-nums text-slate-600">-</span>
                                                         )}
@@ -2011,7 +1992,6 @@ export default function Strategy() {
                                 const sourceSynced = isBudgetSourceSynced(account);
                                 const rowKey = `budget-${account.id}`;
                                 const sourceDetails = budgetSourceDetails(account);
-                                const sourceLabel = suggestedAmount > 0 ? 'Registry' : '';
                                 return (
                                     <Fragment key={account.id}>
                                         <tr className="hover:bg-slate-800/30 group">
@@ -2023,10 +2003,7 @@ export default function Strategy() {
                                                 <div className="flex items-center justify-end gap-1.5">
                                                     {renderSourceToggle(rowKey, sourceDetails)}
                                                     {hasSuggestion ? (
-                                                        <div className="space-y-0.5">
-                                                            <p className="font-mono-nums text-cyan-300">{formatCurrency(suggestedAmount)}</p>
-                                                            <p className="text-[9px] uppercase text-slate-500">{sourceLabel}</p>
-                                                        </div>
+                                                        <p className="font-mono-nums text-cyan-300">{formatCurrency(suggestedAmount)}</p>
                                                     ) : (
                                                         <span className="font-mono-nums text-slate-600">-</span>
                                                     )}
