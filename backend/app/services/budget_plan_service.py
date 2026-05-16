@@ -26,6 +26,23 @@ INFLOW_LINE_TYPES = {"income", "borrowing", "drawdown"}
 OUTFLOW_LINE_TYPES = {"expense", "allocation", "debt_payment"}
 
 
+BudgetSummaryContext = dict[str, dict]
+
+
+def _period_transactions_cached(
+    db: Session,
+    client_id: int,
+    period: str,
+    context: BudgetSummaryContext | None = None,
+) -> list[models.Transaction]:
+    if context is None:
+        return _period_transactions(db, client_id, period)
+    cache = context.setdefault("period_transactions", {})
+    if period not in cache:
+        cache[period] = _period_transactions(db, client_id, period)
+    return cache[period]
+
+
 def get_or_create_default_plan(db: Session, client_id: int) -> models.BudgetPlan:
     plan = db.query(models.BudgetPlan).filter_by(client_id=client_id, is_default=True).first()
     if not plan:
@@ -113,9 +130,10 @@ def actual_for_plan_line(
     line: models.MonthlyPlanLine | dict,
     period: str,
     capsule_accounts: dict[int, int | None] | None = None,
+    context: BudgetSummaryContext | None = None,
 ) -> float:
     capsule_accounts = capsule_accounts or {}
-    txs = _period_transactions(db, client_id, period)
+    txs = _period_transactions_cached(db, client_id, period, context)
     line_type = line["line_type"] if isinstance(line, dict) else line.line_type
     target_type = line["target_type"] if isinstance(line, dict) else line.target_type
     target_id = line.get("target_id") if isinstance(line, dict) else line.target_id
@@ -124,12 +142,15 @@ def actual_for_plan_line(
     needle = name.lower()
 
     if target_type == "capsule" and target_id:
-        capsule = db.query(models.Capsule).filter(
-            models.Capsule.id == target_id,
-            models.Capsule.client_id == client_id,
-        ).first()
+        capsule = (context or {}).get("capsule_by_id", {}).get(target_id)
+        if capsule is None:
+            capsule = db.query(models.Capsule).filter(
+                models.Capsule.id == target_id,
+                models.Capsule.client_id == client_id,
+            ).first()
         if capsule:
-            return capsule_balance(db, capsule)
+            cached_balances = (context or {}).get("capsule_balances", {})
+            return cached_balances.get(capsule.id, capsule_balance(db, capsule))
         account_id = capsule_accounts.get(target_id)
 
     if line_type == "income":
@@ -199,8 +220,9 @@ def _serialize_plan_line(
     line: models.MonthlyPlanLine,
     name_maps: dict[str, dict[int, str]],
     capsule_accounts: dict[int, int | None],
+    context: BudgetSummaryContext | None = None,
 ) -> dict:
-    actual = actual_for_plan_line(db, client_id, line, line.target_period, capsule_accounts)
+    actual = actual_for_plan_line(db, client_id, line, line.target_period, capsule_accounts, context)
     target_name = _line_display_name(line, name_maps)
     return {
         "id": line.id,
@@ -234,6 +256,7 @@ def _virtual_capsule_line(
     capsule: models.Capsule,
     period: str,
     capsule_accounts: dict[int, int | None],
+    context: BudgetSummaryContext | None = None,
 ) -> dict:
     line = {
         "id": None,
@@ -258,7 +281,7 @@ def _virtual_capsule_line(
         "recurring_transaction_id": None,
         "sync_status": None,
     }
-    actual = actual_for_plan_line(db, client_id, line, period, capsule_accounts)
+    actual = actual_for_plan_line(db, client_id, line, period, capsule_accounts, context)
     line["actual"] = round(actual, 0)
     line["variance"] = round((capsule.monthly_contribution or 0.0) - actual, 0)
     return line
@@ -438,9 +461,27 @@ def _registry_plan_line(
     }
 
 
-def registry_plan_lines(db: Session, client_id: int, period: str) -> list[dict]:
-    ensure_registry_entries(db, client_id)
-    name_maps = _target_name_maps(db, client_id)
+def registry_plan_lines(
+    db: Session,
+    client_id: int,
+    period: str,
+    context: BudgetSummaryContext | None = None,
+) -> list[dict]:
+    if context is not None:
+        cache = context.setdefault("registry_lines", {})
+        if period in cache:
+            return cache[period]
+        ensured = context.setdefault("registry_ensured", {})
+        if not ensured.get(client_id):
+            ensure_registry_entries(db, client_id)
+            ensured[client_id] = True
+        maps_cache = context.setdefault("target_name_maps", {})
+        if client_id not in maps_cache:
+            maps_cache[client_id] = _target_name_maps(db, client_id)
+        name_maps = maps_cache[client_id]
+    else:
+        ensure_registry_entries(db, client_id)
+        name_maps = _target_name_maps(db, client_id)
     entries = db.query(models.RegistryEntry).filter(
         models.RegistryEntry.client_id == client_id,
         models.RegistryEntry.is_active.is_(True),
@@ -483,10 +524,18 @@ def registry_plan_lines(db: Session, client_id: int, period: str) -> list[dict]:
             *line.get("product_expense_items", []),
         ]
         existing["recurring_transaction_id"] = existing.get("recurring_transaction_id") or line.get("recurring_transaction_id")
-    return list(aggregated.values())
+    result = list(aggregated.values())
+    if context is not None:
+        cache[period] = result
+    return result
 
 
-def registry_totals(db: Session, client_id: int, period: str) -> dict[str, float]:
+def registry_totals(
+    db: Session,
+    client_id: int,
+    period: str,
+    context: BudgetSummaryContext | None = None,
+) -> dict[str, float]:
     totals = {
         "income": 0.0,
         "fixed_costs": 0.0,
@@ -494,7 +543,7 @@ def registry_totals(db: Session, client_id: int, period: str) -> dict[str, float
         "allocations": 0.0,
         "borrowing": 0.0,
     }
-    for line in registry_plan_lines(db, client_id, period):
+    for line in registry_plan_lines(db, client_id, period, context):
         amount = line.get("registry_amount") or line.get("suggested_amount") or 0.0
         line_type = line.get("line_type")
         if line_type == "income":
@@ -584,9 +633,11 @@ def get_budget_summary(
     cash_flow_start_period: str | None = None,
     cash_flow_months: int = 12,
 ) -> dict:
+    context: BudgetSummaryContext = {}
     plan_id = resolve_budget_plan_id(db, client_id, plan_id)
 
     ensure_registry_entries(db, client_id)
+    context["registry_ensured"] = {client_id: True}
     events_with_progress = get_life_events_with_progress(db, client_id=client_id)
     total_gap = sum(max(0, e["gap"]) for e in events_with_progress)
     avg_years = (
@@ -595,11 +646,13 @@ def get_budget_summary(
     )
     required_monthly_savings = total_gap / (avg_years * 12) if avg_years > 0 else 0
 
-    recurring = registry_totals(db, client_id, period)
+    recurring = registry_totals(db, client_id, period, context)
     name_maps = _target_name_maps(db, client_id)
     capsules = db.query(models.Capsule).filter(models.Capsule.client_id == client_id).all()
     capsule_accounts = {capsule.id: capsule.account_id for capsule in capsules}
     capsule_by_id = {capsule.id: capsule for capsule in capsules}
+    context["capsule_by_id"] = capsule_by_id
+    context["capsule_balances"] = {capsule.id: capsule_balance(db, capsule) for capsule in capsules}
     capsule_by_life_event_id = {
         capsule.life_event_id: capsule
         for capsule in capsules
@@ -614,7 +667,7 @@ def get_budget_summary(
     ).order_by(models.MonthlyPlanLine.line_type, models.MonthlyPlanLine.id).all()
     plan_models = _deduplicate_active_plan_models(db, plan_models)
     plan_lines = [
-        _serialize_plan_line(db, client_id, line, name_maps, capsule_accounts)
+        _serialize_plan_line(db, client_id, line, name_maps, capsule_accounts, context)
         for line in plan_models
     ]
     for line in plan_lines:
@@ -627,7 +680,7 @@ def get_budget_summary(
                 line["name"] = capsule.name
                 line["target_name"] = capsule.name
                 line["account_name"] = capsule.account.name if capsule.account else None
-                actual = actual_for_plan_line(db, client_id, line, period, capsule_accounts)
+                actual = actual_for_plan_line(db, client_id, line, period, capsule_accounts, context)
                 line["actual"] = round(actual, 0)
                 line["variance"] = round((line.get("amount") or 0.0) - actual, 0)
 
@@ -639,8 +692,8 @@ def get_budget_summary(
     }
     for capsule in capsules:
         if capsule.id not in existing_capsule_ids:
-            plan_lines.append(_virtual_capsule_line(db, client_id, capsule, period, capsule_accounts))
-    plan_lines = _merge_registry_context(plan_lines, registry_plan_lines(db, client_id, period))
+            plan_lines.append(_virtual_capsule_line(db, client_id, capsule, period, capsule_accounts, context))
+    plan_lines = _merge_registry_context(plan_lines, registry_plan_lines(db, client_id, period, context))
 
     expense_lines = [line for line in plan_lines if line["line_type"] == "expense"]
     allocation_lines = [line for line in plan_lines if line["line_type"] == "allocation"]
@@ -676,7 +729,7 @@ def get_budget_summary(
         feasibility_status = "shortfall"
 
     projection_start = cash_flow_start_period or period
-    projection = get_cash_flow_projection(db, client_id, projection_start, months=cash_flow_months, starting_cash=starting_cash, plan_id=plan_id)
+    projection = get_cash_flow_projection(db, client_id, projection_start, months=cash_flow_months, starting_cash=starting_cash, plan_id=plan_id, context=context)
     cash_flow_summary = summarize_cash_flow_projection(projection, starting_cash, projection_start)
 
     return {
@@ -764,6 +817,7 @@ def get_cash_flow_projection(
     months: int = 12,
     starting_cash: float | None = None,
     plan_id: int | None = None,
+    context: BudgetSummaryContext | None = None,
 ) -> list[dict]:
     plan_id = resolve_budget_plan_id(db, client_id, plan_id)
     cash = _liquid_cash(db, client_id) if starting_cash is None else starting_cash
@@ -792,7 +846,7 @@ def get_cash_flow_projection(
         )
         net = income - expense - allocation - debt
         cash += net
-        setup_warnings = budget_setup_warnings(db, client_id, period, lines)
+        setup_warnings = budget_setup_warnings(db, client_id, period, lines, context)
         rows.append({
             "period": period,
             "inflow": round(income, 0),
@@ -812,9 +866,10 @@ def budget_setup_warnings(
     client_id: int,
     period: str,
     plan_models: list[models.MonthlyPlanLine],
+    context: BudgetSummaryContext | None = None,
 ) -> list[dict]:
     return [
-        *recurrence_setup_warnings(db, client_id, period, plan_models),
+        *recurrence_setup_warnings(db, client_id, period, plan_models, context),
         *product_reserve_setup_warnings(db, client_id, plan_models),
     ]
 
@@ -824,8 +879,9 @@ def recurrence_setup_warnings(
     client_id: int,
     period: str,
     plan_models: list[models.MonthlyPlanLine],
+    context: BudgetSummaryContext | None = None,
 ) -> list[dict]:
-    registry_lines = registry_plan_lines(db, client_id, period)
+    registry_lines = registry_plan_lines(db, client_id, period, context)
     plan_by_key = {
         _plan_match_key(line.line_type, line.target_type, line.account_id, line.name): line
         for line in plan_models

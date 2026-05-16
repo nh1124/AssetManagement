@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from .. import models
 from ..database import get_db
 from ..dependencies import get_current_client
+from ..services.cache_service import invalidate_client
 from ..services.action_bridge_service import (
     apply_action,
     create_action,
@@ -61,7 +62,9 @@ def process_due_monthly_actions(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    return {"processed": process_due_actions(db, current_client.id)}
+    result = {"processed": process_due_actions(db, current_client.id)}
+    invalidate_client(current_client.id)
+    return result
 
 
 @router.post("/{action_id}/apply")
@@ -71,7 +74,9 @@ def apply_monthly_action(
     current_client: models.Client = Depends(get_current_client),
 ):
     try:
-        return apply_action(db, current_client.id, action_id)
+        result = apply_action(db, current_client.id, action_id)
+        invalidate_client(current_client.id)
+        return result
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
@@ -85,6 +90,8 @@ def skip_monthly_action(
     current_client: models.Client = Depends(get_current_client),
 ):
     try:
-        return skip_action(db, current_client.id, action_id)
+        result = skip_action(db, current_client.id, action_id)
+        invalidate_client(current_client.id)
+        return result
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

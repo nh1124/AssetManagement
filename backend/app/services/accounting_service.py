@@ -8,7 +8,7 @@ from sqlalchemy import and_, func
 from sqlalchemy.orm import Session
 
 from .. import models
-from .fx_service import calculate_account_valued_balance, convert_transaction_amount, get_client_currency
+from .fx_service import calculate_account_valued_balance, calculate_account_valued_balances, convert_transaction_amount, get_client_currency
 
 # Default accounts to create on startup
 DEFAULT_ACCOUNTS = [
@@ -338,8 +338,9 @@ def get_balance_sheet(
 
     assets = []
     liabilities = []
+    balances = calculate_account_valued_balances(db, accounts, as_of_date)
     for acc in accounts:
-        balance = calculate_account_valued_balance(db, acc, as_of_date)
+        balance = balances.get(acc.id, 0.0)
         if acc.account_type in ("asset", "item"):
             assets.append({"name": acc.name, "balance": balance})
         elif acc.account_type == "liability":

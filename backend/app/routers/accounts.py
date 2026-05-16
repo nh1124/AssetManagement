@@ -4,7 +4,8 @@ from typing import List, Optional, Literal
 from .. import models
 from ..database import get_db
 from ..dependencies import get_current_client
-from ..services.fx_service import calculate_account_valued_balance
+from ..services.cache_service import invalidate_client
+from ..services.fx_service import calculate_account_valued_balance, calculate_account_valued_balances
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
@@ -103,7 +104,7 @@ def _validate_parent(
 
 def _build_tree(db: Session, accounts: list[models.Account]) -> dict:
     by_id = {account.id: account for account in accounts}
-    balances = {account.id: calculate_account_valued_balance(db, account) for account in accounts}
+    balances = calculate_account_valued_balances(db, accounts)
     children_by_parent: dict[int | None, list[models.Account]] = {}
     for account in accounts:
         parent_id = account.parent_id if account.parent_id in by_id else None
@@ -141,8 +142,9 @@ def get_accounts(
         query = query.filter(models.Account.account_type == account_type)
     
     accounts = query.order_by(models.Account.account_type, models.Account.name).all()
+    balances = calculate_account_valued_balances(db, accounts)
     return [
-        _serialize_account(account, balance=calculate_account_valued_balance(db, account))
+        _serialize_account(account, balance=balances.get(account.id, 0.0))
         for account in accounts
     ]
 
@@ -168,6 +170,7 @@ def get_accounts_grouped_by_type(
         models.Account.client_id == current_client.id,
         models.Account.is_active == True
     ).all()
+    balances = calculate_account_valued_balances(db, accounts)
     
     grouped = {
         "asset": [],
@@ -181,7 +184,7 @@ def get_accounts_grouped_by_type(
             grouped[acc.account_type].append({
                 "id": acc.id,
                 "name": acc.name,
-                "balance": calculate_account_valued_balance(db, acc),
+                "balance": balances.get(acc.id, 0.0),
                 "role": acc.role,
                 "role_target_amount": acc.role_target_amount,
             })
@@ -206,6 +209,7 @@ def create_account(
     db.add(db_account)
     db.commit()
     db.refresh(db_account)
+    invalidate_client(current_client.id)
     return _serialize_account(db_account, balance=calculate_account_valued_balance(db, db_account))
 
 @router.put("/{account_id}", response_model=AccountResponse)
@@ -243,6 +247,7 @@ def update_account(
         setattr(db_account, key, value)
     db.commit()
     db.refresh(db_account)
+    invalidate_client(current_client.id)
     return _serialize_account(db_account, balance=calculate_account_valued_balance(db, db_account))
 
 @router.delete("/{account_id}")
@@ -284,6 +289,7 @@ def delete_account(
         
     db_account.is_active = False
     db.commit()
+    invalidate_client(current_client.id)
     return {"message": "Account deactivated"}
 
 @router.post("/seed-defaults")
@@ -295,4 +301,5 @@ def seed_default_accounts(
     from ..services.accounting_service import ensure_default_accounts
     # We need to update ensure_default_accounts to accept client_id
     ensure_default_accounts(db, client_id=current_client.id)
+    invalidate_client(current_client.id)
     return {"message": "Default accounts seeded"}

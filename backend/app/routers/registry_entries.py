@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
+from ..services.cache_service import invalidate_client
 from ..services.registry_service import ensure_registry_entries
 
 
@@ -135,6 +136,7 @@ def create_registry_entry(
     sync_recurring_from_registry(db, entry)
     db.commit()
     db.refresh(entry)
+    invalidate_client(current_client.id)
     return enrich_entry(entry)
 
 
@@ -158,6 +160,7 @@ def update_registry_entry(
     sync_recurring_from_registry(db, entry)
     db.commit()
     db.refresh(entry)
+    invalidate_client(current_client.id)
     return enrich_entry(entry)
 
 
@@ -185,3 +188,4 @@ def delete_registry_entry(
     entry.budget_active = False
     entry.generate_recurring = False
     db.commit()
+    invalidate_client(current_client.id)

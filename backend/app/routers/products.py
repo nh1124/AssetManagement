@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
+from ..services.cache_service import invalidate_client
 from ..services.product_reserve_service import (
     effective_budget_treatment,
     ensure_default_product_reserve_pools,
@@ -149,6 +150,7 @@ def create_product(
     sync_registry_from_product(db, db_product)
     db.commit()
     db.refresh(db_product)
+    invalidate_client(current_client.id)
     return enrich_product(db_product)
 
 
@@ -173,6 +175,7 @@ def update_product(
     sync_registry_from_product(db, db_product)
     db.commit()
     db.refresh(db_product)
+    invalidate_client(current_client.id)
     return enrich_product(db_product)
 
 
@@ -200,6 +203,7 @@ def delete_product(
         registry.source_product_id = None
     db.delete(db_product)
     db.commit()
+    invalidate_client(current_client.id)
 
 
 @router.get("/unit-economics-summary")

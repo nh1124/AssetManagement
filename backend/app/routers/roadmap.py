@@ -8,6 +8,7 @@ from ..services.milestone_service import (
     preview_milestones_from_simulation,
     reset_milestones_from_annual_plan,
 )
+from ..services.cache_service import get_or_set, invalidate_client
 
 
 def _parse_contribution_schedule(raw: str | None) -> list[dict]:
@@ -40,15 +41,24 @@ def read_roadmap_projection(
     db: Session = Depends(database.get_db),
     current_client: models.Client = Depends(dependencies.get_current_client),
 ):
-    return get_roadmap_projection(
-        db=db,
-        client_id=current_client.id,
-        years=years,
-        annual_return=annual_return,
-        inflation=inflation,
-        monthly_savings=monthly_savings,
-        contribution_schedule=_parse_contribution_schedule(contribution_schedule),
-        allocation_mode=allocation_mode,
+    parsed_schedule = _parse_contribution_schedule(contribution_schedule)
+    key = (
+        f"client:{current_client.id}:roadmap_projection:{years}:{annual_return}:"
+        f"{inflation}:{monthly_savings}:{allocation_mode}:{json.dumps(parsed_schedule, sort_keys=True)}"
+    )
+    return get_or_set(
+        key,
+        300,
+        lambda: get_roadmap_projection(
+            db=db,
+            client_id=current_client.id,
+            years=years,
+            annual_return=annual_return,
+            inflation=inflation,
+            monthly_savings=monthly_savings,
+            contribution_schedule=parsed_schedule,
+            allocation_mode=allocation_mode,
+        ),
     )
 
 @router.get("/milestones", response_model=List[schemas.Milestone])
@@ -83,6 +93,7 @@ def create_milestone(
     db.add(db_milestone)
     db.commit()
     db.refresh(db_milestone)
+    invalidate_client(current_client.id)
     return db_milestone
 
 @router.post("/life-events/{life_event_id}/milestones/reset-from-annual", response_model=List[schemas.Milestone])
@@ -97,7 +108,9 @@ def reset_life_event_milestones_from_annual(
     ).first()
     if not event:
         raise HTTPException(status_code=404, detail="Life event not found")
-    return reset_milestones_from_annual_plan(db, current_client.id, life_event_id)
+    result = reset_milestones_from_annual_plan(db, current_client.id, life_event_id)
+    invalidate_client(current_client.id)
+    return result
 
 
 @router.post("/life-events/{life_event_id}/milestones/from-simulation/preview", response_model=schemas.MilestoneSimulationPreview)
@@ -134,7 +147,7 @@ def create_life_event_milestones_from_simulation(
     current_client: models.Client = Depends(dependencies.get_current_client),
 ):
     try:
-        return apply_milestones_from_simulation(
+        result = apply_milestones_from_simulation(
             db=db,
             client_id=current_client.id,
             life_event_id=life_event_id,
@@ -148,6 +161,8 @@ def create_life_event_milestones_from_simulation(
             contribution_schedule=[item.model_dump(mode='json') for item in payload.contribution_schedule],
             allocation_mode=payload.allocation_mode,
         )
+        invalidate_client(current_client.id)
+        return result
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -168,6 +183,7 @@ def update_milestone(
         setattr(milestone, field, value)
     db.commit()
     db.refresh(milestone)
+    invalidate_client(current_client.id)
     return milestone
 
 
@@ -182,4 +198,5 @@ def delete_milestone(
         raise HTTPException(status_code=404, detail="Milestone not found")
     db.delete(db_milestone)
     db.commit()
+    invalidate_client(current_client.id)
     return db_milestone

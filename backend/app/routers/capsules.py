@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from .. import database, dependencies, models, schemas
+from ..services.cache_service import invalidate_client
 from ..services.capsule_service import (
     capsule_balance,
     capsule_to_dict,
@@ -88,6 +89,7 @@ def create_capsule(
     db.add(db_capsule)
     db.commit()
     db.refresh(db_capsule)
+    invalidate_client(current_client.id)
     return capsule_to_dict(db, db_capsule)
 
 
@@ -122,6 +124,7 @@ def update_capsule(
 
     db.commit()
     db.refresh(db_capsule)
+    invalidate_client(current_client.id)
     return capsule_to_dict(db, db_capsule)
 
 
@@ -149,6 +152,7 @@ def delete_capsule(
 
     db.delete(capsule)
     db.commit()
+    invalidate_client(current_client.id)
     return {"message": "Capsule deleted successfully"}
 
 
@@ -189,6 +193,7 @@ def contribute_to_capsule(
     amount = min(amount, remaining)
     upsert_capsule_holding(db, capsule, from_account.id, amount, note="Manual contribution")
     db.commit()
+    invalidate_client(current_client.id)
 
     return {
         "status": "ok",
@@ -216,6 +221,7 @@ def create_product_reserve_pools(
 ):
     capsules = ensure_default_product_reserve_pools(db, current_client.id)
     db.commit()
+    invalidate_client(current_client.id)
     return [capsule_to_dict(db, capsule) for capsule in capsules]
 
 
@@ -226,6 +232,7 @@ def sync_product_reserves(
 ):
     result = sync_product_reserve_capsules(db, current_client.id)
     db.commit()
+    invalidate_client(current_client.id)
     return result
 
 
@@ -244,6 +251,7 @@ def create_goal_capsule(
     capsule = create_capsule_for_goal(db, current_client.id, goal)
     db.commit()
     db.refresh(capsule)
+    invalidate_client(current_client.id)
     return capsule_to_dict(db, capsule)
 
 
@@ -281,6 +289,7 @@ def create_capsule_rule(
     db.add(rule)
     db.commit()
     db.refresh(rule)
+    invalidate_client(current_client.id)
     return _rule_to_dict(rule)
 
 
@@ -301,6 +310,7 @@ def update_capsule_rule(
         setattr(rule, key, value)
     db.commit()
     db.refresh(rule)
+    invalidate_client(current_client.id)
     return _rule_to_dict(rule)
 
 
@@ -318,6 +328,7 @@ def delete_capsule_rule(
         raise HTTPException(status_code=404, detail="Rule not found")
     db.delete(rule)
     db.commit()
+    invalidate_client(current_client.id)
     return {"message": "Rule deleted"}
 
 
@@ -378,6 +389,7 @@ def create_capsule_holding(
         existing.note = payload.note
         db.commit()
         db.refresh(existing)
+        invalidate_client(current_client.id)
         return _holding_to_dict(existing)
 
     h = models.CapsuleHolding(
@@ -389,6 +401,7 @@ def create_capsule_holding(
     db.add(h)
     db.commit()
     db.refresh(h)
+    invalidate_client(current_client.id)
     return _holding_to_dict(h)
 
 
@@ -419,6 +432,7 @@ def update_capsule_holding(
 
     db.commit()
     db.refresh(h)
+    invalidate_client(current_client.id)
     return _holding_to_dict(h)
 
 
@@ -445,4 +459,5 @@ def delete_capsule_holding(
 
     db.delete(h)
     db.commit()
+    invalidate_client(current_client.id)
     return {"message": "Holding deleted"}

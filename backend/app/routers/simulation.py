@@ -5,6 +5,7 @@ import json
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
+from ..services.cache_service import invalidate_client
 from ..services.simulation_service import (
     calculate_goal_probability_monte_carlo,
     get_goal_simulation_context,
@@ -67,6 +68,7 @@ def create_or_update_simulation_config(
 
     db.commit()
     db.refresh(db_config)
+    invalidate_client(current_client.id)
     return db_config
 
 

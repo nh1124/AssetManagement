@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from .. import models
 from ..database import get_db
 from ..dependencies import get_current_client
+from ..services.cache_service import invalidate_client
 from ..services.capsule_service import create_capsule_for_goal
 
 router = APIRouter(prefix="/data", tags=["data"])
@@ -850,6 +851,7 @@ def import_client_data(
             )
 
         db.commit()
+        invalidate_client(current_client.id)
     except Exception as exc:
         db.rollback()
         raise HTTPException(status_code=400, detail=f"Import failed: {exc}") from exc

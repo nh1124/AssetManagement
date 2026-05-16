@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
+from ..services.cache_service import invalidate_client
 from ..services.fx_service import normalize_currency, update_used_exchange_rates
 
 router = APIRouter(prefix="/exchange-rates", tags=["exchange_rates"])
@@ -55,7 +56,9 @@ def auto_update_exchange_rates(
     current_client: models.Client = Depends(get_current_client),
 ):
     """Fetch today's rates for currencies actually used in journal transactions."""
-    return update_used_exchange_rates(db, current_client.id)
+    result = update_used_exchange_rates(db, current_client.id)
+    invalidate_client(current_client.id)
+    return result
 
 
 @router.post("/", response_model=schemas.ExchangeRate)
@@ -80,6 +83,7 @@ def create_exchange_rate(
         existing.source = payload.source or "manual"
         db.commit()
         db.refresh(existing)
+        invalidate_client(current_client.id)
         return _serialize(existing)
 
     rate = models.ExchangeRate(
@@ -93,6 +97,7 @@ def create_exchange_rate(
     db.add(rate)
     db.commit()
     db.refresh(rate)
+    invalidate_client(current_client.id)
     return _serialize(rate)
 
 
@@ -118,6 +123,7 @@ def update_exchange_rate(
         raise HTTPException(status_code=400, detail="Currencies must differ")
     db.commit()
     db.refresh(rate)
+    invalidate_client(current_client.id)
     return _serialize(rate)
 
 
@@ -135,4 +141,5 @@ def delete_exchange_rate(
         raise HTTPException(status_code=404, detail="Exchange rate not found")
     db.delete(rate)
     db.commit()
+    invalidate_client(current_client.id)
     return {"message": "Exchange rate deleted"}

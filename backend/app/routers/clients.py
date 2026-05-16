@@ -6,6 +6,7 @@ from .. import models
 from ..database import get_db
 from ..dependencies import get_current_client
 from ..security import encrypt_key
+from ..services.cache_service import invalidate_client
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/clients", tags=["clients"])
@@ -112,4 +113,5 @@ def update_client_settings(
     current_client.general_settings = settings
     flag_modified(current_client, "general_settings")
     db.commit()
+    invalidate_client(current_client.id)
     return current_client.general_settings

@@ -14,6 +14,7 @@ from ..services.accounting_service import (
     revert_transaction,
     update_transaction as update_transaction_service,
 )
+from ..services.cache_service import invalidate_client
 from ..services.capsule_service import apply_capsule_rules_for_transaction
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
@@ -101,6 +102,7 @@ def create_transaction(
     process_transaction(db, db_transaction)
     db.refresh(db_transaction)
     apply_capsule_rules_for_transaction(db, db_transaction)
+    invalidate_client(current_client.id)
 
     return _serialize_transaction(db_transaction)
 
@@ -121,6 +123,7 @@ def update_transaction(
 
     if not tx:
         raise HTTPException(status_code=404, detail="Transaction not found")
+    invalidate_client(current_client.id)
     return _serialize_transaction(tx)
 
 
@@ -147,4 +150,5 @@ def delete_transaction(
 
     db.delete(transaction)
     db.commit()
+    invalidate_client(current_client.id)
     return {"message": "Transaction deleted"}

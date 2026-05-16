@@ -7,6 +7,7 @@ from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.accounting_service import process_transaction
+from ..services.cache_service import invalidate_client
 from ..services.registry_service import detach_registry_from_recurring, sync_registry_from_recurring
 
 router = APIRouter(prefix="/recurring", tags=["recurring"])
@@ -52,6 +53,7 @@ def create_recurring_transaction(
     sync_registry_from_recurring(db, db_recurring)
     db.commit()
     db.refresh(db_recurring)
+    invalidate_client(current_client.id)
     return db_recurring
 
 @router.put("/{recurring_id}", response_model=schemas.RecurringTransaction)
@@ -76,6 +78,7 @@ def update_recurring_transaction(
 
     db.commit()
     db.refresh(db_recurring)
+    invalidate_client(current_client.id)
     return db_recurring
 
 @router.delete("/{recurring_id}")
@@ -95,6 +98,7 @@ def delete_recurring_transaction(
     detach_registry_from_recurring(db, db_recurring)
     db.delete(db_recurring)
     db.commit()
+    invalidate_client(current_client.id)
     return {"message": "Recurring transaction deleted"}
 
 @router.get("/due", response_model=List[schemas.RecurringTransaction])
@@ -148,6 +152,7 @@ def process_recurring_transaction(
     
     db.commit()
     db.refresh(db_recurring)
+    invalidate_client(current_client.id)
 
     return {"message": "Transaction processed", "transaction_id": db_transaction.id, "next_due_date": db_recurring.next_due_date}
 
@@ -169,5 +174,6 @@ def skip_recurring_transaction(
     advance_next_due_date(db_recurring)
     db.commit()
     db.refresh(db_recurring)
+    invalidate_client(current_client.id)
 
     return {"message": "Recurring transaction skipped", "next_due_date": db_recurring.next_due_date}

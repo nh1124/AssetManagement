@@ -9,7 +9,14 @@ from sqlalchemy import and_, extract, func
 from sqlalchemy.orm import Session
 
 from .. import models
-from .fx_service import calculate_account_valued_balance, convert_transaction_amount
+from .fx_service import (
+    DEBIT_NORMAL_TYPES,
+    build_rate_lookup,
+    calculate_account_valued_balance,
+    calculate_account_valued_balances,
+    convert_amount_with_lookup,
+    convert_transaction_amount,
+)
 
 
 LIQUID_ACCOUNT_NAMES = {"cash", "bank", "savings"}
@@ -25,7 +32,8 @@ def _cash_accounts(db: Session, client_id: int) -> list[models.Account]:
 
 
 def _sum_liquid_assets(db: Session, client_id: int) -> float:
-    return sum(calculate_account_valued_balance(db, account) for account in _cash_accounts(db, client_id))
+    accounts = _cash_accounts(db, client_id)
+    return sum(calculate_account_valued_balances(db, accounts).values())
 
 
 def _sum_unpaid_liabilities(db: Session, client_id: int) -> float:
@@ -33,15 +41,18 @@ def _sum_unpaid_liabilities(db: Session, client_id: int) -> float:
         models.Account.client_id == client_id,
         models.Account.account_type == "liability",
     ).all()
-    return sum(abs(calculate_account_valued_balance(db, account)) for account in liabilities)
+    balances = calculate_account_valued_balances(db, liabilities)
+    return sum(abs(balance) for balance in balances.values())
 
 
 def _sum_capsule_balance(db: Session, client_id: int) -> float:
     capsules = db.query(models.Capsule).filter(
         models.Capsule.client_id == client_id
     ).all()
+    account_capsules = [capsule for capsule in capsules if capsule.account]
+    balances = calculate_account_valued_balances(db, [capsule.account for capsule in account_capsules])
     return sum(
-        ((calculate_account_valued_balance(db, capsule.account) if capsule.account else capsule.current_balance) or 0.0)
+        (balances.get(capsule.account.id, 0.0) if capsule.account else capsule.current_balance) or 0.0
         for capsule in capsules
     )
 
@@ -58,12 +69,13 @@ def calculate_idle_money(db: Session, client_id: int) -> dict:
     accounts = _asset_accounts(db, client_id)
     by_role = defaultdict(float)
     targets_by_role = defaultdict(float)
+    balances = calculate_account_valued_balances(db, accounts)
 
     for account in accounts:
         role = account.role or "unassigned"
         if role not in ACCOUNT_ROLES:
             role = "unassigned"
-        by_role[role] += calculate_account_valued_balance(db, account)
+        by_role[role] += balances.get(account.id, 0.0)
         if account.role_target_amount:
             targets_by_role[role] += account.role_target_amount
 
@@ -354,8 +366,9 @@ def _calc_net_worth_at(db: Session, client_id: int, as_of: date) -> dict:
     assets = 0.0
     liabilities = 0.0
     accounts = db.query(models.Account).filter(models.Account.client_id == client_id).all()
+    balances = calculate_account_valued_balances(db, accounts, as_of_date=as_of)
     for account in accounts:
-        balance = calculate_account_valued_balance(db, account, as_of_date=as_of)
+        balance = balances.get(account.id, 0.0)
         if account.account_type in ("asset", "item"):
             assets += balance
         elif account.account_type == "liability":
@@ -371,18 +384,59 @@ def _calc_net_worth_at(db: Session, client_id: int, as_of: date) -> dict:
 def get_net_worth_history(db: Session, client_id: int, months: int = 36) -> list[dict]:
     months = max(1, min(months, 240))
     today = date.today()
-    history = []
-
+    periods = []
     for i in range(months - 1, -1, -1):
         target = today.replace(day=1) - relativedelta(months=i)
-        eom = target + relativedelta(months=1, days=-1)
-        values = _calc_net_worth_at(db, client_id, eom)
+        periods.append(target + relativedelta(months=1, days=-1))
+
+    accounts = db.query(models.Account).filter(models.Account.client_id == client_id).all()
+    account_by_id = {account.id: account for account in accounts}
+    balances = {account.id: 0.0 for account in accounts}
+    latest_period = periods[-1]
+    lookup = build_rate_lookup(db, client_id)
+    entries = db.query(models.JournalEntry, models.Transaction).join(
+        models.Transaction,
+        models.Transaction.id == models.JournalEntry.transaction_id,
+    ).filter(
+        models.JournalEntry.account_id.in_(account_by_id.keys() or {-1}),
+        models.Transaction.date <= latest_period,
+    ).order_by(models.Transaction.date, models.JournalEntry.id).all()
+
+    history = []
+    entry_index = 0
+    for eom in periods:
+        while entry_index < len(entries) and entries[entry_index][1].date <= eom:
+            entry, transaction = entries[entry_index]
+            entry_index += 1
+            account = account_by_id.get(entry.account_id)
+            if not account:
+                continue
+            if account.account_type in DEBIT_NORMAL_TYPES:
+                signed_amount = (entry.debit or 0.0) - (entry.credit or 0.0)
+            else:
+                signed_amount = (entry.credit or 0.0) - (entry.debit or 0.0)
+            balances[account.id] += convert_amount_with_lookup(
+                lookup,
+                signed_amount,
+                transaction.currency,
+                transaction.date,
+            )
+
+        assets = 0.0
+        liabilities = 0.0
+        for account in accounts:
+            balance = balances.get(account.id, 0.0)
+            if account.account_type in ("asset", "item"):
+                assets += balance
+            elif account.account_type == "liability":
+                liabilities += abs(balance)
+
         history.append(
             {
                 "period": eom.strftime("%Y-%m"),
-                "net_worth": round(values["net_worth"], 2),
-                "assets": round(values["assets"], 2),
-                "liabilities": round(values["liabilities"], 2),
+                "net_worth": round(assets - liabilities, 2),
+                "assets": round(assets, 2),
+                "liabilities": round(liabilities, 2),
             }
         )
 

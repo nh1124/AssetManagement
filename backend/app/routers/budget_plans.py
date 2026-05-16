@@ -5,6 +5,7 @@ from typing import List
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
+from ..services.cache_service import invalidate_client
 from ..services.budget_plan_service import (
     get_or_create_default_plan,
     get_cash_flow_projection,
@@ -59,6 +60,7 @@ def create_budget_plan(
         db.rollback()
         raise HTTPException(status_code=409, detail="A plan with this name already exists") from exc
     db.refresh(plan)
+    invalidate_client(current_client.id)
     return plan
 
 
@@ -166,6 +168,7 @@ def copy_period_full_replace(
         db.add(new_line)
 
     db.commit()
+    invalidate_client(current_client.id)
     return {"status": "success", "copied": len(source_lines)}
 
 
@@ -224,6 +227,7 @@ def copy_plan_from(
         db.add(new_line)
 
     db.commit()
+    invalidate_client(current_client.id)
     return {"status": "success", "copied": len(source_lines)}
 
 
@@ -256,6 +260,7 @@ def update_budget_plan(
         db.rollback()
         raise HTTPException(status_code=409, detail="A plan with this name already exists") from exc
     db.refresh(plan)
+    invalidate_client(current_client.id)
     return plan
 
 
@@ -282,4 +287,5 @@ def delete_budget_plan(
     )
     db.delete(plan)
     db.commit()
+    invalidate_client(current_client.id)
     return {"message": "Budget plan deleted"}

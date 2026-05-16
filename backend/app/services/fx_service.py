@@ -259,32 +259,129 @@ def convert_transaction_amount(
     )
 
 
+class RateLookup:
+    """Small per-request FX lookup to avoid querying rates for every row."""
+
+    def __init__(self, db: Session, client_id: int, target_currency: str):
+        self.target_currency = normalize_currency(target_currency)
+        rows = db.query(models.ExchangeRate).filter(
+            models.ExchangeRate.client_id == client_id,
+        ).order_by(
+            models.ExchangeRate.base_currency,
+            models.ExchangeRate.quote_currency,
+            models.ExchangeRate.as_of_date,
+            models.ExchangeRate.id,
+        ).all()
+        self._rates: dict[tuple[str, str], list[models.ExchangeRate]] = {}
+        for row in rows:
+            key = (normalize_currency(row.base_currency), normalize_currency(row.quote_currency))
+            self._rates.setdefault(key, []).append(row)
+
+    def _latest(self, base: str, quote: str, as_of_date: date | None) -> models.ExchangeRate | None:
+        candidates = self._rates.get((base, quote), [])
+        selected = None
+        for row in candidates:
+            if as_of_date is not None and row.as_of_date and row.as_of_date > as_of_date:
+                continue
+            selected = row
+        if selected is not None:
+            return selected
+        return candidates[-1] if candidates else None
+
+    def rate(self, base_currency: str | None, quote_currency: str | None, as_of_date: date | None) -> float | None:
+        base = normalize_currency(base_currency)
+        quote = normalize_currency(quote_currency)
+        if base == quote:
+            return 1.0
+
+        direct = self._latest(base, quote, as_of_date)
+        if direct and direct.rate:
+            return direct.rate
+
+        inverse = self._latest(quote, base, as_of_date)
+        if inverse and inverse.rate:
+            return 1.0 / inverse.rate
+
+        return None
+
+    def convert(self, amount: float | None, from_currency: str | None, as_of_date: date | None) -> float:
+        value = amount or 0.0
+        source = normalize_currency(from_currency)
+        if source == self.target_currency:
+            return value
+        rate = self.rate(source, self.target_currency, as_of_date)
+        if rate is None:
+            return 0.0
+        return value * rate
+
+
+def build_rate_lookup(
+    db: Session,
+    client_id: int | None,
+    target_currency: str | None = None,
+) -> RateLookup | None:
+    if client_id is None:
+        return None
+    target = normalize_currency(target_currency) if target_currency else get_client_currency(db, client_id)
+    return RateLookup(db, client_id, target)
+
+
+def convert_amount_with_lookup(
+    lookup: RateLookup | None,
+    amount: float | None,
+    from_currency: str | None,
+    as_of_date: date | None,
+) -> float:
+    if lookup is None:
+        return amount or 0.0
+    return lookup.convert(amount, from_currency, as_of_date)
+
+
+def calculate_account_valued_balances(
+    db: Session,
+    accounts: list[models.Account],
+    as_of_date: date | None = None,
+    target_currency: str | None = None,
+) -> dict[int, float]:
+    """Calculate balances for many accounts with one journal query."""
+    if not accounts:
+        return {}
+
+    account_by_id = {account.id: account for account in accounts}
+    balances = {account.id: 0.0 for account in accounts}
+    client_id = accounts[0].client_id
+    lookup = build_rate_lookup(db, client_id, target_currency)
+
+    query = db.query(models.JournalEntry, models.Transaction).join(
+        models.Transaction,
+        models.Transaction.id == models.JournalEntry.transaction_id,
+    ).filter(models.JournalEntry.account_id.in_(account_by_id.keys()))
+
+    if as_of_date is not None:
+        query = query.filter(models.Transaction.date <= as_of_date)
+
+    for entry, transaction in query.all():
+        account = account_by_id.get(entry.account_id)
+        if not account:
+            continue
+        if account.account_type in DEBIT_NORMAL_TYPES:
+            signed_amount = (entry.debit or 0.0) - (entry.credit or 0.0)
+        else:
+            signed_amount = (entry.credit or 0.0) - (entry.debit or 0.0)
+        balances[account.id] += convert_amount_with_lookup(
+            lookup,
+            signed_amount,
+            transaction.currency,
+            transaction.date,
+        )
+
+    return balances
+
+
 def calculate_account_valued_balance(
     db: Session,
     account: models.Account,
     as_of_date: date | None = None,
     target_currency: str | None = None,
 ) -> float:
-    query = db.query(models.JournalEntry, models.Transaction).join(
-        models.Transaction,
-        models.Transaction.id == models.JournalEntry.transaction_id,
-    ).filter(models.JournalEntry.account_id == account.id)
-
-    if as_of_date is not None:
-        query = query.filter(models.Transaction.date <= as_of_date)
-
-    balance = 0.0
-    for entry, transaction in query.all():
-        if account.account_type in DEBIT_NORMAL_TYPES:
-            signed_amount = (entry.debit or 0.0) - (entry.credit or 0.0)
-        else:
-            signed_amount = (entry.credit or 0.0) - (entry.debit or 0.0)
-        balance += convert_amount(
-            db=db,
-            client_id=account.client_id,
-            amount=signed_amount,
-            from_currency=transaction.currency,
-            to_currency=target_currency,
-            as_of_date=transaction.date,
-        )
-    return balance
+    return calculate_account_valued_balances(db, [account], as_of_date, target_currency).get(account.id, 0.0)

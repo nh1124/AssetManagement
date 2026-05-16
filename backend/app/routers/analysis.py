@@ -6,6 +6,7 @@ from ..database import get_db
 from ..dependencies import get_current_client
 from .. import models
 from ..services import analysis_service
+from ..services.cache_service import get_or_set
 from ..services.accounting_service import (
     ensure_default_accounts,
     get_balance_sheet,
@@ -29,7 +30,11 @@ def get_analysis_summary(
 ):
     """Get financial summary for current client."""
     ensure_default_accounts(db, client_id=current_client.id)
-    return analysis_service.get_summary(db, client_id=current_client.id)
+    return get_or_set(
+        f"client:{current_client.id}:analysis_summary",
+        60,
+        lambda: analysis_service.get_summary(db, client_id=current_client.id),
+    )
 
 @router.get("/balance-sheet")
 def get_bs(
@@ -176,7 +181,11 @@ def get_net_worth_history(
     current_client: models.Client = Depends(get_current_client),
 ):
     """Get month-end net worth history calculated from journal entries."""
-    return analysis_service.get_net_worth_history(db, client_id=current_client.id, months=months)
+    return get_or_set(
+        f"client:{current_client.id}:net_worth_history:{months}",
+        300,
+        lambda: analysis_service.get_net_worth_history(db, client_id=current_client.id, months=months),
+    )
 
 
 @router.get("/reconcile")

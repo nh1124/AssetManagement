@@ -15,6 +15,7 @@ from ..services.goal_service import (
 from ..services.capsule_service import create_capsule_for_goal, capsule_balance
 from ..services.accounting_service import process_transaction
 from ..services.budget_plan_service import create_plan_lines, get_budget_summary as build_budget_summary, update_plan_lines
+from ..services.cache_service import get_or_set, invalidate_client
 
 router = APIRouter(prefix="/life-events", tags=["life_events"])
 
@@ -90,13 +91,21 @@ def get_budget_summary(
     if not period:
         period = datetime.now().strftime("%Y-%m")
     try:
-        return build_budget_summary(
-            db,
-            current_client.id,
-            period,
-            plan_id=plan_id,
-            cash_flow_start_period=cash_flow_start_period,
-            cash_flow_months=cash_flow_months,
+        key = (
+            f"client:{current_client.id}:budget_summary:{period}:{plan_id}:"
+            f"{cash_flow_start_period}:{cash_flow_months}"
+        )
+        return get_or_set(
+            key,
+            120,
+            lambda: build_budget_summary(
+                db,
+                current_client.id,
+                period,
+                plan_id=plan_id,
+                cash_flow_start_period=cash_flow_start_period,
+                cash_flow_months=cash_flow_months,
+            ),
         )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -127,6 +136,7 @@ def create_monthly_plan_lines(
         saved = create_plan_lines(db, current_client.id, lines)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    invalidate_client(current_client.id)
     return {"status": "success", "ids": [line.id for line in saved]}
 
 
@@ -140,6 +150,7 @@ def update_monthly_plan_lines(
         saved = update_plan_lines(db, current_client.id, lines)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    invalidate_client(current_client.id)
     return {"status": "success", "ids": [line.id for line in saved]}
 
 
@@ -157,6 +168,7 @@ def delete_monthly_plan_line(
         raise HTTPException(status_code=404, detail="Monthly plan line not found")
     line.is_active = False
     db.commit()
+    invalidate_client(current_client.id)
     return {"message": "Monthly plan line deleted"}
 
 @router.post("/")
@@ -176,6 +188,7 @@ def create_life_event(
     create_capsule_for_goal(db, current_client.id, db_event)
     db.commit()
     db.refresh(db_event)
+    invalidate_client(current_client.id)
     return db_event
 
 @router.put("/{event_id}")
@@ -198,6 +211,7 @@ def update_life_event(
         setattr(db_event, key, value)
     db.commit()
     db.refresh(db_event)
+    invalidate_client(current_client.id)
     return db_event
 
 @router.get("/{event_id}/capsules")
@@ -307,6 +321,7 @@ def delete_life_event(
             db.delete(account)
 
     db.commit()
+    invalidate_client(current_client.id)
     return {"message": "Deleted"}
 
 @router.get("/generate-budget/{month}")
