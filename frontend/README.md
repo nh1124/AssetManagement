@@ -1,5 +1,21 @@
 # React + TypeScript + Vite
 
+## Asset Management UI Notes
+
+The desktop Review page is implemented through `src/pages/TheLab.tsx` in period mode.
+
+The `Flows` tab shows account-level movement for the selected Review period:
+
+- `day`, `week`, `month`, and `quarter` buckets.
+- A collapsible Account Type filter for Expense, Asset, Liability, and Income.
+- Account rows with debit, credit, normal-balance delta, and a compact trend.
+- A selected-account detail panel with a chart and journal-backed transactions.
+
+The tab uses:
+
+- `GET /analysis/account-flows`
+- `GET /analysis/account-transactions`
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:

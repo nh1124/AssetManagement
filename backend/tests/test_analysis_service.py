@@ -10,6 +10,8 @@ try:
     from backend.app.database import Base
     from backend.app.services.accounting_service import (
         get_balance_sheet,
+        get_account_flows_for_range,
+        get_account_transactions_for_range,
         get_profit_loss_for_range,
         get_profit_loss_rollup,
         process_transaction,
@@ -27,6 +29,8 @@ except ModuleNotFoundError:
     from app.database import Base  # type: ignore[no-redef]
     from app.services.accounting_service import (  # type: ignore[no-redef]
         get_balance_sheet,
+        get_account_flows_for_range,
+        get_account_transactions_for_range,
         get_profit_loss_for_range,
         get_profit_loss_rollup,
         process_transaction,
@@ -437,6 +441,89 @@ def test_period_pl_and_balance_sheet_respect_explicit_dates() -> None:
 
         assert april_bs["net_worth"] == 100000
         assert may_pl["total_income"] == 200000
+    finally:
+        db.close()
+
+
+def test_account_flows_and_account_transactions_use_journal_sides() -> None:
+    db = _session()
+    try:
+        client = models.Client(id=1, name="test", general_settings={"currency": "JPY"}, ai_config={})
+        cash = models.Account(client_id=1, name="cash", account_type="asset", balance=0)
+        salary = models.Account(client_id=1, name="salary", account_type="income", balance=0)
+        food = models.Account(client_id=1, name="food", account_type="expense", balance=0)
+        db.add_all([client, cash, salary, food])
+        db.commit()
+
+        income = models.Transaction(
+            client_id=1,
+            date=date(2026, 5, 1),
+            description="Salary",
+            amount=500000,
+            type="Income",
+            category="salary",
+            currency="JPY",
+            from_account_id=salary.id,
+            to_account_id=cash.id,
+        )
+        lunch = models.Transaction(
+            client_id=1,
+            date=date(2026, 5, 3),
+            description="Lunch",
+            amount=1200,
+            type="Expense",
+            category="food",
+            currency="JPY",
+            from_account_id=cash.id,
+            to_account_id=food.id,
+        )
+        db.add(income)
+        db.commit()
+        process_transaction(db, income)
+        db.add(lunch)
+        db.commit()
+        process_transaction(db, lunch)
+
+        flows = get_account_flows_for_range(
+            db,
+            date(2026, 5, 1),
+            date(2026, 5, 31),
+            grain="month",
+            account_types=["asset", "expense", "income"],
+            client_id=1,
+        )
+        rows = {row["account_name"]: row for row in flows["accounts"]}
+
+        assert rows["cash"]["total_debit"] == 500000
+        assert rows["cash"]["total_credit"] == 1200
+        assert rows["cash"]["normal_balance_delta"] == 498800
+        assert rows["salary"]["total_credit"] == 500000
+        assert rows["salary"]["normal_balance_delta"] == 500000
+        assert rows["food"]["total_debit"] == 1200
+        assert rows["food"]["normal_balance_delta"] == 1200
+        assert rows["food"]["buckets"][0]["key"] == "2026-05"
+
+        expense_flows = get_account_flows_for_range(
+            db,
+            date(2026, 5, 1),
+            date(2026, 5, 31),
+            grain="month",
+            account_types=["expense"],
+            client_id=1,
+        )
+        assert [row["account_name"] for row in expense_flows["accounts"]] == ["food"]
+
+        detail = get_account_transactions_for_range(
+            db,
+            food.id,
+            date(2026, 5, 1),
+            date(2026, 5, 31),
+            client_id=1,
+        )
+        assert detail["total"] == 1
+        assert detail["items"][0]["debit"] == 1200
+        assert detail["items"][0]["credit"] == 0
+        assert detail["items"][0]["counterpart_accounts"][0]["account_name"] == "cash"
     finally:
         db.close()
 

@@ -448,6 +448,91 @@ export interface NetWorthHistoryPoint {
     liabilities: number;
 }
 
+export type AccountFlowGrain = 'day' | 'week' | 'month' | 'quarter';
+
+export interface AccountFlowBucket {
+    key: string;
+    label: string;
+    start_date?: string;
+    end_date?: string;
+    debit: number;
+    credit: number;
+    net_movement: number;
+    normal_balance_delta: number;
+    transaction_count: number;
+}
+
+export interface AccountFlowRow {
+    account_id: number;
+    account_name: string;
+    account_type: Account['account_type'];
+    total_debit: number;
+    total_credit: number;
+    net_movement: number;
+    normal_balance_delta: number;
+    transaction_count: number;
+    buckets: AccountFlowBucket[];
+}
+
+export interface AccountFlowAnalysis {
+    period: string;
+    start_date: string;
+    end_date: string;
+    grain: AccountFlowGrain;
+    currency: string;
+    account_types: string[];
+    buckets: Array<Pick<AccountFlowBucket, 'key' | 'label' | 'start_date' | 'end_date'>>;
+    accounts: AccountFlowRow[];
+    totals: {
+        debit: number;
+        credit: number;
+        net_movement: number;
+        normal_balance_delta: number;
+        account_count: number;
+    };
+}
+
+export interface AccountFlowTransaction {
+    entry_id: number;
+    transaction_id: number;
+    date: string;
+    description: string;
+    type: Transaction['type'];
+    category?: string | null;
+    currency: string;
+    amount: number;
+    raw_amount: number;
+    account_id: number;
+    account_name: string;
+    account_type: Account['account_type'];
+    debit: number;
+    credit: number;
+    raw_debit: number;
+    raw_credit: number;
+    normal_balance_delta: number;
+    counterpart_accounts: Array<{
+        account_id: number;
+        account_name?: string | null;
+        account_type?: string | null;
+        debit: number;
+        credit: number;
+    }>;
+    from_account_id?: number | null;
+    from_account_name?: string | null;
+    to_account_id?: number | null;
+    to_account_name?: string | null;
+}
+
+export interface AccountFlowTransactionPage {
+    account: Pick<Account, 'id' | 'name' | 'account_type'>;
+    period: string;
+    start_date: string;
+    end_date: string;
+    currency: string;
+    items: AccountFlowTransaction[];
+    total: number;
+}
+
 export interface RoadmapProjectionPoint {
     year: number;
     p10: number;

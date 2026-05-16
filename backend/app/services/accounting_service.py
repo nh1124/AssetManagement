@@ -1,7 +1,7 @@
 """Accounting Service - Double-entry bookkeeping engine."""
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from typing import Optional
 
 from sqlalchemy import and_, func
@@ -599,3 +599,268 @@ def get_variance_analysis(
     result = get_variance_analysis_for_range(db, start_date, end_date - date.resolution, client_id)
     result["period"] = f"{year}-{month:02d}"
     return result
+
+
+def _flow_bucket_for_day(day: date, grain: str) -> tuple[str, str, date, date]:
+    if grain == "day":
+        return day.isoformat(), day.isoformat(), day, day
+    if grain == "week":
+        start = day - timedelta(days=day.weekday())
+        end = start + timedelta(days=6)
+        return f"{start.isocalendar().year}-W{start.isocalendar().week:02d}", f"{start.isocalendar().year}-W{start.isocalendar().week:02d}", start, end
+    if grain == "quarter":
+        quarter = (day.month - 1) // 3 + 1
+        start = date(day.year, (quarter - 1) * 3 + 1, 1)
+        next_start = date(day.year + 1, 1, 1) if quarter == 4 else date(day.year, quarter * 3 + 1, 1)
+        end = next_start - date.resolution
+        return f"{day.year}-Q{quarter}", f"{day.year} Q{quarter}", start, end
+
+    start = date(day.year, day.month, 1)
+    end = date(day.year + 1, 1, 1) - date.resolution if day.month == 12 else date(day.year, day.month + 1, 1) - date.resolution
+    return f"{day.year}-{day.month:02d}", f"{day.year}-{day.month:02d}", start, end
+
+
+def _flow_buckets(start_date: date, end_date: date, grain: str) -> list[dict]:
+    buckets: list[dict] = []
+    seen: set[str] = set()
+    cursor = start_date
+    while cursor <= end_date:
+        key, label, bucket_start, bucket_end = _flow_bucket_for_day(cursor, grain)
+        if key not in seen:
+            buckets.append(
+                {
+                    "key": key,
+                    "label": label,
+                    "start_date": max(bucket_start, start_date).isoformat(),
+                    "end_date": min(bucket_end, end_date).isoformat(),
+                }
+            )
+            seen.add(key)
+        if grain == "day":
+            cursor += timedelta(days=1)
+        elif grain == "week":
+            cursor += timedelta(days=7)
+        elif grain == "quarter":
+            next_month = ((cursor.month - 1) // 3 + 1) * 3 + 1
+            cursor = date(cursor.year + 1, 1, 1) if next_month > 12 else date(cursor.year, next_month, 1)
+        else:
+            cursor = date(cursor.year + 1, 1, 1) if cursor.month == 12 else date(cursor.year, cursor.month + 1, 1)
+    return buckets
+
+
+def _valued_entry_sides(db: Session, entry: models.JournalEntry, tx: models.Transaction, client_id: int | None) -> tuple[float, float]:
+    raw_debit = entry.debit or 0.0
+    raw_credit = entry.credit or 0.0
+    if not tx.amount:
+        return raw_debit, raw_credit
+
+    valued_amount = convert_transaction_amount(db, tx, client_id=client_id)
+    factor = valued_amount / tx.amount
+    return raw_debit * factor, raw_credit * factor
+
+
+def _normal_balance_delta(account_type: str | None, debit: float, credit: float) -> float:
+    if account_type in DEBIT_NORMAL_TYPES:
+        return debit - credit
+    return credit - debit
+
+
+def get_account_flows_for_range(
+    db: Session,
+    start_date: date,
+    end_date: date,
+    grain: str = "month",
+    account_types: list[str] | None = None,
+    include_zero: bool = False,
+    client_id: int | None = None,
+) -> dict:
+    """Return debit/credit movement by account and time bucket for a date range."""
+    if grain not in {"day", "week", "month", "quarter"}:
+        raise ValueError("grain must be one of day, week, month, quarter")
+    if start_date > end_date:
+        raise ValueError("start_date must be before or equal to end_date")
+
+    normalized_types = {item for item in (account_types or []) if item}
+    account_query = db.query(models.Account).filter(
+        models.Account.client_id == client_id,
+        models.Account.is_active.is_(True),
+    )
+    if normalized_types:
+        account_query = account_query.filter(models.Account.account_type.in_(normalized_types))
+    accounts = account_query.order_by(models.Account.account_type, models.Account.name).all()
+    account_by_id = {account.id: account for account in accounts}
+    buckets = _flow_buckets(start_date, end_date, grain)
+    bucket_templates = {
+        bucket["key"]: {
+            "key": bucket["key"],
+            "label": bucket["label"],
+            "debit": 0.0,
+            "credit": 0.0,
+            "net_movement": 0.0,
+            "normal_balance_delta": 0.0,
+            "transaction_count": 0,
+        }
+        for bucket in buckets
+    }
+
+    rows = {
+        account.id: {
+            "account_id": account.id,
+            "account_name": account.name,
+            "account_type": account.account_type,
+            "total_debit": 0.0,
+            "total_credit": 0.0,
+            "net_movement": 0.0,
+            "normal_balance_delta": 0.0,
+            "transaction_count": 0,
+            "buckets": {key: dict(value) for key, value in bucket_templates.items()},
+        }
+        for account in accounts
+    }
+
+    entries = db.query(models.JournalEntry, models.Transaction).join(
+        models.Transaction,
+        models.Transaction.id == models.JournalEntry.transaction_id,
+    ).filter(
+        models.Transaction.client_id == client_id,
+        models.Transaction.date >= start_date,
+        models.Transaction.date <= end_date,
+    )
+    if account_by_id:
+        entries = entries.filter(models.JournalEntry.account_id.in_(account_by_id.keys()))
+
+    for entry, tx in entries.all():
+        account = account_by_id.get(entry.account_id)
+        if not account:
+            continue
+        debit, credit = _valued_entry_sides(db, entry, tx, client_id)
+        normal_delta = _normal_balance_delta(account.account_type, debit, credit)
+        key, _, _, _ = _flow_bucket_for_day(tx.date, grain)
+        row = rows[account.id]
+        row["total_debit"] += debit
+        row["total_credit"] += credit
+        row["net_movement"] += debit - credit
+        row["normal_balance_delta"] += normal_delta
+        row["transaction_count"] += 1
+        bucket = row["buckets"][key]
+        bucket["debit"] += debit
+        bucket["credit"] += credit
+        bucket["net_movement"] += debit - credit
+        bucket["normal_balance_delta"] += normal_delta
+        bucket["transaction_count"] += 1
+
+    account_rows = []
+    for row in rows.values():
+        if include_zero or row["transaction_count"] > 0 or abs(row["normal_balance_delta"]) > 0.01:
+            row["buckets"] = [row["buckets"][bucket["key"]] for bucket in buckets]
+            account_rows.append(row)
+
+    account_rows.sort(key=lambda row: (row["account_type"], -abs(row["normal_balance_delta"]), row["account_name"]))
+    total_debit = sum(row["total_debit"] for row in account_rows)
+    total_credit = sum(row["total_credit"] for row in account_rows)
+    return {
+        "period": f"{start_date.isoformat()}..{end_date.isoformat()}",
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "grain": grain,
+        "currency": get_client_currency(db, client_id),
+        "account_types": sorted(normalized_types),
+        "buckets": buckets,
+        "accounts": account_rows,
+        "totals": {
+            "debit": total_debit,
+            "credit": total_credit,
+            "net_movement": total_debit - total_credit,
+            "normal_balance_delta": sum(row["normal_balance_delta"] for row in account_rows),
+            "account_count": len(account_rows),
+        },
+    }
+
+
+def get_account_transactions_for_range(
+    db: Session,
+    account_id: int,
+    start_date: date,
+    end_date: date,
+    limit: int = 100,
+    offset: int = 0,
+    client_id: int | None = None,
+) -> dict:
+    """Return journal-backed transaction rows for one account in a date range."""
+    account = db.query(models.Account).filter(
+        models.Account.id == account_id,
+        models.Account.client_id == client_id,
+    ).first()
+    if not account:
+        raise LookupError("Account not found")
+
+    query = db.query(models.JournalEntry, models.Transaction).join(
+        models.Transaction,
+        models.Transaction.id == models.JournalEntry.transaction_id,
+    ).filter(
+        models.JournalEntry.account_id == account_id,
+        models.Transaction.client_id == client_id,
+        models.Transaction.date >= start_date,
+        models.Transaction.date <= end_date,
+    )
+    total = query.count()
+    entries = query.order_by(models.Transaction.date.desc(), models.Transaction.id.desc()).offset(offset).limit(limit).all()
+
+    items = []
+    for entry, tx in entries:
+        debit, credit = _valued_entry_sides(db, entry, tx, client_id)
+        counterparts = []
+        for other in tx.journal_entries:
+            if other.id == entry.id:
+                continue
+            other_account = other.account
+            other_debit, other_credit = _valued_entry_sides(db, other, tx, client_id)
+            counterparts.append(
+                {
+                    "account_id": other.account_id,
+                    "account_name": other_account.name if other_account else None,
+                    "account_type": other_account.account_type if other_account else None,
+                    "debit": other_debit,
+                    "credit": other_credit,
+                }
+            )
+        items.append(
+            {
+                "entry_id": entry.id,
+                "transaction_id": tx.id,
+                "date": tx.date.isoformat(),
+                "description": tx.description,
+                "type": tx.type,
+                "category": tx.category,
+                "currency": tx.currency,
+                "amount": convert_transaction_amount(db, tx, client_id=client_id) if tx.amount else 0.0,
+                "raw_amount": tx.amount,
+                "account_id": account.id,
+                "account_name": account.name,
+                "account_type": account.account_type,
+                "debit": debit,
+                "credit": credit,
+                "raw_debit": entry.debit or 0.0,
+                "raw_credit": entry.credit or 0.0,
+                "normal_balance_delta": _normal_balance_delta(account.account_type, debit, credit),
+                "counterpart_accounts": counterparts,
+                "from_account_id": tx.from_account_id,
+                "from_account_name": tx.from_account_rel.name if tx.from_account_rel else None,
+                "to_account_id": tx.to_account_id,
+                "to_account_name": tx.to_account_rel.name if tx.to_account_rel else None,
+            }
+        )
+
+    return {
+        "account": {
+            "id": account.id,
+            "name": account.name,
+            "account_type": account.account_type,
+        },
+        "period": f"{start_date.isoformat()}..{end_date.isoformat()}",
+        "start_date": start_date.isoformat(),
+        "end_date": end_date.isoformat(),
+        "currency": get_client_currency(db, client_id),
+        "items": items,
+        "total": total,
+    }

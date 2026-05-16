@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from datetime import date
 from typing import Optional
@@ -9,6 +9,8 @@ from ..services import analysis_service
 from ..services.accounting_service import (
     ensure_default_accounts,
     get_balance_sheet,
+    get_account_flows_for_range,
+    get_account_transactions_for_range,
     get_profit_loss,
     get_profit_loss_for_range,
     get_profit_loss_rollup,
@@ -96,6 +98,58 @@ def get_variance(
         month = date.today().month
     
     return get_variance_analysis(db, year, month, client_id=current_client.id)
+
+
+@router.get("/account-flows")
+def get_account_flows(
+    start_date: date = Query(...),
+    end_date: date = Query(...),
+    grain: str = Query(default="month"),
+    account_types: Optional[str] = Query(None),
+    include_zero: bool = Query(default=False),
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    """Get debit/credit movement by account for the Review period flow view."""
+    ensure_default_accounts(db, client_id=current_client.id)
+    type_filter = [item.strip() for item in account_types.split(",") if item.strip()] if account_types else None
+    try:
+        return get_account_flows_for_range(
+            db,
+            start_date,
+            end_date,
+            grain=grain,
+            account_types=type_filter,
+            include_zero=include_zero,
+            client_id=current_client.id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.get("/account-transactions")
+def get_account_transactions(
+    account_id: int = Query(...),
+    start_date: date = Query(...),
+    end_date: date = Query(...),
+    limit: int = Query(default=100, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    """Get journal-backed transactions for one account within a Review period."""
+    try:
+        return get_account_transactions_for_range(
+            db,
+            account_id,
+            start_date,
+            end_date,
+            limit=limit,
+            offset=offset,
+            client_id=current_client.id,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 @router.get("/depreciation")
 def get_depreciation(

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Check, RefreshCw, Save } from 'lucide-react';
+import { Check, ChevronDown, Filter, RefreshCw, Save } from 'lucide-react';
 import {
+    Bar,
     CartesianGrid,
     Cell,
     ComposedChart,
@@ -17,6 +18,8 @@ import TabPanel from '../components/TabPanel';
 import { useClient } from '../context/ClientContext';
 import {
     getAnalysisSummary,
+    getAccountFlowTransactions,
+    getAccountFlows,
     getBalanceSheet,
     getCapsules,
     getPeriodReport,
@@ -38,7 +41,7 @@ import {
 } from '../api';
 import { useToast } from '../components/Toast';
 import { formatCurrency as formatCurrencyWithSetting } from '../utils/currency';
-import type { ActionProposal, AnalysisSummary, MonthlyAction, MonthlyReport, PeriodReview, NetWorthHistoryPoint, ReconcileResponse, ReviewActionKind } from '../types';
+import type { AccountFlowAnalysis, AccountFlowGrain, AccountFlowTransaction, ActionProposal, AnalysisSummary, MonthlyAction, MonthlyReport, PeriodReview, NetWorthHistoryPoint, ReconcileResponse, ReviewActionKind } from '../types';
 
 interface TheLabProps {
     onNavigate?: (page: string) => void;
@@ -58,6 +61,7 @@ const PERIOD_TABS = [
     { id: 'pl', label: 'P/L' },
     { id: 'bs', label: 'B/S' },
     { id: 'variance', label: 'Budget' },
+    { id: 'flows', label: 'Flows' },
     { id: 'report', label: 'Report' },
     { id: 'review', label: 'Review' },
     { id: 'actions', label: 'Actions' },
@@ -115,6 +119,20 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
     const [periodEndDate, setPeriodEndDate] = useState(initialRange.end);
     const [loading, setLoading] = useState(false);
     const [plRollup, setPlRollup] = useState(false);
+    const [flowGrain, setFlowGrain] = useState<AccountFlowGrain>('month');
+    const [flowFiltersOpen, setFlowFiltersOpen] = useState(false);
+    const [flowAccountTypes, setFlowAccountTypes] = useState<Record<string, boolean>>({
+        expense: true,
+        asset: true,
+        liability: true,
+        income: true,
+    });
+    const [flowIncludeZero, setFlowIncludeZero] = useState(false);
+    const [accountFlows, setAccountFlows] = useState<AccountFlowAnalysis | null>(null);
+    const [flowTransactions, setFlowTransactions] = useState<AccountFlowTransaction[]>([]);
+    const [selectedFlowAccountId, setSelectedFlowAccountId] = useState<number | null>(null);
+    const [flowLoading, setFlowLoading] = useState(false);
+    const [flowTxLoading, setFlowTxLoading] = useState(false);
 
     const [summary, setSummary] = useState<AnalysisSummary | null>(null);
     const [balanceSheet, setBalanceSheet] = useState<any>(null);
@@ -154,6 +172,60 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
     const [applyingProposalId, setApplyingProposalId] = useState<string | null>(null);
     const { showToast } = useToast();
     const { currentClient } = useClient();
+    const selectedFlowTypes = Object.entries(flowAccountTypes)
+        .filter(([, enabled]) => enabled)
+        .map(([type]) => type);
+    const selectedFlowTypeKey = selectedFlowTypes.join(',');
+    const flowTypeOptions = [
+        { key: 'expense', label: 'Expense', tone: 'text-rose-300 border-rose-900 bg-rose-950/20' },
+        { key: 'asset', label: 'Asset', tone: 'text-cyan-300 border-cyan-900 bg-cyan-950/20' },
+        { key: 'liability', label: 'Liability', tone: 'text-amber-300 border-amber-900 bg-amber-950/20' },
+        { key: 'income', label: 'Income', tone: 'text-emerald-300 border-emerald-900 bg-emerald-950/20' },
+    ];
+
+    const loadAccountFlows = async () => {
+        if (analysisMode !== 'period') return;
+        setFlowLoading(true);
+        try {
+            const data = await getAccountFlows({
+                startDate: periodStartDate,
+                endDate: periodEndDate,
+                grain: flowGrain,
+                accountTypes: selectedFlowTypes,
+                includeZero: flowIncludeZero,
+            });
+            setAccountFlows(data);
+            if (!data.accounts.some((account) => account.account_id === selectedFlowAccountId)) {
+                setSelectedFlowAccountId(data.accounts[0]?.account_id ?? null);
+            }
+            if (data.accounts.length === 0) {
+                setFlowTransactions([]);
+            }
+        } catch (error) {
+            console.error('Failed to load account flows:', error);
+            showToast('Failed to load account flows', 'error');
+        } finally {
+            setFlowLoading(false);
+        }
+    };
+
+    const loadFlowTransactions = async (accountId: number) => {
+        setFlowTxLoading(true);
+        try {
+            const data = await getAccountFlowTransactions({
+                accountId,
+                startDate: periodStartDate,
+                endDate: periodEndDate,
+                limit: 100,
+            });
+            setFlowTransactions(data.items);
+        } catch (error) {
+            console.error('Failed to load account transactions:', error);
+            showToast('Failed to load account transactions', 'error');
+        } finally {
+            setFlowTxLoading(false);
+        }
+    };
 
     useEffect(() => {
         if (mode) setAnalysisMode(mode);
@@ -210,6 +282,16 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
     useEffect(() => {
         fetchData();
     }, [periodStartDate, periodEndDate, historyMonths, plRollup]);
+
+    useEffect(() => {
+        loadAccountFlows();
+    }, [analysisMode, periodStartDate, periodEndDate, flowGrain, selectedFlowTypeKey, flowIncludeZero]);
+
+    useEffect(() => {
+        if (selectedFlowAccountId) {
+            loadFlowTransactions(selectedFlowAccountId);
+        }
+    }, [selectedFlowAccountId, periodStartDate, periodEndDate]);
 
     const changeHistoryMonths = async (months: number) => {
         setHistoryMonths(months);
@@ -511,6 +593,11 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
         const totalActual = variance?.total_actual ?? (variance?.items ?? []).reduce((sum: number, item: any) => sum + (item.actual || 0), 0);
         const totalVariance = variance?.total_variance ?? (totalBudget - totalActual);
         const categoryColor = (index: number, total: number) => `hsl(${Math.round(index * 360 / Math.max(total, 1))}, 62%, 52%)`;
+        const flowRows = accountFlows?.accounts ?? [];
+        const selectedFlowAccount = flowRows.find((account) => account.account_id === selectedFlowAccountId) ?? flowRows[0];
+        const flowMaxDelta = Math.max(1, ...flowRows.flatMap((account) => account.buckets.map((bucket) => Math.abs(bucket.normal_balance_delta))));
+        const flowTypeTone = (type: string) => flowTypeOptions.find((item) => item.key === type)?.tone ?? 'text-slate-300 border-slate-700 bg-slate-900/40';
+        const flowDeltaTone = (value: number) => value >= 0 ? 'text-cyan-300' : 'text-rose-300';
         const assetRows = [...(balanceSheet?.assets ?? [])]
             .filter((row: any) => Math.abs(row.balance || 0) > 0.01)
             .sort((a: any, b: any) => (b.balance || 0) - (a.balance || 0));
@@ -1008,6 +1095,199 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
                     </div>
                     </div>
                 );
+            case 'flows':
+                return (
+                    <div className="space-y-4">
+                        <div className="flex flex-col gap-3 border border-slate-700 bg-slate-800/30 p-3">
+                            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                                <div>
+                                    <p className="text-xs uppercase tracking-wider text-slate-500">Account Movement</p>
+                                    <p className="mt-1 text-xs text-slate-400">Debit, credit, and normal-balance movement for the selected Review period.</p>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <select
+                                        value={flowGrain}
+                                        onChange={(event) => setFlowGrain(event.target.value as AccountFlowGrain)}
+                                        className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-slate-200"
+                                    >
+                                        <option value="day">Day</option>
+                                        <option value="week">Week</option>
+                                        <option value="month">Month</option>
+                                        <option value="quarter">Quarter</option>
+                                    </select>
+                                    <button
+                                        type="button"
+                                        onClick={() => setFlowFiltersOpen(!flowFiltersOpen)}
+                                        className="flex items-center gap-2 border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
+                                    >
+                                        <Filter size={12} />
+                                        Account Type
+                                        <ChevronDown size={12} className={flowFiltersOpen ? 'rotate-180' : ''} />
+                                    </button>
+                                </div>
+                            </div>
+
+                            {flowFiltersOpen && (
+                                <div className="flex flex-wrap items-center gap-3 border-t border-slate-800 pt-3">
+                                    {flowTypeOptions.map((option) => (
+                                        <label key={option.key} className={`flex items-center gap-2 border px-2 py-1 text-xs ${option.tone}`}>
+                                            <input
+                                                type="checkbox"
+                                                checked={flowAccountTypes[option.key]}
+                                                onChange={(event) => {
+                                                    if (!event.target.checked && selectedFlowTypes.length === 1) return;
+                                                    setFlowAccountTypes({ ...flowAccountTypes, [option.key]: event.target.checked });
+                                                }}
+                                            />
+                                            {option.label}
+                                        </label>
+                                    ))}
+                                    <label className="ml-auto flex items-center gap-2 text-xs text-slate-400">
+                                        <input
+                                            type="checkbox"
+                                            checked={flowIncludeZero}
+                                            onChange={(event) => setFlowIncludeZero(event.target.checked)}
+                                        />
+                                        Show zero rows
+                                    </label>
+                                </div>
+                            )}
+
+                            <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+                                <div className="border border-slate-800 bg-slate-900/50 p-3">
+                                    <p className="text-[10px] uppercase text-slate-500">Debit</p>
+                                    <p className="font-mono-nums text-sm text-cyan-300">{formatCurrency(accountFlows?.totals.debit ?? 0)}</p>
+                                </div>
+                                <div className="border border-slate-800 bg-slate-900/50 p-3">
+                                    <p className="text-[10px] uppercase text-slate-500">Credit</p>
+                                    <p className="font-mono-nums text-sm text-amber-300">{formatCurrency(accountFlows?.totals.credit ?? 0)}</p>
+                                </div>
+                                <div className="border border-slate-800 bg-slate-900/50 p-3">
+                                    <p className="text-[10px] uppercase text-slate-500">Normal Delta</p>
+                                    <p className={`font-mono-nums text-sm ${flowDeltaTone(accountFlows?.totals.normal_balance_delta ?? 0)}`}>
+                                        {formatCurrency(accountFlows?.totals.normal_balance_delta ?? 0)}
+                                    </p>
+                                </div>
+                                <div className="border border-slate-800 bg-slate-900/50 p-3">
+                                    <p className="text-[10px] uppercase text-slate-500">Accounts</p>
+                                    <p className="font-mono-nums text-sm text-slate-200">{accountFlows?.totals.account_count ?? 0}</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(420px,0.8fr)]">
+                            <div className="overflow-x-auto border border-slate-700 bg-slate-800/30">
+                                <div className="grid min-w-[760px] grid-cols-[minmax(150px,1fr)_88px_110px_110px_110px_minmax(120px,0.9fr)] gap-2 border-b border-slate-700 px-3 py-2 text-[10px] uppercase text-slate-500">
+                                    <span>Account</span>
+                                    <span>Type</span>
+                                    <span className="text-right">Debit</span>
+                                    <span className="text-right">Credit</span>
+                                    <span className="text-right">Normal Δ</span>
+                                    <span>Trend</span>
+                                </div>
+                                <div className="max-h-[520px] overflow-auto">
+                                    {flowLoading ? (
+                                        <p className="p-4 text-xs text-slate-500">Loading account flows...</p>
+                                    ) : flowRows.length === 0 ? (
+                                        <p className="p-4 text-xs text-slate-500">No account movement in this period.</p>
+                                    ) : (
+                                        flowRows.map((account) => (
+                                            <button
+                                                type="button"
+                                                key={account.account_id}
+                                                onClick={() => setSelectedFlowAccountId(account.account_id)}
+                                                className={`grid min-w-[760px] w-full grid-cols-[minmax(150px,1fr)_88px_110px_110px_110px_minmax(120px,0.9fr)] gap-2 border-b border-slate-800 px-3 py-2 text-left text-xs hover:bg-slate-800/60 ${selectedFlowAccount?.account_id === account.account_id ? 'bg-slate-800/80' : ''}`}
+                                            >
+                                                <span className="truncate text-slate-200">{account.account_name}</span>
+                                                <span className={`w-fit border px-1.5 py-0.5 text-[10px] capitalize ${flowTypeTone(account.account_type)}`}>{account.account_type}</span>
+                                                <span className="text-right font-mono-nums text-cyan-300">{formatCurrency(account.total_debit)}</span>
+                                                <span className="text-right font-mono-nums text-amber-300">{formatCurrency(account.total_credit)}</span>
+                                                <span className={`text-right font-mono-nums ${flowDeltaTone(account.normal_balance_delta)}`}>{formatCurrency(account.normal_balance_delta)}</span>
+                                                <span className="flex h-7 items-end gap-1 overflow-hidden">
+                                                    {account.buckets.map((bucket) => {
+                                                        const height = Math.max(2, Math.round(Math.abs(bucket.normal_balance_delta) / flowMaxDelta * 26));
+                                                        return (
+                                                            <span
+                                                                key={bucket.key}
+                                                                title={`${bucket.label}: ${formatCurrency(bucket.normal_balance_delta)}`}
+                                                                className={`w-full min-w-1 ${bucket.normal_balance_delta >= 0 ? 'bg-cyan-500/70' : 'bg-rose-500/70'}`}
+                                                                style={{ height }}
+                                                            />
+                                                        );
+                                                    })}
+                                                </span>
+                                            </button>
+                                        ))
+                                    )}
+                                </div>
+                            </div>
+
+                            <div className="space-y-3">
+                                <div className="border border-slate-700 bg-slate-800/30 p-3">
+                                    <div className="flex items-start justify-between gap-3">
+                                        <div className="min-w-0">
+                                            <p className="truncate text-sm text-slate-100">{selectedFlowAccount?.account_name ?? 'No account selected'}</p>
+                                            {selectedFlowAccount && <p className="mt-1 text-[10px] uppercase text-slate-500">{selectedFlowAccount.account_type} movement</p>}
+                                        </div>
+                                        {selectedFlowAccount && (
+                                            <span className={`font-mono-nums text-sm ${flowDeltaTone(selectedFlowAccount.normal_balance_delta)}`}>
+                                                {formatCurrency(selectedFlowAccount.normal_balance_delta)}
+                                            </span>
+                                        )}
+                                    </div>
+                                    <div className="mt-3 h-56">
+                                        {selectedFlowAccount ? (
+                                            <ResponsiveContainer width="100%" height="100%">
+                                                <ComposedChart data={selectedFlowAccount.buckets} margin={{ top: 8, right: 8, bottom: 16, left: 0 }}>
+                                                    <CartesianGrid stroke="#1e293b" />
+                                                    <XAxis dataKey="label" stroke="#64748b" tick={{ fontSize: 10 }} />
+                                                    <YAxis stroke="#64748b" tick={{ fontSize: 10 }} tickFormatter={(value) => `${Math.round(Number(value) / 1000)}k`} />
+                                                    <Tooltip
+                                                        contentStyle={{ background: '#0f172a', border: '1px solid #334155', fontSize: 12 }}
+                                                        formatter={(value, name) => [formatCurrency(Number(value ?? 0)), String(name)]}
+                                                    />
+                                                    <Bar dataKey="debit" name="Debit" fill="#22d3ee" />
+                                                    <Bar dataKey="credit" name="Credit" fill="#f59e0b" />
+                                                    <Line type="monotone" dataKey="normal_balance_delta" name="Normal Δ" stroke="#10b981" dot={false} strokeWidth={2} />
+                                                </ComposedChart>
+                                            </ResponsiveContainer>
+                                        ) : (
+                                            <p className="pt-20 text-center text-xs text-slate-500">Select an account to inspect movement.</p>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="border border-slate-700 bg-slate-800/30">
+                                    <div className="flex items-center justify-between border-b border-slate-700 px-3 py-2">
+                                        <p className="text-xs uppercase tracking-wider text-slate-500">Transactions</p>
+                                        <span className="text-[10px] text-slate-500">{flowTransactions.length} shown</span>
+                                    </div>
+                                    <div className="max-h-[340px] overflow-auto">
+                                        {flowTxLoading ? (
+                                            <p className="p-4 text-xs text-slate-500">Loading transactions...</p>
+                                        ) : flowTransactions.length === 0 ? (
+                                            <p className="p-4 text-xs text-slate-500">No transactions for this account in the selected period.</p>
+                                        ) : (
+                                            flowTransactions.map((item) => (
+                                                <div key={item.entry_id} className="grid grid-cols-[82px_minmax(0,1fr)_90px_90px] gap-2 border-b border-slate-800 px-3 py-2 text-xs">
+                                                    <span className="font-mono-nums text-slate-500">{item.date}</span>
+                                                    <div className="min-w-0">
+                                                        <p className="truncate text-slate-200">{item.description}</p>
+                                                        <p className="truncate text-[10px] text-slate-600">
+                                                            {item.type} / {(item.counterpart_accounts ?? []).map((counterpart) => counterpart.account_name).filter(Boolean).join(', ') || 'No counterpart'}
+                                                        </p>
+                                                    </div>
+                                                    <span className="text-right font-mono-nums text-cyan-300">{item.debit ? formatCurrency(item.debit) : '-'}</span>
+                                                    <span className="text-right font-mono-nums text-amber-300">{item.credit ? formatCurrency(item.credit) : '-'}</span>
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                );
             case 'reconcile': {
                 const discrepancies = reconcileResult?.discrepancies ?? reconcileResult?.fixed_accounts ?? [];
                 const isOk = reconcileResult?.status === 'ok';
@@ -1483,7 +1763,15 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
                                 />
                             </div>
                         )}
-                        <button onClick={fetchData} className="p-1.5 hover:bg-slate-800 text-slate-400 flex items-center gap-1 text-xs" disabled={loading}>
+                        <button
+                            onClick={() => {
+                                fetchData();
+                                loadAccountFlows();
+                                if (selectedFlowAccountId) loadFlowTransactions(selectedFlowAccountId);
+                            }}
+                            className="p-1.5 hover:bg-slate-800 text-slate-400 flex items-center gap-1 text-xs"
+                            disabled={loading || flowLoading}
+                        >
                             <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
                             Refresh
                         </button>

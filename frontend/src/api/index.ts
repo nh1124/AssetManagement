@@ -1,6 +1,9 @@
 import axios from 'axios';
 import type {
     Account,
+    AccountFlowAnalysis,
+    AccountFlowGrain,
+    AccountFlowTransactionPage,
     AccountRole,
     AccountTreeNode,
     AnalysisSummary,
@@ -119,6 +122,42 @@ export const getVarianceAnalysis = async (year?: number, month?: number, startDa
     if (startDate) params.append('start_date', startDate);
     if (endDate) params.append('end_date', endDate);
     const response = await api.get(`/analysis/variance?${params.toString()}`);
+    return response.data;
+};
+
+export const getAccountFlows = async (params: {
+    startDate: string;
+    endDate: string;
+    grain?: AccountFlowGrain;
+    accountTypes?: string[];
+    includeZero?: boolean;
+}): Promise<AccountFlowAnalysis> => {
+    const query = new URLSearchParams({
+        start_date: params.startDate,
+        end_date: params.endDate,
+        grain: params.grain ?? 'month',
+    });
+    if (params.accountTypes?.length) query.append('account_types', params.accountTypes.join(','));
+    if (params.includeZero) query.append('include_zero', 'true');
+    const response = await api.get(`/analysis/account-flows?${query.toString()}`);
+    return response.data;
+};
+
+export const getAccountFlowTransactions = async (params: {
+    accountId: number;
+    startDate: string;
+    endDate: string;
+    limit?: number;
+    offset?: number;
+}): Promise<AccountFlowTransactionPage> => {
+    const query = new URLSearchParams({
+        account_id: String(params.accountId),
+        start_date: params.startDate,
+        end_date: params.endDate,
+        limit: String(params.limit ?? 100),
+        offset: String(params.offset ?? 0),
+    });
+    const response = await api.get(`/analysis/account-transactions?${query.toString()}`);
     return response.data;
 };
 
