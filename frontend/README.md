@@ -10,6 +10,8 @@ The `Flows` tab shows account-level movement for the selected Review period:
 - A collapsible Account Type filter for Expense, Asset, Liability, and Income.
 - Account rows with debit, credit, normal-balance delta, and a compact trend.
 - A selected-account detail panel with a chart and journal-backed transactions.
+- Top movers, account search, sorting, and comparison against previous period, prior year, or budget.
+- Click a transaction in the detail panel to edit it without leaving Review.
 
 The tab uses:
 

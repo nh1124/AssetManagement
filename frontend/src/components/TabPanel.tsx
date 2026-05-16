@@ -33,7 +33,7 @@ export default function TabPanel({ tabs, activeTab, onTabChange, children, scrol
             </div>
 
             {/* Tab Content */}
-            <div className={`flex-1 p-3 ${scrollContent ? 'overflow-auto' : 'overflow-visible'}`}>
+            <div className={`flex-1 p-3 ${scrollContent ? 'overflow-auto scrollbar-subtle' : 'overflow-visible'}`}>
                 {children}
             </div>
         </div>

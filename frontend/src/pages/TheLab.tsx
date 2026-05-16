@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Check, ChevronDown, Filter, RefreshCw, Save } from 'lucide-react';
+import { Check, SlidersHorizontal, RefreshCw, Save } from 'lucide-react';
 import {
     Bar,
     CartesianGrid,
@@ -38,6 +38,7 @@ import {
     getVarianceAnalysis,
     fixReconcile,
     savePeriodReview,
+    updateTransaction,
 } from '../api';
 import { useToast } from '../components/Toast';
 import { formatCurrency as formatCurrencyWithSetting } from '../utils/currency';
@@ -68,6 +69,8 @@ const PERIOD_TABS = [
 ];
 
 type PeriodPreset = 'thisMonth' | 'lastMonth' | 'thisQuarter' | 'ytd' | 'thisYear' | 'last12Months' | 'custom';
+type FlowComparisonMode = 'none' | 'previous' | 'yearOverYear' | 'budget';
+type FlowSortKey = 'normal' | 'compare' | 'debit' | 'credit' | 'transactions' | 'name';
 
 const toISODate = (date: Date) => {
     const offset = date.getTimezoneOffset();
@@ -109,6 +112,23 @@ const getPresetRange = (preset: PeriodPreset) => {
     return { start: toISODate(monthStart(today)), end: toISODate(monthEnd(today)) };
 };
 
+const shiftedRange = (startDate: string, endDate: string, mode: FlowComparisonMode) => {
+    const start = new Date(`${startDate}T00:00:00`);
+    const end = new Date(`${endDate}T00:00:00`);
+    if (mode === 'yearOverYear') {
+        return {
+            start: toISODate(new Date(start.getFullYear() - 1, start.getMonth(), start.getDate())),
+            end: toISODate(new Date(end.getFullYear() - 1, end.getMonth(), end.getDate())),
+        };
+    }
+    const spanDays = Math.max(1, Math.round((end.getTime() - start.getTime()) / 86400000) + 1);
+    const previousEnd = new Date(start);
+    previousEnd.setDate(previousEnd.getDate() - 1);
+    const previousStart = new Date(previousEnd);
+    previousStart.setDate(previousStart.getDate() - spanDays + 1);
+    return { start: toISODate(previousStart), end: toISODate(previousEnd) };
+};
+
 export default function TheLab({ onNavigate, mode }: TheLabProps) {
     const [analysisMode, setAnalysisMode] = useState<'portfolio' | 'period'>(mode ?? 'portfolio');
     const [portfolioTab, setPortfolioTab] = useState('overview');
@@ -129,10 +149,27 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
     });
     const [flowIncludeZero, setFlowIncludeZero] = useState(false);
     const [accountFlows, setAccountFlows] = useState<AccountFlowAnalysis | null>(null);
+    const [comparisonFlows, setComparisonFlows] = useState<AccountFlowAnalysis | null>(null);
     const [flowTransactions, setFlowTransactions] = useState<AccountFlowTransaction[]>([]);
     const [selectedFlowAccountId, setSelectedFlowAccountId] = useState<number | null>(null);
     const [flowLoading, setFlowLoading] = useState(false);
     const [flowTxLoading, setFlowTxLoading] = useState(false);
+    const [flowComparison, setFlowComparison] = useState<FlowComparisonMode>('previous');
+    const [flowSearch, setFlowSearch] = useState('');
+    const [flowSortKey, setFlowSortKey] = useState<FlowSortKey>('normal');
+    const [flowSortDirection, setFlowSortDirection] = useState<'desc' | 'asc'>('desc');
+    const [editingFlowTransaction, setEditingFlowTransaction] = useState<AccountFlowTransaction | null>(null);
+    const [flowEditSaving, setFlowEditSaving] = useState(false);
+    const [flowEditDraft, setFlowEditDraft] = useState({
+        date: '',
+        description: '',
+        amount: '',
+        type: 'Expense',
+        category: '',
+        currency: 'JPY',
+        from_account_id: '',
+        to_account_id: '',
+    });
 
     const [summary, setSummary] = useState<AnalysisSummary | null>(null);
     const [balanceSheet, setBalanceSheet] = useState<any>(null);
@@ -172,6 +209,7 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
     const [applyingProposalId, setApplyingProposalId] = useState<string | null>(null);
     const { showToast } = useToast();
     const { currentClient } = useClient();
+    const currentCurrency = currentClient?.general_settings?.currency || 'JPY';
     const selectedFlowTypes = Object.entries(flowAccountTypes)
         .filter(([, enabled]) => enabled)
         .map(([type]) => type);
@@ -194,6 +232,19 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
                 accountTypes: selectedFlowTypes,
                 includeZero: flowIncludeZero,
             });
+            if (flowComparison === 'previous' || flowComparison === 'yearOverYear') {
+                const compareRange = shiftedRange(periodStartDate, periodEndDate, flowComparison);
+                const compareData = await getAccountFlows({
+                    startDate: compareRange.start,
+                    endDate: compareRange.end,
+                    grain: flowGrain,
+                    accountTypes: selectedFlowTypes,
+                    includeZero: true,
+                });
+                setComparisonFlows(compareData);
+            } else {
+                setComparisonFlows(null);
+            }
             setAccountFlows(data);
             if (!data.accounts.some((account) => account.account_id === selectedFlowAccountId)) {
                 setSelectedFlowAccountId(data.accounts[0]?.account_id ?? null);
@@ -206,6 +257,47 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
             showToast('Failed to load account flows', 'error');
         } finally {
             setFlowLoading(false);
+        }
+    };
+
+    const openFlowTransactionEdit = (item: AccountFlowTransaction) => {
+        setEditingFlowTransaction(item);
+        setFlowEditDraft({
+            date: item.date,
+            description: item.description || '',
+            amount: String(item.raw_amount ?? item.amount ?? ''),
+            type: item.type,
+            category: item.category || '',
+            currency: item.currency || currentCurrency,
+            from_account_id: item.from_account_id ? String(item.from_account_id) : '',
+            to_account_id: item.to_account_id ? String(item.to_account_id) : '',
+        });
+    };
+
+    const saveFlowTransactionEdit = async () => {
+        if (!editingFlowTransaction) return;
+        setFlowEditSaving(true);
+        try {
+            await updateTransaction(editingFlowTransaction.transaction_id, {
+                date: flowEditDraft.date,
+                description: flowEditDraft.description,
+                amount: Number(flowEditDraft.amount),
+                type: flowEditDraft.type as any,
+                category: flowEditDraft.category,
+                currency: flowEditDraft.currency,
+                from_account_id: flowEditDraft.from_account_id ? Number(flowEditDraft.from_account_id) : undefined,
+                to_account_id: flowEditDraft.to_account_id ? Number(flowEditDraft.to_account_id) : undefined,
+            });
+            setEditingFlowTransaction(null);
+            showToast('Transaction updated', 'success');
+            await loadAccountFlows();
+            if (selectedFlowAccountId) await loadFlowTransactions(selectedFlowAccountId);
+            await fetchData();
+        } catch (error) {
+            console.error('Failed to update flow transaction:', error);
+            showToast('Failed to update transaction', 'error');
+        } finally {
+            setFlowEditSaving(false);
         }
     };
 
@@ -285,7 +377,7 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
 
     useEffect(() => {
         loadAccountFlows();
-    }, [analysisMode, periodStartDate, periodEndDate, flowGrain, selectedFlowTypeKey, flowIncludeZero]);
+    }, [analysisMode, periodStartDate, periodEndDate, flowGrain, selectedFlowTypeKey, flowIncludeZero, flowComparison]);
 
     useEffect(() => {
         if (selectedFlowAccountId) {
@@ -302,7 +394,7 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
         }
     };
 
-    const formatCurrency = (value: number) => formatCurrencyWithSetting(value, currentClient?.general_settings?.currency);
+    const formatCurrency = (value: number) => formatCurrencyWithSetting(value, currentCurrency);
     const formatOptionalCurrency = (value?: number | null) =>
         typeof value === 'number' && Number.isFinite(value) ? formatCurrency(value) : '—';
     const formatOptionalPercent = (value?: number | null) =>
@@ -595,9 +687,61 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
         const categoryColor = (index: number, total: number) => `hsl(${Math.round(index * 360 / Math.max(total, 1))}, 62%, 52%)`;
         const flowRows = accountFlows?.accounts ?? [];
         const selectedFlowAccount = flowRows.find((account) => account.account_id === selectedFlowAccountId) ?? flowRows[0];
-        const flowMaxDelta = Math.max(1, ...flowRows.flatMap((account) => account.buckets.map((bucket) => Math.abs(bucket.normal_balance_delta))));
+        const comparisonByAccountId = new Map((comparisonFlows?.accounts ?? []).map((account) => [account.account_id, account]));
+        const budgetByCategory = new Map<string, { budget?: number; actual?: number; variance?: number }>(
+            (variance?.items ?? []).map((item: any) => [String(item.category).toLowerCase(), item])
+        );
+        const compareValueFor = (account: AccountFlowAnalysis['accounts'][number]) => {
+            if (flowComparison === 'budget' && account.account_type === 'expense') {
+                const budget = budgetByCategory.get(String(account.account_name).toLowerCase());
+                return typeof budget?.budget === 'number' ? account.normal_balance_delta - budget.budget : null;
+            }
+            if (flowComparison === 'previous' || flowComparison === 'yearOverYear') {
+                const previous = comparisonByAccountId.get(account.account_id);
+                return account.normal_balance_delta - (previous?.normal_balance_delta ?? 0);
+            }
+            return null;
+        };
+        const comparePercentFor = (account: AccountFlowAnalysis['accounts'][number]) => {
+            if (flowComparison === 'budget' && account.account_type === 'expense') {
+                const budget = budgetByCategory.get(String(account.account_name).toLowerCase());
+                return typeof budget?.budget === 'number' && budget.budget > 0 ? account.normal_balance_delta / budget.budget * 100 : null;
+            }
+            if (flowComparison === 'previous' || flowComparison === 'yearOverYear') {
+                const previous = comparisonByAccountId.get(account.account_id);
+                const previousAmount = previous?.normal_balance_delta ?? 0;
+                return Math.abs(previousAmount) > 0.01 ? (account.normal_balance_delta - previousAmount) / Math.abs(previousAmount) * 100 : null;
+            }
+            return null;
+        };
+        const searchedFlowRows = flowRows.filter((account) => {
+            const query = flowSearch.trim().toLowerCase();
+            if (!query) return true;
+            return account.account_name.toLowerCase().includes(query) || account.account_type.toLowerCase().includes(query);
+        });
+        const sortedFlowRows = [...searchedFlowRows].sort((a, b) => {
+            const dir = flowSortDirection === 'asc' ? 1 : -1;
+            if (flowSortKey === 'name') return a.account_name.localeCompare(b.account_name) * dir;
+            if (flowSortKey === 'compare') return ((Math.abs(compareValueFor(a) ?? 0) - Math.abs(compareValueFor(b) ?? 0)) * dir);
+            if (flowSortKey === 'debit') return (a.total_debit - b.total_debit) * dir;
+            if (flowSortKey === 'credit') return (a.total_credit - b.total_credit) * dir;
+            if (flowSortKey === 'transactions') return (a.transaction_count - b.transaction_count) * dir;
+            return (Math.abs(a.normal_balance_delta) - Math.abs(b.normal_balance_delta)) * dir;
+        });
+        const topMovers = [...flowRows]
+            .map((account) => ({ account, compareValue: compareValueFor(account) }))
+            .filter((item) => flowComparison === 'none' || item.compareValue !== null)
+            .sort((a, b) => Math.abs(flowComparison === 'none' ? b.account.normal_balance_delta : b.compareValue ?? 0) - Math.abs(flowComparison === 'none' ? a.account.normal_balance_delta : a.compareValue ?? 0))
+            .slice(0, 5);
+        const flowMaxDelta = Math.max(1, ...sortedFlowRows.flatMap((account) => account.buckets.map((bucket) => Math.abs(bucket.normal_balance_delta))));
         const flowTypeTone = (type: string) => flowTypeOptions.find((item) => item.key === type)?.tone ?? 'text-slate-300 border-slate-700 bg-slate-900/40';
         const flowDeltaTone = (value: number) => value >= 0 ? 'text-cyan-300' : 'text-rose-300';
+        const flowComparisonLabel: Record<FlowComparisonMode, string> = {
+            none: 'Current',
+            previous: 'Previous period',
+            yearOverYear: 'Year over year',
+            budget: 'Budget',
+        };
         const assetRows = [...(balanceSheet?.assets ?? [])]
             .filter((row: any) => Math.abs(row.balance || 0) > 0.01)
             .sort((a: any, b: any) => (b.balance || 0) - (a.balance || 0));
@@ -1097,113 +1241,353 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
                 );
             case 'flows':
                 return (
-                    <div className="space-y-4">
-                        <div className="flex flex-col gap-3 border border-slate-700 bg-slate-800/30 p-3">
+                    <div className="space-y-3">
+                        <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+                            <div className="border border-slate-800 bg-slate-900/50 p-2">
+                                <p className="text-[10px] uppercase text-slate-500">Debit</p>
+                                <p className="font-mono-nums text-sm text-cyan-300">{formatCurrency(accountFlows?.totals.debit ?? 0)}</p>
+                            </div>
+                            <div className="border border-slate-800 bg-slate-900/50 p-2">
+                                <p className="text-[10px] uppercase text-slate-500">Credit</p>
+                                <p className="font-mono-nums text-sm text-amber-300">{formatCurrency(accountFlows?.totals.credit ?? 0)}</p>
+                            </div>
+                            <div className="border border-slate-800 bg-slate-900/50 p-2">
+                                <p className="text-[10px] uppercase text-slate-500">Normal Delta</p>
+                                <p className={`font-mono-nums text-sm ${flowDeltaTone(accountFlows?.totals.normal_balance_delta ?? 0)}`}>
+                                    {formatCurrency(accountFlows?.totals.normal_balance_delta ?? 0)}
+                                </p>
+                            </div>
+                            <div className="border border-slate-800 bg-slate-900/50 p-2">
+                                <p className="text-[10px] uppercase text-slate-500">Accounts</p>
+                                <p className="font-mono-nums text-sm text-slate-200">{accountFlows?.totals.account_count ?? 0}</p>
+                            </div>
+                        </div>
+
+                        <div className="hidden">
                             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                                 <div>
                                     <p className="text-xs uppercase tracking-wider text-slate-500">Account Movement</p>
-                                    <p className="mt-1 text-xs text-slate-400">Debit, credit, and normal-balance movement for the selected Review period.</p>
                                 </div>
-                                <div className="flex flex-wrap items-center gap-2">
-                                    <select
-                                        value={flowGrain}
-                                        onChange={(event) => setFlowGrain(event.target.value as AccountFlowGrain)}
-                                        className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-slate-200"
-                                    >
-                                        <option value="day">Day</option>
-                                        <option value="week">Week</option>
-                                        <option value="month">Month</option>
-                                        <option value="quarter">Quarter</option>
-                                    </select>
+                                <div className="flex flex-wrap items-center justify-end gap-2">
+                                    {selectedFlowTypes.map((type) => (
+                                        <span key={type} className={`border px-2 py-1 text-[10px] capitalize ${flowTypeTone(type)}`}>
+                                            {type}
+                                        </span>
+                                    ))}
+                                    <span className="border border-slate-700 bg-slate-900/60 px-2 py-1 text-[10px] text-slate-400">
+                                        Compare: {flowComparisonLabel[flowComparison]}
+                                    </span>
+                                    {flowSearch.trim() && (
+                                        <span className="border border-slate-700 bg-slate-900/60 px-2 py-1 text-[10px] text-slate-400">
+                                            Search: {flowSearch.trim()}
+                                        </span>
+                                    )}
                                     <button
                                         type="button"
                                         onClick={() => setFlowFiltersOpen(!flowFiltersOpen)}
-                                        className="flex items-center gap-2 border border-slate-700 bg-slate-900 px-3 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
+                                        className={`flex h-8 w-8 items-center justify-center border text-slate-300 hover:bg-slate-800 ${flowFiltersOpen ? 'border-emerald-600 bg-emerald-950/30' : 'border-slate-700 bg-slate-900'}`}
+                                        aria-label="Toggle account movement filters"
+                                        title="Toggle account movement filters"
                                     >
-                                        <Filter size={12} />
-                                        Account Type
-                                        <ChevronDown size={12} className={flowFiltersOpen ? 'rotate-180' : ''} />
+                                        <SlidersHorizontal size={14} />
+                                    </button>
+                                </div>
+                            </div>
+
+                            <div className="hidden">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    {selectedFlowTypes.map((type) => (
+                                        <span key={type} className={`border px-2 py-1 text-[10px] capitalize ${flowTypeTone(type)}`}>
+                                            {type}
+                                        </span>
+                                    ))}
+                                    <span className="border border-slate-700 bg-slate-900/60 px-2 py-1 text-[10px] text-slate-400">
+                                        Compare: {flowComparisonLabel[flowComparison]}
+                                    </span>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <input
+                                        value={flowSearch}
+                                        onChange={(event) => setFlowSearch(event.target.value)}
+                                        placeholder="Search account"
+                                        className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-emerald-500"
+                                    />
+                                    <select
+                                        value={flowSortKey}
+                                        onChange={(event) => setFlowSortKey(event.target.value as FlowSortKey)}
+                                        className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-slate-200"
+                                    >
+                                        <option value="normal">Sort: Normal Δ</option>
+                                        <option value="compare">Sort: Compare Δ</option>
+                                        <option value="debit">Sort: Debit</option>
+                                        <option value="credit">Sort: Credit</option>
+                                        <option value="transactions">Sort: Count</option>
+                                        <option value="name">Sort: Name</option>
+                                    </select>
+                                    <button
+                                        type="button"
+                                        onClick={() => setFlowSortDirection(flowSortDirection === 'desc' ? 'asc' : 'desc')}
+                                        className="border border-slate-700 bg-slate-900 px-2 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
+                                    >
+                                        {flowSortDirection === 'desc' ? 'Desc' : 'Asc'}
                                     </button>
                                 </div>
                             </div>
 
                             {flowFiltersOpen && (
-                                <div className="flex flex-wrap items-center gap-3 border-t border-slate-800 pt-3">
-                                    {flowTypeOptions.map((option) => (
-                                        <label key={option.key} className={`flex items-center gap-2 border px-2 py-1 text-xs ${option.tone}`}>
+                                <div className="space-y-3 border-t border-slate-800 pt-3">
+                                    <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
+                                        <select
+                                            value={flowGrain}
+                                            onChange={(event) => setFlowGrain(event.target.value as AccountFlowGrain)}
+                                            className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-slate-200"
+                                        >
+                                            <option value="day">Day</option>
+                                            <option value="week">Week</option>
+                                            <option value="month">Month</option>
+                                            <option value="quarter">Quarter</option>
+                                        </select>
+                                        <select
+                                            value={flowComparison}
+                                            onChange={(event) => setFlowComparison(event.target.value as FlowComparisonMode)}
+                                            className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-slate-200"
+                                        >
+                                            <option value="previous">Previous period</option>
+                                            <option value="yearOverYear">Year over year</option>
+                                            <option value="budget">Budget</option>
+                                            <option value="none">No comparison</option>
+                                        </select>
+                                        <input
+                                            value={flowSearch}
+                                            onChange={(event) => setFlowSearch(event.target.value)}
+                                            placeholder="Search account"
+                                            className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-emerald-500"
+                                        />
+                                        <div className="flex gap-2">
+                                            <select
+                                                value={flowSortKey}
+                                                onChange={(event) => setFlowSortKey(event.target.value as FlowSortKey)}
+                                                className="min-w-0 flex-1 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-slate-200"
+                                            >
+                                                <option value="normal">Sort: Normal Delta</option>
+                                                <option value="compare">Sort: Compare Delta</option>
+                                                <option value="debit">Sort: Debit</option>
+                                                <option value="credit">Sort: Credit</option>
+                                                <option value="transactions">Sort: Count</option>
+                                                <option value="name">Sort: Name</option>
+                                            </select>
+                                            <button
+                                                type="button"
+                                                onClick={() => setFlowSortDirection(flowSortDirection === 'desc' ? 'asc' : 'desc')}
+                                                className="border border-slate-700 bg-slate-900 px-2 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
+                                            >
+                                                {flowSortDirection === 'desc' ? 'Desc' : 'Asc'}
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div className="flex flex-wrap items-center gap-3">
+                                        {flowTypeOptions.map((option) => (
+                                            <label key={option.key} className={`flex items-center gap-2 border px-2 py-1 text-xs ${option.tone}`}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={flowAccountTypes[option.key]}
+                                                    onChange={(event) => {
+                                                        if (!event.target.checked && selectedFlowTypes.length === 1) return;
+                                                        setFlowAccountTypes({ ...flowAccountTypes, [option.key]: event.target.checked });
+                                                    }}
+                                                />
+                                                {option.label}
+                                            </label>
+                                        ))}
+                                        <label className="ml-auto flex items-center gap-2 text-xs text-slate-400">
                                             <input
                                                 type="checkbox"
-                                                checked={flowAccountTypes[option.key]}
-                                                onChange={(event) => {
-                                                    if (!event.target.checked && selectedFlowTypes.length === 1) return;
-                                                    setFlowAccountTypes({ ...flowAccountTypes, [option.key]: event.target.checked });
-                                                }}
+                                                checked={flowIncludeZero}
+                                                onChange={(event) => setFlowIncludeZero(event.target.checked)}
                                             />
-                                            {option.label}
+                                            Show zero rows
                                         </label>
-                                    ))}
-                                    <label className="ml-auto flex items-center gap-2 text-xs text-slate-400">
-                                        <input
-                                            type="checkbox"
-                                            checked={flowIncludeZero}
-                                            onChange={(event) => setFlowIncludeZero(event.target.checked)}
-                                        />
-                                        Show zero rows
-                                    </label>
+                                    </div>
                                 </div>
                             )}
 
-                            <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
-                                <div className="border border-slate-800 bg-slate-900/50 p-3">
-                                    <p className="text-[10px] uppercase text-slate-500">Debit</p>
-                                    <p className="font-mono-nums text-sm text-cyan-300">{formatCurrency(accountFlows?.totals.debit ?? 0)}</p>
-                                </div>
-                                <div className="border border-slate-800 bg-slate-900/50 p-3">
-                                    <p className="text-[10px] uppercase text-slate-500">Credit</p>
-                                    <p className="font-mono-nums text-sm text-amber-300">{formatCurrency(accountFlows?.totals.credit ?? 0)}</p>
-                                </div>
-                                <div className="border border-slate-800 bg-slate-900/50 p-3">
-                                    <p className="text-[10px] uppercase text-slate-500">Normal Delta</p>
-                                    <p className={`font-mono-nums text-sm ${flowDeltaTone(accountFlows?.totals.normal_balance_delta ?? 0)}`}>
-                                        {formatCurrency(accountFlows?.totals.normal_balance_delta ?? 0)}
-                                    </p>
-                                </div>
-                                <div className="border border-slate-800 bg-slate-900/50 p-3">
-                                    <p className="text-[10px] uppercase text-slate-500">Accounts</p>
-                                    <p className="font-mono-nums text-sm text-slate-200">{accountFlows?.totals.account_count ?? 0}</p>
-                                </div>
-                            </div>
                         </div>
 
-                        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.2fr)_minmax(420px,0.8fr)]">
-                            <div className="overflow-x-auto border border-slate-700 bg-slate-800/30">
-                                <div className="grid min-w-[760px] grid-cols-[minmax(150px,1fr)_88px_110px_110px_110px_minmax(120px,0.9fr)] gap-2 border-b border-slate-700 px-3 py-2 text-[10px] uppercase text-slate-500">
+                        <div className="grid grid-cols-1 gap-2 lg:grid-cols-5">
+                            {topMovers.map(({ account, compareValue }) => {
+                                const displayValue = flowComparison === 'none' ? account.normal_balance_delta : compareValue ?? 0;
+                                const pct = comparePercentFor(account);
+                                return (
+                                    <button
+                                        type="button"
+                                        key={account.account_id}
+                                        onClick={() => setSelectedFlowAccountId(account.account_id)}
+                                        className="border border-slate-800 bg-slate-900/50 p-2 text-left hover:bg-slate-800/60"
+                                    >
+                                        <div className="flex items-center justify-between gap-2">
+                                            <span className="truncate text-xs text-slate-200">{account.account_name}</span>
+                                            <span className={`text-[10px] capitalize ${flowDeltaTone(displayValue)}`}>{account.account_type}</span>
+                                        </div>
+                                        <p className={`mt-2 font-mono-nums text-sm ${flowDeltaTone(displayValue)}`}>{formatCurrency(displayValue)}</p>
+                                        <p className="mt-1 truncate text-[10px] text-slate-500">
+                                            {flowComparison === 'none' ? 'Largest current movement' : `${flowComparisonLabel[flowComparison]}${pct == null ? '' : ` / ${Math.round(pct)}%`}`}
+                                        </p>
+                                    </button>
+                                );
+                            })}
+                        </div>
+
+                        <div className="flex flex-col gap-3">
+                            <div className="flex items-center justify-between gap-3">
+                                <p className="text-xs uppercase tracking-wider text-slate-500">Account Movement</p>
+                                <div className="flex flex-wrap items-center justify-end gap-2">
+                                    {selectedFlowTypes.map((type) => (
+                                        <span key={type} className={`border px-2 py-1 text-[10px] capitalize ${flowTypeTone(type)}`}>
+                                            {type}
+                                        </span>
+                                    ))}
+                                    <span className="border border-slate-700 bg-slate-900/60 px-2 py-1 text-[10px] text-slate-400">
+                                        Compare: {flowComparisonLabel[flowComparison]}
+                                    </span>
+                                    {flowSearch.trim() && (
+                                        <span className="border border-slate-700 bg-slate-900/60 px-2 py-1 text-[10px] text-slate-400">
+                                            Search: {flowSearch.trim()}
+                                        </span>
+                                    )}
+                                    <button
+                                        type="button"
+                                        onClick={() => setFlowFiltersOpen(!flowFiltersOpen)}
+                                        className={`flex h-8 w-8 items-center justify-center border text-slate-300 hover:bg-slate-800 ${flowFiltersOpen ? 'border-emerald-600 bg-emerald-950/30' : 'border-slate-700 bg-slate-900'}`}
+                                        aria-label="Toggle account movement filters"
+                                        title="Toggle account movement filters"
+                                    >
+                                        <SlidersHorizontal size={14} />
+                                    </button>
+                                </div>
+                            </div>
+
+                            {flowFiltersOpen && (
+                                <div className="space-y-3 border border-slate-700 bg-slate-800/30 p-3">
+                                    <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
+                                        <select
+                                            value={flowGrain}
+                                            onChange={(event) => setFlowGrain(event.target.value as AccountFlowGrain)}
+                                            className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-slate-200"
+                                        >
+                                            <option value="day">Day</option>
+                                            <option value="week">Week</option>
+                                            <option value="month">Month</option>
+                                            <option value="quarter">Quarter</option>
+                                        </select>
+                                        <select
+                                            value={flowComparison}
+                                            onChange={(event) => setFlowComparison(event.target.value as FlowComparisonMode)}
+                                            className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-slate-200"
+                                        >
+                                            <option value="previous">Previous period</option>
+                                            <option value="yearOverYear">Year over year</option>
+                                            <option value="budget">Budget</option>
+                                            <option value="none">No comparison</option>
+                                        </select>
+                                        <input
+                                            value={flowSearch}
+                                            onChange={(event) => setFlowSearch(event.target.value)}
+                                            placeholder="Search account"
+                                            className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-slate-200 outline-none focus:border-emerald-500"
+                                        />
+                                        <div className="flex gap-2">
+                                            <select
+                                                value={flowSortKey}
+                                                onChange={(event) => setFlowSortKey(event.target.value as FlowSortKey)}
+                                                className="min-w-0 flex-1 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-slate-200"
+                                            >
+                                                <option value="normal">Sort: Normal Delta</option>
+                                                <option value="compare">Sort: Compare Delta</option>
+                                                <option value="debit">Sort: Debit</option>
+                                                <option value="credit">Sort: Credit</option>
+                                                <option value="transactions">Sort: Count</option>
+                                                <option value="name">Sort: Name</option>
+                                            </select>
+                                            <button
+                                                type="button"
+                                                onClick={() => setFlowSortDirection(flowSortDirection === 'desc' ? 'asc' : 'desc')}
+                                                className="border border-slate-700 bg-slate-900 px-2 py-1.5 text-xs text-slate-300 hover:bg-slate-800"
+                                            >
+                                                {flowSortDirection === 'desc' ? 'Desc' : 'Asc'}
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div className="flex flex-wrap items-center gap-3">
+                                        {flowTypeOptions.map((option) => (
+                                            <label key={option.key} className={`flex items-center gap-2 border px-2 py-1 text-xs ${option.tone}`}>
+                                                <input
+                                                    type="checkbox"
+                                                    checked={flowAccountTypes[option.key]}
+                                                    onChange={(event) => {
+                                                        if (!event.target.checked && selectedFlowTypes.length === 1) return;
+                                                        setFlowAccountTypes({ ...flowAccountTypes, [option.key]: event.target.checked });
+                                                    }}
+                                                />
+                                                {option.label}
+                                            </label>
+                                        ))}
+                                        <label className="ml-auto flex items-center gap-2 text-xs text-slate-400">
+                                            <input
+                                                type="checkbox"
+                                                checked={flowIncludeZero}
+                                                onChange={(event) => setFlowIncludeZero(event.target.checked)}
+                                            />
+                                            Show zero rows
+                                        </label>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1.08fr)_minmax(320px,0.92fr)]">
+                            <div className="overflow-hidden border border-slate-700 bg-slate-800/30">
+                                <div className="grid grid-cols-[minmax(112px,1fr)_64px_82px_82px_88px_96px] 2xl:grid-cols-[minmax(150px,1fr)_78px_96px_96px_104px_118px_minmax(96px,0.7fr)] gap-2 border-b border-slate-700 px-3 py-2 text-[10px] uppercase text-slate-500">
                                     <span>Account</span>
                                     <span>Type</span>
                                     <span className="text-right">Debit</span>
                                     <span className="text-right">Credit</span>
                                     <span className="text-right">Normal Δ</span>
-                                    <span>Trend</span>
+                                    <span className="text-right">
+                                        {flowComparison === 'budget'
+                                            ? 'vs Budget'
+                                            : flowComparison === 'yearOverYear'
+                                                ? 'vs Last Year'
+                                                : flowComparison === 'previous'
+                                                    ? 'vs Previous'
+                                                    : 'Compare'}
+                                    </span>
+                                    <span className="hidden 2xl:block">Trend</span>
                                 </div>
-                                <div className="max-h-[520px] overflow-auto">
+                                <div className="max-h-[48vh] overflow-auto scrollbar-subtle">
                                     {flowLoading ? (
                                         <p className="p-4 text-xs text-slate-500">Loading account flows...</p>
-                                    ) : flowRows.length === 0 ? (
+                                    ) : sortedFlowRows.length === 0 ? (
                                         <p className="p-4 text-xs text-slate-500">No account movement in this period.</p>
                                     ) : (
-                                        flowRows.map((account) => (
+                                        sortedFlowRows.map((account) => {
+                                            const compareValue = compareValueFor(account);
+                                            const comparePercent = comparePercentFor(account);
+                                            return (
                                             <button
                                                 type="button"
                                                 key={account.account_id}
                                                 onClick={() => setSelectedFlowAccountId(account.account_id)}
-                                                className={`grid min-w-[760px] w-full grid-cols-[minmax(150px,1fr)_88px_110px_110px_110px_minmax(120px,0.9fr)] gap-2 border-b border-slate-800 px-3 py-2 text-left text-xs hover:bg-slate-800/60 ${selectedFlowAccount?.account_id === account.account_id ? 'bg-slate-800/80' : ''}`}
+                                                className={`grid w-full grid-cols-[minmax(112px,1fr)_64px_82px_82px_88px_96px] 2xl:grid-cols-[minmax(150px,1fr)_78px_96px_96px_104px_118px_minmax(96px,0.7fr)] gap-2 border-b border-slate-800 px-3 py-2 text-left text-xs hover:bg-slate-800/60 ${selectedFlowAccount?.account_id === account.account_id ? 'bg-slate-800/80' : ''}`}
                                             >
-                                                <span className="truncate text-slate-200">{account.account_name}</span>
+                                                <span className="truncate text-slate-200" title={account.account_name}>{account.account_name}</span>
                                                 <span className={`w-fit border px-1.5 py-0.5 text-[10px] capitalize ${flowTypeTone(account.account_type)}`}>{account.account_type}</span>
-                                                <span className="text-right font-mono-nums text-cyan-300">{formatCurrency(account.total_debit)}</span>
-                                                <span className="text-right font-mono-nums text-amber-300">{formatCurrency(account.total_credit)}</span>
-                                                <span className={`text-right font-mono-nums ${flowDeltaTone(account.normal_balance_delta)}`}>{formatCurrency(account.normal_balance_delta)}</span>
-                                                <span className="flex h-7 items-end gap-1 overflow-hidden">
+                                                <span className="truncate text-right font-mono-nums text-cyan-300" title={formatCurrency(account.total_debit)}>{formatCurrency(account.total_debit)}</span>
+                                                <span className="truncate text-right font-mono-nums text-amber-300" title={formatCurrency(account.total_credit)}>{formatCurrency(account.total_credit)}</span>
+                                                <span className={`truncate text-right font-mono-nums ${flowDeltaTone(account.normal_balance_delta)}`} title={formatCurrency(account.normal_balance_delta)}>{formatCurrency(account.normal_balance_delta)}</span>
+                                                <span className={`truncate text-right font-mono-nums ${compareValue == null ? 'text-slate-600' : flowDeltaTone(compareValue)}`} title={compareValue == null ? '-' : `${formatCurrency(compareValue)}${comparePercent == null ? '' : ` (${Math.round(comparePercent)}%)`}`}>
+                                                    {compareValue == null ? '-' : `${formatCurrency(compareValue)}${comparePercent == null ? '' : ` (${Math.round(comparePercent)}%)`}`}
+                                                </span>
+                                                <span className="hidden h-7 items-end gap-1 overflow-hidden 2xl:flex">
                                                     {account.buckets.map((bucket) => {
                                                         const height = Math.max(2, Math.round(Math.abs(bucket.normal_balance_delta) / flowMaxDelta * 26));
                                                         return (
@@ -1217,7 +1601,8 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
                                                     })}
                                                 </span>
                                             </button>
-                                        ))
+                                            );
+                                        })
                                     )}
                                 </div>
                             </div>
@@ -1235,7 +1620,7 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
                                             </span>
                                         )}
                                     </div>
-                                    <div className="mt-3 h-56">
+                                    <div className="mt-3 h-32 2xl:h-44">
                                         {selectedFlowAccount ? (
                                             <ResponsiveContainer width="100%" height="100%">
                                                 <ComposedChart data={selectedFlowAccount.buckets} margin={{ top: 8, right: 8, bottom: 16, left: 0 }}>
@@ -1262,14 +1647,20 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
                                         <p className="text-xs uppercase tracking-wider text-slate-500">Transactions</p>
                                         <span className="text-[10px] text-slate-500">{flowTransactions.length} shown</span>
                                     </div>
-                                    <div className="max-h-[340px] overflow-auto">
+                                    <div className="max-h-[26vh] overflow-auto scrollbar-subtle">
                                         {flowTxLoading ? (
                                             <p className="p-4 text-xs text-slate-500">Loading transactions...</p>
                                         ) : flowTransactions.length === 0 ? (
                                             <p className="p-4 text-xs text-slate-500">No transactions for this account in the selected period.</p>
                                         ) : (
                                             flowTransactions.map((item) => (
-                                                <div key={item.entry_id} className="grid grid-cols-[82px_minmax(0,1fr)_90px_90px] gap-2 border-b border-slate-800 px-3 py-2 text-xs">
+                                                <button
+                                                    type="button"
+                                                    key={item.entry_id}
+                                                    onClick={() => openFlowTransactionEdit(item)}
+                                                    className="grid w-full grid-cols-[82px_minmax(0,1fr)_90px_90px] gap-2 border-b border-slate-800 px-3 py-2 text-left text-xs hover:bg-slate-800/60"
+                                                    title="Edit transaction"
+                                                >
                                                     <span className="font-mono-nums text-slate-500">{item.date}</span>
                                                     <div className="min-w-0">
                                                         <p className="truncate text-slate-200">{item.description}</p>
@@ -1279,13 +1670,129 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
                                                     </div>
                                                     <span className="text-right font-mono-nums text-cyan-300">{item.debit ? formatCurrency(item.debit) : '-'}</span>
                                                     <span className="text-right font-mono-nums text-amber-300">{item.credit ? formatCurrency(item.credit) : '-'}</span>
-                                                </div>
+                                                </button>
                                             ))
                                         )}
                                     </div>
                                 </div>
                             </div>
                         </div>
+                        {editingFlowTransaction && (
+                            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+                                <div className="w-full max-w-2xl border border-slate-700 bg-slate-950 p-4 shadow-2xl">
+                                    <div className="flex items-start justify-between gap-3 border-b border-slate-800 pb-3">
+                                        <div>
+                                            <p className="text-sm font-medium text-slate-100">Edit Transaction #{editingFlowTransaction.transaction_id}</p>
+                                            <p className="mt-1 text-xs text-slate-500">Changes rebuild journal entries and refresh the Review data.</p>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={() => setEditingFlowTransaction(null)}
+                                            className="px-2 py-1 text-xs text-slate-400 hover:bg-slate-800"
+                                        >
+                                            Close
+                                        </button>
+                                    </div>
+
+                                    <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2">
+                                        <label className="block text-xs text-slate-400">
+                                            Date
+                                            <input
+                                                type="date"
+                                                value={flowEditDraft.date}
+                                                onChange={(event) => setFlowEditDraft({ ...flowEditDraft, date: event.target.value })}
+                                                className="mt-1 w-full border border-slate-700 bg-slate-900 px-2 py-2 text-sm text-slate-100"
+                                            />
+                                        </label>
+                                        <label className="block text-xs text-slate-400">
+                                            Type
+                                            <select
+                                                value={flowEditDraft.type}
+                                                onChange={(event) => setFlowEditDraft({ ...flowEditDraft, type: event.target.value })}
+                                                className="mt-1 w-full border border-slate-700 bg-slate-900 px-2 py-2 text-sm text-slate-100"
+                                            >
+                                                {['Income', 'Expense', 'Transfer', 'LiabilityPayment', 'Borrowing', 'CreditExpense', 'CreditAssetPurchase'].map((type) => (
+                                                    <option key={type} value={type}>{type}</option>
+                                                ))}
+                                            </select>
+                                        </label>
+                                        <label className="block text-xs text-slate-400 md:col-span-2">
+                                            Description
+                                            <input
+                                                value={flowEditDraft.description}
+                                                onChange={(event) => setFlowEditDraft({ ...flowEditDraft, description: event.target.value })}
+                                                className="mt-1 w-full border border-slate-700 bg-slate-900 px-2 py-2 text-sm text-slate-100"
+                                            />
+                                        </label>
+                                        <label className="block text-xs text-slate-400">
+                                            Amount
+                                            <input
+                                                type="number"
+                                                value={flowEditDraft.amount}
+                                                onChange={(event) => setFlowEditDraft({ ...flowEditDraft, amount: event.target.value })}
+                                                className="mt-1 w-full border border-slate-700 bg-slate-900 px-2 py-2 font-mono-nums text-sm text-slate-100"
+                                            />
+                                        </label>
+                                        <label className="block text-xs text-slate-400">
+                                            Currency
+                                            <input
+                                                value={flowEditDraft.currency}
+                                                onChange={(event) => setFlowEditDraft({ ...flowEditDraft, currency: event.target.value.toUpperCase() })}
+                                                className="mt-1 w-full border border-slate-700 bg-slate-900 px-2 py-2 text-sm text-slate-100"
+                                            />
+                                        </label>
+                                        <label className="block text-xs text-slate-400">
+                                            From Account
+                                            <select
+                                                value={flowEditDraft.from_account_id}
+                                                onChange={(event) => setFlowEditDraft({ ...flowEditDraft, from_account_id: event.target.value })}
+                                                className="mt-1 w-full border border-slate-700 bg-slate-900 px-2 py-2 text-sm text-slate-100"
+                                            >
+                                                <option value="">Resolve automatically</option>
+                                                {accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+                                            </select>
+                                        </label>
+                                        <label className="block text-xs text-slate-400">
+                                            To Account
+                                            <select
+                                                value={flowEditDraft.to_account_id}
+                                                onChange={(event) => setFlowEditDraft({ ...flowEditDraft, to_account_id: event.target.value })}
+                                                className="mt-1 w-full border border-slate-700 bg-slate-900 px-2 py-2 text-sm text-slate-100"
+                                            >
+                                                <option value="">Resolve automatically</option>
+                                                {accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+                                            </select>
+                                        </label>
+                                        <label className="block text-xs text-slate-400 md:col-span-2">
+                                            Category
+                                            <input
+                                                value={flowEditDraft.category}
+                                                onChange={(event) => setFlowEditDraft({ ...flowEditDraft, category: event.target.value })}
+                                                className="mt-1 w-full border border-slate-700 bg-slate-900 px-2 py-2 text-sm text-slate-100"
+                                            />
+                                        </label>
+                                    </div>
+
+                                    <div className="mt-4 flex justify-end gap-2 border-t border-slate-800 pt-3">
+                                        <button
+                                            type="button"
+                                            onClick={() => setEditingFlowTransaction(null)}
+                                            className="border border-slate-700 px-3 py-2 text-xs text-slate-300 hover:bg-slate-800"
+                                        >
+                                            Cancel
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={saveFlowTransactionEdit}
+                                            disabled={flowEditSaving}
+                                            className="bg-emerald-700 px-3 py-2 text-xs font-medium text-white hover:bg-emerald-600 disabled:opacity-50"
+                                        >
+                                            {flowEditSaving ? 'Saving...' : 'Save Changes'}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 );
             case 'reconcile': {
@@ -1696,8 +2203,8 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
     };
 
     return (
-        <div className="h-full flex flex-col p-4 overflow-auto">
-            <div className="flex flex-col gap-3 mb-4 flex-shrink-0">
+        <div className="h-full flex flex-col p-4 overflow-hidden">
+            <div className={`flex flex-col gap-3 flex-shrink-0 ${analysisMode === 'period' && periodTab === 'flows' ? 'mb-2' : 'mb-4'}`}>
                 <div className="flex flex-col min-[760px]:flex-row min-[760px]:items-center justify-between gap-3">
                     {!mode && (
                         <div className="inline-flex border border-slate-800 bg-slate-900/70 w-fit">
@@ -1784,7 +2291,7 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
                 activeTab={analysisMode === 'portfolio' ? portfolioTab : periodTab}
                 onTabChange={analysisMode === 'portfolio' ? setPortfolioTab : setPeriodTab}
             >
-                <div className="p-4">{renderTabContent()}</div>
+                <div className={analysisMode === 'period' && periodTab === 'flows' ? 'p-2' : 'p-4'}>{renderTabContent()}</div>
             </TabPanel>
         </div>
     );
