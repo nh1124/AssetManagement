@@ -1,13 +1,27 @@
-import { useEffect, useRef, useState } from 'react';
-import { Save, User, Key, Eye, EyeOff, Users, Plus, Settings, PlusCircle, Database, Download, Upload } from 'lucide-react';
+import { type ChangeEvent, useEffect, useRef, useState } from 'react';
+import {
+    Database,
+    Download,
+    Eye,
+    EyeOff,
+    Key,
+    Lock,
+    PlusCircle,
+    Save,
+    Settings,
+    ShieldCheck,
+    Upload,
+    User,
+} from 'lucide-react';
+import SplitView from '../components/SplitView';
 import { useClient } from '../context/ClientContext';
 import { useAuth } from '../context/AuthContext';
-import { createClient, exportData, importData, updateClientKey, updateClientSettings, updateProfile } from '../api';
+import { exportData, importData, updateClientKey, updateClientSettings, updateProfile } from '../api';
 import { useToast } from '../components/Toast';
 
 export default function SettingsPage() {
     const { user } = useAuth();
-    const { clientId, setClientId, clients, refreshClients } = useClient();
+    const { clientId, currentClient, refreshClients } = useClient();
     const { showToast } = useToast();
 
     const [settings, setSettings] = useState({
@@ -24,11 +38,7 @@ export default function SettingsPage() {
     const [isSaving, setIsSaving] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
     const [isImporting, setIsImporting] = useState(false);
-    const [showClientModal, setShowClientModal] = useState(false);
-    const [newClient, setNewClient] = useState({ name: '', seed_defaults: true });
-    const [isCreatingClient, setIsCreatingClient] = useState(false);
     const importInputRef = useRef<HTMLInputElement>(null);
-    const currentClient = clients.find(c => c.id === clientId);
 
     useEffect(() => {
         const general = currentClient?.general_settings || user?.general_settings || {};
@@ -44,17 +54,15 @@ export default function SettingsPage() {
     const handleSave = async () => {
         setIsSaving(true);
         try {
-            // 1. Update Profile (auth/me)
             await updateProfile({
                 name: settings.name,
                 email: settings.email,
-                password: settings.newPassword || undefined
+                password: settings.newPassword || undefined,
             });
 
-            // 2. Save API key to backend (encrypted)
             if (settings.geminiApiKey) {
                 await updateClientKey(clientId, settings.geminiApiKey);
-                setSettings(prev => ({ ...prev, geminiApiKey: '' }));
+                setSettings((prev) => ({ ...prev, geminiApiKey: '' }));
             }
 
             await updateClientSettings(clientId, {
@@ -70,26 +78,6 @@ export default function SettingsPage() {
             showToast(error.response?.data?.detail || 'Failed to save settings', 'error');
         } finally {
             setIsSaving(false);
-        }
-    };
-
-    const handleCreateClient = async () => {
-        if (!newClient.name.trim()) return;
-        setIsCreatingClient(true);
-        try {
-            const created = await createClient({
-                name: newClient.name.trim(),
-                seed_defaults: newClient.seed_defaults,
-            });
-            await refreshClients();
-            setNewClient({ name: '', seed_defaults: true });
-            setShowClientModal(false);
-            setClientId(created.id);
-            showToast('Client created', 'success');
-        } catch (error: any) {
-            showToast(error.response?.data?.detail || 'Failed to create client', 'error');
-        } finally {
-            setIsCreatingClient(false);
         }
     };
 
@@ -139,13 +127,13 @@ export default function SettingsPage() {
         }
     };
 
-    const handleImportFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const handleImportFile = async (event: ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         event.target.value = '';
         if (!file) return;
 
         const confirmed = window.confirm(
-            'Importing this file will replace all data for the active client. Continue?'
+            'Importing this file will replace all data for the signed-in user. Continue?'
         );
         if (!confirmed) return;
 
@@ -163,260 +151,220 @@ export default function SettingsPage() {
         }
     };
 
-    return (
-        <div className="h-full overflow-auto p-4 max-w-4xl mx-auto">
-            <h1 className="text-lg font-semibold mb-6 flex items-center gap-2">
-                <Settings className="text-emerald-400" size={20} />
-                Control Center
-            </h1>
+    const fieldClass = 'w-full bg-slate-900 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:border-emerald-500 transition-colors';
+    const labelClass = 'block text-[10px] text-slate-500 uppercase tracking-widest mb-1';
+    const rowClass = 'border-b border-slate-800 px-2 py-4 last:border-b-0';
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="space-y-6">
-                    {/* User Profile Section */}
-                    <div className="border border-slate-800 p-5 bg-slate-900/30 rounded-lg">
-                        <div className="flex items-center gap-2 mb-4">
-                            <User size={18} className="text-emerald-400" />
-                            <h2 className="text-sm font-semibold">User Profile</h2>
-                        </div>
-                        <div className="space-y-4">
-                            <div>
-                                <label className="block text-[10px] text-slate-500 uppercase tracking-widest mb-1">Full Name</label>
-                                <input
-                                    type="text"
-                                    value={settings.name}
-                                    onChange={(e) => setSettings({ ...settings, name: e.target.value })}
-                                    className="w-full bg-slate-800/50 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:border-emerald-500 transition-colors"
-                                    placeholder="Enter your name"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-[10px] text-slate-500 uppercase tracking-widest mb-1">Email Address</label>
-                                <input
-                                    type="email"
-                                    value={settings.email}
-                                    onChange={(e) => setSettings({ ...settings, email: e.target.value })}
-                                    className="w-full bg-slate-800/50 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:border-emerald-500 transition-colors"
-                                    placeholder="Enter your email"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-[10px] text-slate-500 uppercase tracking-widest mb-1">Update Password</label>
-                                <div className="relative">
-                                    <input
-                                        type={showPassword ? 'text' : 'password'}
-                                        value={settings.newPassword}
-                                        onChange={(e) => setSettings({ ...settings, newPassword: e.target.value })}
-                                        className="w-full bg-slate-800/50 border border-slate-700 px-3 py-2 pr-10 text-sm focus:outline-none focus:border-emerald-500 transition-colors"
-                                        placeholder="Leave blank to keep current"
-                                    />
-                                    <button
-                                        type="button"
-                                        onClick={() => setShowPassword(!showPassword)}
-                                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-500 hover:text-slate-300"
-                                    >
-                                        {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
-                                    </button>
-                                </div>
-                            </div>
+    const leftPane = (
+        <div className="h-full overflow-y-auto overflow-x-hidden pr-1 space-y-3 scrollbar-subtle">
+            <div className="border border-slate-800 bg-slate-900/70 p-4">
+                <div className="flex items-center gap-2 mb-4">
+                    <User size={18} className="text-emerald-400" />
+                    <h2 className="text-sm font-semibold">User Profile</h2>
+                </div>
+                <div className="space-y-4">
+                    <div>
+                        <label className={labelClass}>Full Name</label>
+                        <input
+                            type="text"
+                            value={settings.name}
+                            onChange={(e) => setSettings({ ...settings, name: e.target.value })}
+                            className={fieldClass}
+                            placeholder="Enter your name"
+                        />
+                    </div>
+                    <div>
+                        <label className={labelClass}>Email Address</label>
+                        <input
+                            type="email"
+                            value={settings.email}
+                            onChange={(e) => setSettings({ ...settings, email: e.target.value })}
+                            className={fieldClass}
+                            placeholder="Enter your email"
+                        />
+                    </div>
+                    <div>
+                        <label className={labelClass}>Update Password</label>
+                        <div className="relative">
+                            <input
+                                type={showPassword ? 'text' : 'password'}
+                                value={settings.newPassword}
+                                onChange={(e) => setSettings({ ...settings, newPassword: e.target.value })}
+                                className={`${fieldClass} pr-10`}
+                                placeholder="Leave blank to keep current"
+                            />
+                            <button
+                                type="button"
+                                onClick={() => setShowPassword(!showPassword)}
+                                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-500 hover:text-slate-300"
+                                aria-label="Toggle password visibility"
+                                title="Toggle password visibility"
+                            >
+                                {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+                            </button>
                         </div>
                     </div>
+                </div>
+            </div>
 
-                    {/* Client Selection (SaaS Context) */}
-                    <div className="border border-slate-800 p-5 bg-slate-900/30 rounded-lg">
-                        <div className="flex items-center gap-2 mb-4">
-                            <Users size={18} className="text-cyan-400" />
-                            <h2 className="text-sm font-semibold">Active Client Context</h2>
+            <div className="border border-slate-800 bg-slate-900/70 p-4">
+                <div className="flex items-center gap-2 mb-3">
+                    <ShieldCheck size={18} className="text-cyan-400" />
+                    <h2 className="text-sm font-semibold">Signed-In Client</h2>
+                </div>
+                <div className="flex items-center justify-between gap-3 border border-slate-800 bg-slate-950/60 px-3 py-3">
+                    <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-slate-100">{currentClient?.name || user?.name || 'Current user'}</p>
+                        <p className="mt-1 text-[10px] font-mono text-slate-500">ID: {clientId}</p>
+                    </div>
+                    <span className={`shrink-0 rounded px-2 py-0.5 text-[10px] ${currentClient?.has_key ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400'}`}>
+                        {currentClient?.has_key ? 'Key Set' : 'Key Required'}
+                    </span>
+                </div>
+                <p className="mt-3 text-[10px] leading-relaxed text-slate-500">
+                    Client switching is disabled. To access another user, sign out and sign in with that account.
+                </p>
+            </div>
+        </div>
+    );
+
+    const rightPane = (
+        <div className="space-y-3 h-full min-h-0 flex flex-col overflow-hidden">
+            <div className="border border-slate-800 bg-slate-900/70 p-3 flex-shrink-0">
+                <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                        <Settings className="text-emerald-400" size={18} />
+                        <div>
+                            <h1 className="text-sm font-semibold">Control Center</h1>
+                            <p className="text-[10px] text-slate-500">Security, preferences, and data transfer</p>
                         </div>
-                        <div className="space-y-4">
-                            <div>
-                                <label className="block text-[10px] text-slate-500 uppercase tracking-widest mb-1">Switch Tenant</label>
-                                <div className="flex gap-2">
-                                    <select
-                                        value={clientId}
-                                        onChange={(e) => setClientId(parseInt(e.target.value))}
-                                        className="flex-1 bg-slate-800/50 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:border-emerald-500 appearance-none transition-colors"
-                                    >
-                                        {clients.map(c => (
-                                            <option key={c.id} value={c.id}>
-                                                {c.name} {c.has_key ? ' (Key Set)' : ' (Key Missing)'}
-                                            </option>
-                                        ))}
-                                    </select>
-                                    <button
-                                        className="px-3 bg-slate-800/50 border border-slate-700 hover:bg-slate-700 transition-colors"
-                                        onClick={() => setShowClientModal(true)}
-                                    >
-                                        <Plus size={16} />
-                                    </button>
-                                </div>
-                            </div>
-                            <div className="flex items-center justify-between p-3 bg-slate-950/50 border border-slate-800 rounded">
-                                <span className="text-[10px] text-slate-500 font-mono">ID: {currentClient?.id}</span>
-                                <span className={`text-[10px] px-2 py-0.5 rounded ${currentClient?.has_key ? 'bg-emerald-500/10 text-emerald-400' : 'bg-amber-500/10 text-amber-400'}`}>
-                                    {currentClient?.has_key ? 'Authenticated' : 'Key Required'}
-                                </span>
-                            </div>
+                    </div>
+                    <Lock size={15} className="text-slate-500" />
+                </div>
+            </div>
+
+            <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden border border-slate-800 bg-slate-900/70 p-3 pr-2 scrollbar-subtle">
+                <div className={rowClass}>
+                    <div className="mb-3 flex items-center gap-2">
+                        <Key size={18} className="text-amber-400" />
+                        <h2 className="text-sm font-semibold">Gemini Security</h2>
+                    </div>
+                    <p className="mb-4 text-[10px] leading-relaxed text-slate-500">
+                        Configure the Google Gemini API key for the signed-in user. Keys are encrypted before storage.
+                    </p>
+                    <div className="relative">
+                        <input
+                            type={showApiKey ? 'text' : 'password'}
+                            value={settings.geminiApiKey}
+                            onChange={(e) => setSettings({ ...settings, geminiApiKey: e.target.value })}
+                            placeholder="Paste new Gemini API key..."
+                            className={`${fieldClass} pr-10 font-mono`}
+                        />
+                        <button
+                            type="button"
+                            onClick={() => setShowApiKey(!showApiKey)}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-500 hover:text-slate-300"
+                            aria-label="Toggle API key visibility"
+                            title="Toggle API key visibility"
+                        >
+                            {showApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                        </button>
+                    </div>
+                    <div className="mt-3 flex items-center gap-2 text-[10px]">
+                        <div className={`h-1.5 w-1.5 rounded-full ${currentClient?.has_key ? 'bg-emerald-500' : 'bg-slate-700'}`} />
+                        <span className="text-slate-500">
+                            {currentClient?.has_key ? 'Remote key active' : 'No key configured'}
+                        </span>
+                    </div>
+                </div>
+
+                <div className={rowClass}>
+                    <div className="mb-3 flex items-center gap-2">
+                        <PlusCircle size={18} className="text-cyan-400" />
+                        <h2 className="text-sm font-semibold">General Preferences</h2>
+                    </div>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <div>
+                            <label className={labelClass}>Currency</label>
+                            <select
+                                value={settings.currency}
+                                onChange={(e) => setSettings({ ...settings, currency: e.target.value })}
+                                className={fieldClass}
+                            >
+                                <option value="JPY">JPY</option>
+                                <option value="USD">USD</option>
+                                <option value="EUR">EUR</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label className={labelClass}>Language</label>
+                            <select
+                                value={settings.language}
+                                onChange={(e) => setSettings({ ...settings, language: e.target.value })}
+                                className={fieldClass}
+                            >
+                                <option value="ja">Japanese</option>
+                                <option value="en">English</option>
+                            </select>
                         </div>
                     </div>
                 </div>
 
-                <div className="space-y-6">
-                    {/* Gemini API Key */}
-                    <div className="border border-slate-800 p-5 bg-slate-900/30 rounded-lg">
-                        <div className="flex items-center gap-2 mb-2">
-                            <Key size={18} className="text-amber-400" />
-                            <h2 className="text-sm font-semibold">Gemini Security</h2>
-                        </div>
-                        <p className="text-[10px] text-slate-500 mb-4 leading-relaxed">
-                            Configure your Google Gemini API key for this specific tenant context.
-                            Keys are encrypted using Fernet-AES.
-                        </p>
-                        <div className="relative">
-                            <input
-                                type={showApiKey ? 'text' : 'password'}
-                                value={settings.geminiApiKey}
-                                onChange={(e) => setSettings({ ...settings, geminiApiKey: e.target.value })}
-                                placeholder="Paste new Gemini API key..."
-                                className="w-full bg-slate-800/50 border border-slate-700 px-3 py-2 pr-10 text-sm font-mono focus:outline-none focus:border-emerald-500 transition-colors"
-                            />
-                            <button
-                                type="button"
-                                onClick={() => setShowApiKey(!showApiKey)}
-                                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-500 hover:text-slate-300"
-                            >
-                                {showApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
-                            </button>
-                        </div>
-                        <div className="mt-4 flex items-center gap-2 text-[10px]">
-                            <div className={`w-1.5 h-1.5 rounded-full ${currentClient?.has_key ? 'bg-emerald-500' : 'bg-slate-700'}`} />
-                            <span className="text-slate-500">
-                                {currentClient?.has_key ? 'Remote Key Active' : 'No Key Configured'}
-                            </span>
-                        </div>
+                <div className={rowClass}>
+                    <div className="mb-3 flex items-center gap-2">
+                        <Database size={18} className="text-purple-400" />
+                        <h2 className="text-sm font-semibold">Data Transfer</h2>
                     </div>
-
-                    {/* Preferences */}
-                    <div className="border border-slate-800 p-5 bg-slate-900/30 rounded-lg">
-                        <div className="flex items-center gap-2 mb-4">
-                            <PlusCircle size={18} className="text-cyan-400" />
-                            <h2 className="text-sm font-semibold">General Preferences</h2>
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                            <div>
-                                <label className="block text-[10px] text-slate-500 uppercase tracking-widest mb-1">Currency</label>
-                                <select
-                                    value={settings.currency}
-                                    onChange={(e) => setSettings({ ...settings, currency: e.target.value })}
-                                    className="w-full bg-slate-800/50 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:border-emerald-500 transition-colors"
-                                >
-                                    <option value="JPY">¥ JPY</option>
-                                    <option value="USD">$ USD</option>
-                                    <option value="EUR">€ EUR</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label className="block text-[10px] text-slate-500 uppercase tracking-widest mb-1">Language</label>
-                                <select
-                                    value={settings.language}
-                                    onChange={(e) => setSettings({ ...settings, language: e.target.value })}
-                                    className="w-full bg-slate-800/50 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:border-emerald-500 transition-colors"
-                                >
-                                    <option value="ja">日本語</option>
-                                    <option value="en">English</option>
-                                </select>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Data Transfer */}
-                    <div className="border border-slate-800 p-5 bg-slate-900/30 rounded-lg">
-                        <div className="flex items-center gap-2 mb-2">
-                            <Database size={18} className="text-purple-400" />
-                            <h2 className="text-sm font-semibold">Data Transfer</h2>
-                        </div>
-                        <p className="text-[10px] text-slate-500 mb-4 leading-relaxed">
-                            Export or restore the active tenant's accounts, transactions, goals, budgets, products, and capsules.
-                        </p>
-                        <input
-                            ref={importInputRef}
-                            type="file"
-                            accept="application/json,.json"
-                            className="hidden"
-                            onChange={handleImportFile}
-                        />
-                        <div className="grid grid-cols-2 gap-3">
-                            <button
-                                type="button"
-                                onClick={handleExport}
-                                disabled={isExporting || isImporting}
-                                className="bg-slate-800/60 border border-slate-700 hover:border-purple-500 hover:text-purple-300 px-3 py-2 text-xs font-medium flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
-                            >
-                                <Download size={14} />
-                                {isExporting ? 'Exporting...' : 'Export JSON'}
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => importInputRef.current?.click()}
-                                disabled={isExporting || isImporting}
-                                className="bg-slate-800/60 border border-slate-700 hover:border-amber-500 hover:text-amber-300 px-3 py-2 text-xs font-medium flex items-center justify-center gap-2 transition-colors disabled:opacity-50"
-                            >
-                                <Upload size={14} />
-                                {isImporting ? 'Importing...' : 'Import JSON'}
-                            </button>
-                        </div>
-                    </div>
-
-                    {/* Actions */}
-                    <div className="pt-2">
+                    <p className="mb-4 text-[10px] leading-relaxed text-slate-500">
+                        Export or restore the signed-in user's accounts, transactions, goals, budgets, products, and capsules.
+                    </p>
+                    <input
+                        ref={importInputRef}
+                        type="file"
+                        accept="application/json,.json"
+                        className="hidden"
+                        onChange={handleImportFile}
+                    />
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                         <button
-                            onClick={handleSave}
-                            disabled={isSaving}
-                            className={`w-full py-3 text-sm font-bold flex items-center justify-center gap-3 rounded-lg transition-all shadow-lg ${saved
-                                ? 'bg-emerald-500 text-white shadow-emerald-500/20 scale-95'
-                                : 'bg-emerald-600 hover:bg-emerald-500 text-white hover:shadow-emerald-500/30'
-                                } disabled:opacity-50 active:scale-95`}
+                            type="button"
+                            onClick={handleExport}
+                            disabled={isExporting || isImporting}
+                            className="flex items-center justify-center gap-2 border border-slate-700 bg-slate-800/60 px-3 py-2 text-xs font-medium transition-colors hover:border-purple-500 hover:text-purple-300 disabled:opacity-50"
                         >
-                            <Save size={18} />
-                            {isSaving ? 'Synchronizing...' : saved ? 'Successfully Saved' : 'Apply All Changes'}
+                            <Download size={14} />
+                            {isExporting ? 'Exporting...' : 'Export JSON'}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => importInputRef.current?.click()}
+                            disabled={isExporting || isImporting}
+                            className="flex items-center justify-center gap-2 border border-slate-700 bg-slate-800/60 px-3 py-2 text-xs font-medium transition-colors hover:border-amber-500 hover:text-amber-300 disabled:opacity-50"
+                        >
+                            <Upload size={14} />
+                            {isImporting ? 'Importing...' : 'Import JSON'}
                         </button>
                     </div>
                 </div>
             </div>
-            {showClientModal && (
-                <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-                    <div className="w-full max-w-md bg-slate-950 border border-slate-700 p-5">
-                        <div className="flex items-center justify-between mb-4">
-                            <h2 className="text-sm font-semibold">New Client</h2>
-                            <button onClick={() => setShowClientModal(false)} className="text-slate-500 hover:text-slate-200">
-                                ×
-                            </button>
-                        </div>
-                        <div className="space-y-3">
-                            <input
-                                value={newClient.name}
-                                onChange={(event) => setNewClient({ ...newClient, name: event.target.value })}
-                                placeholder="Client name"
-                                className="w-full bg-slate-900 border border-slate-700 px-3 py-2 text-sm"
-                            />
-                            <label className="flex items-center gap-2 text-xs text-slate-400">
-                                <input
-                                    type="checkbox"
-                                    checked={newClient.seed_defaults}
-                                    onChange={(event) => setNewClient({ ...newClient, seed_defaults: event.target.checked })}
-                                />
-                                Seed default accounts
-                            </label>
-                            <button
-                                onClick={handleCreateClient}
-                                disabled={isCreatingClient}
-                                className="w-full bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white py-2 text-xs font-bold"
-                            >
-                                {isCreatingClient ? 'Creating...' : 'Create Client'}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
+
+            <button
+                onClick={handleSave}
+                disabled={isSaving}
+                className={`flex w-full flex-shrink-0 items-center justify-center gap-3 rounded-lg py-3 text-sm font-bold shadow-lg transition-all ${saved
+                    ? 'bg-emerald-500 text-white shadow-emerald-500/20 scale-95'
+                    : 'bg-emerald-600 hover:bg-emerald-500 text-white hover:shadow-emerald-500/30'
+                    } disabled:opacity-50 active:scale-95`}
+            >
+                <Save size={18} />
+                {isSaving ? 'Synchronizing...' : saved ? 'Successfully Saved' : 'Apply All Changes'}
+            </button>
+        </div>
+    );
+
+    return (
+        <div className="h-full min-h-0 overflow-hidden p-2">
+            <SplitView left={leftPane} right={rightPane} />
         </div>
     );
 }

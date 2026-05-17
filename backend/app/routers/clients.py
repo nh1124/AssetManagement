@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import List
 from .. import models
 from ..database import get_db
 from ..dependencies import get_current_client
@@ -34,68 +34,58 @@ class ClientCreatePayload(BaseModel):
 class ClientSettingsUpdate(BaseModel):
     general_settings: dict
 
+
+def _client_response(client: models.Client) -> dict:
+    ai_config = dict(client.ai_config) if client.ai_config else {}
+    masked_config = ai_config.copy()
+    for key in ["gemini_api_key", "openai_api_key"]:
+        if masked_config.get(key):
+            masked_config[key] = "********"
+
+    return {
+        "id": client.id,
+        "name": client.name,
+        "ai_config": masked_config,
+        "general_settings": client.general_settings or {},
+        "has_key": "gemini_api_key" in ai_config,
+    }
+
+
 @router.get("/", response_model=List[ClientResponse])
-def get_clients(db: Session = Depends(get_db)):
-    """Get all clients with masked AI config. Matches VisionArk's get_settings pattern."""
-    clients = db.query(models.Client).all()
-    results = []
-    for c in clients:
-        # Mask API keys
-        ai_config = dict(c.ai_config) if c.ai_config else {}
-        masked_config = ai_config.copy()
-        for key in ["gemini_api_key", "openai_api_key"]:
-            if masked_config.get(key):
-                masked_config[key] = "********"
-        
-        results.append({
-            "id": c.id, 
-            "name": c.name, 
-            "ai_config": masked_config,
-            "general_settings": c.general_settings or {},
-            "has_key": "gemini_api_key" in ai_config
-        })
-    return results
+def get_clients(current_client: models.Client = Depends(get_current_client)):
+    """Return only the authenticated client."""
+    return [_client_response(current_client)]
 
 
 @router.post("/", response_model=ClientResponse)
 def create_client(
     payload: ClientCreatePayload,
-    db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
     """Create a new client."""
-    db_client = models.Client(name=payload.name, ai_config={}, general_settings={})
-    db.add(db_client)
-    db.flush()
-    if payload.seed_defaults:
-        from ..services.accounting_service import ensure_default_accounts
-        ensure_default_accounts(db, client_id=db_client.id)
-    db.commit()
-    db.refresh(db_client)
-    return {
-        "id": db_client.id,
-        "name": db_client.name,
-        "ai_config": db_client.ai_config or {},
-        "general_settings": db_client.general_settings or {},
-        "has_key": False,
-    }
+    raise HTTPException(status_code=403, detail="Create a user through registration, then sign in as that user")
 
 @router.put("/{client_id}/key")
-def update_client_key(client_id: int, key_data: ClientKeyUpdate, db: Session = Depends(get_db)):
+def update_client_key(
+    client_id: int,
+    key_data: ClientKeyUpdate,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
     """Update (and encrypt) a client's Gemini API key in ai_config JSON. Matches VisionArk patch/ai."""
-    db_client = db.query(models.Client).filter(models.Client.id == client_id).first()
-    if not db_client:
-        raise HTTPException(status_code=404, detail="Client not found")
+    if current_client.id != client_id:
+        raise HTTPException(status_code=403, detail="Cannot edit another client key")
     
     # Update ai_config JSON blob
-    config = dict(db_client.ai_config) if db_client.ai_config else {}
+    config = dict(current_client.ai_config) if current_client.ai_config else {}
     config["gemini_api_key"] = encrypt_key(key_data.gemini_api_key)
-    db_client.ai_config = config
+    current_client.ai_config = config
     
     # Required for SQLAlchemy to detect JSON changes
-    flag_modified(db_client, "ai_config")
+    flag_modified(current_client, "ai_config")
     
     db.commit()
+    invalidate_client(current_client.id)
     return {"message": "API key updated and encrypted successfully in ai_config"}
 
 

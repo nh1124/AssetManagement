@@ -39,14 +39,12 @@ const api = axios.create({
     headers: { 'Content-Type': 'application/json' },
 });
 
-// Interceptor to add Auth and X-Client-Id headers
+// Interceptor to add Auth header. Client identity is resolved from the JWT.
 api.interceptors.request.use((config) => {
     const token = localStorage.getItem('finance_access_token');
     if (token) {
         config.headers['Authorization'] = `Bearer ${token}`;
     }
-    const clientId = localStorage.getItem('finance_client_id') || '1';
-    config.headers['X-Client-Id'] = clientId;
     return config;
 });
 
@@ -56,8 +54,7 @@ api.interceptors.response.use(
     (error) => {
         if (error.response?.status === 401) {
             localStorage.removeItem('finance_access_token');
-            // We don't necessarily want to remove client_id if we want to remember the last tenant,
-            // but for security it's often better to clear it or let the user re-select/default to 1.
+            localStorage.removeItem('finance_client_id');
             window.location.reload(); // Force App to re-evaluate auth status
         }
         return Promise.reject(error);

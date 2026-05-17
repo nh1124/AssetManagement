@@ -1,4 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { getClients } from '../api';
+import { useAuth } from './AuthContext';
 
 interface Client {
     id: number;
@@ -20,26 +22,29 @@ interface ClientContextType {
 const ClientContext = createContext<ClientContextType | undefined>(undefined);
 
 export const ClientProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    // Default to client 1 (Default User)
+    const { user } = useAuth();
     const [clientId, setClientIdState] = useState<number>(() => {
-        const saved = localStorage.getItem('finance_client_id');
-        return saved ? parseInt(saved, 10) : 1;
+        const saved = Number(localStorage.getItem('finance_client_id'));
+        return user?.id ?? (Number.isFinite(saved) && saved > 0 ? saved : 1);
     });
     const [clients, setClients] = useState<Client[]>([]);
 
     const setClientId = (id: number) => {
+        if (user && id !== user.id) {
+            console.warn('Client switching is disabled. Sign out and sign in as another user.');
+            return;
+        }
         setClientIdState(id);
         localStorage.setItem('finance_client_id', id.toString());
-        // Force reload or just let interceptor handle it
-        window.location.reload();
     };
 
     const refreshClients = async () => {
         try {
-            const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:18100'}/clients/`);
-            if (response.ok) {
-                const data = await response.json();
-                setClients(data);
+            const data = await getClients();
+            setClients(data);
+            if (data[0]?.id) {
+                setClientIdState(data[0].id);
+                localStorage.setItem('finance_client_id', data[0].id.toString());
             }
         } catch (error) {
             console.error('Failed to fetch clients:', error);
@@ -48,9 +53,15 @@ export const ClientProvider: React.FC<{ children: React.ReactNode }> = ({ childr
 
     useEffect(() => {
         refreshClients();
-    }, []);
+    }, [user?.id]);
 
-    const currentClient = clients.find((client) => client.id === clientId);
+    useEffect(() => {
+        if (!user?.id) return;
+        setClientIdState(user.id);
+        localStorage.setItem('finance_client_id', user.id.toString());
+    }, [user?.id]);
+
+    const currentClient = clients.find((client) => client.id === clientId) || clients[0];
 
     return (
         <ClientContext.Provider value={{ clientId, setClientId, clients, currentClient, refreshClients }}>

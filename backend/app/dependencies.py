@@ -1,4 +1,4 @@
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from typing import Optional
@@ -10,36 +10,26 @@ bearer_scheme = HTTPBearer(auto_error=False)
 
 async def get_current_client(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
-    x_client_id: Optional[str] = Header(None, alias="X-Client-Id"),
     db: Session = Depends(get_db)
 ) -> models.Client:
     """
-    Dependency to resolve the active client. 
-    Matches VisionArk's resolve_identity pattern: 
-    1. Try Authorization: Bearer <JWT>
-    2. Try X-Client-Id header (Legacy/Migration)
+    Resolve the authenticated client from the bearer token only.
+
+    Client identity is a login boundary. Do not accept caller-controlled
+    headers or local storage values as a way to switch tenants.
     """
     client_id = None
-
-    # 1. Try JWT
     if credentials:
         payload = decode_token(credentials.credentials)
         if payload:
             client_id = payload.get("sub")
-    
-    # 2. Fallback to Header
-    if not client_id and x_client_id:
-        try:
-            client_id = int(x_client_id)
-        except ValueError:
-            pass
-            
+
     if not client_id:
-        raise HTTPException(status_code=401, detail="Authentication required (JWT or X-Client-Id)")
-        
+        raise HTTPException(status_code=401, detail="Authentication required")
+
     client = db.query(models.Client).filter(models.Client.id == client_id).first()
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
-        
+
     return client
 
