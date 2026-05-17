@@ -314,6 +314,9 @@ class LifeEvent(Base):
     target_amount = Column(Float)
     priority = Column(Integer, default=2)  # 1=High, 2=Medium, 3=Low
     note = Column(String, nullable=True)
+    active_plan_basis = Column(String, default="milestone", server_default="milestone", nullable=False)
+    active_plan_label = Column(String, nullable=True)
+    plan_status_override = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     client = relationship("Client", back_populates="life_events")
@@ -442,6 +445,7 @@ class Milestone(Base):
     note = Column(String, nullable=True)
     source = Column(String, default="manual", server_default="manual", nullable=False)
     source_snapshot = Column(JSON, nullable=True)
+    is_active_plan = Column(Boolean, default=True, server_default="true", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     client = relationship("Client", back_populates="milestones")

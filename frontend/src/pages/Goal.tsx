@@ -109,6 +109,14 @@ const statusTone = (status?: string) => {
     return 'text-rose-300 border-rose-800 bg-rose-950/30';
 };
 
+const planStatusTone = (status?: string) => {
+    if (status === 'Ahead') return 'text-emerald-200 border-emerald-800 bg-emerald-950/40';
+    if (status === 'On Track') return 'text-cyan-200 border-cyan-800 bg-cyan-950/40';
+    if (status === 'Watch') return 'text-amber-200 border-amber-800 bg-amber-950/40';
+    if (status === 'Behind') return 'text-rose-200 border-rose-800 bg-rose-950/40';
+    return 'text-slate-300 border-slate-700 bg-slate-800/40';
+};
+
 const getErrorDetail = (error: unknown, fallback: string) => {
     const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
     return detail || fallback;
@@ -1324,6 +1332,118 @@ export default function Goal() {
         );
     };
 
+    const renderPlanSummary = () => {
+        if (!selectedGoal) return null;
+        const fundedPercent = fundedPct(selectedGoal);
+        const planProgressPct = Math.max(0, Math.min(160, selectedGoal.plan_progress_percentage ?? 0));
+        const planGap = selectedGoal.plan_gap ?? 0;
+        const nextMilestone = selectedGoal.plan_next_milestone;
+        const previousMilestone = selectedGoal.plan_previous_milestone;
+
+        return (
+            <div className="space-y-4">
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+                    <div className="bg-slate-800/40 border border-slate-700 p-3">
+                        <p className="text-[10px] text-slate-500 uppercase">Target</p>
+                        <p className="font-mono-nums text-cyan-400">{formatCurrency(selectedGoal.target_amount)}</p>
+                    </div>
+                    <div className="bg-slate-800/40 border border-slate-700 p-3">
+                        <p className="text-[10px] text-slate-500 uppercase">Funded</p>
+                        <p className="font-mono-nums text-emerald-400">{formatCurrency(selectedGoal.current_funded)}</p>
+                    </div>
+                    <div className="bg-slate-800/40 border border-slate-700 p-3">
+                        <p className="text-[10px] text-slate-500 uppercase">Expected Today</p>
+                        <p className="font-mono-nums text-cyan-400">{formatCurrency(selectedGoal.plan_expected_amount)}</p>
+                    </div>
+                    <div className="bg-slate-800/40 border border-slate-700 p-3">
+                        <p className="text-[10px] text-slate-500 uppercase">Plan Status</p>
+                        <p className={`inline-flex px-2 py-0.5 border text-xs font-mono-nums ${planStatusTone(selectedGoal.plan_status)}`}>
+                            {selectedGoal.plan_status || 'No Plan'}
+                        </p>
+                    </div>
+                </div>
+
+                <div className="grid grid-cols-1 min-[1120px]:grid-cols-[1fr_320px] gap-4">
+                    <div className="bg-slate-800/30 border border-slate-700 p-4">
+                        <h3 className="text-[10px] text-slate-500 uppercase tracking-wider mb-4">Operating Plan</h3>
+                        <div className="space-y-4">
+                            <div>
+                                <div className="flex justify-between text-xs mb-1">
+                                    <span className="text-slate-400">Funded vs Target</span>
+                                    <span className="font-mono-nums text-emerald-400">{fundedPercent.toFixed(1)}%</span>
+                                </div>
+                                <div className="h-2 bg-slate-950 border border-slate-800 overflow-hidden">
+                                    <div className="h-full bg-emerald-500" style={{ width: `${fundedPercent}%` }} />
+                                </div>
+                            </div>
+                            <div>
+                                <div className="flex justify-between text-xs mb-1">
+                                    <span className="text-slate-400">Funded vs Plan Expected</span>
+                                    <span className={`font-mono-nums ${planGap >= 0 ? 'text-emerald-400' : 'text-rose-300'}`}>
+                                        {selectedGoal.plan_progress_percentage?.toFixed(1) ?? '0.0'}%
+                                    </span>
+                                </div>
+                                <div className="h-2 bg-slate-950 border border-slate-800 overflow-hidden">
+                                    <div className={`h-full ${planGap >= 0 ? 'bg-emerald-500' : 'bg-rose-500'}`} style={{ width: `${Math.min(planProgressPct, 100)}%` }} />
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                                <div className="border border-slate-800 bg-slate-900/50 p-3">
+                                    <p className="text-[10px] text-slate-500 uppercase mb-1">Gap to Plan Today</p>
+                                    <p className={`font-mono-nums ${planGap >= 0 ? 'text-emerald-400' : 'text-rose-300'}`}>{formatCurrency(planGap)}</p>
+                                </div>
+                                <div className="border border-slate-800 bg-slate-900/50 p-3">
+                                    <p className="text-[10px] text-slate-500 uppercase mb-1">Next Milestone Gap</p>
+                                    <p className={`font-mono-nums ${(nextMilestone?.gap ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-300'}`}>
+                                        {nextMilestone ? formatCurrency(nextMilestone.gap) : 'No upcoming milestone'}
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="bg-slate-800/30 border border-slate-700 p-4">
+                        <h3 className="text-[10px] text-slate-500 uppercase tracking-wider mb-3">Plan Signals</h3>
+                        <div className="space-y-2 text-xs">
+                            <div className="flex justify-between gap-3">
+                                <span className="text-slate-500">Plan Basis</span>
+                                <span className="text-slate-300">{selectedGoal.active_plan_label || selectedGoal.active_plan_basis || 'milestone'}</span>
+                            </div>
+                            <div className="flex justify-between gap-3">
+                                <span className="text-slate-500">Previous</span>
+                                <span className="font-mono-nums text-slate-300">
+                                    {previousMilestone ? `${previousMilestone.date} / ${formatCompact(previousMilestone.target_amount)}` : '-'}
+                                </span>
+                            </div>
+                            <div className="flex justify-between gap-3">
+                                <span className="text-slate-500">Next</span>
+                                <span className="font-mono-nums text-slate-300">
+                                    {nextMilestone ? `${nextMilestone.date} / ${formatCompact(nextMilestone.target_amount)}` : '-'}
+                                </span>
+                            </div>
+                            <div className="flex justify-between gap-3">
+                                <span className="text-slate-500">Priority</span>
+                                <span className={PRIORITY_COLORS[selectedGoal.priority]}>{priorityLabel(selectedGoal.priority)}</span>
+                            </div>
+                            <div className="flex justify-between gap-3">
+                                <span className="text-slate-500">Start Date</span>
+                                <span className="font-mono-nums text-slate-300">{selectedGoal.start_date || '-'}</span>
+                            </div>
+                            <div className="flex justify-between gap-3">
+                                <span className="text-slate-500">Target Date</span>
+                                <span className="font-mono-nums text-slate-300">{selectedGoal.target_date}</span>
+                            </div>
+                            <div className="flex justify-between gap-3">
+                                <span className="text-slate-500">Years Left</span>
+                                <span className="font-mono-nums text-slate-300">{selectedGoal.years_remaining?.toFixed(1) ?? '0.0'}</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        );
+    };
+
     const renderAllMilestoneCard = (milestone: (typeof allMilestonesWithMeta)[number], compact = false) => (
         <div
             key={milestone.id}
@@ -1446,7 +1566,7 @@ export default function Goal() {
                     <p className={`font-mono-nums ${statusTone(roadmapProjection?.roadmap_progression).split(' ')[0]}`}>{roadmapProjection?.roadmap_progression ?? 'No Data'}</p>
                 </div>
                 <div className="bg-slate-800/40 border border-slate-700 p-3">
-                    <p className="text-[10px] text-slate-500 uppercase">Progression</p>
+                    <p className="text-[10px] text-slate-500 uppercase">What-if Progression</p>
                     <p className="font-mono-nums text-cyan-400">{Math.round(roadmapProjection?.roadmap_progression_pct ?? 0)}%</p>
                 </div>
                 <div className="bg-slate-800/40 border border-slate-700 p-3">
@@ -1454,7 +1574,7 @@ export default function Goal() {
                     <p className="font-mono-nums text-rose-300">{formatCurrency(roadmapTotals.target)}</p>
                 </div>
                 <div className="bg-slate-800/40 border border-slate-700 p-3">
-                    <p className="text-[10px] text-slate-500 uppercase">Projected</p>
+                    <p className="text-[10px] text-slate-500 uppercase">What-if Projected</p>
                     <p className="font-mono-nums text-emerald-300">{formatCurrency(roadmapTotals.projected)}</p>
                 </div>
             </div>
@@ -1635,11 +1755,11 @@ export default function Goal() {
 
                     <div className="grid grid-cols-2 gap-2 text-xs">
                         <div className="bg-slate-800/40 border border-slate-700 p-2">
-                            <p className="text-slate-500">Projected</p>
+                            <p className="text-slate-500">What-if Projection</p>
                             <p className="font-mono-nums text-cyan-400">{formatCurrency(selectedGoal.projected_amount)}</p>
                         </div>
                         <div className="bg-slate-800/40 border border-slate-700 p-2">
-                            <p className="text-slate-500">Gap</p>
+                            <p className="text-slate-500">What-if Gap</p>
                             <p className="font-mono-nums text-amber-400">{formatCurrency(selectedGoal.gap)}</p>
                         </div>
                     </div>
@@ -1649,7 +1769,7 @@ export default function Goal() {
                     <div className="bg-slate-800/30 border border-slate-700 p-4">
                         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-3">
                             <h3 className="text-[10px] text-slate-500 uppercase tracking-wider">
-                                Projection ({selectedGoal.weighted_return?.toFixed(1) || simParams.annual_return}% return)
+                                What-if Projection ({selectedGoal.weighted_return?.toFixed(1) || simParams.annual_return}% return)
                             </h3>
                             <div className="flex flex-wrap gap-2">
                                 <div className="inline-flex border border-slate-700">
@@ -1666,7 +1786,7 @@ export default function Goal() {
                                 </div>
                                 <div className="inline-flex border border-slate-700 bg-slate-900/80">
                                     {([
-                                        ['projection', 'Projection'],
+                                        ['projection', 'What-if'],
                                         ['monteCarlo', 'Monte Carlo'],
                                         ['combined', 'Combined'],
                                     ] as Array<[ProjectionView, string]>).map(([id, label]) => (
@@ -2113,7 +2233,7 @@ export default function Goal() {
         if (selectedScope === 'all') return renderSimulation();
         switch (activeGoalTab) {
             case 'summary':
-                return renderSummary();
+                return renderPlanSummary() ?? renderSummary();
             case 'simulation':
                 return renderSimulation();
             case 'milestone':
@@ -2186,6 +2306,8 @@ export default function Goal() {
                             dashboard?.events.map((goal) => {
                                 const goalFundedPct = fundedPct(goal);
                                 const accent = goalAccent(goal.id);
+                                const nextMilestone = goal.plan_next_milestone;
+                                const nextGap = nextMilestone?.gap ?? 0;
                                 return (
                                     <button
                                         key={goal.id}
@@ -2207,6 +2329,16 @@ export default function Goal() {
                                                 </p>
                                             </div>
                                             <span className="text-[10px] text-slate-400 font-mono-nums">{Math.round(goalFundedPct)}% funded</span>
+                                        </div>
+                                        <div className="mt-2 flex items-center justify-between gap-2 text-[10px]">
+                                            <span className="text-slate-500 truncate">
+                                                {nextMilestone ? `Next ${nextMilestone.date}: ${formatCompact(nextMilestone.target_amount)}` : 'No upcoming milestone'}
+                                            </span>
+                                            {nextMilestone && (
+                                                <span className={`font-mono-nums shrink-0 ${nextGap >= 0 ? 'text-emerald-400' : 'text-rose-300'}`}>
+                                                    {formatCompact(nextGap)}
+                                                </span>
+                                            )}
                                         </div>
                                         <div className="h-1 bg-slate-900 rounded-full mt-3 overflow-hidden">
                                             <div className={`h-full ${accent.dot}`} style={{ width: `${goalFundedPct}%` }} />

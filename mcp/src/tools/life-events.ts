@@ -15,9 +15,17 @@ interface LifeEvent {
   target_amount: number;
   priority: number;
   note?: string | null;
+  active_plan_basis?: string;
+  active_plan_label?: string | null;
+  plan_status_override?: string | null;
   current_funded?: number;
   projected_amount?: number;
   gap?: number;
+  funded_percentage?: number;
+  plan_expected_amount?: number;
+  plan_gap?: number;
+  plan_status?: string;
+  plan_progress_percentage?: number;
   years_remaining?: number;
   status?: string;
   progress_percentage?: number;
@@ -33,6 +41,9 @@ const lifeEventCreateSchema = z
     target_amount: z.number().min(0).describe("Target amount"),
     priority: z.number().int().min(1).max(3).describe("Priority: 1=high, 2=medium, 3=low"),
     note: z.string().optional().describe("Optional note"),
+    active_plan_basis: z.string().optional().describe("Active operating plan basis"),
+    active_plan_label: z.string().nullable().optional().describe("Active operating plan label"),
+    plan_status_override: z.string().nullable().optional().describe("Optional manual plan status override"),
   })
   .strict();
 
@@ -106,11 +117,14 @@ export function registerLifeEventTools(server: McpServer): void {
       inputSchema: lifeEventCreateSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    async ({ name, start_date, target_date, target_amount, priority, note }) => {
+    async ({ name, start_date, target_date, target_amount, priority, note, active_plan_basis, active_plan_label, plan_status_override }) => {
       try {
         const body: Record<string, unknown> = { name, target_date, target_amount, priority };
         if (start_date !== undefined) body.start_date = start_date;
         if (note !== undefined) body.note = note;
+        if (active_plan_basis !== undefined) body.active_plan_basis = active_plan_basis;
+        if (active_plan_label !== undefined) body.active_plan_label = active_plan_label;
+        if (plan_status_override !== undefined) body.plan_status_override = plan_status_override;
         const data = await api.post<LifeEvent>("/life-events/", body);
         return {
           content: [{ type: "text", text: `Created life event:\n${JSON.stringify(data, null, 2)}` }],
@@ -130,7 +144,7 @@ export function registerLifeEventTools(server: McpServer): void {
       inputSchema: lifeEventUpdateSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async ({ id, name, start_date, target_date, target_amount, priority, note }) => {
+    async ({ id, name, start_date, target_date, target_amount, priority, note, active_plan_basis, active_plan_label, plan_status_override }) => {
       try {
         const body: Record<string, unknown> = {};
         if (name !== undefined) body.name = name;
@@ -139,6 +153,9 @@ export function registerLifeEventTools(server: McpServer): void {
         if (target_amount !== undefined) body.target_amount = target_amount;
         if (priority !== undefined) body.priority = priority;
         if (note !== undefined) body.note = note;
+        if (active_plan_basis !== undefined) body.active_plan_basis = active_plan_basis;
+        if (active_plan_label !== undefined) body.active_plan_label = active_plan_label;
+        if (plan_status_override !== undefined) body.plan_status_override = plan_status_override;
         const data = await api.put<LifeEvent>(`/life-events/${id}`, body);
         return {
           content: [{ type: "text", text: `Updated life event ${id}:\n${JSON.stringify(data, null, 2)}` }],

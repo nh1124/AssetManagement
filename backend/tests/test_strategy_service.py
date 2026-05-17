@@ -20,6 +20,7 @@ try:
     from backend.app.database import Base
     from backend.app.services.strategy_service import (
         _period_contribution_from_schedule,
+        calculate_milestone_plan_progress,
         generate_roadmap,
         get_goal_simulation_context,
         get_life_events_with_progress,
@@ -30,6 +31,7 @@ except ModuleNotFoundError:
     from app.database import Base  # type: ignore[no-redef]
     from app.services.strategy_service import (  # type: ignore[no-redef]
         _period_contribution_from_schedule,
+        calculate_milestone_plan_progress,
         generate_roadmap,
         get_goal_simulation_context,
         get_life_events_with_progress,
@@ -56,6 +58,57 @@ def _client_and_goal(db, target_date: date, target_amount: float = 1_500_000, pr
     db.add(goal)
     db.flush()
     return client, goal
+
+
+def test_milestone_plan_progress_interpolates_expected_amount():
+    db = _session()
+    try:
+        _, goal = _client_and_goal(db, target_date=date(2027, 1, 1))
+        goal.start_date = date(2026, 1, 1)
+        db.add(
+            models.Milestone(
+                client_id=1,
+                life_event_id=goal.id,
+                date=date(2026, 7, 1),
+                target_amount=300_000,
+                is_active_plan=True,
+            )
+        )
+        db.flush()
+
+        result = calculate_milestone_plan_progress(goal, current_funded=100_000, evaluation_date=date(2026, 4, 1))
+
+        assert 148_000 <= result["plan_expected_amount"] <= 151_000
+        assert result["plan_gap"] < 0
+        assert result["plan_status"] == "Behind"
+        assert result["plan_next_milestone"]["target_amount"] == 300_000
+    finally:
+        db.close()
+
+
+def test_inactive_milestones_do_not_drive_plan_progress():
+    db = _session()
+    try:
+        _, goal = _client_and_goal(db, target_date=date(2027, 1, 1))
+        goal.start_date = date(2026, 1, 1)
+        db.add(
+            models.Milestone(
+                client_id=1,
+                life_event_id=goal.id,
+                date=date(2026, 7, 1),
+                target_amount=300_000,
+                is_active_plan=False,
+            )
+        )
+        db.flush()
+
+        result = calculate_milestone_plan_progress(goal, current_funded=0, evaluation_date=date(2026, 4, 1))
+
+        assert result["plan_expected_amount"] == 0.0
+        assert result["plan_status"] == "No Plan"
+        assert result["plan_next_milestone"] is None
+    finally:
+        db.close()
 
 
 # ---------------------------------------------------------------------------

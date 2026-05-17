@@ -495,6 +495,9 @@ class LifeEventBase(BaseModel):
     target_amount: float
     priority: Literal[1, 2, 3] = 2
     note: Optional[str] = None
+    active_plan_basis: str = "milestone"
+    active_plan_label: Optional[str] = None
+    plan_status_override: Optional[str] = None
 
 class LifeEventCreate(LifeEventBase):
     pass
@@ -506,6 +509,9 @@ class LifeEventUpdate(BaseModel):
     target_amount: Optional[float] = None
     priority: Optional[Literal[1, 2, 3]] = None
     note: Optional[str] = None
+    active_plan_basis: Optional[str] = None
+    active_plan_label: Optional[str] = None
+    plan_status_override: Optional[str] = None
 
 class LifeEvent(LifeEventBase):
     id: int
@@ -524,6 +530,13 @@ class LifeEventWithProgress(LifeEvent):
     status: str = "Not Started"  # "On Track", "At Risk", "Off Track"
     progress_percentage: float = 0.0
     years_remaining: float = 0.0
+    funded_percentage: float = 0.0
+    plan_expected_amount: float = 0.0
+    plan_gap: float = 0.0
+    plan_status: str = "No Plan"
+    plan_progress_percentage: float = 0.0
+    plan_previous_milestone: Optional[dict[str, Any]] = None
+    plan_next_milestone: Optional[dict[str, Any]] = None
 
 class StrategyDashboard(BaseModel):
     events: list[LifeEventWithProgress]
@@ -564,6 +577,7 @@ class MilestoneBase(BaseModel):
     note: Optional[str] = None
     source: str = "manual"
     source_snapshot: Optional[dict[str, Any]] = None
+    is_active_plan: bool = True
 
 class MilestoneCreate(MilestoneBase):
     pass
@@ -572,6 +586,7 @@ class MilestoneUpdate(BaseModel):
     note: Optional[str] = None
     target_amount: Optional[float] = None
     date: Optional[DateType] = None
+    is_active_plan: Optional[bool] = None
 
 class Milestone(MilestoneBase):
     id: int

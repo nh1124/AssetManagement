@@ -100,6 +100,9 @@ export interface LifeEvent {
     target_amount: number;
     priority: 1 | 2 | 3;
     note?: string | null;
+    active_plan_basis?: string;
+    active_plan_label?: string | null;
+    plan_status_override?: string | null;
     created_at?: string;
     current_funded?: number;
     projected_amount?: number;
@@ -107,8 +110,24 @@ export interface LifeEvent {
     weighted_return?: number;
     status?: 'On Track' | 'At Risk' | 'Off Track' | 'Achieved' | 'Missed' | 'Not Started';
     progress_percentage?: number;
+    funded_percentage?: number;
+    plan_expected_amount?: number;
+    plan_gap?: number;
+    plan_status?: 'Ahead' | 'On Track' | 'Watch' | 'Behind' | 'No Plan' | string;
+    plan_progress_percentage?: number;
+    plan_previous_milestone?: MilestonePlanSummary | null;
+    plan_next_milestone?: MilestonePlanSummary | null;
     years_remaining?: number;
     roadmap?: RoadmapEntry[];
+}
+
+export interface MilestonePlanSummary {
+    id: number;
+    date: string;
+    target_amount: number;
+    note?: string | null;
+    source?: string | null;
+    gap?: number;
 }
 
 export interface Product {
@@ -367,6 +386,7 @@ export interface Milestone {
     note?: string;
     source?: string;
     source_snapshot?: Record<string, unknown> | null;
+    is_active_plan?: boolean;
 }
 
 export type MilestoneSimulationBasis = 'annual_plan' | 'deterministic' | 'p10' | 'p50' | 'p90';

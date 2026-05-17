@@ -102,6 +102,7 @@ export function registerRoadmapTools(server: McpServer): void {
           note: z.string().nullable().optional().describe("Note"),
           source: z.string().optional().default("manual").describe("Source label"),
           source_snapshot: z.record(z.unknown()).nullable().optional().describe("Optional source snapshot"),
+          is_active_plan: z.boolean().optional().default(true).describe("Whether this milestone is part of the active operating plan"),
         })
         .strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },

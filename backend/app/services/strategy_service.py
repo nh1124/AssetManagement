@@ -516,6 +516,113 @@ def determine_status(projected: float, target: float, years_remaining: float) ->
         return "Off Track"
 
 
+def _milestone_summary(milestone: models.Milestone | None, current_funded: float | None = None) -> dict | None:
+    if milestone is None:
+        return None
+    data = {
+        "id": milestone.id,
+        "date": milestone.date.isoformat(),
+        "target_amount": round(float(milestone.target_amount or 0.0), 2),
+        "note": milestone.note,
+        "source": milestone.source,
+    }
+    if current_funded is not None:
+        data["gap"] = round(float(current_funded) - float(milestone.target_amount or 0.0), 2)
+    return data
+
+
+def calculate_milestone_plan_progress(
+    event: models.LifeEvent,
+    current_funded: float,
+    evaluation_date: date,
+) -> dict:
+    """Compare actual funded amount against the adopted milestone plan.
+
+    The expected amount is linearly interpolated between active milestones, using
+    life_event.start_date (or created_at/today fallback) as the zero-balance plan
+    start before the first milestone.
+    """
+    active_milestones = sorted(
+        [m for m in (event.milestones or []) if getattr(m, "is_active_plan", True)],
+        key=lambda m: (m.date, m.id),
+    )
+    if not active_milestones:
+        return {
+            "plan_expected_amount": 0.0,
+            "plan_gap": 0.0,
+            "plan_status": event.plan_status_override or "No Plan",
+            "plan_progress_percentage": 0.0,
+            "plan_previous_milestone": None,
+            "plan_next_milestone": None,
+        }
+
+    previous_milestone = None
+    next_milestone = None
+    for milestone in active_milestones:
+        if milestone.date <= evaluation_date:
+            previous_milestone = milestone
+        elif next_milestone is None:
+            next_milestone = milestone
+            break
+
+    plan_start = event.start_date
+    if plan_start is None and event.created_at is not None:
+        plan_start = event.created_at.date()
+    if plan_start is None:
+        plan_start = min(evaluation_date, active_milestones[0].date)
+
+    if next_milestone is None:
+        expected = float(previous_milestone.target_amount or 0.0) if previous_milestone else 0.0
+    elif previous_milestone is None:
+        start_date = min(plan_start, next_milestone.date)
+        start_amount = 0.0
+        end_date = next_milestone.date
+        end_amount = float(next_milestone.target_amount or 0.0)
+        if evaluation_date <= start_date:
+            expected = start_amount
+        elif end_date <= start_date:
+            expected = end_amount
+        else:
+            ratio = (evaluation_date - start_date).days / max((end_date - start_date).days, 1)
+            expected = start_amount + (end_amount - start_amount) * max(0.0, min(1.0, ratio))
+    else:
+        start_date = previous_milestone.date
+        start_amount = float(previous_milestone.target_amount or 0.0)
+        end_date = next_milestone.date
+        end_amount = float(next_milestone.target_amount or 0.0)
+        if end_date <= start_date:
+            expected = end_amount
+        else:
+            ratio = (evaluation_date - start_date).days / max((end_date - start_date).days, 1)
+            expected = start_amount + (end_amount - start_amount) * max(0.0, min(1.0, ratio))
+
+    gap = float(current_funded) - expected
+    if event.plan_status_override:
+        plan_status = event.plan_status_override
+    elif expected <= 0:
+        plan_status = "On Track"
+    else:
+        ratio = float(current_funded) / expected
+        if ratio >= 1.05:
+            plan_status = "Ahead"
+        elif ratio >= 1.0:
+            plan_status = "On Track"
+        elif ratio >= 0.85:
+            plan_status = "Watch"
+        else:
+            plan_status = "Behind"
+
+    plan_progress = (float(current_funded) / expected * 100) if expected > 0 else 100.0
+    return {
+        "plan_expected_amount": round(expected, 2),
+        "plan_gap": round(gap, 2),
+        "plan_status": plan_status,
+        "plan_progress_percentage": round(plan_progress, 1),
+        "plan_previous_milestone": _milestone_summary(previous_milestone, current_funded),
+        "plan_next_milestone": _milestone_summary(next_milestone, current_funded),
+    }
+
+
 def get_life_events_with_progress(
     db: Session,
     client_id: int,
@@ -563,6 +670,8 @@ def get_life_events_with_progress(
         gap = event.target_amount - projected
         status = determine_status(projected, event.target_amount, years_remaining)
         progress_pct = (projected / event.target_amount * 100) if event.target_amount > 0 else 0
+        funded_pct = (current_funded / event.target_amount * 100) if event.target_amount > 0 else 0
+        plan_progress = calculate_milestone_plan_progress(event, current_funded, evaluation_date)
         
         # In direct mode pass the raw schedule so per-period contributions (bonus
         # month, one-time date) are shown accurately in the roadmap table.
@@ -591,6 +700,10 @@ def get_life_events_with_progress(
             "target_amount": event.target_amount,
             "priority": event.priority,
             "note": event.note,
+            "start_date": event.start_date.isoformat() if event.start_date else None,
+            "active_plan_basis": event.active_plan_basis,
+            "active_plan_label": event.active_plan_label,
+            "plan_status_override": event.plan_status_override,
             "created_at": event.created_at.isoformat() if event.created_at else None,
             "allocations": [],
             "current_funded": round(current_funded, 2),
@@ -599,8 +712,10 @@ def get_life_events_with_progress(
             "weighted_return": round(effective_return, 2),
             "status": status,
             "progress_percentage": round(min(progress_pct, 100), 1),
+            "funded_percentage": round(min(funded_pct, 100), 1),
             "years_remaining": round(years_remaining, 1),
-            "roadmap": roadmap
+            "roadmap": roadmap,
+            **plan_progress,
         })
     
     return result
@@ -803,6 +918,8 @@ def get_roadmap_projection(
                 "date": milestone.date.isoformat(),
                 "target_amount": milestone.target_amount,
                 "note": milestone.note,
+                "source": milestone.source,
+                "is_active_plan": milestone.is_active_plan,
             }
             for milestone in milestones
         ],

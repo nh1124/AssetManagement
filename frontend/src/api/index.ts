@@ -737,7 +737,7 @@ export const createMilestone = async (milestone: any): Promise<Milestone> => {
 
 export const updateMilestone = async (
     id: number,
-    update: { note?: string | null; target_amount?: number; date?: string }
+    update: { note?: string | null; target_amount?: number; date?: string; is_active_plan?: boolean }
 ): Promise<Milestone> => {
     const response = await api.patch(`/roadmap/milestones/${id}`, update);
     return response.data;

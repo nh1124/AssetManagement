@@ -251,10 +251,14 @@ def export_client_data(
                     [
                         "id",
                         "name",
+                        "start_date",
                         "target_date",
                         "target_amount",
                         "priority",
                         "note",
+                        "active_plan_basis",
+                        "active_plan_label",
+                        "plan_status_override",
                         "created_at",
                     ],
                 )
@@ -366,6 +370,7 @@ def export_client_data(
                         "note",
                         "source",
                         "source_snapshot",
+                        "is_active_plan",
                         "created_at",
                     ],
                 )
@@ -669,10 +674,14 @@ def import_client_data(
             event = models.LifeEvent(
                 client_id=current_client.id,
                 name=item["name"],
+                start_date=_parse_date(item.get("start_date")),
                 target_date=_parse_date(item.get("target_date")),
                 target_amount=item.get("target_amount") or 0,
                 priority=item.get("priority") or 2,
                 note=item.get("note"),
+                active_plan_basis=item.get("active_plan_basis") or "milestone",
+                active_plan_label=item.get("active_plan_label"),
+                plan_status_override=item.get("plan_status_override"),
                 created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
             )
             db.add(event)
@@ -747,6 +756,7 @@ def import_client_data(
                     note=item.get("note"),
                     source=item.get("source") or "manual",
                     source_snapshot=item.get("source_snapshot"),
+                    is_active_plan=item.get("is_active_plan", True),
                     created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
                 )
             )
