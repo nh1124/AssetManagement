@@ -74,9 +74,18 @@ type GoalTab = 'summary' | 'simulation' | 'milestone' | 'assetAllocation';
 type GoalScope = 'all' | 'goal';
 type ProjectionView = 'projection' | 'monteCarlo' | 'combined';
 type AllRoadmapView = 'roadmap' | 'riskBand' | 'combined';
+type AllMilestoneView = 'chronological' | 'byGoal' | 'timeline';
 type ContributionDraft = ContributionScheduleItem & { id: string };
 
 const YEAR_MS = 365.25 * 24 * 60 * 60 * 1000;
+const GOAL_ACCENTS = [
+    { border: 'border-l-cyan-500', dot: 'bg-cyan-400', badge: 'border-cyan-700 bg-cyan-950/40 text-cyan-200', text: 'text-cyan-300' },
+    { border: 'border-l-emerald-500', dot: 'bg-emerald-400', badge: 'border-emerald-700 bg-emerald-950/40 text-emerald-200', text: 'text-emerald-300' },
+    { border: 'border-l-amber-500', dot: 'bg-amber-400', badge: 'border-amber-700 bg-amber-950/40 text-amber-200', text: 'text-amber-300' },
+    { border: 'border-l-rose-500', dot: 'bg-rose-400', badge: 'border-rose-700 bg-rose-950/40 text-rose-200', text: 'text-rose-300' },
+    { border: 'border-l-indigo-500', dot: 'bg-indigo-400', badge: 'border-indigo-700 bg-indigo-950/40 text-indigo-200', text: 'text-indigo-300' },
+    { border: 'border-l-fuchsia-500', dot: 'bg-fuchsia-400', badge: 'border-fuchsia-700 bg-fuchsia-950/40 text-fuchsia-200', text: 'text-fuchsia-300' },
+] as const;
 
 const GOAL_TABS: Array<{ id: GoalTab; label: string }> = [
     { id: 'summary', label: 'Summary' },
@@ -113,6 +122,12 @@ const parseScheduleDate = (value?: string | null) => {
 
 const maxDate = (a: Date, b: Date) => (a.getTime() > b.getTime() ? a : b);
 const minDate = (a: Date, b: Date) => (a.getTime() < b.getTime() ? a : b);
+const goalAccent = (goalId?: number | null) => GOAL_ACCENTS[Math.abs(Number(goalId) || 0) % GOAL_ACCENTS.length];
+const fundedPct = (goal: Pick<LifeEvent, 'current_funded' | 'target_amount'>) => (
+    goal.target_amount > 0
+        ? Math.max(0, Math.min(100, ((goal.current_funded || 0) / goal.target_amount) * 100))
+        : 0
+);
 
 const scheduleWindowLabel = (item: ContributionScheduleItem) => {
     if (item.kind === 'one_time' || (!item.start_date && !item.end_date)) return '';
@@ -132,6 +147,9 @@ export default function Goal() {
     const [activeGoalTab, setActiveGoalTab] = useState<GoalTab>('simulation');
     const [projectionView, setProjectionView] = useState<ProjectionView>('combined');
     const [allRoadmapView, setAllRoadmapView] = useState<AllRoadmapView>('combined');
+    const [allMilestoneView, setAllMilestoneView] = useState<AllMilestoneView>('chronological');
+    const [allMilestoneGoalFilter, setAllMilestoneGoalFilter] = useState('all');
+    const [allMilestoneSourceFilter, setAllMilestoneSourceFilter] = useState('all');
     const [milestones, setMilestones] = useState<Milestone[]>([]);
     const [eventForm, setEventForm] = useState(emptyEventForm);
     const [editingEvent, setEditingEvent] = useState<LifeEvent | null>(null);
@@ -606,8 +624,12 @@ export default function Goal() {
 
     const totals = useMemo(() => {
         const goals = dashboard?.events ?? [];
+        const target = goals.reduce((sum, goal) => sum + (goal.target_amount || 0), 0);
+        const funded = goals.reduce((sum, goal) => sum + (goal.current_funded || 0), 0);
         return {
-            target: goals.reduce((sum, goal) => sum + (goal.target_amount || 0), 0),
+            target,
+            funded,
+            fundedPct: target > 0 ? Math.max(0, Math.min(100, (funded / target) * 100)) : 0,
             gap: goals.reduce((sum, goal) => sum + Math.max(0, goal.gap || 0), 0),
             count: goals.length,
         };
@@ -712,6 +734,51 @@ export default function Goal() {
             projected: goals.reduce((sum, goal) => sum + (goal.projected_amount || 0), 0),
         };
     }, [roadmapProjection]);
+
+    const goalById = useMemo(() => {
+        const map = new Map<number, LifeEvent>();
+        (dashboard?.events ?? []).forEach((goal) => map.set(goal.id, goal));
+        (roadmapProjection?.events ?? []).forEach((goal) => {
+            if (!map.has(goal.id)) map.set(goal.id, goal);
+        });
+        return map;
+    }, [dashboard?.events, roadmapProjection?.events]);
+
+    const milestoneSourceOptions = useMemo(() => {
+        const sources = new Set(milestones.map((milestone) => milestone.source || 'manual'));
+        return Array.from(sources).sort();
+    }, [milestones]);
+
+    const allMilestonesWithMeta = useMemo(() => {
+        return milestones
+            .map((milestone) => {
+                const goal = milestone.life_event_id ? goalById.get(milestone.life_event_id) : undefined;
+                return {
+                    ...milestone,
+                    goalName: goal?.name ?? 'Unlinked',
+                    goalTargetDate: goal?.target_date ?? null,
+                    goalFundedPct: goal ? fundedPct(goal) : null,
+                    accent: goalAccent(milestone.life_event_id),
+                    sourceLabel: milestone.source || 'manual',
+                };
+            })
+            .filter((milestone) => (
+                allMilestoneGoalFilter === 'all' || String(milestone.life_event_id ?? 'unlinked') === allMilestoneGoalFilter
+            ))
+            .filter((milestone) => (
+                allMilestoneSourceFilter === 'all' || milestone.sourceLabel === allMilestoneSourceFilter
+            ))
+            .sort((a, b) => a.date.localeCompare(b.date) || a.goalName.localeCompare(b.goalName) || a.id - b.id);
+    }, [allMilestoneGoalFilter, allMilestoneSourceFilter, goalById, milestones]);
+
+    const allMilestonesByGoal = useMemo(() => {
+        const groups = new Map<string, typeof allMilestonesWithMeta>();
+        allMilestonesWithMeta.forEach((milestone) => {
+            const key = milestone.goalName;
+            groups.set(key, [...(groups.get(key) ?? []), milestone]);
+        });
+        return Array.from(groups.entries()).sort(([a], [b]) => a.localeCompare(b));
+    }, [allMilestonesWithMeta]);
 
     const linkedCapsule = useMemo(
         () => (selectedGoal ? capsules.find((c) => c.life_event_id === selectedGoal.id) : undefined),
@@ -1257,25 +1324,116 @@ export default function Goal() {
         );
     };
 
+    const renderAllMilestoneCard = (milestone: (typeof allMilestonesWithMeta)[number], compact = false) => (
+        <div
+            key={milestone.id}
+            className={`bg-slate-900/60 border border-slate-700 border-l-4 ${milestone.accent.border} p-3 text-xs`}
+        >
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
+                <div className="min-w-0 flex items-center gap-2">
+                    <span className={`h-2.5 w-2.5 rounded-full shrink-0 ${milestone.accent.dot}`} />
+                    <span className={`px-2 py-0.5 border text-[10px] truncate max-w-[220px] ${milestone.accent.badge}`}>
+                        {milestone.goalName}
+                    </span>
+                    <span className="font-mono-nums text-slate-300 shrink-0">{milestone.date}</span>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                    {milestone.goalFundedPct != null && (
+                        <span className="text-[10px] text-slate-500 font-mono-nums">
+                            {Math.round(milestone.goalFundedPct)}% funded
+                        </span>
+                    )}
+                    <span className="font-mono-nums text-emerald-400">{formatCurrency(milestone.target_amount)}</span>
+                </div>
+            </div>
+            {!compact && (
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px]">
+                    {milestone.note && <span className="text-slate-500">{milestone.note}</span>}
+                    <span className="text-slate-600">source: {milestone.sourceLabel}</span>
+                    {milestone.goalTargetDate && <span className="text-slate-600">goal target: {milestone.goalTargetDate}</span>}
+                </div>
+            )}
+        </div>
+    );
+
     const renderAllMilestones = () => (
         <div className="bg-slate-800/30 border border-slate-700 p-4">
-            <h3 className="text-[10px] text-slate-500 uppercase tracking-wider flex items-center gap-1 mb-3"><Flag size={12} /> All Milestones</h3>
-            <div className="space-y-2 max-h-[420px] overflow-auto">
+            <div className="flex flex-col min-[900px]:flex-row min-[900px]:items-center justify-between gap-3 mb-3">
+                <h3 className="text-[10px] text-slate-500 uppercase tracking-wider flex items-center gap-1"><Flag size={12} /> All Milestones</h3>
+                <div className="flex flex-wrap items-center gap-2">
+                    <div className="inline-flex border border-slate-700 bg-slate-900/80">
+                        {([
+                            ['chronological', 'Chronological'],
+                            ['byGoal', 'By Goal'],
+                            ['timeline', 'Timeline'],
+                        ] as Array<[AllMilestoneView, string]>).map(([id, label]) => (
+                            <button
+                                key={id}
+                                type="button"
+                                onClick={() => setAllMilestoneView(id)}
+                                className={`px-3 py-1.5 text-[10px] ${allMilestoneView === id ? 'bg-cyan-950/50 text-cyan-300' : 'text-slate-500 hover:text-slate-300'}`}
+                            >
+                                {label}
+                            </button>
+                        ))}
+                    </div>
+                    <select
+                        value={allMilestoneGoalFilter}
+                        onChange={(event) => setAllMilestoneGoalFilter(event.target.value)}
+                        className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-[10px] text-slate-300"
+                        title="Filter by goal"
+                    >
+                        <option value="all">All goals</option>
+                        {(dashboard?.events ?? []).map((goal) => (
+                            <option key={goal.id} value={goal.id}>{goal.name}</option>
+                        ))}
+                        {milestones.some((milestone) => !milestone.life_event_id) && <option value="unlinked">Unlinked</option>}
+                    </select>
+                    <select
+                        value={allMilestoneSourceFilter}
+                        onChange={(event) => setAllMilestoneSourceFilter(event.target.value)}
+                        className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-[10px] text-slate-300"
+                        title="Filter by source"
+                    >
+                        <option value="all">All sources</option>
+                        {milestoneSourceOptions.map((source) => (
+                            <option key={source} value={source}>{source}</option>
+                        ))}
+                    </select>
+                </div>
+            </div>
+            <div className="max-h-[420px] overflow-auto">
                 {milestones.length === 0 ? (
                     <p className="text-xs text-slate-600">No milestones yet.</p>
-                ) : milestones.map((milestone) => (
-                    <div key={milestone.id} className="grid grid-cols-1 md:grid-cols-[140px_1fr] items-center gap-3 bg-slate-900/60 border border-slate-700 p-2 text-xs">
-                        <div className="flex items-center gap-2">
-                            <Calendar size={12} className="text-slate-500" />
-                            <span className="font-mono-nums text-slate-300">{milestone.date}</span>
-                        </div>
-                        <div className="min-w-0">
-                            <span className="font-mono-nums text-emerald-400">{formatCurrency(milestone.target_amount)}</span>
-                            {milestone.note && <span className="ml-3 text-slate-500">{milestone.note}</span>}
-                            {milestone.source && milestone.source !== 'manual' && <span className="ml-3 text-[10px] text-cyan-500">{milestone.source}</span>}
-                        </div>
+                ) : allMilestonesWithMeta.length === 0 ? (
+                    <p className="text-xs text-slate-600">No milestones match the current filters.</p>
+                ) : allMilestoneView === 'byGoal' ? (
+                    <div className="space-y-4">
+                        {allMilestonesByGoal.map(([goalName, items]) => (
+                            <section key={goalName} className="space-y-2">
+                                <div className="flex items-center gap-2">
+                                    <span className={`h-2.5 w-2.5 rounded-full ${items[0]?.accent.dot ?? 'bg-slate-500'}`} />
+                                    <h4 className="text-[10px] uppercase tracking-wider text-slate-400">{goalName}</h4>
+                                    <span className="text-[10px] text-slate-600 font-mono-nums">{items.length}</span>
+                                </div>
+                                {items.map((milestone) => renderAllMilestoneCard(milestone))}
+                            </section>
+                        ))}
                     </div>
-                ))}
+                ) : allMilestoneView === 'timeline' ? (
+                    <div className="relative pl-5 space-y-3 before:absolute before:left-[9px] before:top-1 before:bottom-1 before:w-px before:bg-slate-700">
+                        {allMilestonesWithMeta.map((milestone) => (
+                            <div key={milestone.id} className="relative">
+                                <span className={`absolute -left-[15px] top-4 h-2.5 w-2.5 rounded-full ring-4 ring-slate-900 ${milestone.accent.dot}`} />
+                                {renderAllMilestoneCard(milestone, true)}
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    <div className="space-y-2">
+                        {allMilestonesWithMeta.map((milestone) => renderAllMilestoneCard(milestone))}
+                    </div>
+                )}
             </div>
         </div>
     );
@@ -2016,42 +2174,46 @@ export default function Goal() {
                                     <p className="text-sm text-slate-100 truncate">All Goals</p>
                                     <p className="text-[10px] text-slate-500 mt-1">Portfolio roadmap / aggregate liability demand</p>
                                 </div>
-                                <span className="text-[10px] text-slate-400 font-mono-nums">{Math.round(roadmapProjection?.roadmap_progression_pct ?? 0)}%</span>
+                                <span className="text-[10px] text-slate-400 font-mono-nums">{Math.round(totals.fundedPct)}% funded</span>
                             </div>
                             <div className="h-1 bg-slate-900 rounded-full mt-3 overflow-hidden">
-                                <div className="h-full bg-cyan-500" style={{ width: `${Math.min(100, roadmapProjection?.roadmap_progression_pct ?? 0)}%` }} />
+                                <div className="h-full bg-emerald-500" style={{ width: `${totals.fundedPct}%` }} />
                             </div>
                         </button>
                         {(dashboard?.events ?? []).length === 0 ? (
                             <div className="text-center text-xs text-slate-600 py-10">No goals yet. Create the first north star.</div>
                         ) : (
-                            dashboard?.events.map((goal) => (
-                                <button
-                                    key={goal.id}
-                                    onClick={() => {
-                                        setSelectedScope('goal');
-                                        setSelectedGoal(goal);
-                                        setActiveGoalTab('summary');
-                                        setMilestonePreview(null);
-                                        fetchGoalWorkspace(goal.id, 'goal');
-                                        fetchGoalMilestones(goal.id);
-                                    }}
-                                    className={`w-full text-left border px-3 py-3 transition-colors ${selectedScope === 'goal' && selectedGoal?.id === goal.id ? 'border-cyan-700 bg-cyan-950/20' : 'border-slate-800 bg-slate-800/20 hover:bg-slate-800/50'}`}
-                                >
-                                    <div className="flex items-start justify-between gap-2">
-                                        <div className="min-w-0">
-                                            <p className="text-sm text-slate-100 truncate">{goal.name}</p>
-                                            <p className="text-[10px] text-slate-500 mt-1">
-                                                {goal.target_date} / <span className={PRIORITY_COLORS[goal.priority]}>{priorityLabel(goal.priority)}</span>
-                                            </p>
+                            dashboard?.events.map((goal) => {
+                                const goalFundedPct = fundedPct(goal);
+                                const accent = goalAccent(goal.id);
+                                return (
+                                    <button
+                                        key={goal.id}
+                                        onClick={() => {
+                                            setSelectedScope('goal');
+                                            setSelectedGoal(goal);
+                                            setActiveGoalTab('summary');
+                                            setMilestonePreview(null);
+                                            fetchGoalWorkspace(goal.id, 'goal');
+                                            fetchGoalMilestones(goal.id);
+                                        }}
+                                        className={`w-full text-left border border-l-4 px-3 py-3 transition-colors ${selectedScope === 'goal' && selectedGoal?.id === goal.id ? 'border-cyan-700 bg-cyan-950/20' : 'border-slate-800 bg-slate-800/20 hover:bg-slate-800/50'} ${accent.border}`}
+                                    >
+                                        <div className="flex items-start justify-between gap-2">
+                                            <div className="min-w-0">
+                                                <p className="text-sm text-slate-100 truncate">{goal.name}</p>
+                                                <p className="text-[10px] text-slate-500 mt-1">
+                                                    {goal.target_date} / <span className={PRIORITY_COLORS[goal.priority]}>{priorityLabel(goal.priority)}</span>
+                                                </p>
+                                            </div>
+                                            <span className="text-[10px] text-slate-400 font-mono-nums">{Math.round(goalFundedPct)}% funded</span>
                                         </div>
-                                        <span className="text-[10px] text-slate-400 font-mono-nums">{Math.round(goal.progress_percentage || 0)}%</span>
-                                    </div>
-                                    <div className="h-1 bg-slate-900 rounded-full mt-3 overflow-hidden">
-                                        <div className="h-full bg-cyan-500" style={{ width: `${Math.min(100, goal.progress_percentage || 0)}%` }} />
-                                    </div>
-                                </button>
-                            ))
+                                        <div className="h-1 bg-slate-900 rounded-full mt-3 overflow-hidden">
+                                            <div className={`h-full ${accent.dot}`} style={{ width: `${goalFundedPct}%` }} />
+                                        </div>
+                                    </button>
+                                );
+                            })
                         )}
                     </div>
                 </section>
