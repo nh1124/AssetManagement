@@ -16,6 +16,7 @@ const planTargetTypeSchema = z.enum(["account", "capsule", "life_event", "produc
 const monthlyPlanLineSchema = z
   .object({
     id: z.number().int().min(1).optional().describe("Existing monthly plan line ID. Required for updates; omit for creates."),
+    plan_id: z.number().int().min(1).optional().describe("Budget plan ID. Omit to use the default plan."),
     target_period: periodSchema.describe("Target period, YYYY-MM"),
     line_type: planLineTypeSchema.describe("Monthly plan line type"),
     target_type: planTargetTypeSchema.optional().default("manual").describe("Target entity kind"),
@@ -41,16 +42,18 @@ export function registerMonthlyPlanningTools(server: McpServer): void {
       inputSchema: z
         .object({
           period: periodSchema.optional().describe("Target period, YYYY-MM"),
+          plan_id: z.number().int().min(1).optional().describe("Budget plan ID. Omit to use the default plan."),
           cash_flow_start_period: periodSchema.optional().describe("Projection start period, YYYY-MM"),
           cash_flow_months: z.number().int().min(1).max(36).optional().default(12),
         })
         .strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async ({ period, cash_flow_start_period, cash_flow_months = 12 }) => {
+    async ({ period, plan_id, cash_flow_start_period, cash_flow_months = 12 }) => {
       try {
         const params = new URLSearchParams();
         if (period !== undefined) params.append("period", period);
+        if (plan_id !== undefined) params.append("plan_id", String(plan_id));
         if (cash_flow_start_period !== undefined) params.append("cash_flow_start_period", cash_flow_start_period);
         params.append("cash_flow_months", String(cash_flow_months));
         const data = await api.get<unknown>(`/life-events/budget-summary?${params.toString()}`);
@@ -69,12 +72,20 @@ export function registerMonthlyPlanningTools(server: McpServer): void {
     {
       title: "List monthly plan lines",
       description: "Returns monthly plan lines for a period.",
-      inputSchema: z.object({ period: periodSchema.optional().describe("Target period, YYYY-MM") }).strict(),
+      inputSchema: z
+        .object({
+          period: periodSchema.optional().describe("Target period, YYYY-MM"),
+          plan_id: z.number().int().min(1).optional().describe("Budget plan ID. Omit to use the default plan."),
+        })
+        .strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async ({ period }) => {
+    async ({ period, plan_id }) => {
       try {
-        const query = period ? `?period=${encodeURIComponent(period)}` : "";
+        const params = new URLSearchParams();
+        if (period !== undefined) params.append("period", period);
+        if (plan_id !== undefined) params.append("plan_id", String(plan_id));
+        const query = params.toString() ? `?${params.toString()}` : "";
         const data = await api.get<unknown>(`/life-events/monthly-plan-lines${query}`);
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],

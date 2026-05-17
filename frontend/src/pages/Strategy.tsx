@@ -27,7 +27,6 @@ import {
     getLifeEvents,
     getProducts,
     processCapsuleContributions,
-    suggestBudget,
     syncProductReserves,
     type MonthlyPlanLinePayload,
     updateAccount,
@@ -189,7 +188,6 @@ export default function Strategy() {
         name: '',
         amount: '',
     });
-    const [budgetThinking, setBudgetThinking] = useState(false);
     const [allExpenseAccounts, setAllExpenseAccounts] = useState<Account[]>([]);
     const [categorySearch, setCategorySearch] = useState('');
     const [selectedAccountId, setSelectedAccountId] = useState<number | null>(null);
@@ -534,38 +532,6 @@ export default function Strategy() {
             await fetchBudgetSummary();
         } catch (error) {
             showToast('Failed to save budget change', 'error');
-        }
-    };
-
-    const applyBudgetSuggestions = async () => {
-        if (!budgetSummary) return;
-        setBudgetThinking(true);
-        try {
-            const suggestions = await suggestBudget();
-            const edits = { ...budgetEdits };
-            const payload: EditablePlanLinePayload[] = [];
-            let applied = 0;
-            suggestions.forEach((suggestion: any) => {
-                const account = budgetSummary.expense_accounts.find(
-                    (item) => item.name.toLowerCase().includes(suggestion.category.toLowerCase())
-                        || suggestion.category.toLowerCase().includes(item.name.toLowerCase()),
-                );
-                if (account) {
-                    edits[account.id] = suggestion.suggested_limit;
-                    payload.push(budgetAccountPlanPayload(account, suggestion.suggested_limit));
-                    applied += 1;
-                }
-            });
-            setBudgetEdits(edits);
-            if (payload.length > 0) {
-                await persistMonthlyPlanLines(payload);
-                await fetchBudgetSummary();
-            }
-            showToast(applied > 0 ? `Applied ${applied} budget suggestions` : 'No matching categories found', applied > 0 ? 'success' : 'info');
-        } catch (error) {
-            showToast('Failed to get budget suggestions', 'error');
-        } finally {
-            setBudgetThinking(false);
         }
     };
 
@@ -1867,15 +1833,6 @@ export default function Strategy() {
                         >
                             <RefreshCw size={14} />
                         </button>
-                        <button
-                            type="button"
-                            title={budgetThinking ? 'Thinking...' : 'AI Suggest Budget'}
-                            disabled={budgetThinking}
-                            onClick={applyBudgetSuggestions}
-                            className={`text-slate-500 hover:text-purple-300 disabled:opacity-30`}
-                        >
-                            <Sparkles size={14} />
-                        </button>
                         <button type="button" title="Add category" onClick={() => openBudgetCategoryForm()} className="text-slate-500 hover:text-emerald-400">
                             <Plus size={14} />
                         </button>
@@ -2533,7 +2490,7 @@ export default function Strategy() {
     );
 
     return (
-        <div className="h-full flex flex-col">
+        <div className="h-full min-h-0 flex flex-col overflow-hidden">
             <TabPanel tabs={TABS} activeTab={activeTab} onTabChange={setActiveTab}>
                 {activeTab === 'budgeting' && renderBudgeting()}
                 {activeTab === 'capsules' && renderCapsules()}

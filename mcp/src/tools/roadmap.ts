@@ -11,6 +11,15 @@ const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const simulationBasisSchema = z.enum(["annual_plan", "deterministic", "p10", "p50", "p90"]);
 const simulationIntervalSchema = z.enum(["annual", "semiannual", "quarterly", "target_only"]);
 const simulationModeSchema = z.enum(["add", "replace"]);
+const milestoneUpdateSchema = z
+  .object({
+    id: z.number().int().min(1).describe("Milestone ID"),
+    date: dateSchema.optional().describe("Milestone date, YYYY-MM-DD"),
+    target_amount: z.number().min(0).optional().describe("Target amount"),
+    note: z.string().nullable().optional().describe("Note"),
+    is_active_plan: z.boolean().optional().describe("Whether this milestone is part of the active operating plan"),
+  })
+  .strict();
 
 const milestoneSimulationInputSchema = z
   .object({
@@ -155,6 +164,48 @@ export function registerRoadmapTools(server: McpServer): void {
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
           structuredContent: toStructured({ milestones: data }),
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
+      }
+    },
+  );
+
+  server.registerTool(
+    "roadmap_milestones_update",
+    {
+      title: "Update milestone",
+      description: "Updates a roadmap milestone's date, target amount, note, or active-plan flag.",
+      inputSchema: milestoneUpdateSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ id, ...patch }) => {
+      try {
+        const data = await api.patch<unknown>(`/roadmap/milestones/${id}`, patch);
+        return {
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+          structuredContent: toStructured(data),
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
+      }
+    },
+  );
+
+  server.registerTool(
+    "roadmap_milestones_delete",
+    {
+      title: "Delete milestone",
+      description: "Deletes one roadmap milestone.",
+      inputSchema: z.object({ id: z.number().int().min(1).describe("Milestone ID") }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ id }) => {
+      try {
+        const data = await api.delete<unknown>(`/roadmap/milestones/${id}`);
+        return {
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+          structuredContent: toStructured(data),
         };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };

@@ -15,7 +15,7 @@ interface TabPanelProps {
 
 export default function TabPanel({ tabs, activeTab, onTabChange, children, scrollContent = true }: TabPanelProps) {
     return (
-        <div className="flex flex-col h-full">
+        <div className="flex flex-col h-full min-h-0 overflow-hidden">
             {/* Tab Bar */}
             <div className="flex border-b border-slate-800 bg-slate-900/80">
                 {tabs.map((tab) => (
@@ -33,7 +33,7 @@ export default function TabPanel({ tabs, activeTab, onTabChange, children, scrol
             </div>
 
             {/* Tab Content */}
-            <div className={`flex-1 p-3 ${scrollContent ? 'overflow-auto scrollbar-subtle' : 'overflow-visible'}`}>
+            <div className={`flex-1 min-h-0 p-3 ${scrollContent ? 'overflow-auto scrollbar-subtle' : 'overflow-visible'}`}>
                 {children}
             </div>
         </div>
