@@ -99,7 +99,9 @@ export const QUICK_KIND_RULES = Object.fromEntries(
 ) as Record<QuickTemplateKind, { fromTypes: string[]; toTypes: string[] }>;
 
 export const quickKindLabel = (kind: string) =>
-    QUICK_TEMPLATE_KINDS.find((option) => option.value === kind)?.label ?? kind;
+    (QUICK_KIND_LABELS[kind as QuickTemplateKind]?.ja
+        || QUICK_TEMPLATE_KINDS.find((option) => option.value === kind)?.label
+        || kind);
 
 export const QUICK_TEMPLATE_GROUPS: Array<{ value: QuickTemplateGroup; label: string }> = [
     { value: 'expense', label: '支出' },
@@ -109,6 +111,28 @@ export const QUICK_TEMPLATE_GROUPS: Array<{ value: QuickTemplateGroup; label: st
 
 export const quickKindGroup = (kind: string): QuickTemplateGroup =>
     QUICK_TEMPLATE_KINDS.find((option) => option.value === kind)?.group ?? 'expense';
+
+const QUICK_KIND_LABELS: Record<QuickTemplateKind, Record<LanguageCode, string>> = {
+    simple_expense: { ja: '支出', en: 'Expense' },
+    credit_expense: { ja: '支出（クレカ）', en: 'Credit Expense' },
+    expense_with_advance: { ja: '支出＋立替', en: 'Expense + Advance' },
+    income: { ja: '収入', en: 'Income' },
+    reimbursement: { ja: '返金・精算', en: 'Reimbursement' },
+    transfer: { ja: '口座移動', en: 'Transfer' },
+    debt_payment: { ja: '負債支払', en: 'Debt Payment' },
+};
+
+const QUICK_GROUP_LABELS: Record<QuickTemplateGroup, Record<LanguageCode, string>> = {
+    expense: { ja: '支出', en: 'Expense' },
+    income: { ja: '収入', en: 'Income' },
+    transfer: { ja: '移動', en: 'Transfer' },
+};
+
+export const quickKindLabelFor = (kind: string, language: LanguageCode = 'ja') =>
+    QUICK_KIND_LABELS[kind as QuickTemplateKind]?.[language] ?? quickKindLabel(kind);
+
+export const quickGroupLabel = (group: QuickTemplateGroup, language: LanguageCode = 'ja') =>
+    QUICK_GROUP_LABELS[group]?.[language] ?? group;
 
 export const QUICK_PRESETS: QuickPreset[] = [
     {
@@ -395,6 +419,109 @@ export const QUICK_PRESETS: QuickPreset[] = [
 
 const QUICK_PRESET_KEYS = new Set(QUICK_PRESETS.map((preset) => preset.key));
 
+const QUICK_PRESET_ENGLISH: Record<string, { tray: string; name: string; category: string }> = {
+    housing_utilities: {
+        tray: 'Fixed Costs',
+        name: 'Home & Utilities',
+        category: 'Fixed Costs/Home & Utilities',
+    },
+    communications_mobile: {
+        tray: 'Fixed Costs',
+        name: 'Communications & Subscriptions',
+        category: 'Fixed Costs/Communications & Subscriptions',
+    },
+    food_groceries: {
+        tray: 'Food',
+        name: 'Groceries & Daily Meals',
+        category: 'Food/Groceries & Daily Meals',
+    },
+    food_dining_out: {
+        tray: 'Food',
+        name: 'Dining & Cafes',
+        category: 'Food/Dining & Cafes',
+    },
+    daily_consumables: {
+        tray: 'Daily Life',
+        name: 'Household Supplies',
+        category: 'Daily Life/Household Supplies',
+    },
+    beauty_skincare: {
+        tray: 'Daily Life',
+        name: 'Clothing & Grooming',
+        category: 'Daily Life/Clothing & Grooming',
+    },
+    health_medical: {
+        tray: 'Medical & Health',
+        name: 'Medical & Health',
+        category: 'Medical & Health',
+    },
+    transport_commute: {
+        tray: 'Transport',
+        name: 'Commute & Work',
+        category: 'Transport/Commute & Work',
+    },
+    transport_personal: {
+        tray: 'Transport',
+        name: 'Personal Travel',
+        category: 'Transport/Personal Travel',
+    },
+    learning_services: {
+        tray: 'Work & Learning',
+        name: 'Work Tools & Learning',
+        category: 'Work & Learning/Work Tools & Learning',
+    },
+    social_drinks: {
+        tray: 'Social',
+        name: 'Meals & Gifts',
+        category: 'Social/Meals & Gifts',
+    },
+    hobby_entertainment: {
+        tray: 'Hobbies & Entertainment',
+        name: 'Hobbies & Entertainment',
+        category: 'Hobbies & Entertainment',
+    },
+    other_unknown: {
+        tray: 'Other',
+        name: 'Uncategorized & Adjustments',
+        category: 'Other/Uncategorized & Adjustments',
+    },
+    income_salary: {
+        tray: 'Income',
+        name: 'Salary & Bonuses',
+        category: 'Income/Salary & Bonuses',
+    },
+    income_investment_return: {
+        tray: 'Income',
+        name: 'Side & Occasional Income',
+        category: 'Income/Side & Occasional Income',
+    },
+    income_refund_rebate: {
+        tray: 'Income',
+        name: 'Refunds & Rebates',
+        category: 'Income/Refunds & Rebates',
+    },
+    transfer_between_accounts: {
+        tray: 'Account Transfer',
+        name: 'Between Accounts',
+        category: 'Account Transfer/Between Accounts',
+    },
+    transfer_savings: {
+        tray: 'Account Transfer',
+        name: 'Savings & Investment Transfer',
+        category: 'Account Transfer/Savings & Investment Transfer',
+    },
+    transfer_credit_card_payment: {
+        tray: 'Payments & Settlement',
+        name: 'Credit Card & Loan Payment',
+        category: 'Payments & Settlement/Credit Card & Loan Payment',
+    },
+    transfer_reimbursement: {
+        tray: 'Payments & Settlement',
+        name: 'Reimbursements & Company Claims',
+        category: 'Payments & Settlement/Reimbursements & Company Claims',
+    },
+};
+
 export const quickPresetKey = (template: QuickTemplate | undefined) =>
     typeof template?.config?.preset_key === 'string' ? template.config.preset_key : '';
 
@@ -409,13 +536,57 @@ export const filterVisibleQuickTemplates = (templates: QuickTemplate[]) => {
     return visibleTemplates.length > 0 ? visibleTemplates : activeTemplates;
 };
 
-export const quickTemplateDisplay = (template: QuickTemplate) => {
-    const preset = quickPresetFor(template);
+export const quickPresetDisplay = (preset: QuickPreset, language: LanguageCode = 'ja') => {
+    const english = QUICK_PRESET_ENGLISH[preset.key];
+    if (language === 'en' && english) {
+        return {
+            ...english,
+            description: preset.description.en,
+        };
+    }
     return {
-        tray: preset?.tray || template.tray,
-        name: preset?.name || template.name,
-        category: preset?.category || template.category || template.tray || template.name,
-        description: preset?.description.ja || template.description || quickKindLabel(template.template_kind),
+        tray: preset.tray,
+        name: preset.name,
+        category: preset.category,
+        description: preset.description.ja,
+    };
+};
+
+const QUICK_CATEGORY_SUFFIXES: Record<string, Record<LanguageCode, string>> = {
+    自分負担: { ja: '自分負担', en: 'Own Share' },
+    立替: { ja: '立替', en: 'Advance' },
+    精算: { ja: '精算', en: 'Settlement' },
+};
+
+export const localizeQuickCategory = (category: string | null | undefined, language: LanguageCode = 'ja') => {
+    if (!category) return language === 'ja' ? 'その他' : 'Other';
+    if (language === 'ja') return category;
+
+    for (const preset of QUICK_PRESETS) {
+        const display = quickPresetDisplay(preset, language);
+        if (category === preset.tray) return display.tray;
+        if (category === preset.name) return display.name;
+        if (category === preset.category) return display.category;
+
+        const prefix = `${preset.category}/`;
+        if (category.startsWith(prefix)) {
+            const suffix = category.slice(prefix.length);
+            const localizedSuffix = QUICK_CATEGORY_SUFFIXES[suffix]?.[language];
+            if (localizedSuffix) return `${display.category}/${localizedSuffix}`;
+        }
+    }
+
+    return category;
+};
+
+export const quickTemplateDisplay = (template: QuickTemplate, language: LanguageCode = 'ja') => {
+    const preset = quickPresetFor(template);
+    const display = preset ? quickPresetDisplay(preset, language) : undefined;
+    return {
+        tray: display?.tray || template.tray,
+        name: display?.name || template.name,
+        category: display?.category || template.category || template.tray || template.name,
+        description: display?.description || template.description || quickKindLabelFor(template.template_kind, language),
     };
 };
 
@@ -481,11 +652,13 @@ export const buildQuickTransactions = ({
     quickEntry,
     accounts,
     currentCurrency,
+    language = 'ja',
 }: {
     selectedTemplate: QuickTemplate | undefined;
     quickEntry: QuickEntry;
     accounts: AccountItem[];
     currentCurrency: string;
+    language?: LanguageCode;
 }): { transactions: Array<Omit<Transaction, 'id'>>; error?: string } => {
     const accountById = (id: number | string | null | undefined) => {
         if (id === null || id === undefined || id === '') return undefined;
@@ -501,9 +674,14 @@ export const buildQuickTransactions = ({
     const expenseAccount = accountById(quickEntry.expense_account_id);
     const receivableAccount = accountById(quickEntry.receivable_account_id || quickEntry.payment_account_id);
     const reimbursementAccount = accountById(quickEntry.reimbursement_account_id || quickEntry.expense_account_id);
-    const display = quickTemplateDisplay(selectedTemplate);
+    const display = quickTemplateDisplay(selectedTemplate, language);
     const description = quickEntry.description.trim() || display.name;
     const category = display.category || expenseAccount?.name;
+    const generatedText = {
+        ownShare: language === 'ja' ? '自分負担' : 'Own Share',
+        advance: language === 'ja' ? '立替' : 'Advance',
+        settlement: language === 'ja' ? '精算' : 'Settlement',
+    };
     const base = {
         date: quickEntry.date,
         currency: quickEntry.currency || selectedTemplate.default_currency || currentCurrency,
@@ -584,7 +762,7 @@ export const buildQuickTransactions = ({
         if (resolvedOwn > 0) {
             transactions.push({
                 ...base,
-                description: `${description} 自分負担`,
+                description: `${description} ${generatedText.ownShare}`,
                 amount: resolvedOwn,
                 type: isCreditPayment ? 'CreditExpense' : 'Expense',
                 category,
@@ -595,10 +773,10 @@ export const buildQuickTransactions = ({
         if (resolvedAdvance > 0 && receivableAccount) {
             transactions.push({
                 ...base,
-                description: `${description} 立替`,
+                description: `${description} ${generatedText.advance}`,
                 amount: resolvedAdvance,
                 type: isCreditPayment ? 'CreditAssetPurchase' : 'Transfer',
-                category: `${category}/立替`,
+                category: `${category}/${generatedText.advance}`,
                 from_account_id: paymentAccount.id,
                 to_account_id: receivableAccount.id,
             });
@@ -607,10 +785,10 @@ export const buildQuickTransactions = ({
             if (!receivableAccount || !reimbursementAccount) return { transactions: [], error: 'Deposit account is required for reimbursement' };
             transactions.push({
                 ...base,
-                description: `${description} 精算`,
+                description: `${description} ${generatedText.settlement}`,
                 amount: resolvedAdvance,
                 type: 'Transfer',
-                category: `${category}/精算`,
+                category: `${category}/${generatedText.settlement}`,
                 from_account_id: receivableAccount.id,
                 to_account_id: reimbursementAccount.id,
             });

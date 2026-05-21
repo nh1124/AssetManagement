@@ -24,12 +24,14 @@ import {
     filterVisibleQuickTemplates,
     QUICK_KIND_RULES,
     QUICK_TEMPLATE_GROUPS,
-    quickKindLabel,
+    quickGroupLabel,
+    quickKindLabelFor,
     quickKindGroup,
     quickPresetFor,
     quickTemplateDisplay,
     type AccountItem,
     type QuickEntry,
+    type LanguageCode,
     type QuickTemplateGroup,
     type QuickTemplateKind,
 } from '../../features/journal/quick';
@@ -69,13 +71,14 @@ export default function MobileQuickPage() {
     const [, setIsLoading] = useState(true);
 
     const currentCurrency = currentClient?.general_settings?.currency || 'JPY';
+    const language: LanguageCode = String(currentClient?.general_settings?.language || 'ja').toLowerCase().startsWith('ja') ? 'ja' : 'en';
     const trayTiles = Array.from(new Set(
         templates
             .filter((template) => quickKindGroup(template.template_kind) === activeGroup)
-            .map((template) => quickTemplateDisplay(template).tray)
+            .map((template) => quickTemplateDisplay(template, language).tray)
     )).map((tray) => {
         const trayTemplates = templates.filter((template) =>
-            quickTemplateDisplay(template).tray === tray && quickKindGroup(template.template_kind) === activeGroup
+            quickTemplateDisplay(template, language).tray === tray && quickKindGroup(template.template_kind) === activeGroup
         );
         const preset = trayTemplates[0] ? quickPresetFor(trayTemplates[0]) : undefined;
         return {
@@ -86,8 +89,15 @@ export default function MobileQuickPage() {
         };
     });
     const visibleTemplates = activeTray
-        ? templates.filter((template) => quickTemplateDisplay(template).tray === activeTray && quickKindGroup(template.template_kind) === activeGroup)
+        ? templates.filter((template) => quickTemplateDisplay(template, language).tray === activeTray && quickKindGroup(template.template_kind) === activeGroup)
         : [];
+    const mobileQuickText = {
+        templateCount: (count: number) => language === 'ja' ? `${count} テンプレート` : `${count} templates`,
+        noCategories: (group: QuickTemplateGroup) => language === 'ja'
+            ? `${quickGroupLabel(group, language)}カテゴリはまだありません。`
+            : `No ${quickGroupLabel(group, language).toLowerCase()} categories yet.`,
+        noTemplatesIn: (tray: string) => language === 'ja' ? `${tray} のテンプレートはありません。` : `No templates in ${tray}.`,
+    };
 
     const loadQuickData = async () => {
         setIsLoading(true);
@@ -138,7 +148,7 @@ export default function MobileQuickPage() {
                             onClick={() => { setActiveGroup(group.value); setActiveTray(''); }}
                             className={`h-8 rounded-full px-4 text-xs transition-colors ${activeGroup === group.value ? 'bg-emerald-500 text-slate-950' : 'text-slate-500'}`}
                         >
-                            {group.label}
+                            {quickGroupLabel(group.value, language)}
                         </button>
                     ))}
                 </div>
@@ -159,14 +169,14 @@ export default function MobileQuickPage() {
                     <EmptyState text="No quick templates yet. Create them from the desktop Journal screen." />
                 ) : !activeTray ? (
                     trayTiles.length === 0 ? (
-                        <EmptyState text={`No ${activeGroup} categories yet.`} />
+                        <EmptyState text={mobileQuickText.noCategories(activeGroup)} />
                     ) : (
                         <div className="flex flex-wrap justify-center gap-2">
                             {trayTiles.map((tray) => (
                                 <CategoryButton
                                     key={tray.tray}
                                     label={tray.tray}
-                                    meta={`${tray.count} templates`}
+                                    meta={mobileQuickText.templateCount(tray.count)}
                                     icon={tray.icon}
                                     tone={tray.tone}
                                     onSelect={() => setActiveTray(tray.tray)}
@@ -175,13 +185,14 @@ export default function MobileQuickPage() {
                         </div>
                     )
                 ) : visibleTemplates.length === 0 ? (
-                    <EmptyState text={`No templates in ${activeTray}.`} />
+                    <EmptyState text={mobileQuickText.noTemplatesIn(activeTray)} />
                 ) : (
                     <div className="flex flex-wrap justify-center gap-2">
                         {visibleTemplates.map((template) => (
                             <TemplateButton
                                 key={template.id}
                                 template={template}
+                                language={language}
                                 onSelect={() => setSelectedTemplate(template)}
                             />
                         ))}
@@ -214,6 +225,7 @@ export default function MobileQuickPage() {
                 template={selectedTemplate}
                 accounts={accounts}
                 currentCurrency={currentCurrency}
+                language={language}
                 onClose={() => setSelectedTemplate(null)}
                 onSaved={loadQuickData}
             />
@@ -266,10 +278,18 @@ function CategoryButton({
     );
 }
 
-function TemplateButton({ template, onSelect }: { template: QuickTemplate; onSelect: () => void }) {
+function TemplateButton({
+    template,
+    language,
+    onSelect,
+}: {
+    template: QuickTemplate;
+    language: LanguageCode;
+    onSelect: () => void;
+}) {
     const preset = quickPresetFor(template);
     const Icon = preset?.icon ?? ArrowRightLeft;
-    const display = quickTemplateDisplay(template);
+    const display = quickTemplateDisplay(template, language);
 
     return (
         <button
@@ -282,7 +302,7 @@ function TemplateButton({ template, onSelect }: { template: QuickTemplate; onSel
                 <ChevronRight size={15} className="text-slate-600" />
             </div>
             <p className="mt-3 truncate text-sm font-medium text-slate-100">{display.name}</p>
-            <p className="mt-1 truncate text-[10px] text-slate-500">{display.tray} - {quickKindLabel(template.template_kind)}</p>
+            <p className="mt-1 truncate text-[10px] text-slate-500">{display.tray} - {quickKindLabelFor(template.template_kind, language)}</p>
         </button>
     );
 }
@@ -299,12 +319,14 @@ function MobileQuickEntrySheet({
     template,
     accounts,
     currentCurrency,
+    language,
     onClose,
     onSaved,
 }: {
     template: QuickTemplate | null;
     accounts: Account[];
     currentCurrency: string;
+    language: LanguageCode;
     onClose: () => void;
     onSaved: () => Promise<void>;
 }) {
@@ -319,7 +341,7 @@ function MobileQuickEntrySheet({
     }, [template, currentCurrency, accountItems]);
 
     if (!template) return null;
-    const display = quickTemplateDisplay(template);
+    const display = quickTemplateDisplay(template, language);
 
     const save = async () => {
         const ownAmount = entry.ownAmount || entry.amount;
@@ -329,10 +351,11 @@ function MobileQuickEntrySheet({
             quickEntry: { ...resolvedEntry, ownAmount },
             accounts: accountItems,
             currentCurrency,
+            language,
         });
 
         const resolvedTransactions = error && isMissingAccountError(error)
-            ? [buildFallbackTransaction(template, resolvedEntry, accountItems, currentCurrency)]
+            ? [buildFallbackTransaction(template, resolvedEntry, accountItems, currentCurrency, language)]
             : transactions;
 
         if (error && resolvedTransactions.length === 0) {
@@ -371,7 +394,7 @@ function MobileQuickEntrySheet({
             <section className="relative w-full border-t border-slate-700 bg-slate-950 p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-2xl">
                 <div className="mb-4 flex items-center justify-between">
                     <div className="min-w-0">
-                        <p className="text-[10px] uppercase tracking-wide text-slate-500">{quickKindLabel(template.template_kind)}</p>
+                        <p className="text-[10px] uppercase tracking-wide text-slate-500">{quickKindLabelFor(template.template_kind, language)}</p>
                         <h2 className="truncate text-lg font-semibold text-slate-100">{display.name}</h2>
                     </div>
                     <button type="button" onClick={onClose} className="p-2 text-slate-500 active:text-slate-200" aria-label="Close">
@@ -463,9 +486,10 @@ function buildFallbackTransaction(
     entry: QuickEntry,
     accounts: AccountItem[],
     currentCurrency: string,
+    language: LanguageCode,
 ): Omit<Transaction, 'id'> {
     const paymentAccount = accounts.find((account) => account.id === Number(entry.payment_account_id));
-    const display = quickTemplateDisplay(template);
+    const display = quickTemplateDisplay(template, language);
     return {
         date: entry.date,
         description: entry.description.trim() || display.name,

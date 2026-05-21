@@ -26,9 +26,11 @@ import {
     QUICK_PRESETS,
     QUICK_TEMPLATE_GROUPS,
     QUICK_TEMPLATE_KINDS,
+    localizeQuickCategory,
+    quickGroupLabel,
     quickHelp,
     quickKindGroup,
-    quickKindLabel,
+    quickKindLabelFor,
     quickPresetFor,
     quickTemplateDisplay,
     quickText,
@@ -270,6 +272,18 @@ export default function Journal() {
 
     const text = quickText(language);
     const help = quickHelp(language);
+    const journalText = {
+        templateCount: (count: number) => language === 'ja' ? `${count} テンプレート` : `${count} templates`,
+        noCategories: (group: QuickTemplateGroup) => language === 'ja'
+            ? `${quickGroupLabel(group, language)}カテゴリはまだありません。`
+            : `No ${quickGroupLabel(group, language).toLowerCase()} categories yet.`,
+        noTemplatesIn: (tray: string) => language === 'ja' ? `${tray} のテンプレートはありません。` : `No templates in ${tray}.`,
+        results: language === 'ja' ? '件' : 'results',
+        income: language === 'ja' ? '収入' : 'Income',
+        outflow: language === 'ja' ? '支出' : 'Outflow',
+        net: language === 'ja' ? '純額' : 'Net',
+        average: language === 'ja' ? '平均' : 'Avg',
+    };
 
     useEffect(() => {
         fetchInitialData();
@@ -282,13 +296,13 @@ export default function Journal() {
             setSelectedQuickTemplateId(null);
             return;
         }
-        if (activeQuickTray && !quickTemplates.some((template) => quickTemplateDisplay(template).tray === activeQuickTray)) {
+        if (activeQuickTray && !quickTemplates.some((template) => quickTemplateDisplay(template, language).tray === activeQuickTray)) {
             setActiveQuickTray('');
         }
         if (selectedQuickTemplateId && !quickTemplates.some((template) => template.id === selectedQuickTemplateId)) {
             setSelectedQuickTemplateId(null);
         }
-    }, [quickTemplates, activeQuickTray, selectedQuickTemplateId]);
+    }, [quickTemplates, activeQuickTray, selectedQuickTemplateId, language]);
 
     useEffect(() => {
         const seedKey = `finance_quick_seeded_${clientId}_quick_catalog_v4`;
@@ -349,7 +363,7 @@ export default function Journal() {
                 const templates = await getQuickTemplates();
                 setQuickTemplates(filterVisibleQuickTemplates(templates));
                 if (created[0]) {
-                    setActiveQuickTray(quickTemplateDisplay(created[0]).tray);
+                    setActiveQuickTray(quickTemplateDisplay(created[0], language).tray);
                     setSelectedQuickTemplateId(created[0].id);
                     selectQuickTemplate(created[0]);
                 }
@@ -462,10 +476,10 @@ export default function Journal() {
     const quickTrayTiles = Array.from(new Set(
         quickTemplates
             .filter((template) => quickKindGroup(template.template_kind) === activeQuickGroup)
-            .map((template) => quickTemplateDisplay(template).tray)
+            .map((template) => quickTemplateDisplay(template, language).tray)
     )).map((tray) => {
         const trayTemplates = quickTemplates.filter((template) =>
-            quickTemplateDisplay(template).tray === tray && quickKindGroup(template.template_kind) === activeQuickGroup
+            quickTemplateDisplay(template, language).tray === tray && quickKindGroup(template.template_kind) === activeQuickGroup
         );
         const preset = trayTemplates[0] ? quickPresetFor(trayTemplates[0]) : undefined;
         return {
@@ -477,14 +491,14 @@ export default function Journal() {
     });
     const visibleQuickTemplates = activeQuickTray
         ? quickTemplates.filter((template) =>
-            quickTemplateDisplay(template).tray === activeQuickTray && quickKindGroup(template.template_kind) === activeQuickGroup
+            quickTemplateDisplay(template, language).tray === activeQuickTray && quickKindGroup(template.template_kind) === activeQuickGroup
         )
         : [];
     const defaultQuickTray = activeQuickTray
         || (quickTemplates.find((template) => quickKindGroup(template.template_kind) === activeQuickGroup)
-            ? quickTemplateDisplay(quickTemplates.find((template) => quickKindGroup(template.template_kind) === activeQuickGroup)!).tray
+            ? quickTemplateDisplay(quickTemplates.find((template) => quickKindGroup(template.template_kind) === activeQuickGroup)!, language).tray
             : undefined)
-        || '食費';
+        || (language === 'ja' ? '食費' : 'Food');
 
     const resetQuickTemplateDraft = (tray = defaultQuickTray) => {
         setEditingQuickTemplateId(null);
@@ -506,7 +520,7 @@ export default function Journal() {
             setSelectedQuickTemplateId(null);
             return;
         }
-        const display = quickTemplateDisplay(template);
+        const display = quickTemplateDisplay(template, language);
         setSelectedQuickTemplateId(template.id);
         setQuickEntry((prev) => ({
             ...prev,
@@ -524,7 +538,7 @@ export default function Journal() {
     };
 
     const handleEditQuickTemplate = (template: QuickTemplate) => {
-        const display = quickTemplateDisplay(template);
+        const display = quickTemplateDisplay(template, language);
         setEditingQuickTemplateId(template.id);
         setShowQuickTemplateForm(true);
         setQuickTemplateDraft({
@@ -550,7 +564,7 @@ export default function Journal() {
             amount: '',
             ownAmount: '',
             advanceAmount: '',
-            description: selectedQuickTemplate ? quickTemplateDisplay(selectedQuickTemplate).name : '',
+            description: selectedQuickTemplate ? quickTemplateDisplay(selectedQuickTemplate, language).name : '',
             reimbursementReceived: false,
         }));
     };
@@ -560,6 +574,7 @@ export default function Journal() {
         quickEntry,
         accounts,
         currentCurrency,
+        language,
     });
 
     const handleSaveQuickTemplate = async () => {
@@ -587,7 +602,7 @@ export default function Journal() {
             const template = editingQuickTemplateId
                 ? await updateQuickTemplate(editingQuickTemplateId, payload)
                 : await createQuickTemplate(payload);
-            const display = quickTemplateDisplay(template);
+            const display = quickTemplateDisplay(template, language);
             showToast(editingQuickTemplateId ? 'Quick template updated' : 'Quick template created', 'success');
             setShowQuickTemplateForm(false);
             resetQuickTemplateDraft(display.tray);
@@ -638,11 +653,11 @@ export default function Journal() {
         try {
             await createTransactionBatch({
                 quick_template_id: selectedQuickTemplate?.id ?? null,
-                label: quickEntry.description || (selectedQuickTemplate ? quickTemplateDisplay(selectedQuickTemplate).name : '') || 'Quick entry',
+                label: quickEntry.description || (selectedQuickTemplate ? quickTemplateDisplay(selectedQuickTemplate, language).name : '') || 'Quick entry',
                 source: 'quick',
                 input_payload: {
                     template_kind: selectedQuickTemplate?.template_kind,
-                    tray: selectedQuickTemplate ? quickTemplateDisplay(selectedQuickTemplate).tray : undefined,
+                    tray: selectedQuickTemplate ? quickTemplateDisplay(selectedQuickTemplate, language).tray : undefined,
                     entry: quickEntry,
                 },
                 transactions: quickPreview.transactions,
@@ -1048,7 +1063,7 @@ export default function Journal() {
                                         onClick={() => { setActiveQuickGroup(group.value); setActiveQuickTray(''); setSelectedQuickTemplateId(null); }}
                                         className={`h-8 rounded-full px-4 text-xs transition-colors ${activeQuickGroup === group.value ? 'bg-emerald-500 text-slate-950' : 'text-slate-500'}`}
                                     >
-                                        {group.label}
+                                        {quickGroupLabel(group.value, language)}
                                     </button>
                                 ))}
                             </div>
@@ -1146,11 +1161,11 @@ export default function Journal() {
                                             className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs focus:border-emerald-500 focus:outline-none"
                                         >
                                             {QUICK_TEMPLATE_GROUPS.map((group) => (
-                                                <optgroup key={group.value} label={group.label}>
+                                                <optgroup key={group.value} label={quickGroupLabel(group.value, language)}>
                                                     {QUICK_TEMPLATE_KINDS
                                                         .filter((option) => option.group === group.value)
                                                         .map((option) => (
-                                                            <option key={option.value} value={option.value}>{option.label}</option>
+                                                            <option key={option.value} value={option.value}>{quickKindLabelFor(option.value, language)}</option>
                                                         ))}
                                                 </optgroup>
                                             ))}
@@ -1261,7 +1276,7 @@ export default function Journal() {
                                             <QuickCategoryTile
                                                 key={tray.tray}
                                                 label={tray.tray}
-                                                meta={`${tray.count} templates`}
+                                                meta={journalText.templateCount(tray.count)}
                                                 icon={tray.icon}
                                                 tone={tray.tone}
                                                 onClick={() => {
@@ -1273,7 +1288,7 @@ export default function Journal() {
                                     </div>
                                 ) : (
                                     <div className="border border-dashed border-slate-800 bg-slate-900/40 px-3 py-4 text-sm text-slate-500">
-                                        No {activeQuickGroup} categories yet.
+                                        {journalText.noCategories(activeQuickGroup)}
                                     </div>
                                 )
                             ) : visibleQuickTemplates.length > 0 ? (
@@ -1290,7 +1305,7 @@ export default function Journal() {
                                 </div>
                             ) : (
                                 <div className="border border-dashed border-slate-800 bg-slate-900/40 px-3 py-4 text-sm text-slate-500">
-                                    No templates in {activeQuickTray}.
+                                    {journalText.noTemplatesIn(activeQuickTray)}
                                 </div>
                             )
                         ) : (
@@ -1313,9 +1328,9 @@ export default function Journal() {
                             <div className="border border-slate-700 bg-slate-900/60 p-3 space-y-3">
                                 <div className="flex items-center justify-between gap-2 border-b border-slate-800 pb-2">
                                     <div>
-                                        <p className="text-xs font-bold text-white">{quickTemplateDisplay(selectedQuickTemplate).name}</p>
+                                        <p className="text-xs font-bold text-white">{quickTemplateDisplay(selectedQuickTemplate, language).name}</p>
                                         <p className="text-[10px] text-slate-500">
-                                            {quickKindGroup(selectedQuickTemplate.template_kind)} / {quickTemplateDisplay(selectedQuickTemplate).tray} / {quickKindLabel(selectedQuickTemplate.template_kind)}
+                                            {quickGroupLabel(quickKindGroup(selectedQuickTemplate.template_kind), language)} / {quickTemplateDisplay(selectedQuickTemplate, language).tray} / {quickKindLabelFor(selectedQuickTemplate.template_kind, language)}
                                         </p>
                                     </div>
                                     <div className="flex gap-1">
@@ -1888,11 +1903,11 @@ export default function Journal() {
             <div className="border border-slate-800 bg-slate-900/70 p-3 space-y-3 flex-shrink-0">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="grid grid-cols-2 xl:grid-cols-4 gap-x-4 gap-y-1 text-[10px] text-slate-400 flex-1">
-                        <span>{transactionTotal} results</span>
-                        <span className="font-mono-nums text-emerald-400">Income {formatCurrency(loadedIncome)}</span>
-                        <span className="font-mono-nums text-rose-400">Outflow {formatCurrency(loadedOutflow)}</span>
+                        <span>{transactionTotal} {journalText.results}</span>
+                        <span className="font-mono-nums text-emerald-400">{journalText.income} {formatCurrency(loadedIncome)}</span>
+                        <span className="font-mono-nums text-rose-400">{journalText.outflow} {formatCurrency(loadedOutflow)}</span>
                         <span className={`font-mono-nums ${loadedNet >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                            Net {formatCurrency(loadedNet)} / Avg {formatCurrency(loadedAverage)}
+                            {journalText.net} {formatCurrency(loadedNet)} / {journalText.average} {formatCurrency(loadedAverage)}
                         </span>
                     </div>
                     <button
@@ -1998,7 +2013,7 @@ export default function Journal() {
                                 {tx.type === 'Income' ? <ArrowUpCircle className="text-emerald-500" size={14} /> : tx.type === 'Expense' || tx.type === 'LiabilityPayment' ? <ArrowDownCircle className="text-rose-500" size={14} /> : <RefreshCw className="text-cyan-500" size={14} />}
                                 <div>
                                     <p className="text-xs">{tx.description}</p>
-                                    <p className="text-[10px] text-slate-600">{tx.date} • {tx.category || 'Other'}</p>
+                                    <p className="text-[10px] text-slate-600">{tx.date} • {localizeQuickCategory(tx.category, language)}</p>
                                 </div>
                             </div>
                             <div className="flex items-center gap-2">

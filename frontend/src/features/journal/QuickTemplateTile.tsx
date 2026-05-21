@@ -1,6 +1,6 @@
 import { ArrowRightLeft, ChevronRight } from 'lucide-react';
 import type { QuickTemplate } from '../../types';
-import { quickKindLabel, quickPresetFor, quickTemplateDisplay, type LanguageCode } from './quick';
+import { quickKindLabelFor, quickPresetFor, quickTemplateDisplay, type LanguageCode } from './quick';
 
 type QuickTemplateTileProps = {
     template: QuickTemplate;
@@ -17,7 +17,7 @@ export default function QuickTemplateTile({
 }: QuickTemplateTileProps) {
     const preset = quickPresetFor(template);
     const Icon = preset?.icon || ArrowRightLeft;
-    const display = quickTemplateDisplay(template);
+    const display = quickTemplateDisplay(template, language);
     const infoText = preset?.description[language] || display.description;
 
     return (
@@ -32,7 +32,7 @@ export default function QuickTemplateTile({
                 <ChevronRight size={15} className="text-slate-600" />
             </div>
             <span className="mt-3 block truncate text-sm font-medium text-slate-100">{display.name}</span>
-            <span className="mt-1 block truncate text-[10px] text-slate-500">{display.tray} - {quickKindLabel(template.template_kind)}</span>
+            <span className="mt-1 block truncate text-[10px] text-slate-500">{display.tray} - {quickKindLabelFor(template.template_kind, language)}</span>
         </button>
     );
 }

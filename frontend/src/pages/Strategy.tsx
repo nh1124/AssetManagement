@@ -1,6 +1,6 @@
 ﻿import { Fragment, useEffect, useState } from 'react';
 import { Bar, BarChart, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { AlertTriangle, Archive, CalendarDays, ChevronLeft, ChevronRight, Copy, Edit2, Info, Plus, RefreshCw, Search, Sparkles, Trash2, Unlink, X } from 'lucide-react';
+import { AlertTriangle, Archive, CalendarDays, ChevronLeft, ChevronRight, Copy, Edit2, Info, Plus, RefreshCw, Search, Trash2, Unlink, X } from 'lucide-react';
 import TabPanel from '../components/TabPanel';
 import { useToast } from '../components/Toast';
 import { useClient } from '../context/ClientContext';
@@ -26,7 +26,6 @@ import {
     getCapsules,
     getLifeEvents,
     getProducts,
-    processCapsuleContributions,
     syncProductReserves,
     type MonthlyPlanLinePayload,
     updateAccount,
@@ -224,7 +223,8 @@ export default function Strategy() {
     const [showCapsuleForm, setShowCapsuleForm] = useState(false);
     const [showCapsuleFilters, setShowCapsuleFilters] = useState(false);
     const [capsuleSearch, setCapsuleSearch] = useState('');
-    const [capsuleSort, setCapsuleSort] = useState<'name' | 'target' | 'progress' | 'type'>('type');
+    const [capsuleSort, setCapsuleSort] = useState<'priority' | 'name' | 'target' | 'progress' | 'balance'>('priority');
+    const [capsuleFilterType, setCapsuleFilterType] = useState<'all' | 'managed' | 'life_event' | 'product_pool' | 'manual'>('all');
     const [showRuleForm, setShowRuleForm] = useState(false);
     const [editingCapsuleId, setEditingCapsuleId] = useState<number | null>(null);
     const [capsuleForm, setCapsuleForm] = useState({ name: '', target_amount: '', current_balance: '0' });
@@ -1159,17 +1159,6 @@ export default function Strategy() {
             const detail = (error as { response?: { data?: { detail?: string } } })?.response?.data?.detail;
             showToast(detail || 'Failed to delete capsule', 'error');
             setCapsuleDeleteModal({ ...capsuleDeleteModal, confirming: false });
-        }
-    };
-
-    const processCapsules = async () => {
-        if (!confirm('Process monthly contributions for all capsules?')) return;
-        try {
-            const result = await processCapsuleContributions();
-            showToast(result.message, 'success');
-            await fetchCapsules();
-        } catch (error) {
-            showToast('Failed to process contributions', 'error');
         }
     };
 
@@ -2255,29 +2244,55 @@ export default function Strategy() {
         capsule.life_event_id || (capsule.linked_products?.length ?? 0) > 0,
     );
 
+    const capsuleIsRegistryManaged = (capsule: Capsule) => Boolean(
+        capsule.capsule_type === 'product_pool'
+        || (capsule.linked_products?.length ?? 0) > 0
+        || capsule.target_amount_source === 'linked_products'
+        || capsule.monthly_contribution_source === 'linked_products'
+    );
+
+    const capsulePriorityRank = (capsule: Capsule) => {
+        if (capsuleIsRegistryManaged(capsule)) return 0;
+        if (capsule.life_event_id) return 1;
+        return 2;
+    };
+
+    const capsuleKindLabel = (capsule: Capsule) => {
+        if (capsuleIsRegistryManaged(capsule)) return 'Managed Reserve';
+        if (capsule.life_event_id) return 'Life Event';
+        return 'Manual';
+    };
+
     const visibleCapsules = [...capsules]
         .filter((capsule) => {
             const query = capsuleSearch.trim().toLowerCase();
-            if (!query) return true;
-            return [
+            const matchesQuery = !query || [
                 capsule.name,
                 capsule.capsule_type,
                 capsule.life_event_id ? 'life event' : '',
-                capsule.capsule_type === 'product_pool' ? 'product reserve' : '',
+                capsuleIsRegistryManaged(capsule) ? 'managed reserve fixed asset reserve item reserve product reserve' : '',
+                ...(capsule.linked_products ?? []).map((product) => product.name),
             ].some((value) => (value || '').toLowerCase().includes(query));
+            if (!matchesQuery) return false;
+            if (capsuleFilterType === 'all') return true;
+            if (capsuleFilterType === 'managed') return capsuleIsRegistryManaged(capsule);
+            if (capsuleFilterType === 'life_event') return Boolean(capsule.life_event_id);
+            if (capsuleFilterType === 'product_pool') return capsule.capsule_type === 'product_pool';
+            return !capsuleIsRegistryManaged(capsule) && !capsule.life_event_id;
         })
         .sort((a, b) => {
+            if (capsuleSort === 'priority') {
+                return capsulePriorityRank(a) - capsulePriorityRank(b) || a.name.localeCompare(b.name);
+            }
             if (capsuleSort === 'name') return a.name.localeCompare(b.name);
             if (capsuleSort === 'target') return Number(b.target_amount || 0) - Number(a.target_amount || 0);
+            if (capsuleSort === 'balance') return Number(b.current_balance || 0) - Number(a.current_balance || 0);
             if (capsuleSort === 'progress') {
                 const progressA = a.target_amount > 0 ? a.current_balance / a.target_amount : 0;
                 const progressB = b.target_amount > 0 ? b.current_balance / b.target_amount : 0;
                 return progressB - progressA;
             }
-            const rank = (capsule: Capsule) => (
-                capsule.life_event_id ? 0 : capsule.capsule_type === 'product_pool' ? 1 : 2
-            );
-            return rank(a) - rank(b) || a.name.localeCompare(b.name);
+            return a.name.localeCompare(b.name);
         });
 
     const renderCapsuleForm = () => (
@@ -2288,74 +2303,105 @@ export default function Strategy() {
         </div>
     );
 
-    const renderCapsules = () => (
-        <div className="grid grid-cols-1 min-[960px]:grid-cols-[340px_1fr] gap-4 p-4">
-            <section className="bg-slate-900/60 border border-slate-800 p-4 space-y-3">
-                <h2 className="text-xs text-slate-400 uppercase tracking-wider">Capsule Actions</h2>
-                <button onClick={() => openCapsuleForm()} className="w-full bg-purple-900/40 hover:bg-purple-900/60 border border-purple-800 py-2 text-xs text-purple-200 flex items-center justify-center gap-2"><Plus size={14} /> New Capsule</button>
-                <button onClick={processCapsules} className="w-full bg-slate-800 hover:bg-slate-700 border border-slate-700 py-2 text-xs text-slate-300 flex items-center justify-center gap-2"><Sparkles size={14} /> Process Contributions</button>
-                <button onClick={() => setShowRuleForm(!showRuleForm)} className="w-full bg-slate-800 hover:bg-slate-700 border border-slate-700 py-2 text-xs text-slate-300 flex items-center justify-center gap-2"><Plus size={14} /> Auto Rule</button>
-                {showCapsuleForm && editingCapsuleId === null && renderCapsuleForm()}
-                {showRuleForm && (
-                    <div className="border border-cyan-800/50 bg-cyan-900/10 p-3 space-y-2">
-                        <select value={ruleForm.capsule_id} onChange={(event) => setRuleForm({ ...ruleForm, capsule_id: event.target.value })} className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs">
-                            <option value="">Capsule</option>
-                            {capsules.map((capsule) => <option key={capsule.id} value={capsule.id}>{capsule.name}</option>)}
-                        </select>
-                        <div className="grid grid-cols-2 gap-2">
-                            <select value={ruleForm.trigger_type} onChange={(event) => setRuleForm({ ...ruleForm, trigger_type: event.target.value as TransactionKind })} className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs">
-                                {(['Income', 'Expense', 'CreditExpense', 'Transfer'] as TransactionKind[]).map((type) => <option key={type} value={type}>{type}</option>)}
-                            </select>
-                            <input value={ruleForm.trigger_category} onChange={(event) => setRuleForm({ ...ruleForm, trigger_category: event.target.value })} placeholder="Category contains" className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs" />
-                        </div>
-                        <input value={ruleForm.trigger_description} onChange={(event) => setRuleForm({ ...ruleForm, trigger_description: event.target.value })} placeholder="Description contains" className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs" />
-                        <div className="grid grid-cols-2 gap-2">
-                            <select value={ruleForm.amount_type} onChange={(event) => setRuleForm({ ...ruleForm, amount_type: event.target.value })} className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs">
-                                <option value="fixed">Fixed</option>
-                                <option value="percentage">Percent</option>
-                            </select>
-                            <input type="number" value={ruleForm.amount_value} onChange={(event) => setRuleForm({ ...ruleForm, amount_value: event.target.value })} placeholder={ruleForm.amount_type === 'percentage' ? 'Percent' : 'Amount'} className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums" />
-                        </div>
-                        <select value={ruleForm.source_mode} onChange={(event) => setRuleForm({ ...ruleForm, source_mode: event.target.value, source_account_id: '' })} className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs">
-                            <option value="transaction_account">Use transaction account</option>
-                            <option value="fixed_account">Use fixed source account</option>
-                        </select>
-                        {ruleForm.source_mode === 'fixed_account' && (
-                            <select value={ruleForm.source_account_id} onChange={(event) => setRuleForm({ ...ruleForm, source_account_id: event.target.value })} className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs">
-                                <option value="">Source account</option>
-                                {accounts.filter((account) => account.account_type === 'asset').map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
-                            </select>
-                        )}
-                        <div className="flex gap-2"><button onClick={saveCapsuleRule} className="flex-1 bg-cyan-700 hover:bg-cyan-600 text-white py-2 text-xs">Save Rule</button><button onClick={() => setShowRuleForm(false)} className="px-3 bg-slate-800 text-slate-400 text-xs">Cancel</button></div>
-                    </div>
-                )}
-            </section>
+    const openAutoRuleForm = (capsule: Capsule) => {
+        setRuleForm({
+            capsule_id: String(capsule.id),
+            trigger_type: 'Income',
+            trigger_category: '',
+            trigger_description: '',
+            source_mode: 'transaction_account',
+            source_account_id: '',
+            amount_type: 'fixed',
+            amount_value: '',
+        });
+        setShowRuleForm(true);
+    };
 
+    const renderAutoRuleForm = () => (
+        <div className="border border-cyan-800/50 bg-cyan-900/10 p-3 space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+                <select value={ruleForm.trigger_type} onChange={(event) => setRuleForm({ ...ruleForm, trigger_type: event.target.value as TransactionKind })} className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs">
+                    {(['Income', 'Expense', 'CreditExpense', 'Transfer'] as TransactionKind[]).map((type) => <option key={type} value={type}>{type}</option>)}
+                </select>
+                <input value={ruleForm.trigger_category} onChange={(event) => setRuleForm({ ...ruleForm, trigger_category: event.target.value })} placeholder="Category contains" className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs" />
+            </div>
+            <input value={ruleForm.trigger_description} onChange={(event) => setRuleForm({ ...ruleForm, trigger_description: event.target.value })} placeholder="Description contains" className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs" />
+            <div className="grid grid-cols-2 gap-2">
+                <select value={ruleForm.amount_type} onChange={(event) => setRuleForm({ ...ruleForm, amount_type: event.target.value })} className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs">
+                    <option value="fixed">Fixed</option>
+                    <option value="percentage">Percent</option>
+                </select>
+                <input type="number" value={ruleForm.amount_value} onChange={(event) => setRuleForm({ ...ruleForm, amount_value: event.target.value })} placeholder={ruleForm.amount_type === 'percentage' ? 'Percent' : 'Amount'} className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums" />
+            </div>
+            <select value={ruleForm.source_mode} onChange={(event) => setRuleForm({ ...ruleForm, source_mode: event.target.value, source_account_id: '' })} className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs">
+                <option value="transaction_account">Use transaction account</option>
+                <option value="fixed_account">Use fixed source account</option>
+            </select>
+            {ruleForm.source_mode === 'fixed_account' && (
+                <select value={ruleForm.source_account_id} onChange={(event) => setRuleForm({ ...ruleForm, source_account_id: event.target.value })} className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs">
+                    <option value="">Source account</option>
+                    {accounts.filter((account) => account.account_type === 'asset').map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
+                </select>
+            )}
+            <div className="flex gap-2">
+                <button onClick={saveCapsuleRule} className="flex-1 bg-cyan-700 hover:bg-cyan-600 text-white py-2 text-xs">Save Rule</button>
+                <button onClick={() => setShowRuleForm(false)} className="px-3 bg-slate-800 text-slate-400 text-xs">Cancel</button>
+            </div>
+        </div>
+    );
+
+    const renderCapsules = () => (
+        <div className="p-4 space-y-4">
             <section className="bg-slate-900/60 border border-slate-800 p-4 overflow-auto">
-                <div className="flex items-center justify-between gap-3 mb-3">
-                    <h2 className="text-xs text-slate-400 uppercase tracking-wider">Capsules</h2>
-                    <button type="button" title="Search and sort capsules" onClick={() => setShowCapsuleFilters((value) => !value)} className="text-slate-500 hover:text-cyan-300">
-                        <Search size={14} />
-                    </button>
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                        <h2 className="text-xs text-slate-400 uppercase tracking-wider">Capsules</h2>
+                        <span className="text-[10px] text-slate-600">{visibleCapsules.length} / {capsules.length}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <button type="button" title="Search and sort capsules" onClick={() => setShowCapsuleFilters((value) => !value)} className="p-1.5 text-slate-500 hover:text-cyan-300">
+                            <Search size={14} />
+                        </button>
+                        <button type="button" title="New Capsule" onClick={() => openCapsuleForm()} className="p-1.5 text-slate-500 hover:text-emerald-400">
+                            <Plus size={16} />
+                        </button>
+                    </div>
                 </div>
+                {showCapsuleForm && editingCapsuleId === null && (
+                    <div className="mb-3 max-w-xl">{renderCapsuleForm()}</div>
+                )}
                 {showCapsuleFilters && (
-                    <div className="mb-3 grid grid-cols-1 sm:grid-cols-[1fr_160px] gap-2">
-                        <input
-                            value={capsuleSearch}
-                            onChange={(event) => setCapsuleSearch(event.target.value)}
-                            placeholder="Search capsules..."
-                            className="bg-slate-950 border border-slate-700 px-2 py-1.5 text-xs"
-                        />
-                        <select
-                            value={capsuleSort}
-                            onChange={(event) => setCapsuleSort(event.target.value as typeof capsuleSort)}
-                            className="bg-slate-950 border border-slate-700 px-2 py-1.5 text-xs"
-                        >
-                            <option value="type">Type</option>
-                            <option value="name">Name</option>
-                            <option value="target">Target</option>
-                            <option value="progress">Progress</option>
-                        </select>
+                    <div className="mb-4 border border-slate-800 bg-slate-950/40 p-3">
+                        <div className="grid grid-cols-1 gap-2 md:grid-cols-[1fr_180px_180px]">
+                            <input
+                                value={capsuleSearch}
+                                onChange={(event) => setCapsuleSearch(event.target.value)}
+                                placeholder="Search name, type, linked products..."
+                                className="bg-slate-950 border border-slate-700 px-2 py-1.5 text-xs"
+                            />
+                            <select
+                                value={capsuleFilterType}
+                                onChange={(event) => setCapsuleFilterType(event.target.value as typeof capsuleFilterType)}
+                                className="bg-slate-950 border border-slate-700 px-2 py-1.5 text-xs"
+                            >
+                                <option value="all">All capsules</option>
+                                <option value="managed">Managed reserves</option>
+                                <option value="product_pool">Product pools</option>
+                                <option value="life_event">Life events</option>
+                                <option value="manual">Manual</option>
+                            </select>
+                            <select
+                                value={capsuleSort}
+                                onChange={(event) => setCapsuleSort(event.target.value as typeof capsuleSort)}
+                                className="bg-slate-950 border border-slate-700 px-2 py-1.5 text-xs"
+                            >
+                                <option value="priority">Priority</option>
+                                <option value="name">Name</option>
+                                <option value="target">Target</option>
+                                <option value="balance">Balance</option>
+                                <option value="progress">Progress</option>
+                            </select>
+                        </div>
                     </div>
                 )}
                 <div className="grid grid-cols-1 min-[1120px]:grid-cols-2 gap-3">
@@ -2365,23 +2411,24 @@ export default function Strategy() {
                         const holdingForm = holdingForms[capsule.id] ?? { account_id: '', held_amount: '' };
                         const holdingsTotal = (capsule.holdings ?? []).reduce((s, h) => s + h.held_amount, 0);
                         const protectedCapsule = capsuleIsProtected(capsule);
+                        const managedCapsule = capsuleIsRegistryManaged(capsule);
+                        const ruleFormOpen = showRuleForm && ruleForm.capsule_id === String(capsule.id);
                         return (
-                            <div key={capsule.id} className="bg-slate-800/30 border border-slate-700 p-3 space-y-3">
+                            <div key={capsule.id} className={`border p-3 space-y-3 ${managedCapsule ? 'border-cyan-800/70 bg-cyan-950/10' : 'border-slate-700 bg-slate-800/30'}`}>
                                 <div className="flex justify-between gap-3">
-                                    <div>
-                                        <p className="text-sm text-slate-100 flex items-center gap-2"><Archive size={14} className="text-purple-400" /> {capsule.name}</p>
+                                    <div className="min-w-0">
+                                        <p className="text-sm text-slate-100 flex items-center gap-2"><Archive size={14} className={managedCapsule ? 'text-cyan-400' : 'text-purple-400'} /> <span className="truncate">{capsule.name}</span></p>
                                         <p className="text-[10px] text-slate-500">
-                                            Target {formatCurrency(capsule.target_amount)}
-                                            {capsule.capsule_type === 'product_pool' ? ` / Product Pool` : ''}
+                                            {capsuleKindLabel(capsule)} / Target {formatCurrency(capsule.target_amount)}
                                         </p>
                                     </div>
                                     <div className="text-right"><p className="text-lg font-mono-nums text-purple-400">{formatCurrency(capsule.current_balance)}</p><p className="text-[10px] text-slate-500">{Math.round(progress)}%</p></div>
                                 </div>
-                                {capsule.capsule_type === 'product_pool' && (
+                                {managedCapsule && (
                                     <div className="grid grid-cols-2 gap-2 text-[10px]">
                                         <div className="border border-slate-800 bg-slate-900/50 p-2">
                                             <p className="text-slate-500 uppercase">Suggested / Mo</p>
-                                            <p className="font-mono-nums text-cyan-300">{formatCurrency(capsule.recommended_monthly_contribution ?? 0)}</p>
+                                            <p className="font-mono-nums text-cyan-300">{formatCurrency(capsule.recommended_monthly_contribution ?? capsule.monthly_contribution ?? 0)}</p>
                                         </div>
                                         <div className="border border-slate-800 bg-slate-900/50 p-2">
                                             <p className="text-slate-500 uppercase">Linked Products</p>
@@ -2389,11 +2436,11 @@ export default function Strategy() {
                                         </div>
                                     </div>
                                 )}
-                                {capsule.capsule_type === 'product_pool' && (
+                                {managedCapsule && (
                                     <div className="flex justify-end">
                                         <button
                                             type="button"
-                                            title="Sync this product reserve pool"
+                                            title="Sync this reserve pool"
                                             onClick={syncReservePools}
                                             className="text-cyan-400 hover:text-cyan-200 flex items-center gap-1 text-[10px]"
                                         >
@@ -2403,6 +2450,7 @@ export default function Strategy() {
                                 )}
                                 <div className="h-1.5 bg-slate-900 rounded-full overflow-hidden"><div className="h-full bg-purple-500" style={{ width: `${progress}%` }} /></div>
                                 {showCapsuleForm && editingCapsuleId === capsule.id && renderCapsuleForm()}
+                                {ruleFormOpen && renderAutoRuleForm()}
                                 <div>
                                     <button
                                         type="button"
@@ -2453,6 +2501,7 @@ export default function Strategy() {
                                 </div>
                                 <div className="flex justify-end gap-3 text-[10px]">
                                     <button onClick={() => openCapsuleForm(capsule)} className="text-slate-400 hover:text-white flex items-center gap-1"><Edit2 size={10} /> Edit</button>
+                                    <button onClick={() => ruleFormOpen ? setShowRuleForm(false) : openAutoRuleForm(capsule)} className="text-slate-400 hover:text-cyan-300 flex items-center gap-1"><Plus size={10} /> Auto Rule</button>
                                     <button
                                         onClick={() => openCapsuleDeleteModal(capsule)}
                                         disabled={protectedCapsule}
