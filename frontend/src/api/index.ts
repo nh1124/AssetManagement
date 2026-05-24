@@ -488,6 +488,7 @@ export type MonthlyPlanLinePayload = {
     name?: string | null;
     amount: number;
     source?: string;
+    cash_treatment?: 'auto' | 'cash' | 'non_cash';
     recurring_transaction_id?: number | null;
     is_active?: boolean;
     plan_id?: number | null;

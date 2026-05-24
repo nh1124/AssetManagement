@@ -342,6 +342,7 @@ class MonthlyPlanLine(Base):
     name = Column(String, nullable=True)
     amount = Column(Float, default=0.0, nullable=False)
     source = Column(String, default="manual", server_default="manual", nullable=False)
+    cash_treatment = Column(String, default="auto", server_default="auto", nullable=False)  # auto, cash, non_cash
     recurring_transaction_id = Column(Integer, ForeignKey("recurring_transactions.id", ondelete="SET NULL"), nullable=True)
     is_active = Column(Boolean, default=True, server_default="true", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)

@@ -16,6 +16,7 @@ ProductBudgetTreatmentLiteral = Literal["auto", "expense_only", "reserve_allocat
 RegistryEntryTypeLiteral = Literal["asset", "item", "service", "income", "allocation", "debt"]
 RegistryFrequencyLiteral = Literal["Monthly", "Yearly", "EveryNDays", "Irregular"]
 RegistryLineTypeLiteral = Literal["income", "expense", "allocation", "debt_payment", "borrowing", "drawdown"]
+MonthlyPlanCashTreatmentLiteral = Literal["auto", "cash", "non_cash"]
 
 # Account Schemas
 class AccountBase(BaseModel):
@@ -349,6 +350,7 @@ class MonthlyPlanLineBase(BaseModel):
     name: Optional[str] = None
     amount: float = 0.0
     source: str = "manual"
+    cash_treatment: MonthlyPlanCashTreatmentLiteral = "auto"
     recurring_transaction_id: Optional[int] = None
     is_active: bool = True
     plan_id: Optional[int] = None
@@ -374,6 +376,7 @@ class MonthlyPlanLineUpdate(BaseModel):
     name: Optional[str] = None
     amount: Optional[float] = None
     source: Optional[str] = None
+    cash_treatment: Optional[MonthlyPlanCashTreatmentLiteral] = None
     recurring_transaction_id: Optional[int] = None
     is_active: Optional[bool] = None
     plan_id: Optional[int] = None

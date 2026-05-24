@@ -629,6 +629,170 @@ def test_cash_flow_projection_does_not_double_count_current_month_over_actuals()
         db.close()
 
 
+def test_financed_expense_counts_as_budget_usage_without_cash_flow_expense() -> None:
+    db = _session()
+    try:
+        current_period = current_period_key()
+        next_period = add_months(current_period, 1)
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        salary = models.Account(client_id=1, name="salary", account_type="income")
+        cash = models.Account(client_id=1, name="cash", account_type="asset")
+        beauty = models.Account(client_id=1, name="beauty", account_type="expense")
+        loan = models.Account(client_id=1, name="medical loan", account_type="liability")
+        db.add_all([client, salary, cash, beauty, loan])
+        db.flush()
+        db.add_all([
+            models.MonthlyPlanLine(
+                client_id=1,
+                target_period=current_period,
+                line_type="expense",
+                target_type="account",
+                account_id=beauty.id,
+                source_account_id=loan.id,
+                name="beauty",
+                amount=600000,
+                cash_treatment="non_cash",
+            ),
+            models.MonthlyPlanLine(
+                client_id=1,
+                target_period=current_period,
+                line_type="debt_payment",
+                target_type="account",
+                account_id=loan.id,
+                name="medical loan",
+                amount=30000,
+            ),
+            models.MonthlyPlanLine(
+                client_id=1,
+                target_period=next_period,
+                line_type="expense",
+                target_type="account",
+                account_id=beauty.id,
+                source_account_id=loan.id,
+                name="beauty",
+                amount=600000,
+                cash_treatment="non_cash",
+            ),
+            models.MonthlyPlanLine(
+                client_id=1,
+                target_period=next_period,
+                line_type="debt_payment",
+                target_type="account",
+                account_id=loan.id,
+                name="medical loan",
+                amount=30000,
+            ),
+        ])
+        opening_tx = models.Transaction(
+            client_id=1,
+            date=period_to_range(add_months(current_period, -1))[0],
+            description="opening income",
+            amount=100000,
+            type="Income",
+            from_account_id=salary.id,
+            to_account_id=cash.id,
+            currency="JPY",
+        )
+        financed_expense = models.Transaction(
+            client_id=1,
+            date=date.today(),
+            description="beauty",
+            amount=600000,
+            type="CreditExpense",
+            from_account_id=loan.id,
+            to_account_id=beauty.id,
+            currency="JPY",
+        )
+        repayment = models.Transaction(
+            client_id=1,
+            date=date.today(),
+            description="medical loan repayment",
+            amount=30000,
+            type="LiabilityPayment",
+            from_account_id=cash.id,
+            to_account_id=loan.id,
+            currency="JPY",
+        )
+        db.add_all([opening_tx, financed_expense, repayment])
+        db.commit()
+        process_transaction(db, opening_tx)
+        process_transaction(db, financed_expense)
+        process_transaction(db, repayment)
+
+        summary = get_budget_summary(db, client_id=1, period=current_period, cash_flow_months=2)
+        current_row = summary["cash_flow_projection"][0]
+        next_row = summary["cash_flow_projection"][1]
+        expense = next(account for account in summary["expense_accounts"] if account["account_id"] == beauty.id)
+        debt_line = next(line for line in summary["plan_lines"] if line["line_type"] == "debt_payment")
+
+        assert expense["balance"] == 600000
+        assert expense["cash_treatment"] == "non_cash"
+        assert debt_line["actual"] == 30000
+        assert summary["starting_cash"] == 70000
+        assert current_row["expense"] == 0
+        assert current_row["debt"] == 0
+        assert current_row["ending_cash"] == 70000
+        assert next_row["expense"] == 0
+        assert next_row["debt"] == 30000
+        assert next_row["net_cash"] == -30000
+        assert next_row["ending_cash"] == 40000
+    finally:
+        db.close()
+
+
+def test_auto_cash_treatment_excludes_credit_expense_recurrence_from_cash_flow() -> None:
+    db = _session()
+    try:
+        next_period = add_months(current_period_key(), 1)
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        cash = models.Account(client_id=1, name="cash", account_type="asset")
+        credit = models.Account(client_id=1, name="credit", account_type="liability")
+        subscription = models.Account(client_id=1, name="subscription", account_type="expense")
+        db.add_all([client, cash, credit, subscription])
+        db.flush()
+        recurring = models.RecurringTransaction(
+            client_id=1,
+            name="subscription",
+            amount=10000,
+            type="CreditExpense",
+            from_account_id=credit.id,
+            to_account_id=subscription.id,
+            frequency="Monthly",
+            is_active=True,
+        )
+        db.add(recurring)
+        db.flush()
+        db.add(models.MonthlyPlanLine(
+            client_id=1,
+            target_period=next_period,
+            line_type="expense",
+            target_type="account",
+            account_id=subscription.id,
+            source_account_id=credit.id,
+            name="subscription",
+            amount=10000,
+            source="recurrence",
+            recurring_transaction_id=recurring.id,
+            cash_treatment="auto",
+        ))
+        db.commit()
+
+        summary = get_budget_summary(
+            db,
+            client_id=1,
+            period=current_period_key(),
+            cash_flow_start_period=next_period,
+            cash_flow_months=1,
+        )
+        row = summary["cash_flow_projection"][0]
+
+        assert row["period"] == next_period
+        assert row["expense"] == 0
+        assert row["net_cash"] == 0
+    finally:
+        db.close()
+
+
 def test_cash_flow_projection_warns_about_unsynced_product_reserve_capsule() -> None:
     db = _session()
     try:

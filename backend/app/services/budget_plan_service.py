@@ -24,6 +24,7 @@ from .registry_service import (
 LIQUID_ACCOUNT_NAMES = {"cash", "bank", "savings"}
 INFLOW_LINE_TYPES = {"income", "borrowing", "drawdown"}
 OUTFLOW_LINE_TYPES = {"expense", "allocation", "debt_payment"}
+NON_CASH_TRANSACTION_TYPES = {"CreditExpense", "CreditAssetPurchase"}
 
 
 BudgetSummaryContext = dict[str, dict]
@@ -222,7 +223,51 @@ def actual_for_plan_line(
 def _line_attr(line: models.MonthlyPlanLine | dict, key: str):
     if isinstance(line, dict):
         return line.get(key)
-    return getattr(line, key)
+    return getattr(line, key, None)
+
+
+def _line_cash_treatment(line: models.MonthlyPlanLine | dict) -> str:
+    return _line_attr(line, "cash_treatment") or "auto"
+
+
+def _linked_recurring_transaction_type(
+    db: Session,
+    client_id: int,
+    line: models.MonthlyPlanLine | dict,
+    context: BudgetSummaryContext | None = None,
+) -> str | None:
+    transaction_type = _line_attr(line, "transaction_type")
+    if transaction_type:
+        return transaction_type
+    recurring_id = _line_attr(line, "recurring_transaction_id")
+    if not recurring_id:
+        return None
+    if context is not None:
+        cache = context.setdefault("recurring_transaction_types", {})
+        if recurring_id in cache:
+            return cache[recurring_id]
+    recurring = db.query(models.RecurringTransaction).filter(
+        models.RecurringTransaction.id == recurring_id,
+        models.RecurringTransaction.client_id == client_id,
+    ).first()
+    transaction_type = recurring.type if recurring else None
+    if context is not None:
+        context.setdefault("recurring_transaction_types", {})[recurring_id] = transaction_type
+    return transaction_type
+
+
+def plan_line_has_cash_impact(
+    db: Session,
+    client_id: int,
+    line: models.MonthlyPlanLine | dict,
+    context: BudgetSummaryContext | None = None,
+) -> bool:
+    treatment = _line_cash_treatment(line)
+    if treatment == "cash":
+        return True
+    if treatment == "non_cash":
+        return False
+    return _linked_recurring_transaction_type(db, client_id, line, context) not in NON_CASH_TRANSACTION_TYPES
 
 
 def _cash_flow_line_account_id(
@@ -273,6 +318,8 @@ def cash_flow_actual_for_plan_line(
     current capsule balance for budget variance, but cash flow only needs the
     already-executed movement for the month.
     """
+    if not plan_line_has_cash_impact(db, client_id, line, context):
+        return 0.0
     txs = _period_transactions_cached(db, client_id, period, context)
     line_type = _line_attr(line, "line_type")
     account_id = _cash_flow_line_account_id(db, client_id, line, context)
@@ -296,13 +343,13 @@ def cash_flow_actual_for_plan_line(
     elif line_type == "expense":
         selected = [
             tx for tx in txs
-            if tx.type in {"Expense", "CreditExpense"}
+            if tx.type == "Expense"
             and ((account_id and tx.to_account_id == account_id) or (not account_id and matches_text(tx)))
         ]
     elif line_type == "allocation":
         selected = [
             tx for tx in txs
-            if tx.type in {"Transfer", "CreditAssetPurchase"}
+            if tx.type == "Transfer"
             and ((account_id and tx.to_account_id == account_id) or (not account_id and matches_text(tx)))
         ]
     elif line_type == "debt_payment":
@@ -336,6 +383,8 @@ def _cash_flow_line_amount_for_period(
     context: BudgetSummaryContext | None = None,
 ) -> float:
     planned = line.amount or 0.0
+    if not plan_line_has_cash_impact(db, client_id, line, context):
+        return 0.0
     if period != current_period_key():
         return planned
     actual = cash_flow_actual_for_plan_line(db, client_id, line, period, context)
@@ -373,6 +422,7 @@ def _serialize_plan_line(
         "suggested_status": None,
         "is_active": line.is_active,
         "source": line.source or "manual",
+        "cash_treatment": line.cash_treatment or "auto",
         "recurring_transaction_id": line.recurring_transaction_id,
         "sync_status": None,
     }
@@ -406,6 +456,7 @@ def _virtual_capsule_line(
         "suggested_status": "synced" if capsule.capsule_type == "product_pool" else None,
         "is_active": True,
         "source": "capsule",
+        "cash_treatment": "cash",
         "recurring_transaction_id": None,
         "sync_status": None,
     }
@@ -462,9 +513,15 @@ def _sum_actual(lines: Iterable[dict], *line_types: str) -> float:
     return sum((line.get("actual") or 0.0) for line in lines if line.get("line_type") in wanted)
 
 
-def _plan_match_key(line_type: str | None, target_type: str | None, account_id: int | None, name: str | None) -> tuple:
+def _plan_match_key(
+    line_type: str | None,
+    target_type: str | None,
+    account_id: int | None,
+    name: str | None,
+    cash_treatment: str | None = "auto",
+) -> tuple:
     normalized_name = "" if account_id else (name or "").strip().lower()
-    return (line_type or "", target_type or "manual", account_id or 0, normalized_name)
+    return (line_type or "", target_type or "manual", account_id or 0, normalized_name, cash_treatment or "auto")
 
 
 def _line_identity_key(line: models.MonthlyPlanLine | dict) -> tuple:
@@ -480,6 +537,7 @@ def _line_identity_key(line: models.MonthlyPlanLine | dict) -> tuple:
         account_id or 0,
         target_id or 0,
         name,
+        getter("cash_treatment", "auto") or "auto",
     )
 
 
@@ -583,6 +641,7 @@ def _registry_plan_line(
             "amount": round(amount, 0),
         }] if entry.source_product_id else [],
         "source": "registry",
+        "cash_treatment": "auto",
         "recurring_transaction_id": entry.source_recurring_transaction_id,
         "sync_status": "missing",
         "is_active": True,
@@ -618,7 +677,7 @@ def registry_plan_lines(
     lines = [line for entry in entries if (line := _registry_plan_line(db, entry, period, name_maps)) is not None]
     aggregated: dict[tuple, dict] = {}
     for line in lines:
-        key = _plan_match_key(line["line_type"], line["target_type"], line["account_id"], line["name"])
+        key = _plan_match_key(line["line_type"], line["target_type"], line["account_id"], line["name"], line.get("cash_treatment"))
         if key not in aggregated:
             item = dict(line)
             if item["account_id"]:
@@ -689,30 +748,47 @@ def registry_totals(
 
 def _merge_registry_context(plan_lines: list[dict], registry_lines: list[dict]) -> list[dict]:
     registry_by_key = {
-        _plan_match_key(line["line_type"], line["target_type"], line["account_id"], line["name"]): line
+        _plan_match_key(line["line_type"], line["target_type"], line["account_id"], line["name"], line.get("cash_treatment")): line
         for line in registry_lines
     }
-    # Secondary index: (line_type, entry_name) for fallback when account_id differs between
+    # Secondary index: (line_type, entry_name, cash_treatment) for fallback when account_id differs between
     # an existing DB plan line (account_id=None) and the registry line (account_id set).
     registry_by_entry_name: dict[tuple, dict] = {}
     for reg_line in registry_lines:
         lt = reg_line.get("line_type") or ""
+        cash_treatment = reg_line.get("cash_treatment") or "auto"
         for item in reg_line.get("registry_items", []):
             entry_name = (item.get("name") or "").strip().lower()
             if entry_name:
-                registry_by_entry_name.setdefault((lt, entry_name), reg_line)
+                registry_by_entry_name.setdefault((lt, entry_name, cash_treatment), reg_line)
 
     matched_keys: set[tuple] = set()
     for line in plan_lines:
-        primary_key = _plan_match_key(line.get("line_type"), line.get("target_type"), line.get("account_id"), line.get("name") or line.get("target_name"))
+        primary_key = _plan_match_key(
+            line.get("line_type"),
+            line.get("target_type"),
+            line.get("account_id"),
+            line.get("name") or line.get("target_name"),
+            line.get("cash_treatment"),
+        )
         registry_line = registry_by_key.get(primary_key)
         if not registry_line:
             plan_name = (line.get("name") or line.get("target_name") or "").strip().lower()
             if plan_name:
-                registry_line = registry_by_entry_name.get((line.get("line_type") or "", plan_name))
+                registry_line = registry_by_entry_name.get((
+                    line.get("line_type") or "",
+                    plan_name,
+                    line.get("cash_treatment") or "auto",
+                ))
         registry_amount = round((registry_line or {}).get("registry_amount") or 0.0, 0)
         if registry_line:
-            matched_keys.add(_plan_match_key(registry_line["line_type"], registry_line["target_type"], registry_line["account_id"], registry_line["name"]))
+            matched_keys.add(_plan_match_key(
+                registry_line["line_type"],
+                registry_line["target_type"],
+                registry_line["account_id"],
+                registry_line["name"],
+                registry_line.get("cash_treatment"),
+            ))
             line["registry_amount"] = registry_amount
             line["registry_entry_ids"] = registry_line.get("registry_entry_ids", [])
             line["registry_items"] = registry_line.get("registry_items", [])
@@ -738,7 +814,7 @@ def _merge_registry_context(plan_lines: list[dict], registry_lines: list[dict]) 
 
     plan_lines.extend([
         line for line in registry_lines
-        if _plan_match_key(line["line_type"], line["target_type"], line["account_id"], line["name"]) not in matched_keys
+        if _plan_match_key(line["line_type"], line["target_type"], line["account_id"], line["name"], line.get("cash_treatment")) not in matched_keys
     ])
     return plan_lines
 
@@ -904,6 +980,7 @@ def get_budget_summary(
                 "suggested_source": line.get("suggested_source"),
                 "suggested_status": line.get("suggested_status"),
                 "source": line.get("source"),
+                "cash_treatment": line.get("cash_treatment", "auto"),
                 "sync_status": line.get("sync_status"),
                 "recurring_transaction_id": line.get("recurring_transaction_id"),
             }
@@ -1016,7 +1093,7 @@ def recurrence_setup_warnings(
 ) -> list[dict]:
     registry_lines = registry_plan_lines(db, client_id, period, context)
     plan_by_key = {
-        _plan_match_key(line.line_type, line.target_type, line.account_id, line.name): line
+        _plan_match_key(line.line_type, line.target_type, line.account_id, line.name, line.cash_treatment): line
         for line in plan_models
     }
     warnings = []
@@ -1026,6 +1103,7 @@ def recurrence_setup_warnings(
             registry_line["target_type"],
             registry_line["account_id"],
             registry_line["name"],
+            registry_line.get("cash_treatment"),
         ))
         if not matched:
             warnings.append({

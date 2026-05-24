@@ -162,6 +162,7 @@ def copy_period_full_replace(
             name=src.name,
             amount=src.amount,
             source=src.source,
+            cash_treatment=src.cash_treatment,
             recurring_transaction_id=src.recurring_transaction_id,
             is_active=True,
         )
@@ -221,6 +222,7 @@ def copy_plan_from(
             name=src.name,
             amount=src.amount,
             source=src.source,
+            cash_treatment=src.cash_treatment,
             recurring_transaction_id=src.recurring_transaction_id,
             is_active=True,
         )

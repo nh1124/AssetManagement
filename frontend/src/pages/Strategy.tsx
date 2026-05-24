@@ -42,6 +42,7 @@ import type {
     CapsuleRule,
     LifeEvent,
     MonthlyPlanLine,
+    MonthlyPlanCashTreatment,
     MonthlyPlanTargetType,
     MonthlyPlanLineType,
     Product,
@@ -79,6 +80,7 @@ interface BudgetAccount {
     suggested_source?: string | null;
     suggested_status?: 'synced' | 'missing' | 'diff' | null;
     source?: string | null;
+    cash_treatment?: MonthlyPlanCashTreatment;
     sync_status?: 'synced' | 'missing' | 'diff' | null;
 }
 
@@ -186,6 +188,7 @@ export default function Strategy() {
     const [budgetCategoryForm, setBudgetCategoryForm] = useState({
         name: '',
         amount: '',
+        cash_treatment: 'auto' as MonthlyPlanCashTreatment,
     });
     const [allExpenseAccounts, setAllExpenseAccounts] = useState<Account[]>([]);
     const [categorySearch, setCategorySearch] = useState('');
@@ -199,6 +202,7 @@ export default function Strategy() {
         account_id: string;
         name: string;
         amount: string;
+        cash_treatment: MonthlyPlanCashTreatment;
     }>({
         line_type: 'allocation',
         target_type: 'account',
@@ -206,6 +210,7 @@ export default function Strategy() {
         account_id: '',
         name: '',
         amount: '',
+        cash_treatment: 'auto',
     });
     const [products, setProducts] = useState<Product[]>([]);
     const [lifeEvents, setLifeEvents] = useState<LifeEvent[]>([]);
@@ -282,7 +287,6 @@ export default function Strategy() {
         if (kind === 'product_reserve') return 'Product Reserve';
         return 'Source';
     };
-
     const budgetSourceDetails = (account: BudgetAccount): SourceDetail[] => {
         const productKeys = new Set((account.product_expense_items ?? []).map(
             (item) => `${item.name}|${Number(item.amount || 0)}`,
@@ -518,6 +522,7 @@ export default function Strategy() {
             amount,
             source,
             recurring_transaction_id: source.includes('recurrence') ? account.recurring_transaction_id ?? null : null,
+            cash_treatment: account.cash_treatment ?? 'auto',
             is_active: true,
         };
         return {
@@ -534,6 +539,14 @@ export default function Strategy() {
             showToast('Failed to save budget change', 'error');
         }
     };
+    const persistBudgetAccountCashTreatment = async (account: BudgetAccount, cashTreatment: MonthlyPlanCashTreatment) => {
+        try {
+            await persistMonthlyPlanLines([{ ...budgetAccountPlanPayload(account, budgetEdits[account.id] ?? account.amount), cash_treatment: cashTreatment }]);
+            await fetchBudgetSummary();
+        } catch (error) {
+            showToast('Failed to save cash treatment', 'error');
+        }
+    };
 
     const openBudgetCategoryForm = async (account?: BudgetAccount) => {
         setEditingBudgetAccount(account ?? null);
@@ -541,8 +554,9 @@ export default function Strategy() {
             ? {
                 name: account.name,
                 amount: String(budgetEdits[account.id] ?? account.amount ?? 0),
+                cash_treatment: account.cash_treatment ?? 'auto',
             }
-            : { name: '', amount: '' });
+            : { name: '', amount: '', cash_treatment: 'auto' });
         setCategorySearch('');
         setSelectedAccountId(null);
         setShowCategoryDropdown(false);
@@ -569,6 +583,7 @@ export default function Strategy() {
                     name,
                     amount,
                     source: 'manual',
+                    cash_treatment: budgetCategoryForm.cash_treatment,
                 }]);
                 showToast('Budget category updated', 'success');
             } else if (selectedAccountId !== null) {
@@ -581,6 +596,7 @@ export default function Strategy() {
                     name: account?.name ?? null,
                     amount,
                     source: 'manual',
+                    cash_treatment: budgetCategoryForm.cash_treatment,
                 }]);
                 showToast('Budget category added', 'success');
             } else {
@@ -594,12 +610,13 @@ export default function Strategy() {
                     target_type: 'account',
                     name: created.name,
                     amount,
+                    cash_treatment: budgetCategoryForm.cash_treatment,
                 }]);
                 showToast('Budget category added', 'success');
             }
             setShowBudgetCategoryForm(false);
             setEditingBudgetAccount(null);
-            setBudgetCategoryForm({ name: '', amount: '' });
+            setBudgetCategoryForm({ name: '', amount: '', cash_treatment: 'auto' });
             setCategorySearch('');
             setSelectedAccountId(null);
             await fetchBudgetSummary();
@@ -633,6 +650,7 @@ export default function Strategy() {
             account_id: '',
             name: '',
             amount: '',
+            cash_treatment: 'auto',
         });
     };
 
@@ -642,7 +660,7 @@ export default function Strategy() {
         const accountId = line.account_id ?? 0;
         const targetId = line.target_id ?? 0;
         const name = accountId || targetId ? '' : (line.name || line.target_name || '').trim().toLowerCase();
-        return `${line.line_type || ''}|${line.target_type || 'manual'}|${accountId}|${targetId}|${name}`;
+        return `${line.line_type || ''}|${line.target_type || 'manual'}|${accountId}|${targetId}|${name}|${line.cash_treatment || 'auto'}`;
     };
 
     const recurringContextFor = (line: Partial<MonthlyPlanLine>) => {
@@ -671,12 +689,35 @@ export default function Strategy() {
                 name: line.name || line.target_name || null,
                 amount,
                 source: line.source && SYNCED_SOURCES.has(line.source) ? line.source : 'manual',
+                cash_treatment: line.cash_treatment ?? 'auto',
                 recurring_transaction_id: line.source?.includes('recurrence') ? line.recurring_transaction_id ?? null : null,
                 is_active: true,
             }]);
             await fetchBudgetSummary();
         } catch (error) {
             showToast('Failed to save plan change', 'error');
+        }
+    };
+    const persistPlanLineCashTreatment = async (line: EditablePlanLine, cashTreatment: MonthlyPlanCashTreatment) => {
+        try {
+            await persistMonthlyPlanLines([{
+                ...(typeof line.id === 'number' ? { id: line.id } : {}),
+                target_period: currentPeriod,
+                line_type: line.line_type,
+                target_type: line.target_type,
+                target_id: line.target_id ?? null,
+                account_id: line.account_id ?? null,
+                source_account_id: line.source_account_id ?? null,
+                name: line.name || line.target_name || null,
+                amount: Number(line.amount || 0),
+                source: line.source ?? 'manual',
+                cash_treatment: cashTreatment,
+                recurring_transaction_id: line.recurring_transaction_id ?? null,
+                is_active: true,
+            }]);
+            await fetchBudgetSummary();
+        } catch (error) {
+            showToast('Failed to save cash treatment', 'error');
         }
     };
 
@@ -703,6 +744,7 @@ export default function Strategy() {
                 name: account.name,
                 amount: budgetAmountWithExistingAdjustment(account),
                 source: suggestedBudgetSource(account),
+                cash_treatment: account.cash_treatment ?? 'auto',
                 recurring_transaction_id: account.suggested_source?.includes('recurrence') ? account.recurring_transaction_id ?? null : null,
                 is_active: true,
             }]);
@@ -726,6 +768,7 @@ export default function Strategy() {
                 name: account.name,
                 amount: budgetAmountWithExistingAdjustment(account),
                 source: suggestedBudgetSource(account),
+                cash_treatment: account.cash_treatment ?? 'auto',
                 recurring_transaction_id: account.suggested_source?.includes('recurrence') ? account.recurring_transaction_id ?? null : null,
                 is_active: true,
             }));
@@ -772,6 +815,7 @@ export default function Strategy() {
                 name: line.name || line.target_name || null,
                 amount: planLineAmountWithExistingAdjustment(line),
                 source: line.suggested_source === 'product_reserve' ? 'capsule' : line.suggested_source === 'registry' ? 'registry' : line.recurring_transaction_id ? 'recurrence' : line.source ?? 'manual',
+                cash_treatment: line.cash_treatment ?? 'auto',
                 recurring_transaction_id: line.recurring_transaction_id ?? null,
                 is_active: true,
             }]);
@@ -796,6 +840,7 @@ export default function Strategy() {
                 name: line.name || line.target_name || null,
                 amount: planLineAmountWithExistingAdjustment(line),
                 source: line.suggested_source === 'product_reserve' ? 'capsule' : line.suggested_source === 'registry' ? 'registry' : line.recurring_transaction_id ? 'recurrence' : line.source ?? 'manual',
+                cash_treatment: line.cash_treatment ?? 'auto',
                 recurring_transaction_id: line.recurring_transaction_id ?? null,
                 is_active: true,
             }));
@@ -837,6 +882,7 @@ export default function Strategy() {
                         return sourceAmount + adjustment;
                     })(),
                     source: suggestedBudgetSource(account),
+                    cash_treatment: account.cash_treatment ?? 'auto',
                     recurring_transaction_id: account.suggested_source?.includes('recurrence') ? account.recurring_transaction_id ?? null : null,
                     is_active: true,
                 }));
@@ -861,6 +907,7 @@ export default function Strategy() {
                         return sourceAmount + adjustment;
                     })(),
                     source: line.suggested_source === 'product_reserve' ? 'capsule' : line.suggested_source === 'registry' ? 'registry' : 'recurrence',
+                    cash_treatment: line.cash_treatment ?? 'auto',
                     recurring_transaction_id: line.recurring_transaction_id ?? null,
                     is_active: true,
                 }));
@@ -885,6 +932,7 @@ export default function Strategy() {
                         name: warning.name,
                         amount: Number(warning.amount || 0) + (existing?.id ? Number(existing.amount || 0) - Number(warning.amount || 0) : 0),
                         source: 'capsule',
+                        cash_treatment: 'cash',
                         recurring_transaction_id: null,
                         is_active: true,
                     };
@@ -915,6 +963,7 @@ export default function Strategy() {
                 name: account.name,
                 amount: Number(budgetEdits[account.id] ?? account.amount ?? 0),
                 source: 'manual',
+                cash_treatment: account.cash_treatment ?? 'auto',
                 recurring_transaction_id: null,
                 is_active: true,
             }]);
@@ -939,6 +988,7 @@ export default function Strategy() {
                 name: line.name || line.target_name || null,
                 amount: Number(line.amount || 0),
                 source: 'manual',
+                cash_treatment: line.cash_treatment ?? 'auto',
                 recurring_transaction_id: null,
                 is_active: true,
             }]);
@@ -1010,6 +1060,7 @@ export default function Strategy() {
                     name,
                     amount,
                     source: 'manual',
+                    cash_treatment: planLineForm.cash_treatment,
                     recurring_transaction_id: null,
                     is_active: true,
                 }]);
@@ -1020,6 +1071,7 @@ export default function Strategy() {
                     account_id: '',
                     name: '',
                     amount: '',
+                    cash_treatment: 'auto',
                 });
                 setExpandedPlanForm(null);
                 await fetchBudgetSummary();
@@ -1053,6 +1105,7 @@ export default function Strategy() {
                 actual: 0,
                 variance: amount,
                 source: 'manual',
+                cash_treatment: planLineForm.cash_treatment,
                 recurring_transaction_id: recurringContext?.recurring_transaction_id ?? null,
                 recurring_amount: recurringContext?.recurring_amount ?? 0,
                 sync_status: recurringContext ? 'diff' : null,
@@ -1066,6 +1119,7 @@ export default function Strategy() {
             account_id: '',
             name: '',
             amount: '',
+            cash_treatment: 'auto',
         });
         setExpandedPlanForm(null);
     };
@@ -1466,7 +1520,7 @@ export default function Strategy() {
                                 value={planLineForm.name}
                                 onChange={(event) => setPlanLineForm({ ...planLineForm, name: event.target.value })}
                                 placeholder="Name"
-                                className="col-span-4 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
+                                className="col-span-3 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
                             />
                         ) : (
                             <select
@@ -1479,7 +1533,7 @@ export default function Strategy() {
                                         target_id: planLineForm.target_type === 'account' ? '' : value,
                                     });
                                 }}
-                                className="col-span-4 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
+                                className="col-span-3 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
                             >
                                 <option value="">Target...</option>
                                 {targetOptions.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
@@ -1492,7 +1546,17 @@ export default function Strategy() {
                             placeholder="Amount"
                             className="col-span-2 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums"
                         />
-                        <button type="button" onClick={addPlanLine} className="col-span-2 bg-cyan-700 hover:bg-cyan-600 text-white py-1.5 text-xs">
+                        <select
+                            value={planLineForm.cash_treatment}
+                            onChange={(event) => setPlanLineForm({ ...planLineForm, cash_treatment: event.target.value as MonthlyPlanCashTreatment })}
+                            className="col-span-2 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
+                            title="Cash flow treatment"
+                        >
+                            <option value="auto">Auto cash</option>
+                            <option value="cash">Cash</option>
+                            <option value="non_cash">Non-cash</option>
+                        </select>
+                        <button type="button" onClick={addPlanLine} className="col-span-1 bg-cyan-700 hover:bg-cyan-600 text-white py-1.5 text-xs">
                             Add
                         </button>
                     </div>
@@ -1563,7 +1627,19 @@ export default function Strategy() {
                                                 <td className="px-2 py-2 text-slate-300">
                                                     <div>
                                                         <p>{planTargetLabel(line)}</p>
-                                                        <p className="text-[9px] text-slate-600 uppercase">{line.line_type.replace('_', ' ')}</p>
+                                                        <div className="flex flex-wrap items-center gap-2">
+                                                            <p className="text-[9px] text-slate-600 uppercase">{line.line_type.replace('_', ' ')}</p>
+                                                            <select
+                                                                value={line.cash_treatment ?? 'auto'}
+                                                                onChange={(event) => persistPlanLineCashTreatment(line, event.target.value as MonthlyPlanCashTreatment)}
+                                                                className="bg-transparent text-[9px] uppercase text-slate-600 outline-none hover:text-cyan-300"
+                                                                title="Cash flow treatment"
+                                                            >
+                                                                <option value="auto">Cash: Auto</option>
+                                                                <option value="cash">Cash: Cash</option>
+                                                                <option value="non_cash">Cash: Non-cash</option>
+                                                            </select>
+                                                        </div>
                                                     </div>
                                                 </td>
                                                 <td className="px-2 py-2 text-right font-mono-nums text-slate-500">{formatCurrency(line.actual)}</td>
@@ -1844,10 +1920,10 @@ export default function Strategy() {
                                         value={budgetCategoryForm.name}
                                         onChange={e => setBudgetCategoryForm({ ...budgetCategoryForm, name: e.target.value })}
                                         placeholder="Category name"
-                                        className="col-span-5 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
+                                        className="col-span-4 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
                                     />
                                 ) : (
-                                    <div className="col-span-5 relative">
+                                    <div className="col-span-4 relative">
                                         <input
                                             value={categorySearch}
                                             onChange={e => {
@@ -1890,8 +1966,18 @@ export default function Strategy() {
                                     value={budgetCategoryForm.amount}
                                     onChange={e => setBudgetCategoryForm({ ...budgetCategoryForm, amount: e.target.value })}
                                     placeholder="Amount"
-                                    className="col-span-3 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums"
+                                    className="col-span-2 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums"
                                 />
+                                <select
+                                    value={budgetCategoryForm.cash_treatment}
+                                    onChange={e => setBudgetCategoryForm({ ...budgetCategoryForm, cash_treatment: e.target.value as MonthlyPlanCashTreatment })}
+                                    className="col-span-2 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
+                                    title="Cash flow treatment"
+                                >
+                                    <option value="auto">Auto cash</option>
+                                    <option value="cash">Cash</option>
+                                    <option value="non_cash">Non-cash</option>
+                                </select>
                                 <button type="button" onClick={saveBudgetCategory} className="col-span-2 bg-emerald-600 hover:bg-emerald-500 text-white py-1.5 text-xs">
                                     {editingBudgetAccount ? 'Update' : 'Add'}
                                 </button>
@@ -1899,7 +1985,7 @@ export default function Strategy() {
                                     setShowBudgetCategoryForm(false);
                                     setShowCategoryDropdown(false);
                                     setEditingBudgetAccount(null);
-                                    setBudgetCategoryForm({ name: '', amount: '' });
+                                    setBudgetCategoryForm({ name: '', amount: '', cash_treatment: 'auto' });
                                 }} className="col-span-2 bg-slate-800 hover:bg-slate-700 text-slate-300 py-1.5 text-xs">
                                     Cancel
                                 </button>
@@ -1942,7 +2028,19 @@ export default function Strategy() {
                                     <Fragment key={account.id}>
                                         <tr className="hover:bg-slate-800/30 group">
                                             <td className="px-2 py-2 text-slate-300">
-                                                {account.name}
+                                                <div>
+                                                    <p>{account.name}</p>
+                                                    <select
+                                                        value={account.cash_treatment ?? 'auto'}
+                                                        onChange={(event) => persistBudgetAccountCashTreatment(account, event.target.value as MonthlyPlanCashTreatment)}
+                                                        className="mt-1 bg-transparent text-[9px] uppercase text-slate-600 outline-none hover:text-cyan-300"
+                                                        title="Cash flow treatment"
+                                                    >
+                                                        <option value="auto">Cash: Auto</option>
+                                                        <option value="cash">Cash: Cash</option>
+                                                        <option value="non_cash">Cash: Non-cash</option>
+                                                    </select>
+                                                </div>
                                             </td>
                                             <td className="px-2 py-2 text-right font-mono-nums text-slate-500">{formatCurrency(account.balance)}</td>
                                             <td className="px-2 py-2 text-right">
