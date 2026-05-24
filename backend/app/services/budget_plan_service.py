@@ -25,6 +25,7 @@ LIQUID_ACCOUNT_NAMES = {"cash", "bank", "savings"}
 INFLOW_LINE_TYPES = {"income", "borrowing", "drawdown"}
 OUTFLOW_LINE_TYPES = {"expense", "allocation", "debt_payment"}
 NON_CASH_TRANSACTION_TYPES = {"CreditExpense", "CreditAssetPurchase"}
+ASSET_FLOW_BUCKETS = ("operating", "defense", "earmarked", "growth", "unassigned")
 
 
 BudgetSummaryContext = dict[str, dict]
@@ -256,6 +257,126 @@ def _linked_recurring_transaction_type(
     return transaction_type
 
 
+def _account_cache(db: Session, client_id: int, context: BudgetSummaryContext | None = None) -> dict[int, models.Account]:
+    if context is not None:
+        cache = context.setdefault("account_by_id", {})
+        if client_id not in cache:
+            cache[client_id] = {
+                account.id: account
+                for account in db.query(models.Account).filter(models.Account.client_id == client_id).all()
+            }
+        return cache[client_id]
+    return {
+        account.id: account
+        for account in db.query(models.Account).filter(models.Account.client_id == client_id).all()
+    }
+
+
+def _account_by_id(
+    db: Session,
+    client_id: int,
+    account_id: int | None,
+    context: BudgetSummaryContext | None = None,
+) -> models.Account | None:
+    if not account_id:
+        return None
+    return _account_cache(db, client_id, context).get(account_id)
+
+
+def account_flow_bucket(account: models.Account | None) -> str:
+    if not account:
+        return "unknown"
+    if account.account_type == "asset":
+        name = (account.name or "").strip().lower()
+        role = account.role or "unassigned"
+        if role == "operating" or name in LIQUID_ACCOUNT_NAMES:
+            return "operating"
+        if role in {"defense", "earmarked", "growth"}:
+            return role
+        return "unassigned"
+    if account.account_type in {"liability", "income", "expense"}:
+        return account.account_type
+    return "unknown"
+
+
+def _empty_flow() -> dict[str, float]:
+    return {
+        "inflow": 0.0,
+        "expense": 0.0,
+        "allocation": 0.0,
+        "debt": 0.0,
+        "operating": 0.0,
+        "defense": 0.0,
+        "earmarked": 0.0,
+        "growth": 0.0,
+        "unassigned": 0.0,
+        "financing": 0.0,
+        "internal_transfer": 0.0,
+        "non_cash_budget": 0.0,
+    }
+
+
+def _add_flow(target: dict[str, float], source: dict[str, float]) -> None:
+    for key, value in source.items():
+        target[key] = target.get(key, 0.0) + (value or 0.0)
+
+
+def _movement_flow(from_bucket: str, to_bucket: str, amount: float) -> dict[str, float]:
+    flow = _empty_flow()
+    if amount <= 0:
+        return flow
+
+    if from_bucket in ASSET_FLOW_BUCKETS:
+        flow[from_bucket] -= amount
+    if to_bucket in ASSET_FLOW_BUCKETS:
+        flow[to_bucket] += amount
+
+    if from_bucket == "operating" and to_bucket == "expense":
+        flow["expense"] += amount
+    elif from_bucket == "operating" and to_bucket == "liability":
+        flow["debt"] += amount
+        flow["financing"] -= amount
+    elif from_bucket == "liability" and to_bucket in ASSET_FLOW_BUCKETS:
+        flow["inflow"] += amount if to_bucket == "operating" else 0.0
+        flow["financing"] += amount
+    elif from_bucket == "income" and to_bucket in ASSET_FLOW_BUCKETS:
+        flow["inflow"] += amount if to_bucket == "operating" else 0.0
+    elif from_bucket == "operating" and to_bucket in {"defense", "earmarked", "growth", "unassigned"}:
+        flow["allocation"] += amount
+    elif from_bucket in {"defense", "earmarked", "growth", "unassigned"} and to_bucket == "operating":
+        flow["inflow"] += amount
+    elif from_bucket == "operating" and to_bucket == "operating":
+        flow["internal_transfer"] += amount
+    elif from_bucket in ASSET_FLOW_BUCKETS and to_bucket in ASSET_FLOW_BUCKETS:
+        flow["internal_transfer"] += amount
+    elif from_bucket == "liability" and to_bucket == "expense":
+        flow["non_cash_budget"] += amount
+
+    return flow
+
+
+def _fallback_line_flow(line_type: str | None, amount: float) -> dict[str, float]:
+    flow = _empty_flow()
+    if amount <= 0:
+        return flow
+    if line_type in INFLOW_LINE_TYPES:
+        flow["inflow"] = amount
+        flow["operating"] = amount
+        if line_type == "borrowing":
+            flow["financing"] = amount
+    elif line_type == "expense":
+        flow["expense"] = amount
+        flow["operating"] = -amount
+    elif line_type == "allocation":
+        flow["allocation"] = amount
+        flow["operating"] = -amount
+    elif line_type == "debt_payment":
+        flow["debt"] = amount
+        flow["operating"] = -amount
+        flow["financing"] = -amount
+    return flow
+
+
 def plan_line_has_cash_impact(
     db: Session,
     client_id: int,
@@ -305,6 +426,61 @@ def _cash_flow_line_account_id(
     return None
 
 
+def _plan_line_movement_accounts(
+    db: Session,
+    client_id: int,
+    line: models.MonthlyPlanLine | dict,
+    context: BudgetSummaryContext | None = None,
+) -> tuple[models.Account | None, models.Account | None]:
+    line_type = _line_attr(line, "line_type")
+    source_account = _account_by_id(db, client_id, _line_attr(line, "source_account_id"), context)
+    target_account = _account_by_id(db, client_id, _cash_flow_line_account_id(db, client_id, line, context), context)
+
+    if line_type == "income":
+        return target_account, source_account
+    if line_type == "expense":
+        return source_account, target_account
+    if line_type == "allocation":
+        return source_account, target_account
+    if line_type == "debt_payment":
+        return source_account, target_account
+    if line_type == "borrowing":
+        return target_account, source_account
+    if line_type == "drawdown":
+        return target_account, source_account
+    return source_account, target_account
+
+
+def plan_line_flow_for_amount(
+    db: Session,
+    client_id: int,
+    line: models.MonthlyPlanLine | dict,
+    amount: float,
+    context: BudgetSummaryContext | None = None,
+) -> dict[str, float]:
+    if amount <= 0:
+        return _empty_flow()
+    treatment = _line_cash_treatment(line)
+    if treatment == "non_cash":
+        flow = _empty_flow()
+        flow["non_cash_budget"] = amount
+        return flow
+
+    from_account, to_account = _plan_line_movement_accounts(db, client_id, line, context)
+    if from_account or to_account:
+        flow = _movement_flow(account_flow_bucket(from_account), account_flow_bucket(to_account), amount)
+        has_classified_movement = any(
+            abs(flow.get(key, 0.0)) > 0
+            for key in (*ASSET_FLOW_BUCKETS, "financing", "internal_transfer", "non_cash_budget")
+        )
+        if not has_classified_movement and (from_account is None or to_account is None):
+            return _fallback_line_flow(_line_attr(line, "line_type"), amount)
+        if treatment == "cash" and not any(abs(flow.get(bucket, 0.0)) > 0 for bucket in ASSET_FLOW_BUCKETS):
+            return _fallback_line_flow(_line_attr(line, "line_type"), amount)
+        return flow
+    return _fallback_line_flow(_line_attr(line, "line_type"), amount)
+
+
 def cash_flow_actual_for_plan_line(
     db: Session,
     client_id: int,
@@ -323,7 +499,11 @@ def cash_flow_actual_for_plan_line(
     txs = _period_transactions_cached(db, client_id, period, context)
     line_type = _line_attr(line, "line_type")
     account_id = _cash_flow_line_account_id(db, client_id, line, context)
+    source_account_id = _line_attr(line, "source_account_id")
     name = (_line_attr(line, "name") or "").lower()
+
+    def source_matches(tx: models.Transaction, attr: str) -> bool:
+        return not source_account_id or getattr(tx, attr) == source_account_id
 
     def matches_text(tx: models.Transaction) -> bool:
         return bool(
@@ -338,36 +518,42 @@ def cash_flow_actual_for_plan_line(
         selected = [
             tx for tx in txs
             if tx.type == "Income"
+            and source_matches(tx, "to_account_id")
             and ((account_id and tx.from_account_id == account_id) or (not account_id and matches_text(tx)))
         ]
     elif line_type == "expense":
         selected = [
             tx for tx in txs
             if tx.type == "Expense"
+            and source_matches(tx, "from_account_id")
             and ((account_id and tx.to_account_id == account_id) or (not account_id and matches_text(tx)))
         ]
     elif line_type == "allocation":
         selected = [
             tx for tx in txs
             if tx.type == "Transfer"
+            and source_matches(tx, "from_account_id")
             and ((account_id and tx.to_account_id == account_id) or (not account_id and matches_text(tx)))
         ]
     elif line_type == "debt_payment":
         selected = [
             tx for tx in txs
             if tx.type == "LiabilityPayment"
+            and source_matches(tx, "from_account_id")
             and ((account_id and tx.to_account_id == account_id) or (not account_id and matches_text(tx)))
         ]
     elif line_type == "borrowing":
         selected = [
             tx for tx in txs
             if tx.type == "Borrowing"
+            and source_matches(tx, "to_account_id")
             and ((account_id and tx.from_account_id == account_id) or (not account_id and matches_text(tx)))
         ]
     elif line_type == "drawdown":
         selected = [
             tx for tx in txs
             if tx.type == "Transfer"
+            and source_matches(tx, "to_account_id")
             and ((account_id and tx.from_account_id == account_id) or (not account_id and matches_text(tx)))
         ]
     else:
@@ -383,9 +569,9 @@ def _cash_flow_line_amount_for_period(
     context: BudgetSummaryContext | None = None,
 ) -> float:
     planned = line.amount or 0.0
-    if not plan_line_has_cash_impact(db, client_id, line, context):
-        return 0.0
     if period != current_period_key():
+        return planned
+    if not plan_line_has_cash_impact(db, client_id, line, context):
         return planned
     actual = cash_flow_actual_for_plan_line(db, client_id, line, period, context)
     return max(0.0, planned - actual)
@@ -518,10 +704,18 @@ def _plan_match_key(
     target_type: str | None,
     account_id: int | None,
     name: str | None,
+    source_account_id: int | None = None,
     cash_treatment: str | None = "auto",
 ) -> tuple:
     normalized_name = "" if account_id else (name or "").strip().lower()
-    return (line_type or "", target_type or "manual", account_id or 0, normalized_name, cash_treatment or "auto")
+    return (
+        line_type or "",
+        target_type or "manual",
+        account_id or 0,
+        source_account_id or 0,
+        normalized_name,
+        cash_treatment or "auto",
+    )
 
 
 def _line_identity_key(line: models.MonthlyPlanLine | dict) -> tuple:
@@ -535,6 +729,7 @@ def _line_identity_key(line: models.MonthlyPlanLine | dict) -> tuple:
         getter("line_type"),
         getter("target_type") or "manual",
         account_id or 0,
+        getter("source_account_id") or 0,
         target_id or 0,
         name,
         getter("cash_treatment", "auto") or "auto",
@@ -677,7 +872,14 @@ def registry_plan_lines(
     lines = [line for entry in entries if (line := _registry_plan_line(db, entry, period, name_maps)) is not None]
     aggregated: dict[tuple, dict] = {}
     for line in lines:
-        key = _plan_match_key(line["line_type"], line["target_type"], line["account_id"], line["name"], line.get("cash_treatment"))
+        key = _plan_match_key(
+            line["line_type"],
+            line["target_type"],
+            line["account_id"],
+            line["name"],
+            line.get("source_account_id"),
+            line.get("cash_treatment"),
+        )
         if key not in aggregated:
             item = dict(line)
             if item["account_id"]:
@@ -748,19 +950,38 @@ def registry_totals(
 
 def _merge_registry_context(plan_lines: list[dict], registry_lines: list[dict]) -> list[dict]:
     registry_by_key = {
-        _plan_match_key(line["line_type"], line["target_type"], line["account_id"], line["name"], line.get("cash_treatment")): line
+        _plan_match_key(
+            line["line_type"],
+            line["target_type"],
+            line["account_id"],
+            line["name"],
+            line.get("source_account_id"),
+            line.get("cash_treatment"),
+        ): line
         for line in registry_lines
     }
-    # Secondary index: (line_type, entry_name, cash_treatment) for fallback when account_id differs between
+    registry_by_key_without_source = {
+        _plan_match_key(
+            line["line_type"],
+            line["target_type"],
+            line["account_id"],
+            line["name"],
+            None,
+            line.get("cash_treatment"),
+        ): line
+        for line in registry_lines
+    }
+    # Secondary index: (line_type, entry_name, source_account_id, cash_treatment) for fallback when account_id differs between
     # an existing DB plan line (account_id=None) and the registry line (account_id set).
     registry_by_entry_name: dict[tuple, dict] = {}
     for reg_line in registry_lines:
         lt = reg_line.get("line_type") or ""
         cash_treatment = reg_line.get("cash_treatment") or "auto"
+        source_account_id = reg_line.get("source_account_id") or 0
         for item in reg_line.get("registry_items", []):
             entry_name = (item.get("name") or "").strip().lower()
             if entry_name:
-                registry_by_entry_name.setdefault((lt, entry_name, cash_treatment), reg_line)
+                registry_by_entry_name.setdefault((lt, entry_name, source_account_id, cash_treatment), reg_line)
 
     matched_keys: set[tuple] = set()
     for line in plan_lines:
@@ -769,15 +990,26 @@ def _merge_registry_context(plan_lines: list[dict], registry_lines: list[dict]) 
             line.get("target_type"),
             line.get("account_id"),
             line.get("name") or line.get("target_name"),
+            line.get("source_account_id"),
             line.get("cash_treatment"),
         )
         registry_line = registry_by_key.get(primary_key)
+        if not registry_line and not line.get("source_account_id"):
+            registry_line = registry_by_key_without_source.get(_plan_match_key(
+                line.get("line_type"),
+                line.get("target_type"),
+                line.get("account_id"),
+                line.get("name") or line.get("target_name"),
+                None,
+                line.get("cash_treatment"),
+            ))
         if not registry_line:
             plan_name = (line.get("name") or line.get("target_name") or "").strip().lower()
             if plan_name:
                 registry_line = registry_by_entry_name.get((
                     line.get("line_type") or "",
                     plan_name,
+                    line.get("source_account_id") or 0,
                     line.get("cash_treatment") or "auto",
                 ))
         registry_amount = round((registry_line or {}).get("registry_amount") or 0.0, 0)
@@ -787,6 +1019,7 @@ def _merge_registry_context(plan_lines: list[dict], registry_lines: list[dict]) 
                 registry_line["target_type"],
                 registry_line["account_id"],
                 registry_line["name"],
+                registry_line.get("source_account_id"),
                 registry_line.get("cash_treatment"),
             ))
             line["registry_amount"] = registry_amount
@@ -814,7 +1047,14 @@ def _merge_registry_context(plan_lines: list[dict], registry_lines: list[dict]) 
 
     plan_lines.extend([
         line for line in registry_lines
-        if _plan_match_key(line["line_type"], line["target_type"], line["account_id"], line["name"], line.get("cash_treatment")) not in matched_keys
+        if _plan_match_key(
+            line["line_type"],
+            line["target_type"],
+            line["account_id"],
+            line["name"],
+            line.get("source_account_id"),
+            line.get("cash_treatment"),
+        ) not in matched_keys
     ])
     return plan_lines
 
@@ -961,8 +1201,14 @@ def get_budget_summary(
         "plan_lines": plan_lines,
         "expense_accounts": [
             {
-                "id": line["account_id"] or line["id"] or -(line.get("recurring_transaction_id") or 0),
+                "id": line.get("id")
+                or (
+                    -(line.get("registry_entry_ids") or [0])[0]
+                    if line.get("registry_entry_ids")
+                    else line.get("account_id") or -(line.get("recurring_transaction_id") or 0)
+                ),
                 "account_id": line["account_id"],
+                "source_account_id": line.get("source_account_id"),
                 "target_type": line.get("target_type"),
                 "target_id": line.get("target_id"),
                 "name": line["target_name"],
@@ -1038,23 +1284,15 @@ def get_cash_flow_projection(
         )
         lines = q.all()
         lines = _deduplicate_active_plan_models(db, lines)
-        effective_amounts = [
-            (line, _cash_flow_line_amount_for_period(db, client_id, line, period, context))
-            for line in lines
-        ]
-        income = sum(
-            amount for line, amount in effective_amounts if line.line_type in INFLOW_LINE_TYPES
-        )
-        expense = sum(
-            amount for line, amount in effective_amounts if line.line_type == "expense"
-        )
-        allocation = sum(
-            amount for line, amount in effective_amounts if line.line_type == "allocation"
-        )
-        debt = sum(
-            amount for line, amount in effective_amounts if line.line_type == "debt_payment"
-        )
-        net = income - expense - allocation - debt
+        flow = _empty_flow()
+        for line in lines:
+            amount = _cash_flow_line_amount_for_period(db, client_id, line, period, context)
+            _add_flow(flow, plan_line_flow_for_amount(db, client_id, line, amount, context))
+        income = flow["inflow"]
+        expense = flow["expense"]
+        allocation = flow["allocation"]
+        debt = flow["debt"]
+        net = flow["operating"]
         cash += net
         setup_warnings = budget_setup_warnings(db, client_id, period, lines, context)
         rows.append({
@@ -1065,6 +1303,14 @@ def get_cash_flow_projection(
             "debt": round(debt, 0),
             "net_cash": round(net, 0),
             "ending_cash": round(cash, 0),
+            "operating_flow": round(flow["operating"], 0),
+            "defense_flow": round(flow["defense"], 0),
+            "earmarked_flow": round(flow["earmarked"], 0),
+            "growth_flow": round(flow["growth"], 0),
+            "unassigned_asset_flow": round(flow["unassigned"], 0),
+            "financing_flow": round(flow["financing"], 0),
+            "internal_transfer": round(flow["internal_transfer"], 0),
+            "non_cash_budget": round(flow["non_cash_budget"], 0),
             "status": "shortfall" if cash < 0 else ("warning" if setup_warnings or net < 0 else "ok"),
             "setup_warnings": setup_warnings,
         })
@@ -1093,7 +1339,14 @@ def recurrence_setup_warnings(
 ) -> list[dict]:
     registry_lines = registry_plan_lines(db, client_id, period, context)
     plan_by_key = {
-        _plan_match_key(line.line_type, line.target_type, line.account_id, line.name, line.cash_treatment): line
+        _plan_match_key(
+            line.line_type,
+            line.target_type,
+            line.account_id,
+            line.name,
+            line.source_account_id,
+            line.cash_treatment,
+        ): line
         for line in plan_models
     }
     warnings = []
@@ -1103,6 +1356,7 @@ def recurrence_setup_warnings(
             registry_line["target_type"],
             registry_line["account_id"],
             registry_line["name"],
+            registry_line.get("source_account_id"),
             registry_line.get("cash_treatment"),
         ))
         if not matched:

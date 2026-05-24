@@ -780,7 +780,7 @@ def test_auto_cash_treatment_excludes_credit_expense_recurrence_from_cash_flow()
         summary = get_budget_summary(
             db,
             client_id=1,
-            period=current_period_key(),
+            period=next_period,
             cash_flow_start_period=next_period,
             cash_flow_months=1,
         )
@@ -789,6 +789,103 @@ def test_auto_cash_treatment_excludes_credit_expense_recurrence_from_cash_flow()
         assert row["period"] == next_period
         assert row["expense"] == 0
         assert row["net_cash"] == 0
+    finally:
+        db.close()
+
+
+def test_cash_flow_splits_same_expense_account_by_source_account_bucket() -> None:
+    db = _session()
+    try:
+        next_period = add_months(current_period_key(), 1)
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        cash = models.Account(client_id=1, name="cash", account_type="asset", role="operating")
+        loan = models.Account(client_id=1, name="medical loan", account_type="liability")
+        beauty = models.Account(client_id=1, name="beauty", account_type="expense")
+        db.add_all([client, cash, loan, beauty])
+        db.flush()
+        db.add_all([
+            models.MonthlyPlanLine(
+                client_id=1,
+                target_period=next_period,
+                line_type="expense",
+                target_type="account",
+                account_id=beauty.id,
+                source_account_id=cash.id,
+                name="beauty cash",
+                amount=100000,
+            ),
+            models.MonthlyPlanLine(
+                client_id=1,
+                target_period=next_period,
+                line_type="expense",
+                target_type="account",
+                account_id=beauty.id,
+                source_account_id=loan.id,
+                name="beauty loan",
+                amount=500000,
+            ),
+        ])
+        db.commit()
+
+        summary = get_budget_summary(
+            db,
+            client_id=1,
+            period=next_period,
+            cash_flow_start_period=next_period,
+            cash_flow_months=1,
+        )
+        row = summary["cash_flow_projection"][0]
+        beauty_rows = [account for account in summary["expense_accounts"] if account["account_id"] == beauty.id]
+
+        assert len(beauty_rows) == 2
+        assert summary["total_variable_budget"] == 600000
+        assert row["expense"] == 100000
+        assert row["non_cash_budget"] == 500000
+        assert row["operating_flow"] == -100000
+        assert row["net_cash"] == -100000
+    finally:
+        db.close()
+
+
+def test_cash_flow_reports_asset_role_movements() -> None:
+    db = _session()
+    try:
+        next_period = add_months(current_period_key(), 1)
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        cash = models.Account(client_id=1, name="cash", account_type="asset", role="operating")
+        nisa = models.Account(client_id=1, name="NISA", account_type="asset", role="growth")
+        reserve = models.Account(client_id=1, name="Trip Reserve", account_type="asset", role="earmarked")
+        defense = models.Account(client_id=1, name="Emergency", account_type="asset", role="defense")
+        db.add_all([client, cash, nisa, reserve, defense])
+        db.flush()
+        for account, amount in [(nisa, 50000), (reserve, 20000), (defense, 10000)]:
+            db.add(models.MonthlyPlanLine(
+                client_id=1,
+                target_period=next_period,
+                line_type="allocation",
+                target_type="account",
+                account_id=account.id,
+                source_account_id=cash.id,
+                name=account.name,
+                amount=amount,
+            ))
+        db.commit()
+
+        summary = get_budget_summary(
+            db,
+            client_id=1,
+            period=current_period_key(),
+            cash_flow_start_period=next_period,
+            cash_flow_months=1,
+        )
+        row = summary["cash_flow_projection"][0]
+
+        assert row["allocation"] == 80000
+        assert row["operating_flow"] == -80000
+        assert row["growth_flow"] == 50000
+        assert row["earmarked_flow"] == 20000
+        assert row["defense_flow"] == 10000
+        assert row["net_cash"] == -80000
     finally:
         db.close()
 

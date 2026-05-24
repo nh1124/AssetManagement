@@ -57,6 +57,7 @@ interface BudgetAccount {
     name: string;
     amount: number;
     balance: number;
+    source_account_id?: number | null;
     plan_line_id?: number | null;
     recurring_amount?: number;
     recurring_transaction_id?: number | null;
@@ -125,6 +126,14 @@ interface BudgetSummary {
         debt: number;
         net_cash: number;
         ending_cash: number;
+        operating_flow?: number;
+        defense_flow?: number;
+        earmarked_flow?: number;
+        growth_flow?: number;
+        unassigned_asset_flow?: number;
+        financing_flow?: number;
+        internal_transfer?: number;
+        non_cash_budget?: number;
         status: 'ok' | 'warning' | 'shortfall';
         setup_warnings?: CashFlowSetupWarning[];
     }>;
@@ -518,6 +527,7 @@ export default function Strategy() {
             target_type: account.target_type ?? 'account',
             target_id: account.target_id ?? null,
             account_id: account.account_id ?? (account.target_type === 'account' ? account.id : null),
+            source_account_id: account.source_account_id ?? null,
             name: account.name ?? null,
             amount,
             source,
@@ -577,6 +587,7 @@ export default function Strategy() {
                 await persistMonthlyPlanLines([{
                     ...(typeof editingBudgetAccount.plan_line_id === 'number' ? { id: editingBudgetAccount.plan_line_id } : {}),
                     account_id: editingBudgetAccount.id,
+                    source_account_id: editingBudgetAccount.source_account_id ?? null,
                     target_period: currentPeriod,
                     line_type: 'expense',
                     target_type: 'account',
@@ -590,6 +601,7 @@ export default function Strategy() {
                 const account = allExpenseAccounts.find((item) => item.id === selectedAccountId);
                 await persistMonthlyPlanLines([{
                     account_id: selectedAccountId,
+                    source_account_id: null,
                     target_period: currentPeriod,
                     line_type: 'expense',
                     target_type: 'account',
@@ -605,6 +617,7 @@ export default function Strategy() {
                 const created = await createAccount({ name, account_type: 'expense', balance: 0 });
                 await persistMonthlyPlanLines([{
                     account_id: created.id,
+                    source_account_id: null,
                     target_period: currentPeriod,
                     line_type: 'expense',
                     target_type: 'account',
@@ -741,6 +754,7 @@ export default function Strategy() {
                 target_type: account.target_type ?? (account.account_id ? 'account' : 'manual'),
                 target_id: account.target_id ?? null,
                 account_id: account.account_id ?? null,
+                source_account_id: account.source_account_id ?? null,
                 name: account.name,
                 amount: budgetAmountWithExistingAdjustment(account),
                 source: suggestedBudgetSource(account),
@@ -765,6 +779,7 @@ export default function Strategy() {
                 target_type: account.target_type ?? (account.account_id ? 'account' : 'manual'),
                 target_id: account.target_id ?? null,
                 account_id: account.account_id ?? null,
+                source_account_id: account.source_account_id ?? null,
                 name: account.name,
                 amount: budgetAmountWithExistingAdjustment(account),
                 source: suggestedBudgetSource(account),
@@ -875,6 +890,7 @@ export default function Strategy() {
                     target_type: account.target_type ?? (account.account_id ? 'account' : 'manual'),
                     target_id: account.target_id ?? null,
                     account_id: account.account_id ?? null,
+                    source_account_id: account.source_account_id ?? null,
                     name: account.name,
                     amount: (() => {
                         const sourceAmount = Number(account.suggested_amount || account.recurring_amount || 0);
@@ -960,6 +976,7 @@ export default function Strategy() {
                 target_type: account.target_type ?? (account.account_id ? 'account' : 'manual'),
                 target_id: account.target_id ?? null,
                 account_id: account.account_id ?? null,
+                source_account_id: account.source_account_id ?? null,
                 name: account.name,
                 amount: Number(budgetEdits[account.id] ?? account.amount ?? 0),
                 source: 'manual',
@@ -1905,7 +1922,7 @@ export default function Strategy() {
                 </div>
 
                 {showBudgetCategoryForm && (() => {
-                    const currentBudgetIds = new Set((budgetSummary?.expense_accounts ?? []).map(a => a.id));
+                    const currentBudgetIds = new Set((budgetSummary?.expense_accounts ?? []).map(a => a.account_id ?? a.id));
                     const filtered = allExpenseAccounts.filter(a =>
                         !currentBudgetIds.has(a.id) &&
                         a.name.toLowerCase().includes(categorySearch.toLowerCase())
@@ -2161,6 +2178,9 @@ export default function Strategy() {
                                     <th className="px-2 py-2 text-right font-normal">Expense</th>
                                     <th className="px-2 py-2 text-right font-normal">Allocation</th>
                                     <th className="px-2 py-2 text-right font-normal">Debt</th>
+                                    <th className="px-2 py-2 text-right font-normal">Reserve</th>
+                                    <th className="px-2 py-2 text-right font-normal">Invest</th>
+                                    <th className="px-2 py-2 text-right font-normal">Defense</th>
                                     <th className="px-2 py-2 text-right font-normal">Net</th>
                                     <th className="px-2 py-2 text-right font-normal">Ending</th>
                                 </tr>
@@ -2215,6 +2235,9 @@ export default function Strategy() {
                                         <td className="px-2 py-2 text-right font-mono-nums text-amber-300">{formatCurrency(row.expense)}</td>
                                         <td className="px-2 py-2 text-right font-mono-nums text-cyan-300">{formatCurrency(row.allocation)}</td>
                                         <td className="px-2 py-2 text-right font-mono-nums text-rose-300">{formatCurrency(row.debt)}</td>
+                                        <td className={`px-2 py-2 text-right font-mono-nums ${(row.earmarked_flow ?? 0) >= 0 ? 'text-cyan-300' : 'text-rose-300'}`}>{formatCurrency(row.earmarked_flow)}</td>
+                                        <td className={`px-2 py-2 text-right font-mono-nums ${(row.growth_flow ?? 0) >= 0 ? 'text-violet-300' : 'text-rose-300'}`}>{formatCurrency(row.growth_flow)}</td>
+                                        <td className={`px-2 py-2 text-right font-mono-nums ${(row.defense_flow ?? 0) >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>{formatCurrency(row.defense_flow)}</td>
                                         <td className={`px-2 py-2 text-right font-mono-nums ${row.net_cash >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(row.net_cash)}</td>
                                         <td className={`px-2 py-2 text-right font-mono-nums ${row.ending_cash >= 0 ? 'text-slate-200' : 'text-rose-400'}`}>{formatCurrency(row.ending_cash)}</td>
                                     </tr>
