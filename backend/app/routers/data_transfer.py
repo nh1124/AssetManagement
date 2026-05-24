@@ -12,6 +12,7 @@ from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.cache_service import invalidate_client
 from ..services.capsule_service import create_capsule_for_goal
+from ..services.data_health_service import check_data_health, repair_data_health
 
 router = APIRouter(prefix="/data", tags=["data"])
 
@@ -296,6 +297,24 @@ def export_client_data(
                 .order_by(models.JournalEntry.id)
                 .all()
             ],
+            "budget_plans": [
+                _row(
+                    plan,
+                    [
+                        "id",
+                        "name",
+                        "description",
+                        "is_default",
+                        "sort_order",
+                        "created_at",
+                        "updated_at",
+                    ],
+                )
+                for plan in db.query(models.BudgetPlan)
+                .filter(models.BudgetPlan.client_id == current_client.id)
+                .order_by(models.BudgetPlan.sort_order, models.BudgetPlan.id)
+                .all()
+            ],
             "monthly_plan_lines": [
                 _row(
                     line,
@@ -309,11 +328,10 @@ def export_client_data(
                         "source_account_id",
                         "name",
                         "amount",
-                        "priority",
-                        "note",
                         "source",
                         "cash_treatment",
                         "recurring_transaction_id",
+                        "plan_id",
                         "is_active",
                         "created_at",
                         "updated_at",
@@ -424,6 +442,36 @@ def export_client_data(
                 .order_by(models.CapsuleRule.id)
                 .all()
             ],
+            "capsule_holdings": [
+                _row(holding, ["id", "capsule_id", "account_id", "held_amount", "note", "updated_at"])
+                for holding in db.query(models.CapsuleHolding)
+                .join(models.Capsule, models.Capsule.id == models.CapsuleHolding.capsule_id)
+                .filter(models.Capsule.client_id == current_client.id)
+                .order_by(models.CapsuleHolding.id)
+                .all()
+            ],
+            "simulation_scenarios": [
+                _row(
+                    scenario,
+                    [
+                        "id",
+                        "life_event_id",
+                        "name",
+                        "description",
+                        "annual_return",
+                        "inflation",
+                        "monthly_savings",
+                        "contribution_schedule",
+                        "allocation_mode",
+                        "created_at",
+                        "updated_at",
+                    ],
+                )
+                for scenario in db.query(models.SimulationScenario)
+                .filter(models.SimulationScenario.client_id == current_client.id)
+                .order_by(models.SimulationScenario.id)
+                .all()
+            ],
             "exchange_rates": [
                 _row(
                     rate,
@@ -461,6 +509,7 @@ def import_client_data(
     quick_template_map: dict[int, int] = {}
     recurring_map: dict[int, int] = {}
     capsule_map: dict[int, int] = {}
+    budget_plan_map: dict[int, int] = {}
 
     try:
         tx_ids = [
@@ -479,17 +528,20 @@ def import_client_data(
             models.MonthlyPlanLine,
             models.MonthlyReview,
             models.PeriodReview,
+            models.MonthlyAction,
             models.CapsuleRule,
             models.Capsule,
             models.ExchangeRate,
             models.Milestone,
             models.RegistryEntry,
             models.RecurringTransaction,
+            models.SimulationScenario,
             models.SimulationConfig,
             models.Product,
             models.Transaction,
             models.TransactionBatch,
             models.QuickTemplate,
+            models.BudgetPlan,
             models.LifeEvent,
             models.Account,
         ]:
@@ -520,6 +572,21 @@ def import_client_data(
 
         for account, old_parent_id in account_parent_updates:
             account.parent_id = account_map.get(old_parent_id)
+
+        for item in data.get("budget_plans", []):
+            old_id = int(item["id"])
+            plan = models.BudgetPlan(
+                client_id=current_client.id,
+                name=item["name"],
+                description=item.get("description"),
+                is_default=item.get("is_default", False),
+                sort_order=item.get("sort_order") or 0,
+                created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
+                updated_at=_parse_datetime(item.get("updated_at")),
+            )
+            db.add(plan)
+            db.flush()
+            budget_plan_map[old_id] = plan.id
 
         product_map: dict[int, int] = {}
         product_funding_updates: list[tuple[models.Product, int]] = []
@@ -762,6 +829,25 @@ def import_client_data(
                 )
             )
 
+        for item in data.get("simulation_scenarios", []):
+            life_event_id = event_map.get(item.get("life_event_id"))
+            if life_event_id:
+                db.add(
+                    models.SimulationScenario(
+                        client_id=current_client.id,
+                        life_event_id=life_event_id,
+                        name=item["name"],
+                        description=item.get("description"),
+                        annual_return=item.get("annual_return") or 5.0,
+                        inflation=item.get("inflation") or 2.0,
+                        monthly_savings=item.get("monthly_savings"),
+                        contribution_schedule=item.get("contribution_schedule") or [],
+                        allocation_mode=item.get("allocation_mode") or "direct",
+                        created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
+                        updated_at=_parse_datetime(item.get("updated_at")),
+                    )
+                )
+
         for item in data.get("capsules", []):
             old_id = int(item["id"])
             capsule = models.Capsule(
@@ -815,6 +901,20 @@ def import_client_data(
                     )
                 )
 
+        for item in data.get("capsule_holdings", []):
+            capsule_id = capsule_map.get(item.get("capsule_id"))
+            account_id = account_map.get(item.get("account_id"))
+            if capsule_id and account_id:
+                db.add(
+                    models.CapsuleHolding(
+                        capsule_id=capsule_id,
+                        account_id=account_id,
+                        held_amount=item.get("held_amount") or 0,
+                        note=item.get("note"),
+                        updated_at=_parse_datetime(item.get("updated_at")) or datetime.utcnow(),
+                    )
+                )
+
         for item in data.get("monthly_plan_lines", []):
             target_type = item.get("target_type") or "manual"
             target_id = item.get("target_id")
@@ -837,11 +937,10 @@ def import_client_data(
                     source_account_id=account_map.get(item.get("source_account_id")),
                     name=item.get("name"),
                     amount=item.get("amount") or 0,
-                    priority=item.get("priority") or 2,
-                    note=item.get("note"),
                     source=item.get("source") or "manual",
                     cash_treatment=item.get("cash_treatment") or "auto",
                     recurring_transaction_id=recurring_map.get(item.get("recurring_transaction_id")),
+                    plan_id=budget_plan_map.get(item.get("plan_id")),
                     is_active=item.get("is_active", True),
                     created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
                     updated_at=_parse_datetime(item.get("updated_at")),
@@ -876,3 +975,19 @@ def import_client_data(
             for key, value in data.items()
         },
     }
+
+
+@router.get("/health")
+def data_health_check(
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    return check_data_health(db, current_client.id)
+
+
+@router.post("/health/repair")
+def data_health_repair(
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    return repair_data_health(db, current_client.id)

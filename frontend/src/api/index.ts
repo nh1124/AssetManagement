@@ -8,6 +8,8 @@ import type {
     AccountTreeNode,
     AnalysisSummary,
     ContributionScheduleItem,
+    DataHealthResult,
+    DataRepairResult,
     ExchangeRate,
     ExchangeRateAutoUpdateResult,
     MonthlyAction,
@@ -637,6 +639,16 @@ export const exportData = async () => {
 
 export const importData = async (payload: any) => {
     const response = await api.post('/data/import', payload);
+    return response.data;
+};
+
+export const checkDataHealth = async (): Promise<DataHealthResult> => {
+    const response = await api.get('/data/health');
+    return response.data;
+};
+
+export const repairDataHealth = async (): Promise<DataRepairResult> => {
+    const response = await api.post('/data/health/repair');
     return response.data;
 };
 

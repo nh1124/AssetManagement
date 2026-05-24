@@ -10,22 +10,108 @@ try:
     from backend.app import models
     from backend.app.database import Base
     from backend.app.routers.budget_plans import compare_budget_plans, copy_period_full_replace, copy_plan_from
+    from backend.app.routers.data_transfer import export_client_data
     from backend.app.schemas import CopyPeriodRequest, MonthlyPlanLineBatchUpdate, MonthlyPlanLineCreate
     from backend.app.services.accounting_service import process_transaction
     from backend.app.services.budget_plan_service import add_months, create_plan_lines, current_period_key, get_budget_summary, period_to_range, update_plan_lines
+    from backend.app.services.data_health_service import check_data_health, repair_data_health
 except ModuleNotFoundError:
     from app import models  # type: ignore[no-redef]
     from app.database import Base  # type: ignore[no-redef]
     from app.routers.budget_plans import compare_budget_plans, copy_period_full_replace, copy_plan_from  # type: ignore[no-redef]
+    from app.routers.data_transfer import export_client_data  # type: ignore[no-redef]
     from app.schemas import CopyPeriodRequest, MonthlyPlanLineBatchUpdate, MonthlyPlanLineCreate  # type: ignore[no-redef]
     from app.services.accounting_service import process_transaction  # type: ignore[no-redef]
     from app.services.budget_plan_service import add_months, create_plan_lines, current_period_key, get_budget_summary, period_to_range, update_plan_lines  # type: ignore[no-redef]
+    from app.services.data_health_service import check_data_health, repair_data_health  # type: ignore[no-redef]
 
 
 def _session():
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(bind=engine)
     return sessionmaker(autocommit=False, autoflush=False, bind=engine)()
+
+
+def test_data_health_repairs_plan_line_source_from_posted_transaction() -> None:
+    db = _session()
+    try:
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        payable = models.Account(client_id=1, name="long payable", account_type="liability")
+        beauty = models.Account(client_id=1, name="beauty", account_type="expense")
+        db.add_all([client, payable, beauty])
+        db.flush()
+        line = models.MonthlyPlanLine(
+            client_id=1,
+            target_period="2026-05",
+            line_type="expense",
+            target_type="account",
+            account_id=beauty.id,
+            name="beauty",
+            amount=120000,
+            source_account_id=None,
+        )
+        tx = models.Transaction(
+            client_id=1,
+            date=date(2026, 5, 10),
+            description="credit beauty",
+            amount=120000,
+            type="CreditExpense",
+            from_account_id=payable.id,
+            to_account_id=beauty.id,
+            currency="JPY",
+        )
+        db.add_all([line, tx])
+        db.commit()
+        process_transaction(db, tx)
+
+        health = check_data_health(db, 1)
+        source_issue = next(issue for issue in health["issues"] if issue["code"] == "plan_line_sources")
+        item = next(item for item in source_issue["items"] if item["line_id"] == line.id)
+        assert item["repairable"] is True
+        assert item["suggested_source_account_id"] == payable.id
+
+        result = repair_data_health(db, 1)
+        db.refresh(line)
+
+        assert line.source_account_id == payable.id
+        assert any(action["code"] == "plan_line_sources" and action["updated"] == 1 for action in result["actions"])
+    finally:
+        db.close()
+
+
+def test_data_export_includes_budget_plan_line_fields_without_legacy_columns() -> None:
+    db = _session()
+    try:
+        client = models.Client(id=1, name="test", username="test", email="test@example.com", general_settings={}, ai_config={})
+        cash = models.Account(client_id=1, name="cash", account_type="asset")
+        food = models.Account(client_id=1, name="food", account_type="expense")
+        plan = models.BudgetPlan(client_id=1, name="Baseline", is_default=True)
+        db.add_all([client, cash, food, plan])
+        db.flush()
+        line = models.MonthlyPlanLine(
+            client_id=1,
+            plan_id=plan.id,
+            target_period="2026-05",
+            line_type="expense",
+            target_type="account",
+            account_id=food.id,
+            source_account_id=cash.id,
+            name="food",
+            amount=1000,
+        )
+        db.add(line)
+        db.commit()
+
+        snapshot = export_client_data(db=db, current_client=client)
+        exported_line = snapshot["data"]["monthly_plan_lines"][0]
+
+        assert exported_line["plan_id"] == plan.id
+        assert exported_line["source_account_id"] == cash.id
+        assert "priority" not in exported_line
+        assert "note" not in exported_line
+        assert snapshot["data"]["budget_plans"][0]["name"] == "Baseline"
+    finally:
+        db.close()
 
 
 def test_budget_summary_combines_income_spending_allocations_and_debt() -> None:

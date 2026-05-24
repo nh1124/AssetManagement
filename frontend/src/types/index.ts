@@ -676,3 +676,26 @@ export interface BudgetPlanCompareResult {
     plan_name: string;
     cash_flow: BudgetPlanCashFlowRow[];
 }
+
+export interface DataHealthIssue {
+    code: string;
+    severity: 'ok' | 'warning' | 'error';
+    title: string;
+    detail: string;
+    count: number;
+    repairable: boolean;
+    items: Array<Record<string, unknown>>;
+}
+
+export interface DataHealthResult {
+    status: 'ok' | 'issues_found' | 'repaired';
+    total_issues: number;
+    repairable_groups: number;
+    issues: DataHealthIssue[];
+}
+
+export interface DataRepairResult {
+    status: 'repaired';
+    actions: Array<{ code: string; updated: number }>;
+    health: DataHealthResult;
+}
