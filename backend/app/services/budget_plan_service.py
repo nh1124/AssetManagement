@@ -316,6 +316,17 @@ def _empty_flow() -> dict[str, float]:
     }
 
 
+def _empty_balance() -> dict[str, float]:
+    return {
+        "operating": 0.0,
+        "defense": 0.0,
+        "earmarked": 0.0,
+        "growth": 0.0,
+        "unassigned": 0.0,
+        "liabilities": 0.0,
+    }
+
+
 def _add_flow(target: dict[str, float], source: dict[str, float]) -> None:
     for key, value in source.items():
         target[key] = target.get(key, 0.0) + (value or 0.0)
@@ -535,6 +546,59 @@ def plan_line_flow_for_amount(
             return _fallback_line_flow(_line_attr(line, "line_type"), amount)
         return flow
     return _fallback_line_flow(_line_attr(line, "line_type"), amount)
+
+
+def _balance_movement_for_amount(
+    db: Session,
+    client_id: int,
+    line: models.MonthlyPlanLine | dict,
+    amount: float,
+    context: BudgetSummaryContext | None = None,
+) -> dict[str, float]:
+    movement = _empty_balance()
+    if amount <= 0:
+        return movement
+
+    from_account, to_account = _plan_line_movement_accounts(db, client_id, line, context)
+    from_bucket = account_flow_bucket(from_account)
+    to_bucket = account_flow_bucket(to_account)
+
+    if from_bucket in ASSET_FLOW_BUCKETS:
+        movement[from_bucket] -= amount
+    elif from_bucket == "liability":
+        movement["liabilities"] += amount
+
+    if to_bucket in ASSET_FLOW_BUCKETS:
+        movement[to_bucket] += amount
+    elif to_bucket == "liability":
+        movement["liabilities"] -= amount
+
+    if from_account is None or to_account is None:
+        fallback = _fallback_line_flow(_line_attr(line, "line_type"), amount)
+        movement["operating"] += fallback["operating"]
+        if fallback["financing"] and from_bucket != "liability" and to_bucket != "liability":
+            movement["liabilities"] += fallback["financing"]
+
+    return movement
+
+
+def _projection_amounts_for_period(
+    db: Session,
+    client_id: int,
+    line: models.MonthlyPlanLine,
+    period: str,
+    context: BudgetSummaryContext | None = None,
+) -> tuple[float, float, float]:
+    planned = line.amount or 0.0
+    if period != current_period_key():
+        return planned, 0.0, planned
+    if plan_line_has_cash_impact(db, client_id, line, context):
+        actual = cash_flow_actual_for_plan_line(db, client_id, line, period, context)
+    else:
+        actual = actual_for_plan_line(db, client_id, line, period, context=context)
+    remaining = max(0.0, planned - actual)
+    projected = actual + remaining
+    return projected, actual, remaining
 
 
 def cash_flow_actual_for_plan_line(
@@ -1127,6 +1191,38 @@ def _liquid_cash(db: Session, client_id: int) -> float:
     return sum(calculate_account_valued_balance(db, account) for account in accounts)
 
 
+def _starting_balance_state(db: Session, client_id: int) -> dict[str, float]:
+    state = _empty_balance()
+    accounts = db.query(models.Account).filter(
+        models.Account.client_id == client_id,
+        models.Account.is_active.is_(True),
+    ).all()
+    for account in accounts:
+        balance = calculate_account_valued_balance(db, account)
+        bucket = account_flow_bucket(account)
+        if bucket in ASSET_FLOW_BUCKETS:
+            state[bucket] += balance
+        elif bucket == "liability":
+            state["liabilities"] += balance
+    return state
+
+
+def _balance_projection_row(period: str, state: dict[str, float]) -> dict:
+    total_assets = sum(state[bucket] for bucket in ASSET_FLOW_BUCKETS)
+    liabilities = state["liabilities"]
+    return {
+        "period": period,
+        "operating_assets": round(state["operating"], 0),
+        "defense_assets": round(state["defense"], 0),
+        "earmarked_assets": round(state["earmarked"], 0),
+        "growth_assets": round(state["growth"], 0),
+        "unassigned_assets": round(state["unassigned"], 0),
+        "total_assets": round(total_assets, 0),
+        "liabilities": round(liabilities, 0),
+        "net_worth": round(total_assets - liabilities, 0),
+    }
+
+
 def get_budget_summary(
     db: Session,
     client_id: int,
@@ -1234,6 +1330,8 @@ def get_budget_summary(
     projection_start = cash_flow_start_period or period
     projection = get_cash_flow_projection(db, client_id, projection_start, months=cash_flow_months, starting_cash=starting_cash, plan_id=plan_id, context=context)
     cash_flow_summary = summarize_cash_flow_projection(projection, starting_cash, projection_start)
+    balance_projection = get_balance_projection(db, client_id, projection_start, months=cash_flow_months, plan_id=plan_id, context=context)
+    balance_summary = summarize_balance_projection(balance_projection)
 
     return {
         "period": period,
@@ -1315,6 +1413,8 @@ def get_budget_summary(
         ],
         "cash_flow_projection": projection,
         "cash_flow_summary": cash_flow_summary,
+        "balance_projection": balance_projection,
+        "balance_summary": balance_summary,
         "goals_count": len(events_with_progress),
         "total_goal_gap": round(total_gap, 0),
     }
@@ -1342,15 +1442,19 @@ def get_cash_flow_projection(
         )
         lines = q.all()
         lines = _deduplicate_active_plan_models(db, lines)
-        flow = _empty_flow()
+        planned_flow = _empty_flow()
+        actual_flow = _empty_flow()
+        remaining_flow = _empty_flow()
         for line in lines:
-            amount = _cash_flow_line_amount_for_period(db, client_id, line, period, context)
-            _add_flow(flow, plan_line_flow_for_amount(db, client_id, line, amount, context))
-        income = flow["inflow"]
-        expense = flow["expense"]
-        allocation = flow["allocation"]
-        debt = flow["debt"]
-        net = flow["operating"]
+            planned_amount, actual_amount, remaining_amount = _projection_amounts_for_period(db, client_id, line, period, context)
+            _add_flow(planned_flow, plan_line_flow_for_amount(db, client_id, line, planned_amount, context))
+            _add_flow(actual_flow, plan_line_flow_for_amount(db, client_id, line, actual_amount, context))
+            _add_flow(remaining_flow, plan_line_flow_for_amount(db, client_id, line, remaining_amount, context))
+        income = remaining_flow["inflow"]
+        expense = remaining_flow["expense"]
+        allocation = remaining_flow["allocation"]
+        debt = remaining_flow["debt"]
+        net = remaining_flow["operating"]
         cash += net
         setup_warnings = budget_setup_warnings(db, client_id, period, lines, context)
         rows.append({
@@ -1361,18 +1465,81 @@ def get_cash_flow_projection(
             "debt": round(debt, 0),
             "net_cash": round(net, 0),
             "ending_cash": round(cash, 0),
-            "operating_flow": round(flow["operating"], 0),
-            "defense_flow": round(flow["defense"], 0),
-            "earmarked_flow": round(flow["earmarked"], 0),
-            "growth_flow": round(flow["growth"], 0),
-            "unassigned_asset_flow": round(flow["unassigned"], 0),
-            "financing_flow": round(flow["financing"], 0),
-            "internal_transfer": round(flow["internal_transfer"], 0),
-            "non_cash_budget": round(flow["non_cash_budget"], 0),
+            "planned_inflow": round(planned_flow["inflow"], 0),
+            "actual_inflow": round(actual_flow["inflow"], 0),
+            "remaining_inflow": round(remaining_flow["inflow"], 0),
+            "planned_expense": round(planned_flow["expense"], 0),
+            "actual_expense": round(actual_flow["expense"], 0),
+            "remaining_expense": round(remaining_flow["expense"], 0),
+            "planned_allocation": round(planned_flow["allocation"], 0),
+            "actual_allocation": round(actual_flow["allocation"], 0),
+            "remaining_allocation": round(remaining_flow["allocation"], 0),
+            "planned_debt": round(planned_flow["debt"], 0),
+            "actual_debt": round(actual_flow["debt"], 0),
+            "remaining_debt": round(remaining_flow["debt"], 0),
+            "operating_flow": round(remaining_flow["operating"], 0),
+            "defense_flow": round(remaining_flow["defense"], 0),
+            "earmarked_flow": round(remaining_flow["earmarked"], 0),
+            "growth_flow": round(remaining_flow["growth"], 0),
+            "unassigned_asset_flow": round(remaining_flow["unassigned"], 0),
+            "financing_flow": round(remaining_flow["financing"], 0),
+            "internal_transfer": round(remaining_flow["internal_transfer"], 0),
+            "non_cash_budget": round(remaining_flow["non_cash_budget"], 0),
             "status": "shortfall" if cash < 0 else ("warning" if setup_warnings or net < 0 else "ok"),
             "setup_warnings": setup_warnings,
         })
     return rows
+
+
+def get_balance_projection(
+    db: Session,
+    client_id: int,
+    start_period: str,
+    months: int = 12,
+    plan_id: int | None = None,
+    context: BudgetSummaryContext | None = None,
+) -> list[dict]:
+    plan_id = resolve_budget_plan_id(db, client_id, plan_id)
+    state = _starting_balance_state(db, client_id)
+    rows = []
+    for idx in range(months):
+        period = add_months(start_period, idx)
+        lines = (
+            db.query(models.MonthlyPlanLine)
+            .filter(
+                models.MonthlyPlanLine.client_id == client_id,
+                models.MonthlyPlanLine.target_period == period,
+                models.MonthlyPlanLine.is_active.is_(True),
+                models.MonthlyPlanLine.plan_id == plan_id,
+            )
+            .all()
+        )
+        lines = _deduplicate_active_plan_models(db, lines)
+        for line in lines:
+            _, _, remaining_amount = _projection_amounts_for_period(db, client_id, line, period, context)
+            movement = _balance_movement_for_amount(db, client_id, line, remaining_amount, context)
+            for key, value in movement.items():
+                state[key] = state.get(key, 0.0) + (value or 0.0)
+        rows.append(_balance_projection_row(period, state))
+    return rows
+
+
+def summarize_balance_projection(projection: list[dict]) -> dict[str, float | int]:
+    if not projection:
+        return {
+            "horizon_months": 0,
+            "ending_total_assets": 0.0,
+            "ending_liabilities": 0.0,
+            "ending_net_worth": 0.0,
+            "lowest_net_worth": 0.0,
+        }
+    return {
+        "horizon_months": len(projection),
+        "ending_total_assets": projection[-1]["total_assets"],
+        "ending_liabilities": projection[-1]["liabilities"],
+        "ending_net_worth": projection[-1]["net_worth"],
+        "lowest_net_worth": min(row["net_worth"] for row in projection),
+    }
 
 
 def budget_setup_warnings(

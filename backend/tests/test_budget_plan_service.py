@@ -647,11 +647,20 @@ def test_cash_flow_projection_uses_remaining_current_month_plan_after_actuals() 
 
         assert summary["starting_cash"] == 70000
         assert current_row["period"] == current_period
+        assert current_row["planned_inflow"] == 100000
+        assert current_row["actual_inflow"] == 100000
+        assert current_row["remaining_inflow"] == 0
         assert current_row["inflow"] == 0
+        assert current_row["planned_expense"] == 50000
+        assert current_row["actual_expense"] == 30000
+        assert current_row["remaining_expense"] == 20000
         assert current_row["expense"] == 20000
         assert current_row["net_cash"] == -20000
         assert current_row["ending_cash"] == 50000
         assert next_row["period"] == next_period
+        assert next_row["planned_inflow"] == 100000
+        assert next_row["actual_inflow"] == 0
+        assert next_row["remaining_inflow"] == 100000
         assert next_row["inflow"] == 100000
         assert next_row["expense"] == 50000
         assert next_row["net_cash"] == 50000
@@ -709,6 +718,9 @@ def test_cash_flow_projection_does_not_double_count_current_month_over_actuals()
 
         assert summary["starting_cash"] == 30000
         assert current_row["expense"] == 0
+        assert current_row["actual_expense"] == 70000
+        assert current_row["remaining_expense"] == 0
+        assert current_row["planned_expense"] == 70000
         assert current_row["net_cash"] == 0
         assert current_row["ending_cash"] == 30000
     finally:
@@ -817,11 +829,16 @@ def test_financed_expense_counts_as_budget_usage_without_cash_flow_expense() -> 
         assert summary["starting_cash"] == 70000
         assert current_row["expense"] == 0
         assert current_row["debt"] == 0
+        assert current_row["non_cash_budget"] == 0
         assert current_row["ending_cash"] == 70000
         assert next_row["expense"] == 0
         assert next_row["debt"] == 30000
         assert next_row["net_cash"] == -30000
         assert next_row["ending_cash"] == 40000
+        assert summary["balance_projection"][0]["liabilities"] == 570000
+        assert summary["balance_projection"][0]["net_worth"] == -500000
+        assert summary["balance_projection"][1]["liabilities"] == 1140000
+        assert summary["balance_projection"][1]["net_worth"] == -1100000
     finally:
         db.close()
 
@@ -929,6 +946,116 @@ def test_cash_flow_splits_same_expense_account_by_source_account_bucket() -> Non
         assert row["non_cash_budget"] == 500000
         assert row["operating_flow"] == -100000
         assert row["net_cash"] == -100000
+    finally:
+        db.close()
+
+
+def test_balance_projection_tracks_future_liability_financed_expense() -> None:
+    db = _session()
+    try:
+        next_period = add_months(current_period_key(), 1)
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        loan = models.Account(client_id=1, name="loan", account_type="liability")
+        beauty = models.Account(client_id=1, name="beauty", account_type="expense")
+        db.add_all([client, loan, beauty])
+        db.flush()
+        db.add(models.MonthlyPlanLine(
+            client_id=1,
+            target_period=next_period,
+            line_type="expense",
+            target_type="account",
+            account_id=beauty.id,
+            source_account_id=loan.id,
+            name="beauty",
+            amount=500000,
+        ))
+        db.commit()
+
+        summary = get_budget_summary(
+            db,
+            client_id=1,
+            period=next_period,
+            cash_flow_start_period=next_period,
+            cash_flow_months=1,
+        )
+        cash_row = summary["cash_flow_projection"][0]
+        balance_row = summary["balance_projection"][0]
+
+        assert cash_row["expense"] == 0
+        assert cash_row["non_cash_budget"] == 500000
+        assert cash_row["net_cash"] == 0
+        assert balance_row["liabilities"] == 500000
+        assert balance_row["net_worth"] == -500000
+    finally:
+        db.close()
+
+
+def test_balance_projection_tracks_debt_payment_and_liability_asset_purchase() -> None:
+    db = _session()
+    try:
+        next_period = add_months(current_period_key(), 1)
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        salary = models.Account(client_id=1, name="salary", account_type="income")
+        cash = models.Account(client_id=1, name="cash", account_type="asset", role="operating")
+        loan = models.Account(client_id=1, name="loan", account_type="liability")
+        nisa = models.Account(client_id=1, name="NISA", account_type="asset", role="growth")
+        db.add_all([client, salary, cash, loan, nisa])
+        db.flush()
+        opening = models.Transaction(
+            client_id=1,
+            date=period_to_range(add_months(next_period, -2))[0],
+            description="opening borrowing",
+            amount=100000,
+            type="Borrowing",
+            from_account_id=loan.id,
+            to_account_id=cash.id,
+            currency="JPY",
+        )
+        db.add(opening)
+        db.commit()
+        process_transaction(db, opening)
+
+        db.add_all([
+            models.MonthlyPlanLine(
+                client_id=1,
+                target_period=next_period,
+                line_type="debt_payment",
+                target_type="account",
+                account_id=loan.id,
+                source_account_id=cash.id,
+                name="loan repayment",
+                amount=30000,
+            ),
+            models.MonthlyPlanLine(
+                client_id=1,
+                target_period=next_period,
+                line_type="allocation",
+                target_type="account",
+                account_id=nisa.id,
+                source_account_id=loan.id,
+                name="levered NISA",
+                amount=50000,
+            ),
+        ])
+        db.commit()
+
+        summary = get_budget_summary(
+            db,
+            client_id=1,
+            period=next_period,
+            cash_flow_start_period=next_period,
+            cash_flow_months=1,
+        )
+        cash_row = summary["cash_flow_projection"][0]
+        balance_row = summary["balance_projection"][0]
+
+        assert cash_row["debt"] == 30000
+        assert cash_row["net_cash"] == -30000
+        assert cash_row["growth_flow"] == 50000
+        assert balance_row["operating_assets"] == 70000
+        assert balance_row["growth_assets"] == 50000
+        assert balance_row["liabilities"] == 120000
+        assert balance_row["net_worth"] == 0
     finally:
         db.close()
 

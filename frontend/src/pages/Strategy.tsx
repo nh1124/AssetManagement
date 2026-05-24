@@ -126,6 +126,18 @@ interface BudgetSummary {
         debt: number;
         net_cash: number;
         ending_cash: number;
+        planned_inflow?: number;
+        actual_inflow?: number;
+        remaining_inflow?: number;
+        planned_expense?: number;
+        actual_expense?: number;
+        remaining_expense?: number;
+        planned_allocation?: number;
+        actual_allocation?: number;
+        remaining_allocation?: number;
+        planned_debt?: number;
+        actual_debt?: number;
+        remaining_debt?: number;
         operating_flow?: number;
         defense_flow?: number;
         earmarked_flow?: number;
@@ -143,6 +155,24 @@ interface BudgetSummary {
         required_buffer: number;
         shortfall_month?: string | null;
         horizon_months: number;
+    };
+    balance_projection?: Array<{
+        period: string;
+        operating_assets: number;
+        defense_assets: number;
+        earmarked_assets: number;
+        growth_assets: number;
+        unassigned_assets: number;
+        total_assets: number;
+        liabilities: number;
+        net_worth: number;
+    }>;
+    balance_summary?: {
+        horizon_months: number;
+        ending_total_assets: number;
+        ending_liabilities: number;
+        ending_net_worth: number;
+        lowest_net_worth: number;
     };
     others_actual: number;
     sinking_funds: Array<{
@@ -174,7 +204,8 @@ export default function Strategy() {
     const { showToast } = useToast();
     const { currentClient } = useClient();
     const [activeTab, setActiveTab] = useState('budgeting');
-    const [activeBudgetingTab, setActiveBudgetingTab] = useState<'overview' | 'plan' | 'cash_flow' | 'compare'>('overview');
+    const [activeBudgetingTab, setActiveBudgetingTab] = useState<'overview' | 'plan' | 'projection' | 'compare'>('overview');
+    const [projectionView, setProjectionView] = useState<'cash' | 'balance'>('cash');
     const [budgetPlans, setBudgetPlans] = useState<BudgetPlan[]>([]);
     const [activePlanId, setActivePlanId] = useState<number | null>(null);
     const [showPlanNameInput, setShowPlanNameInput] = useState(false);
@@ -1327,6 +1358,7 @@ export default function Strategy() {
         const variableSuggestedTotal = (budgetSummary?.expense_accounts ?? []).reduce((sum, account) => sum + Number(account.suggested_amount || 0), 0);
         const variableSyncableAccounts = (budgetSummary?.expense_accounts ?? []).filter((account) => account.suggested_source && !isBudgetSourceSynced(account));
         const cashFlowSummary = budgetSummary?.cash_flow_summary;
+        const balanceSummary = budgetSummary?.balance_summary;
         const cashFlowHorizon = cashFlowSummary?.horizon_months ?? budgetSummary?.cash_flow_projection?.length ?? 12;
         const runwayLabel = cashFlowSummary
             ? cashFlowSummary.shortfall_month
@@ -1488,7 +1520,7 @@ export default function Strategy() {
                 </div>
                 <div className="border border-slate-800 bg-slate-900/60 p-4">
                     <div className="mb-3 flex items-center justify-between">
-                        <h2 className="text-xs text-slate-400 uppercase tracking-wider">Cash Path</h2>
+                        <h2 className="text-xs text-slate-400 uppercase tracking-wider">Projection Preview</h2>
                         <span className="text-[10px] text-slate-600 font-mono-nums">{cashFlowStartPeriod} / {cashFlowMonths} mo</span>
                     </div>
                     <ResponsiveContainer width="100%" height={220}>
@@ -1754,10 +1786,10 @@ export default function Strategy() {
                 </button>
                 <button
                     type="button"
-                    onClick={() => setActiveBudgetingTab('cash_flow')}
-                    className={`px-4 py-2 text-xs font-medium ${activeBudgetingTab === 'cash_flow' ? 'bg-slate-800/70 text-cyan-300' : 'text-slate-500 hover:bg-slate-800/40 hover:text-slate-300'}`}
+                    onClick={() => setActiveBudgetingTab('projection')}
+                    className={`px-4 py-2 text-xs font-medium ${activeBudgetingTab === 'projection' ? 'bg-slate-800/70 text-cyan-300' : 'text-slate-500 hover:bg-slate-800/40 hover:text-slate-300'}`}
                 >
-                    Cash Flow
+                    Projection
                 </button>
                 <button
                     type="button"
@@ -2130,122 +2162,171 @@ export default function Strategy() {
                 {renderPlanSection('Allocation Plan', ['allocation'], 'allocation', 'No asset allocations yet.')}
                 {renderPlanSection('Debt Plan', ['debt_payment'], 'debt_payment', 'No planned debt payments yet.')}
             </section>
-            ) : activeBudgetingTab === 'cash_flow' ? (
+            ) : activeBudgetingTab === 'projection' ? (
 
             <section className="bg-slate-900/60 border border-slate-800 p-4 overflow-auto">
-                <div>
-                    <div className="flex items-center justify-between mb-3">
-                        {renderTitleWithInfo('Cash Flow', 'projection')}
-                        <div className="flex items-center gap-3">
-                            <span className="text-xs text-slate-500 font-mono-nums">
-                                {cashFlowStartPeriod} / {cashFlowMonths} mo
-                            </span>
-                            <span className="text-xs text-slate-500 font-mono-nums">Start {formatCurrency(budgetSummary?.starting_cash)}</span>
+                <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+                    {renderTitleWithInfo(projectionView === 'cash' ? 'Cash Projection' : 'Balance Projection', 'projection')}
+                    <div className="flex items-center gap-3">
+                        <div className="inline-flex border border-slate-800 bg-slate-950/50">
+                            <button
+                                type="button"
+                                onClick={() => setProjectionView('cash')}
+                                className={`px-3 py-1.5 text-xs ${projectionView === 'cash' ? 'bg-slate-800 text-cyan-300' : 'text-slate-500 hover:text-slate-300'}`}
+                            >
+                                Cash
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setProjectionView('balance')}
+                                className={`px-3 py-1.5 text-xs ${projectionView === 'balance' ? 'bg-slate-800 text-cyan-300' : 'text-slate-500 hover:text-slate-300'}`}
+                            >
+                                Balance
+                            </button>
                         </div>
-                    </div>
-                    <div className="grid grid-cols-2 min-[1280px]:grid-cols-4 gap-2 mb-3">
-                        <div className="border border-slate-800 bg-slate-950/40 px-3 py-2">
-                            <p className="text-[10px] uppercase text-slate-500">Runway</p>
-                            <p className={`mt-1 font-mono-nums text-sm ${cashFlowSummary?.shortfall_month ? 'text-amber-300' : 'text-emerald-300'}`}>
-                                {runwayLabel}
-                            </p>
-                        </div>
-                        <div className="border border-slate-800 bg-slate-950/40 px-3 py-2">
-                            <p className="text-[10px] uppercase text-slate-500">Lowest Cash</p>
-                            <p className={`mt-1 font-mono-nums text-sm ${(cashFlowSummary?.lowest_cash ?? 0) >= 0 ? 'text-slate-200' : 'text-rose-400'}`}>
-                                {formatCurrency(cashFlowSummary?.lowest_cash)}
-                            </p>
-                        </div>
-                        <div className="border border-slate-800 bg-slate-950/40 px-3 py-2">
-                            <p className="text-[10px] uppercase text-slate-500">Required Buffer</p>
-                            <p className={`mt-1 font-mono-nums text-sm ${(cashFlowSummary?.required_buffer ?? 0) > 0 ? 'text-amber-300' : 'text-slate-200'}`}>
-                                {formatCurrency(cashFlowSummary?.required_buffer)}
-                            </p>
-                        </div>
-                        <div className="border border-slate-800 bg-slate-950/40 px-3 py-2">
-                            <p className="text-[10px] uppercase text-slate-500">Shortfall Month</p>
-                            <p className={`mt-1 font-mono-nums text-sm ${cashFlowSummary?.shortfall_month ? 'text-rose-400' : 'text-emerald-300'}`}>
-                                {cashFlowSummary?.shortfall_month ?? 'None'}
-                            </p>
-                        </div>
-                    </div>
-                    <div className="overflow-x-auto border border-slate-800">
-                        <table className="w-full text-[10px]">
-                            <thead className="text-slate-500 uppercase border-b border-slate-700 bg-slate-800/50">
-                                <tr>
-                                    <th className="px-2 py-2 text-left font-normal">Month</th>
-                                    <th className="px-2 py-2 text-right font-normal">Inflow</th>
-                                    <th className="px-2 py-2 text-right font-normal">Expense</th>
-                                    <th className="px-2 py-2 text-right font-normal">Allocation</th>
-                                    <th className="px-2 py-2 text-right font-normal">Debt</th>
-                                    <th className="px-2 py-2 text-right font-normal">Reserve</th>
-                                    <th className="px-2 py-2 text-right font-normal">Invest</th>
-                                    <th className="px-2 py-2 text-right font-normal">Defense</th>
-                                    <th className="px-2 py-2 text-right font-normal">Net</th>
-                                    <th className="px-2 py-2 text-right font-normal">Ending</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-800/70">
-                                {(budgetSummary?.cash_flow_projection ?? []).map((row) => (
-                                    <tr key={row.period} className="hover:bg-slate-800/30">
-                                        <td className="px-2 py-2 text-slate-300">
-                                            <div className="flex items-center gap-2">
-                                                <span>{row.period}</span>
-                                                {(row.setup_warnings?.length ?? 0) > 0 ? (
-                                                    <button
-                                                        type="button"
-                                                        title={(row.setup_warnings ?? []).map((warning) => `${warning.name}: ${formatCurrency(warning.amount)}`).join('\n')}
-                                                        onClick={() => jumpToCashFlowPeriod(row.period)}
-                                                        className="text-amber-400 hover:text-amber-200"
-                                                    >
-                                                        <AlertTriangle size={12} />
-                                                    </button>
-                                                ) : (
-                                                    <span title="No recurrence warnings" className="text-slate-700">
-                                                        <AlertTriangle size={12} />
-                                                    </span>
-                                                )}
-                                                <button
-                                                    type="button"
-                                                    title={`Jump to ${row.period}`}
-                                                    onClick={() => jumpToCashFlowPeriod(row.period)}
-                                                    className="text-slate-500 hover:text-cyan-300"
-                                                >
-                                                    <ChevronRight size={12} />
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    title={`Sync budget setup differences for ${row.period}`}
-                                                    onClick={() => syncAllRecurrencesForPeriod(row.period)}
-                                                    className={(row.setup_warnings?.length ?? 0) > 0 ? 'text-amber-400 hover:text-amber-200' : 'text-slate-500 hover:text-amber-300'}
-                                                >
-                                                    <RefreshCw size={12} />
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    title={`Copy current month budget to ${row.period}`}
-                                                    onClick={() => copyCurrentBudgetToPeriod(row.period)}
-                                                    className="text-slate-500 hover:text-emerald-300"
-                                                >
-                                                    <Copy size={12} />
-                                                </button>
-                                            </div>
-                                        </td>
-                                        <td className="px-2 py-2 text-right font-mono-nums text-emerald-400">{formatCurrency(row.inflow)}</td>
-                                        <td className="px-2 py-2 text-right font-mono-nums text-amber-300">{formatCurrency(row.expense)}</td>
-                                        <td className="px-2 py-2 text-right font-mono-nums text-cyan-300">{formatCurrency(row.allocation)}</td>
-                                        <td className="px-2 py-2 text-right font-mono-nums text-rose-300">{formatCurrency(row.debt)}</td>
-                                        <td className={`px-2 py-2 text-right font-mono-nums ${(row.earmarked_flow ?? 0) >= 0 ? 'text-cyan-300' : 'text-rose-300'}`}>{formatCurrency(row.earmarked_flow)}</td>
-                                        <td className={`px-2 py-2 text-right font-mono-nums ${(row.growth_flow ?? 0) >= 0 ? 'text-violet-300' : 'text-rose-300'}`}>{formatCurrency(row.growth_flow)}</td>
-                                        <td className={`px-2 py-2 text-right font-mono-nums ${(row.defense_flow ?? 0) >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>{formatCurrency(row.defense_flow)}</td>
-                                        <td className={`px-2 py-2 text-right font-mono-nums ${row.net_cash >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(row.net_cash)}</td>
-                                        <td className={`px-2 py-2 text-right font-mono-nums ${row.ending_cash >= 0 ? 'text-slate-200' : 'text-rose-400'}`}>{formatCurrency(row.ending_cash)}</td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                        <span className="text-xs text-slate-500 font-mono-nums">
+                            {cashFlowStartPeriod} / {cashFlowMonths} mo
+                        </span>
                     </div>
                 </div>
+
+                {projectionView === 'cash' ? (
+                    <div>
+                        <div className="grid grid-cols-2 min-[1280px]:grid-cols-4 gap-2 mb-3">
+                            <div className="border border-slate-800 bg-slate-950/40 px-3 py-2">
+                                <p className="text-[10px] uppercase text-slate-500">Runway</p>
+                                <p className={`mt-1 font-mono-nums text-sm ${cashFlowSummary?.shortfall_month ? 'text-amber-300' : 'text-emerald-300'}`}>{runwayLabel}</p>
+                            </div>
+                            <div className="border border-slate-800 bg-slate-950/40 px-3 py-2">
+                                <p className="text-[10px] uppercase text-slate-500">Lowest Cash</p>
+                                <p className={`mt-1 font-mono-nums text-sm ${(cashFlowSummary?.lowest_cash ?? 0) >= 0 ? 'text-slate-200' : 'text-rose-400'}`}>{formatCurrency(cashFlowSummary?.lowest_cash)}</p>
+                            </div>
+                            <div className="border border-slate-800 bg-slate-950/40 px-3 py-2">
+                                <p className="text-[10px] uppercase text-slate-500">Required Buffer</p>
+                                <p className={`mt-1 font-mono-nums text-sm ${(cashFlowSummary?.required_buffer ?? 0) > 0 ? 'text-amber-300' : 'text-slate-200'}`}>{formatCurrency(cashFlowSummary?.required_buffer)}</p>
+                            </div>
+                            <div className="border border-slate-800 bg-slate-950/40 px-3 py-2">
+                                <p className="text-[10px] uppercase text-slate-500">Shortfall Month</p>
+                                <p className={`mt-1 font-mono-nums text-sm ${cashFlowSummary?.shortfall_month ? 'text-rose-400' : 'text-emerald-300'}`}>{cashFlowSummary?.shortfall_month ?? 'None'}</p>
+                            </div>
+                        </div>
+                        <div className="overflow-x-auto border border-slate-800">
+                            <table className="w-full text-[10px]">
+                                <thead className="text-slate-500 uppercase border-b border-slate-700 bg-slate-800/50">
+                                    <tr>
+                                        <th className="px-2 py-2 text-left font-normal">Month</th>
+                                        <th className="px-2 py-2 text-right font-normal">Projected Inflow</th>
+                                        <th className="px-2 py-2 text-right font-normal">Actual Inflow</th>
+                                        <th className="px-2 py-2 text-right font-normal">Remaining Inflow</th>
+                                        <th className="px-2 py-2 text-right font-normal">Projected Expense</th>
+                                        <th className="px-2 py-2 text-right font-normal">Actual Expense</th>
+                                        <th className="px-2 py-2 text-right font-normal">Remaining Expense</th>
+                                        <th className="px-2 py-2 text-right font-normal">Projected Allocation</th>
+                                        <th className="px-2 py-2 text-right font-normal">Actual Allocation</th>
+                                        <th className="px-2 py-2 text-right font-normal">Remaining Allocation</th>
+                                        <th className="px-2 py-2 text-right font-normal">Projected Debt</th>
+                                        <th className="px-2 py-2 text-right font-normal">Actual Debt</th>
+                                        <th className="px-2 py-2 text-right font-normal">Remaining Debt</th>
+                                        <th className="px-2 py-2 text-right font-normal">Net Remaining</th>
+                                        <th className="px-2 py-2 text-right font-normal">Ending Cash</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-800/70">
+                                    {(budgetSummary?.cash_flow_projection ?? []).map((row) => (
+                                        <tr key={row.period} className="hover:bg-slate-800/30">
+                                            <td className="px-2 py-2 text-slate-300">
+                                                <div className="flex items-center gap-2">
+                                                    <span>{row.period}</span>
+                                                    {(row.setup_warnings?.length ?? 0) > 0 ? (
+                                                        <button type="button" title={(row.setup_warnings ?? []).map((warning) => `${warning.name}: ${formatCurrency(warning.amount)}`).join('\n')} onClick={() => jumpToCashFlowPeriod(row.period)} className="text-amber-400 hover:text-amber-200">
+                                                            <AlertTriangle size={12} />
+                                                        </button>
+                                                    ) : (
+                                                        <span title="No recurrence warnings" className="text-slate-700"><AlertTriangle size={12} /></span>
+                                                    )}
+                                                    <button type="button" title={`Jump to ${row.period}`} onClick={() => jumpToCashFlowPeriod(row.period)} className="text-slate-500 hover:text-cyan-300"><ChevronRight size={12} /></button>
+                                                    <button type="button" title={`Sync budget setup differences for ${row.period}`} onClick={() => syncAllRecurrencesForPeriod(row.period)} className={(row.setup_warnings?.length ?? 0) > 0 ? 'text-amber-400 hover:text-amber-200' : 'text-slate-500 hover:text-amber-300'}><RefreshCw size={12} /></button>
+                                                    <button type="button" title={`Copy current month budget to ${row.period}`} onClick={() => copyCurrentBudgetToPeriod(row.period)} className="text-slate-500 hover:text-emerald-300"><Copy size={12} /></button>
+                                                </div>
+                                            </td>
+                                            <td className="px-2 py-2 text-right font-mono-nums text-emerald-300">{formatCurrency(row.planned_inflow ?? row.inflow)}</td>
+                                            <td className="px-2 py-2 text-right font-mono-nums text-slate-400">{formatCurrency(row.actual_inflow ?? 0)}</td>
+                                            <td className="px-2 py-2 text-right font-mono-nums text-emerald-400">{formatCurrency(row.remaining_inflow ?? row.inflow)}</td>
+                                            <td className="px-2 py-2 text-right font-mono-nums text-amber-200">{formatCurrency(row.planned_expense ?? row.expense)}</td>
+                                            <td className="px-2 py-2 text-right font-mono-nums text-slate-400">{formatCurrency(row.actual_expense ?? 0)}</td>
+                                            <td className="px-2 py-2 text-right font-mono-nums text-amber-300">{formatCurrency(row.remaining_expense ?? row.expense)}</td>
+                                            <td className="px-2 py-2 text-right font-mono-nums text-cyan-200">{formatCurrency(row.planned_allocation ?? row.allocation)}</td>
+                                            <td className="px-2 py-2 text-right font-mono-nums text-slate-400">{formatCurrency(row.actual_allocation ?? 0)}</td>
+                                            <td className="px-2 py-2 text-right font-mono-nums text-cyan-300">{formatCurrency(row.remaining_allocation ?? row.allocation)}</td>
+                                            <td className="px-2 py-2 text-right font-mono-nums text-rose-200">{formatCurrency(row.planned_debt ?? row.debt)}</td>
+                                            <td className="px-2 py-2 text-right font-mono-nums text-slate-400">{formatCurrency(row.actual_debt ?? 0)}</td>
+                                            <td className="px-2 py-2 text-right font-mono-nums text-rose-300">{formatCurrency(row.remaining_debt ?? row.debt)}</td>
+                                            <td className={`px-2 py-2 text-right font-mono-nums ${row.net_cash >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(row.net_cash)}</td>
+                                            <td className={`px-2 py-2 text-right font-mono-nums ${row.ending_cash >= 0 ? 'text-slate-200' : 'text-rose-400'}`}>{formatCurrency(row.ending_cash)}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                ) : (
+                    <div>
+                        <div className="grid grid-cols-2 min-[1280px]:grid-cols-4 gap-2 mb-3">
+                            {renderMetricPanel('Ending Assets', balanceSummary?.ending_total_assets, 'text-cyan-300')}
+                            {renderMetricPanel('Ending Liabilities', balanceSummary?.ending_liabilities, 'text-rose-300')}
+                            {renderMetricPanel('Ending Net Worth', balanceSummary?.ending_net_worth, (balanceSummary?.ending_net_worth ?? 0) >= 0 ? 'text-emerald-400' : 'text-rose-400')}
+                            {renderMetricPanel('Lowest Net Worth', balanceSummary?.lowest_net_worth, (balanceSummary?.lowest_net_worth ?? 0) >= 0 ? 'text-slate-200' : 'text-rose-400')}
+                        </div>
+                        <div className="mb-3 border border-slate-800 bg-slate-950/30 p-3">
+                            <ResponsiveContainer width="100%" height={260}>
+                                <LineChart data={budgetSummary?.balance_projection ?? []} margin={{ top: 8, right: 16, left: 8, bottom: 4 }}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                                    <XAxis dataKey="period" tick={{ fontSize: 9, fill: '#64748b' }} />
+                                    <YAxis tickFormatter={(v) => `¥${(Number(v) / 1000).toFixed(0)}k`} tick={{ fontSize: 9, fill: '#64748b' }} width={62} />
+                                    <Tooltip contentStyle={{ background: '#0f172a', border: '1px solid #1e293b', fontSize: 11 }} formatter={(value) => formatCurrency(Number(value))} />
+                                    <Legend wrapperStyle={{ fontSize: 10 }} />
+                                    <Line type="monotone" dataKey="net_worth" name="Net Worth" stroke="#34d399" strokeWidth={1.7} dot={false} />
+                                    <Line type="monotone" dataKey="total_assets" name="Total Assets" stroke="#67e8f9" strokeWidth={1.3} dot={false} />
+                                    <Line type="monotone" dataKey="liabilities" name="Liabilities" stroke="#fb7185" strokeWidth={1.3} dot={false} />
+                                    <Line type="monotone" dataKey="growth_assets" name="Growth" stroke="#c084fc" strokeWidth={1.1} dot={false} />
+                                    <Line type="monotone" dataKey="earmarked_assets" name="Earmarked" stroke="#22d3ee" strokeWidth={1.1} dot={false} />
+                                </LineChart>
+                            </ResponsiveContainer>
+                        </div>
+                        <div className="overflow-x-auto border border-slate-800">
+                            <table className="w-full text-[10px]">
+                                <thead className="text-slate-500 uppercase border-b border-slate-700 bg-slate-800/50">
+                                    <tr>
+                                        <th className="px-2 py-2 text-left font-normal">Month</th>
+                                        <th className="px-2 py-2 text-right font-normal">Operating</th>
+                                        <th className="px-2 py-2 text-right font-normal">Defense</th>
+                                        <th className="px-2 py-2 text-right font-normal">Earmarked</th>
+                                        <th className="px-2 py-2 text-right font-normal">Growth</th>
+                                        <th className="px-2 py-2 text-right font-normal">Unassigned</th>
+                                        <th className="px-2 py-2 text-right font-normal">Assets</th>
+                                        <th className="px-2 py-2 text-right font-normal">Liabilities</th>
+                                        <th className="px-2 py-2 text-right font-normal">Net Worth</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-800/70">
+                                    {(budgetSummary?.balance_projection ?? []).map((row) => (
+                                        <tr key={row.period} className="hover:bg-slate-800/30">
+                                            <td className="px-2 py-2 text-slate-300">{row.period}</td>
+                                            <td className="px-2 py-2 text-right font-mono-nums text-slate-200">{formatCurrency(row.operating_assets)}</td>
+                                            <td className="px-2 py-2 text-right font-mono-nums text-emerald-300">{formatCurrency(row.defense_assets)}</td>
+                                            <td className="px-2 py-2 text-right font-mono-nums text-cyan-300">{formatCurrency(row.earmarked_assets)}</td>
+                                            <td className="px-2 py-2 text-right font-mono-nums text-violet-300">{formatCurrency(row.growth_assets)}</td>
+                                            <td className="px-2 py-2 text-right font-mono-nums text-slate-400">{formatCurrency(row.unassigned_assets)}</td>
+                                            <td className="px-2 py-2 text-right font-mono-nums text-cyan-200">{formatCurrency(row.total_assets)}</td>
+                                            <td className="px-2 py-2 text-right font-mono-nums text-rose-300">{formatCurrency(row.liabilities)}</td>
+                                            <td className={`px-2 py-2 text-right font-mono-nums ${row.net_worth >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(row.net_worth)}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                )}
             </section>
             ) : (
             <section className="bg-slate-900/60 border border-slate-800 p-4 overflow-auto">
