@@ -86,6 +86,11 @@ def add_months(period: str, months: int) -> str:
     return f"{shifted.year}-{shifted.month:02d}"
 
 
+def current_period_key(today: date | None = None) -> str:
+    today = today or date.today()
+    return f"{today.year}-{today.month:02d}"
+
+
 
 
 def _target_name_maps(db: Session, client_id: int) -> dict[str, dict[int, str]]:
@@ -212,6 +217,129 @@ def actual_for_plan_line(
     else:
         selected = []
     return _sum_transactions(selected, db, client_id)
+
+
+def _line_attr(line: models.MonthlyPlanLine | dict, key: str):
+    if isinstance(line, dict):
+        return line.get(key)
+    return getattr(line, key)
+
+
+def _cash_flow_line_account_id(
+    db: Session,
+    client_id: int,
+    line: models.MonthlyPlanLine | dict,
+    context: BudgetSummaryContext | None = None,
+) -> int | None:
+    account_id = _line_attr(line, "account_id")
+    if account_id:
+        return account_id
+
+    target_type = _line_attr(line, "target_type")
+    target_id = _line_attr(line, "target_id")
+    if target_type == "capsule" and target_id:
+        capsule_by_id = (context or {}).get("capsule_by_id", {})
+        capsule = capsule_by_id.get(target_id)
+        if capsule is None:
+            capsule = db.query(models.Capsule).filter(
+                models.Capsule.id == target_id,
+                models.Capsule.client_id == client_id,
+            ).first()
+        return capsule.account_id if capsule else None
+
+    if target_type == "life_event" and target_id:
+        capsule_by_life_event_id = (context or {}).get("capsule_by_life_event_id", {})
+        capsule = capsule_by_life_event_id.get(target_id)
+        if capsule is None:
+            capsule = db.query(models.Capsule).filter(
+                models.Capsule.client_id == client_id,
+                models.Capsule.life_event_id == target_id,
+            ).first()
+        return capsule.account_id if capsule else None
+
+    return None
+
+
+def cash_flow_actual_for_plan_line(
+    db: Session,
+    client_id: int,
+    line: models.MonthlyPlanLine | dict,
+    period: str,
+    context: BudgetSummaryContext | None = None,
+) -> float:
+    """Return transactions already executed for a plan line in a cash-flow period.
+
+    This intentionally differs from actual_for_plan_line: capsule budget rows use
+    current capsule balance for budget variance, but cash flow only needs the
+    already-executed movement for the month.
+    """
+    txs = _period_transactions_cached(db, client_id, period, context)
+    line_type = _line_attr(line, "line_type")
+    account_id = _cash_flow_line_account_id(db, client_id, line, context)
+    name = (_line_attr(line, "name") or "").lower()
+
+    def matches_text(tx: models.Transaction) -> bool:
+        return bool(
+            name
+            and (
+                name in (tx.description or "").lower()
+                or name in (tx.category or "").lower()
+            )
+        )
+
+    if line_type == "income":
+        selected = [
+            tx for tx in txs
+            if tx.type == "Income"
+            and ((account_id and tx.from_account_id == account_id) or (not account_id and matches_text(tx)))
+        ]
+    elif line_type == "expense":
+        selected = [
+            tx for tx in txs
+            if tx.type in {"Expense", "CreditExpense"}
+            and ((account_id and tx.to_account_id == account_id) or (not account_id and matches_text(tx)))
+        ]
+    elif line_type == "allocation":
+        selected = [
+            tx for tx in txs
+            if tx.type in {"Transfer", "CreditAssetPurchase"}
+            and ((account_id and tx.to_account_id == account_id) or (not account_id and matches_text(tx)))
+        ]
+    elif line_type == "debt_payment":
+        selected = [
+            tx for tx in txs
+            if tx.type == "LiabilityPayment"
+            and ((account_id and tx.to_account_id == account_id) or (not account_id and matches_text(tx)))
+        ]
+    elif line_type == "borrowing":
+        selected = [
+            tx for tx in txs
+            if tx.type == "Borrowing"
+            and ((account_id and tx.from_account_id == account_id) or (not account_id and matches_text(tx)))
+        ]
+    elif line_type == "drawdown":
+        selected = [
+            tx for tx in txs
+            if tx.type == "Transfer"
+            and ((account_id and tx.from_account_id == account_id) or (not account_id and matches_text(tx)))
+        ]
+    else:
+        selected = []
+    return _sum_transactions(selected, db, client_id)
+
+
+def _cash_flow_line_amount_for_period(
+    db: Session,
+    client_id: int,
+    line: models.MonthlyPlanLine,
+    period: str,
+    context: BudgetSummaryContext | None = None,
+) -> float:
+    planned = line.amount or 0.0
+    if period != current_period_key():
+        return planned
+    actual = cash_flow_actual_for_plan_line(db, client_id, line, period, context)
+    return max(0.0, planned - actual)
 
 
 def _serialize_plan_line(
@@ -658,6 +786,7 @@ def get_budget_summary(
         for capsule in capsules
         if capsule.life_event_id
     }
+    context["capsule_by_life_event_id"] = capsule_by_life_event_id
 
     plan_models = db.query(models.MonthlyPlanLine).filter(
         models.MonthlyPlanLine.client_id == client_id,
@@ -832,17 +961,21 @@ def get_cash_flow_projection(
         )
         lines = q.all()
         lines = _deduplicate_active_plan_models(db, lines)
+        effective_amounts = [
+            (line, _cash_flow_line_amount_for_period(db, client_id, line, period, context))
+            for line in lines
+        ]
         income = sum(
-            line.amount or 0.0 for line in lines if line.line_type in INFLOW_LINE_TYPES
+            amount for line, amount in effective_amounts if line.line_type in INFLOW_LINE_TYPES
         )
         expense = sum(
-            line.amount or 0.0 for line in lines if line.line_type == "expense"
+            amount for line, amount in effective_amounts if line.line_type == "expense"
         )
         allocation = sum(
-            line.amount or 0.0 for line in lines if line.line_type == "allocation"
+            amount for line, amount in effective_amounts if line.line_type == "allocation"
         )
         debt = sum(
-            line.amount or 0.0 for line in lines if line.line_type == "debt_payment"
+            amount for line, amount in effective_amounts if line.line_type == "debt_payment"
         )
         net = income - expense - allocation - debt
         cash += net

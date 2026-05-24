@@ -12,14 +12,14 @@ try:
     from backend.app.routers.budget_plans import compare_budget_plans, copy_period_full_replace, copy_plan_from
     from backend.app.schemas import CopyPeriodRequest, MonthlyPlanLineBatchUpdate, MonthlyPlanLineCreate
     from backend.app.services.accounting_service import process_transaction
-    from backend.app.services.budget_plan_service import create_plan_lines, get_budget_summary, update_plan_lines
+    from backend.app.services.budget_plan_service import add_months, create_plan_lines, current_period_key, get_budget_summary, period_to_range, update_plan_lines
 except ModuleNotFoundError:
     from app import models  # type: ignore[no-redef]
     from app.database import Base  # type: ignore[no-redef]
     from app.routers.budget_plans import compare_budget_plans, copy_period_full_replace, copy_plan_from  # type: ignore[no-redef]
     from app.schemas import CopyPeriodRequest, MonthlyPlanLineBatchUpdate, MonthlyPlanLineCreate  # type: ignore[no-redef]
     from app.services.accounting_service import process_transaction  # type: ignore[no-redef]
-    from app.services.budget_plan_service import create_plan_lines, get_budget_summary, update_plan_lines  # type: ignore[no-redef]
+    from app.services.budget_plan_service import add_months, create_plan_lines, current_period_key, get_budget_summary, period_to_range, update_plan_lines  # type: ignore[no-redef]
 
 
 def _session():
@@ -477,6 +477,154 @@ def test_cash_flow_projection_warns_about_unsynced_yearly_income() -> None:
         assert june["inflow"] == 0
         assert june["setup_warnings"][0]["type"] == "missing_budget"
         assert june["setup_warnings"][0]["amount"] == 600000
+    finally:
+        db.close()
+
+
+def test_cash_flow_projection_uses_remaining_current_month_plan_after_actuals() -> None:
+    db = _session()
+    try:
+        current_period = current_period_key()
+        next_period = add_months(current_period, 1)
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        salary = models.Account(client_id=1, name="salary", account_type="income")
+        cash = models.Account(client_id=1, name="cash", account_type="asset")
+        food = models.Account(client_id=1, name="food", account_type="expense")
+        db.add_all([client, salary, cash, food])
+        db.flush()
+        db.add_all([
+            models.MonthlyPlanLine(
+                client_id=1,
+                target_period=current_period,
+                line_type="income",
+                target_type="account",
+                account_id=salary.id,
+                name="salary",
+                amount=100000,
+            ),
+            models.MonthlyPlanLine(
+                client_id=1,
+                target_period=current_period,
+                line_type="expense",
+                target_type="account",
+                account_id=food.id,
+                name="food",
+                amount=50000,
+            ),
+            models.MonthlyPlanLine(
+                client_id=1,
+                target_period=next_period,
+                line_type="income",
+                target_type="account",
+                account_id=salary.id,
+                name="salary",
+                amount=100000,
+            ),
+            models.MonthlyPlanLine(
+                client_id=1,
+                target_period=next_period,
+                line_type="expense",
+                target_type="account",
+                account_id=food.id,
+                name="food",
+                amount=50000,
+            ),
+        ])
+        income_tx = models.Transaction(
+            client_id=1,
+            date=date.today(),
+            description="salary",
+            amount=100000,
+            type="Income",
+            from_account_id=salary.id,
+            to_account_id=cash.id,
+            currency="JPY",
+        )
+        expense_tx = models.Transaction(
+            client_id=1,
+            date=date.today(),
+            description="food",
+            amount=30000,
+            type="Expense",
+            from_account_id=cash.id,
+            to_account_id=food.id,
+            currency="JPY",
+        )
+        db.add_all([income_tx, expense_tx])
+        db.commit()
+        process_transaction(db, income_tx)
+        process_transaction(db, expense_tx)
+
+        summary = get_budget_summary(db, client_id=1, period=current_period, cash_flow_months=2)
+        current_row = summary["cash_flow_projection"][0]
+        next_row = summary["cash_flow_projection"][1]
+
+        assert summary["starting_cash"] == 70000
+        assert current_row["period"] == current_period
+        assert current_row["inflow"] == 0
+        assert current_row["expense"] == 20000
+        assert current_row["net_cash"] == -20000
+        assert current_row["ending_cash"] == 50000
+        assert next_row["period"] == next_period
+        assert next_row["inflow"] == 100000
+        assert next_row["expense"] == 50000
+        assert next_row["net_cash"] == 50000
+        assert next_row["ending_cash"] == 100000
+    finally:
+        db.close()
+
+
+def test_cash_flow_projection_does_not_double_count_current_month_over_actuals() -> None:
+    db = _session()
+    try:
+        current_period = current_period_key()
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        salary = models.Account(client_id=1, name="salary", account_type="income")
+        cash = models.Account(client_id=1, name="cash", account_type="asset")
+        food = models.Account(client_id=1, name="food", account_type="expense")
+        db.add_all([client, salary, cash, food])
+        db.flush()
+        db.add(models.MonthlyPlanLine(
+            client_id=1,
+            target_period=current_period,
+            line_type="expense",
+            target_type="account",
+            account_id=food.id,
+            name="food",
+            amount=50000,
+        ))
+        opening_tx = models.Transaction(
+            client_id=1,
+            date=period_to_range(add_months(current_period, -1))[0],
+            description="opening income",
+            amount=100000,
+            type="Income",
+            from_account_id=salary.id,
+            to_account_id=cash.id,
+            currency="JPY",
+        )
+        expense_tx = models.Transaction(
+            client_id=1,
+            date=date.today(),
+            description="food",
+            amount=70000,
+            type="Expense",
+            from_account_id=cash.id,
+            to_account_id=food.id,
+            currency="JPY",
+        )
+        db.add_all([opening_tx, expense_tx])
+        db.commit()
+        process_transaction(db, opening_tx)
+        process_transaction(db, expense_tx)
+
+        summary = get_budget_summary(db, client_id=1, period=current_period, cash_flow_months=1)
+        current_row = summary["cash_flow_projection"][0]
+
+        assert summary["starting_cash"] == 30000
+        assert current_row["expense"] == 0
+        assert current_row["net_cash"] == 0
+        assert current_row["ending_cash"] == 30000
     finally:
         db.close()
 
