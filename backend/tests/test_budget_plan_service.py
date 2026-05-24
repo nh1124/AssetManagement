@@ -847,6 +847,61 @@ def test_cash_flow_splits_same_expense_account_by_source_account_bucket() -> Non
         db.close()
 
 
+def test_cash_flow_uses_registry_source_when_saved_budget_line_lacks_source_account() -> None:
+    db = _session()
+    try:
+        next_period = add_months(current_period_key(), 1)
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        loan = models.Account(client_id=1, name="long term payable", account_type="liability")
+        beauty = models.Account(client_id=1, name="beauty", account_type="expense")
+        db.add_all([client, loan, beauty])
+        db.flush()
+        db.add(models.RegistryEntry(
+            client_id=1,
+            name="beauty",
+            entry_type="service",
+            amount=500000,
+            currency="JPY",
+            frequency="Monthly",
+            transaction_type="CreditExpense",
+            line_type="expense",
+            budget_account_id=beauty.id,
+            source_account_id=loan.id,
+            destination_account_id=beauty.id,
+            budget_active=True,
+            is_active=True,
+        ))
+        db.add(models.MonthlyPlanLine(
+            client_id=1,
+            target_period=next_period,
+            line_type="expense",
+            target_type="account",
+            account_id=beauty.id,
+            name="beauty",
+            amount=500000,
+            source="registry",
+            cash_treatment="auto",
+        ))
+        db.commit()
+
+        summary = get_budget_summary(
+            db,
+            client_id=1,
+            period=next_period,
+            cash_flow_start_period=next_period,
+            cash_flow_months=1,
+        )
+        row = summary["cash_flow_projection"][0]
+        beauty_row = next(account for account in summary["expense_accounts"] if account["account_id"] == beauty.id)
+
+        assert beauty_row["source_account_id"] == loan.id
+        assert row["expense"] == 0
+        assert row["non_cash_budget"] == 500000
+        assert row["net_cash"] == 0
+    finally:
+        db.close()
+
+
 def test_cash_flow_reports_asset_role_movements() -> None:
     db = _session()
     try:

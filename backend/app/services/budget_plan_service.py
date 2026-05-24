@@ -426,6 +426,62 @@ def _cash_flow_line_account_id(
     return None
 
 
+def _registry_line_for_plan_line(
+    db: Session,
+    client_id: int,
+    line: models.MonthlyPlanLine | dict,
+    context: BudgetSummaryContext | None = None,
+) -> dict | None:
+    period = _line_attr(line, "target_period")
+    if not period:
+        return None
+    line_type = _line_attr(line, "line_type")
+    target_type = _line_attr(line, "target_type")
+    account_id = _line_attr(line, "account_id")
+    name = _line_attr(line, "name") or _line_attr(line, "target_name")
+    cash_treatment = _line_attr(line, "cash_treatment") or "auto"
+    key = _plan_match_key(line_type, target_type, account_id, name, None, cash_treatment)
+    for registry_line in registry_plan_lines(db, client_id, period, context):
+        registry_key = _plan_match_key(
+            registry_line.get("line_type"),
+            registry_line.get("target_type"),
+            registry_line.get("account_id"),
+            registry_line.get("name"),
+            None,
+            registry_line.get("cash_treatment"),
+        )
+        if registry_key == key:
+            return registry_line
+
+        plan_name = (name or "").strip().lower()
+        if plan_name:
+            item_names = {
+                (item.get("name") or "").strip().lower()
+                for item in registry_line.get("registry_items", [])
+            }
+            if (
+                registry_line.get("line_type") == line_type
+                and registry_line.get("account_id") == account_id
+                and (registry_line.get("cash_treatment") or "auto") == cash_treatment
+                and plan_name in item_names
+            ):
+                return registry_line
+    return None
+
+
+def _cash_flow_line_source_account_id(
+    db: Session,
+    client_id: int,
+    line: models.MonthlyPlanLine | dict,
+    context: BudgetSummaryContext | None = None,
+) -> int | None:
+    source_account_id = _line_attr(line, "source_account_id")
+    if source_account_id:
+        return source_account_id
+    registry_line = _registry_line_for_plan_line(db, client_id, line, context)
+    return registry_line.get("source_account_id") if registry_line else None
+
+
 def _plan_line_movement_accounts(
     db: Session,
     client_id: int,
@@ -433,7 +489,7 @@ def _plan_line_movement_accounts(
     context: BudgetSummaryContext | None = None,
 ) -> tuple[models.Account | None, models.Account | None]:
     line_type = _line_attr(line, "line_type")
-    source_account = _account_by_id(db, client_id, _line_attr(line, "source_account_id"), context)
+    source_account = _account_by_id(db, client_id, _cash_flow_line_source_account_id(db, client_id, line, context), context)
     target_account = _account_by_id(db, client_id, _cash_flow_line_account_id(db, client_id, line, context), context)
 
     if line_type == "income":
@@ -499,7 +555,7 @@ def cash_flow_actual_for_plan_line(
     txs = _period_transactions_cached(db, client_id, period, context)
     line_type = _line_attr(line, "line_type")
     account_id = _cash_flow_line_account_id(db, client_id, line, context)
-    source_account_id = _line_attr(line, "source_account_id")
+    source_account_id = _cash_flow_line_source_account_id(db, client_id, line, context)
     name = (_line_attr(line, "name") or "").lower()
 
     def source_matches(tx: models.Transaction, attr: str) -> bool:
@@ -1026,6 +1082,8 @@ def _merge_registry_context(plan_lines: list[dict], registry_lines: list[dict]) 
             line["registry_entry_ids"] = registry_line.get("registry_entry_ids", [])
             line["registry_items"] = registry_line.get("registry_items", [])
             line["recurring_transaction_ids"] = registry_line.get("recurring_transaction_ids", [])
+            if not line.get("source_account_id") and registry_line.get("source_account_id"):
+                line["source_account_id"] = registry_line.get("source_account_id")
             line["product_expense_amount"] = registry_line.get("product_expense_amount", 0.0)
             line["product_expense_items"] = registry_line.get("product_expense_items", [])
             line["recurring_amount"] = registry_amount
