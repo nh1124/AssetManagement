@@ -990,6 +990,58 @@ def test_balance_projection_tracks_future_liability_financed_expense() -> None:
         db.close()
 
 
+def test_income_direct_to_asset_counts_as_allocation_actual_without_remaining_cash_outflow() -> None:
+    db = _session()
+    try:
+        current_period = current_period_key()
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        salary = models.Account(client_id=1, name="salary", account_type="income")
+        bank = models.Account(client_id=1, name="bank", account_type="asset", role="operating")
+        stock = models.Account(client_id=1, name="employee stock", account_type="asset", role="growth")
+        db.add_all([client, salary, bank, stock])
+        db.flush()
+        line = models.MonthlyPlanLine(
+            client_id=1,
+            target_period=current_period,
+            line_type="allocation",
+            target_type="account",
+            account_id=stock.id,
+            source_account_id=bank.id,
+            name="employee stock",
+            amount=50000,
+        )
+        tx = models.Transaction(
+            client_id=1,
+            date=date.today(),
+            description="payroll stock contribution",
+            amount=54515,
+            type="Income",
+            from_account_id=salary.id,
+            to_account_id=stock.id,
+            currency="JPY",
+            category="employee stock",
+        )
+        db.add_all([line, tx])
+        db.commit()
+        process_transaction(db, tx)
+
+        summary = get_budget_summary(db, client_id=1, period=current_period, cash_flow_months=1)
+        plan_line = next(item for item in summary["plan_lines"] if item["line_type"] == "allocation")
+        row = summary["cash_flow_projection"][0]
+        balance_row = summary["balance_projection"][0]
+
+        assert plan_line["actual"] == 54515
+        assert plan_line["variance"] == -4515
+        assert row["planned_allocation"] == 54515
+        assert row["actual_allocation"] == 54515
+        assert row["remaining_allocation"] == 0
+        assert row["allocation"] == 0
+        assert row["net_cash"] == 0
+        assert balance_row["growth_assets"] == 54515
+    finally:
+        db.close()
+
+
 def test_balance_projection_tracks_debt_payment_and_liability_asset_purchase() -> None:
     db = _session()
     try:

@@ -183,10 +183,20 @@ def actual_for_plan_line(
     elif line_type == "allocation":
         selected = [
             tx for tx in txs
-            if tx.type in {"Transfer", "CreditAssetPurchase"}
+            if (
+                tx.type in {"Transfer", "CreditAssetPurchase"}
+                or tx.type == "Income"
+            )
             and (
                 (account_id and tx.to_account_id == account_id)
-                or (not account_id and needle and needle in (tx.description or "").lower())
+                or (
+                    not account_id
+                    and needle
+                    and (
+                        needle in (tx.description or "").lower()
+                        or needle in (tx.category or "").lower()
+                    )
+                )
             )
         ]
     elif line_type == "debt_payment":
@@ -651,9 +661,17 @@ def cash_flow_actual_for_plan_line(
     elif line_type == "allocation":
         selected = [
             tx for tx in txs
-            if tx.type == "Transfer"
-            and source_matches(tx, "from_account_id")
-            and ((account_id and tx.to_account_id == account_id) or (not account_id and matches_text(tx)))
+            if (
+                (
+                    tx.type == "Transfer"
+                    and source_matches(tx, "from_account_id")
+                    and ((account_id and tx.to_account_id == account_id) or (not account_id and matches_text(tx)))
+                )
+                or (
+                    tx.type == "Income"
+                    and ((account_id and tx.to_account_id == account_id) or (not account_id and matches_text(tx)))
+                )
+            )
         ]
     elif line_type == "debt_payment":
         selected = [
