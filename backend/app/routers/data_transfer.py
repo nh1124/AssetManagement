@@ -1,25 +1,56 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from datetime import date, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .. import models
 from ..database import get_db
 from ..dependencies import get_current_client
+from ..services.accounting_service import calculate_account_journal_balance
 from ..services.cache_service import invalidate_client
 from ..services.capsule_service import create_capsule_for_goal
 from ..services.data_health_service import check_data_health, repair_data_health
 
 router = APIRouter(prefix="/data", tags=["data"])
 
+EXPORT_VERSION = 2
+
+DATA_COLLECTIONS = [
+    "accounts",
+    "products",
+    "simulation_configs",
+    "recurring_transactions",
+    "registry_entries",
+    "quick_templates",
+    "transaction_batches",
+    "life_events",
+    "transactions",
+    "journal_entries",
+    "budget_plans",
+    "monthly_plan_lines",
+    "monthly_reviews",
+    "period_reviews",
+    "monthly_actions",
+    "milestones",
+    "capsules",
+    "capsule_rules",
+    "capsule_holdings",
+    "simulation_scenarios",
+    "exchange_rates",
+]
+
 
 class ImportPayload(BaseModel):
     version: int | None = None
     exported_at: str | None = None
+    manifest: dict[str, Any] | None = None
     client: dict[str, Any] | None = None
     data: dict[str, list[dict[str, Any]]]
 
@@ -32,6 +63,48 @@ def _iso(value: Any) -> Any:
 
 def _row(obj: Any, fields: list[str]) -> dict[str, Any]:
     return {field: _iso(getattr(obj, field)) for field in fields}
+
+
+def _canonical_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
+
+
+def _sha256(value: Any) -> str:
+    return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def _data_counts(data: dict[str, list[dict[str, Any]]]) -> dict[str, int]:
+    return {key: len(data.get(key, [])) for key in DATA_COLLECTIONS}
+
+
+def _table_checksums(data: dict[str, list[dict[str, Any]]]) -> dict[str, str]:
+    return {key: _sha256(data.get(key, [])) for key in DATA_COLLECTIONS}
+
+
+def _db_revision(db: Session) -> str | None:
+    try:
+        return db.execute(text("SELECT version_num FROM alembic_version")).scalar()
+    except Exception:
+        return None
+
+
+def _build_manifest(
+    db: Session,
+    current_client: models.Client,
+    data: dict[str, list[dict[str, Any]]],
+    exported_at: str,
+) -> dict[str, Any]:
+    checksums = _table_checksums(data)
+    return {
+        "export_version": EXPORT_VERSION,
+        "exported_at": exported_at,
+        "application": "AssetManagement",
+        "alembic_revision": _db_revision(db),
+        "client_id": current_client.id,
+        "counts": _data_counts(data),
+        "checksums": checksums,
+        "payload_checksum": _sha256({"data": data, "checksums": checksums}),
+    }
 
 
 def _parse_date(value: Any) -> date | None:
@@ -50,6 +123,206 @@ def _parse_datetime(value: Any) -> datetime | None:
     return datetime.fromisoformat(str(value))
 
 
+def _as_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _validate_import_payload(payload: ImportPayload) -> dict[str, Any]:
+    data = payload.data or {}
+    issues: list[dict[str, Any]] = []
+
+    def issue(
+        severity: str,
+        code: str,
+        detail: str,
+        collection: str | None = None,
+        item_id: Any = None,
+        field: str | None = None,
+    ) -> None:
+        row = {"severity": severity, "code": code, "detail": detail}
+        if collection:
+            row["collection"] = collection
+        if item_id is not None:
+            row["item_id"] = item_id
+        if field:
+            row["field"] = field
+        issues.append(row)
+
+    unknown_collections = sorted(set(data.keys()) - set(DATA_COLLECTIONS))
+    for collection in unknown_collections:
+        issue("warning", "unknown_collection", "This collection is not imported by this application version.", collection)
+
+    if payload.version and payload.version > EXPORT_VERSION:
+        issue(
+            "error",
+            "unsupported_version",
+            f"Export version {payload.version} is newer than supported version {EXPORT_VERSION}.",
+        )
+    elif payload.version and payload.version < EXPORT_VERSION:
+        issue(
+            "warning",
+            "older_version",
+            f"Export version {payload.version} will be imported with compatibility defaults.",
+        )
+
+    id_sets: dict[str, set[int]] = {}
+    for collection in DATA_COLLECTIONS:
+        seen: set[int] = set()
+        for index, item in enumerate(data.get(collection, [])):
+            item_id = _as_int(item.get("id"))
+            if item_id is None:
+                issue("error", "missing_id", f"Row {index} is missing a valid id.", collection, field="id")
+                continue
+            if item_id in seen:
+                issue("error", "duplicate_id", f"Duplicate id {item_id}.", collection, item_id, "id")
+            seen.add(item_id)
+        id_sets[collection] = seen
+
+    def check_ref(collection: str, field: str, target: str, required: bool = False) -> None:
+        target_ids = id_sets.get(target, set())
+        for item in data.get(collection, []):
+            value = item.get(field)
+            ref_id = _as_int(value)
+            if ref_id is None:
+                if required and value is not None:
+                    issue("error", "invalid_reference", f"{field} is not a valid integer id.", collection, item.get("id"), field)
+                elif required:
+                    issue("error", "missing_reference", f"{field} is required.", collection, item.get("id"), field)
+                continue
+            if ref_id not in target_ids:
+                issue(
+                    "error",
+                    "missing_reference",
+                    f"{field} points to missing {target} id {ref_id}.",
+                    collection,
+                    item.get("id"),
+                    field,
+                )
+
+    check_ref("accounts", "parent_id", "accounts")
+    check_ref("products", "budget_account_id", "accounts")
+    check_ref("products", "funding_capsule_id", "capsules")
+    check_ref("recurring_transactions", "from_account_id", "accounts")
+    check_ref("recurring_transactions", "to_account_id", "accounts")
+    check_ref("recurring_transactions", "source_registry_entry_id", "registry_entries")
+    check_ref("registry_entries", "budget_account_id", "accounts")
+    check_ref("registry_entries", "source_account_id", "accounts")
+    check_ref("registry_entries", "destination_account_id", "accounts")
+    check_ref("registry_entries", "funding_capsule_id", "capsules")
+    check_ref("registry_entries", "source_product_id", "products")
+    check_ref("registry_entries", "source_recurring_transaction_id", "recurring_transactions")
+    check_ref("quick_templates", "default_from_account_id", "accounts")
+    check_ref("quick_templates", "default_to_account_id", "accounts")
+    check_ref("transaction_batches", "quick_template_id", "quick_templates")
+    check_ref("transactions", "from_account_id", "accounts")
+    check_ref("transactions", "to_account_id", "accounts")
+    check_ref("transactions", "batch_id", "transaction_batches")
+    check_ref("journal_entries", "transaction_id", "transactions", required=True)
+    check_ref("journal_entries", "account_id", "accounts", required=True)
+    check_ref("milestones", "life_event_id", "life_events")
+    check_ref("capsules", "account_id", "accounts")
+    check_ref("capsules", "life_event_id", "life_events")
+    check_ref("capsule_rules", "capsule_id", "capsules", required=True)
+    check_ref("capsule_rules", "source_account_id", "accounts")
+    check_ref("capsule_holdings", "capsule_id", "capsules", required=True)
+    check_ref("capsule_holdings", "account_id", "accounts", required=True)
+    check_ref("simulation_scenarios", "life_event_id", "life_events", required=True)
+    check_ref("monthly_plan_lines", "account_id", "accounts")
+    check_ref("monthly_plan_lines", "source_account_id", "accounts")
+    check_ref("monthly_plan_lines", "recurring_transaction_id", "recurring_transactions")
+    check_ref("monthly_plan_lines", "plan_id", "budget_plans")
+
+    for item in data.get("monthly_plan_lines", []):
+        target_type = item.get("target_type")
+        target_id = _as_int(item.get("target_id"))
+        if target_id is None:
+            continue
+        target_collection = {
+            "account": "accounts",
+            "capsule": "capsules",
+            "life_event": "life_events",
+            "product": "products",
+        }.get(target_type)
+        if target_collection and target_id not in id_sets[target_collection]:
+            issue(
+                "error",
+                "missing_reference",
+                f"target_id points to missing {target_collection} id {target_id}.",
+                "monthly_plan_lines",
+                item.get("id"),
+                "target_id",
+            )
+
+    manifest = payload.manifest or {}
+    expected_checksums = manifest.get("checksums") or {}
+    actual_checksums = _table_checksums(data)
+    for collection, expected in expected_checksums.items():
+        actual = actual_checksums.get(collection)
+        if actual and expected != actual:
+            issue(
+                "error",
+                "checksum_mismatch",
+                "Collection checksum does not match the export manifest.",
+                collection,
+            )
+
+    expected_payload_checksum = manifest.get("payload_checksum")
+    if expected_payload_checksum:
+        actual_payload_checksum = _sha256({"data": data, "checksums": actual_checksums})
+        if expected_payload_checksum != actual_payload_checksum:
+            issue("error", "payload_checksum_mismatch", "Payload checksum does not match the export manifest.")
+
+    error_count = sum(1 for item in issues if item["severity"] == "error")
+    warning_count = sum(1 for item in issues if item["severity"] == "warning")
+    return {
+        "status": "valid" if error_count == 0 else "invalid",
+        "error_count": error_count,
+        "warning_count": warning_count,
+        "counts": _data_counts(data),
+        "issues": issues,
+    }
+
+
+def _remap_nested_ids(value: Any, key_maps: dict[str, dict[int, int]]) -> Any:
+    if isinstance(value, list):
+        return [_remap_nested_ids(item, key_maps) for item in value]
+    if not isinstance(value, dict):
+        return value
+
+    mapped: dict[str, Any] = {}
+    for key, item_value in value.items():
+        id_map = key_maps.get(key)
+        old_id = _as_int(item_value)
+        if id_map is not None and old_id is not None:
+            mapped[key] = id_map.get(old_id, item_value)
+        else:
+            mapped[key] = _remap_nested_ids(item_value, key_maps)
+    return mapped
+
+
+def _remap_action_target_id(item: dict[str, Any], key_maps: dict[str, dict[int, int]]) -> int | None:
+    target_id = _as_int(item.get("target_id"))
+    if target_id is None:
+        return None
+    kind = item.get("kind")
+    payload = item.get("payload") or {}
+    target_key = {
+        "set_budget": "account_id",
+        "pause_recurring": "recurring_id",
+        "change_capsule_contribution": "capsule_id",
+    }.get(kind)
+    if kind == "boost_allocation":
+        target_key = "account_id" if payload.get("account_id") else "life_event_id"
+    if not target_key:
+        return target_id
+    return key_maps.get(target_key, {}).get(target_id, target_id)
+
+
 @router.get("/export")
 def export_client_data(
     db: Session = Depends(get_db),
@@ -62,17 +335,8 @@ def export_client_data(
         .all()
     ]
 
-    return {
-        "version": 1,
-        "exported_at": datetime.utcnow().isoformat(),
-        "client": {
-            "id": current_client.id,
-            "name": current_client.name,
-            "username": current_client.username,
-            "email": current_client.email,
-            "general_settings": current_client.general_settings or {},
-        },
-        "data": {
+    exported_at = datetime.utcnow().isoformat()
+    data = {
             "accounts": [
                 _row(
                     account,
@@ -378,6 +642,31 @@ def export_client_data(
                 .order_by(models.PeriodReview.start_date, models.PeriodReview.end_date)
                 .all()
             ],
+            "monthly_actions": [
+                _row(
+                    action,
+                    [
+                        "id",
+                        "source_period",
+                        "target_period",
+                        "proposal_id",
+                        "kind",
+                        "description",
+                        "amount",
+                        "target_id",
+                        "payload",
+                        "result",
+                        "status",
+                        "idempotency_key",
+                        "created_at",
+                        "applied_at",
+                    ],
+                )
+                for action in db.query(models.MonthlyAction)
+                .filter(models.MonthlyAction.client_id == current_client.id)
+                .order_by(models.MonthlyAction.id)
+                .all()
+            ],
             "milestones": [
                 _row(
                     milestone,
@@ -491,6 +780,36 @@ def export_client_data(
                 .order_by(models.ExchangeRate.id)
                 .all()
             ],
+    }
+
+    return {
+        "version": EXPORT_VERSION,
+        "exported_at": exported_at,
+        "manifest": _build_manifest(db, current_client, data, exported_at),
+        "client": {
+            "id": current_client.id,
+            "name": current_client.name,
+            "username": current_client.username,
+            "email": current_client.email,
+            "general_settings": current_client.general_settings or {},
+        },
+        "health": check_data_health(db, current_client.id),
+        "data": data,
+    }
+
+
+@router.post("/import/validate")
+def validate_import_client_data(
+    payload: ImportPayload,
+    current_client: models.Client = Depends(get_current_client),
+):
+    validation = _validate_import_payload(payload)
+    return {
+        **validation,
+        "client": {
+            "target_client_id": current_client.id,
+            "source_client_id": (payload.client or {}).get("id"),
+            "source_name": (payload.client or {}).get("name"),
         },
     }
 
@@ -502,6 +821,16 @@ def import_client_data(
     current_client: models.Client = Depends(get_current_client),
 ):
     data = payload.data or {}
+    validation = _validate_import_payload(payload)
+    if validation["error_count"]:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "message": "Import payload validation failed",
+                "validation": validation,
+            },
+        )
+
     account_map: dict[int, int] = {}
     transaction_map: dict[int, int] = {}
     batch_map: dict[int, int] = {}
@@ -522,6 +851,17 @@ def import_client_data(
         if tx_ids:
             db.query(models.JournalEntry).filter(
                 models.JournalEntry.transaction_id.in_(tx_ids)
+            ).delete(synchronize_session=False)
+
+        capsule_ids = [
+            row[0]
+            for row in db.query(models.Capsule.id)
+            .filter(models.Capsule.client_id == current_client.id)
+            .all()
+        ]
+        if capsule_ids:
+            db.query(models.CapsuleHolding).filter(
+                models.CapsuleHolding.capsule_id.in_(capsule_ids)
             ).delete(synchronize_session=False)
 
         for model in [
@@ -788,6 +1128,10 @@ def import_client_data(
                     )
                 )
 
+        db.flush()
+        for account in db.query(models.Account).filter(models.Account.client_id == current_client.id).all():
+            account.balance = calculate_account_journal_balance(db, account)
+
         for item in data.get("monthly_reviews", []):
             db.add(
                 models.MonthlyReview(
@@ -814,20 +1158,23 @@ def import_client_data(
                 )
             )
 
+        milestone_map: dict[int, int] = {}
         for item in data.get("milestones", []):
-            db.add(
-                models.Milestone(
-                    client_id=current_client.id,
-                    life_event_id=event_map.get(item.get("life_event_id")),
-                    date=_parse_date(item.get("date")),
-                    target_amount=item.get("target_amount") or 0,
-                    note=item.get("note"),
-                    source=item.get("source") or "manual",
-                    source_snapshot=item.get("source_snapshot"),
-                    is_active_plan=item.get("is_active_plan", True),
-                    created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
-                )
+            old_id = int(item["id"])
+            milestone = models.Milestone(
+                client_id=current_client.id,
+                life_event_id=event_map.get(item.get("life_event_id")),
+                date=_parse_date(item.get("date")),
+                target_amount=item.get("target_amount") or 0,
+                note=item.get("note"),
+                source=item.get("source") or "manual",
+                source_snapshot=item.get("source_snapshot"),
+                is_active_plan=item.get("is_active_plan", True),
+                created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
             )
+            db.add(milestone)
+            db.flush()
+            milestone_map[old_id] = milestone.id
 
         for item in data.get("simulation_scenarios", []):
             life_event_id = event_map.get(item.get("life_event_id"))
@@ -873,8 +1220,7 @@ def import_client_data(
         for registry_entry, old_capsule_id in registry_funding_updates:
             registry_entry.funding_capsule_id = capsule_map.get(old_capsule_id)
 
-        # LifeEvent ごとに紐づく Capsule+Account が存在しない場合は自動生成する
-        # （通常の POST /life-events/ と同じ動作を import でも再現する）
+        # Recreate missing goal capsules so older exports behave like normal goal creation.
         for event in (
             db.query(models.LifeEvent)
             .filter(models.LifeEvent.client_id == current_client.id)
@@ -915,7 +1261,9 @@ def import_client_data(
                     )
                 )
 
+        monthly_plan_line_map: dict[int, int] = {}
         for item in data.get("monthly_plan_lines", []):
+            old_id = int(item["id"])
             target_type = item.get("target_type") or "manual"
             target_id = item.get("target_id")
             if target_type == "capsule":
@@ -925,27 +1273,28 @@ def import_client_data(
             elif target_type == "product":
                 target_id = product_map.get(target_id)
             elif target_type == "account":
-                target_id = None
-            db.add(
-                models.MonthlyPlanLine(
-                    client_id=current_client.id,
-                    target_period=item["target_period"],
-                    line_type=item["line_type"],
-                    target_type=target_type,
-                    target_id=target_id,
-                    account_id=account_map.get(item.get("account_id")),
-                    source_account_id=account_map.get(item.get("source_account_id")),
-                    name=item.get("name"),
-                    amount=item.get("amount") or 0,
-                    source=item.get("source") or "manual",
-                    cash_treatment=item.get("cash_treatment") or "auto",
-                    recurring_transaction_id=recurring_map.get(item.get("recurring_transaction_id")),
-                    plan_id=budget_plan_map.get(item.get("plan_id")),
-                    is_active=item.get("is_active", True),
-                    created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
-                    updated_at=_parse_datetime(item.get("updated_at")),
-                )
+                target_id = account_map.get(target_id)
+            line = models.MonthlyPlanLine(
+                client_id=current_client.id,
+                target_period=item["target_period"],
+                line_type=item["line_type"],
+                target_type=target_type,
+                target_id=target_id,
+                account_id=account_map.get(item.get("account_id")),
+                source_account_id=account_map.get(item.get("source_account_id")),
+                name=item.get("name"),
+                amount=item.get("amount") or 0,
+                source=item.get("source") or "manual",
+                cash_treatment=item.get("cash_treatment") or "auto",
+                recurring_transaction_id=recurring_map.get(item.get("recurring_transaction_id")),
+                plan_id=budget_plan_map.get(item.get("plan_id")),
+                is_active=item.get("is_active", True),
+                created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
+                updated_at=_parse_datetime(item.get("updated_at")),
             )
+            db.add(line)
+            db.flush()
+            monthly_plan_line_map[old_id] = line.id
 
         for item in data.get("exchange_rates", []):
             db.add(
@@ -961,6 +1310,50 @@ def import_client_data(
                 )
             )
 
+        action_key_maps = {
+            "account_id": account_map,
+            "from_account_id": account_map,
+            "to_account_id": account_map,
+            "source_account_id": account_map,
+            "destination_account_id": account_map,
+            "budget_account_id": account_map,
+            "recurring_id": recurring_map,
+            "recurring_transaction_id": recurring_map,
+            "source_recurring_transaction_id": recurring_map,
+            "life_event_id": event_map,
+            "capsule_id": capsule_map,
+            "funding_capsule_id": capsule_map,
+            "product_id": product_map,
+            "source_product_id": product_map,
+            "transaction_id": transaction_map,
+            "batch_id": batch_map,
+            "quick_template_id": quick_template_map,
+            "budget_plan_id": budget_plan_map,
+            "plan_id": budget_plan_map,
+            "plan_line_id": monthly_plan_line_map,
+            "monthly_plan_line_id": monthly_plan_line_map,
+            "milestone_id": milestone_map,
+        }
+        for item in data.get("monthly_actions", []):
+            db.add(
+                models.MonthlyAction(
+                    client_id=current_client.id,
+                    source_period=item["source_period"],
+                    target_period=item.get("target_period"),
+                    proposal_id=item["proposal_id"],
+                    kind=item["kind"],
+                    description=item.get("description") or "",
+                    amount=item.get("amount"),
+                    target_id=_remap_action_target_id(item, action_key_maps),
+                    payload=_remap_nested_ids(item.get("payload") or {}, action_key_maps),
+                    result=_remap_nested_ids(item.get("result") or {}, action_key_maps),
+                    status=item.get("status") or "pending",
+                    idempotency_key=item.get("idempotency_key") or f"import:{current_client.id}:{item['id']}",
+                    created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
+                    applied_at=_parse_datetime(item.get("applied_at")),
+                )
+            )
+
         db.commit()
         invalidate_client(current_client.id)
     except Exception as exc:
@@ -970,10 +1363,9 @@ def import_client_data(
     return {
         "status": "ok",
         "message": "Data imported successfully",
-        "counts": {
-            key: len(value) if isinstance(value, list) else 0
-            for key, value in data.items()
-        },
+        "counts": _data_counts(data),
+        "validation": validation,
+        "health": check_data_health(db, current_client.id),
     }
 
 

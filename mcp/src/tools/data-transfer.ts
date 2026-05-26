@@ -30,6 +30,31 @@ export function registerDataTransferTools(server: McpServer): void {
   );
 
   server.registerTool(
+    "data_import_validate",
+    {
+      title: "Validate client data import",
+      description: "Validates an exported data payload without replacing any current client data.",
+      inputSchema: z
+        .object({
+          payload: z.record(z.unknown()).describe("Payload previously returned by data_export"),
+        })
+        .strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ payload }) => {
+      try {
+        const data = await api.post<unknown>("/data/import/validate", payload);
+        return {
+          content: [{ type: "text", text: `Import validation:\n${JSON.stringify(data, null, 2)}` }],
+          structuredContent: toStructured(data),
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
+      }
+    },
+  );
+
+  server.registerTool(
     "data_import_replace_current_client",
     {
       title: "Import client data",

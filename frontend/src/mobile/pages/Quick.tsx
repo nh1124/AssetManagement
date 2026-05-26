@@ -332,7 +332,8 @@ function MobileQuickEntrySheet({
 }) {
     const { showToast } = useToast();
     const accountItems = useMemo(() => toAccountItems(accounts), [accounts]);
-    const paymentAccounts = useMemo(() => paymentMethodsFor(template, accountItems), [template, accountItems]);
+    const creditAccounts = useMemo(() => accountsForSide(template, accountItems, 'from'), [template, accountItems]);
+    const debitAccounts = useMemo(() => accountsForSide(template, accountItems, 'to'), [template, accountItems]);
     const [entry, setEntry] = useState<QuickEntry>(() => makeEntry(template, currentCurrency, accountItems));
     const [isSaving, setIsSaving] = useState(false);
 
@@ -342,6 +343,7 @@ function MobileQuickEntrySheet({
 
     if (!template) return null;
     const display = quickTemplateDisplay(template, language);
+    const sheetText = mobileQuickSheetText(template, language);
 
     const save = async () => {
         const ownAmount = entry.ownAmount || entry.amount;
@@ -374,6 +376,7 @@ function MobileQuickEntrySheet({
                     date: entry.date,
                     description: entry.description,
                     payment_account_id: resolvedEntry.payment_account_id || null,
+                    expense_account_id: resolvedEntry.expense_account_id || null,
                     fallback_account_resolution: Boolean(error),
                 },
                 transactions: resolvedTransactions,
@@ -391,7 +394,7 @@ function MobileQuickEntrySheet({
     return (
         <div className="fixed inset-0 z-50 flex items-end bg-black/60">
             <button type="button" className="absolute inset-0" onClick={onClose} aria-label="Close quick entry" />
-            <section className="relative w-full border-t border-slate-700 bg-slate-950 p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-2xl">
+            <section className="relative max-h-[92vh] w-full overflow-y-auto border-t border-slate-700 bg-slate-950 p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-2xl">
                 <div className="mb-4 flex items-center justify-between">
                     <div className="min-w-0">
                         <p className="text-[10px] uppercase tracking-wide text-slate-500">{quickKindLabelFor(template.template_kind, language)}</p>
@@ -425,21 +428,42 @@ function MobileQuickEntrySheet({
                     </label>
                     <div>
                         <div className="mb-1 flex items-center justify-between">
-                            <span className="text-[10px] uppercase tracking-wide text-slate-500">Payment</span>
-                            <span className="text-[10px] text-slate-600">Auto is allowed</span>
+                            <span className="text-[10px] uppercase tracking-wide text-slate-500">{sheetText.credit}</span>
+                            <span className="text-[10px] text-slate-600">{sheetText.autoAllowed}</span>
                         </div>
                         <div className="edge-fade-x scrollbar-none flex gap-2 overflow-x-auto pb-1">
-                            <PaymentChip
-                                label="Auto"
+                            <AccountChip
+                                label={sheetText.auto}
                                 selected={!entry.payment_account_id}
                                 onClick={() => setEntry({ ...entry, payment_account_id: '' })}
                             />
-                            {paymentAccounts.map((account) => (
-                                <PaymentChip
+                            {creditAccounts.map((account) => (
+                                <AccountChip
                                     key={account.id}
-                                    label={account.name.replace(/_/g, ' ')}
+                                    label={accountLabel(account)}
                                     selected={entry.payment_account_id === String(account.id)}
                                     onClick={() => setEntry({ ...entry, payment_account_id: String(account.id) })}
+                                />
+                            ))}
+                        </div>
+                    </div>
+                    <div>
+                        <div className="mb-1 flex items-center justify-between">
+                            <span className="text-[10px] uppercase tracking-wide text-slate-500">{sheetText.debit}</span>
+                            <span className="text-[10px] text-slate-600">{sheetText.autoAllowed}</span>
+                        </div>
+                        <div className="edge-fade-x scrollbar-none flex gap-2 overflow-x-auto pb-1">
+                            <AccountChip
+                                label={sheetText.auto}
+                                selected={!entry.expense_account_id}
+                                onClick={() => setEntry({ ...entry, expense_account_id: '' })}
+                            />
+                            {debitAccounts.map((account) => (
+                                <AccountChip
+                                    key={account.id}
+                                    label={accountLabel(account)}
+                                    selected={entry.expense_account_id === String(account.id)}
+                                    onClick={() => setEntry({ ...entry, expense_account_id: String(account.id) })}
                                 />
                             ))}
                         </div>
@@ -466,6 +490,30 @@ function MobileQuickEntrySheet({
             </section>
         </div>
     );
+}
+
+function mobileQuickSheetText(template: QuickTemplate, language: LanguageCode) {
+    const isJapanese = language === 'ja';
+    const kind = template.template_kind as QuickTemplateKind;
+    const debitDetail = kind === 'debt_payment'
+        ? (isJapanese ? '負債' : 'Debt')
+        : kind === 'transfer' || kind === 'reimbursement'
+            ? (isJapanese ? '移動先' : 'To')
+            : kind === 'income'
+                ? (isJapanese ? '入金先' : 'Deposit')
+                : (isJapanese ? '費目' : 'Expense');
+    const creditDetail = kind === 'reimbursement'
+        ? (isJapanese ? '立替金' : 'Receivable')
+        : kind === 'income'
+            ? (isJapanese ? '収入元' : 'Income Source')
+            : (isJapanese ? '支払元' : 'From');
+
+    return {
+        auto: isJapanese ? '自動' : 'Auto',
+        autoAllowed: isJapanese ? '自動可' : 'Auto is allowed',
+        credit: isJapanese ? `貸方 / ${creditDetail}` : `Credit / ${creditDetail}`,
+        debit: isJapanese ? `借方 / ${debitDetail}` : `Debit / ${debitDetail}`,
+    };
 }
 
 function isMissingAccountError(error: string) {
@@ -502,7 +550,7 @@ function buildFallbackTransaction(
     };
 }
 
-function PaymentChip({
+function AccountChip({
     label,
     selected,
     onClick,
@@ -515,14 +563,19 @@ function PaymentChip({
         <button
             type="button"
             onClick={onClick}
-            className={`h-10 shrink-0 border px-3 text-xs capitalize ${selected
+            className={`h-10 max-w-[12rem] shrink-0 truncate border px-3 text-xs ${selected
                 ? 'border-emerald-500 bg-emerald-950/30 text-emerald-200'
                 : 'border-slate-700 bg-slate-900 text-slate-400'
                 }`}
+            title={label}
         >
             {label}
         </button>
     );
+}
+
+function accountLabel(account: AccountItem) {
+    return account.name.replace(/_/g, ' ');
 }
 
 function defaultAccountId(accounts: AccountItem[], allowedTypes: string[], preferredTypes: string[] = []) {
@@ -530,9 +583,11 @@ function defaultAccountId(accounts: AccountItem[], allowedTypes: string[], prefe
         ?? accounts.find((account) => allowedTypes.includes(account.account_type))?.id;
 }
 
-function paymentMethodsFor(template: QuickTemplate | null, accounts: AccountItem[]) {
+function accountsForSide(template: QuickTemplate | null, accounts: AccountItem[], side: 'from' | 'to') {
     const kind = template?.template_kind as QuickTemplateKind | undefined;
-    const allowedTypes = kind && QUICK_KIND_RULES[kind] ? QUICK_KIND_RULES[kind].fromTypes : ['asset', 'liability'];
+    const allowedTypes = kind && QUICK_KIND_RULES[kind]
+        ? QUICK_KIND_RULES[kind][side === 'from' ? 'fromTypes' : 'toTypes']
+        : ['asset', 'liability'];
     return accounts.filter((account) => allowedTypes.includes(account.account_type));
 }
 

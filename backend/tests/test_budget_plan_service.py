@@ -10,7 +10,7 @@ try:
     from backend.app import models
     from backend.app.database import Base
     from backend.app.routers.budget_plans import compare_budget_plans, copy_period_full_replace, copy_plan_from
-    from backend.app.routers.data_transfer import export_client_data
+    from backend.app.routers.data_transfer import ImportPayload, export_client_data, import_client_data, validate_import_client_data
     from backend.app.schemas import CopyPeriodRequest, MonthlyPlanLineBatchUpdate, MonthlyPlanLineCreate
     from backend.app.services.accounting_service import process_transaction
     from backend.app.services.budget_plan_service import add_months, create_plan_lines, current_period_key, get_budget_summary, period_to_range, update_plan_lines
@@ -19,7 +19,7 @@ except ModuleNotFoundError:
     from app import models  # type: ignore[no-redef]
     from app.database import Base  # type: ignore[no-redef]
     from app.routers.budget_plans import compare_budget_plans, copy_period_full_replace, copy_plan_from  # type: ignore[no-redef]
-    from app.routers.data_transfer import export_client_data  # type: ignore[no-redef]
+    from app.routers.data_transfer import ImportPayload, export_client_data, import_client_data, validate_import_client_data  # type: ignore[no-redef]
     from app.schemas import CopyPeriodRequest, MonthlyPlanLineBatchUpdate, MonthlyPlanLineCreate  # type: ignore[no-redef]
     from app.services.accounting_service import process_transaction  # type: ignore[no-redef]
     from app.services.budget_plan_service import add_months, create_plan_lines, current_period_key, get_budget_summary, period_to_range, update_plan_lines  # type: ignore[no-redef]
@@ -112,6 +112,105 @@ def test_data_export_includes_budget_plan_line_fields_without_legacy_columns() -
         assert snapshot["data"]["budget_plans"][0]["name"] == "Baseline"
     finally:
         db.close()
+
+
+def test_data_export_manifest_and_validate_include_monthly_actions() -> None:
+    db = _session()
+    try:
+        client = models.Client(id=1, name="test", username="test", email="test@example.com", general_settings={}, ai_config={})
+        db.add(client)
+        db.add(
+            models.MonthlyAction(
+                client_id=1,
+                source_period="2026-05",
+                target_period="2026-06",
+                proposal_id="proposal-1",
+                kind="set_budget",
+                description="Adjust food budget",
+                amount=12000,
+                target_id=10,
+                payload={"account_id": 10, "amount": 12000},
+                result={},
+                status="pending",
+                idempotency_key="review:1:2026-05:test",
+            )
+        )
+        db.commit()
+
+        snapshot = export_client_data(db=db, current_client=client)
+        payload = ImportPayload(**snapshot)
+        validation = validate_import_client_data(payload=payload, current_client=client)
+
+        assert snapshot["version"] == 2
+        assert snapshot["manifest"]["counts"]["monthly_actions"] == 1
+        assert snapshot["data"]["monthly_actions"][0]["kind"] == "set_budget"
+        assert validation["status"] == "valid"
+        assert validation["counts"]["monthly_actions"] == 1
+    finally:
+        db.close()
+
+
+def test_data_import_round_trip_remaps_account_targets_and_monthly_actions() -> None:
+    source_db = _session()
+    target_db = _session()
+    try:
+        source_client = models.Client(id=1, name="source", username="source", general_settings={}, ai_config={})
+        cash = models.Account(client_id=1, name="cash", account_type="asset")
+        food = models.Account(client_id=1, name="food", account_type="expense")
+        plan = models.BudgetPlan(client_id=1, name="Baseline", is_default=True)
+        source_db.add_all([source_client, cash, food, plan])
+        source_db.flush()
+        source_db.add(
+            models.MonthlyPlanLine(
+                client_id=1,
+                plan_id=plan.id,
+                target_period="2026-05",
+                line_type="expense",
+                target_type="account",
+                target_id=food.id,
+                account_id=food.id,
+                source_account_id=cash.id,
+                name="food",
+                amount=15000,
+            )
+        )
+        source_db.add(
+            models.MonthlyAction(
+                client_id=1,
+                source_period="2026-05",
+                target_period="2026-06",
+                proposal_id="proposal-1",
+                kind="set_budget",
+                description="Adjust food budget",
+                amount=15000,
+                target_id=food.id,
+                payload={"account_id": food.id, "amount": 15000},
+                result={"plan_line_id": 1},
+                status="pending",
+                idempotency_key="review:1:2026-05:roundtrip",
+            )
+        )
+        source_db.commit()
+
+        snapshot = export_client_data(db=source_db, current_client=source_client)
+        target_client = models.Client(id=2, name="target", username="target", general_settings={}, ai_config={})
+        target_db.add(target_client)
+        target_db.commit()
+
+        result = import_client_data(payload=ImportPayload(**snapshot), db=target_db, current_client=target_client)
+
+        imported_food = target_db.query(models.Account).filter_by(client_id=2, name="food").one()
+        imported_line = target_db.query(models.MonthlyPlanLine).filter_by(client_id=2, name="food").one()
+        imported_action = target_db.query(models.MonthlyAction).filter_by(client_id=2, proposal_id="proposal-1").one()
+
+        assert result["status"] == "ok"
+        assert imported_line.account_id == imported_food.id
+        assert imported_line.target_id == imported_food.id
+        assert imported_action.target_id == imported_food.id
+        assert imported_action.payload["account_id"] == imported_food.id
+    finally:
+        source_db.close()
+        target_db.close()
 
 
 def test_budget_summary_combines_income_spending_allocations_and_debt() -> None:
