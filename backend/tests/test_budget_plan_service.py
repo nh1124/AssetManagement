@@ -141,7 +141,7 @@ def test_data_export_manifest_and_validate_include_monthly_actions() -> None:
         payload = ImportPayload(**snapshot)
         validation = validate_import_client_data(payload=payload, current_client=client)
 
-        assert snapshot["version"] == 2
+        assert snapshot["version"] == 3
         assert snapshot["manifest"]["counts"]["monthly_actions"] == 1
         assert snapshot["data"]["monthly_actions"][0]["kind"] == "set_budget"
         assert validation["status"] == "valid"
@@ -208,6 +208,38 @@ def test_data_import_round_trip_remaps_account_targets_and_monthly_actions() -> 
         assert imported_line.target_id == imported_food.id
         assert imported_action.target_id == imported_food.id
         assert imported_action.payload["account_id"] == imported_food.id
+    finally:
+        source_db.close()
+        target_db.close()
+
+
+def test_data_import_allows_legacy_checksum_mismatch_when_structure_is_valid() -> None:
+    source_db = _session()
+    target_db = _session()
+    try:
+        source_client = models.Client(id=1, name="source", username="source", general_settings={}, ai_config={})
+        cash = models.Account(client_id=1, name="cash", account_type="asset", balance=1000.0)
+        source_db.add_all([source_client, cash])
+        source_db.commit()
+
+        snapshot = export_client_data(db=source_db, current_client=source_client)
+        snapshot["version"] = 2
+        snapshot["manifest"]["export_version"] = 2
+        snapshot["manifest"]["checksums"]["accounts"] = "legacy-checksum"
+        snapshot["manifest"]["payload_checksum"] = "legacy-payload-checksum"
+        payload = ImportPayload(**snapshot)
+        validation = validate_import_client_data(payload=payload, current_client=source_client)
+
+        assert validation["status"] == "valid"
+        assert validation["warning_count"] >= 2
+
+        target_client = models.Client(id=2, name="target", username="target", general_settings={}, ai_config={})
+        target_db.add(target_client)
+        target_db.commit()
+        result = import_client_data(payload=payload, db=target_db, current_client=target_client)
+
+        assert result["status"] == "ok"
+        assert result["validation"]["status"] == "valid"
     finally:
         source_db.close()
         target_db.close()

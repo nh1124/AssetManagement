@@ -20,7 +20,7 @@ from ..services.data_health_service import check_data_health, repair_data_health
 
 router = APIRouter(prefix="/data", tags=["data"])
 
-EXPORT_VERSION = 2
+EXPORT_VERSION = 3
 
 DATA_COLLECTIONS = [
     "accounts",
@@ -65,8 +65,19 @@ def _row(obj: Any, fields: list[str]) -> dict[str, Any]:
     return {field: _iso(getattr(obj, field)) for field in fields}
 
 
+def _normalize_for_checksum(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _normalize_for_checksum(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_normalize_for_checksum(item) for item in value]
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
 def _canonical_json(value: Any) -> str:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
+    normalized = _normalize_for_checksum(value)
+    return json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
 
 
 def _sha256(value: Any) -> str:
@@ -259,15 +270,27 @@ def _validate_import_payload(payload: ImportPayload) -> dict[str, Any]:
             )
 
     manifest = payload.manifest or {}
+    expected_counts = manifest.get("counts") or {}
+    actual_counts = _data_counts(data)
+    for collection, expected in expected_counts.items():
+        actual = actual_counts.get(collection)
+        if actual is not None and expected != actual:
+            issue(
+                "error",
+                "count_mismatch",
+                f"Manifest count {expected} does not match payload count {actual}.",
+                collection,
+            )
+
     expected_checksums = manifest.get("checksums") or {}
     actual_checksums = _table_checksums(data)
     for collection, expected in expected_checksums.items():
         actual = actual_checksums.get(collection)
         if actual and expected != actual:
             issue(
-                "error",
+                "warning",
                 "checksum_mismatch",
-                "Collection checksum does not match the export manifest.",
+                "Collection checksum does not match the export manifest. This can happen with older exports after JSON number normalization.",
                 collection,
             )
 
@@ -275,7 +298,11 @@ def _validate_import_payload(payload: ImportPayload) -> dict[str, Any]:
     if expected_payload_checksum:
         actual_payload_checksum = _sha256({"data": data, "checksums": actual_checksums})
         if expected_payload_checksum != actual_payload_checksum:
-            issue("error", "payload_checksum_mismatch", "Payload checksum does not match the export manifest.")
+            issue(
+                "warning",
+                "payload_checksum_mismatch",
+                "Payload checksum does not match the export manifest. This can happen with older exports after JSON number normalization.",
+            )
 
     error_count = sum(1 for item in issues if item["severity"] == "error")
     warning_count = sum(1 for item in issues if item["severity"] == "warning")
