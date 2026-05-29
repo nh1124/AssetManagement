@@ -7,6 +7,7 @@ from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.cache_service import invalidate_client
 from ..services.budget_plan_service import (
+    assign_plan_line_identity,
     get_or_create_default_plan,
     get_cash_flow_projection,
     _liquid_cash,
@@ -162,10 +163,14 @@ def copy_period_full_replace(
             name=src.name,
             amount=src.amount,
             source=src.source,
+            source_kind=src.source_kind,
+            source_id=src.source_id,
+            manual_override=src.manual_override,
             cash_treatment=src.cash_treatment,
             recurring_transaction_id=src.recurring_transaction_id,
             is_active=True,
         )
+        assign_plan_line_identity(new_line)
         db.add(new_line)
 
     db.commit()
@@ -222,10 +227,14 @@ def copy_plan_from(
             name=src.name,
             amount=src.amount,
             source=src.source,
+            source_kind=src.source_kind,
+            source_id=src.source_id,
+            manual_override=src.manual_override,
             cash_treatment=src.cash_treatment,
             recurring_transaction_id=src.recurring_transaction_id,
             is_active=True,
         )
+        assign_plan_line_identity(new_line)
         db.add(new_line)
 
     db.commit()

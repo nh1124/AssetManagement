@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+import json
+from types import SimpleNamespace
 from typing import Iterable
 
 from dateutil.relativedelta import relativedelta
@@ -14,7 +16,11 @@ from .fx_service import calculate_account_valued_balance, convert_amount, conver
 from .goal_service import get_life_events_with_progress
 from .product_reserve_service import effective_budget_treatment, product_reserve_values
 from .registry_service import (
-    ensure_registry_entries,
+    product_budget_active,
+    product_line_type,
+    product_unit_amount,
+    recurring_entry_type,
+    recurring_line_type,
     registry_entry_amount_for_period,
     registry_source_account_id,
     registry_target_account_id,
@@ -239,6 +245,42 @@ def _line_attr(line: models.MonthlyPlanLine | dict, key: str):
 
 def _line_cash_treatment(line: models.MonthlyPlanLine | dict) -> str:
     return _line_attr(line, "cash_treatment") or "auto"
+
+
+def _line_source_kind(line: models.MonthlyPlanLine | dict) -> str:
+    explicit = _line_attr(line, "source_kind")
+    if explicit:
+        if explicit == "recurrence":
+            return "recurring"
+        return explicit
+    source = _line_attr(line, "source")
+    recurring_id = _line_attr(line, "recurring_transaction_id")
+    if recurring_id:
+        return "recurring"
+    if source and source != "manual":
+        if source == "recurrence":
+            return "recurring"
+        return source
+    target_type = _line_attr(line, "target_type")
+    if target_type in {"capsule", "product"} and _line_attr(line, "target_id"):
+        return target_type
+    return "manual"
+
+
+def _line_source_id(line: models.MonthlyPlanLine | dict) -> int | None:
+    explicit = _line_attr(line, "source_id")
+    if explicit:
+        return explicit
+    recurring_id = _line_attr(line, "recurring_transaction_id")
+    if recurring_id:
+        return recurring_id
+    target_type = _line_attr(line, "target_type")
+    target_id = _line_attr(line, "target_id")
+    if target_type in {"capsule", "product"} and target_id:
+        return target_id
+    if _line_source_kind(line) == "credit_settlement":
+        return _line_attr(line, "account_id")
+    return None
 
 
 def _linked_recurring_transaction_type(
@@ -595,11 +637,18 @@ def _balance_movement_for_amount(
 def _projection_amounts_for_period(
     db: Session,
     client_id: int,
-    line: models.MonthlyPlanLine,
+    line: models.MonthlyPlanLine | dict,
     period: str,
     context: BudgetSummaryContext | None = None,
 ) -> tuple[float, float, float]:
-    planned = line.amount or 0.0
+    planned = _line_attr(line, "amount") or 0.0
+    if not _line_attr(line, "id") and planned <= 0:
+        planned = (
+            _line_attr(line, "suggested_amount")
+            or _line_attr(line, "registry_amount")
+            or _line_attr(line, "recurring_amount")
+            or 0.0
+        )
     if period != current_period_key():
         return planned, 0.0, planned
     if plan_line_has_cash_impact(db, client_id, line, context):
@@ -746,6 +795,10 @@ def _serialize_plan_line(
         "suggested_status": None,
         "is_active": line.is_active,
         "source": line.source or "manual",
+        "source_kind": _line_source_kind(line),
+        "source_id": _line_source_id(line),
+        "identity_key": line.identity_key or plan_line_identity_key(line),
+        "manual_override": bool(line.manual_override),
         "cash_treatment": line.cash_treatment or "auto",
         "recurring_transaction_id": line.recurring_transaction_id,
         "sync_status": None,
@@ -780,6 +833,10 @@ def _virtual_capsule_line(
         "suggested_status": "synced" if capsule.capsule_type == "product_pool" else None,
         "is_active": True,
         "source": "capsule",
+        "source_kind": "capsule",
+        "source_id": capsule.id,
+        "identity_key": "",
+        "manual_override": False,
         "cash_treatment": "cash",
         "recurring_transaction_id": None,
         "sync_status": None,
@@ -861,9 +918,13 @@ def _line_identity_key(line: models.MonthlyPlanLine | dict) -> tuple:
     account_id = getter("account_id")
     target_id = getter("target_id")
     name = "" if account_id or target_id else (getter("name") or "").strip().lower()
+    source_kind = _line_source_kind(line)
+    source_id = _line_source_id(line) or 0
     return (
         getter("plan_id") or 0,
         getter("target_period"),
+        source_kind,
+        source_id,
         getter("line_type"),
         getter("target_type") or "manual",
         account_id or 0,
@@ -874,6 +935,17 @@ def _line_identity_key(line: models.MonthlyPlanLine | dict) -> tuple:
     )
 
 
+def plan_line_identity_key(line: models.MonthlyPlanLine | dict) -> str:
+    return json.dumps(_line_identity_key(line), ensure_ascii=True, separators=(",", ":"))
+
+
+def assign_plan_line_identity(line: models.MonthlyPlanLine) -> None:
+    line.source_kind = _line_source_kind(line)
+    if line.source_id is None:
+        line.source_id = _line_source_id(line)
+    line.identity_key = plan_line_identity_key(line)
+
+
 def _newest_line_key(line: models.MonthlyPlanLine) -> tuple:
     return (
         line.updated_at or line.created_at or datetime.min,
@@ -882,7 +954,12 @@ def _newest_line_key(line: models.MonthlyPlanLine) -> tuple:
     )
 
 
-def _deduplicate_active_plan_models(db: Session, plan_models: list[models.MonthlyPlanLine]) -> list[models.MonthlyPlanLine]:
+def _deduplicate_active_plan_models(
+    db: Session,
+    plan_models: list[models.MonthlyPlanLine],
+    *,
+    repair: bool = False,
+) -> list[models.MonthlyPlanLine]:
     grouped: dict[tuple, list[models.MonthlyPlanLine]] = {}
     for line in plan_models:
         grouped.setdefault(_line_identity_key(line), []).append(line)
@@ -897,15 +974,21 @@ def _deduplicate_active_plan_models(db: Session, plan_models: list[models.Monthl
         deduped.append(keeper)
         for duplicate in lines:
             if duplicate.id != keeper.id:
-                duplicate.is_active = False
-                changed = True
+                if repair:
+                    duplicate.is_active = False
+                    changed = True
 
-    if changed:
+    if repair and changed:
         db.commit()
     return sorted(deduped, key=lambda line: (line.line_type, line.id))
 
 
-def _active_line_with_identity(db: Session, client_id: int, data: dict) -> models.MonthlyPlanLine | None:
+def _active_line_with_identity(
+    db: Session,
+    client_id: int,
+    data: dict,
+    exclude_id: int | None = None,
+) -> models.MonthlyPlanLine | None:
     key = _line_identity_key({**data, "target_period": data.get("target_period")})
     q = db.query(models.MonthlyPlanLine).filter(
         models.MonthlyPlanLine.client_id == client_id,
@@ -917,7 +1000,32 @@ def _active_line_with_identity(db: Session, client_id: int, data: dict) -> model
     if plan_id is not None:
         q = q.filter(models.MonthlyPlanLine.plan_id == plan_id)
     rows = q.all()
-    return next((line for line in rows if _line_identity_key(line) == key), None)
+    return next((line for line in rows if line.id != exclude_id and _line_identity_key(line) == key), None)
+
+
+def _active_duplicate_for_line(
+    db: Session,
+    client_id: int,
+    line: models.MonthlyPlanLine,
+) -> models.MonthlyPlanLine | None:
+    return _active_line_with_identity(
+        db,
+        client_id,
+        {
+            "plan_id": line.plan_id,
+            "target_period": line.target_period,
+            "source_kind": _line_source_kind(line),
+            "source_id": _line_source_id(line),
+            "line_type": line.line_type,
+            "target_type": line.target_type,
+            "target_id": line.target_id,
+            "account_id": line.account_id,
+            "source_account_id": line.source_account_id,
+            "name": line.name,
+            "cash_treatment": line.cash_treatment,
+        },
+        exclude_id=line.id,
+    )
 
 
 
@@ -974,11 +1082,94 @@ def _registry_plan_line(
             "amount": round(amount, 0),
         }] if entry.source_product_id else [],
         "source": "registry",
+        "source_kind": "registry",
+        "source_id": entry.id,
+        "identity_key": "",
+        "manual_override": False,
         "cash_treatment": "auto",
         "recurring_transaction_id": entry.source_recurring_transaction_id,
         "sync_status": "missing",
         "is_active": True,
     }
+
+
+def _virtual_registry_entries(
+    db: Session,
+    client_id: int,
+    existing_entries: list[models.RegistryEntry],
+) -> list[SimpleNamespace]:
+    existing_product_ids = {
+        entry.source_product_id
+        for entry in existing_entries
+        if entry.source_product_id
+    }
+    existing_recurring_ids = {
+        entry.source_recurring_transaction_id
+        for entry in existing_entries
+        if entry.source_recurring_transaction_id
+    }
+    entries: list[SimpleNamespace] = []
+
+    products = db.query(models.Product).filter(models.Product.client_id == client_id).all()
+    for product in products:
+        if product.id in existing_product_ids or not product_budget_active(product):
+            continue
+        entries.append(SimpleNamespace(
+            id=-product.id,
+            client_id=client_id,
+            name=product.name,
+            entry_type="asset" if product.is_asset else "item",
+            amount=product_unit_amount(product),
+            currency="JPY",
+            frequency="EveryNDays" if product.frequency_days and product.frequency_days > 0 else "Irregular",
+            frequency_days=product.frequency_days or None,
+            day_of_month=None,
+            month_of_year=None,
+            transaction_type="Expense",
+            line_type=product_line_type(product),
+            budget_account_id=product.budget_account_id,
+            source_account_id=None,
+            destination_account_id=None,
+            source_recurring_transaction_id=None,
+            source_product_id=product.id,
+            is_active=True,
+            budget_active=True,
+            start_period=None,
+            end_period=None,
+        ))
+
+    recurring_rows = db.query(models.RecurringTransaction).filter(
+        models.RecurringTransaction.client_id == client_id,
+        models.RecurringTransaction.is_active.is_(True),
+    ).all()
+    for recurring in recurring_rows:
+        if recurring.id in existing_recurring_ids:
+            continue
+        line_type = recurring_line_type(recurring.type)
+        entries.append(SimpleNamespace(
+            id=-(1000000 + recurring.id),
+            client_id=client_id,
+            name=recurring.name,
+            entry_type=recurring_entry_type(recurring.type),
+            amount=recurring.amount or 0.0,
+            currency=recurring.currency or "JPY",
+            frequency=recurring.frequency or "Monthly",
+            frequency_days=None,
+            day_of_month=recurring.day_of_month or 1,
+            month_of_year=recurring.month_of_year,
+            transaction_type=recurring.type or "Expense",
+            line_type=line_type,
+            budget_account_id=recurring.to_account_id if line_type in {"expense", "debt_payment"} else None,
+            source_account_id=recurring.from_account_id,
+            destination_account_id=recurring.to_account_id,
+            source_recurring_transaction_id=recurring.id,
+            source_product_id=None,
+            is_active=True,
+            budget_active=True,
+            start_period=recurring.start_period,
+            end_period=recurring.end_period,
+        ))
+    return entries
 
 
 def registry_plan_lines(
@@ -991,22 +1182,18 @@ def registry_plan_lines(
         cache = context.setdefault("registry_lines", {})
         if period in cache:
             return cache[period]
-        ensured = context.setdefault("registry_ensured", {})
-        if not ensured.get(client_id):
-            ensure_registry_entries(db, client_id)
-            ensured[client_id] = True
         maps_cache = context.setdefault("target_name_maps", {})
         if client_id not in maps_cache:
             maps_cache[client_id] = _target_name_maps(db, client_id)
         name_maps = maps_cache[client_id]
     else:
-        ensure_registry_entries(db, client_id)
         name_maps = _target_name_maps(db, client_id)
     entries = db.query(models.RegistryEntry).filter(
         models.RegistryEntry.client_id == client_id,
         models.RegistryEntry.is_active.is_(True),
         models.RegistryEntry.budget_active.is_(True),
     ).all()
+    entries = [*entries, *_virtual_registry_entries(db, client_id, entries)]
     lines = [line for entry in entries if (line := _registry_plan_line(db, entry, period, name_maps)) is not None]
     aggregated: dict[tuple, dict] = {}
     for line in lines:
@@ -1084,6 +1271,117 @@ def registry_totals(
         elif line_type == "borrowing":
             totals["borrowing"] += amount
     return totals
+
+
+def _credit_settlement_plan_line(
+    db: Session,
+    client_id: int,
+    account: models.Account,
+    period: str,
+    amount: float,
+    context: BudgetSummaryContext | None = None,
+) -> dict:
+    line = {
+        "id": None,
+        "target_period": period,
+        "line_type": "debt_payment",
+        "target_type": "account",
+        "target_id": account.id,
+        "account_id": account.id,
+        "source_account_id": None,
+        "name": f"{account.name} payment",
+        "target_name": account.name,
+        "account_name": account.name,
+        "amount": 0.0,
+        "actual": 0.0,
+        "variance": 0.0,
+        "recurring_amount": 0.0,
+        "suggested_amount": round(amount, 0),
+        "suggested_source": "credit_settlement",
+        "suggested_items": [{
+            "id": account.id,
+            "name": account.name,
+            "amount": round(amount, 0),
+            "source": "credit_settlement",
+        }],
+        "suggested_status": "missing",
+        "source": "credit_settlement",
+        "source_kind": "credit_settlement",
+        "source_id": account.id,
+        "identity_key": "",
+        "manual_override": False,
+        "cash_treatment": "cash",
+        "recurring_transaction_id": None,
+        "sync_status": "missing",
+        "is_active": True,
+    }
+    actual = cash_flow_actual_for_plan_line(db, client_id, line, period, context)
+    line["actual"] = round(actual, 0)
+    line["variance"] = round(amount - actual, 0)
+    return line
+
+
+def credit_settlement_plan_lines(
+    db: Session,
+    client_id: int,
+    period: str,
+    context: BudgetSummaryContext | None = None,
+) -> list[dict]:
+    if context is not None:
+        cache = context.setdefault("credit_settlement_lines", {})
+        if period in cache:
+            return cache[period]
+
+    txs = _period_transactions_cached(db, client_id, period, context)
+    credit_usage_by_account: dict[int, float] = {}
+    for tx in txs:
+        if tx.type not in NON_CASH_TRANSACTION_TYPES or not tx.from_account_id:
+            continue
+        credit_usage_by_account[tx.from_account_id] = credit_usage_by_account.get(tx.from_account_id, 0.0) + convert_transaction_amount(db, tx, client_id=client_id)
+
+    period_start, _ = period_to_range(period)
+    recurring_credit_by_account: dict[int, float] = {}
+    for row in db.query(models.RecurringTransaction).filter(
+        models.RecurringTransaction.client_id == client_id,
+        models.RecurringTransaction.is_active.is_(True),
+        models.RecurringTransaction.type.in_(NON_CASH_TRANSACTION_TYPES),
+    ).all():
+        if not row.from_account_id:
+            continue
+        if row.start_period and row.start_period > period:
+            continue
+        if row.end_period and row.end_period < period:
+            continue
+        recurring_credit_by_account[row.from_account_id] = (
+            recurring_credit_by_account.get(row.from_account_id, 0.0)
+            + convert_amount(db, client_id, row.amount or 0.0, row.currency or "JPY", as_of_date=period_start)
+        )
+    account_ids = set(credit_usage_by_account) | set(recurring_credit_by_account)
+    if not account_ids:
+        result: list[dict] = []
+        if context is not None:
+            cache[period] = result
+        return result
+
+    accounts = db.query(models.Account).filter(
+        models.Account.client_id == client_id,
+        models.Account.id.in_(account_ids),
+        models.Account.account_type == "liability",
+        models.Account.is_active.is_(True),
+    ).all()
+    result = []
+    for account in accounts:
+        balance = max(0.0, calculate_account_valued_balance(db, account))
+        amount = max(
+            balance,
+            credit_usage_by_account.get(account.id, 0.0),
+            recurring_credit_by_account.get(account.id, 0.0),
+        )
+        if amount > 0:
+            result.append(_credit_settlement_plan_line(db, client_id, account, period, amount, context))
+    if context is not None:
+        cache[period] = result
+    return result
 
 
 def _merge_registry_context(plan_lines: list[dict], registry_lines: list[dict]) -> list[dict]:
@@ -1199,6 +1497,58 @@ def _merge_registry_context(plan_lines: list[dict], registry_lines: list[dict]) 
     return plan_lines
 
 
+def _merge_credit_settlement_context(plan_lines: list[dict], settlement_lines: list[dict]) -> list[dict]:
+    for settlement in settlement_lines:
+        matched = next(
+            (
+                line for line in plan_lines
+                if line.get("line_type") == "debt_payment"
+                and line.get("account_id") == settlement.get("account_id")
+            ),
+            None,
+        )
+        if not matched:
+            plan_lines.append(settlement)
+            continue
+        suggested = round(settlement.get("suggested_amount") or 0.0, 0)
+        matched["suggested_amount"] = suggested
+        matched["suggested_source"] = "credit_settlement"
+        matched["suggested_items"] = settlement.get("suggested_items", [])
+        matched["suggested_status"] = (
+            "synced"
+            if round(matched.get("amount") or 0.0, 0) == suggested
+            else "diff"
+        )
+        if matched.get("source") != "manual":
+            matched["source_kind"] = matched.get("source_kind") or "credit_settlement"
+            matched["source_id"] = matched.get("source_id") or settlement.get("source_id")
+        matched["sync_status"] = matched["suggested_status"]
+    return plan_lines
+
+
+def _plan_line_matches_registry_line(line: models.MonthlyPlanLine | dict, registry_line: dict) -> bool:
+    if _line_attr(line, "line_type") != registry_line.get("line_type"):
+        return False
+    if (_line_attr(line, "cash_treatment") or "auto") != (registry_line.get("cash_treatment") or "auto"):
+        return False
+    line_account_id = _line_attr(line, "account_id")
+    registry_account_id = registry_line.get("account_id")
+    if line_account_id and registry_account_id and line_account_id == registry_account_id:
+        return True
+    if line_account_id != registry_account_id:
+        return False
+    line_name = (_line_attr(line, "name") or _line_attr(line, "target_name") or "").strip().lower()
+    registry_names = {
+        (registry_line.get("name") or "").strip().lower(),
+        (registry_line.get("target_name") or "").strip().lower(),
+    }
+    registry_names.update(
+        (item.get("name") or "").strip().lower()
+        for item in registry_line.get("registry_items", [])
+    )
+    return bool(line_name and line_name in registry_names)
+
+
 def _liquid_cash(db: Session, client_id: int) -> float:
     accounts = db.query(models.Account).filter(
         models.Account.client_id == client_id,
@@ -1252,8 +1602,6 @@ def get_budget_summary(
     context: BudgetSummaryContext = {}
     plan_id = resolve_budget_plan_id(db, client_id, plan_id)
 
-    ensure_registry_entries(db, client_id)
-    context["registry_ensured"] = {client_id: True}
     events_with_progress = get_life_events_with_progress(db, client_id=client_id)
     total_gap = sum(max(0, e["gap"]) for e in events_with_progress)
     avg_years = (
@@ -1311,6 +1659,7 @@ def get_budget_summary(
         if capsule.id not in existing_capsule_ids:
             plan_lines.append(_virtual_capsule_line(db, client_id, capsule, period, capsule_accounts, context))
     plan_lines = _merge_registry_context(plan_lines, registry_plan_lines(db, client_id, period, context))
+    plan_lines = _merge_credit_settlement_context(plan_lines, credit_settlement_plan_lines(db, client_id, period, context))
 
     expense_lines = [line for line in plan_lines if line["line_type"] == "expense"]
     allocation_lines = [line for line in plan_lines if line["line_type"] == "allocation"]
@@ -1400,6 +1749,9 @@ def get_budget_summary(
                 "suggested_source": line.get("suggested_source"),
                 "suggested_status": line.get("suggested_status"),
                 "source": line.get("source"),
+                "source_kind": line.get("source_kind"),
+                "source_id": line.get("source_id"),
+                "manual_override": line.get("manual_override", False),
                 "cash_treatment": line.get("cash_treatment", "auto"),
                 "sync_status": line.get("sync_status"),
                 "recurring_transaction_id": line.get("recurring_transaction_id"),
@@ -1450,6 +1802,7 @@ def get_cash_flow_projection(
     plan_id = resolve_budget_plan_id(db, client_id, plan_id)
     cash = _liquid_cash(db, client_id) if starting_cash is None else starting_cash
     rows = []
+    projected_credit_settlements: set[int] = set()
     for idx in range(months):
         period = add_months(start_period, idx)
         q = db.query(models.MonthlyPlanLine).filter(
@@ -1460,10 +1813,47 @@ def get_cash_flow_projection(
         )
         lines = q.all()
         lines = _deduplicate_active_plan_models(db, lines)
+        projection_lines: list[models.MonthlyPlanLine | dict] = list(lines)
+        registry_lines = registry_plan_lines(db, client_id, period, context)
+        existing_keys = {_plan_match_key(
+            line.line_type,
+            line.target_type,
+            line.account_id,
+            line.name,
+            line.source_account_id,
+            line.cash_treatment,
+        ) for line in lines}
+        for registry_line in registry_lines:
+            if any(_plan_line_matches_registry_line(line, registry_line) for line in projection_lines):
+                continue
+            key = _plan_match_key(
+                registry_line["line_type"],
+                registry_line["target_type"],
+                registry_line["account_id"],
+                registry_line["name"],
+                registry_line.get("source_account_id"),
+                registry_line.get("cash_treatment"),
+            )
+            if key not in existing_keys:
+                projection_lines.append(registry_line)
+                existing_keys.add(key)
+        for settlement_line in credit_settlement_plan_lines(db, client_id, period, context):
+            account_id = settlement_line.get("account_id")
+            if account_id in projected_credit_settlements:
+                continue
+            if any(
+                _line_attr(line, "line_type") == "debt_payment"
+                and _line_attr(line, "account_id") == account_id
+                for line in projection_lines
+            ):
+                continue
+            projection_lines.append(settlement_line)
+            if account_id:
+                projected_credit_settlements.add(account_id)
         planned_flow = _empty_flow()
         actual_flow = _empty_flow()
         remaining_flow = _empty_flow()
-        for line in lines:
+        for line in projection_lines:
             planned_amount, actual_amount, remaining_amount = _projection_amounts_for_period(db, client_id, line, period, context)
             _add_flow(planned_flow, plan_line_flow_for_amount(db, client_id, line, planned_amount, context))
             _add_flow(actual_flow, plan_line_flow_for_amount(db, client_id, line, actual_amount, context))
@@ -1520,6 +1910,7 @@ def get_balance_projection(
     plan_id = resolve_budget_plan_id(db, client_id, plan_id)
     state = _starting_balance_state(db, client_id)
     rows = []
+    projected_credit_settlements: set[int] = set()
     for idx in range(months):
         period = add_months(start_period, idx)
         lines = (
@@ -1533,7 +1924,43 @@ def get_balance_projection(
             .all()
         )
         lines = _deduplicate_active_plan_models(db, lines)
-        for line in lines:
+        projection_lines: list[models.MonthlyPlanLine | dict] = list(lines)
+        existing_keys = {_plan_match_key(
+            line.line_type,
+            line.target_type,
+            line.account_id,
+            line.name,
+            line.source_account_id,
+            line.cash_treatment,
+        ) for line in lines}
+        for registry_line in registry_plan_lines(db, client_id, period, context):
+            if any(_plan_line_matches_registry_line(line, registry_line) for line in projection_lines):
+                continue
+            key = _plan_match_key(
+                registry_line["line_type"],
+                registry_line["target_type"],
+                registry_line["account_id"],
+                registry_line["name"],
+                registry_line.get("source_account_id"),
+                registry_line.get("cash_treatment"),
+            )
+            if key not in existing_keys:
+                projection_lines.append(registry_line)
+                existing_keys.add(key)
+        for settlement_line in credit_settlement_plan_lines(db, client_id, period, context):
+            account_id = settlement_line.get("account_id")
+            if account_id in projected_credit_settlements:
+                continue
+            if any(
+                _line_attr(line, "line_type") == "debt_payment"
+                and _line_attr(line, "account_id") == account_id
+                for line in projection_lines
+            ):
+                continue
+            projection_lines.append(settlement_line)
+            if account_id:
+                projected_credit_settlements.add(account_id)
+        for line in projection_lines:
             _, _, remaining_amount = _projection_amounts_for_period(db, client_id, line, period, context)
             movement = _balance_movement_for_amount(db, client_id, line, remaining_amount, context)
             for key, value in movement.items():
@@ -1569,6 +1996,7 @@ def budget_setup_warnings(
 ) -> list[dict]:
     return [
         *recurrence_setup_warnings(db, client_id, period, plan_models, context),
+        *credit_settlement_setup_warnings(db, client_id, period, plan_models, context),
         *product_reserve_setup_warnings(db, client_id, plan_models),
     ]
 
@@ -1671,6 +2099,45 @@ def product_reserve_setup_warnings(
     return warnings
 
 
+def credit_settlement_setup_warnings(
+    db: Session,
+    client_id: int,
+    period: str,
+    plan_models: list[models.MonthlyPlanLine],
+    context: BudgetSummaryContext | None = None,
+) -> list[dict]:
+    plan_by_account = {
+        line.account_id: line
+        for line in plan_models
+        if line.line_type == "debt_payment" and line.account_id is not None
+    }
+    warnings = []
+    for settlement in credit_settlement_plan_lines(db, client_id, period, context):
+        amount = round(settlement.get("suggested_amount") or 0.0, 0)
+        matched = plan_by_account.get(settlement.get("account_id"))
+        if not matched:
+            warnings.append({
+                "type": "missing_credit_settlement",
+                "source": "credit_settlement",
+                "account_id": settlement.get("account_id"),
+                "name": settlement.get("target_name") or settlement.get("name"),
+                "amount": amount,
+            })
+            continue
+        budget_amount = round(matched.amount or 0.0, 0)
+        if budget_amount != amount:
+            warnings.append({
+                "type": "credit_settlement_diff",
+                "source": "credit_settlement",
+                "account_id": settlement.get("account_id"),
+                "plan_line_id": matched.id,
+                "name": settlement.get("target_name") or settlement.get("name"),
+                "amount": amount,
+                "budget_amount": budget_amount,
+            })
+    return warnings
+
+
 def summarize_cash_flow_projection(
     projection: list[dict],
     starting_cash: float,
@@ -1705,6 +2172,12 @@ def _apply_plan_line_data(db: Session, client_id: int, line: models.MonthlyPlanL
     for key, value in data.items():
         if key != "id":
             setattr(line, key, value)
+    line.source_kind = _line_source_kind(line)
+    if line.source_id is None:
+        line.source_id = _line_source_id(line)
+    if line.source == "manual":
+        line.source_kind = "manual"
+        line.source_id = None
     # Normalize manual lines: if no account_id is set but the registry has one for
     # this line_type+name, promote target_type to "account" so future matching works.
     if (not line.account_id) and line.target_type in (None, "manual") and line.name and line.line_type:
@@ -1735,6 +2208,10 @@ def _apply_plan_line_data(db: Session, client_id: int, line: models.MonthlyPlanL
             line.name = capsule.name
             line.account_id = capsule.account_id
             capsule.monthly_contribution = line.amount or 0.0
+            if line.source in {None, "manual", "capsule"}:
+                line.source_kind = "capsule"
+                line.source_id = capsule.id
+    assign_plan_line_identity(line)
 
 
 def create_plan_lines(db: Session, client_id: int, payloads: list) -> list[models.MonthlyPlanLine]:
@@ -1748,6 +2225,10 @@ def create_plan_lines(db: Session, client_id: int, payloads: list) -> list[model
         line = models.MonthlyPlanLine(client_id=client_id)
         db.add(line)
         _apply_plan_line_data(db, client_id, line, data)
+        duplicate = _active_duplicate_for_line(db, client_id, line)
+        if duplicate:
+            db.rollback()
+            raise ValueError("Monthly plan line already exists for this period and source")
         created.append(line)
     db.commit()
     for line in created:
@@ -1773,6 +2254,10 @@ def update_plan_lines(db: Session, client_id: int, payloads: list) -> list[model
         elif line.plan_id is None:
             data["plan_id"] = resolve_budget_plan_id(db, client_id)
         _apply_plan_line_data(db, client_id, line, data)
+        duplicate = _active_duplicate_for_line(db, client_id, line)
+        if duplicate:
+            db.rollback()
+            raise ValueError("Monthly plan line already exists for this period and source")
         saved.append(line)
     db.commit()
     for line in saved:

@@ -45,6 +45,31 @@ def run_alembic_migrations() -> None:
     alembic_cfg.set_main_option("script_location", str(backend_dir / "alembic"))
     command.upgrade(alembic_cfg, "head")
 
+
+def ensure_runtime_schema_guards(db) -> None:
+    """Patch critical additive columns when a hot-reloaded app outruns Alembic."""
+    dialect = db.bind.dialect.name if db.bind is not None else ""
+    if dialect == "postgresql":
+        db.execute(text("ALTER TABLE monthly_plan_lines ADD COLUMN IF NOT EXISTS source_kind VARCHAR NOT NULL DEFAULT 'manual'"))
+        db.execute(text("ALTER TABLE monthly_plan_lines ADD COLUMN IF NOT EXISTS source_id INTEGER"))
+        db.execute(text("ALTER TABLE monthly_plan_lines ADD COLUMN IF NOT EXISTS identity_key VARCHAR NOT NULL DEFAULT ''"))
+        db.execute(text("ALTER TABLE monthly_plan_lines ADD COLUMN IF NOT EXISTS manual_override BOOLEAN NOT NULL DEFAULT false"))
+        db.execute(text(
+            """
+            CREATE INDEX IF NOT EXISTS ix_monthly_plan_lines_source_identity
+            ON monthly_plan_lines (client_id, plan_id, target_period, source_kind, source_id)
+            """
+        ))
+        db.execute(text(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS uq_monthly_plan_lines_active_identity
+            ON monthly_plan_lines (client_id, identity_key)
+            WHERE is_active = true AND identity_key <> ''
+            """
+        ))
+        db.commit()
+
+
 # Startup Seed Logic
 @app.on_event("startup")
 def startup_event():
@@ -57,6 +82,7 @@ def startup_event():
 
     db = SessionLocal()
     try:
+        ensure_runtime_schema_guards(db)
         # 1. Ensure Default Client exists
         default_client = db.query(models.Client).filter(models.Client.id == 1).first()
         if not default_client:

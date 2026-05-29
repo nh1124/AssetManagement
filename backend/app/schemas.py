@@ -350,6 +350,10 @@ class MonthlyPlanLineBase(BaseModel):
     name: Optional[str] = None
     amount: float = 0.0
     source: str = "manual"
+    source_kind: str = "manual"
+    source_id: Optional[int] = None
+    identity_key: str = ""
+    manual_override: bool = False
     cash_treatment: MonthlyPlanCashTreatmentLiteral = "auto"
     recurring_transaction_id: Optional[int] = None
     is_active: bool = True
@@ -376,6 +380,10 @@ class MonthlyPlanLineUpdate(BaseModel):
     name: Optional[str] = None
     amount: Optional[float] = None
     source: Optional[str] = None
+    source_kind: Optional[str] = None
+    source_id: Optional[int] = None
+    identity_key: Optional[str] = None
+    manual_override: Optional[bool] = None
     cash_treatment: Optional[MonthlyPlanCashTreatmentLiteral] = None
     recurring_transaction_id: Optional[int] = None
     is_active: Optional[bool] = None

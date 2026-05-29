@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import date
 
 from fastapi import HTTPException
+import pytest
 from sqlalchemy import create_engine
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 try:
@@ -13,7 +15,7 @@ try:
     from backend.app.routers.data_transfer import ImportPayload, export_client_data, import_client_data, validate_import_client_data
     from backend.app.schemas import CopyPeriodRequest, MonthlyPlanLineBatchUpdate, MonthlyPlanLineCreate
     from backend.app.services.accounting_service import process_transaction
-    from backend.app.services.budget_plan_service import add_months, create_plan_lines, current_period_key, get_budget_summary, period_to_range, update_plan_lines
+    from backend.app.services.budget_plan_service import add_months, assign_plan_line_identity, create_plan_lines, current_period_key, get_budget_summary, period_to_range, update_plan_lines
     from backend.app.services.data_health_service import check_data_health, repair_data_health
 except ModuleNotFoundError:
     from app import models  # type: ignore[no-redef]
@@ -22,7 +24,7 @@ except ModuleNotFoundError:
     from app.routers.data_transfer import ImportPayload, export_client_data, import_client_data, validate_import_client_data  # type: ignore[no-redef]
     from app.schemas import CopyPeriodRequest, MonthlyPlanLineBatchUpdate, MonthlyPlanLineCreate  # type: ignore[no-redef]
     from app.services.accounting_service import process_transaction  # type: ignore[no-redef]
-    from app.services.budget_plan_service import add_months, create_plan_lines, current_period_key, get_budget_summary, period_to_range, update_plan_lines  # type: ignore[no-redef]
+    from app.services.budget_plan_service import add_months, assign_plan_line_identity, create_plan_lines, current_period_key, get_budget_summary, period_to_range, update_plan_lines  # type: ignore[no-redef]
     from app.services.data_health_service import check_data_health, repair_data_health  # type: ignore[no-redef]
 
 
@@ -98,7 +100,10 @@ def test_data_export_includes_budget_plan_line_fields_without_legacy_columns() -
             source_account_id=cash.id,
             name="food",
             amount=1000,
+            source_kind="manual",
+            manual_override=True,
         )
+        assign_plan_line_identity(line)
         db.add(line)
         db.commit()
 
@@ -107,6 +112,9 @@ def test_data_export_includes_budget_plan_line_fields_without_legacy_columns() -
 
         assert exported_line["plan_id"] == plan.id
         assert exported_line["source_account_id"] == cash.id
+        assert exported_line["source_kind"] == "manual"
+        assert exported_line["identity_key"]
+        assert exported_line["manual_override"] is True
         assert "priority" not in exported_line
         assert "note" not in exported_line
         assert snapshot["data"]["budget_plans"][0]["name"] == "Baseline"
@@ -141,7 +149,7 @@ def test_data_export_manifest_and_validate_include_monthly_actions() -> None:
         payload = ImportPayload(**snapshot)
         validation = validate_import_client_data(payload=payload, current_client=client)
 
-        assert snapshot["version"] == 3
+        assert snapshot["version"] == 4
         assert snapshot["manifest"]["counts"]["monthly_actions"] == 1
         assert snapshot["data"]["monthly_actions"][0]["kind"] == "set_budget"
         assert validation["status"] == "valid"
@@ -240,6 +248,69 @@ def test_data_import_allows_legacy_checksum_mismatch_when_structure_is_valid() -
 
         assert result["status"] == "ok"
         assert result["validation"]["status"] == "valid"
+    finally:
+        source_db.close()
+        target_db.close()
+
+
+def test_data_import_backfills_plan_line_source_identity_for_legacy_payload() -> None:
+    source_db = _session()
+    target_db = _session()
+    try:
+        source_client = models.Client(id=1, name="source", username="source", general_settings={}, ai_config={})
+        cash = models.Account(client_id=1, name="cash", account_type="asset")
+        food = models.Account(client_id=1, name="food", account_type="expense")
+        source_db.add_all([source_client, cash, food])
+        source_db.flush()
+        recurring = models.RecurringTransaction(
+            client_id=1,
+            name="food",
+            amount=10000,
+            type="Expense",
+            from_account_id=cash.id,
+            to_account_id=food.id,
+            frequency="Monthly",
+            is_active=True,
+        )
+        source_db.add(recurring)
+        source_db.flush()
+        line = models.MonthlyPlanLine(
+            client_id=1,
+            target_period="2026-05",
+            line_type="expense",
+            target_type="account",
+            account_id=food.id,
+            source_account_id=cash.id,
+            name="food",
+            amount=10000,
+            source="recurrence",
+            recurring_transaction_id=recurring.id,
+        )
+        assign_plan_line_identity(line)
+        source_db.add(line)
+        source_db.commit()
+
+        snapshot = export_client_data(db=source_db, current_client=source_client)
+        legacy_line = snapshot["data"]["monthly_plan_lines"][0]
+        legacy_line.pop("source_kind", None)
+        legacy_line.pop("source_id", None)
+        legacy_line.pop("identity_key", None)
+        snapshot["version"] = 3
+        snapshot["manifest"]["export_version"] = 3
+        snapshot["manifest"]["checksums"]["monthly_plan_lines"] = "legacy"
+        snapshot["manifest"]["payload_checksum"] = "legacy"
+
+        target_client = models.Client(id=2, name="target", username="target", general_settings={}, ai_config={})
+        target_db.add(target_client)
+        target_db.commit()
+        result = import_client_data(payload=ImportPayload(**snapshot), db=target_db, current_client=target_client)
+        imported_line = target_db.query(models.MonthlyPlanLine).filter_by(client_id=2, name="food").one()
+        imported_recurring = target_db.query(models.RecurringTransaction).filter_by(client_id=2, name="food").one()
+
+        assert result["status"] == "ok"
+        assert imported_line.source_kind == "recurring"
+        assert imported_line.source_id == imported_recurring.id
+        assert imported_line.identity_key
     finally:
         source_db.close()
         target_db.close()
@@ -447,7 +518,7 @@ def test_update_plan_lines_requires_existing_id() -> None:
         db.close()
 
 
-def test_budget_summary_deactivates_duplicate_expense_lines() -> None:
+def test_budget_summary_deduplicates_expense_lines_without_writing() -> None:
     db = _session()
     try:
         client = models.Client(id=1, name="test", general_settings={}, ai_config={})
@@ -483,8 +554,89 @@ def test_budget_summary_deactivates_duplicate_expense_lines() -> None:
         assert len(accounts) == 1
         assert accounts[0]["plan_line_id"] == newer.id
         assert accounts[0]["amount"] == 15000
+        assert older.is_active is True
+        assert newer.is_active is True
+    finally:
+        db.close()
+
+
+def test_data_health_reports_and_repairs_duplicate_plan_lines() -> None:
+    db = _session()
+    try:
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        food = models.Account(client_id=1, name="food", account_type="expense")
+        db.add_all([client, food])
+        db.flush()
+        older = models.MonthlyPlanLine(
+            client_id=1,
+            target_period="2026-05",
+            line_type="expense",
+            target_type="account",
+            account_id=food.id,
+            name=food.name,
+            amount=10000,
+        )
+        newer = models.MonthlyPlanLine(
+            client_id=1,
+            target_period="2026-05",
+            line_type="expense",
+            target_type="account",
+            account_id=food.id,
+            name=food.name,
+            amount=15000,
+        )
+        db.add_all([older, newer])
+        db.commit()
+
+        health = check_data_health(db, 1)
+        duplicate_issue = next(issue for issue in health["issues"] if issue["code"] == "duplicate_plan_lines")
+        assert duplicate_issue["count"] == 1
+
+        result = repair_data_health(db, 1)
+        db.refresh(older)
+        db.refresh(newer)
+
+        assert any(action["code"] == "duplicate_plan_lines" and action["updated"] == 1 for action in result["actions"])
         assert older.is_active is False
         assert newer.is_active is True
+    finally:
+        db.close()
+
+
+def test_db_rejects_duplicate_active_plan_line_identity() -> None:
+    db = _session()
+    try:
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        food = models.Account(client_id=1, name="food", account_type="expense")
+        plan = models.BudgetPlan(client_id=1, name="Baseline", is_default=True)
+        db.add_all([client, food, plan])
+        db.flush()
+        first = models.MonthlyPlanLine(
+            client_id=1,
+            plan_id=plan.id,
+            target_period="2026-05",
+            line_type="expense",
+            target_type="account",
+            account_id=food.id,
+            name=food.name,
+            amount=10000,
+        )
+        duplicate = models.MonthlyPlanLine(
+            client_id=1,
+            plan_id=plan.id,
+            target_period="2026-05",
+            line_type="expense",
+            target_type="account",
+            account_id=food.id,
+            name=food.name,
+            amount=15000,
+        )
+        assign_plan_line_identity(first)
+        assign_plan_line_identity(duplicate)
+        db.add_all([first, duplicate])
+
+        with pytest.raises(IntegrityError):
+            db.commit()
     finally:
         db.close()
 
@@ -691,7 +843,7 @@ def test_cash_flow_projection_warns_about_unsynced_yearly_income() -> None:
         assert may["period"] == "2026-05"
         assert may["inflow"] == 0
         assert june["period"] == "2026-06"
-        assert june["inflow"] == 0
+        assert june["inflow"] == 600000
         assert june["setup_warnings"][0]["type"] == "missing_budget"
         assert june["setup_warnings"][0]["amount"] == 600000
     finally:
@@ -974,7 +1126,7 @@ def test_financed_expense_counts_as_budget_usage_without_cash_flow_expense() -> 
         db.close()
 
 
-def test_auto_cash_treatment_excludes_credit_expense_recurrence_from_cash_flow() -> None:
+def test_auto_cash_treatment_excludes_credit_expense_and_projects_card_payment() -> None:
     db = _session()
     try:
         next_period = add_months(current_period_key(), 1)
@@ -1022,7 +1174,8 @@ def test_auto_cash_treatment_excludes_credit_expense_recurrence_from_cash_flow()
 
         assert row["period"] == next_period
         assert row["expense"] == 0
-        assert row["net_cash"] == 0
+        assert row["debt"] == 10000
+        assert row["net_cash"] == -10000
     finally:
         db.close()
 
@@ -1298,6 +1451,60 @@ def test_cash_flow_uses_registry_source_when_saved_budget_line_lacks_source_acco
         db.close()
 
 
+def test_credit_expense_creates_credit_settlement_projection() -> None:
+    db = _session()
+    try:
+        period = current_period_key()
+        start, _ = period_to_range(period)
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        cash = models.Account(client_id=1, name="cash", account_type="asset", role="operating")
+        card = models.Account(client_id=1, name="credit card", account_type="liability")
+        food = models.Account(client_id=1, name="food", account_type="expense")
+        db.add_all([client, cash, card, food])
+        db.flush()
+        tx = models.Transaction(
+            client_id=1,
+            date=start,
+            description="credit food",
+            amount=50000,
+            type="CreditExpense",
+            from_account_id=card.id,
+            to_account_id=food.id,
+            currency="JPY",
+        )
+        db.add(tx)
+        db.add(models.MonthlyPlanLine(
+            client_id=1,
+            target_period=period,
+            line_type="expense",
+            target_type="account",
+            account_id=food.id,
+            source_account_id=card.id,
+            name="food",
+            amount=50000,
+        ))
+        db.commit()
+        process_transaction(db, tx)
+
+        summary = get_budget_summary(
+            db,
+            client_id=1,
+            period=period,
+            cash_flow_start_period=period,
+            cash_flow_months=1,
+        )
+        settlement = next(line for line in summary["plan_lines"] if line.get("source_kind") == "credit_settlement")
+        row = summary["cash_flow_projection"][0]
+
+        assert settlement["line_type"] == "debt_payment"
+        assert settlement["account_id"] == card.id
+        assert settlement["suggested_amount"] == 50000
+        assert row["non_cash_budget"] == 50000
+        assert row["debt"] == 50000
+    finally:
+        db.close()
+
+
 def test_cash_flow_reports_asset_role_movements() -> None:
     db = _session()
     try:
@@ -1427,10 +1634,10 @@ def test_cash_flow_summary_reports_buffer_and_shortfall_month() -> None:
         summary = get_budget_summary(db, client_id=1, period="2026-05")
 
         assert summary["cash_flow_summary"] == {
-            "runway_months": 12,
-            "lowest_cash": 0,
-            "required_buffer": 0,
-            "shortfall_month": None,
+            "runway_months": 0,
+            "lowest_cash": -960000,
+            "required_buffer": 960000,
+            "shortfall_month": "2026-05",
             "horizon_months": 12,
         }
         assert summary["cash_flow_projection"][0]["setup_warnings"][0]["type"] == "missing_budget"

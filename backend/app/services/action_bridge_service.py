@@ -6,6 +6,7 @@ from uuid import uuid4
 from sqlalchemy.orm import Session
 
 from .. import models
+from .budget_plan_service import assign_plan_line_identity
 
 
 ACTION_KINDS = {
@@ -127,6 +128,7 @@ def _apply_set_budget(db: Session, action: models.MonthlyAction) -> dict:
             amount=amount,
         )
         db.add(plan_line)
+    assign_plan_line_identity(plan_line)
     db.flush()
     return {"plan_line_id": plan_line.id, "target_period": target_period}
 

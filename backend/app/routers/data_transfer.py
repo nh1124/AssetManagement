@@ -14,13 +14,14 @@ from .. import models
 from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.accounting_service import calculate_account_journal_balance
+from ..services.budget_plan_service import assign_plan_line_identity
 from ..services.cache_service import invalidate_client
 from ..services.capsule_service import create_capsule_for_goal
 from ..services.data_health_service import check_data_health, repair_data_health
 
 router = APIRouter(prefix="/data", tags=["data"])
 
-EXPORT_VERSION = 3
+EXPORT_VERSION = 4
 
 DATA_COLLECTIONS = [
     "accounts",
@@ -620,6 +621,10 @@ def export_client_data(
                         "name",
                         "amount",
                         "source",
+                        "source_kind",
+                        "source_id",
+                        "identity_key",
+                        "manual_override",
                         "cash_treatment",
                         "recurring_transaction_id",
                         "plan_id",
@@ -1289,6 +1294,7 @@ def import_client_data(
                 )
 
         monthly_plan_line_map: dict[int, int] = {}
+        active_plan_line_identities: dict[str, models.MonthlyPlanLine] = {}
         for item in data.get("monthly_plan_lines", []):
             old_id = int(item["id"])
             target_type = item.get("target_type") or "manual"
@@ -1301,24 +1307,65 @@ def import_client_data(
                 target_id = product_map.get(target_id)
             elif target_type == "account":
                 target_id = account_map.get(target_id)
+            account_id = account_map.get(item.get("account_id"))
+            source_account_id = account_map.get(item.get("source_account_id"))
+            recurring_id = recurring_map.get(item.get("recurring_transaction_id"))
+            source_kind = item.get("source_kind") or item.get("source") or "manual"
+            if source_kind == "recurrence":
+                source_kind = "recurring"
+            source_id = item.get("source_id")
+            if source_kind == "recurring":
+                source_id = recurring_id
+            elif source_kind == "capsule":
+                source_id = target_id if target_type == "capsule" else capsule_map.get(source_id)
+            elif source_kind == "product":
+                source_id = target_id if target_type == "product" else product_map.get(source_id)
+            elif source_kind == "credit_settlement":
+                source_id = account_map.get(source_id) or account_map.get(item.get("account_id"))
+            elif source_kind == "registry" and source_id:
+                source_id = registry_map.get(source_id)
+            elif source_kind == "registry":
+                match = db.query(models.RegistryEntry).filter(
+                    models.RegistryEntry.client_id == current_client.id,
+                    models.RegistryEntry.line_type == item.get("line_type"),
+                    models.RegistryEntry.name == item.get("name"),
+                )
+                if account_id:
+                    match = match.filter(
+                        (models.RegistryEntry.budget_account_id == account_id)
+                        | (models.RegistryEntry.destination_account_id == account_id)
+                    )
+                if source_account_id:
+                    match = match.filter(models.RegistryEntry.source_account_id == source_account_id)
+                source_id = (match.first() or models.RegistryEntry()).id
             line = models.MonthlyPlanLine(
                 client_id=current_client.id,
                 target_period=item["target_period"],
                 line_type=item["line_type"],
                 target_type=target_type,
                 target_id=target_id,
-                account_id=account_map.get(item.get("account_id")),
-                source_account_id=account_map.get(item.get("source_account_id")),
+                account_id=account_id,
+                source_account_id=source_account_id,
                 name=item.get("name"),
                 amount=item.get("amount") or 0,
                 source=item.get("source") or "manual",
+                source_kind=source_kind,
+                source_id=source_id,
+                manual_override=item.get("manual_override", False),
                 cash_treatment=item.get("cash_treatment") or "auto",
-                recurring_transaction_id=recurring_map.get(item.get("recurring_transaction_id")),
+                recurring_transaction_id=recurring_id,
                 plan_id=budget_plan_map.get(item.get("plan_id")),
                 is_active=item.get("is_active", True),
                 created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
                 updated_at=_parse_datetime(item.get("updated_at")),
             )
+            assign_plan_line_identity(line)
+            if line.is_active and line.identity_key:
+                previous = active_plan_line_identities.get(line.identity_key)
+                if previous:
+                    previous.is_active = False
+                    db.flush()
+                active_plan_line_identities[line.identity_key] = line
             db.add(line)
             db.flush()
             monthly_plan_line_map[old_id] = line.id

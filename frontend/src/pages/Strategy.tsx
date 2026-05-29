@@ -1,6 +1,6 @@
 ﻿import { Fragment, useEffect, useState } from 'react';
 import { Bar, BarChart, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { AlertTriangle, Archive, CalendarDays, ChevronLeft, ChevronRight, Copy, Edit2, Info, Plus, RefreshCw, Search, Trash2, Unlink, X } from 'lucide-react';
+import { AlertTriangle, Archive, CalendarDays, ChevronLeft, ChevronRight, Copy, Edit2, Info, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react';
 import TabPanel from '../components/TabPanel';
 import { useToast } from '../components/Toast';
 import { useClient } from '../context/ClientContext';
@@ -86,8 +86,8 @@ interface BudgetAccount {
 }
 
 interface CashFlowSetupWarning {
-    type: 'missing_budget' | 'amount_diff' | 'missing_product_reserve' | 'product_reserve_diff';
-    source?: 'registry' | 'recurrence' | 'product_reserve';
+    type: 'missing_budget' | 'amount_diff' | 'missing_product_reserve' | 'product_reserve_diff' | 'missing_credit_settlement' | 'credit_settlement_diff';
+    source?: 'registry' | 'recurrence' | 'product_reserve' | 'credit_settlement';
     recurring_transaction_id?: number;
     capsule_id?: number;
     account_id?: number | null;
@@ -533,25 +533,7 @@ export default function Strategy() {
         setCurrentPeriod(monthKey());
     };
 
-    const SYNCED_SOURCES = new Set(['registry', 'recurrence', 'product_expense', 'recurrence_product_expense', 'capsule']);
-
-    const suggestedBudgetSource = (account: BudgetAccount) => {
-        if (account.suggested_source === 'registry') return 'registry';
-        if (account.suggested_source === 'recurrence') return 'recurrence';
-        if (account.suggested_source === 'product_expense') return 'product_expense';
-        if (account.suggested_source === 'recurrence_product_expense') return 'recurrence_product_expense';
-        return 'manual';
-    };
-
-    const budgetSourceAmount = (account: BudgetAccount) => Number(account.suggested_amount || account.recurring_amount || 0);
-
     const budgetAccountPlanPayload = (account: BudgetAccount, amount: number, period = currentPeriod): EditablePlanLinePayload => {
-        const suggestedAmount = Number(account.suggested_amount || 0);
-        const source = account.source && SYNCED_SOURCES.has(account.source)
-            ? account.source
-            : account.suggested_source && Math.round(amount) === Math.round(suggestedAmount)
-                ? suggestedBudgetSource(account)
-                : 'manual';
         const payload: MonthlyPlanLinePayload = {
             target_period: period,
             line_type: 'expense',
@@ -561,8 +543,11 @@ export default function Strategy() {
             source_account_id: account.source_account_id ?? null,
             name: account.name ?? null,
             amount,
-            source,
-            recurring_transaction_id: source.includes('recurrence') ? account.recurring_transaction_id ?? null : null,
+            source: 'manual',
+            source_kind: 'manual',
+            source_id: null,
+            manual_override: true,
+            recurring_transaction_id: null,
             cash_treatment: account.cash_treatment ?? 'auto',
             is_active: true,
         };
@@ -732,9 +717,12 @@ export default function Strategy() {
                 source_account_id: line.source_account_id ?? null,
                 name: line.name || line.target_name || null,
                 amount,
-                source: line.source && SYNCED_SOURCES.has(line.source) ? line.source : 'manual',
+                source: 'manual',
+                source_kind: 'manual',
+                source_id: null,
+                manual_override: true,
                 cash_treatment: line.cash_treatment ?? 'auto',
-                recurring_transaction_id: line.source?.includes('recurrence') ? line.recurring_transaction_id ?? null : null,
+                recurring_transaction_id: null,
                 is_active: true,
             }]);
             await fetchBudgetSummary();
@@ -754,9 +742,12 @@ export default function Strategy() {
                 source_account_id: line.source_account_id ?? null,
                 name: line.name || line.target_name || null,
                 amount: Number(line.amount || 0),
-                source: line.source ?? 'manual',
+                source: 'manual',
+                source_kind: 'manual',
+                source_id: null,
+                manual_override: true,
                 cash_treatment: cashTreatment,
-                recurring_transaction_id: line.recurring_transaction_id ?? null,
+                recurring_transaction_id: null,
                 is_active: true,
             }]);
             await fetchBudgetSummary();
@@ -765,287 +756,11 @@ export default function Strategy() {
         }
     };
 
-    const budgetAmountWithExistingAdjustment = (account: BudgetAccount) => {
-        const sourceAmount = budgetSourceAmount(account);
-        const currentAmount = Number(budgetEdits[account.id] ?? account.amount ?? 0);
-        const adjustment = account.plan_line_id ? currentAmount - sourceAmount : 0;
-        return sourceAmount + adjustment;
-    };
-    const isBudgetSourceSynced = (account: BudgetAccount) => Boolean(
-        account.plan_line_id && account.source && SYNCED_SOURCES.has(account.source),
-    );
-
-    const syncSuggestedBudgetAccount = async (account: BudgetAccount) => {
-        if (!account.suggested_source || account.suggested_amount == null) return;
-        try {
-            await persistMonthlyPlanLines([{
-                ...(typeof account.plan_line_id === 'number' ? { id: account.plan_line_id } : {}),
-                target_period: currentPeriod,
-                line_type: 'expense',
-                target_type: account.target_type ?? (account.account_id ? 'account' : 'manual'),
-                target_id: account.target_id ?? null,
-                account_id: account.account_id ?? null,
-                source_account_id: account.source_account_id ?? null,
-                name: account.name,
-                amount: budgetAmountWithExistingAdjustment(account),
-                source: suggestedBudgetSource(account),
-                cash_treatment: account.cash_treatment ?? 'auto',
-                recurring_transaction_id: account.suggested_source?.includes('recurrence') ? account.recurring_transaction_id ?? null : null,
-                is_active: true,
-            }]);
-            showToast('Synced with suggested budget', 'success');
-            await fetchBudgetSummary();
-        } catch (error) {
-            showToast('Failed to sync suggested budget', 'error');
-        }
-    };
-
-    const syncSuggestedBudgetAccounts = async (accountsToSync: BudgetAccount[]) => {
-        const payload = accountsToSync
-            .filter((account) => account.suggested_source && !isBudgetSourceSynced(account))
-            .map((account) => ({
-                ...(typeof account.plan_line_id === 'number' ? { id: account.plan_line_id } : {}),
-                target_period: currentPeriod,
-                line_type: 'expense',
-                target_type: account.target_type ?? (account.account_id ? 'account' : 'manual'),
-                target_id: account.target_id ?? null,
-                account_id: account.account_id ?? null,
-                source_account_id: account.source_account_id ?? null,
-                name: account.name,
-                amount: budgetAmountWithExistingAdjustment(account),
-                source: suggestedBudgetSource(account),
-                cash_treatment: account.cash_treatment ?? 'auto',
-                recurring_transaction_id: account.suggested_source?.includes('recurrence') ? account.recurring_transaction_id ?? null : null,
-                is_active: true,
-            }));
-        if (payload.length === 0) {
-            showToast('No budget suggestions to sync', 'info');
-            return;
-        }
-        try {
-            await persistMonthlyPlanLines(payload);
-            showToast(`Synced ${payload.length} budget item${payload.length === 1 ? '' : 's'}`, 'success');
-            await fetchBudgetSummary();
-        } catch (error) {
-            showToast('Failed to sync budget suggestions', 'error');
-        }
-    };
-
     const planLineSourceAmount = (line: Partial<MonthlyPlanLine>) => (
         Number(line.suggested_amount || 0) > 0
             ? Number(line.suggested_amount || 0)
             : Number(line.recurring_amount || 0)
     );
-
-    const planLineAmountWithExistingAdjustment = (line: EditablePlanLine) => {
-        const sourceAmount = planLineSourceAmount(line);
-        const adjustment = line.id ? Number(line.amount || 0) - sourceAmount : 0;
-        return sourceAmount + adjustment;
-    };
-    const isPlanLineSourceSynced = (line: Partial<MonthlyPlanLine>) => Boolean(
-        line.id && line.source && SYNCED_SOURCES.has(line.source),
-    );
-
-    const syncSuggestedPlanLine = async (line: EditablePlanLine) => {
-        const sourceAmount = planLineSourceAmount(line);
-        if (sourceAmount <= 0) return;
-        try {
-            await persistMonthlyPlanLines([{
-                ...(typeof line.id === 'number' ? { id: line.id } : {}),
-                target_period: currentPeriod,
-                line_type: line.line_type,
-                target_type: line.target_type,
-                target_id: line.target_id ?? null,
-                account_id: line.account_id ?? null,
-                source_account_id: line.source_account_id ?? null,
-                name: line.name || line.target_name || null,
-                amount: planLineAmountWithExistingAdjustment(line),
-                source: line.suggested_source === 'product_reserve' ? 'capsule' : line.suggested_source === 'registry' ? 'registry' : line.recurring_transaction_id ? 'recurrence' : line.source ?? 'manual',
-                cash_treatment: line.cash_treatment ?? 'auto',
-                recurring_transaction_id: line.recurring_transaction_id ?? null,
-                is_active: true,
-            }]);
-            showToast('Synced with suggested amount', 'success');
-            await fetchBudgetSummary();
-        } catch (error) {
-            showToast('Failed to sync suggested amount', 'error');
-        }
-    };
-
-    const syncSuggestedPlanLines = async (lines: EditablePlanLine[]) => {
-        const payload = lines
-            .filter((line) => planLineSourceAmount(line) > 0 && !isPlanLineSourceSynced(line))
-            .map((line) => ({
-                ...(typeof line.id === 'number' ? { id: line.id } : {}),
-                target_period: currentPeriod,
-                line_type: line.line_type,
-                target_type: line.target_type,
-                target_id: line.target_id ?? null,
-                account_id: line.account_id ?? null,
-                source_account_id: line.source_account_id ?? null,
-                name: line.name || line.target_name || null,
-                amount: planLineAmountWithExistingAdjustment(line),
-                source: line.suggested_source === 'product_reserve' ? 'capsule' : line.suggested_source === 'registry' ? 'registry' : line.recurring_transaction_id ? 'recurrence' : line.source ?? 'manual',
-                cash_treatment: line.cash_treatment ?? 'auto',
-                recurring_transaction_id: line.recurring_transaction_id ?? null,
-                is_active: true,
-            }));
-        if (payload.length === 0) {
-            showToast('No source suggestions to sync', 'info');
-            return;
-        }
-        try {
-            await persistMonthlyPlanLines(payload);
-            showToast(`Synced ${payload.length} source item${payload.length === 1 ? '' : 's'}`, 'success');
-            await fetchBudgetSummary();
-        } catch (error) {
-            showToast('Failed to sync source suggestions', 'error');
-        }
-    };
-
-    const syncAllRecurrencesForPeriod = async (period: string) => {
-        try {
-            const summary = period === currentPeriod
-                ? budgetSummary
-                : await getBudgetSummary(period, { cash_flow_start_period: period, cash_flow_months: 1, plan_id: activePlanId ?? undefined });
-            if (!summary) return;
-            const expensePayload = (summary.expense_accounts ?? [])
-                .filter((account: BudgetAccount) => (
-                    (account.suggested_source && !(account.plan_line_id && account.source && SYNCED_SOURCES.has(account.source)))
-                    || (account.recurring_transaction_id && !(account.plan_line_id && account.source && SYNCED_SOURCES.has(account.source)))
-                ))
-                .map((account: BudgetAccount) => ({
-                    ...(typeof account.plan_line_id === 'number' ? { id: account.plan_line_id } : {}),
-                    target_period: period,
-                    line_type: 'expense',
-                    target_type: account.target_type ?? (account.account_id ? 'account' : 'manual'),
-                    target_id: account.target_id ?? null,
-                    account_id: account.account_id ?? null,
-                    source_account_id: account.source_account_id ?? null,
-                    name: account.name,
-                    amount: (() => {
-                        const sourceAmount = Number(account.suggested_amount || account.recurring_amount || 0);
-                        const adjustment = account.plan_line_id ? Number(account.amount || 0) - sourceAmount : 0;
-                        return sourceAmount + adjustment;
-                    })(),
-                    source: suggestedBudgetSource(account),
-                    cash_treatment: account.cash_treatment ?? 'auto',
-                    recurring_transaction_id: account.suggested_source?.includes('recurrence') ? account.recurring_transaction_id ?? null : null,
-                    is_active: true,
-                }));
-            const planPayload = (summary.plan_lines ?? [])
-                .filter((line: MonthlyPlanLine) => (
-                    line.line_type !== 'expense'
-                    && planLineSourceAmount(line) > 0
-                    && !(line.id && line.source && SYNCED_SOURCES.has(line.source))
-                ))
-                .map((line: MonthlyPlanLine) => ({
-                    ...(typeof line.id === 'number' ? { id: line.id } : {}),
-                    target_period: period,
-                    line_type: line.line_type,
-                    target_type: line.target_type,
-                    target_id: line.target_id ?? null,
-                    account_id: line.account_id ?? null,
-                    source_account_id: line.source_account_id ?? null,
-                    name: line.name || line.target_name || null,
-                    amount: (() => {
-                        const sourceAmount = Number(line.suggested_amount || line.recurring_amount || 0);
-                        const adjustment = line.id ? Number(line.amount || 0) - sourceAmount : 0;
-                        return sourceAmount + adjustment;
-                    })(),
-                    source: line.suggested_source === 'product_reserve' ? 'capsule' : line.suggested_source === 'registry' ? 'registry' : 'recurrence',
-                    cash_treatment: line.cash_treatment ?? 'auto',
-                    recurring_transaction_id: line.recurring_transaction_id ?? null,
-                    is_active: true,
-                }));
-            const productReservePayload = (summary.cash_flow_projection ?? [])
-                .find((row: { period: string }) => row.period === period)
-                ?.setup_warnings
-                ?.filter((warning: CashFlowSetupWarning) => warning.source === 'product_reserve' && warning.capsule_id)
-                .map((warning: CashFlowSetupWarning) => {
-                    const existing = (summary.plan_lines ?? []).find((line: MonthlyPlanLine) => (
-                        line.line_type === 'allocation'
-                        && line.target_type === 'capsule'
-                        && line.target_id === warning.capsule_id
-                    ));
-                    const existingId = existing?.id ?? warning.plan_line_id;
-                    return {
-                        ...(typeof existingId === 'number' ? { id: existingId } : {}),
-                        target_period: period,
-                        line_type: 'allocation',
-                        target_type: 'capsule',
-                        target_id: warning.capsule_id ?? null,
-                        account_id: warning.account_id ?? null,
-                        name: warning.name,
-                        amount: Number(warning.amount || 0) + (existing?.id ? Number(existing.amount || 0) - Number(warning.amount || 0) : 0),
-                        source: 'capsule',
-                        cash_treatment: 'cash',
-                        recurring_transaction_id: null,
-                        is_active: true,
-                    };
-                }) ?? [];
-            const payload = [...expensePayload, ...planPayload, ...productReservePayload];
-            if (payload.length === 0) {
-                showToast('No recurrence differences to sync', 'info');
-                return;
-            }
-            await persistMonthlyPlanLines(payload);
-            showToast(`Synced ${payload.length} recurrence item${payload.length === 1 ? '' : 's'} for ${period}`, 'success');
-            await fetchBudgetSummary();
-        } catch (error) {
-            showToast('Failed to sync recurrences', 'error');
-        }
-    };
-
-    const unlinkRecurringBudgetAccount = async (account: BudgetAccount) => {
-        if (!account.plan_line_id) return;
-        try {
-            await persistMonthlyPlanLines([{
-                id: account.plan_line_id,
-                target_period: currentPeriod,
-                line_type: 'expense',
-                target_type: account.target_type ?? (account.account_id ? 'account' : 'manual'),
-                target_id: account.target_id ?? null,
-                account_id: account.account_id ?? null,
-                source_account_id: account.source_account_id ?? null,
-                name: account.name,
-                amount: Number(budgetEdits[account.id] ?? account.amount ?? 0),
-                source: 'manual',
-                cash_treatment: account.cash_treatment ?? 'auto',
-                recurring_transaction_id: null,
-                is_active: true,
-            }]);
-            showToast('Source sync removed', 'info');
-            await fetchBudgetSummary();
-        } catch (error) {
-            showToast('Failed to remove source sync', 'error');
-        }
-    };
-
-    const unlinkRecurringPlanLine = async (line: EditablePlanLine) => {
-        if (!line.id) return;
-        try {
-            await persistMonthlyPlanLines([{
-                id: line.id,
-                target_period: currentPeriod,
-                line_type: line.line_type,
-                target_type: line.target_type,
-                target_id: line.target_id ?? null,
-                account_id: line.account_id ?? null,
-                source_account_id: line.source_account_id ?? null,
-                name: line.name || line.target_name || null,
-                amount: Number(line.amount || 0),
-                source: 'manual',
-                cash_treatment: line.cash_treatment ?? 'auto',
-                recurring_transaction_id: null,
-                is_active: true,
-            }]);
-            showToast('Source sync removed', 'info');
-            await fetchBudgetSummary();
-        } catch (error) {
-            showToast('Failed to remove source sync', 'error');
-        }
-    };
 
     const jumpToCashFlowPeriod = (period: string) => {
         setCurrentPeriod(period);
@@ -1356,7 +1071,6 @@ export default function Strategy() {
         const variableActualTotal = (budgetSummary?.expense_accounts ?? []).reduce((sum, account) => sum + (account.balance || 0), 0);
         const variableVarianceTotal = variableBudgetTotal - variableActualTotal;
         const variableSuggestedTotal = (budgetSummary?.expense_accounts ?? []).reduce((sum, account) => sum + Number(account.suggested_amount || 0), 0);
-        const variableSyncableAccounts = (budgetSummary?.expense_accounts ?? []).filter((account) => account.suggested_source && !isBudgetSourceSynced(account));
         const cashFlowSummary = budgetSummary?.cash_flow_summary;
         const balanceSummary = budgetSummary?.balance_summary;
         const cashFlowHorizon = cashFlowSummary?.horizon_months ?? budgetSummary?.cash_flow_projection?.length ?? 12;
@@ -1622,7 +1336,6 @@ export default function Strategy() {
             const totalActual = planGroupActual(types);
             const totalPlan = planGroupTotal(types);
             const totalSuggested = rows.reduce((sum, line) => sum + planLineSourceAmount(line), 0);
-            const syncableRows = rows.filter((line) => planLineSourceAmount(line) > 0 && !isPlanLineSourceSynced(line));
             return (
                 <div className="mt-6">
                     <div className="flex items-center justify-between mb-3">
@@ -1632,15 +1345,6 @@ export default function Strategy() {
                         )}
                         <div className="flex items-center gap-3">
                             <span className="text-xs text-slate-500 font-mono-nums">Total {formatCurrency(totalPlan)}</span>
-                            <button
-                                type="button"
-                                title="Sync all registry differences"
-                                disabled={syncableRows.length === 0}
-                                onClick={() => syncSuggestedPlanLines(syncableRows)}
-                                className={`text-slate-500 ${syncableRows.length > 0 ? 'hover:text-amber-300' : 'opacity-30 cursor-not-allowed'}`}
-                            >
-                                <RefreshCw size={14} />
-                            </button>
                             <button type="button" title={`Add ${title}`} onClick={() => openPlanLineForm(addType)} className="text-slate-500 hover:text-cyan-400">
                                 <Plus size={14} />
                             </button>
@@ -1667,7 +1371,6 @@ export default function Strategy() {
                                     const variance = Number(line.actual || 0) - Number(line.amount || 0);
                                     const sourceAmount = planLineSourceAmount(line);
                                     const adjustment = Number(line.amount || 0) - sourceAmount;
-                                    const sourceSynced = isPlanLineSourceSynced(line);
                                     const rowKey = `plan-${line.local_id}`;
                                     const sourceDetails = planSourceDetails(line);
                                     return (
@@ -1728,21 +1431,6 @@ export default function Strategy() {
                                                 <td className={`px-2 py-2 text-right font-mono-nums ${variance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(variance)}</td>
                                                 <td className="px-2 py-2 text-right">
                                                     <div className="flex items-center justify-end gap-2">
-                                                        {sourceAmount > 0 && (
-                                                            <button
-                                                                type="button"
-                                                                title={sourceSynced ? 'Synced with registry' : 'Sync with registry'}
-                                                                onClick={() => syncSuggestedPlanLine(line)}
-                                                                className={sourceSynced ? 'text-cyan-400 hover:text-cyan-200' : 'text-amber-400 hover:text-amber-200'}
-                                                            >
-                                                                <RefreshCw size={12} />
-                                                            </button>
-                                                        )}
-                                                        {sourceSynced && (
-                                                            <button type="button" title="Remove source sync" onClick={() => unlinkRecurringPlanLine(line)} className="text-slate-500 hover:text-amber-300">
-                                                                <Unlink size={12} />
-                                                            </button>
-                                                        )}
                                                         <button type="button" title="Remove line" onClick={() => removePlanLine(line)} className="text-slate-500 hover:text-rose-400"><Trash2 size={12} /></button>
                                                     </div>
                                                 </td>
@@ -1938,15 +1626,6 @@ export default function Strategy() {
                     {renderTitleWithInfo('Variable Budget', 'variable')}
                     <div className="flex items-center gap-3">
                         <span className="text-xs text-slate-500 font-mono-nums">Total {formatCurrency(variableBudgetTotal)}</span>
-                        <button
-                            type="button"
-                            title="Sync all suggested budget differences"
-                            disabled={variableSyncableAccounts.length === 0}
-                            onClick={() => syncSuggestedBudgetAccounts(variableSyncableAccounts)}
-                            className={`text-slate-500 ${variableSyncableAccounts.length > 0 ? 'hover:text-amber-300' : 'opacity-30 cursor-not-allowed'}`}
-                        >
-                            <RefreshCw size={14} />
-                        </button>
                         <button type="button" title="Add category" onClick={() => openBudgetCategoryForm()} className="text-slate-500 hover:text-emerald-400">
                             <Plus size={14} />
                         </button>
@@ -2070,7 +1749,6 @@ export default function Strategy() {
                                 const suggestedAmount = Number(account.suggested_amount || 0);
                                 const adjustment = limit - suggestedAmount;
                                 const hasSuggestion = Boolean(account.suggested_source && suggestedAmount > 0);
-                                const sourceSynced = isBudgetSourceSynced(account);
                                 const rowKey = `budget-${account.id}`;
                                 const sourceDetails = budgetSourceDetails(account);
                                 return (
@@ -2125,12 +1803,6 @@ export default function Strategy() {
                                             <td className="px-2 py-2 text-right font-mono-nums text-slate-200">{formatCurrency(limit)}</td>
                                             <td className={`px-2 py-2 text-right font-mono-nums ${variance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(variance)}</td>
                                             <td className="px-2 py-2 text-right flex items-center justify-end gap-2">
-                                                {hasSuggestion && (
-                                                    <button type="button" title="Sync source budget while keeping adjust" onClick={() => syncSuggestedBudgetAccount(account)} className={sourceSynced ? 'text-cyan-400 hover:text-cyan-200' : 'text-amber-400 hover:text-amber-200'}><RefreshCw size={12} /></button>
-                                                )}
-                                                {sourceSynced && (
-                                                    <button type="button" title="Remove source sync" onClick={() => unlinkRecurringBudgetAccount(account)} className="text-slate-500 hover:text-amber-300"><Unlink size={12} /></button>
-                                                )}
                                                 <button type="button" title="Remove from budget" onClick={() => removeBudgetCategory(account.id, account.plan_line_id)} className="text-slate-500 hover:text-rose-400"><Trash2 size={12} /></button>
                                             </td>
                                         </tr>
@@ -2245,7 +1917,6 @@ export default function Strategy() {
                                                         <span title="No recurrence warnings" className="text-slate-700"><AlertTriangle size={12} /></span>
                                                     )}
                                                     <button type="button" title={`Jump to ${row.period}`} onClick={() => jumpToCashFlowPeriod(row.period)} className="text-slate-500 hover:text-cyan-300"><ChevronRight size={12} /></button>
-                                                    <button type="button" title={`Sync budget setup differences for ${row.period}`} onClick={() => syncAllRecurrencesForPeriod(row.period)} className={(row.setup_warnings?.length ?? 0) > 0 ? 'text-amber-400 hover:text-amber-200' : 'text-slate-500 hover:text-amber-300'}><RefreshCw size={12} /></button>
                                                     <button type="button" title={`Copy current month budget to ${row.period}`} onClick={() => copyCurrentBudgetToPeriod(row.period)} className="text-slate-500 hover:text-emerald-300"><Copy size={12} /></button>
                                                 </div>
                                             </td>

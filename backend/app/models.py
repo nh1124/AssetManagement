@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, Boolean, DateTime, JSON, Text, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, Boolean, DateTime, JSON, Text, UniqueConstraint, Index, and_
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import enum
@@ -342,6 +342,10 @@ class MonthlyPlanLine(Base):
     name = Column(String, nullable=True)
     amount = Column(Float, default=0.0, nullable=False)
     source = Column(String, default="manual", server_default="manual", nullable=False)
+    source_kind = Column(String, default="manual", server_default="manual", nullable=False)
+    source_id = Column(Integer, nullable=True)
+    identity_key = Column(String, default="", server_default="", nullable=False)
+    manual_override = Column(Boolean, default=False, server_default="false", nullable=False)
     cash_treatment = Column(String, default="auto", server_default="auto", nullable=False)  # auto, cash, non_cash
     recurring_transaction_id = Column(Integer, ForeignKey("recurring_transactions.id", ondelete="SET NULL"), nullable=True)
     is_active = Column(Boolean, default=True, server_default="true", nullable=False)
@@ -349,6 +353,17 @@ class MonthlyPlanLine(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     plan_id = Column(Integer, ForeignKey("budget_plans.id", ondelete="SET NULL"), nullable=True)
+
+    __table_args__ = (
+        Index(
+            "uq_monthly_plan_lines_active_identity",
+            "client_id",
+            "identity_key",
+            unique=True,
+            sqlite_where=and_(is_active.is_(True), identity_key != ""),
+            postgresql_where=and_(is_active.is_(True), identity_key != ""),
+        ),
+    )
 
     client = relationship("Client", back_populates="monthly_plan_lines")
     account = relationship("Account", foreign_keys=[account_id])

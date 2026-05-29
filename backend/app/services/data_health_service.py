@@ -8,9 +8,9 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from .accounting_service import calculate_account_journal_balance
-from .budget_plan_service import get_or_create_default_plan, period_to_range
+from .budget_plan_service import assign_plan_line_identity, _line_identity_key, _newest_line_key, get_or_create_default_plan, period_to_range
 from .cache_service import invalidate_client
-from .registry_service import registry_entry_amount_for_period, registry_target_account_id
+from .registry_service import ensure_registry_entries, registry_entry_amount_for_period, registry_target_account_id
 
 
 PLAN_SOURCE_LINE_TYPES = {"expense", "allocation", "debt_payment", "borrowing", "drawdown"}
@@ -278,6 +278,39 @@ def _registry_recurring_items(db: Session, client_id: int) -> list[dict[str, Any
     return items
 
 
+def _duplicate_plan_line_items(db: Session, client_id: int) -> list[dict[str, Any]]:
+    grouped: dict[tuple, list[models.MonthlyPlanLine]] = defaultdict(list)
+    for line in (
+        db.query(models.MonthlyPlanLine)
+        .filter(
+            models.MonthlyPlanLine.client_id == client_id,
+            models.MonthlyPlanLine.is_active.is_(True),
+        )
+        .all()
+    ):
+        grouped[_line_identity_key(line)].append(line)
+
+    items = []
+    for lines in grouped.values():
+        if len(lines) <= 1:
+            continue
+        keeper = max(lines, key=_newest_line_key)
+        items.append(
+            {
+                "problem": "duplicate_active_plan_lines",
+                "period": keeper.target_period,
+                "plan_id": keeper.plan_id,
+                "line_type": keeper.line_type,
+                "account_id": keeper.account_id,
+                "name": keeper.name,
+                "keeper_line_id": keeper.id,
+                "duplicate_line_ids": [line.id for line in lines if line.id != keeper.id],
+                "repairable": True,
+            }
+        )
+    return items
+
+
 def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
     default_plan = db.query(models.BudgetPlan).filter_by(client_id=client_id, is_default=True).first()
     null_plan_count = (
@@ -292,6 +325,7 @@ def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
     missing_source = _missing_source_items(db, client_id)
     balance_drift = _balance_drift_items(db, client_id)
     registry_recurring = _registry_recurring_items(db, client_id)
+    duplicate_plan_lines = _duplicate_plan_line_items(db, client_id)
 
     issues = [
         {
@@ -337,6 +371,15 @@ def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
             "repairable": any(item["repairable"] for item in registry_recurring),
             "items": registry_recurring[:100],
         },
+        {
+            "code": "duplicate_plan_lines",
+            "severity": "warning",
+            "title": "Duplicate active plan lines",
+            "detail": "Only one active plan line should exist for the same period, source, and target.",
+            "count": len(duplicate_plan_lines),
+            "repairable": bool(duplicate_plan_lines),
+            "items": duplicate_plan_lines[:100],
+        },
     ]
     total = sum(issue["count"] for issue in issues)
     repairable = sum(1 for issue in issues if issue["repairable"] and issue["count"] > 0)
@@ -373,23 +416,41 @@ def repair_data_health(db: Session, client_id: int) -> dict[str, Any]:
     )
     actions.append({"code": "budget_plan_defaults", "updated": pre_null_plan_count + null_plan_count + (1 if missing_default else 0)})
 
+    before_registry_count = (
+        db.query(models.RegistryEntry)
+        .filter(models.RegistryEntry.client_id == client_id)
+        .count()
+    )
+    ensure_registry_entries(db, client_id)
+    after_registry_count = (
+        db.query(models.RegistryEntry)
+        .filter(models.RegistryEntry.client_id == client_id)
+        .count()
+    )
+    actions.append({"code": "registry_entries", "updated": max(0, after_registry_count - before_registry_count)})
+
     source_updates = 0
-    for line in (
+    identity_updates = 0
+    plan_lines = (
         db.query(models.MonthlyPlanLine)
         .filter(
             models.MonthlyPlanLine.client_id == client_id,
             models.MonthlyPlanLine.is_active.is_(True),
-            models.MonthlyPlanLine.source_account_id.is_(None),
-            models.MonthlyPlanLine.line_type.in_(PLAN_SOURCE_LINE_TYPES),
         )
         .all()
-    ):
-        candidate = infer_plan_line_source(db, line)
-        if not candidate:
-            continue
-        line.source_account_id = candidate.source_account_id
-        source_updates += 1
+    )
+    for line in plan_lines:
+        before_identity = line.identity_key
+        if line.source_account_id is None and line.line_type in PLAN_SOURCE_LINE_TYPES:
+            candidate = infer_plan_line_source(db, line)
+            if candidate:
+                line.source_account_id = candidate.source_account_id
+                source_updates += 1
+        assign_plan_line_identity(line)
+        if line.identity_key != before_identity:
+            identity_updates += 1
     actions.append({"code": "plan_line_sources", "updated": source_updates})
+    actions.append({"code": "plan_line_identities", "updated": identity_updates})
 
     balance_updates = 0
     for account in db.query(models.Account).filter(models.Account.client_id == client_id).all():
@@ -434,6 +495,27 @@ def repair_data_health(db: Session, client_id: int) -> dict[str, Any]:
         if changed:
             registry_updates += 1
     actions.append({"code": "registry_recurring_links", "updated": registry_updates})
+
+    duplicate_updates = 0
+    grouped: dict[tuple, list[models.MonthlyPlanLine]] = defaultdict(list)
+    for line in (
+        db.query(models.MonthlyPlanLine)
+        .filter(
+            models.MonthlyPlanLine.client_id == client_id,
+            models.MonthlyPlanLine.is_active.is_(True),
+        )
+        .all()
+    ):
+        grouped[_line_identity_key(line)].append(line)
+    for lines in grouped.values():
+        if len(lines) <= 1:
+            continue
+        keeper = max(lines, key=_newest_line_key)
+        for duplicate in lines:
+            if duplicate.id != keeper.id:
+                duplicate.is_active = False
+                duplicate_updates += 1
+    actions.append({"code": "duplicate_plan_lines", "updated": duplicate_updates})
 
     db.commit()
     invalidate_client(client_id)

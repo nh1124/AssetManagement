@@ -9,7 +9,6 @@ from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.cache_service import invalidate_client
-from ..services.registry_service import ensure_registry_entries
 
 
 router = APIRouter(prefix="/registry-entries", tags=["registry-entries"])
@@ -115,7 +114,6 @@ def get_registry_entries(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    ensure_registry_entries(db, current_client.id)
     entries = db.query(models.RegistryEntry).filter(
         models.RegistryEntry.client_id == current_client.id,
     ).order_by(models.RegistryEntry.entry_type, models.RegistryEntry.name).all()

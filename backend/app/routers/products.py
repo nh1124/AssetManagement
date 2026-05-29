@@ -16,7 +16,6 @@ from ..services.product_reserve_service import (
     product_reserve_values,
     should_use_reserve,
 )
-from ..services.registry_service import sync_registry_from_product
 
 router = APIRouter(prefix="/products", tags=["products"])
 
@@ -146,8 +145,6 @@ def create_product(
     data = normalize_product_data(db, current_client.id, data)
     db_product = models.Product(**data, client_id=current_client.id)
     db.add(db_product)
-    db.flush()
-    sync_registry_from_product(db, db_product)
     db.commit()
     db.refresh(db_product)
     invalidate_client(current_client.id)
@@ -172,7 +169,6 @@ def update_product(
     data = normalize_product_data(db, current_client.id, product.model_dump())
     for key, value in data.items():
         setattr(db_product, key, value)
-    sync_registry_from_product(db, db_product)
     db.commit()
     db.refresh(db_product)
     invalidate_client(current_client.id)

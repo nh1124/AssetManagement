@@ -234,6 +234,9 @@ export interface MonthlyPlanLine {
     recurring_transaction_id?: number | null;
     is_active?: boolean;
     source?: string;
+    source_kind?: string;
+    source_id?: number | null;
+    manual_override?: boolean;
 }
 
 export interface MonthlyReview {
