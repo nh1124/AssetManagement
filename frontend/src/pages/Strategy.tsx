@@ -1,6 +1,6 @@
 ﻿import { Fragment, useEffect, useState } from 'react';
 import { Bar, BarChart, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { AlertTriangle, Archive, CalendarDays, ChevronLeft, ChevronRight, Copy, Edit2, Info, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Archive, CalendarDays, ChevronLeft, ChevronRight, Copy, Edit2, Info, Plus, RefreshCw, Save, Search, Trash2, X } from 'lucide-react';
 import TabPanel from '../components/TabPanel';
 import { useToast } from '../components/Toast';
 import { useClient } from '../context/ClientContext';
@@ -191,7 +191,7 @@ interface BudgetSummary {
 }
 
 type TransactionKind = Transaction['type'];
-type EditablePlanLine = MonthlyPlanLine & { local_id: string };
+type EditablePlanLine = MonthlyPlanLine & { local_id: string; budget_amount?: number };
 
 const TABS = [
     { id: 'budgeting', label: 'Budgeting' },
@@ -286,7 +286,8 @@ export default function Strategy() {
     const [expandedHoldingCapsules, setExpandedHoldingCapsules] = useState<Set<number>>(new Set());
     const [holdingForms, setHoldingForms] = useState<Record<number, { account_id: string; held_amount: string }>>({});
 
-    const variableBudgetTotal = Object.values(budgetEdits).reduce((sum, amount) => sum + amount, 0);
+    const variableCandidateTotal = Object.values(budgetEdits).reduce((sum, amount) => sum + amount, 0);
+    const variableBudgetTotal = Number(budgetSummary?.total_variable_budget ?? 0);
     const calculatedRemaining = budgetSummary?.remaining_balance ?? 0;
     const formatCurrency = (value: number | undefined | null) =>
         formatCurrencyWithSetting(value, currentClient?.general_settings?.currency);
@@ -426,16 +427,26 @@ export default function Strategy() {
             });
             const edits: Record<number, number> = {};
             summary.expense_accounts.forEach((account: BudgetAccount) => {
-                edits[account.id] = account.amount;
+                const savedBudget = typeof account.plan_line_id === 'number' ? Number(account.amount || 0) : 0;
+                const suggestedAmount = Number(account.suggested_amount || account.registry_amount || account.recurring_amount || 0);
+                edits[account.id] = typeof account.plan_line_id === 'number'
+                    ? savedBudget
+                    : (suggestedAmount || Number(account.amount || 0));
             });
             setBudgetSummary(summary);
             setBudgetEdits(edits);
             setPlanLineDrafts((summary.plan_lines ?? [])
                 .filter((line: MonthlyPlanLine) => line.line_type !== 'expense')
-                .map((line: MonthlyPlanLine, index: number) => ({
-                    ...line,
-                    local_id: line.id ? `id-${line.id}` : `virtual-${line.line_type}-${line.target_type}-${line.target_id ?? line.name ?? index}`,
-                })));
+                .map((line: MonthlyPlanLine, index: number) => {
+                    const suggestedAmount = Number(line.suggested_amount || line.registry_amount || line.recurring_amount || 0);
+                    const savedBudget = typeof line.id === 'number' ? Number(line.amount || 0) : 0;
+                    return {
+                        ...line,
+                        amount: typeof line.id === 'number' ? savedBudget : (suggestedAmount || Number(line.amount || 0)),
+                        budget_amount: savedBudget,
+                        local_id: line.id ? `id-${line.id}` : `virtual-${line.line_type}-${line.target_type}-${line.target_id ?? line.name ?? index}`,
+                    };
+                }));
         } catch (error) {
             console.error('Failed to fetch budget summary:', error);
             showToast('Failed to load budget summary', 'error');
@@ -557,6 +568,17 @@ export default function Strategy() {
         };
     };
 
+    const updateBudgetAccountCashTreatmentLocal = (accountId: number, cashTreatment: MonthlyPlanCashTreatment) => {
+        setBudgetSummary((prev) => prev
+            ? {
+                ...prev,
+                expense_accounts: prev.expense_accounts.map((account) => (
+                    account.id === accountId ? { ...account, cash_treatment: cashTreatment } : account
+                )),
+            }
+            : prev);
+    };
+
     const persistBudgetAccountAmount = async (account: BudgetAccount, amount: number) => {
         try {
             await persistMonthlyPlanLines([budgetAccountPlanPayload(account, amount)]);
@@ -567,8 +589,9 @@ export default function Strategy() {
     };
     const persistBudgetAccountCashTreatment = async (account: BudgetAccount, cashTreatment: MonthlyPlanCashTreatment) => {
         try {
-            await persistMonthlyPlanLines([{ ...budgetAccountPlanPayload(account, budgetEdits[account.id] ?? account.amount), cash_treatment: cashTreatment }]);
-            await fetchBudgetSummary();
+            updateBudgetAccountCashTreatmentLocal(account.id, cashTreatment);
+            if (typeof account.plan_line_id !== 'number') return;
+            await persistMonthlyPlanLines([{ ...budgetAccountPlanPayload(account, Number(account.amount || 0)), cash_treatment: cashTreatment }]);
         } catch (error) {
             showToast('Failed to save cash treatment', 'error');
         }
@@ -579,7 +602,7 @@ export default function Strategy() {
         setBudgetCategoryForm(account
             ? {
                 name: account.name,
-                amount: String(budgetEdits[account.id] ?? account.amount ?? 0),
+                amount: String(typeof account.plan_line_id === 'number' ? account.amount ?? 0 : 0),
                 cash_treatment: account.cash_treatment ?? 'auto',
             }
             : { name: '', amount: '', cash_treatment: 'auto' });
@@ -705,6 +728,12 @@ export default function Strategy() {
         )));
     };
 
+    const updatePlanLineCashTreatment = (localId: string, cashTreatment: MonthlyPlanCashTreatment) => {
+        setPlanLineDrafts((prev) => prev.map((line) => (
+            line.local_id === localId ? { ...line, cash_treatment: cashTreatment } : line
+        )));
+    };
+
     const persistPlanLineAmount = async (line: EditablePlanLine, amount: number) => {
         try {
             await persistMonthlyPlanLines([{
@@ -732,8 +761,10 @@ export default function Strategy() {
     };
     const persistPlanLineCashTreatment = async (line: EditablePlanLine, cashTreatment: MonthlyPlanCashTreatment) => {
         try {
+            updatePlanLineCashTreatment(line.local_id, cashTreatment);
+            if (typeof line.id !== 'number') return;
             await persistMonthlyPlanLines([{
-                ...(typeof line.id === 'number' ? { id: line.id } : {}),
+                id: line.id,
                 target_period: currentPeriod,
                 line_type: line.line_type,
                 target_type: line.target_type,
@@ -741,7 +772,7 @@ export default function Strategy() {
                 account_id: line.account_id ?? null,
                 source_account_id: line.source_account_id ?? null,
                 name: line.name || line.target_name || null,
-                amount: Number(line.amount || 0),
+                amount: Number(line.budget_amount ?? line.amount ?? 0),
                 source: 'manual',
                 source_kind: 'manual',
                 source_id: null,
@@ -750,11 +781,14 @@ export default function Strategy() {
                 recurring_transaction_id: null,
                 is_active: true,
             }]);
-            await fetchBudgetSummary();
         } catch (error) {
             showToast('Failed to save cash treatment', 'error');
         }
     };
+
+    const planLineBudgetAmount = (line: Partial<EditablePlanLine>) => (
+        Number(line.budget_amount ?? line.amount ?? 0)
+    );
 
     const planLineSourceAmount = (line: Partial<MonthlyPlanLine>) => (
         Number(line.suggested_amount || 0) > 0
@@ -865,6 +899,7 @@ export default function Strategy() {
                 name,
                 target_name: name,
                 amount,
+                budget_amount: 0,
                 actual: 0,
                 variance: amount,
                 source: 'manual',
@@ -1139,8 +1174,10 @@ export default function Strategy() {
         })();
         const planLinesFor = (types: MonthlyPlanLineType[]) =>
             planLineDrafts.filter((line) => types.includes(line.line_type));
-        const planGroupTotal = (types: MonthlyPlanLineType[]) =>
+        const planGroupCandidateTotal = (types: MonthlyPlanLineType[]) =>
             planLinesFor(types).reduce((sum, line) => sum + Number(line.amount || 0), 0);
+        const planGroupBudgetTotal = (types: MonthlyPlanLineType[]) =>
+            planLinesFor(types).reduce((sum, line) => sum + planLineBudgetAmount(line), 0);
         const planGroupActual = (types: MonthlyPlanLineType[]) =>
             planLinesFor(types).reduce((sum, line) => sum + Number(line.actual || 0), 0);
         const isCurrentMonth = currentPeriod === monthKey();
@@ -1334,7 +1371,8 @@ export default function Strategy() {
         ) => {
             const rows = planLinesFor(types);
             const totalActual = planGroupActual(types);
-            const totalPlan = planGroupTotal(types);
+            const totalCandidate = planGroupCandidateTotal(types);
+            const totalBudget = planGroupBudgetTotal(types);
             const totalSuggested = rows.reduce((sum, line) => sum + planLineSourceAmount(line), 0);
             return (
                 <div className="mt-6">
@@ -1344,7 +1382,7 @@ export default function Strategy() {
                             addType === 'income' ? 'income' : addType === 'allocation' ? 'allocation' : 'debt',
                         )}
                         <div className="flex items-center gap-3">
-                            <span className="text-xs text-slate-500 font-mono-nums">Total {formatCurrency(totalPlan)}</span>
+                            <span className="text-xs text-slate-500 font-mono-nums">Budget {formatCurrency(totalBudget)} / Candidate {formatCurrency(totalCandidate)}</span>
                             <button type="button" title={`Add ${title}`} onClick={() => openPlanLineForm(addType)} className="text-slate-500 hover:text-cyan-400">
                                 <Plus size={14} />
                             </button>
@@ -1359,18 +1397,24 @@ export default function Strategy() {
                                     <th className="px-2 py-2 text-right font-normal">Actual</th>
                                     <th className="px-2 py-2 text-right font-normal">Registry</th>
                                     <th className="px-2 py-2 text-right font-normal">Adjust</th>
-                                    <th className="px-2 py-2 text-right font-normal">Plan</th>
+                                    <th className="px-2 py-2 text-right font-normal">Candidate</th>
+                                    <th className="px-2 py-2 text-right font-normal">Budget</th>
+                                    <th className="px-2 py-2 text-right font-normal">Gap</th>
                                     <th className="px-2 py-2 text-right font-normal">Variance</th>
                                     <th className="px-2 py-2 sr-only">Actions</th>
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-800/70">
                                 {rows.length === 0 ? (
-                                    <tr><td colSpan={7} className="px-2 py-4 text-slate-600">{emptyText}</td></tr>
+                                    <tr><td colSpan={9} className="px-2 py-4 text-slate-600">{emptyText}</td></tr>
                                 ) : rows.map((line) => {
-                                    const variance = Number(line.actual || 0) - Number(line.amount || 0);
+                                    const candidateAmount = Number(line.amount || 0);
+                                    const budgetAmount = planLineBudgetAmount(line);
+                                    const variance = budgetAmount - Number(line.actual || 0);
                                     const sourceAmount = planLineSourceAmount(line);
-                                    const adjustment = Number(line.amount || 0) - sourceAmount;
+                                    const adjustment = candidateAmount - sourceAmount;
+                                    const gap = candidateAmount - budgetAmount;
+                                    const hasBudgetGap = Math.round(gap) !== 0 || typeof line.id !== 'number';
                                     const rowKey = `plan-${line.local_id}`;
                                     const sourceDetails = planSourceDetails(line);
                                     return (
@@ -1415,27 +1459,33 @@ export default function Strategy() {
                                                             const nextAdjustment = Number(event.target.value) || 0;
                                                             updatePlanLineAmount(line.local_id, sourceAmount + nextAdjustment);
                                                         }}
-                                                        onBlur={(event) => {
-                                                            const nextAdjustment = Number(event.target.value) || 0;
-                                                            persistPlanLineAmount(line, sourceAmount + nextAdjustment);
-                                                        }}
                                                         onKeyDown={(event) => {
-                                                            if (event.key === 'Enter') (event.target as HTMLInputElement).blur();
+                                                            if (event.key === 'Enter') {
+                                                                const nextAdjustment = Number((event.target as HTMLInputElement).value) || 0;
+                                                                persistPlanLineAmount(line, sourceAmount + nextAdjustment);
+                                                            }
                                                         }}
                                                         className="w-20 bg-transparent border-b border-slate-700 text-right font-mono-nums outline-none focus:border-cyan-500"
                                                     />
                                                 </td>
                                                 <td className="px-2 py-2 text-right">
-                                                    <span className="font-mono-nums text-slate-200">{formatCurrency(line.amount)}</span>
+                                                    <span className="font-mono-nums text-cyan-200">{formatCurrency(candidateAmount)}</span>
                                                 </td>
+                                                <td className="px-2 py-2 text-right font-mono-nums text-slate-200">{formatCurrency(budgetAmount)}</td>
+                                                <td className={`px-2 py-2 text-right font-mono-nums ${gap === 0 ? 'text-slate-500' : gap > 0 ? 'text-amber-300' : 'text-rose-300'}`}>{formatCurrency(gap)}</td>
                                                 <td className={`px-2 py-2 text-right font-mono-nums ${variance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(variance)}</td>
                                                 <td className="px-2 py-2 text-right">
                                                     <div className="flex items-center justify-end gap-2">
+                                                        {hasBudgetGap && (
+                                                            <button type="button" title="Apply candidate to budget" aria-label="Apply candidate to budget" onClick={() => persistPlanLineAmount(line, candidateAmount)} className="text-cyan-300 hover:text-cyan-100">
+                                                                <Save size={12} />
+                                                            </button>
+                                                        )}
                                                         <button type="button" title="Remove line" onClick={() => removePlanLine(line)} className="text-slate-500 hover:text-rose-400"><Trash2 size={12} /></button>
                                                     </div>
                                                 </td>
                                             </tr>
-                                            {renderSourceDetailsRow(rowKey, sourceDetails, 7)}
+                                            {renderSourceDetailsRow(rowKey, sourceDetails, 9)}
                                         </Fragment>
                                     );
                                 })}
@@ -1443,8 +1493,10 @@ export default function Strategy() {
                                     <td className="px-2 py-2 text-slate-100 font-medium">Total</td>
                                     <td className="px-2 py-2 text-right font-mono-nums text-slate-300">{formatCurrency(totalActual)}</td>
                                     <td className="px-2 py-2 text-right font-mono-nums text-cyan-300">{formatCurrency(totalSuggested)}</td>
-                                    <td className="px-2 py-2 text-right font-mono-nums text-slate-300">{formatCurrency(totalPlan - totalSuggested)}</td>
-                                    <td className="px-2 py-2 text-right font-mono-nums text-slate-200">{formatCurrency(totalPlan)}</td>
+                                    <td className="px-2 py-2 text-right font-mono-nums text-slate-300">{formatCurrency(totalCandidate - totalSuggested)}</td>
+                                    <td className="px-2 py-2 text-right font-mono-nums text-cyan-200">{formatCurrency(totalCandidate)}</td>
+                                    <td className="px-2 py-2 text-right font-mono-nums text-slate-200">{formatCurrency(totalBudget)}</td>
+                                    <td className="px-2 py-2 text-right font-mono-nums text-slate-300">{formatCurrency(totalCandidate - totalBudget)}</td>
                                     <td colSpan={2} />
                                 </tr>
                             </tbody>
@@ -1625,7 +1677,7 @@ export default function Strategy() {
                 <div className="flex items-center justify-between mb-3">
                     {renderTitleWithInfo('Variable Budget', 'variable')}
                     <div className="flex items-center gap-3">
-                        <span className="text-xs text-slate-500 font-mono-nums">Total {formatCurrency(variableBudgetTotal)}</span>
+                        <span className="text-xs text-slate-500 font-mono-nums">Budget {formatCurrency(variableBudgetTotal)} / Candidate {formatCurrency(variableCandidateTotal)}</span>
                         <button type="button" title="Add category" onClick={() => openBudgetCategoryForm()} className="text-slate-500 hover:text-emerald-400">
                             <Plus size={14} />
                         </button>
@@ -1730,7 +1782,9 @@ export default function Strategy() {
                                 <th className="px-2 py-2 text-right font-normal">Actual</th>
                                 <th className="px-2 py-2 text-right font-normal">Source / Suggested</th>
                                 <th className="px-2 py-2 text-right font-normal">Adjust</th>
+                                <th className="px-2 py-2 text-right font-normal">Candidate</th>
                                 <th className="px-2 py-2 text-right font-normal">Budget</th>
+                                <th className="px-2 py-2 text-right font-normal">Gap</th>
                                 <th className="px-2 py-2 text-right font-normal">Variance</th>
                                 <th className="px-2 py-2 sr-only">Actions</th>
                             </tr>
@@ -1738,16 +1792,19 @@ export default function Strategy() {
                         <tbody className="divide-y divide-slate-800/70">
                             {(budgetSummary?.expense_accounts ?? []).length === 0 && (
                                 <tr>
-                                    <td colSpan={7} className="px-2 py-8 text-center text-slate-600 text-xs">
+                                    <td colSpan={9} className="px-2 py-8 text-center text-slate-600 text-xs">
                                         費目が追加されていません。右上の+から追加してください。
                                     </td>
                                 </tr>
                             )}
                             {(budgetSummary?.expense_accounts ?? []).map((account) => {
-                                const limit = budgetEdits[account.id] ?? 0;
-                                const variance = limit - (account.balance || 0);
+                                const candidateAmount = budgetEdits[account.id] ?? 0;
+                                const budgetAmount = typeof account.plan_line_id === 'number' ? Number(account.amount || 0) : 0;
+                                const variance = budgetAmount - (account.balance || 0);
                                 const suggestedAmount = Number(account.suggested_amount || 0);
-                                const adjustment = limit - suggestedAmount;
+                                const adjustment = candidateAmount - suggestedAmount;
+                                const gap = candidateAmount - budgetAmount;
+                                const hasBudgetGap = Math.round(gap) !== 0 || typeof account.plan_line_id !== 'number';
                                 const hasSuggestion = Boolean(account.suggested_source && suggestedAmount > 0);
                                 const rowKey = `budget-${account.id}`;
                                 const sourceDetails = budgetSourceDetails(account);
@@ -1790,23 +1847,29 @@ export default function Strategy() {
                                                         const nextAdjustment = Number(event.target.value) || 0;
                                                         setBudgetEdits({ ...budgetEdits, [account.id]: suggestedAmount + nextAdjustment });
                                                     }}
-                                                    onBlur={(event) => {
-                                                        const nextAdjustment = Number(event.target.value) || 0;
-                                                        persistBudgetAccountAmount(account, suggestedAmount + nextAdjustment);
-                                                    }}
                                                     onKeyDown={(event) => {
-                                                        if (event.key === 'Enter') (event.target as HTMLInputElement).blur();
+                                                        if (event.key === 'Enter') {
+                                                            const nextAdjustment = Number((event.target as HTMLInputElement).value) || 0;
+                                                            persistBudgetAccountAmount(account, suggestedAmount + nextAdjustment);
+                                                        }
                                                     }}
                                                     className="w-20 bg-transparent border-b border-slate-700 text-right font-mono-nums outline-none focus:border-cyan-500"
                                                 />
                                             </td>
-                                            <td className="px-2 py-2 text-right font-mono-nums text-slate-200">{formatCurrency(limit)}</td>
+                                            <td className="px-2 py-2 text-right font-mono-nums text-cyan-200">{formatCurrency(candidateAmount)}</td>
+                                            <td className="px-2 py-2 text-right font-mono-nums text-slate-200">{formatCurrency(budgetAmount)}</td>
+                                            <td className={`px-2 py-2 text-right font-mono-nums ${gap === 0 ? 'text-slate-500' : gap > 0 ? 'text-amber-300' : 'text-rose-300'}`}>{formatCurrency(gap)}</td>
                                             <td className={`px-2 py-2 text-right font-mono-nums ${variance >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>{formatCurrency(variance)}</td>
                                             <td className="px-2 py-2 text-right flex items-center justify-end gap-2">
+                                                {hasBudgetGap && (
+                                                    <button type="button" title="Apply candidate to budget" aria-label="Apply candidate to budget" onClick={() => persistBudgetAccountAmount(account, candidateAmount)} className="text-cyan-300 hover:text-cyan-100">
+                                                        <Save size={12} />
+                                                    </button>
+                                                )}
                                                 <button type="button" title="Remove from budget" onClick={() => removeBudgetCategory(account.id, account.plan_line_id)} className="text-slate-500 hover:text-rose-400"><Trash2 size={12} /></button>
                                             </td>
                                         </tr>
-                                        {renderSourceDetailsRow(rowKey, sourceDetails, 7)}
+                                        {renderSourceDetailsRow(rowKey, sourceDetails, 9)}
                                     </Fragment>
                                 );
                             })}
@@ -1814,7 +1877,7 @@ export default function Strategy() {
                                 <tr className="hover:bg-slate-800/30 opacity-60">
                                     <td className="px-2 py-2 text-slate-500 italic">others</td>
                                     <td className="px-2 py-2 text-right font-mono-nums text-slate-500">{formatCurrency(budgetSummary!.others_actual)}</td>
-                                    <td colSpan={4} className="px-2 py-2 text-right text-[9px] text-slate-600">未予算費目の合計</td>
+                                    <td colSpan={6} className="px-2 py-2 text-right text-[9px] text-slate-600">未予算費目の合計</td>
                                     <td className="px-2 py-2" />
                                 </tr>
                             )}
@@ -1822,8 +1885,10 @@ export default function Strategy() {
                                 <td className="px-2 py-2 text-slate-100 font-medium">Total</td>
                                 <td className="px-2 py-2 text-right font-mono-nums text-slate-300">{formatCurrency(variableActualTotal)}</td>
                                 <td className="px-2 py-2 text-right font-mono-nums text-cyan-300">{formatCurrency(variableSuggestedTotal)}</td>
-                                <td className="px-2 py-2 text-right font-mono-nums text-slate-300">{formatCurrency(variableBudgetTotal - variableSuggestedTotal)}</td>
+                                <td className="px-2 py-2 text-right font-mono-nums text-slate-300">{formatCurrency(variableCandidateTotal - variableSuggestedTotal)}</td>
+                                <td className="px-2 py-2 text-right font-mono-nums text-cyan-200">{formatCurrency(variableCandidateTotal)}</td>
                                 <td className="px-2 py-2 text-right font-mono-nums text-slate-200">{formatCurrency(variableBudgetTotal)}</td>
+                                <td className="px-2 py-2 text-right font-mono-nums text-slate-300">{formatCurrency(variableCandidateTotal - variableBudgetTotal)}</td>
                                 <td className={`px-2 py-2 text-right font-mono-nums ${variableVarianceTotal >= 0 ? 'text-emerald-300' : 'text-rose-300'}`}>{formatCurrency(variableVarianceTotal)}</td>
                                 <td className="px-2 py-2" />
                             </tr>

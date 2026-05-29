@@ -843,7 +843,7 @@ def test_cash_flow_projection_warns_about_unsynced_yearly_income() -> None:
         assert may["period"] == "2026-05"
         assert may["inflow"] == 0
         assert june["period"] == "2026-06"
-        assert june["inflow"] == 600000
+        assert june["inflow"] == 0
         assert june["setup_warnings"][0]["type"] == "missing_budget"
         assert june["setup_warnings"][0]["amount"] == 600000
     finally:
@@ -1174,8 +1174,10 @@ def test_auto_cash_treatment_excludes_credit_expense_and_projects_card_payment()
 
         assert row["period"] == next_period
         assert row["expense"] == 0
-        assert row["debt"] == 10000
-        assert row["net_cash"] == -10000
+        assert row["debt"] == 0
+        assert row["net_cash"] == 0
+        assert row["setup_warnings"][0]["type"] == "missing_credit_settlement"
+        assert row["setup_warnings"][0]["amount"] == 10000
     finally:
         db.close()
 
@@ -1500,7 +1502,8 @@ def test_credit_expense_creates_credit_settlement_projection() -> None:
         assert settlement["account_id"] == card.id
         assert settlement["suggested_amount"] == 50000
         assert row["non_cash_budget"] == 50000
-        assert row["debt"] == 50000
+        assert row["debt"] == 0
+        assert row["setup_warnings"][0]["type"] == "missing_credit_settlement"
     finally:
         db.close()
 
@@ -1634,10 +1637,10 @@ def test_cash_flow_summary_reports_buffer_and_shortfall_month() -> None:
         summary = get_budget_summary(db, client_id=1, period="2026-05")
 
         assert summary["cash_flow_summary"] == {
-            "runway_months": 0,
-            "lowest_cash": -960000,
-            "required_buffer": 960000,
-            "shortfall_month": "2026-05",
+            "runway_months": 12,
+            "lowest_cash": 0,
+            "required_buffer": 0,
+            "shortfall_month": None,
             "horizon_months": 12,
         }
         assert summary["cash_flow_projection"][0]["setup_warnings"][0]["type"] == "missing_budget"

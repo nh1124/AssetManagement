@@ -1802,7 +1802,6 @@ def get_cash_flow_projection(
     plan_id = resolve_budget_plan_id(db, client_id, plan_id)
     cash = _liquid_cash(db, client_id) if starting_cash is None else starting_cash
     rows = []
-    projected_credit_settlements: set[int] = set()
     for idx in range(months):
         period = add_months(start_period, idx)
         q = db.query(models.MonthlyPlanLine).filter(
@@ -1814,42 +1813,6 @@ def get_cash_flow_projection(
         lines = q.all()
         lines = _deduplicate_active_plan_models(db, lines)
         projection_lines: list[models.MonthlyPlanLine | dict] = list(lines)
-        registry_lines = registry_plan_lines(db, client_id, period, context)
-        existing_keys = {_plan_match_key(
-            line.line_type,
-            line.target_type,
-            line.account_id,
-            line.name,
-            line.source_account_id,
-            line.cash_treatment,
-        ) for line in lines}
-        for registry_line in registry_lines:
-            if any(_plan_line_matches_registry_line(line, registry_line) for line in projection_lines):
-                continue
-            key = _plan_match_key(
-                registry_line["line_type"],
-                registry_line["target_type"],
-                registry_line["account_id"],
-                registry_line["name"],
-                registry_line.get("source_account_id"),
-                registry_line.get("cash_treatment"),
-            )
-            if key not in existing_keys:
-                projection_lines.append(registry_line)
-                existing_keys.add(key)
-        for settlement_line in credit_settlement_plan_lines(db, client_id, period, context):
-            account_id = settlement_line.get("account_id")
-            if account_id in projected_credit_settlements:
-                continue
-            if any(
-                _line_attr(line, "line_type") == "debt_payment"
-                and _line_attr(line, "account_id") == account_id
-                for line in projection_lines
-            ):
-                continue
-            projection_lines.append(settlement_line)
-            if account_id:
-                projected_credit_settlements.add(account_id)
         planned_flow = _empty_flow()
         actual_flow = _empty_flow()
         remaining_flow = _empty_flow()
@@ -1910,7 +1873,6 @@ def get_balance_projection(
     plan_id = resolve_budget_plan_id(db, client_id, plan_id)
     state = _starting_balance_state(db, client_id)
     rows = []
-    projected_credit_settlements: set[int] = set()
     for idx in range(months):
         period = add_months(start_period, idx)
         lines = (
@@ -1925,41 +1887,6 @@ def get_balance_projection(
         )
         lines = _deduplicate_active_plan_models(db, lines)
         projection_lines: list[models.MonthlyPlanLine | dict] = list(lines)
-        existing_keys = {_plan_match_key(
-            line.line_type,
-            line.target_type,
-            line.account_id,
-            line.name,
-            line.source_account_id,
-            line.cash_treatment,
-        ) for line in lines}
-        for registry_line in registry_plan_lines(db, client_id, period, context):
-            if any(_plan_line_matches_registry_line(line, registry_line) for line in projection_lines):
-                continue
-            key = _plan_match_key(
-                registry_line["line_type"],
-                registry_line["target_type"],
-                registry_line["account_id"],
-                registry_line["name"],
-                registry_line.get("source_account_id"),
-                registry_line.get("cash_treatment"),
-            )
-            if key not in existing_keys:
-                projection_lines.append(registry_line)
-                existing_keys.add(key)
-        for settlement_line in credit_settlement_plan_lines(db, client_id, period, context):
-            account_id = settlement_line.get("account_id")
-            if account_id in projected_credit_settlements:
-                continue
-            if any(
-                _line_attr(line, "line_type") == "debt_payment"
-                and _line_attr(line, "account_id") == account_id
-                for line in projection_lines
-            ):
-                continue
-            projection_lines.append(settlement_line)
-            if account_id:
-                projected_credit_settlements.add(account_id)
         for line in projection_lines:
             _, _, remaining_amount = _projection_amounts_for_period(db, client_id, line, period, context)
             movement = _balance_movement_for_amount(db, client_id, line, remaining_amount, context)
