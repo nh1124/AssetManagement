@@ -250,6 +250,14 @@ export const createAccount = async (account: {
     expected_return?: number;
     role?: AccountRole;
     role_target_amount?: number | null;
+    liability_closing_day?: number | null;
+    liability_payment_day?: number | null;
+    liability_payment_month_offset?: number;
+    liability_payment_policy?: Account['liability_payment_policy'];
+    liability_minimum_payment?: number | null;
+    liability_fixed_payment_amount?: number | null;
+    liability_installment_months?: number | null;
+    liability_revolving_rate?: number | null;
 }): Promise<Account> => {
     const response = await api.post('/accounts/', account);
     return response.data;
@@ -261,6 +269,14 @@ export const updateAccount = async (id: number, data: {
     expected_return?: number;
     role?: AccountRole;
     role_target_amount?: number | null;
+    liability_closing_day?: number | null;
+    liability_payment_day?: number | null;
+    liability_payment_month_offset?: number;
+    liability_payment_policy?: Account['liability_payment_policy'];
+    liability_minimum_payment?: number | null;
+    liability_fixed_payment_amount?: number | null;
+    liability_installment_months?: number | null;
+    liability_revolving_rate?: number | null;
     is_active?: boolean;
 }): Promise<Account> => {
     const response = await api.put(`/accounts/${id}`, data);

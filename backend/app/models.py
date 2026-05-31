@@ -86,6 +86,14 @@ class Account(Base):
     expected_return = Column(Float, default=0.0)  # Annual return rate % for asset accounts
     role = Column(String, default=AccountRole.UNASSIGNED.value, server_default=AccountRole.UNASSIGNED.value, nullable=False)
     role_target_amount = Column(Float, nullable=True)
+    liability_closing_day = Column(Integer, nullable=True)
+    liability_payment_day = Column(Integer, nullable=True)
+    liability_payment_month_offset = Column(Integer, default=0, server_default="0", nullable=False)
+    liability_payment_policy = Column(String, default="full", server_default="full", nullable=False)
+    liability_minimum_payment = Column(Float, nullable=True)
+    liability_fixed_payment_amount = Column(Float, nullable=True)
+    liability_installment_months = Column(Integer, nullable=True)
+    liability_revolving_rate = Column(Float, nullable=True)
     is_active = Column(Boolean, default=True)
     
     client = relationship("Client", back_populates="accounts")

@@ -19,6 +19,14 @@ class AccountCreate(BaseModel):
     expected_return: float = 0.0
     role: Literal["defense", "growth", "earmarked", "operating", "unassigned"] = "unassigned"
     role_target_amount: Optional[float] = None
+    liability_closing_day: Optional[int] = None
+    liability_payment_day: Optional[int] = None
+    liability_payment_month_offset: int = 0
+    liability_payment_policy: Literal["full", "minimum", "fixed", "installment", "revolving"] = "full"
+    liability_minimum_payment: Optional[float] = None
+    liability_fixed_payment_amount: Optional[float] = None
+    liability_installment_months: Optional[int] = None
+    liability_revolving_rate: Optional[float] = None
 
 class AccountUpdate(BaseModel):
     name: Optional[str] = None
@@ -27,6 +35,14 @@ class AccountUpdate(BaseModel):
     expected_return: Optional[float] = None
     role: Optional[Literal["defense", "growth", "earmarked", "operating", "unassigned"]] = None
     role_target_amount: Optional[float] = None
+    liability_closing_day: Optional[int] = None
+    liability_payment_day: Optional[int] = None
+    liability_payment_month_offset: Optional[int] = None
+    liability_payment_policy: Optional[Literal["full", "minimum", "fixed", "installment", "revolving"]] = None
+    liability_minimum_payment: Optional[float] = None
+    liability_fixed_payment_amount: Optional[float] = None
+    liability_installment_months: Optional[int] = None
+    liability_revolving_rate: Optional[float] = None
     is_active: Optional[bool] = None
 
 class AccountResponse(BaseModel):
@@ -38,6 +54,14 @@ class AccountResponse(BaseModel):
     expected_return: float = 0.0
     role: str = "unassigned"
     role_target_amount: Optional[float] = None
+    liability_closing_day: Optional[int] = None
+    liability_payment_day: Optional[int] = None
+    liability_payment_month_offset: int = 0
+    liability_payment_policy: str = "full"
+    liability_minimum_payment: Optional[float] = None
+    liability_fixed_payment_amount: Optional[float] = None
+    liability_installment_months: Optional[int] = None
+    liability_revolving_rate: Optional[float] = None
     is_active: bool = True
 
     class Config:
@@ -60,6 +84,14 @@ def _serialize_account(
         "expected_return": account.expected_return or 0.0,
         "role": account.role or "unassigned",
         "role_target_amount": account.role_target_amount,
+        "liability_closing_day": account.liability_closing_day,
+        "liability_payment_day": account.liability_payment_day,
+        "liability_payment_month_offset": account.liability_payment_month_offset or 0,
+        "liability_payment_policy": account.liability_payment_policy or "full",
+        "liability_minimum_payment": account.liability_minimum_payment,
+        "liability_fixed_payment_amount": account.liability_fixed_payment_amount,
+        "liability_installment_months": account.liability_installment_months,
+        "liability_revolving_rate": account.liability_revolving_rate,
         "is_active": account.is_active,
     }
 
@@ -100,6 +132,41 @@ def _validate_parent(
             models.Account.id == current.parent_id,
             models.Account.client_id == client_id,
         ).first()
+
+
+def _normalize_liability_settings(payload: dict, account_type: str) -> None:
+    liability_keys = {
+        "liability_closing_day",
+        "liability_payment_day",
+        "liability_payment_month_offset",
+        "liability_payment_policy",
+        "liability_minimum_payment",
+        "liability_fixed_payment_amount",
+        "liability_installment_months",
+        "liability_revolving_rate",
+    }
+    if account_type != "liability":
+        for key in liability_keys:
+            payload.pop(key, None)
+        return
+    if payload.get("liability_payment_policy") is None:
+        payload["liability_payment_policy"] = "full"
+    if payload.get("liability_payment_month_offset") is None:
+        payload["liability_payment_month_offset"] = 0
+    for key in ("liability_closing_day", "liability_payment_day"):
+        value = payload.get(key)
+        if value is not None and not 1 <= value <= 31:
+            raise HTTPException(status_code=400, detail=f"{key} must be between 1 and 31")
+    offset = payload.get("liability_payment_month_offset")
+    if offset is not None and not 0 <= offset <= 24:
+        raise HTTPException(status_code=400, detail="liability_payment_month_offset must be between 0 and 24")
+    installment_months = payload.get("liability_installment_months")
+    if installment_months is not None and installment_months < 1:
+        raise HTTPException(status_code=400, detail="liability_installment_months must be positive")
+    for key in ("liability_minimum_payment", "liability_fixed_payment_amount", "liability_revolving_rate"):
+        value = payload.get(key)
+        if value is not None and value < 0:
+            raise HTTPException(status_code=400, detail=f"{key} must not be negative")
 
 
 def _build_tree(db: Session, accounts: list[models.Account]) -> dict:
@@ -187,6 +254,14 @@ def get_accounts_grouped_by_type(
                 "balance": balances.get(acc.id, 0.0),
                 "role": acc.role,
                 "role_target_amount": acc.role_target_amount,
+                "liability_closing_day": acc.liability_closing_day,
+                "liability_payment_day": acc.liability_payment_day,
+                "liability_payment_month_offset": acc.liability_payment_month_offset or 0,
+                "liability_payment_policy": acc.liability_payment_policy or "full",
+                "liability_minimum_payment": acc.liability_minimum_payment,
+                "liability_fixed_payment_amount": acc.liability_fixed_payment_amount,
+                "liability_installment_months": acc.liability_installment_months,
+                "liability_revolving_rate": acc.liability_revolving_rate,
             })
     
     return grouped
@@ -204,6 +279,7 @@ def create_account(
             status_code=400,
             detail="Journal is the source of truth. Create an opening-balance transaction instead of setting account.balance.",
         )
+    _normalize_liability_settings(payload, payload["account_type"])
     _validate_parent(db, current_client.id, payload["account_type"], payload.get("parent_id"))
     db_account = models.Account(**payload, client_id=current_client.id)
     db.add(db_account)
@@ -243,6 +319,7 @@ def update_account(
             next_parent_id,
             account_id=db_account.id,
         )
+    _normalize_liability_settings(update_data, db_account.account_type)
     for key, value in update_data.items():
         setattr(db_account, key, value)
     db.commit()

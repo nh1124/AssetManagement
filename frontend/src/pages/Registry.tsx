@@ -26,7 +26,7 @@ import {
 import { useToast } from '../components/Toast';
 import { useClient } from '../context/ClientContext';
 import { formatCurrency as formatCurrencyWithSetting } from '../utils/currency';
-import type { Account, AccountRole, AccountTreeNode, Capsule, ExchangeRate, Product, RegistryEntry } from '../types';
+import type { Account, AccountRole, AccountTreeNode, Capsule, ExchangeRate, LiabilityPaymentPolicy, Product, RegistryEntry } from '../types';
 
 const TABS = [
     { id: 'accounts', label: 'Accounts' },
@@ -67,6 +67,34 @@ const ACCOUNT_ROLES: Array<{ value: AccountRole; label: string }> = [
     { value: 'operating', label: 'Operating' },
     { value: 'unassigned', label: 'Unassigned' },
 ];
+
+const LIABILITY_POLICIES: Array<{ value: LiabilityPaymentPolicy; label: string }> = [
+    { value: 'full', label: 'Full' },
+    { value: 'minimum', label: 'Minimum' },
+    { value: 'fixed', label: 'Fixed' },
+    { value: 'installment', label: 'Installment' },
+    { value: 'revolving', label: 'Revolving' },
+];
+
+const emptyAccountDraft = () => ({
+    name: '',
+    account_type: 'expense',
+    role: 'unassigned' as AccountRole,
+    role_target_amount: '',
+    parent_id: '',
+    liability_closing_day: '',
+    liability_payment_day: '',
+    liability_payment_month_offset: '0',
+    liability_payment_policy: 'full' as LiabilityPaymentPolicy,
+    liability_minimum_payment: '',
+    liability_fixed_payment_amount: '',
+    liability_installment_months: '',
+    liability_revolving_rate: '',
+});
+
+const nullableNumber = (value: string | number | null | undefined) => (
+    value === '' || value === null || value === undefined ? null : Number(value)
+);
 
 const EMPTY_PRODUCT_FORM = {
     name: '',
@@ -558,13 +586,7 @@ export default function Registry() {
     const [isSavingRate, setIsSavingRate] = useState(false);
     const [editingId, setEditingId] = useState<number | null>(null);
     const [editForm, setEditForm] = useState<any>({});
-    const [newAccount, setNewAccount] = useState({
-        name: '',
-        account_type: 'expense',
-        role: 'unassigned' as AccountRole,
-        role_target_amount: '',
-        parent_id: '',
-    });
+    const [newAccount, setNewAccount] = useState(emptyAccountDraft());
     const [showAddAccount, setShowAddAccount] = useState(false);
     const [productModal, setProductModal] = useState<{ type: 'asset' | 'item'; product: Product | null } | null>(null);
     const [loadingProducts, setLoadingProducts] = useState(false);
@@ -737,9 +759,19 @@ export default function Registry() {
                 role: newAccount.account_type === 'asset' ? newAccount.role : 'unassigned',
                 role_target_amount: newAccount.role_target_amount ? Number(newAccount.role_target_amount) : null,
                 parent_id: newAccount.parent_id ? Number(newAccount.parent_id) : null,
+                ...(newAccount.account_type === 'liability' ? {
+                    liability_closing_day: nullableNumber(newAccount.liability_closing_day),
+                    liability_payment_day: nullableNumber(newAccount.liability_payment_day),
+                    liability_payment_month_offset: Number(newAccount.liability_payment_month_offset || 0),
+                    liability_payment_policy: newAccount.liability_payment_policy,
+                    liability_minimum_payment: nullableNumber(newAccount.liability_minimum_payment),
+                    liability_fixed_payment_amount: nullableNumber(newAccount.liability_fixed_payment_amount),
+                    liability_installment_months: nullableNumber(newAccount.liability_installment_months),
+                    liability_revolving_rate: nullableNumber(newAccount.liability_revolving_rate),
+                } : {}),
             });
             showToast(`Account "${newAccount.name}" created`, 'success');
-            setNewAccount({ name: '', account_type: 'expense', role: 'unassigned', role_target_amount: '', parent_id: '' });
+            setNewAccount(emptyAccountDraft());
             setShowAddAccount(false);
             fetchData();
         } catch (error) {
@@ -1503,6 +1535,78 @@ export default function Registry() {
                                         />
                                     </>
                                 )}
+                                {account.account_type === 'liability' && (
+                                    <div className="grid w-full grid-cols-2 md:grid-cols-4 xl:grid-cols-8 gap-1">
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            max="31"
+                                            placeholder="Close day"
+                                            value={editForm.liability_closing_day ?? ''}
+                                            onChange={(event) => setEditForm({ ...editForm, liability_closing_day: nullableNumber(event.target.value) })}
+                                            className="bg-slate-900 border border-slate-600 px-1 py-0.5 text-xs font-mono-nums"
+                                        />
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            max="31"
+                                            placeholder="Pay day"
+                                            value={editForm.liability_payment_day ?? ''}
+                                            onChange={(event) => setEditForm({ ...editForm, liability_payment_day: nullableNumber(event.target.value) })}
+                                            className="bg-slate-900 border border-slate-600 px-1 py-0.5 text-xs font-mono-nums"
+                                        />
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            max="24"
+                                            placeholder="Offset"
+                                            value={editForm.liability_payment_month_offset ?? 0}
+                                            onChange={(event) => setEditForm({ ...editForm, liability_payment_month_offset: Number(event.target.value || 0) })}
+                                            className="bg-slate-900 border border-slate-600 px-1 py-0.5 text-xs font-mono-nums"
+                                        />
+                                        <select
+                                            value={editForm.liability_payment_policy ?? 'full'}
+                                            onChange={(event) => setEditForm({ ...editForm, liability_payment_policy: event.target.value as LiabilityPaymentPolicy })}
+                                            className="bg-slate-900 border border-slate-600 px-1 py-0.5 text-xs text-slate-200"
+                                        >
+                                            {LIABILITY_POLICIES.map((policy) => (
+                                                <option key={policy.value} value={policy.value}>{policy.label}</option>
+                                            ))}
+                                        </select>
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            placeholder="Min pay"
+                                            value={editForm.liability_minimum_payment ?? ''}
+                                            onChange={(event) => setEditForm({ ...editForm, liability_minimum_payment: nullableNumber(event.target.value) })}
+                                            className="bg-slate-900 border border-slate-600 px-1 py-0.5 text-xs font-mono-nums"
+                                        />
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            placeholder="Fixed pay"
+                                            value={editForm.liability_fixed_payment_amount ?? ''}
+                                            onChange={(event) => setEditForm({ ...editForm, liability_fixed_payment_amount: nullableNumber(event.target.value) })}
+                                            className="bg-slate-900 border border-slate-600 px-1 py-0.5 text-xs font-mono-nums"
+                                        />
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            placeholder="Installments"
+                                            value={editForm.liability_installment_months ?? ''}
+                                            onChange={(event) => setEditForm({ ...editForm, liability_installment_months: nullableNumber(event.target.value) })}
+                                            className="bg-slate-900 border border-slate-600 px-1 py-0.5 text-xs font-mono-nums"
+                                        />
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            placeholder="Revo %"
+                                            value={editForm.liability_revolving_rate ?? ''}
+                                            onChange={(event) => setEditForm({ ...editForm, liability_revolving_rate: nullableNumber(event.target.value) })}
+                                            className="bg-slate-900 border border-slate-600 px-1 py-0.5 text-xs font-mono-nums"
+                                        />
+                                    </div>
+                                )}
                                 <button onClick={() => handleUpdateAccount(account.id)} className="p-1 text-emerald-400 hover:bg-slate-700">
                                     <Save size={12} />
                                 </button>
@@ -1518,16 +1622,21 @@ export default function Registry() {
                                         {account.role || 'unassigned'}
                                     </span>
                                 )}
+                                {account.account_type === 'liability' && (
+                                    <span className="text-[10px] px-1.5 py-0.5 border border-slate-700 text-amber-300 bg-slate-900/60">
+                                        {account.liability_payment_policy || 'full'} / +{account.liability_payment_month_offset ?? 0}m
+                                        {account.liability_closing_day ? ` / close ${account.liability_closing_day}` : ''}
+                                        {account.liability_payment_day ? ` / pay ${account.liability_payment_day}` : ''}
+                                    </span>
+                                )}
                                 <span className="text-[10px] font-mono-nums text-slate-500">self {formatCurrency(account.balance)}</span>
                                 <span className="text-xs font-mono-nums text-slate-300">rollup {formatCurrency(account.rollup_balance)}</span>
                                 <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                     <button
                                         onClick={() => {
                                             setNewAccount({
-                                                name: '',
+                                                ...emptyAccountDraft(),
                                                 account_type: account.account_type,
-                                                role: 'unassigned',
-                                                role_target_amount: '',
                                                 parent_id: String(account.id),
                                             });
                                             setShowAddAccount(true);
@@ -1545,6 +1654,14 @@ export default function Registry() {
                                                 parent_id: account.parent_id ?? null,
                                                 role: account.role || 'unassigned',
                                                 role_target_amount: account.role_target_amount ?? null,
+                                                liability_closing_day: account.liability_closing_day ?? null,
+                                                liability_payment_day: account.liability_payment_day ?? null,
+                                                liability_payment_month_offset: account.liability_payment_month_offset ?? 0,
+                                                liability_payment_policy: account.liability_payment_policy ?? 'full',
+                                                liability_minimum_payment: account.liability_minimum_payment ?? null,
+                                                liability_fixed_payment_amount: account.liability_fixed_payment_amount ?? null,
+                                                liability_installment_months: account.liability_installment_months ?? null,
+                                                liability_revolving_rate: account.liability_revolving_rate ?? null,
                                             });
                                         }}
                                         className="p-1 text-slate-500 hover:text-white hover:bg-slate-700"
@@ -1627,6 +1744,78 @@ export default function Registry() {
                                     placeholder="Role target"
                                     value={newAccount.role_target_amount}
                                     onChange={(event) => setNewAccount({ ...newAccount, role_target_amount: event.target.value })}
+                                    className="bg-slate-900 border border-slate-700 px-2 py-1 text-xs font-mono-nums"
+                                />
+                            </>
+                        )}
+                        {newAccount.account_type === 'liability' && (
+                            <>
+                                <input
+                                    type="number"
+                                    min="1"
+                                    max="31"
+                                    placeholder="Closing day"
+                                    value={newAccount.liability_closing_day}
+                                    onChange={(event) => setNewAccount({ ...newAccount, liability_closing_day: event.target.value })}
+                                    className="bg-slate-900 border border-slate-700 px-2 py-1 text-xs font-mono-nums"
+                                />
+                                <input
+                                    type="number"
+                                    min="1"
+                                    max="31"
+                                    placeholder="Payment day"
+                                    value={newAccount.liability_payment_day}
+                                    onChange={(event) => setNewAccount({ ...newAccount, liability_payment_day: event.target.value })}
+                                    className="bg-slate-900 border border-slate-700 px-2 py-1 text-xs font-mono-nums"
+                                />
+                                <input
+                                    type="number"
+                                    min="0"
+                                    max="24"
+                                    placeholder="Month offset"
+                                    value={newAccount.liability_payment_month_offset}
+                                    onChange={(event) => setNewAccount({ ...newAccount, liability_payment_month_offset: event.target.value })}
+                                    className="bg-slate-900 border border-slate-700 px-2 py-1 text-xs font-mono-nums"
+                                />
+                                <select
+                                    value={newAccount.liability_payment_policy}
+                                    onChange={(event) => setNewAccount({ ...newAccount, liability_payment_policy: event.target.value as LiabilityPaymentPolicy })}
+                                    className="bg-slate-900 border border-slate-700 px-2 py-1 text-xs"
+                                >
+                                    {LIABILITY_POLICIES.map((policy) => (
+                                        <option key={policy.value} value={policy.value}>{policy.label}</option>
+                                    ))}
+                                </select>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    placeholder="Minimum payment"
+                                    value={newAccount.liability_minimum_payment}
+                                    onChange={(event) => setNewAccount({ ...newAccount, liability_minimum_payment: event.target.value })}
+                                    className="bg-slate-900 border border-slate-700 px-2 py-1 text-xs font-mono-nums"
+                                />
+                                <input
+                                    type="number"
+                                    min="0"
+                                    placeholder="Fixed payment"
+                                    value={newAccount.liability_fixed_payment_amount}
+                                    onChange={(event) => setNewAccount({ ...newAccount, liability_fixed_payment_amount: event.target.value })}
+                                    className="bg-slate-900 border border-slate-700 px-2 py-1 text-xs font-mono-nums"
+                                />
+                                <input
+                                    type="number"
+                                    min="1"
+                                    placeholder="Installment months"
+                                    value={newAccount.liability_installment_months}
+                                    onChange={(event) => setNewAccount({ ...newAccount, liability_installment_months: event.target.value })}
+                                    className="bg-slate-900 border border-slate-700 px-2 py-1 text-xs font-mono-nums"
+                                />
+                                <input
+                                    type="number"
+                                    min="0"
+                                    placeholder="Revolving %"
+                                    value={newAccount.liability_revolving_rate}
+                                    onChange={(event) => setNewAccount({ ...newAccount, liability_revolving_rate: event.target.value })}
                                     className="bg-slate-900 border border-slate-700 px-2 py-1 text-xs font-mono-nums"
                                 />
                             </>

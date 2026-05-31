@@ -43,6 +43,7 @@ export interface TransactionBatch {
 }
 
 export type AccountRole = 'defense' | 'growth' | 'earmarked' | 'operating' | 'unassigned';
+export type LiabilityPaymentPolicy = 'full' | 'minimum' | 'fixed' | 'installment' | 'revolving';
 
 export interface Account {
     id: number;
@@ -54,6 +55,14 @@ export interface Account {
     expected_return: number;
     role: AccountRole;
     role_target_amount?: number | null;
+    liability_closing_day?: number | null;
+    liability_payment_day?: number | null;
+    liability_payment_month_offset?: number;
+    liability_payment_policy?: LiabilityPaymentPolicy;
+    liability_minimum_payment?: number | null;
+    liability_fixed_payment_amount?: number | null;
+    liability_installment_months?: number | null;
+    liability_revolving_rate?: number | null;
     is_active: boolean;
 }
 

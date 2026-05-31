@@ -1508,6 +1508,132 @@ def test_credit_expense_creates_credit_settlement_projection() -> None:
         db.close()
 
 
+def test_credit_settlement_uses_liability_closing_day_and_payment_offset() -> None:
+    db = _session()
+    try:
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        card = models.Account(
+            client_id=1,
+            name="card",
+            account_type="liability",
+            liability_closing_day=15,
+            liability_payment_day=27,
+            liability_payment_month_offset=1,
+            liability_payment_policy="full",
+        )
+        food = models.Account(client_id=1, name="food", account_type="expense")
+        db.add_all([client, card, food])
+        db.flush()
+        db.add_all([
+            models.Transaction(
+                client_id=1,
+                date=date(2026, 5, 10),
+                description="before close",
+                amount=10000,
+                type="CreditExpense",
+                from_account_id=card.id,
+                to_account_id=food.id,
+                currency="JPY",
+            ),
+            models.Transaction(
+                client_id=1,
+                date=date(2026, 5, 20),
+                description="after close",
+                amount=20000,
+                type="CreditExpense",
+                from_account_id=card.id,
+                to_account_id=food.id,
+                currency="JPY",
+            ),
+        ])
+        db.commit()
+
+        june = get_budget_summary(db, client_id=1, period="2026-06", cash_flow_start_period="2026-06", cash_flow_months=1)
+        july = get_budget_summary(db, client_id=1, period="2026-07", cash_flow_start_period="2026-07", cash_flow_months=1)
+
+        june_settlement = next(line for line in june["plan_lines"] if line.get("source_kind") == "credit_settlement")
+        july_settlement = next(line for line in july["plan_lines"] if line.get("source_kind") == "credit_settlement")
+
+        assert june_settlement["suggested_amount"] == 10000
+        assert july_settlement["suggested_amount"] == 20000
+    finally:
+        db.close()
+
+
+def test_credit_settlement_applies_fixed_payment_policy() -> None:
+    db = _session()
+    try:
+        period = "2026-05"
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        card = models.Account(
+            client_id=1,
+            name="card",
+            account_type="liability",
+            liability_payment_policy="fixed",
+            liability_fixed_payment_amount=5000,
+        )
+        food = models.Account(client_id=1, name="food", account_type="expense")
+        db.add_all([client, card, food])
+        db.flush()
+        db.add(models.Transaction(
+            client_id=1,
+            date=date(2026, 5, 10),
+            description="credit food",
+            amount=20000,
+            type="CreditExpense",
+            from_account_id=card.id,
+            to_account_id=food.id,
+            currency="JPY",
+        ))
+        db.commit()
+
+        summary = get_budget_summary(db, client_id=1, period=period, cash_flow_start_period=period, cash_flow_months=1)
+        settlement = next(line for line in summary["plan_lines"] if line.get("source_kind") == "credit_settlement")
+
+        assert settlement["suggested_amount"] == 5000
+        assert settlement["suggested_items"][0]["payment_policy"] == "fixed"
+    finally:
+        db.close()
+
+
+def test_credit_settlement_spreads_installment_policy_across_future_months() -> None:
+    db = _session()
+    try:
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        card = models.Account(
+            client_id=1,
+            name="card",
+            account_type="liability",
+            liability_payment_month_offset=1,
+            liability_payment_policy="installment",
+            liability_installment_months=3,
+        )
+        equipment = models.Account(client_id=1, name="equipment", account_type="expense")
+        db.add_all([client, card, equipment])
+        db.flush()
+        db.add(models.Transaction(
+            client_id=1,
+            date=date(2026, 5, 10),
+            description="installment purchase",
+            amount=30000,
+            type="CreditExpense",
+            from_account_id=card.id,
+            to_account_id=equipment.id,
+            currency="JPY",
+        ))
+        db.commit()
+
+        amounts = []
+        for period in ("2026-06", "2026-07", "2026-08"):
+            summary = get_budget_summary(db, client_id=1, period=period, cash_flow_start_period=period, cash_flow_months=1)
+            settlement = next(line for line in summary["plan_lines"] if line.get("source_kind") == "credit_settlement")
+            amounts.append(settlement["suggested_amount"])
+
+        assert amounts == [10000, 10000, 10000]
+    finally:
+        db.close()
+
+
 def test_cash_flow_reports_asset_role_movements() -> None:
     db = _session()
     try:

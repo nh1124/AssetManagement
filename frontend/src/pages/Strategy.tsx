@@ -228,6 +228,7 @@ export default function Strategy() {
     const [budgetCategoryForm, setBudgetCategoryForm] = useState({
         name: '',
         amount: '',
+        source_account_id: '',
         cash_treatment: 'auto' as MonthlyPlanCashTreatment,
     });
     const [allExpenseAccounts, setAllExpenseAccounts] = useState<Account[]>([]);
@@ -579,6 +580,17 @@ export default function Strategy() {
             : prev);
     };
 
+    const updateBudgetAccountSourceLocal = (accountId: number, sourceAccountId: number | null) => {
+        setBudgetSummary((prev) => prev
+            ? {
+                ...prev,
+                expense_accounts: prev.expense_accounts.map((account) => (
+                    account.id === accountId ? { ...account, source_account_id: sourceAccountId } : account
+                )),
+            }
+            : prev);
+    };
+
     const persistBudgetAccountAmount = async (account: BudgetAccount, amount: number) => {
         try {
             await persistMonthlyPlanLines([budgetAccountPlanPayload(account, amount)]);
@@ -597,15 +609,26 @@ export default function Strategy() {
         }
     };
 
+    const persistBudgetAccountSourceAccount = async (account: BudgetAccount, sourceAccountId: number | null) => {
+        try {
+            updateBudgetAccountSourceLocal(account.id, sourceAccountId);
+            if (typeof account.plan_line_id !== 'number') return;
+            await persistMonthlyPlanLines([budgetAccountPlanPayload({ ...account, source_account_id: sourceAccountId }, Number(account.amount || 0))]);
+        } catch (error) {
+            showToast('Failed to save source account', 'error');
+        }
+    };
+
     const openBudgetCategoryForm = async (account?: BudgetAccount) => {
         setEditingBudgetAccount(account ?? null);
         setBudgetCategoryForm(account
             ? {
                 name: account.name,
                 amount: String(typeof account.plan_line_id === 'number' ? account.amount ?? 0 : 0),
+                source_account_id: account.source_account_id ? String(account.source_account_id) : '',
                 cash_treatment: account.cash_treatment ?? 'auto',
             }
-            : { name: '', amount: '', cash_treatment: 'auto' });
+            : { name: '', amount: '', source_account_id: '', cash_treatment: 'auto' });
         setCategorySearch('');
         setSelectedAccountId(null);
         setShowCategoryDropdown(false);
@@ -626,7 +649,7 @@ export default function Strategy() {
                 await persistMonthlyPlanLines([{
                     ...(typeof editingBudgetAccount.plan_line_id === 'number' ? { id: editingBudgetAccount.plan_line_id } : {}),
                     account_id: editingBudgetAccount.id,
-                    source_account_id: editingBudgetAccount.source_account_id ?? null,
+                    source_account_id: budgetCategoryForm.source_account_id ? Number(budgetCategoryForm.source_account_id) : null,
                     target_period: currentPeriod,
                     line_type: 'expense',
                     target_type: 'account',
@@ -640,7 +663,7 @@ export default function Strategy() {
                 const account = allExpenseAccounts.find((item) => item.id === selectedAccountId);
                 await persistMonthlyPlanLines([{
                     account_id: selectedAccountId,
-                    source_account_id: null,
+                    source_account_id: budgetCategoryForm.source_account_id ? Number(budgetCategoryForm.source_account_id) : null,
                     target_period: currentPeriod,
                     line_type: 'expense',
                     target_type: 'account',
@@ -656,7 +679,7 @@ export default function Strategy() {
                 const created = await createAccount({ name, account_type: 'expense', balance: 0 });
                 await persistMonthlyPlanLines([{
                     account_id: created.id,
-                    source_account_id: null,
+                    source_account_id: budgetCategoryForm.source_account_id ? Number(budgetCategoryForm.source_account_id) : null,
                     target_period: currentPeriod,
                     line_type: 'expense',
                     target_type: 'account',
@@ -668,7 +691,7 @@ export default function Strategy() {
             }
             setShowBudgetCategoryForm(false);
             setEditingBudgetAccount(null);
-            setBudgetCategoryForm({ name: '', amount: '', cash_treatment: 'auto' });
+            setBudgetCategoryForm({ name: '', amount: '', source_account_id: '', cash_treatment: 'auto' });
             setCategorySearch('');
             setSelectedAccountId(null);
             await fetchBudgetSummary();
@@ -734,6 +757,12 @@ export default function Strategy() {
         )));
     };
 
+    const updatePlanLineSourceAccount = (localId: string, sourceAccountId: number | null) => {
+        setPlanLineDrafts((prev) => prev.map((line) => (
+            line.local_id === localId ? { ...line, source_account_id: sourceAccountId } : line
+        )));
+    };
+
     const persistPlanLineAmount = async (line: EditablePlanLine, amount: number) => {
         try {
             await persistMonthlyPlanLines([{
@@ -783,6 +812,33 @@ export default function Strategy() {
             }]);
         } catch (error) {
             showToast('Failed to save cash treatment', 'error');
+        }
+    };
+
+    const persistPlanLineSourceAccount = async (line: EditablePlanLine, sourceAccountId: number | null) => {
+        try {
+            updatePlanLineSourceAccount(line.local_id, sourceAccountId);
+            if (typeof line.id !== 'number') return;
+            await persistMonthlyPlanLines([{
+                id: line.id,
+                target_period: currentPeriod,
+                line_type: line.line_type,
+                target_type: line.target_type,
+                target_id: line.target_id ?? null,
+                account_id: line.account_id ?? null,
+                source_account_id: sourceAccountId,
+                name: line.name || line.target_name || null,
+                amount: Number(line.budget_amount ?? line.amount ?? 0),
+                source: 'manual',
+                source_kind: 'manual',
+                source_id: null,
+                manual_override: true,
+                cash_treatment: line.cash_treatment ?? 'auto',
+                recurring_transaction_id: null,
+                is_active: true,
+            }]);
+        } catch (error) {
+            showToast('Failed to save source account', 'error');
         }
     };
 
@@ -1108,6 +1164,7 @@ export default function Strategy() {
         const variableSuggestedTotal = (budgetSummary?.expense_accounts ?? []).reduce((sum, account) => sum + Number(account.suggested_amount || 0), 0);
         const cashFlowSummary = budgetSummary?.cash_flow_summary;
         const balanceSummary = budgetSummary?.balance_summary;
+        const sourceAccountOptions = accounts.filter((account) => account.account_type === 'asset' || account.account_type === 'liability');
         const cashFlowHorizon = cashFlowSummary?.horizon_months ?? budgetSummary?.cash_flow_projection?.length ?? 12;
         const runwayLabel = cashFlowSummary
             ? cashFlowSummary.shortfall_month
@@ -1435,6 +1492,17 @@ export default function Strategy() {
                                                                 <option value="cash">Cash: Cash</option>
                                                                 <option value="non_cash">Cash: Non-cash</option>
                                                             </select>
+                                                            <select
+                                                                value={line.source_account_id ?? ''}
+                                                                onChange={(event) => persistPlanLineSourceAccount(line, event.target.value ? Number(event.target.value) : null)}
+                                                                className="bg-transparent text-[9px] uppercase text-slate-600 outline-none hover:text-amber-300"
+                                                                title="Source account"
+                                                            >
+                                                                <option value="">Source: Auto</option>
+                                                                {sourceAccountOptions.map((sourceAccount) => (
+                                                                    <option key={sourceAccount.id} value={sourceAccount.id}>{sourceAccount.name}</option>
+                                                                ))}
+                                                            </select>
                                                         </div>
                                                     </div>
                                                 </td>
@@ -1748,24 +1816,35 @@ export default function Strategy() {
                                     placeholder="Amount"
                                     className="col-span-2 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums"
                                 />
-                                <select
-                                    value={budgetCategoryForm.cash_treatment}
-                                    onChange={e => setBudgetCategoryForm({ ...budgetCategoryForm, cash_treatment: e.target.value as MonthlyPlanCashTreatment })}
-                                    className="col-span-2 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
-                                    title="Cash flow treatment"
-                                >
-                                    <option value="auto">Auto cash</option>
-                                    <option value="cash">Cash</option>
-                                    <option value="non_cash">Non-cash</option>
-                                </select>
-                                <button type="button" onClick={saveBudgetCategory} className="col-span-2 bg-emerald-600 hover:bg-emerald-500 text-white py-1.5 text-xs">
-                                    {editingBudgetAccount ? 'Update' : 'Add'}
-                                </button>
+                        <select
+                            value={budgetCategoryForm.cash_treatment}
+                            onChange={e => setBudgetCategoryForm({ ...budgetCategoryForm, cash_treatment: e.target.value as MonthlyPlanCashTreatment })}
+                            className="col-span-2 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
+                            title="Cash flow treatment"
+                        >
+                            <option value="auto">Auto cash</option>
+                            <option value="cash">Cash</option>
+                            <option value="non_cash">Non-cash</option>
+                        </select>
+                        <select
+                            value={budgetCategoryForm.source_account_id}
+                            onChange={e => setBudgetCategoryForm({ ...budgetCategoryForm, source_account_id: e.target.value })}
+                            className="col-span-2 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
+                            title="Source account"
+                        >
+                            <option value="">Source: Auto</option>
+                            {sourceAccountOptions.map((account) => (
+                                <option key={account.id} value={account.id}>{account.name}</option>
+                            ))}
+                        </select>
+                        <button type="button" onClick={saveBudgetCategory} className="col-span-2 bg-emerald-600 hover:bg-emerald-500 text-white py-1.5 text-xs">
+                            {editingBudgetAccount ? 'Update' : 'Add'}
+                        </button>
                                 <button type="button" onClick={() => {
                                     setShowBudgetCategoryForm(false);
                                     setShowCategoryDropdown(false);
                                     setEditingBudgetAccount(null);
-                                    setBudgetCategoryForm({ name: '', amount: '', cash_treatment: 'auto' });
+                                    setBudgetCategoryForm({ name: '', amount: '', source_account_id: '', cash_treatment: 'auto' });
                                 }} className="col-span-2 bg-slate-800 hover:bg-slate-700 text-slate-300 py-1.5 text-xs">
                                     Cancel
                                 </button>
@@ -1823,6 +1902,17 @@ export default function Strategy() {
                                                         <option value="auto">Cash: Auto</option>
                                                         <option value="cash">Cash: Cash</option>
                                                         <option value="non_cash">Cash: Non-cash</option>
+                                                    </select>
+                                                    <select
+                                                        value={account.source_account_id ?? ''}
+                                                        onChange={(event) => persistBudgetAccountSourceAccount(account, event.target.value ? Number(event.target.value) : null)}
+                                                        className="mt-1 block max-w-40 bg-transparent text-[9px] uppercase text-slate-600 outline-none hover:text-amber-300"
+                                                        title="Source account"
+                                                    >
+                                                        <option value="">Source: Auto</option>
+                                                        {sourceAccountOptions.map((sourceAccount) => (
+                                                            <option key={sourceAccount.id} value={sourceAccount.id}>{sourceAccount.name}</option>
+                                                        ))}
                                                     </select>
                                                 </div>
                                             </td>

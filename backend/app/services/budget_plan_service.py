@@ -94,6 +94,17 @@ def add_months(period: str, months: int) -> str:
     return f"{shifted.year}-{shifted.month:02d}"
 
 
+def period_months_between(start_period: str, end_period: str) -> list[str]:
+    start, _ = period_to_range(start_period)
+    end, _ = period_to_range(end_period)
+    periods = []
+    cursor = start
+    while cursor <= end:
+        periods.append(f"{cursor.year}-{cursor.month:02d}")
+        cursor += relativedelta(months=1)
+    return periods
+
+
 def current_period_key(today: date | None = None) -> str:
     today = today or date.today()
     return f"{today.year}-{today.month:02d}"
@@ -1281,6 +1292,7 @@ def _credit_settlement_plan_line(
     amount: float,
     context: BudgetSummaryContext | None = None,
 ) -> dict:
+    policy = account.liability_payment_policy or "full"
     line = {
         "id": None,
         "target_period": period,
@@ -1303,6 +1315,10 @@ def _credit_settlement_plan_line(
             "name": account.name,
             "amount": round(amount, 0),
             "source": "credit_settlement",
+            "payment_policy": policy,
+            "closing_day": account.liability_closing_day,
+            "payment_day": account.liability_payment_day,
+            "payment_month_offset": account.liability_payment_month_offset or 0,
         }],
         "suggested_status": "missing",
         "source": "credit_settlement",
@@ -1321,6 +1337,81 @@ def _credit_settlement_plan_line(
     return line
 
 
+def _account_has_liability_schedule(account: models.Account) -> bool:
+    return bool(
+        account.liability_closing_day
+        or account.liability_payment_day
+        or (account.liability_payment_month_offset or 0) > 0
+    )
+
+
+def _statement_period_for_liability(account: models.Account, activity_date: date) -> str:
+    period = f"{activity_date.year}-{activity_date.month:02d}"
+    closing_day = account.liability_closing_day
+    if closing_day and activity_date.day > closing_day:
+        period = add_months(period, 1)
+    return period
+
+
+def _settlement_period_for_liability(account: models.Account, activity_date: date) -> str:
+    offset = max(0, int(account.liability_payment_month_offset or 0))
+    return add_months(_statement_period_for_liability(account, activity_date), offset)
+
+
+def _liability_activity_allocations(account: models.Account, activity_date: date, amount: float) -> list[tuple[str, float]]:
+    amount = max(0.0, amount or 0.0)
+    if amount <= 0:
+        return []
+    first_period = _settlement_period_for_liability(account, activity_date)
+    if (account.liability_payment_policy or "full") == "installment":
+        months = max(1, int(account.liability_installment_months or 1))
+        installment_amount = amount / months
+        return [(add_months(first_period, index), installment_amount) for index in range(months)]
+    return [(first_period, amount)]
+
+
+def _last_day_of_month(period: str) -> int:
+    start, _ = period_to_range(period)
+    return (start + relativedelta(day=31)).day
+
+
+def _recurring_activity_date(row: models.RecurringTransaction, period: str) -> date:
+    start, _ = period_to_range(period)
+    day = min(max(1, row.day_of_month or 1), _last_day_of_month(period))
+    return date(start.year, start.month, day)
+
+
+def _recurring_applies_to_period(row: models.RecurringTransaction, period: str) -> bool:
+    if row.start_period and row.start_period > period:
+        return False
+    if row.end_period and row.end_period < period:
+        return False
+    if row.frequency == "Yearly":
+        month = int(period.split("-")[1])
+        return not row.month_of_year or row.month_of_year == month
+    return True
+
+
+def _apply_liability_payment_policy(account: models.Account, amount: float) -> float:
+    amount = max(0.0, amount or 0.0)
+    if amount <= 0:
+        return 0.0
+    policy = account.liability_payment_policy or "full"
+    minimum = max(0.0, account.liability_minimum_payment or 0.0)
+    if policy == "minimum":
+        return min(amount, minimum or amount)
+    if policy == "fixed":
+        fixed = max(0.0, account.liability_fixed_payment_amount or 0.0)
+        return min(amount, fixed or amount)
+    if policy == "installment":
+        return amount
+    if policy == "revolving":
+        rate_amount = amount * max(0.0, account.liability_revolving_rate or 0.0) / 100
+        payment = max(minimum, rate_amount)
+        return min(amount, payment or amount)
+    return amount
+
+
 def credit_settlement_plan_lines(
     db: Session,
     client_id: int,
@@ -1332,30 +1423,64 @@ def credit_settlement_plan_lines(
         if period in cache:
             return cache[period]
 
-    txs = _period_transactions_cached(db, client_id, period, context)
+    accounts = db.query(models.Account).filter(
+        models.Account.client_id == client_id,
+        models.Account.account_type == "liability",
+        models.Account.is_active.is_(True),
+    ).all()
+    accounts_by_id = {account.id: account for account in accounts}
+    if not accounts_by_id:
+        result: list[dict] = []
+        if context is not None:
+            cache[period] = result
+        return result
+
+    max_offset = max((account.liability_payment_month_offset or 0) for account in accounts)
+    max_installment_months = max((account.liability_installment_months or 1) for account in accounts)
+    search_start_period = add_months(period, -(max_offset + max_installment_months + 1))
+    search_start, _ = period_to_range(search_start_period)
+    _, search_end = period_to_range(period)
+    txs = db.query(models.Transaction).filter(
+        models.Transaction.client_id == client_id,
+        models.Transaction.date >= search_start,
+        models.Transaction.date < search_end,
+        models.Transaction.type.in_(NON_CASH_TRANSACTION_TYPES),
+    ).all()
     credit_usage_by_account: dict[int, float] = {}
     for tx in txs:
         if tx.type not in NON_CASH_TRANSACTION_TYPES or not tx.from_account_id:
             continue
-        credit_usage_by_account[tx.from_account_id] = credit_usage_by_account.get(tx.from_account_id, 0.0) + convert_transaction_amount(db, tx, client_id=client_id)
+        account = accounts_by_id.get(tx.from_account_id)
+        if not account:
+            continue
+        tx_amount = convert_transaction_amount(db, tx, client_id=client_id)
+        for settlement_period, amount in _liability_activity_allocations(account, tx.date, tx_amount):
+            if settlement_period == period:
+                credit_usage_by_account[tx.from_account_id] = credit_usage_by_account.get(tx.from_account_id, 0.0) + amount
 
-    period_start, _ = period_to_range(period)
     recurring_credit_by_account: dict[int, float] = {}
-    for row in db.query(models.RecurringTransaction).filter(
+    recurring_rows = db.query(models.RecurringTransaction).filter(
         models.RecurringTransaction.client_id == client_id,
         models.RecurringTransaction.is_active.is_(True),
         models.RecurringTransaction.type.in_(NON_CASH_TRANSACTION_TYPES),
-    ).all():
+    ).all()
+    for row in recurring_rows:
         if not row.from_account_id:
             continue
-        if row.start_period and row.start_period > period:
+        account = accounts_by_id.get(row.from_account_id)
+        if not account:
             continue
-        if row.end_period and row.end_period < period:
-            continue
-        recurring_credit_by_account[row.from_account_id] = (
-            recurring_credit_by_account.get(row.from_account_id, 0.0)
-            + convert_amount(db, client_id, row.amount or 0.0, row.currency or "JPY", as_of_date=period_start)
-        )
+        for activity_period in period_months_between(search_start_period, period):
+            if not _recurring_applies_to_period(row, activity_period):
+                continue
+            activity_date = _recurring_activity_date(row, activity_period)
+            recurring_amount = convert_amount(db, client_id, row.amount or 0.0, row.currency or "JPY", as_of_date=activity_date)
+            for settlement_period, amount in _liability_activity_allocations(account, activity_date, recurring_amount):
+                if settlement_period == period:
+                    recurring_credit_by_account[row.from_account_id] = (
+                        recurring_credit_by_account.get(row.from_account_id, 0.0)
+                        + amount
+                    )
     account_ids = set(credit_usage_by_account) | set(recurring_credit_by_account)
     if not account_ids:
         result: list[dict] = []
@@ -1363,20 +1488,18 @@ def credit_settlement_plan_lines(
             cache[period] = result
         return result
 
-    accounts = db.query(models.Account).filter(
-        models.Account.client_id == client_id,
-        models.Account.id.in_(account_ids),
-        models.Account.account_type == "liability",
-        models.Account.is_active.is_(True),
-    ).all()
     result = []
-    for account in accounts:
+    for account_id in account_ids:
+        account = accounts_by_id.get(account_id)
+        if not account:
+            continue
         balance = max(0.0, calculate_account_valued_balance(db, account))
-        amount = max(
-            balance,
-            credit_usage_by_account.get(account.id, 0.0),
-            recurring_credit_by_account.get(account.id, 0.0),
-        )
+        activity_amount = credit_usage_by_account.get(account.id, 0.0) + recurring_credit_by_account.get(account.id, 0.0)
+        if _account_has_liability_schedule(account):
+            raw_amount = activity_amount if activity_amount > 0 else (balance if (account.liability_payment_month_offset or 0) == 0 else 0.0)
+        else:
+            raw_amount = max(balance, activity_amount)
+        amount = _apply_liability_payment_policy(account, raw_amount)
         if amount > 0:
             result.append(_credit_settlement_plan_line(db, client_id, account, period, amount, context))
     if context is not None:

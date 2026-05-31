@@ -17,6 +17,7 @@ RegistryEntryTypeLiteral = Literal["asset", "item", "service", "income", "alloca
 RegistryFrequencyLiteral = Literal["Monthly", "Yearly", "EveryNDays", "Irregular"]
 RegistryLineTypeLiteral = Literal["income", "expense", "allocation", "debt_payment", "borrowing", "drawdown"]
 MonthlyPlanCashTreatmentLiteral = Literal["auto", "cash", "non_cash"]
+LiabilityPaymentPolicyLiteral = Literal["full", "minimum", "fixed", "installment", "revolving"]
 
 # Account Schemas
 class AccountBase(BaseModel):
@@ -27,6 +28,14 @@ class AccountBase(BaseModel):
     expected_return: float = 0.0  # Annual return rate %
     role: Literal["defense", "growth", "earmarked", "operating", "unassigned"] = "unassigned"
     role_target_amount: Optional[float] = None
+    liability_closing_day: Optional[int] = Field(default=None, ge=1, le=31)
+    liability_payment_day: Optional[int] = Field(default=None, ge=1, le=31)
+    liability_payment_month_offset: int = Field(default=0, ge=0, le=24)
+    liability_payment_policy: LiabilityPaymentPolicyLiteral = "full"
+    liability_minimum_payment: Optional[float] = Field(default=None, ge=0)
+    liability_fixed_payment_amount: Optional[float] = Field(default=None, ge=0)
+    liability_installment_months: Optional[int] = Field(default=None, ge=1, le=120)
+    liability_revolving_rate: Optional[float] = Field(default=None, ge=0)
 
 class AccountCreate(AccountBase):
     pass
@@ -37,6 +46,14 @@ class AccountUpdate(BaseModel):
     expected_return: Optional[float] = None
     role: Optional[Literal["defense", "growth", "earmarked", "operating", "unassigned"]] = None
     role_target_amount: Optional[float] = None
+    liability_closing_day: Optional[int] = Field(default=None, ge=1, le=31)
+    liability_payment_day: Optional[int] = Field(default=None, ge=1, le=31)
+    liability_payment_month_offset: Optional[int] = Field(default=None, ge=0, le=24)
+    liability_payment_policy: Optional[LiabilityPaymentPolicyLiteral] = None
+    liability_minimum_payment: Optional[float] = Field(default=None, ge=0)
+    liability_fixed_payment_amount: Optional[float] = Field(default=None, ge=0)
+    liability_installment_months: Optional[int] = Field(default=None, ge=1, le=120)
+    liability_revolving_rate: Optional[float] = Field(default=None, ge=0)
     is_active: Optional[bool] = None
 
 class Account(AccountBase):

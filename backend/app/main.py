@@ -54,6 +54,14 @@ def ensure_runtime_schema_guards(db) -> None:
         db.execute(text("ALTER TABLE monthly_plan_lines ADD COLUMN IF NOT EXISTS source_id INTEGER"))
         db.execute(text("ALTER TABLE monthly_plan_lines ADD COLUMN IF NOT EXISTS identity_key VARCHAR NOT NULL DEFAULT ''"))
         db.execute(text("ALTER TABLE monthly_plan_lines ADD COLUMN IF NOT EXISTS manual_override BOOLEAN NOT NULL DEFAULT false"))
+        db.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS liability_closing_day INTEGER"))
+        db.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS liability_payment_day INTEGER"))
+        db.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS liability_payment_month_offset INTEGER NOT NULL DEFAULT 0"))
+        db.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS liability_payment_policy VARCHAR NOT NULL DEFAULT 'full'"))
+        db.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS liability_minimum_payment DOUBLE PRECISION"))
+        db.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS liability_fixed_payment_amount DOUBLE PRECISION"))
+        db.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS liability_installment_months INTEGER"))
+        db.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS liability_revolving_rate DOUBLE PRECISION"))
         db.execute(text(
             """
             CREATE INDEX IF NOT EXISTS ix_monthly_plan_lines_source_identity
