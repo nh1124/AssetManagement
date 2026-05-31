@@ -615,7 +615,7 @@ export default function Strategy() {
             if (typeof account.plan_line_id !== 'number') return;
             await persistMonthlyPlanLines([budgetAccountPlanPayload({ ...account, source_account_id: sourceAccountId }, Number(account.amount || 0))]);
         } catch (error) {
-            showToast('Failed to save source account', 'error');
+            showToast('Failed to save funding/payment account', 'error');
         }
     };
 
@@ -838,7 +838,7 @@ export default function Strategy() {
                 is_active: true,
             }]);
         } catch (error) {
-            showToast('Failed to save source account', 'error');
+            showToast('Failed to save funding/payment account', 'error');
         }
     };
 
@@ -1165,6 +1165,16 @@ export default function Strategy() {
         const cashFlowSummary = budgetSummary?.cash_flow_summary;
         const balanceSummary = budgetSummary?.balance_summary;
         const sourceAccountOptions = accounts.filter((account) => account.account_type === 'asset' || account.account_type === 'liability');
+        const sourceAccountSelectClass = 'bg-slate-900 border border-slate-700 px-1 py-0.5 text-[9px] uppercase text-amber-200 outline-none hover:border-amber-500 focus:border-amber-400 [color-scheme:dark]';
+        const sourceAccountOptionClass = 'bg-slate-900 text-slate-100';
+        const sourceAccountLabelFor = (lineType?: MonthlyPlanLineType) => {
+            if (lineType === 'expense') return 'Payment';
+            if (lineType === 'allocation') return 'Funding';
+            if (lineType === 'debt_payment') return 'Payment From';
+            if (lineType === 'drawdown') return 'Drawdown From';
+            if (lineType === 'borrowing') return 'Borrow From';
+            return 'Funding';
+        };
         const cashFlowHorizon = cashFlowSummary?.horizon_months ?? budgetSummary?.cash_flow_projection?.length ?? 12;
         const runwayLabel = cashFlowSummary
             ? cashFlowSummary.shortfall_month
@@ -1495,12 +1505,12 @@ export default function Strategy() {
                                                             <select
                                                                 value={line.source_account_id ?? ''}
                                                                 onChange={(event) => persistPlanLineSourceAccount(line, event.target.value ? Number(event.target.value) : null)}
-                                                                className="bg-transparent text-[9px] uppercase text-slate-600 outline-none hover:text-amber-300"
-                                                                title="Source account"
+                                                                className={sourceAccountSelectClass}
+                                                                title={`${sourceAccountLabelFor(line.line_type)} account`}
                                                             >
-                                                                <option value="">Source: Auto</option>
+                                                                <option className={sourceAccountOptionClass} value="">{sourceAccountLabelFor(line.line_type)}: Auto</option>
                                                                 {sourceAccountOptions.map((sourceAccount) => (
-                                                                    <option key={sourceAccount.id} value={sourceAccount.id}>{sourceAccount.name}</option>
+                                                                    <option className={sourceAccountOptionClass} key={sourceAccount.id} value={sourceAccount.id}>{sourceAccount.name}</option>
                                                                 ))}
                                                             </select>
                                                         </div>
@@ -1829,12 +1839,12 @@ export default function Strategy() {
                         <select
                             value={budgetCategoryForm.source_account_id}
                             onChange={e => setBudgetCategoryForm({ ...budgetCategoryForm, source_account_id: e.target.value })}
-                            className="col-span-2 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
-                            title="Source account"
+                            className="col-span-2 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-amber-200 [color-scheme:dark]"
+                            title="Payment account"
                         >
-                            <option value="">Source: Auto</option>
+                            <option className={sourceAccountOptionClass} value="">Payment: Auto</option>
                             {sourceAccountOptions.map((account) => (
-                                <option key={account.id} value={account.id}>{account.name}</option>
+                                <option className={sourceAccountOptionClass} key={account.id} value={account.id}>{account.name}</option>
                             ))}
                         </select>
                         <button type="button" onClick={saveBudgetCategory} className="col-span-2 bg-emerald-600 hover:bg-emerald-500 text-white py-1.5 text-xs">
@@ -1906,12 +1916,12 @@ export default function Strategy() {
                                                     <select
                                                         value={account.source_account_id ?? ''}
                                                         onChange={(event) => persistBudgetAccountSourceAccount(account, event.target.value ? Number(event.target.value) : null)}
-                                                        className="mt-1 block max-w-40 bg-transparent text-[9px] uppercase text-slate-600 outline-none hover:text-amber-300"
-                                                        title="Source account"
+                                                        className={`mt-1 block max-w-44 ${sourceAccountSelectClass}`}
+                                                        title="Payment account"
                                                     >
-                                                        <option value="">Source: Auto</option>
+                                                        <option className={sourceAccountOptionClass} value="">Payment: Auto</option>
                                                         {sourceAccountOptions.map((sourceAccount) => (
-                                                            <option key={sourceAccount.id} value={sourceAccount.id}>{sourceAccount.name}</option>
+                                                            <option className={sourceAccountOptionClass} key={sourceAccount.id} value={sourceAccount.id}>{sourceAccount.name}</option>
                                                         ))}
                                                     </select>
                                                 </div>
@@ -2363,11 +2373,11 @@ export default function Strategy() {
             </div>
             <select value={ruleForm.source_mode} onChange={(event) => setRuleForm({ ...ruleForm, source_mode: event.target.value, source_account_id: '' })} className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs">
                 <option value="transaction_account">Use transaction account</option>
-                <option value="fixed_account">Use fixed source account</option>
+                <option value="fixed_account">Use fixed funding account</option>
             </select>
             {ruleForm.source_mode === 'fixed_account' && (
                 <select value={ruleForm.source_account_id} onChange={(event) => setRuleForm({ ...ruleForm, source_account_id: event.target.value })} className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs">
-                    <option value="">Source account</option>
+                    <option value="">Funding account</option>
                     {accounts.filter((account) => account.account_type === 'asset').map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
                 </select>
             )}
