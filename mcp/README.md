@@ -62,6 +62,7 @@ GET http://localhost:3000/.well-known/oauth-authorization-server
 The root `docker-compose.yml` includes a `mcp` service. Configure these in the root `.env`:
 
 ```env
+MCP_APP_ENV=development
 MCP_PORT=13000
 MCP_BASE_URL=http://localhost:13000
 MCP_PASSWORD=change-me-to-a-strong-password
@@ -69,6 +70,8 @@ MCP_JWT_SECRET=change-me-to-a-secret-key-at-least-32-chars
 BACKEND_USERNAME=your-username
 BACKEND_PASSWORD=your-password
 ```
+
+For production, set `MCP_APP_ENV=production` and replace `MCP_JWT_SECRET` with a strong unique value. The HTTP server refuses known development defaults in production mode.
 
 Then run:
 

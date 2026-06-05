@@ -12,7 +12,21 @@ import jwt from "jsonwebtoken";
 
 // ─── Config ───────────────────────────────────────────────
 
-export const JWT_SECRET = process.env.JWT_SECRET ?? "dev-secret-change-in-production";
+const DEFAULT_JWT_SECRETS = new Set([
+  "dev-secret-change-in-production",
+  "change-me-to-a-secret-key-at-least-32-chars",
+]);
+
+function requireJwtSecret(): string {
+  const secret = process.env.JWT_SECRET ?? "dev-secret-change-in-production";
+  const appEnv = (process.env.APP_ENV ?? "development").trim().toLowerCase();
+  if (appEnv === "production" && DEFAULT_JWT_SECRETS.has(secret)) {
+    throw new Error("Invalid production configuration: JWT_SECRET must be changed in production");
+  }
+  return secret;
+}
+
+export const JWT_SECRET = requireJwtSecret();
 const ACCESS_TOKEN_TTL_SEC = 3600;
 const REFRESH_TOKEN_TTL_MS = 30 * 86400 * 1000; // 30 days
 const AUTH_CODE_TTL_MS = 5 * 60 * 1000;
@@ -70,7 +84,7 @@ const refreshTokenStore = new Map<string, OAuthRefreshTokenRecord>();
 
 // ─── Periodic Cleanup ─────────────────────────────────────
 
-setInterval(() => {
+const cleanupInterval = setInterval(() => {
   const now = Date.now();
   for (const [code, entry] of pendingCodes) {
     if (entry.expires_at < now) pendingCodes.delete(code);
@@ -79,6 +93,7 @@ setInterval(() => {
     if (record.expires_at_ms < now) refreshTokenStore.delete(hash);
   }
 }, 60_000);
+cleanupInterval.unref();
 
 // ─── Utilities ────────────────────────────────────────────
 

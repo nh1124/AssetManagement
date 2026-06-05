@@ -28,7 +28,12 @@ services:
       - ./backend/alembic:/app/alembic
       - ./backend/alembic.ini:/app/alembic.ini
     environment:
+      - APP_ENV=${APP_ENV:-development}
       - DATABASE_URL=postgresql://postgres:postgres@db:5432/finance_ide
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-dev_jwt_secret_change_in_production_must_be_32_chars}
+      - JWT_EXPIRE_MINUTES=${JWT_EXPIRE_MINUTES:-1440}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-YLM_ViHfrMWM0hUF3XoAMLLSaL4dVTy-JnHamAaIWTo=}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:15173,http://127.0.0.1:5173,http://127.0.0.1:15173}
     command: >
       sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     depends_on:
@@ -56,6 +61,7 @@ services:
       - "${MCP_PORT:-13000}:3000"
     environment:
       - PORT=3000
+      - APP_ENV=${MCP_APP_ENV:-development}
       - BASE_URL=${MCP_BASE_URL:-http://localhost:13000}
       - JWT_SECRET=${MCP_JWT_SECRET:-change-me-to-a-secret-key-at-least-32-chars}
       - BACKEND_URL=http://backend:8000

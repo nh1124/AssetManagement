@@ -6,6 +6,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from . import models
+from .config import settings
 from .routers import (
     accounts,
     actions,
@@ -31,6 +32,7 @@ from .routers import (
     transactions,
 )
 from .dependencies import get_current_client
+from .utils.password import verify_password
 
 app = FastAPI(
     title="Finance IDE API",
@@ -78,6 +80,15 @@ def ensure_runtime_schema_guards(db) -> None:
         db.commit()
 
 
+def ensure_no_default_admin_password(db) -> None:
+    admin_client = db.query(models.Client).filter(
+        models.Client.username == "admin",
+        models.Client.is_active.is_(True),
+    ).first()
+    if admin_client and verify_password("adminadmin", admin_client.password_hash or ""):
+        raise RuntimeError("Invalid production configuration: default admin password is still active")
+
+
 # Startup Seed Logic
 @app.on_event("startup")
 def startup_event():
@@ -86,65 +97,70 @@ def startup_event():
     from .utils.password import hash_password
     from .services.accounting_service import ensure_default_accounts
 
+    settings.validate_production_settings()
     run_alembic_migrations()
 
     db = SessionLocal()
     try:
         ensure_runtime_schema_guards(db)
-        # 1. Ensure Default Client exists
         default_client = db.query(models.Client).filter(models.Client.id == 1).first()
-        if not default_client:
-            print("Seeding default admin user...")
-            default_client = models.Client(
-                id=1, 
-                name="Default User",
-                username="admin",
-                password_hash=hash_password("adminadmin"),
-                ai_config={},
-                general_settings={}
-            )
-            db.add(default_client)
-            db.commit()
-            db.refresh(default_client)
-            
-            # Sync Postgres Sequence (since we manually forced ID=1)
-            try:
-                db.execute(text("SELECT setval('clients_id_seq', (SELECT MAX(id) FROM clients))"))
-                db.commit()
-            except Exception as e:
-                print(f"Sequence sync skipped: {e}")
-        else:
-            # Ensure admin has valid credentials
-            if not default_client.username or not default_client.password_hash:
-                default_client.username = "admin"
-                default_client.password_hash = hash_password("adminadmin")
-                db.commit()
 
-        # 2. Cleanup: Assign any orphan data to Default Client
-        # This is safe even after a reset, as it just ensures data integrity.
-        for table in [
-            "accounts",
-            "transactions",
-            "transaction_batches",
-            "quick_templates",
-            "products",
-            "registry_entries",
-            "life_events",
-            "simulation_configs",
-            "recurring_transactions",
-            "monthly_plan_lines",
-            "monthly_reviews",
-            "period_reviews",
-            "milestones",
-            "capsules",
-            "exchange_rates",
-        ]:
-            try:
-                db.execute(text(f"UPDATE {table} SET client_id = 1 WHERE client_id IS NULL"))
-            except Exception:
-                pass
-        db.commit()
-        ensure_default_accounts(db, client_id=1)
+        if settings.is_production:
+            ensure_no_default_admin_password(db)
+        else:
+            # 1. Ensure Default Client exists in development only.
+            if not default_client:
+                print("Seeding default admin user for development...")
+                default_client = models.Client(
+                    id=1,
+                    name="Default User",
+                    username="admin",
+                    password_hash=hash_password("adminadmin"),
+                    ai_config={},
+                    general_settings={}
+                )
+                db.add(default_client)
+                db.commit()
+                db.refresh(default_client)
+
+                # Sync Postgres Sequence (since we manually forced ID=1)
+                try:
+                    db.execute(text("SELECT setval('clients_id_seq', (SELECT MAX(id) FROM clients))"))
+                    db.commit()
+                except Exception as e:
+                    print(f"Sequence sync skipped: {e}")
+            else:
+                # Ensure admin has valid credentials in development only.
+                if not default_client.username or not default_client.password_hash:
+                    default_client.username = "admin"
+                    default_client.password_hash = hash_password("adminadmin")
+                    db.commit()
+
+            # 2. Cleanup: Assign any orphan data to Default Client in development only.
+            # This keeps legacy local resets usable without creating production tenants implicitly.
+            for table in [
+                "accounts",
+                "transactions",
+                "transaction_batches",
+                "quick_templates",
+                "products",
+                "registry_entries",
+                "life_events",
+                "simulation_configs",
+                "recurring_transactions",
+                "monthly_plan_lines",
+                "monthly_reviews",
+                "period_reviews",
+                "milestones",
+                "capsules",
+                "exchange_rates",
+            ]:
+                try:
+                    db.execute(text(f"UPDATE {table} SET client_id = 1 WHERE client_id IS NULL"))
+                except Exception:
+                    pass
+            db.commit()
+            ensure_default_accounts(db, client_id=1)
 
     finally:
         db.close()
@@ -152,7 +168,7 @@ def startup_event():
 # CORS for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
