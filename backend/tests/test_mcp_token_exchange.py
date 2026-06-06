@@ -75,6 +75,20 @@ def test_mcp_token_exchange_issues_backend_token_for_subject() -> None:
         db.close()
 
 
+def test_mcp_token_exchange_accepts_local_https_issuer_variant() -> None:
+    db = _session()
+    try:
+        client = _client(db, 1, "alice")
+        token = _mcp_token(username="alice", backend_client_id=client.id, issuer="https://localhost:13000")
+
+        result = auth.exchange_mcp_token(auth.McpTokenExchangeRequest(mcp_access_token=token), db)
+
+        assert result["client_id"] == client.id
+        assert result["username"] == "alice"
+    finally:
+        db.close()
+
+
 def test_mcp_token_exchange_rejects_wrong_subject_or_issuer() -> None:
     db = _session()
     try:

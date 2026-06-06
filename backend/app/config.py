@@ -1,4 +1,5 @@
 from functools import lru_cache
+from urllib.parse import urlparse
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEV_JWT_SECRET_KEY = "dev_jwt_secret_change_in_production_must_be_32_chars"
@@ -19,6 +20,7 @@ class AppConfig(BaseSettings):
     mcp_jwt_secret: str = DEV_MCP_JWT_SECRET
     mcp_token_audience: str = "asset-management-backend"
     mcp_allowed_issuers: str = "http://localhost:13000"
+    mcp_base_url: str = ""
 
     # Database Settings
     database_url: str = "sqlite:///./finance.db"
@@ -57,11 +59,23 @@ class AppConfig(BaseSettings):
 
     @property
     def allowed_mcp_token_issuers(self) -> list[str]:
-        return [
+        issuers = [
             issuer.strip().rstrip("/")
             for issuer in (self.mcp_allowed_issuers or "").split(",")
             if issuer.strip()
         ]
+        base_url = (self.mcp_base_url or "").strip().rstrip("/")
+        if base_url and base_url not in issuers:
+            issuers.append(base_url)
+        if self.is_development:
+            for issuer in list(issuers):
+                parsed = urlparse(issuer)
+                if parsed.scheme in {"http", "https"} and parsed.hostname in {"localhost", "127.0.0.1"}:
+                    alternate_scheme = "https" if parsed.scheme == "http" else "http"
+                    alternate = parsed._replace(scheme=alternate_scheme).geturl().rstrip("/")
+                    if alternate not in issuers:
+                        issuers.append(alternate)
+        return issuers
 
     def validate_production_settings(self) -> None:
         if not self.is_production:

@@ -50,11 +50,9 @@ async function validateUserCredentials(username: string, password: string): Prom
 // ─── Issuer / Resource helpers ────────────────────────────
 
 function buildOAuthIssuer(req: Request): string {
-  // Prefer explicitly configured base URL
-  const configured = process.env.BASE_URL?.trim();
-  if (configured && configured.startsWith("https://")) return configured;
+  const configured = process.env.BASE_URL?.trim().replace(/\/$/, "");
+  if (configured) return configured;
 
-  // Derive from forwarded headers (Cloudflare Tunnel sets these)
   const proto = req.headers["x-forwarded-proto"]?.toString().split(",")[0]?.trim();
   const host = (req.headers["x-forwarded-host"] ?? req.headers.host)?.toString().split(",")[0]?.trim();
   if (proto === "https" && host) return `https://${host}`;

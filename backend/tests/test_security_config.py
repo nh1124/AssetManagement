@@ -84,6 +84,21 @@ def test_allowed_origins_are_parsed_from_csv() -> None:
     ]
 
 
+def test_development_expands_local_mcp_issuer_scheme_variants() -> None:
+    settings = AppConfig(
+        app_env="development",
+        mcp_allowed_issuers="http://localhost:13000,https://asset.example",
+        mcp_base_url="https://asset-mcp.example.com/",
+    )
+
+    assert settings.allowed_mcp_token_issuers == [
+        "http://localhost:13000",
+        "https://asset.example",
+        "https://asset-mcp.example.com",
+        "https://localhost:13000",
+    ]
+
+
 def test_default_admin_password_is_rejected() -> None:
     db = _session()
     try:
