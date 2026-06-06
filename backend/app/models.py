@@ -73,6 +73,18 @@ class Client(Base):
     exchange_rates = relationship("ExchangeRate", back_populates="client")
     mfa_setting = relationship("ClientMfaSetting", back_populates="client", uselist=False, cascade="all, delete-orphan")
     recovery_codes = relationship("ClientRecoveryCode", back_populates="client", cascade="all, delete-orphan")
+    ai_operation_policies = relationship(
+        "AiOperationPolicy",
+        back_populates="client",
+        cascade="all, delete-orphan",
+        foreign_keys="AiOperationPolicy.client_id",
+    )
+    ai_audit_logs = relationship(
+        "AiAuditLog",
+        back_populates="client",
+        cascade="all, delete-orphan",
+        foreign_keys="AiAuditLog.client_id",
+    )
 
 
 class ClientMfaSetting(Base):
@@ -486,6 +498,61 @@ class MonthlyAction(Base):
     applied_at = Column(DateTime, nullable=True)
 
     client = relationship("Client", back_populates="monthly_actions")
+
+
+class AiOperationPolicy(Base):
+    __tablename__ = "ai_operation_policies"
+    __table_args__ = (
+        UniqueConstraint(
+            "client_id",
+            "ai_client_id",
+            "resource",
+            "action",
+            "risk",
+            name="_client_ai_policy_uc",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    ai_client_id = Column(Integer, ForeignKey("clients.id"), nullable=True, index=True)
+    resource = Column(String, nullable=False)
+    action = Column(String, nullable=False)
+    risk = Column(String, nullable=False)
+    mode = Column(String, nullable=False)
+    threshold_amount = Column(Float, nullable=True)
+    threshold_count = Column(Integer, nullable=True)
+    require_mfa = Column(Boolean, default=False, server_default="false", nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    client = relationship("Client", back_populates="ai_operation_policies", foreign_keys=[client_id])
+
+
+class AiAuditLog(Base):
+    __tablename__ = "ai_audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    actor_client_id = Column(Integer, ForeignKey("clients.id"), nullable=True, index=True)
+    ai_client_id = Column(Integer, ForeignKey("clients.id"), nullable=True, index=True)
+    source = Column(String, nullable=False)
+    tool_name = Column(String, nullable=True)
+    resource = Column(String, nullable=False)
+    action = Column(String, nullable=False)
+    risk = Column(String, nullable=False)
+    decision = Column(String, nullable=False)
+    request_summary = Column(JSON, default=dict, nullable=False)
+    diff_summary = Column(JSON, default=dict, nullable=False)
+    result_summary = Column(JSON, default=dict, nullable=False)
+    approval_request_id = Column(Integer, nullable=True)
+    mfa_verified = Column(Boolean, default=False, server_default="false", nullable=False)
+    ip_address = Column(String, nullable=True)
+    user_agent = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    client = relationship("Client", back_populates="ai_audit_logs", foreign_keys=[client_id])
+
 
 class Milestone(Base):
     __tablename__ = "milestones"

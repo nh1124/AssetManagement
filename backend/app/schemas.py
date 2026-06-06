@@ -18,6 +18,10 @@ RegistryFrequencyLiteral = Literal["Monthly", "Yearly", "EveryNDays", "Irregular
 RegistryLineTypeLiteral = Literal["income", "expense", "allocation", "debt_payment", "borrowing", "drawdown"]
 MonthlyPlanCashTreatmentLiteral = Literal["auto", "cash", "non_cash"]
 LiabilityPaymentPolicyLiteral = Literal["full", "minimum", "fixed", "installment", "revolving"]
+AiOperationRiskLiteral = Literal["low", "medium", "high", "critical"]
+AiOperationModeLiteral = Literal["deny", "allow_read", "require_approval", "allow_execute"]
+AiOperationDecisionLiteral = Literal["allowed", "denied", "approval_required", "applied", "failed"]
+AiOperationSourceLiteral = Literal["frontend", "mcp_http", "mcp_stdio", "backend"]
 
 # Account Schemas
 class AccountBase(BaseModel):
@@ -62,6 +66,79 @@ class Account(AccountBase):
 
     class Config:
         from_attributes = True
+
+
+class AiOperationPolicyBase(BaseModel):
+    ai_client_id: Optional[int] = None
+    resource: str
+    action: str
+    risk: AiOperationRiskLiteral
+    mode: AiOperationModeLiteral
+    threshold_amount: Optional[float] = None
+    threshold_count: Optional[int] = None
+    require_mfa: bool = False
+
+
+class AiOperationPolicyCreate(AiOperationPolicyBase):
+    pass
+
+
+class AiOperationPolicy(AiOperationPolicyBase):
+    id: int
+    client_id: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AiAuditLog(BaseModel):
+    id: int
+    client_id: int
+    actor_client_id: Optional[int] = None
+    ai_client_id: Optional[int] = None
+    source: AiOperationSourceLiteral
+    tool_name: Optional[str] = None
+    resource: str
+    action: str
+    risk: AiOperationRiskLiteral
+    decision: AiOperationDecisionLiteral
+    request_summary: dict[str, Any] = Field(default_factory=dict)
+    diff_summary: dict[str, Any] = Field(default_factory=dict)
+    result_summary: dict[str, Any] = Field(default_factory=dict)
+    approval_request_id: Optional[int] = None
+    mfa_verified: bool = False
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class AiOperationEvaluateRequest(BaseModel):
+    source: AiOperationSourceLiteral = "backend"
+    tool_name: Optional[str] = None
+    resource: str
+    action: str
+    risk: AiOperationRiskLiteral = "low"
+    ai_client_id: Optional[int] = None
+    request_summary: dict[str, Any] = Field(default_factory=dict)
+    diff_summary: dict[str, Any] = Field(default_factory=dict)
+    mfa_verified: bool = False
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
+
+
+class AiOperationEvaluateResponse(BaseModel):
+    decision: str
+    mode: AiOperationModeLiteral
+    resource: str
+    action: str
+    risk: AiOperationRiskLiteral
+    require_mfa: bool = False
+    reason: str
 
 # Transaction Schemas
 class TransactionBase(BaseModel):

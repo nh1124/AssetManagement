@@ -115,6 +115,71 @@ export interface MfaRecoveryCodes {
     recovery_codes: string[];
 }
 
+export type AiOperationRisk = 'low' | 'medium' | 'high' | 'critical';
+export type AiOperationMode = 'deny' | 'allow_read' | 'require_approval' | 'allow_execute';
+export type AiOperationDecision = 'allowed' | 'denied' | 'approval_required' | 'applied' | 'failed';
+export type AiOperationSource = 'frontend' | 'mcp_http' | 'mcp_stdio' | 'backend';
+
+export interface AiOperationPolicy {
+    id: number;
+    client_id: number;
+    ai_client_id?: number | null;
+    resource: string;
+    action: string;
+    risk: AiOperationRisk;
+    mode: AiOperationMode;
+    threshold_amount?: number | null;
+    threshold_count?: number | null;
+    require_mfa: boolean;
+    created_at: string;
+    updated_at: string;
+}
+
+export type AiOperationPolicyPayload = Omit<AiOperationPolicy, 'id' | 'client_id' | 'created_at' | 'updated_at'>;
+
+export interface AiAuditLog {
+    id: number;
+    client_id: number;
+    actor_client_id?: number | null;
+    ai_client_id?: number | null;
+    source: AiOperationSource;
+    tool_name?: string | null;
+    resource: string;
+    action: string;
+    risk: AiOperationRisk;
+    decision: AiOperationDecision;
+    request_summary: Record<string, unknown>;
+    diff_summary: Record<string, unknown>;
+    result_summary: Record<string, unknown>;
+    approval_request_id?: number | null;
+    mfa_verified: boolean;
+    ip_address?: string | null;
+    user_agent?: string | null;
+    created_at: string;
+}
+
+export interface AiOperationEvaluatePayload {
+    source?: AiOperationSource;
+    tool_name?: string | null;
+    resource: string;
+    action: string;
+    risk?: AiOperationRisk;
+    ai_client_id?: number | null;
+    request_summary?: Record<string, unknown>;
+    diff_summary?: Record<string, unknown>;
+    mfa_verified?: boolean;
+}
+
+export interface AiOperationEvaluateResult {
+    decision: string;
+    mode: AiOperationMode;
+    resource: string;
+    action: string;
+    risk: AiOperationRisk;
+    require_mfa: boolean;
+    reason: string;
+}
+
 
 export interface RoadmapEntry {
     year: number;

@@ -6,6 +6,11 @@ import type {
     AccountFlowTransactionPage,
     AccountRole,
     AccountTreeNode,
+    AiAuditLog,
+    AiOperationEvaluatePayload,
+    AiOperationEvaluateResult,
+    AiOperationPolicy,
+    AiOperationPolicyPayload,
     AnalysisSummary,
     ContributionScheduleItem,
     DataHealthResult,
@@ -125,6 +130,30 @@ export const regenerateMfaRecoveryCodes = async (payload: { current_password?: s
 
 export const reauth = async (payload: { current_password?: string; code?: string; recovery_code?: string }) => {
     const response = await api.post('/auth/reauth', payload);
+    return response.data;
+};
+
+export const getAiPolicies = async (): Promise<AiOperationPolicy[]> => {
+    const response = await api.get('/ai/policies');
+    return response.data;
+};
+
+export const updateAiPolicies = async (policies: AiOperationPolicyPayload[]): Promise<AiOperationPolicy[]> => {
+    const response = await api.put('/ai/policies', policies);
+    return response.data;
+};
+
+export const getAiAuditLogs = async (params?: { limit?: number; offset?: number }): Promise<AiAuditLog[]> => {
+    const search = new URLSearchParams();
+    if (params?.limit) search.set('limit', String(params.limit));
+    if (params?.offset) search.set('offset', String(params.offset));
+    const query = search.toString();
+    const response = await api.get(`/ai/audit-logs${query ? `?${query}` : ''}`);
+    return response.data;
+};
+
+export const evaluateAiOperation = async (payload: AiOperationEvaluatePayload): Promise<AiOperationEvaluateResult> => {
+    const response = await api.post('/ai/evaluate', payload);
     return response.data;
 };
 
