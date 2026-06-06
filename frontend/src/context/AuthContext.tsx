@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { login as apiLogin, register as apiRegister, getMe } from '../api';
+import { login as apiLogin, register as apiRegister, getMe, verifyMfaLogin as apiVerifyMfaLogin } from '../api';
+import type { LoginResult } from '../types';
 
 interface User {
     id: number;
@@ -12,7 +13,8 @@ interface User {
 interface AuthContextType {
     user: User | null;
     isAuthenticated: boolean;
-    login: (credentials: any) => Promise<void>;
+    login: (credentials: any) => Promise<LoginResult>;
+    verifyMfaLogin: (payload: { mfa_token: string; code?: string; recovery_code?: string; username: string }) => Promise<void>;
     register: (userData: any) => Promise<void>;
     logout: () => void;
     isLoading: boolean;
@@ -43,15 +45,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         checkAuth();
     }, []);
 
-    const login = async (credentials: any) => {
-        const data = await apiLogin(credentials);
+    const applyLoginResult = (data: LoginResult, username: string) => {
+        if (!data.access_token) {
+            throw new Error('Access token was not returned');
+        }
         localStorage.setItem('finance_access_token', data.access_token);
         localStorage.setItem('finance_client_id', data.client_id.toString());
         setUser({
             id: data.client_id,
             name: data.name,
-            username: credentials.username
+            username
         });
+    };
+
+    const login = async (credentials: any) => {
+        const data = await apiLogin(credentials);
+        if (!data.mfa_required) {
+            applyLoginResult(data, credentials.username);
+        }
+        return data;
+    };
+
+    const verifyMfaLogin = async (payload: { mfa_token: string; code?: string; recovery_code?: string; username: string }) => {
+        const data = await apiVerifyMfaLogin({
+            mfa_token: payload.mfa_token,
+            code: payload.code,
+            recovery_code: payload.recovery_code,
+        });
+        applyLoginResult(data, payload.username);
     };
 
     const register = async (userData: any) => {
@@ -68,7 +89,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     return (
-        <AuthContext.Provider value={{ user, isAuthenticated: !!user, login, register, logout, isLoading }}>
+        <AuthContext.Provider value={{ user, isAuthenticated: !!user, login, verifyMfaLogin, register, logout, isLoading }}>
             {children}
         </AuthContext.Provider>
     );

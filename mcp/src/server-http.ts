@@ -28,6 +28,11 @@ async function validateUserCredentials(username: string, password: string): Prom
       signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) return null;
+    const data = await res.json() as { access_token?: string; mfa_required?: boolean };
+    if (data.mfa_required || !data.access_token) {
+      console.warn("[auth] backend login requires MFA; password-only MCP OAuth login rejected");
+      return null;
+    }
     return username.toLowerCase();
   } catch (err) {
     console.warn("[auth] backend login error", (err as Error).message);

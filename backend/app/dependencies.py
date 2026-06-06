@@ -21,7 +21,7 @@ async def get_current_client(
     client_id = None
     if credentials:
         payload = decode_token(credentials.credentials)
-        if payload:
+        if payload and payload.get("type") == "access":
             client_id = payload.get("sub")
 
     if not client_id:

@@ -90,6 +90,31 @@ export interface ExchangeRateAutoUpdateResult {
     errors: Array<Pick<ExchangeRate, 'base_currency' | 'quote_currency'> & { error: string }>;
 }
 
+export interface LoginResult {
+    access_token?: string | null;
+    token_type: 'bearer' | 'mfa' | string;
+    client_id: number;
+    name: string;
+    mfa_required: boolean;
+    mfa_token?: string | null;
+}
+
+export interface MfaStatus {
+    enabled: boolean;
+    enabled_at?: string | null;
+    last_verified_at?: string | null;
+    recovery_codes_remaining: number;
+}
+
+export interface MfaSetupStart {
+    otpauth_uri: string;
+    manual_entry_key: string;
+}
+
+export interface MfaRecoveryCodes {
+    recovery_codes: string[];
+}
+
 
 export interface RoadmapEntry {
     year: number;

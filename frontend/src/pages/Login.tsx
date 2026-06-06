@@ -7,17 +7,31 @@ export default function LoginPage() {
     const [username, setUsername] = useState('admin');
     const [password, setPassword] = useState('adminadmin');
     const [email, setEmail] = useState('');
+    const [mfaToken, setMfaToken] = useState<string | null>(null);
+    const [mfaCode, setMfaCode] = useState('');
+    const [useRecoveryCode, setUseRecoveryCode] = useState(false);
     const [error, setError] = useState('');
     const [isLoading, setIsLoading] = useState(false);
-    const { login, register } = useAuth();
+    const { login, verifyMfaLogin, register } = useAuth();
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError('');
         setIsLoading(true);
         try {
-            if (mode === 'login') {
-                await login({ username, password });
+            if (mfaToken) {
+                await verifyMfaLogin({
+                    mfa_token: mfaToken,
+                    username,
+                    ...(useRecoveryCode ? { recovery_code: mfaCode } : { code: mfaCode }),
+                });
+            } else if (mode === 'login') {
+                const result = await login({ username, password });
+                if (result.mfa_required && result.mfa_token) {
+                    setMfaToken(result.mfa_token);
+                    setMfaCode('');
+                    return;
+                }
             } else {
                 await register({ username, password, email: email || undefined });
             }
@@ -56,52 +70,81 @@ export default function LoginPage() {
                     )}
 
                     <div className="space-y-4">
-                        <div>
-                            <label className="block text-[10px] text-slate-500 uppercase tracking-widest mb-1">Username</label>
-                            <div className="relative">
-                                <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
+                        {!mfaToken ? (
+                            <>
+                                <div>
+                                    <label className="block text-[10px] text-slate-500 uppercase tracking-widest mb-1">Username</label>
+                                    <div className="relative">
+                                        <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
+                                        <input
+                                            type="text"
+                                            value={username}
+                                            onChange={(e) => setUsername(e.target.value)}
+                                            className="w-full bg-slate-800/50 border border-slate-700 pl-10 pr-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 transition-all placeholder:text-slate-600"
+                                            placeholder="Enter username"
+                                            required
+                                        />
+                                    </div>
+                                </div>
+
+                                {mode === 'register' && (
+                                    <div>
+                                        <label className="block text-[10px] text-slate-500 uppercase tracking-widest mb-1">Email (Optional)</label>
+                                        <div className="relative">
+                                            <AlertCircle className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
+                                            <input
+                                                type="email"
+                                                value={email}
+                                                onChange={(e) => setEmail(e.target.value)}
+                                                className="w-full bg-slate-800/50 border border-slate-700 pl-10 pr-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 transition-all placeholder:text-slate-600"
+                                                placeholder="name@example.com"
+                                            />
+                                        </div>
+                                    </div>
+                                )}
+
+                                <div>
+                                    <label className="block text-[10px] text-slate-500 uppercase tracking-widest mb-1">Password</label>
+                                    <div className="relative">
+                                        <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
+                                        <input
+                                            type="password"
+                                            value={password}
+                                            onChange={(e) => setPassword(e.target.value)}
+                                            className="w-full bg-slate-800/50 border border-slate-700 pl-10 pr-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 transition-all placeholder:text-slate-600"
+                                            placeholder="Enter password"
+                                            required
+                                            minLength={8}
+                                        />
+                                    </div>
+                                </div>
+                            </>
+                        ) : (
+                            <div>
+                                <label className="block text-[10px] text-slate-500 uppercase tracking-widest mb-1">
+                                    {useRecoveryCode ? 'Recovery Code' : 'Authenticator Code'}
+                                </label>
                                 <input
                                     type="text"
-                                    value={username}
-                                    onChange={(e) => setUsername(e.target.value)}
-                                    className="w-full bg-slate-800/50 border border-slate-700 pl-10 pr-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 transition-all placeholder:text-slate-600"
-                                    placeholder="Enter username"
+                                    value={mfaCode}
+                                    onChange={(e) => setMfaCode(e.target.value)}
+                                    className="w-full bg-slate-800/50 border border-slate-700 px-3 py-2 text-center font-mono text-sm text-white focus:outline-none focus:border-emerald-500 transition-all placeholder:text-slate-600"
+                                    placeholder={useRecoveryCode ? 'ABCD-1234' : '123456'}
                                     required
+                                    autoFocus
                                 />
-                            </div>
-                        </div>
-
-                        {mode === 'register' && (
-                            <div>
-                                <label className="block text-[10px] text-slate-500 uppercase tracking-widest mb-1">Email (Optional)</label>
-                                <div className="relative">
-                                    <AlertCircle className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
-                                    <input
-                                        type="email"
-                                        value={email}
-                                        onChange={(e) => setEmail(e.target.value)}
-                                        className="w-full bg-slate-800/50 border border-slate-700 pl-10 pr-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 transition-all placeholder:text-slate-600"
-                                        placeholder="name@example.com"
-                                    />
-                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setUseRecoveryCode(!useRecoveryCode);
+                                        setMfaCode('');
+                                    }}
+                                    className="mt-3 text-xs text-emerald-500 hover:text-emerald-400"
+                                >
+                                    {useRecoveryCode ? 'Use authenticator code' : 'Use recovery code'}
+                                </button>
                             </div>
                         )}
-
-                        <div>
-                            <label className="block text-[10px] text-slate-500 uppercase tracking-widest mb-1">Password</label>
-                            <div className="relative">
-                                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
-                                <input
-                                    type="password"
-                                    value={password}
-                                    onChange={(e) => setPassword(e.target.value)}
-                                    className="w-full bg-slate-800/50 border border-slate-700 pl-10 pr-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 transition-all placeholder:text-slate-600"
-                                    placeholder="Enter password"
-                                    required
-                                    minLength={8}
-                                />
-                            </div>
-                        </div>
 
                         <button
                             type="submit"
@@ -113,7 +156,7 @@ export default function LoginPage() {
                             ) : (
                                 mode === 'login' ? <LogIn size={18} /> : <User size={18} />
                             )}
-                            {isLoading ? (mode === 'login' ? 'Signing in...' : 'Creating Account...') : (mode === 'login' ? 'Sign In' : 'Sign Up')}
+                            {isLoading ? (mfaToken ? 'Verifying...' : mode === 'login' ? 'Signing in...' : 'Creating Account...') : (mfaToken ? 'Verify' : mode === 'login' ? 'Sign In' : 'Sign Up')}
                         </button>
                     </div>
 
@@ -124,6 +167,8 @@ export default function LoginPage() {
                                 type="button"
                                 onClick={() => {
                                     setMode(mode === 'login' ? 'register' : 'login');
+                                    setMfaToken(null);
+                                    setMfaCode('');
                                     setError('');
                                 }}
                                 className="text-emerald-500 hover:text-emerald-400 font-medium transition-colors"

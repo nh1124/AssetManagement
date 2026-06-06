@@ -12,8 +12,12 @@ import type {
     DataRepairResult,
     ExchangeRate,
     ExchangeRateAutoUpdateResult,
+    LoginResult,
     MonthlyAction,
     MonteCarloResult,
+    MfaRecoveryCodes,
+    MfaSetupStart,
+    MfaStatus,
     MonthlyReport,
     MonthlyReview,
     Milestone,
@@ -54,7 +58,10 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
     (response) => response,
     (error) => {
-        if (error.response?.status === 401) {
+        const hadToken = Boolean(localStorage.getItem('finance_access_token'));
+        const url = String(error.config?.url || '');
+        const isAuthFlow = url.startsWith('/auth/login') || url.startsWith('/auth/mfa/login/verify') || url.startsWith('/auth/register');
+        if (error.response?.status === 401 && hadToken && !isAuthFlow) {
             localStorage.removeItem('finance_access_token');
             localStorage.removeItem('finance_client_id');
             window.location.reload(); // Force App to re-evaluate auth status
@@ -65,8 +72,13 @@ api.interceptors.response.use(
 
 
 // Auth endpoints
-export const login = async (credentials: any) => {
+export const login = async (credentials: any): Promise<LoginResult> => {
     const response = await api.post('/auth/login', credentials);
+    return response.data;
+};
+
+export const verifyMfaLogin = async (payload: { mfa_token: string; code?: string; recovery_code?: string }): Promise<LoginResult> => {
+    const response = await api.post('/auth/mfa/login/verify', payload);
     return response.data;
 };
 
@@ -83,6 +95,36 @@ export const updateProfile = async (profileData: any) => {
 
 export const getMe = async () => {
     const response = await api.get('/me');
+    return response.data;
+};
+
+export const getMfaStatus = async (): Promise<MfaStatus> => {
+    const response = await api.get('/auth/mfa/status');
+    return response.data;
+};
+
+export const startMfaSetup = async (payload: { current_password: string }): Promise<MfaSetupStart> => {
+    const response = await api.post('/auth/mfa/setup/start', payload);
+    return response.data;
+};
+
+export const verifyMfaSetup = async (payload: { code: string }): Promise<MfaRecoveryCodes> => {
+    const response = await api.post('/auth/mfa/setup/verify', payload);
+    return response.data;
+};
+
+export const disableMfa = async (payload: { current_password?: string; code?: string; recovery_code?: string }) => {
+    const response = await api.post('/auth/mfa/disable', payload);
+    return response.data;
+};
+
+export const regenerateMfaRecoveryCodes = async (payload: { current_password?: string; code?: string; recovery_code?: string }): Promise<MfaRecoveryCodes> => {
+    const response = await api.post('/auth/mfa/recovery-codes/regenerate', payload);
+    return response.data;
+};
+
+export const reauth = async (payload: { current_password?: string; code?: string; recovery_code?: string }) => {
+    const response = await api.post('/auth/reauth', payload);
     return response.data;
 };
 

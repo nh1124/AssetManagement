@@ -71,6 +71,35 @@ class Client(Base):
     period_reviews = relationship("PeriodReview", back_populates="client")
     monthly_actions = relationship("MonthlyAction", back_populates="client")
     exchange_rates = relationship("ExchangeRate", back_populates="client")
+    mfa_setting = relationship("ClientMfaSetting", back_populates="client", uselist=False, cascade="all, delete-orphan")
+    recovery_codes = relationship("ClientRecoveryCode", back_populates="client", cascade="all, delete-orphan")
+
+
+class ClientMfaSetting(Base):
+    __tablename__ = "client_mfa_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), unique=True, nullable=False, index=True)
+    totp_secret_encrypted = Column(Text, nullable=True)
+    enabled = Column(Boolean, nullable=False, default=False, server_default="false")
+    enabled_at = Column(DateTime, nullable=True)
+    last_verified_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    client = relationship("Client", back_populates="mfa_setting")
+
+
+class ClientRecoveryCode(Base):
+    __tablename__ = "client_recovery_codes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    code_hash = Column(String, nullable=False)
+    used_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    client = relationship("Client", back_populates="recovery_codes")
 
 class Account(Base):
     """Double-entry accounting: Each account has a type and balance."""

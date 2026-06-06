@@ -13,3 +13,4 @@ bcrypt
 httpx
 numpy>=1.24.0
 alembic>=1.13.0
+pyotp>=2.9.0

@@ -13,7 +13,10 @@ async function login(): Promise<string> {
     body: JSON.stringify({ username: BACKEND_USERNAME, password: BACKEND_PASSWORD }),
   });
   if (!res.ok) throw new Error(`Login failed: ${res.status} ${await res.text()}`);
-  const data = await res.json() as { access_token: string };
+  const data = await res.json() as { access_token?: string; mfa_required?: boolean };
+  if (data.mfa_required || !data.access_token) {
+    throw new Error("Backend login requires MFA; configure a non-interactive MCP credential flow before using this account");
+  }
   return data.access_token;
 }
 

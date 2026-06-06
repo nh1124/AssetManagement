@@ -21,15 +21,20 @@ import { useClient } from '../context/ClientContext';
 import { useAuth } from '../context/AuthContext';
 import {
     checkDataHealth,
+    disableMfa,
     exportData,
+    getMfaStatus,
     importData,
+    regenerateMfaRecoveryCodes,
     repairDataHealth,
+    startMfaSetup,
     updateClientKey,
     updateClientSettings,
     updateProfile,
+    verifyMfaSetup,
 } from '../api';
 import { useToast } from '../components/Toast';
-import type { DataHealthResult } from '../types';
+import type { DataHealthResult, MfaSetupStart, MfaStatus } from '../types';
 
 type SettingsTab = 'security' | 'preferences' | 'transfer' | 'health';
 
@@ -56,6 +61,12 @@ export default function SettingsPage() {
     const [health, setHealth] = useState<DataHealthResult | null>(null);
     const [isCheckingHealth, setIsCheckingHealth] = useState(false);
     const [isRepairingHealth, setIsRepairingHealth] = useState(false);
+    const [mfaStatus, setMfaStatus] = useState<MfaStatus | null>(null);
+    const [mfaSetup, setMfaSetup] = useState<MfaSetupStart | null>(null);
+    const [mfaPassword, setMfaPassword] = useState('');
+    const [mfaCode, setMfaCode] = useState('');
+    const [mfaRecoveryCodes, setMfaRecoveryCodes] = useState<string[]>([]);
+    const [isMfaBusy, setIsMfaBusy] = useState(false);
     const importInputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
@@ -68,6 +79,18 @@ export default function SettingsPage() {
             language: general.language || 'ja',
         }));
     }, [currentClient?.id, user?.id]);
+
+    useEffect(() => {
+        refreshMfaStatus();
+    }, [user?.id]);
+
+    const refreshMfaStatus = async () => {
+        try {
+            setMfaStatus(await getMfaStatus());
+        } catch {
+            setMfaStatus(null);
+        }
+    };
 
     const handleSave = async () => {
         setIsSaving(true);
@@ -193,6 +216,70 @@ export default function SettingsPage() {
         }
     };
 
+    const beginMfaSetup = async () => {
+        setIsMfaBusy(true);
+        try {
+            const setup = await startMfaSetup({ current_password: mfaPassword });
+            setMfaSetup(setup);
+            setMfaRecoveryCodes([]);
+            showToast('MFA setup started', 'success');
+        } catch (error: any) {
+            showToast(error.response?.data?.detail || 'Failed to start MFA setup', 'error');
+        } finally {
+            setIsMfaBusy(false);
+        }
+    };
+
+    const confirmMfaSetup = async () => {
+        setIsMfaBusy(true);
+        try {
+            const result = await verifyMfaSetup({ code: mfaCode });
+            setMfaRecoveryCodes(result.recovery_codes);
+            setMfaSetup(null);
+            setMfaCode('');
+            setMfaPassword('');
+            await refreshMfaStatus();
+            showToast('MFA enabled', 'success');
+        } catch (error: any) {
+            showToast(error.response?.data?.detail || 'Failed to verify MFA code', 'error');
+        } finally {
+            setIsMfaBusy(false);
+        }
+    };
+
+    const turnOffMfa = async () => {
+        setIsMfaBusy(true);
+        try {
+            await disableMfa({ current_password: mfaPassword, code: mfaCode });
+            setMfaSetup(null);
+            setMfaRecoveryCodes([]);
+            setMfaCode('');
+            setMfaPassword('');
+            await refreshMfaStatus();
+            showToast('MFA disabled', 'success');
+        } catch (error: any) {
+            showToast(error.response?.data?.detail || 'Failed to disable MFA', 'error');
+        } finally {
+            setIsMfaBusy(false);
+        }
+    };
+
+    const regenerateRecoveryCodes = async () => {
+        setIsMfaBusy(true);
+        try {
+            const result = await regenerateMfaRecoveryCodes({ current_password: mfaPassword, code: mfaCode });
+            setMfaRecoveryCodes(result.recovery_codes);
+            setMfaCode('');
+            setMfaPassword('');
+            await refreshMfaStatus();
+            showToast('Recovery codes regenerated', 'success');
+        } catch (error: any) {
+            showToast(error.response?.data?.detail || 'Failed to regenerate recovery codes', 'error');
+        } finally {
+            setIsMfaBusy(false);
+        }
+    };
+
     const fieldClass = 'w-full bg-slate-900 border border-slate-700 px-3 py-2 text-sm focus:outline-none focus:border-emerald-500 transition-colors';
     const labelClass = 'block text-[10px] text-slate-500 uppercase tracking-widest mb-1';
     const sectionClass = 'border-b border-slate-800 px-2 py-4 last:border-b-0';
@@ -266,35 +353,150 @@ export default function SettingsPage() {
         </div>
     );
 
-    const securityTab = (
+    const mfaTab = (
         <div className={sectionClass}>
-            <div className="mb-3 flex items-center gap-2">
-                <Key size={18} className="text-amber-400" />
-                <h2 className="text-sm font-semibold">Gemini Security</h2>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                    <ShieldCheck size={18} className="text-emerald-400" />
+                    <h2 className="text-sm font-semibold">Multi-Factor Authentication</h2>
+                </div>
+                <span className={`border px-2 py-0.5 text-[10px] ${mfaStatus?.enabled ? 'border-emerald-500/40 text-emerald-300' : 'border-slate-700 text-slate-400'}`}>
+                    {mfaStatus?.enabled ? 'Enabled' : 'Disabled'}
+                </span>
             </div>
-            <div className="relative">
-                <input
-                    type={showApiKey ? 'text' : 'password'}
-                    value={settings.geminiApiKey}
-                    onChange={(e) => setSettings({ ...settings, geminiApiKey: e.target.value })}
-                    placeholder="Paste new Gemini API key..."
-                    className={`${fieldClass} pr-10 font-mono`}
-                />
-                <button
-                    type="button"
-                    onClick={() => setShowApiKey(!showApiKey)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-500 hover:text-slate-300"
-                    aria-label="Toggle API key visibility"
-                    title="Toggle API key visibility"
-                >
-                    {showApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
-                </button>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                    <label className={labelClass}>Current Password</label>
+                    <input
+                        type="password"
+                        value={mfaPassword}
+                        onChange={(e) => setMfaPassword(e.target.value)}
+                        className={fieldClass}
+                        placeholder="Required for setup or changes"
+                    />
+                </div>
+                <div>
+                    <label className={labelClass}>Authenticator Code</label>
+                    <input
+                        type="text"
+                        value={mfaCode}
+                        onChange={(e) => setMfaCode(e.target.value)}
+                        className={`${fieldClass} font-mono`}
+                        placeholder="123456"
+                    />
+                </div>
             </div>
-            <div className="mt-3 flex items-center gap-2 text-[10px]">
-                <div className={`h-1.5 w-1.5 rounded-full ${currentClient?.has_key ? 'bg-emerald-500' : 'bg-slate-700'}`} />
-                <span className="text-slate-500">{currentClient?.has_key ? 'Remote key active' : 'No key configured'}</span>
+
+            {mfaSetup && (
+                <div className="mt-3 border border-emerald-500/30 bg-emerald-950/20 p-3">
+                    <div className="mb-2 text-[10px] uppercase tracking-widest text-emerald-300">Setup URI</div>
+                    <textarea
+                        readOnly
+                        value={mfaSetup.otpauth_uri}
+                        className="h-20 w-full resize-none border border-slate-800 bg-slate-950 p-2 font-mono text-[10px] text-slate-300"
+                    />
+                    <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto]">
+                        <input readOnly value={mfaSetup.manual_entry_key} className={`${fieldClass} font-mono`} />
+                        <button
+                            type="button"
+                            onClick={confirmMfaSetup}
+                            disabled={isMfaBusy || !mfaCode}
+                            className="flex items-center justify-center gap-2 border border-emerald-500/40 px-3 py-2 text-xs text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-50"
+                        >
+                            <CheckCircle2 size={14} />
+                            Verify
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {mfaRecoveryCodes.length > 0 && (
+                <div className="mt-3 border border-amber-500/30 bg-amber-950/10 p-3">
+                    <div className="mb-2 text-[10px] uppercase tracking-widest text-amber-300">Recovery Codes</div>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                        {mfaRecoveryCodes.map((code) => (
+                            <code key={code} className="border border-slate-800 bg-slate-950 px-2 py-1 text-center text-xs text-slate-200">
+                                {code}
+                            </code>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            <div className="mt-3 flex flex-wrap gap-2">
+                {!mfaStatus?.enabled && !mfaSetup && (
+                    <button
+                        type="button"
+                        onClick={beginMfaSetup}
+                        disabled={isMfaBusy || !mfaPassword}
+                        className="flex items-center gap-2 border border-emerald-500/40 bg-slate-800/60 px-3 py-2 text-xs text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-50"
+                    >
+                        <ShieldCheck size={14} />
+                        Start Setup
+                    </button>
+                )}
+                {mfaStatus?.enabled && (
+                    <>
+                        <button
+                            type="button"
+                            onClick={regenerateRecoveryCodes}
+                            disabled={isMfaBusy || (!mfaPassword && !mfaCode)}
+                            className="flex items-center gap-2 border border-slate-700 bg-slate-800/60 px-3 py-2 text-xs hover:border-amber-500 hover:text-amber-300 disabled:opacity-50"
+                        >
+                            <RefreshCw size={14} />
+                            Recovery Codes
+                        </button>
+                        <button
+                            type="button"
+                            onClick={turnOffMfa}
+                            disabled={isMfaBusy || (!mfaPassword && !mfaCode)}
+                            className="flex items-center gap-2 border border-red-500/40 bg-slate-800/60 px-3 py-2 text-xs text-red-300 hover:bg-red-500/10 disabled:opacity-50"
+                        >
+                            <AlertTriangle size={14} />
+                            Disable
+                        </button>
+                    </>
+                )}
+            </div>
+            <div className="mt-2 text-[10px] text-slate-500">
+                {mfaStatus?.enabled ? `${mfaStatus.recovery_codes_remaining} recovery codes remaining` : 'Authenticator app setup is available for this account.'}
             </div>
         </div>
+    );
+
+    const securityTab = (
+        <>
+            {mfaTab}
+            <div className={sectionClass}>
+                <div className="mb-3 flex items-center gap-2">
+                    <Key size={18} className="text-amber-400" />
+                    <h2 className="text-sm font-semibold">Gemini Security</h2>
+                </div>
+                <div className="relative">
+                    <input
+                        type={showApiKey ? 'text' : 'password'}
+                        value={settings.geminiApiKey}
+                        onChange={(e) => setSettings({ ...settings, geminiApiKey: e.target.value })}
+                        placeholder="Paste new Gemini API key..."
+                        className={`${fieldClass} pr-10 font-mono`}
+                    />
+                    <button
+                        type="button"
+                        onClick={() => setShowApiKey(!showApiKey)}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-500 hover:text-slate-300"
+                        aria-label="Toggle API key visibility"
+                        title="Toggle API key visibility"
+                    >
+                        {showApiKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                </div>
+                <div className="mt-3 flex items-center gap-2 text-[10px]">
+                    <div className={`h-1.5 w-1.5 rounded-full ${currentClient?.has_key ? 'bg-emerald-500' : 'bg-slate-700'}`} />
+                    <span className="text-slate-500">{currentClient?.has_key ? 'Remote key active' : 'No key configured'}</span>
+                </div>
+            </div>
+        </>
     );
 
     const preferencesTab = (
