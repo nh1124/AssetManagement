@@ -1,4 +1,5 @@
 import { type ChangeEvent, useEffect, useRef, useState } from 'react';
+import QRCode from 'qrcode';
 import {
     Activity,
     AlertTriangle,
@@ -63,6 +64,7 @@ export default function SettingsPage() {
     const [isRepairingHealth, setIsRepairingHealth] = useState(false);
     const [mfaStatus, setMfaStatus] = useState<MfaStatus | null>(null);
     const [mfaSetup, setMfaSetup] = useState<MfaSetupStart | null>(null);
+    const [mfaQrDataUrl, setMfaQrDataUrl] = useState('');
     const [mfaPassword, setMfaPassword] = useState('');
     const [mfaCode, setMfaCode] = useState('');
     const [mfaRecoveryCodes, setMfaRecoveryCodes] = useState<string[]>([]);
@@ -83,6 +85,32 @@ export default function SettingsPage() {
     useEffect(() => {
         refreshMfaStatus();
     }, [user?.id]);
+
+    useEffect(() => {
+        let cancelled = false;
+        if (!mfaSetup?.otpauth_uri) {
+            setMfaQrDataUrl('');
+            return;
+        }
+
+        QRCode.toDataURL(mfaSetup.otpauth_uri, {
+            width: 208,
+            margin: 2,
+            errorCorrectionLevel: 'M',
+            color: {
+                dark: '#020617',
+                light: '#f8fafc',
+            },
+        }).then((url) => {
+            if (!cancelled) setMfaQrDataUrl(url);
+        }).catch(() => {
+            if (!cancelled) setMfaQrDataUrl('');
+        });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [mfaSetup?.otpauth_uri]);
 
     const refreshMfaStatus = async () => {
         try {
@@ -390,23 +418,37 @@ export default function SettingsPage() {
 
             {mfaSetup && (
                 <div className="mt-3 border border-emerald-500/30 bg-emerald-950/20 p-3">
-                    <div className="mb-2 text-[10px] uppercase tracking-widest text-emerald-300">Setup URI</div>
-                    <textarea
-                        readOnly
-                        value={mfaSetup.otpauth_uri}
-                        className="h-20 w-full resize-none border border-slate-800 bg-slate-950 p-2 font-mono text-[10px] text-slate-300"
-                    />
-                    <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto]">
-                        <input readOnly value={mfaSetup.manual_entry_key} className={`${fieldClass} font-mono`} />
-                        <button
-                            type="button"
-                            onClick={confirmMfaSetup}
-                            disabled={isMfaBusy || !mfaCode}
-                            className="flex items-center justify-center gap-2 border border-emerald-500/40 px-3 py-2 text-xs text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-50"
-                        >
-                            <CheckCircle2 size={14} />
-                            Verify
-                        </button>
+                    <div className="grid grid-cols-1 gap-3 lg:grid-cols-[232px_1fr]">
+                        <div className="flex items-center justify-center border border-slate-800 bg-slate-50 p-3">
+                            {mfaQrDataUrl ? (
+                                <img src={mfaQrDataUrl} alt="MFA setup QR code" className="h-52 w-52" />
+                            ) : (
+                                <div className="flex h-52 w-52 items-center justify-center text-xs text-slate-500">Generating QR...</div>
+                            )}
+                        </div>
+                        <div className="min-w-0 space-y-2">
+                            <div>
+                                <div className="mb-1 text-[10px] uppercase tracking-widest text-emerald-300">Manual Key</div>
+                                <input readOnly value={mfaSetup.manual_entry_key} className={`${fieldClass} font-mono`} />
+                            </div>
+                            <div>
+                                <div className="mb-1 text-[10px] uppercase tracking-widest text-emerald-300">Setup URI</div>
+                                <textarea
+                                    readOnly
+                                    value={mfaSetup.otpauth_uri}
+                                    className="h-20 w-full resize-none border border-slate-800 bg-slate-950 p-2 font-mono text-[10px] text-slate-300"
+                                />
+                            </div>
+                            <button
+                                type="button"
+                                onClick={confirmMfaSetup}
+                                disabled={isMfaBusy || !mfaCode}
+                                className="flex w-full items-center justify-center gap-2 border border-emerald-500/40 px-3 py-2 text-xs text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-50"
+                            >
+                                <CheckCircle2 size={14} />
+                                Verify
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}
