@@ -11,6 +11,7 @@ from .routers import (
     accounts,
     actions,
     ai,
+    ai_change_requests,
     ai_operations,
     analysis,
     auth,
@@ -65,6 +66,42 @@ def ensure_runtime_schema_guards(db) -> None:
         db.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS liability_fixed_payment_amount DOUBLE PRECISION"))
         db.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS liability_installment_months INTEGER"))
         db.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS liability_revolving_rate DOUBLE PRECISION"))
+        db.execute(text(
+            """
+            CREATE TABLE IF NOT EXISTS ai_change_requests (
+                id SERIAL PRIMARY KEY,
+                client_id INTEGER NOT NULL REFERENCES clients(id),
+                created_by_client_id INTEGER REFERENCES clients(id),
+                ai_client_id INTEGER REFERENCES clients(id),
+                mcp_client_id VARCHAR,
+                source VARCHAR NOT NULL,
+                tool_name VARCHAR,
+                resource VARCHAR NOT NULL,
+                action VARCHAR NOT NULL,
+                risk VARCHAR NOT NULL,
+                status VARCHAR NOT NULL DEFAULT 'pending',
+                target_ref JSON NOT NULL,
+                input_payload JSON NOT NULL,
+                before_snapshot JSON NOT NULL,
+                after_snapshot JSON NOT NULL,
+                diff JSON NOT NULL,
+                validation JSON NOT NULL,
+                idempotency_key VARCHAR NOT NULL,
+                precondition_hash VARCHAR,
+                requires_mfa BOOLEAN NOT NULL DEFAULT false,
+                approved_by_client_id INTEGER REFERENCES clients(id),
+                approved_at TIMESTAMP,
+                applied_at TIMESTAMP,
+                expires_at TIMESTAMP,
+                result JSON NOT NULL,
+                created_at TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP NOT NULL,
+                CONSTRAINT _client_ai_change_request_idempotency_uc UNIQUE (client_id, idempotency_key)
+            )
+            """
+        ))
+        db.execute(text("CREATE INDEX IF NOT EXISTS ix_ai_change_requests_client_id ON ai_change_requests (client_id)"))
+        db.execute(text("CREATE INDEX IF NOT EXISTS ix_ai_change_requests_status ON ai_change_requests (status)"))
         db.execute(text(
             """
             CREATE INDEX IF NOT EXISTS ix_monthly_plan_lines_source_identity
@@ -192,6 +229,7 @@ app.include_router(accounts.router)
 app.include_router(actions.router, dependencies=[Depends(get_current_client)])
 app.include_router(ai.router)
 app.include_router(ai_operations.router)
+app.include_router(ai_change_requests.router)
 app.include_router(clients.router)
 app.include_router(data_transfer.router)
 app.include_router(auth.router)

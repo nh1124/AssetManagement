@@ -22,6 +22,7 @@ AiOperationRiskLiteral = Literal["low", "medium", "high", "critical"]
 AiOperationModeLiteral = Literal["deny", "allow_read", "require_approval", "allow_execute"]
 AiOperationDecisionLiteral = Literal["allowed", "denied", "approval_required", "applied", "failed"]
 AiOperationSourceLiteral = Literal["frontend", "mcp_http", "mcp_stdio", "backend"]
+AiChangeRequestStatusLiteral = Literal["draft", "pending", "approved", "applied", "rejected", "expired", "failed"]
 
 # Account Schemas
 class AccountBase(BaseModel):
@@ -141,6 +142,69 @@ class AiOperationEvaluateResponse(BaseModel):
     risk: AiOperationRiskLiteral
     require_mfa: bool = False
     reason: str
+
+
+class AiChangeRequestBase(BaseModel):
+    source: AiOperationSourceLiteral = "backend"
+    tool_name: Optional[str] = None
+    resource: str
+    action: str
+    risk: AiOperationRiskLiteral = "medium"
+    ai_client_id: Optional[int] = None
+    mcp_client_id: Optional[str] = None
+    target_ref: dict[str, Any] = Field(default_factory=dict)
+    input_payload: dict[str, Any] = Field(default_factory=dict)
+    idempotency_key: Optional[str] = None
+    expires_at: Optional[datetime] = None
+    mfa_verified: bool = False
+
+
+class AiChangeRequestPreviewRequest(AiChangeRequestBase):
+    pass
+
+
+class AiChangeRequestCreate(AiChangeRequestBase):
+    status: Literal["draft", "pending"] = "pending"
+
+
+class AiChangeRequestActionRequest(BaseModel):
+    step_up_token: Optional[str] = None
+
+
+class AiChangeRequestPreview(BaseModel):
+    resource: str
+    action: str
+    risk: AiOperationRiskLiteral
+    target_ref: dict[str, Any] = Field(default_factory=dict)
+    input_payload: dict[str, Any] = Field(default_factory=dict)
+    before_snapshot: dict[str, Any] = Field(default_factory=dict)
+    after_snapshot: dict[str, Any] = Field(default_factory=dict)
+    diff: dict[str, Any] = Field(default_factory=dict)
+    validation: dict[str, Any] = Field(default_factory=dict)
+    precondition_hash: Optional[str] = None
+    requires_mfa: bool = False
+
+
+class AiChangeRequest(AiChangeRequestPreview):
+    id: int
+    client_id: int
+    created_by_client_id: Optional[int] = None
+    ai_client_id: Optional[int] = None
+    mcp_client_id: Optional[str] = None
+    source: AiOperationSourceLiteral
+    tool_name: Optional[str] = None
+    status: AiChangeRequestStatusLiteral
+    idempotency_key: str
+    approved_by_client_id: Optional[int] = None
+    approved_at: Optional[datetime] = None
+    applied_at: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+    result: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
 
 # Transaction Schemas
 class TransactionBase(BaseModel):

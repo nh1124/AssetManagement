@@ -85,6 +85,12 @@ class Client(Base):
         cascade="all, delete-orphan",
         foreign_keys="AiAuditLog.client_id",
     )
+    ai_change_requests = relationship(
+        "AiChangeRequest",
+        back_populates="client",
+        cascade="all, delete-orphan",
+        foreign_keys="AiChangeRequest.client_id",
+    )
 
 
 class ClientMfaSetting(Base):
@@ -553,6 +559,43 @@ class AiAuditLog(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     client = relationship("Client", back_populates="ai_audit_logs", foreign_keys=[client_id])
+
+
+class AiChangeRequest(Base):
+    __tablename__ = "ai_change_requests"
+    __table_args__ = (
+        UniqueConstraint("client_id", "idempotency_key", name="_client_ai_change_request_idempotency_uc"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    created_by_client_id = Column(Integer, ForeignKey("clients.id"), nullable=True, index=True)
+    ai_client_id = Column(Integer, ForeignKey("clients.id"), nullable=True, index=True)
+    mcp_client_id = Column(String, nullable=True, index=True)
+    source = Column(String, nullable=False)
+    tool_name = Column(String, nullable=True)
+    resource = Column(String, nullable=False)
+    action = Column(String, nullable=False)
+    risk = Column(String, nullable=False)
+    status = Column(String, default="pending", server_default="pending", nullable=False, index=True)
+    target_ref = Column(JSON, default=dict, nullable=False)
+    input_payload = Column(JSON, default=dict, nullable=False)
+    before_snapshot = Column(JSON, default=dict, nullable=False)
+    after_snapshot = Column(JSON, default=dict, nullable=False)
+    diff = Column(JSON, default=dict, nullable=False)
+    validation = Column(JSON, default=dict, nullable=False)
+    idempotency_key = Column(String, nullable=False)
+    precondition_hash = Column(String, nullable=True)
+    requires_mfa = Column(Boolean, default=False, server_default="false", nullable=False)
+    approved_by_client_id = Column(Integer, ForeignKey("clients.id"), nullable=True, index=True)
+    approved_at = Column(DateTime, nullable=True)
+    applied_at = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
+    result = Column(JSON, default=dict, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    client = relationship("Client", back_populates="ai_change_requests", foreign_keys=[client_id])
 
 
 class Milestone(Base):

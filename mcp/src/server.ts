@@ -5,6 +5,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerAccountTools } from "./tools/accounts.js";
 import { registerActionTools } from "./tools/actions.js";
+import { registerAiChangeRequestTools } from "./tools/ai-change-requests.js";
 import { registerAiTools } from "./tools/ai.js";
 import { registerAnalysisTools } from "./tools/analysis.js";
 import { registerCalculatorTools } from "./tools/calculator.js";
@@ -54,6 +55,7 @@ export function buildMcpServer(): McpServer {
   registerDataTransferTools(server);
   registerClientTools(server);
   registerAiTools(server);
+  registerAiChangeRequestTools(server);
   registerResources(server);
   registerPrompts(server);
 

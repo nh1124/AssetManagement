@@ -6,6 +6,9 @@ import type {
     AccountFlowTransactionPage,
     AccountRole,
     AccountTreeNode,
+    AiChangeRequest,
+    AiChangeRequestPayload,
+    AiChangeRequestPreview,
     AiAuditLog,
     AiOperationEvaluatePayload,
     AiOperationEvaluateResult,
@@ -154,6 +157,46 @@ export const getAiAuditLogs = async (params?: { limit?: number; offset?: number 
 
 export const evaluateAiOperation = async (payload: AiOperationEvaluatePayload): Promise<AiOperationEvaluateResult> => {
     const response = await api.post('/ai/evaluate', payload);
+    return response.data;
+};
+
+export const getAiChangeRequests = async (params?: { status?: string; limit?: number; offset?: number }): Promise<AiChangeRequest[]> => {
+    const search = new URLSearchParams();
+    if (params?.status) search.set('status', params.status);
+    if (params?.limit) search.set('limit', String(params.limit));
+    if (params?.offset) search.set('offset', String(params.offset));
+    const query = search.toString();
+    const response = await api.get(`/ai/change-requests${query ? `?${query}` : ''}`);
+    return response.data;
+};
+
+export const previewAiChangeRequest = async (payload: AiChangeRequestPayload): Promise<AiChangeRequestPreview> => {
+    const response = await api.post('/ai/change-requests/preview', payload);
+    return response.data;
+};
+
+export const createAiChangeRequest = async (payload: AiChangeRequestPayload): Promise<AiChangeRequest> => {
+    const response = await api.post('/ai/change-requests', payload);
+    return response.data;
+};
+
+export const approveAiChangeRequest = async (id: number, payload?: { step_up_token?: string | null }): Promise<AiChangeRequest> => {
+    const response = await api.post(`/ai/change-requests/${id}/approve`, payload ?? {});
+    return response.data;
+};
+
+export const applyAiChangeRequest = async (id: number): Promise<AiChangeRequest> => {
+    const response = await api.post(`/ai/change-requests/${id}/apply`);
+    return response.data;
+};
+
+export const rejectAiChangeRequest = async (id: number): Promise<AiChangeRequest> => {
+    const response = await api.post(`/ai/change-requests/${id}/reject`);
+    return response.data;
+};
+
+export const refreshAiChangeRequestPreview = async (id: number): Promise<AiChangeRequest> => {
+    const response = await api.post(`/ai/change-requests/${id}/refresh-preview`);
     return response.data;
 };
 

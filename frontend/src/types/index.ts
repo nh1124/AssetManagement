@@ -119,6 +119,7 @@ export type AiOperationRisk = 'low' | 'medium' | 'high' | 'critical';
 export type AiOperationMode = 'deny' | 'allow_read' | 'require_approval' | 'allow_execute';
 export type AiOperationDecision = 'allowed' | 'denied' | 'approval_required' | 'applied' | 'failed';
 export type AiOperationSource = 'frontend' | 'mcp_http' | 'mcp_stdio' | 'backend';
+export type AiChangeRequestStatus = 'draft' | 'pending' | 'approved' | 'applied' | 'rejected' | 'expired' | 'failed';
 
 export interface AiOperationPolicy {
     id: number;
@@ -180,6 +181,55 @@ export interface AiOperationEvaluateResult {
     risk: AiOperationRisk;
     require_mfa: boolean;
     reason: string;
+}
+
+export interface AiChangeRequestPayload {
+    source?: AiOperationSource;
+    tool_name?: string | null;
+    resource: string;
+    action: string;
+    risk?: AiOperationRisk;
+    ai_client_id?: number | null;
+    mcp_client_id?: string | null;
+    target_ref?: Record<string, unknown>;
+    input_payload?: Record<string, unknown>;
+    idempotency_key?: string | null;
+    expires_at?: string | null;
+    mfa_verified?: boolean;
+    status?: 'draft' | 'pending';
+}
+
+export interface AiChangeRequestPreview {
+    resource: string;
+    action: string;
+    risk: AiOperationRisk;
+    target_ref: Record<string, unknown>;
+    input_payload: Record<string, unknown>;
+    before_snapshot: Record<string, unknown>;
+    after_snapshot: Record<string, unknown>;
+    diff: Record<string, unknown>;
+    validation: Record<string, unknown>;
+    precondition_hash?: string | null;
+    requires_mfa: boolean;
+}
+
+export interface AiChangeRequest extends AiChangeRequestPreview {
+    id: number;
+    client_id: number;
+    created_by_client_id?: number | null;
+    ai_client_id?: number | null;
+    mcp_client_id?: string | null;
+    source: AiOperationSource;
+    tool_name?: string | null;
+    status: AiChangeRequestStatus;
+    idempotency_key: string;
+    approved_by_client_id?: number | null;
+    approved_at?: string | null;
+    applied_at?: string | null;
+    expires_at?: string | null;
+    result: Record<string, unknown>;
+    created_at: string;
+    updated_at: string;
 }
 
 
