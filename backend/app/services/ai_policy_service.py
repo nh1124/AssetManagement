@@ -55,6 +55,7 @@ class AiOperationContext:
     action: str = ""
     risk: AiRisk = "low"
     ai_client_id: int | None = None
+    mcp_client_id: str | None = None
     request_summary: dict[str, Any] = field(default_factory=dict)
     diff_summary: dict[str, Any] = field(default_factory=dict)
     mfa_verified: bool = False
@@ -152,6 +153,7 @@ def write_ai_audit_log(
         client_id=client_id,
         actor_client_id=client_id,
         ai_client_id=context.ai_client_id,
+        mcp_client_id=context.mcp_client_id,
         source=context.source,
         tool_name=context.tool_name,
         resource=decision.resource,

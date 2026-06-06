@@ -98,6 +98,7 @@ class AiAuditLog(BaseModel):
     client_id: int
     actor_client_id: Optional[int] = None
     ai_client_id: Optional[int] = None
+    mcp_client_id: Optional[str] = None
     source: AiOperationSourceLiteral
     tool_name: Optional[str] = None
     resource: str
@@ -124,6 +125,7 @@ class AiOperationEvaluateRequest(BaseModel):
     action: str
     risk: AiOperationRiskLiteral = "low"
     ai_client_id: Optional[int] = None
+    mcp_client_id: Optional[str] = None
     request_summary: dict[str, Any] = Field(default_factory=dict)
     diff_summary: dict[str, Any] = Field(default_factory=dict)
     mfa_verified: bool = False

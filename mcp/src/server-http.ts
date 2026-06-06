@@ -6,20 +6,25 @@ import express, { type Request, type Response, type NextFunction } from "express
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { buildMcpServer } from "./server.js";
 import {
-  JWT_SECRET,
+  decodeAccessToken,
   getDiscoveryMetadata,
   registerClient,
   resolveClient,
   createAuthCode,
   exchangeCodeForTokens,
   refreshAccessToken,
-  validateAccessToken,
 } from "./auth.js";
+import { withMcpRequestContext, type McpRequestContext } from "./api-client.js";
 
 const PORT = parseInt(process.env.PORT ?? "3000");
 const BACKEND_URL = (process.env.BACKEND_URL ?? "http://backend:8000").replace(/\/$/, "");
 
-async function validateUserCredentials(username: string, password: string): Promise<string | null> {
+interface BackendUserContext {
+  username: string;
+  backend_client_id: number;
+}
+
+async function validateUserCredentials(username: string, password: string): Promise<BackendUserContext | null> {
   try {
     const res = await fetch(`${BACKEND_URL}/auth/login`, {
       method: "POST",
@@ -33,7 +38,9 @@ async function validateUserCredentials(username: string, password: string): Prom
       console.warn("[auth] backend login requires MFA; password-only MCP OAuth login rejected");
       return null;
     }
-    return username.toLowerCase();
+    const loginData = data as { client_id?: number };
+    if (!loginData.client_id) return null;
+    return { username: username.toLowerCase(), backend_client_id: loginData.client_id };
   } catch (err) {
     console.warn("[auth] backend login error", (err as Error).message);
     return null;
@@ -239,8 +246,8 @@ app.post("/authorize", async (req, res) => {
   if (!client) { res.status(400).json({ error: "invalid_client" }); return; }
   if (!client.redirect_uris.includes(redirect_uri)) { res.status(400).json({ error: "invalid_redirect_uri" }); return; }
 
-  const validUsername = await validateUserCredentials(username ?? "", password ?? "");
-  if (!validUsername) {
+  const validUser = await validateUserCredentials(username ?? "", password ?? "");
+  if (!validUser) {
     res.status(401).setHeader("Content-Type", "text/html; charset=utf-8").send(renderLoginForm({
       client_id,
       client_name: client.client_name,
@@ -255,7 +262,8 @@ app.post("/authorize", async (req, res) => {
     return;
   }
 
-  console.info("[oauth] authorize POST success", { client_id, username: validUsername, resource });
+  const issuer = buildOAuthIssuer(req);
+  console.info("[oauth] authorize POST success", { client_id, username: validUser.username, resource });
 
   const code = createAuthCode({
     client_id,
@@ -266,7 +274,9 @@ app.post("/authorize", async (req, res) => {
     state,
     resource,
     allow_refresh_token: client.grant_types.includes("refresh_token"),
-    username: validUsername,
+    username: validUser.username,
+    backend_client_id: validUser.backend_client_id,
+    issuer,
   });
 
   const redirectUrl = new URL(redirect_uri);
@@ -338,11 +348,19 @@ function requireBearer(req: Request, res: Response, next: NextFunction): void {
     res.setHeader("WWW-Authenticate", `Bearer realm="${issuer}", scope="mcp"`).status(401).json({ error: "unauthorized" });
     return;
   }
-  if (!validateAccessToken(auth.slice(7))) {
+  const token = auth.slice(7);
+  const payload = decodeAccessToken(token);
+  if (!payload) {
     console.warn("[mcp] invalid Bearer token", { method: req.method, path: req.path, token_prefix: auth.slice(7, 20) });
     res.setHeader("WWW-Authenticate", `Bearer realm="${issuer}", error="invalid_token"`).status(401).json({ error: "invalid_token" });
     return;
   }
+  (req as Request & { mcpAuth?: McpRequestContext }).mcpAuth = {
+    mcpAccessToken: token,
+    mcpClientId: payload.client_id,
+    username: payload.username,
+    backendClientId: payload.backend_client_id,
+  };
   next();
 }
 
@@ -376,6 +394,11 @@ function toBuffer(chunk: unknown): Buffer | null {
 async function handleMcpPost(req: Request, res: Response): Promise<void> {
   const body = req.body as Record<string, unknown>;
   const method = Array.isArray(body) ? "(batch)" : (body?.method as string | undefined) ?? "(unknown)";
+  const params = !Array.isArray(body) && body?.params && typeof body.params === "object"
+    ? body.params as Record<string, unknown>
+    : {};
+  const toolName = method === "tools/call" && typeof params.name === "string" ? params.name : undefined;
+  const authContext = (req as Request & { mcpAuth?: McpRequestContext }).mcpAuth;
   console.info("[mcp] req", { method, id: body?.id });
 
   // Capture all bytes written to the response
@@ -408,7 +431,11 @@ async function handleMcpPost(req: Request, res: Response): Promise<void> {
       return origSend(message, options);
     };
     await server.connect(transport);
-    await transport.handleRequest(req, res, body);
+    if (authContext) {
+      await withMcpRequestContext({ ...authContext, toolName }, () => transport.handleRequest(req, res, body));
+    } else {
+      await transport.handleRequest(req, res, body);
+    }
     res.on("close", () => {
       transport.close();
       server.close();

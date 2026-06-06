@@ -141,6 +141,7 @@ def test_audit_log_redacts_sensitive_values() -> None:
             resource="ai_settings",
             action="update",
             risk="critical",
+            mcp_client_id="mcp_test_client",
             request_summary={
                 "gemini_api_key": "secret-value",
                 "nested": {"password": "password123", "safe": "visible"},
@@ -157,6 +158,7 @@ def test_audit_log_redacts_sensitive_values() -> None:
         )
 
         assert log.request_summary["gemini_api_key"] == "[redacted]"
+        assert log.mcp_client_id == "mcp_test_client"
         assert log.request_summary["nested"]["password"] == "[redacted]"
         assert log.request_summary["nested"]["safe"] == "visible"
         assert log.result_summary["access_token"] == "[redacted]"

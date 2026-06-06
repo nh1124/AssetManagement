@@ -49,3 +49,23 @@ def decode_token(token: str) -> Optional[dict]:
         return payload
     except JWTError:
         return None
+
+
+def decode_mcp_access_token(token: str) -> Optional[dict]:
+    """Decode an MCP OAuth access token for backend token exchange."""
+    try:
+        payload = jwt.decode(
+            token,
+            settings.mcp_jwt_secret,
+            algorithms=[settings.jwt_algorithm],
+            audience=settings.mcp_token_audience,
+        )
+        issuer = str(payload.get("iss") or "").rstrip("/")
+        allowed_issuers = settings.allowed_mcp_token_issuers
+        if allowed_issuers and issuer not in allowed_issuers:
+            return None
+        if payload.get("type") != "access":
+            return None
+        return payload
+    except JWTError:
+        return None

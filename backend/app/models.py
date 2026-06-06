@@ -536,6 +536,7 @@ class AiAuditLog(Base):
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
     actor_client_id = Column(Integer, ForeignKey("clients.id"), nullable=True, index=True)
     ai_client_id = Column(Integer, ForeignKey("clients.id"), nullable=True, index=True)
+    mcp_client_id = Column(String, nullable=True, index=True)
     source = Column(String, nullable=False)
     tool_name = Column(String, nullable=True)
     resource = Column(String, nullable=False)

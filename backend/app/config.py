@@ -3,6 +3,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 DEV_JWT_SECRET_KEY = "dev_jwt_secret_change_in_production_must_be_32_chars"
 DEV_ENCRYPTION_KEY = "YLM_ViHfrMWM0hUF3XoAMLLSaL4dVTy-JnHamAaIWTo="
+DEV_MCP_JWT_SECRET = "change-me-to-a-secret-key-at-least-32-chars"
 
 
 class AppConfig(BaseSettings):
@@ -15,6 +16,9 @@ class AppConfig(BaseSettings):
     jwt_secret_key: str = DEV_JWT_SECRET_KEY
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 60 * 24  # 24 hours
+    mcp_jwt_secret: str = DEV_MCP_JWT_SECRET
+    mcp_token_audience: str = "asset-management-backend"
+    mcp_allowed_issuers: str = "http://localhost:13000"
 
     # Database Settings
     database_url: str = "sqlite:///./finance.db"
@@ -51,6 +55,14 @@ class AppConfig(BaseSettings):
             if origin.strip()
         ]
 
+    @property
+    def allowed_mcp_token_issuers(self) -> list[str]:
+        return [
+            issuer.strip().rstrip("/")
+            for issuer in (self.mcp_allowed_issuers or "").split(",")
+            if issuer.strip()
+        ]
+
     def validate_production_settings(self) -> None:
         if not self.is_production:
             return
@@ -58,6 +70,8 @@ class AppConfig(BaseSettings):
         errors: list[str] = []
         if self.jwt_secret_key == DEV_JWT_SECRET_KEY:
             errors.append("JWT_SECRET_KEY must be changed in production")
+        if self.mcp_jwt_secret == DEV_MCP_JWT_SECRET:
+            errors.append("MCP_JWT_SECRET must be changed in production")
         if self.encryption_key == DEV_ENCRYPTION_KEY:
             errors.append("ENCRYPTION_KEY must be changed in production")
         if "*" in self.cors_allowed_origins:

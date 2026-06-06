@@ -60,6 +60,8 @@ interface PendingAuthCode {
   resource: string;
   allow_refresh_token: boolean;
   username: string;
+  backend_client_id: number;
+  issuer: string;
   expires_at: number;
 }
 
@@ -69,6 +71,8 @@ interface OAuthRefreshTokenRecord {
   scope: string;
   resource: string;
   username: string;
+  backend_client_id: number;
+  issuer: string;
   issued_at_ms: number;
   expires_at_ms: number;
   revoked_at_ms?: number;
@@ -242,6 +246,8 @@ export function createAuthCode(params: {
   resource: string;
   allow_refresh_token: boolean;
   username: string;
+  backend_client_id: number;
+  issuer: string;
 }): string {
   const code = crypto.randomBytes(32).toString("base64url");
   pendingCodes.set(code, {
@@ -254,6 +260,8 @@ export function createAuthCode(params: {
     resource: params.resource,
     allow_refresh_token: params.allow_refresh_token,
     username: params.username,
+    backend_client_id: params.backend_client_id,
+    issuer: params.issuer,
     expires_at: Date.now() + AUTH_CODE_TTL_MS,
   });
   return code;
@@ -261,18 +269,55 @@ export function createAuthCode(params: {
 
 // ─── Token Issuance ───────────────────────────────────────
 
-function issueAccessJwt(params: { client_id: string; scope: string; resource: string; username: string }): string {
+const BACKEND_TOKEN_AUDIENCE = process.env.BACKEND_TOKEN_AUDIENCE ?? "asset-management-backend";
+
+export interface McpAccessTokenPayload {
+  sub: string;
+  type: "access";
+  client_id: string;
+  scope: string;
+  username: string;
+  backend_client_id: number;
+  aud?: string | string[];
+  iss?: string;
+  exp?: number;
+  iat?: number;
+}
+
+function issueAccessJwt(params: {
+  client_id: string;
+  scope: string;
+  resource: string;
+  username: string;
+  backend_client_id: number;
+  issuer: string;
+}): string {
   return jwt.sign(
-    { sub: params.username, type: "access", client_id: params.client_id, scope: params.scope, username: params.username },
+    {
+      sub: params.username,
+      type: "access",
+      client_id: params.client_id,
+      scope: params.scope,
+      username: params.username,
+      backend_client_id: params.backend_client_id,
+    },
     JWT_SECRET,
     {
       expiresIn: ACCESS_TOKEN_TTL_SEC,
-      ...(params.resource ? { audience: [params.resource] } : {}),
+      issuer: params.issuer,
+      audience: params.resource ? [params.resource, BACKEND_TOKEN_AUDIENCE] : [BACKEND_TOKEN_AUDIENCE],
     }
   );
 }
 
-function issueOpaqueRefreshToken(params: { client_id: string; scope: string; resource: string; username: string }): string {
+function issueOpaqueRefreshToken(params: {
+  client_id: string;
+  scope: string;
+  resource: string;
+  username: string;
+  backend_client_id: number;
+  issuer: string;
+}): string {
   const token = crypto.randomBytes(48).toString("base64url");
   const hash = hashToken(token);
   const now = Date.now();
@@ -282,6 +327,8 @@ function issueOpaqueRefreshToken(params: { client_id: string; scope: string; res
     scope: params.scope,
     resource: params.resource,
     username: params.username,
+    backend_client_id: params.backend_client_id,
+    issuer: params.issuer,
     issued_at_ms: now,
     expires_at_ms: now + REFRESH_TOKEN_TTL_MS,
   });
@@ -336,9 +383,18 @@ export function exchangeCodeForTokens(params: {
     scope: entry.scope,
     resource: effectiveResource,
     username: entry.username,
+    backend_client_id: entry.backend_client_id,
+    issuer: entry.issuer,
   });
   const refresh_token = entry.allow_refresh_token
-    ? issueOpaqueRefreshToken({ client_id: params.client_id, scope: entry.scope, resource: effectiveResource, username: entry.username })
+    ? issueOpaqueRefreshToken({
+        client_id: params.client_id,
+        scope: entry.scope,
+        resource: effectiveResource,
+        username: entry.username,
+        backend_client_id: entry.backend_client_id,
+        issuer: entry.issuer,
+      })
     : undefined;
 
   return { access_token, refresh_token, token_type: "Bearer", expires_in: ACCESS_TOKEN_TTL_SEC, scope: entry.scope };
@@ -369,6 +425,8 @@ export function refreshAccessToken(params: {
     scope: record.scope,
     resource: record.resource,
     username: record.username,
+    backend_client_id: record.backend_client_id,
+    issuer: record.issuer,
   });
   record.replaced_by_hash = hashToken(new_refresh_token);
 
@@ -377,6 +435,8 @@ export function refreshAccessToken(params: {
     scope: record.scope,
     resource: record.resource,
     username: record.username,
+    backend_client_id: record.backend_client_id,
+    issuer: record.issuer,
   });
 
   console.info("[oauth] refresh token rotated", { client_id: params.client_id, username: record.username });
@@ -391,12 +451,16 @@ export function refreshAccessToken(params: {
 
 // ─── Access Token Validation ──────────────────────────────
 
-export function validateAccessToken(token: string): boolean {
+export function decodeAccessToken(token: string): McpAccessTokenPayload | null {
   try {
-    const payload = jwt.verify(token, JWT_SECRET) as { type?: string };
-    return payload.type === "access";
+    const payload = jwt.verify(token, JWT_SECRET) as McpAccessTokenPayload;
+    return payload.type === "access" ? payload : null;
   } catch (err) {
     console.warn("[oauth] token validation failed", { reason: (err as Error).message });
-    return false;
+    return null;
   }
+}
+
+export function validateAccessToken(token: string): boolean {
+  return decodeAccessToken(token) !== null;
 }

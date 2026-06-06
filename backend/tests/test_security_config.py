@@ -5,6 +5,7 @@ from sqlalchemy.orm import sessionmaker
 from backend.app.config import (
     DEV_ENCRYPTION_KEY,
     DEV_JWT_SECRET_KEY,
+    DEV_MCP_JWT_SECRET,
     AppConfig,
 )
 from backend.app.database import Base
@@ -38,13 +39,30 @@ def test_production_rejects_development_secrets() -> None:
 
     message = str(exc.value)
     assert "JWT_SECRET_KEY" in message
+    assert "MCP_JWT_SECRET" in message
     assert "ENCRYPTION_KEY" in message
+
+
+def test_production_rejects_development_mcp_secret() -> None:
+    settings = AppConfig(
+        app_env="production",
+        jwt_secret_key="prod-jwt-secret-that-is-long-and-unique",
+        mcp_jwt_secret=DEV_MCP_JWT_SECRET,
+        encryption_key="prod-fernet-key-placeholder-for-config-test",
+        allowed_origins="https://asset.example",
+    )
+
+    with pytest.raises(RuntimeError) as exc:
+        settings.validate_production_settings()
+
+    assert "MCP_JWT_SECRET" in str(exc.value)
 
 
 def test_production_rejects_wildcard_cors() -> None:
     settings = AppConfig(
         app_env="production",
         jwt_secret_key="prod-jwt-secret-that-is-long-and-unique",
+        mcp_jwt_secret="prod-mcp-secret-that-is-long-and-unique",
         encryption_key="prod-fernet-key-placeholder-for-config-test",
         allowed_origins="*",
     )

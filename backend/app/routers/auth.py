@@ -6,7 +6,7 @@ from typing import Optional
 from sqlalchemy.exc import IntegrityError
 from .. import models
 from ..database import get_db
-from ..utils.jwt import create_access_token, create_typed_token, decode_token
+from ..utils.jwt import create_access_token, create_typed_token, decode_token, decode_mcp_access_token
 from ..utils.password import verify_password, hash_password
 from ..dependencies import get_current_client
 from ..services import mfa_service
@@ -70,6 +70,19 @@ class StepUpResponse(BaseModel):
     step_up_token: str
     token_type: str = "step_up"
     expires_in_seconds: int = 600
+
+
+class McpTokenExchangeRequest(BaseModel):
+    mcp_access_token: str
+
+
+class McpTokenExchangeResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    client_id: int
+    name: str
+    username: Optional[str] = None
+    mcp_client_id: str
 
 
 def _generate_unique_client_name(db: Session, base_name: str) -> str:
@@ -147,6 +160,42 @@ def verify_mfa_login(req: MfaLoginVerifyRequest, db: Session = Depends(get_db)):
         # TODO(P1-002): connect MFA failure to audit log service.
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid MFA code")
     return _auth_response(client)
+
+
+@router.post("/mcp/exchange", response_model=McpTokenExchangeResponse)
+def exchange_mcp_token(req: McpTokenExchangeRequest, db: Session = Depends(get_db)):
+    payload = decode_mcp_access_token(req.mcp_access_token)
+    if not payload:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid MCP access token")
+
+    backend_client_id = payload.get("backend_client_id")
+    username = str(payload.get("username") or payload.get("sub") or "").lower()
+    query = db.query(models.Client).filter(models.Client.is_active == True)
+    if backend_client_id is not None:
+        try:
+            client_id = int(backend_client_id)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="MCP subject is not a valid user")
+        client = query.filter(models.Client.id == client_id).first()
+    else:
+        client = query.filter(models.Client.username == username).first()
+
+    if not client or (username and (client.username or "").lower() != username):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="MCP subject is not a valid user")
+
+    return {
+        "access_token": create_typed_token(
+            user_id=client.id,
+            username=client.name,
+            token_type="access",
+            expires_delta=timedelta(minutes=15),
+        ),
+        "token_type": "bearer",
+        "client_id": client.id,
+        "name": client.name,
+        "username": client.username,
+        "mcp_client_id": str(payload.get("client_id") or ""),
+    }
 
 @router.post("/register")
 def register(req: RegisterRequest, db: Session = Depends(get_db)):

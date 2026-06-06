@@ -56,13 +56,17 @@ def evaluate_ai_operation_api(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
+    mcp_client_id = payload.mcp_client_id or request.headers.get("x-mcp-client-id")
+    tool_name = payload.tool_name or request.headers.get("x-mcp-tool-name")
+    source = "mcp_http" if mcp_client_id and payload.source == "backend" else payload.source
     context = AiOperationContext(
-        source=payload.source,
-        tool_name=payload.tool_name,
+        source=source,
+        tool_name=tool_name,
         resource=payload.resource,
         action=payload.action,
         risk=payload.risk,
         ai_client_id=payload.ai_client_id,
+        mcp_client_id=mcp_client_id,
         request_summary=payload.request_summary,
         diff_summary=payload.diff_summary,
         mfa_verified=payload.mfa_verified,

@@ -17,13 +17,15 @@ npm run build
 npm run smoke
 ```
 
-For tools that read or write application data, set:
+For stdio tools that read or write application data, set:
 
 ```env
 BACKEND_URL=http://localhost:8000
 BACKEND_USERNAME=your-username
 BACKEND_PASSWORD=your-password
 ```
+
+`BACKEND_USERNAME` and `BACKEND_PASSWORD` are a local stdio fallback only. Streamable HTTP uses the OAuth login user: the MCP access JWT is exchanged at the backend `/auth/mcp/exchange` endpoint for a short-lived backend API token, so backend operations run as the same user that authorized the MCP session.
 
 ## Run
 
@@ -67,11 +69,14 @@ MCP_PORT=13000
 MCP_BASE_URL=http://localhost:13000
 MCP_PASSWORD=change-me-to-a-strong-password
 MCP_JWT_SECRET=change-me-to-a-secret-key-at-least-32-chars
+BACKEND_TOKEN_AUDIENCE=asset-management-backend
 BACKEND_USERNAME=your-username
 BACKEND_PASSWORD=your-password
 ```
 
-For production, set `MCP_APP_ENV=production` and replace `MCP_JWT_SECRET` with a strong unique value. The HTTP server refuses known development defaults in production mode.
+For production, set `MCP_APP_ENV=production` and replace `MCP_JWT_SECRET` with a strong unique value shared with the backend `MCP_JWT_SECRET`. Set backend `MCP_ALLOWED_ISSUERS` to the public MCP issuer URL, usually `MCP_BASE_URL`, and keep `MCP_TOKEN_AUDIENCE` aligned with `BACKEND_TOKEN_AUDIENCE`. The HTTP server refuses known development defaults in production mode.
+
+The Docker Compose `BACKEND_USERNAME` and `BACKEND_PASSWORD` values are still available for stdio or development fallback usage. They are not used for normal streamable HTTP tool calls after OAuth authorization.
 
 Then run:
 

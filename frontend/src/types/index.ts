@@ -142,6 +142,7 @@ export interface AiAuditLog {
     client_id: number;
     actor_client_id?: number | null;
     ai_client_id?: number | null;
+    mcp_client_id?: string | null;
     source: AiOperationSource;
     tool_name?: string | null;
     resource: string;
@@ -165,6 +166,7 @@ export interface AiOperationEvaluatePayload {
     action: string;
     risk?: AiOperationRisk;
     ai_client_id?: number | null;
+    mcp_client_id?: string | null;
     request_summary?: Record<string, unknown>;
     diff_summary?: Record<string, unknown>;
     mfa_verified?: boolean;

@@ -34,6 +34,9 @@ services:
       - JWT_EXPIRE_MINUTES=${JWT_EXPIRE_MINUTES:-1440}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-YLM_ViHfrMWM0hUF3XoAMLLSaL4dVTy-JnHamAaIWTo=}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:15173,http://127.0.0.1:5173,http://127.0.0.1:15173}
+      - MCP_JWT_SECRET=${MCP_JWT_SECRET:-change-me-to-a-secret-key-at-least-32-chars}
+      - MCP_TOKEN_AUDIENCE=${MCP_TOKEN_AUDIENCE:-asset-management-backend}
+      - MCP_ALLOWED_ISSUERS=${MCP_ALLOWED_ISSUERS:-http://localhost:13000}
     command: >
       sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     depends_on:
@@ -64,6 +67,7 @@ services:
       - APP_ENV=${MCP_APP_ENV:-development}
       - BASE_URL=${MCP_BASE_URL:-http://localhost:13000}
       - JWT_SECRET=${MCP_JWT_SECRET:-change-me-to-a-secret-key-at-least-32-chars}
+      - BACKEND_TOKEN_AUDIENCE=${MCP_TOKEN_AUDIENCE:-asset-management-backend}
       - BACKEND_URL=http://backend:8000
       - BACKEND_USERNAME=${BACKEND_USERNAME:-}
       - BACKEND_PASSWORD=${BACKEND_PASSWORD:-}
