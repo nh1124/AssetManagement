@@ -11,6 +11,7 @@
     "dev:http": "node --import tsx src/server-http.ts",
     "build": "node ./node_modules/typescript/bin/tsc",
     "typecheck": "node ./node_modules/typescript/bin/tsc --noEmit",
+    "contract:write-tools": "node scripts/write-tool-contracts.mjs",
     "contract:monthly-planning": "node scripts/monthly-planning-contract.mjs",
     "security:config": "node scripts/security-config.mjs",
     "smoke": "node scripts/smoke.mjs",

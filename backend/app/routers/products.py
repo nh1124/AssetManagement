@@ -175,6 +175,41 @@ def update_product(
     return enrich_product(db_product)
 
 
+@router.patch("/{product_id}", response_model=schemas.Product)
+def patch_product(
+    product_id: int,
+    product: schemas.ProductUpdate,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    db_product = db.query(models.Product).filter(
+        models.Product.id == product_id,
+        models.Product.client_id == current_client.id,
+    ).first()
+
+    if not db_product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    data = product.model_dump(exclude_unset=True)
+    merged = {
+        column.name: getattr(db_product, column.name)
+        for column in models.Product.__table__.columns
+        if column.name not in {"id", "client_id", "created_at"}
+    }
+    merged.update(data)
+    merged = normalize_product_data(db, current_client.id, merged)
+    for key, value in data.items():
+        setattr(db_product, key, merged.get(key))
+    if "budget_account_id" in data and "category" not in data:
+        db_product.category = merged.get("category")
+    if "funding_capsule_id" in data or "budget_treatment" in data or "is_asset" in data:
+        db_product.funding_capsule_id = merged.get("funding_capsule_id")
+    db.commit()
+    db.refresh(db_product)
+    invalidate_client(current_client.id)
+    return enrich_product(db_product)
+
+
 @router.delete("/{product_id}", status_code=204)
 def delete_product(
     product_id: int,

@@ -13,7 +13,7 @@ const rateInputSchema = z
     quote_currency: z.string().min(3).max(10).describe("Quote currency, e.g. JPY"),
     rate: z.number().positive().describe("Exchange rate"),
     as_of_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe("Rate date, YYYY-MM-DD"),
-    source: z.string().optional().default("manual").describe("Rate source"),
+    source: z.string().optional().describe("Rate source"),
   })
   .strict();
 

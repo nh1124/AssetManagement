@@ -78,6 +78,32 @@ def update_recurring_transaction(
     invalidate_client(current_client.id)
     return db_recurring
 
+
+@router.patch("/{recurring_id}", response_model=schemas.RecurringTransaction)
+def patch_recurring_transaction(
+    recurring_id: int,
+    recurring_update: schemas.RecurringTransactionUpdate,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client)
+):
+    db_recurring = db.query(models.RecurringTransaction).filter(
+        models.RecurringTransaction.id == recurring_id,
+        models.RecurringTransaction.client_id == current_client.id
+    ).first()
+
+    if not db_recurring:
+        raise HTTPException(status_code=404, detail="Recurring transaction not found")
+
+    update_data = recurring_update.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_recurring, key, value)
+
+    db.commit()
+    db.refresh(db_recurring)
+    invalidate_client(current_client.id)
+    return db_recurring
+
+
 @router.delete("/{recurring_id}")
 def delete_recurring_transaction(
     recurring_id: int,

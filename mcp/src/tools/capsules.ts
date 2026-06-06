@@ -32,11 +32,11 @@ const capsuleRuleInputSchema = z
     trigger_type: transactionTypeSchema.describe("Transaction type that triggers the rule"),
     trigger_category: z.string().nullable().optional().describe("Optional category substring"),
     trigger_description: z.string().nullable().optional().describe("Optional description substring"),
-    source_mode: z.enum(["transaction_account", "fixed_account"]).optional().default("transaction_account"),
+    source_mode: z.enum(["transaction_account", "fixed_account"]).optional(),
     source_account_id: z.number().int().min(1).nullable().optional().describe("Required when source_mode is fixed_account"),
-    amount_type: z.enum(["fixed", "percentage"]).optional().default("fixed"),
+    amount_type: z.enum(["fixed", "percentage"]).optional(),
     amount_value: z.number().min(0).describe("Fixed amount or percentage"),
-    is_active: z.boolean().optional().default(true),
+    is_active: z.boolean().optional(),
   })
   .strict();
 
@@ -83,13 +83,15 @@ Use when: 新しい貯蓄目標を作りたいとき`,
         name: z.string().min(1).describe("カプセル名"),
         target_amount: z.number().min(1).describe("目標金額（円）"),
         monthly_contribution: z.number().min(0).describe("月額積立額（円）"),
-        current_balance: z.number().min(0).optional().default(0).describe("現在残高（円、デフォルト0）")
+        current_balance: z.number().min(0).optional().describe("現在残高（円、デフォルト0）")
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
     },
-    async ({ name, target_amount, monthly_contribution, current_balance = 0 }) => {
+    async ({ name, target_amount, monthly_contribution, current_balance }) => {
       try {
-        const data = await api.post<Capsule>("/capsules/", { name, target_amount, monthly_contribution, current_balance });
+        const body: Record<string, unknown> = { name, target_amount, monthly_contribution };
+        if (current_balance !== undefined) body.current_balance = current_balance;
+        const data = await api.post<Capsule>("/capsules/", body);
         return {
           content: [{ type: "text", text: `Created capsule:\n${JSON.stringify(data, null, 2)}` }],
           structuredContent: toStructured(data)

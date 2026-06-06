@@ -23,17 +23,52 @@ const recurringInputSchema = z
   .object({
     name: z.string().min(1).describe("Name"),
     amount: z.number().min(0).describe("Amount"),
-    currency: z.string().optional().default("JPY").describe("Currency"),
+    currency: z.string().optional().describe("Currency"),
     type: transactionTypeSchema.describe("Transaction type"),
     from_account_id: z.number().int().min(1).optional().describe("Source account ID"),
     to_account_id: z.number().int().min(1).optional().describe("Destination account ID"),
     frequency: z.enum(["Monthly", "Yearly"]).describe("Frequency"),
-    day_of_month: z.number().int().min(1).max(31).optional().default(1).describe("Due day of month"),
+    day_of_month: z.number().int().min(1).max(31).optional().describe("Due day of month"),
     month_of_year: z.number().int().min(1).max(12).nullable().optional().describe("Month for yearly frequency"),
     next_due_date: dateSchema.nullable().optional().describe("Next due date"),
-    is_active: z.boolean().optional().default(true).describe("Whether the recurring transaction is active"),
+    start_period: z.string().regex(/^\d{4}-\d{2}$/).nullable().optional().describe("First active period, YYYY-MM"),
+    end_period: z.string().regex(/^\d{4}-\d{2}$/).nullable().optional().describe("Last active period, YYYY-MM"),
+    auto_post: z.boolean().optional().describe("Whether this recurring item is posted automatically when due"),
+    is_active: z.boolean().optional().describe("Whether the recurring transaction is active"),
+    source_registry_entry_id: z.number().int().min(1).nullable().optional().describe("Linked registry entry ID"),
   })
   .strict();
+
+const recurringPatchSchema = recurringInputSchema.partial().extend({
+  id: z.number().int().min(1).describe("Recurring transaction ID"),
+});
+
+const recurringPayloadKeys = [
+  "name",
+  "amount",
+  "currency",
+  "type",
+  "from_account_id",
+  "to_account_id",
+  "frequency",
+  "day_of_month",
+  "month_of_year",
+  "next_due_date",
+  "start_period",
+  "end_period",
+  "auto_post",
+  "is_active",
+  "source_registry_entry_id",
+] as const;
+
+function recurringPayload(input: object): Record<string, unknown> {
+  const source = input as Record<string, unknown>;
+  const payload: Record<string, unknown> = {};
+  for (const key of recurringPayloadKeys) {
+    if (source[key] !== undefined) payload[key] = source[key];
+  }
+  return payload;
+}
 
 export function registerRecurringTools(server: McpServer): void {
   server.registerTool(
@@ -88,7 +123,7 @@ export function registerRecurringTools(server: McpServer): void {
     },
     async (input) => {
       try {
-        const data = await api.post<unknown>("/recurring/", input);
+        const data = await api.post<unknown>("/recurring/", recurringPayload(input));
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
           structuredContent: toStructured(data),
@@ -138,6 +173,27 @@ export function registerRecurringTools(server: McpServer): void {
             "recurring_create saves a definition only. Use recurring_process to post an actual transaction when due.",
           ],
         };
+        return {
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+          structuredContent: toStructured(data),
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
+      }
+    },
+  );
+
+  server.registerTool(
+    "recurring_update",
+    {
+      title: "Update recurring transaction",
+      description: "Partially updates a recurring transaction definition. Only provided fields are sent.",
+      inputSchema: recurringPatchSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ id, ...patch }) => {
+      try {
+        const data = await api.patch<unknown>(`/recurring/${id}`, recurringPayload(patch));
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
           structuredContent: toStructured(data),

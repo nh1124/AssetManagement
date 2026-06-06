@@ -11,20 +11,19 @@ import { toStructured } from "../utils.js";
 const productInputSchema = z
   .object({
     name: z.string().min(1).describe("Product or item name"),
-    category: z.string().optional().default("Uncategorized").describe("Category name"),
+    category: z.string().optional().describe("Category name"),
     location: z.string().optional().describe("Store or location"),
     last_unit_price: z.number().min(0).describe("Latest purchase price"),
-    units_per_purchase: z.number().int().min(1).optional().default(1).describe("Units per purchase"),
-    frequency_days: z.number().int().min(0).optional().default(0).describe("Repurchase interval in days"),
+    units_per_purchase: z.number().int().min(1).optional().describe("Units per purchase"),
+    frequency_days: z.number().int().min(0).optional().describe("Repurchase interval in days"),
     last_purchase_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Last purchase date, YYYY-MM-DD"),
-    is_asset: z.boolean().optional().default(false).describe("True for fixed assets, false for consumables"),
+    is_asset: z.boolean().optional().describe("True for fixed assets, false for consumables"),
     lifespan_months: z.number().int().min(1).optional().describe("Useful life in months for fixed assets"),
     budget_account_id: z.number().int().min(1).optional().describe("Expense account ID used as budget category"),
     funding_capsule_id: z.number().int().min(1).optional().describe("Reserve capsule ID"),
     budget_treatment: z
       .enum(["auto", "expense_only", "reserve_allocation", "asset_replacement"])
       .optional()
-      .default("auto")
       .describe("How this product participates in budget/reserve planning"),
     purchase_price: z.number().min(0).optional().describe("Original purchase price for fixed assets"),
     purchase_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Original purchase date, YYYY-MM-DD"),
@@ -37,6 +36,32 @@ const productPatchSchema = productInputSchema.partial().extend({
 
 type ProductInput = z.infer<typeof productInputSchema>;
 type ProductPatch = z.infer<typeof productPatchSchema>;
+
+const productPayloadKeys = [
+  "name",
+  "category",
+  "location",
+  "last_unit_price",
+  "units_per_purchase",
+  "frequency_days",
+  "last_purchase_date",
+  "is_asset",
+  "lifespan_months",
+  "budget_account_id",
+  "funding_capsule_id",
+  "budget_treatment",
+  "purchase_price",
+  "purchase_date",
+] as const;
+
+function productPayload(input: object): Record<string, unknown> {
+  const source = input as Record<string, unknown>;
+  const payload: Record<string, unknown> = {};
+  for (const key of productPayloadKeys) {
+    if (source[key] !== undefined) payload[key] = source[key];
+  }
+  return payload;
+}
 
 export function registerProductTools(server: McpServer): void {
   server.registerTool(
@@ -79,7 +104,7 @@ export function registerProductTools(server: McpServer): void {
     },
     async (input: ProductInput) => {
       try {
-        const data = await api.post<unknown>("/products/", input);
+        const data = await api.post<unknown>("/products/", productPayload(input));
         return {
           content: [{ type: "text", text: `Created product:\n${JSON.stringify(data, null, 2)}` }],
           structuredContent: toStructured(data),
@@ -163,30 +188,7 @@ export function registerProductTools(server: McpServer): void {
     },
     async ({ id, ...patch }: ProductPatch) => {
       try {
-        const products = await api.get<Array<Record<string, unknown>>>("/products/");
-        const current = products.find((product) => product.id === id);
-        if (!current) {
-          return { content: [{ type: "text", text: `Error: Product ${id} not found` }] };
-        }
-
-        const body = {
-          name: current.name,
-          category: current.category ?? "Uncategorized",
-          location: current.location ?? undefined,
-          last_unit_price: current.last_unit_price,
-          units_per_purchase: current.units_per_purchase ?? 1,
-          frequency_days: current.frequency_days ?? 0,
-          last_purchase_date: current.last_purchase_date ?? undefined,
-          is_asset: current.is_asset ?? false,
-          lifespan_months: current.lifespan_months ?? undefined,
-          budget_account_id: current.budget_account_id ?? undefined,
-          funding_capsule_id: current.funding_capsule_id ?? undefined,
-          budget_treatment: current.budget_treatment ?? "auto",
-          purchase_price: current.purchase_price ?? undefined,
-          purchase_date: current.purchase_date ?? undefined,
-          ...patch,
-        };
-        const data = await api.put<unknown>(`/products/${id}`, body);
+        const data = await api.patch<unknown>(`/products/${id}`, productPayload(patch));
         return {
           content: [{ type: "text", text: `Updated product:\n${JSON.stringify(data, null, 2)}` }],
           structuredContent: toStructured(data),

@@ -55,17 +55,19 @@ export function registerAccountTools(server: McpServer): void {
           name: z.string().min(1).describe("Account name"),
           account_type: z.enum(["asset", "liability", "income", "expense"]).describe("Account type"),
           parent_id: z.number().int().min(1).optional().describe("Parent account ID"),
-          expected_return: z.number().optional().default(0).describe("Expected annual return percentage"),
-          role: accountRoleSchema.optional().default("unassigned").describe("Planning role"),
+          expected_return: z.number().optional().describe("Expected annual return percentage"),
+          role: accountRoleSchema.optional().describe("Planning role"),
           role_target_amount: z.number().nullable().optional().describe("Target amount for the planning role"),
         })
         .strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    async ({ name, account_type, parent_id, expected_return = 0, role = "unassigned", role_target_amount }) => {
+    async ({ name, account_type, parent_id, expected_return, role, role_target_amount }) => {
       try {
-        const body: Record<string, unknown> = { name, account_type, balance: 0, expected_return, role };
+        const body: Record<string, unknown> = { name, account_type, balance: 0 };
         if (parent_id !== undefined) body.parent_id = parent_id;
+        if (expected_return !== undefined) body.expected_return = expected_return;
+        if (role !== undefined) body.role = role;
         if (role_target_amount !== undefined) body.role_target_amount = role_target_amount;
         const data = await api.post<Account>("/accounts/", body);
         return {

@@ -1,0 +1,414 @@
+[
+  {
+    "tool": "accounts_create",
+    "method": "post",
+    "path": "/accounts/",
+    "body": "object",
+    "source": "src/tools/accounts.ts",
+    "path_fragment": "/accounts/",
+    "allowed_fields": ["name", "account_type", "balance", "parent_id", "expected_return", "role", "role_target_amount"],
+    "required_fields": ["name", "account_type"]
+  },
+  {
+    "tool": "accounts_update",
+    "method": "put",
+    "path": "/accounts/{account_id}",
+    "body": "object",
+    "source": "src/tools/accounts.ts",
+    "path_fragment": "/accounts/${id}",
+    "allowed_fields": ["name", "parent_id", "expected_return", "role", "role_target_amount", "is_active"],
+    "required_fields": []
+  },
+  {
+    "tool": "accounts_delete",
+    "method": "delete",
+    "path": "/accounts/{account_id}",
+    "body": "none",
+    "source": "src/tools/accounts.ts",
+    "path_fragment": "/accounts/${id}"
+  },
+  {
+    "tool": "transactions_create",
+    "method": "post",
+    "path": "/transactions/",
+    "body": "object",
+    "source": "src/tools/transactions.ts",
+    "path_fragment": "/transactions/",
+    "allowed_fields": ["date", "description", "amount", "type", "category", "currency", "from_account_id", "to_account_id"],
+    "required_fields": ["date", "amount", "type"]
+  },
+  {
+    "tool": "transactions_update",
+    "method": "put",
+    "path": "/transactions/{transaction_id}",
+    "body": "object",
+    "source": "src/tools/transactions.ts",
+    "path_fragment": "/transactions/${id}",
+    "allowed_fields": ["date", "description", "amount", "type", "category", "currency", "from_account_id", "to_account_id"],
+    "required_fields": []
+  },
+  {
+    "tool": "transactions_delete",
+    "method": "delete",
+    "path": "/transactions/{transaction_id}",
+    "body": "none",
+    "source": "src/tools/transactions.ts",
+    "path_fragment": "/transactions/${id}"
+  },
+  {
+    "tool": "recurring_create",
+    "method": "post",
+    "path": "/recurring/",
+    "body": "object",
+    "source": "src/tools/recurring.ts",
+    "path_fragment": "/recurring/",
+    "allowed_fields": ["name", "amount", "currency", "type", "from_account_id", "to_account_id", "frequency", "day_of_month", "month_of_year", "next_due_date", "start_period", "end_period", "auto_post", "is_active", "source_registry_entry_id"],
+    "required_fields": ["name", "amount", "type", "frequency"]
+  },
+  {
+    "tool": "recurring_update",
+    "method": "patch",
+    "path": "/recurring/{recurring_id}",
+    "body": "object",
+    "source": "src/tools/recurring.ts",
+    "path_fragment": "/recurring/${id}",
+    "allowed_fields": ["name", "amount", "currency", "type", "from_account_id", "to_account_id", "frequency", "day_of_month", "month_of_year", "next_due_date", "start_period", "end_period", "auto_post", "is_active", "source_registry_entry_id"],
+    "required_fields": []
+  },
+  {
+    "tool": "monthly_plan_lines_save_batch",
+    "method": "post",
+    "path": "/life-events/monthly-plan-lines",
+    "body": "array",
+    "source": "src/tools/monthly-planning.ts",
+    "path_fragment": "/life-events/monthly-plan-lines",
+    "allowed_fields": ["plan_id", "target_period", "line_type", "target_type", "target_id", "account_id", "source_account_id", "name", "amount", "source", "source_kind", "source_id", "identity_key", "manual_override", "cash_treatment", "recurring_transaction_id", "is_active"],
+    "required_fields": ["target_period", "line_type"],
+    "forbidden_fields": ["priority"]
+  },
+  {
+    "tool": "monthly_plan_lines_save_batch",
+    "method": "put",
+    "path": "/life-events/monthly-plan-lines/batch",
+    "body": "array",
+    "source": "src/tools/monthly-planning.ts",
+    "path_fragment": "/life-events/monthly-plan-lines/batch",
+    "allowed_fields": ["id", "plan_id", "target_period", "line_type", "target_type", "target_id", "account_id", "source_account_id", "name", "amount", "source", "source_kind", "source_id", "identity_key", "manual_override", "cash_treatment", "recurring_transaction_id", "is_active"],
+    "required_fields": ["id", "target_period", "line_type"],
+    "forbidden_fields": ["priority"]
+  },
+  {
+    "tool": "monthly_plan_lines_delete",
+    "method": "delete",
+    "path": "/life-events/monthly-plan-lines/{line_id}",
+    "body": "none",
+    "source": "src/tools/monthly-planning.ts",
+    "path_fragment": "/life-events/monthly-plan-lines/${id}"
+  },
+  {
+    "tool": "budget_plans_create",
+    "method": "post",
+    "path": "/budget-plans",
+    "body": "object",
+    "source": "src/tools/strategy.ts",
+    "path_fragment": "/budget-plans",
+    "allowed_fields": ["name", "description", "sort_order"],
+    "required_fields": ["name"]
+  },
+  {
+    "tool": "budget_plans_update",
+    "method": "put",
+    "path": "/budget-plans/{plan_id}",
+    "body": "object",
+    "source": "src/tools/strategy.ts",
+    "path_fragment": "/budget-plans/${id}",
+    "allowed_fields": ["name", "description", "sort_order"],
+    "required_fields": []
+  },
+  {
+    "tool": "budget_plans_delete",
+    "method": "delete",
+    "path": "/budget-plans/{plan_id}",
+    "body": "none",
+    "source": "src/tools/strategy.ts",
+    "path_fragment": "/budget-plans/${id}"
+  },
+  {
+    "tool": "budget_plans_copy_from",
+    "method": "post",
+    "path": "/budget-plans/{plan_id}/copy-from",
+    "body": "none",
+    "source": "src/tools/strategy.ts",
+    "path_fragment": "/budget-plans/${target_plan_id}/copy-from"
+  },
+  {
+    "tool": "budget_plans_copy_period",
+    "method": "post",
+    "path": "/budget-plans/copy-period",
+    "body": "object",
+    "source": "src/tools/strategy.ts",
+    "path_fragment": "/budget-plans/copy-period",
+    "allowed_fields": ["source_period", "target_period", "plan_id"],
+    "required_fields": ["source_period", "target_period"]
+  },
+  {
+    "tool": "registry_entries_create",
+    "method": "post",
+    "path": "/registry-entries/",
+    "body": "object",
+    "source": "src/tools/strategy.ts",
+    "path_fragment": "/registry-entries/",
+    "allowed_fields": ["name", "entry_type", "category", "amount", "currency", "frequency", "frequency_days", "day_of_month", "month_of_year", "transaction_type", "line_type", "budget_account_id", "source_account_id", "destination_account_id", "funding_capsule_id", "budget_treatment", "generate_recurring", "budget_active", "is_active", "source_product_id", "source_recurring_transaction_id", "note", "start_period", "end_period"],
+    "required_fields": ["name"]
+  },
+  {
+    "tool": "registry_entries_update",
+    "method": "put",
+    "path": "/registry-entries/{entry_id}",
+    "body": "object",
+    "source": "src/tools/strategy.ts",
+    "path_fragment": "/registry-entries/${id}",
+    "allowed_fields": ["name", "entry_type", "category", "amount", "currency", "frequency", "frequency_days", "day_of_month", "month_of_year", "transaction_type", "line_type", "budget_account_id", "source_account_id", "destination_account_id", "funding_capsule_id", "budget_treatment", "generate_recurring", "budget_active", "is_active", "source_product_id", "source_recurring_transaction_id", "note", "start_period", "end_period"],
+    "required_fields": ["name"]
+  },
+  {
+    "tool": "registry_entries_delete",
+    "method": "delete",
+    "path": "/registry-entries/{entry_id}",
+    "body": "none",
+    "source": "src/tools/strategy.ts",
+    "path_fragment": "/registry-entries/${id}"
+  },
+  {
+    "tool": "products_create",
+    "method": "post",
+    "path": "/products/",
+    "body": "object",
+    "source": "src/tools/products.ts",
+    "path_fragment": "/products/",
+    "allowed_fields": ["name", "category", "location", "last_unit_price", "units_per_purchase", "frequency_days", "last_purchase_date", "is_asset", "lifespan_months", "budget_account_id", "funding_capsule_id", "budget_treatment", "purchase_price", "purchase_date"],
+    "required_fields": ["name", "last_unit_price"]
+  },
+  {
+    "tool": "products_update",
+    "method": "patch",
+    "path": "/products/{product_id}",
+    "body": "object",
+    "source": "src/tools/products.ts",
+    "path_fragment": "/products/${id}",
+    "allowed_fields": ["name", "category", "location", "last_unit_price", "units_per_purchase", "frequency_days", "last_purchase_date", "is_asset", "lifespan_months", "budget_account_id", "funding_capsule_id", "budget_treatment", "purchase_price", "purchase_date"],
+    "required_fields": []
+  },
+  {
+    "tool": "products_delete",
+    "method": "delete",
+    "path": "/products/{product_id}",
+    "body": "none",
+    "source": "src/tools/products.ts",
+    "path_fragment": "/products/${id}"
+  },
+  {
+    "tool": "life_events_create",
+    "method": "post",
+    "path": "/life-events/",
+    "body": "object",
+    "source": "src/tools/life-events.ts",
+    "path_fragment": "/life-events/",
+    "allowed_fields": ["name", "start_date", "target_date", "target_amount", "priority", "note", "active_plan_basis", "active_plan_label", "plan_status_override"],
+    "required_fields": ["name", "target_date", "target_amount"]
+  },
+  {
+    "tool": "life_events_update",
+    "method": "put",
+    "path": "/life-events/{event_id}",
+    "body": "object",
+    "source": "src/tools/life-events.ts",
+    "path_fragment": "/life-events/${id}",
+    "allowed_fields": ["name", "start_date", "target_date", "target_amount", "priority", "note", "active_plan_basis", "active_plan_label", "plan_status_override"],
+    "required_fields": []
+  },
+  {
+    "tool": "life_events_delete",
+    "method": "delete",
+    "path": "/life-events/{event_id}",
+    "body": "none",
+    "source": "src/tools/life-events.ts",
+    "path_fragment": "/life-events/${id}"
+  },
+  {
+    "tool": "roadmap_milestones_create",
+    "method": "post",
+    "path": "/roadmap/milestones",
+    "body": "object",
+    "source": "src/tools/roadmap.ts",
+    "path_fragment": "/roadmap/milestones",
+    "allowed_fields": ["life_event_id", "date", "target_amount", "note", "source", "source_snapshot", "is_active_plan"],
+    "required_fields": ["date", "target_amount"]
+  },
+  {
+    "tool": "roadmap_milestones_update",
+    "method": "patch",
+    "path": "/roadmap/milestones/{milestone_id}",
+    "body": "object",
+    "source": "src/tools/roadmap.ts",
+    "path_fragment": "/roadmap/milestones/${id}",
+    "allowed_fields": ["date", "target_amount", "note", "is_active_plan"],
+    "required_fields": []
+  },
+  {
+    "tool": "roadmap_milestones_delete",
+    "method": "delete",
+    "path": "/roadmap/milestones/{milestone_id}",
+    "body": "none",
+    "source": "src/tools/roadmap.ts",
+    "path_fragment": "/roadmap/milestones/${id}"
+  },
+  {
+    "tool": "exchange_rates_create",
+    "method": "post",
+    "path": "/exchange-rates/",
+    "body": "object",
+    "source": "src/tools/exchange-rates.ts",
+    "path_fragment": "/exchange-rates/",
+    "allowed_fields": ["base_currency", "quote_currency", "rate", "as_of_date", "source"],
+    "required_fields": ["base_currency", "quote_currency", "rate", "as_of_date"]
+  },
+  {
+    "tool": "exchange_rates_update",
+    "method": "put",
+    "path": "/exchange-rates/{rate_id}",
+    "body": "object",
+    "source": "src/tools/exchange-rates.ts",
+    "path_fragment": "/exchange-rates/${id}",
+    "allowed_fields": ["base_currency", "quote_currency", "rate", "as_of_date", "source"],
+    "required_fields": []
+  },
+  {
+    "tool": "exchange_rates_delete",
+    "method": "delete",
+    "path": "/exchange-rates/{rate_id}",
+    "body": "none",
+    "source": "src/tools/exchange-rates.ts",
+    "path_fragment": "/exchange-rates/${id}"
+  },
+  {
+    "tool": "exchange_rates_auto_update",
+    "method": "post",
+    "path": "/exchange-rates/auto-update",
+    "body": "none",
+    "source": "src/tools/exchange-rates.ts",
+    "path_fragment": "/exchange-rates/auto-update"
+  },
+  {
+    "tool": "capsules_create",
+    "method": "post",
+    "path": "/capsules/",
+    "body": "object",
+    "source": "src/tools/capsules.ts",
+    "path_fragment": "/capsules/",
+    "allowed_fields": ["name", "target_amount", "monthly_contribution", "current_balance"],
+    "required_fields": ["name", "target_amount", "monthly_contribution"]
+  },
+  {
+    "tool": "capsules_update",
+    "method": "put",
+    "path": "/capsules/{capsule_id}",
+    "body": "object",
+    "source": "src/tools/capsules.ts",
+    "path_fragment": "/capsules/${id}",
+    "allowed_fields": ["name", "target_amount", "monthly_contribution", "current_balance", "life_event_id", "capsule_type", "target_amount_source", "monthly_contribution_source"],
+    "required_fields": []
+  },
+  {
+    "tool": "capsules_delete",
+    "method": "delete",
+    "path": "/capsules/{capsule_id}",
+    "body": "none",
+    "source": "src/tools/capsules.ts",
+    "path_fragment": "/capsules/${id}"
+  },
+  {
+    "tool": "capsule_rules_create",
+    "method": "post",
+    "path": "/capsules/rules",
+    "body": "object",
+    "source": "src/tools/capsules.ts",
+    "path_fragment": "/capsules/rules",
+    "allowed_fields": ["capsule_id", "trigger_type", "trigger_category", "trigger_description", "source_mode", "source_account_id", "amount_type", "amount_value", "is_active"],
+    "required_fields": ["capsule_id", "trigger_type", "amount_value"]
+  },
+  {
+    "tool": "capsule_rules_update",
+    "method": "put",
+    "path": "/capsules/rules/{rule_id}",
+    "body": "object",
+    "source": "src/tools/capsules.ts",
+    "path_fragment": "/capsules/rules/${id}",
+    "allowed_fields": ["capsule_id", "trigger_type", "trigger_category", "trigger_description", "source_mode", "source_account_id", "amount_type", "amount_value", "is_active"],
+    "required_fields": []
+  },
+  {
+    "tool": "capsule_rules_delete",
+    "method": "delete",
+    "path": "/capsules/rules/{rule_id}",
+    "body": "none",
+    "source": "src/tools/capsules.ts",
+    "path_fragment": "/capsules/rules/${id}"
+  },
+  {
+    "tool": "capsule_holdings_upsert",
+    "method": "post",
+    "path": "/capsules/{capsule_id}/holdings",
+    "body": "object",
+    "source": "src/tools/capsules.ts",
+    "path_fragment": "/holdings",
+    "allowed_fields": ["account_id", "held_amount", "note"],
+    "required_fields": ["account_id"]
+  },
+  {
+    "tool": "capsule_holdings_update",
+    "method": "put",
+    "path": "/capsules/{capsule_id}/holdings/{holding_id}",
+    "body": "object",
+    "source": "src/tools/capsules.ts",
+    "path_fragment": "/holdings/${holding_id}",
+    "allowed_fields": ["held_amount", "note"],
+    "required_fields": []
+  },
+  {
+    "tool": "capsule_holdings_delete",
+    "method": "delete",
+    "path": "/capsules/{capsule_id}/holdings/{holding_id}",
+    "body": "none",
+    "source": "src/tools/capsules.ts",
+    "path_fragment": "/holdings/${holding_id}"
+  },
+  {
+    "tool": "data_import_replace_current_client",
+    "method": "post",
+    "path": "/data/import",
+    "body": "raw",
+    "source": "src/tools/data-transfer.ts",
+    "path_fragment": "/data/import"
+  },
+  {
+    "tool": "clients_update_settings",
+    "method": "put",
+    "path": "/clients/{client_id}/settings",
+    "body": "object",
+    "source": "src/tools/clients.ts",
+    "path_fragment": "/settings",
+    "allowed_fields": ["general_settings"],
+    "required_fields": ["general_settings"]
+  },
+  {
+    "tool": "clients_update_gemini_key",
+    "method": "put",
+    "path": "/clients/{client_id}/key",
+    "body": "object",
+    "source": "src/tools/clients.ts",
+    "path_fragment": "/key",
+    "allowed_fields": ["gemini_api_key"],
+    "required_fields": ["gemini_api_key"]
+  }
+]

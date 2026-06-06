@@ -186,8 +186,8 @@ def _preview_monthly_plan_lines_update(db: Session, client_id: int, target_ref: 
 
 
 def _preview_recurring_create(db: Session, client_id: int, payload: dict[str, Any]) -> dict[str, Any]:
-    data = schemas.RecurringTransactionCreate(**payload).model_dump(mode="json")
-    if data["amount"] <= 0:
+    data = schemas.RecurringTransactionUpdate(**payload).model_dump(exclude_unset=True, mode="json")
+    if "amount" in data and data["amount"] is not None and data["amount"] <= 0:
         raise ValueError("Recurring transaction amount must be positive")
     _validate_account_refs(db, client_id, data)
     after = dict(data)
@@ -532,7 +532,7 @@ def _apply_dispatch(db: Session, client_id: int, row: models.AiChangeRequest) ->
         ).first()
         if not recurring:
             raise ValueError("Recurring transaction not found")
-        data = schemas.RecurringTransactionCreate(**row.input_payload).model_dump()
+        data = schemas.RecurringTransactionUpdate(**row.input_payload).model_dump(exclude_unset=True)
         for key, value in data.items():
             setattr(recurring, key, value)
         db.flush()

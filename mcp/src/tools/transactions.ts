@@ -94,17 +94,18 @@ export function registerTransactionTools(server: McpServer): void {
           category: z.string().optional().describe("Category"),
           from_account_id: z.number().int().min(1).optional().describe("Source account ID"),
           to_account_id: z.number().int().min(1).optional().describe("Destination account ID"),
-          currency: z.string().optional().default("JPY").describe("Currency"),
+          currency: z.string().optional().describe("Currency"),
         })
         .strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    async ({ date, description, amount, type, category, from_account_id, to_account_id, currency = "JPY" }) => {
+    async ({ date, description, amount, type, category, from_account_id, to_account_id, currency }) => {
       try {
-        const body: Record<string, unknown> = { date, description, amount, type, currency };
+        const body: Record<string, unknown> = { date, description, amount, type };
         if (category !== undefined) body.category = category;
         if (from_account_id !== undefined) body.from_account_id = from_account_id;
         if (to_account_id !== undefined) body.to_account_id = to_account_id;
+        if (currency !== undefined) body.currency = currency;
         const data = await api.post<Transaction>("/transactions/", body);
         return {
           content: [{ type: "text", text: `Created transaction:\n${JSON.stringify(data, null, 2)}` }],

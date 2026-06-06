@@ -16,7 +16,7 @@ const budgetPlanCreateSchema = z
   .object({
     name: z.string().min(1).describe("Budget plan name"),
     description: z.string().nullable().optional().describe("Optional description"),
-    sort_order: z.number().int().optional().default(0).describe("Sort order"),
+    sort_order: z.number().int().optional().describe("Sort order"),
   })
   .strict();
 
@@ -31,27 +31,26 @@ const budgetPlanUpdateSchema = z
 
 const registryEntryBaseSchema = z.object({
   name: z.string().min(1).describe("Registry source name"),
-  entry_type: z.enum(["asset", "item", "service", "income", "allocation", "debt"]).optional().default("service"),
+  entry_type: z.enum(["asset", "item", "service", "income", "allocation", "debt"]).optional(),
   category: z.string().nullable().optional(),
-  amount: z.number().optional().default(0),
-  currency: z.string().optional().default("JPY"),
-  frequency: z.enum(["Monthly", "Yearly", "EveryNDays", "Irregular"]).optional().default("Monthly"),
+  amount: z.number().optional(),
+  currency: z.string().optional(),
+  frequency: z.enum(["Monthly", "Yearly", "EveryNDays", "Irregular"]).optional(),
   frequency_days: z.number().int().min(1).nullable().optional(),
-  day_of_month: z.number().int().min(1).max(31).optional().default(1),
+  day_of_month: z.number().int().min(1).max(31).optional(),
   month_of_year: z.number().int().min(1).max(12).nullable().optional(),
   transaction_type: z
     .enum(["Income", "Expense", "Transfer", "LiabilityPayment", "Borrowing", "CreditExpense", "CreditAssetPurchase"])
-    .optional()
-    .default("Expense"),
-  line_type: z.enum(["income", "expense", "allocation", "debt_payment", "borrowing", "drawdown"]).optional().default("expense"),
+    .optional(),
+  line_type: z.enum(["income", "expense", "allocation", "debt_payment", "borrowing", "drawdown"]).optional(),
   budget_account_id: z.number().int().min(1).nullable().optional(),
   source_account_id: z.number().int().min(1).nullable().optional(),
   destination_account_id: z.number().int().min(1).nullable().optional(),
   funding_capsule_id: z.number().int().min(1).nullable().optional(),
-  budget_treatment: z.enum(["auto", "expense_only", "reserve_allocation", "asset_replacement"]).optional().default("expense_only"),
-  generate_recurring: z.boolean().optional().default(false),
-  budget_active: z.boolean().optional().default(true),
-  is_active: z.boolean().optional().default(true),
+  budget_treatment: z.enum(["auto", "expense_only", "reserve_allocation", "asset_replacement"]).optional(),
+  generate_recurring: z.boolean().optional(),
+  budget_active: z.boolean().optional(),
+  is_active: z.boolean().optional(),
   source_product_id: z.number().int().min(1).nullable().optional(),
   source_recurring_transaction_id: z.number().int().min(1).nullable().optional(),
   note: z.string().nullable().optional(),

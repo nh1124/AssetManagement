@@ -351,7 +351,26 @@ class ProductBase(BaseModel):
     purchase_date: Optional[date] = None
 
 class ProductCreate(ProductBase):
-    pass
+    model_config = ConfigDict(extra="forbid")
+
+
+class ProductUpdate(BaseModel):
+    name: Optional[str] = None
+    category: Optional[str] = None
+    location: Optional[str] = None
+    last_unit_price: Optional[float] = None
+    units_per_purchase: Optional[int] = None
+    frequency_days: Optional[int] = None
+    last_purchase_date: Optional[date] = None
+    is_asset: Optional[bool] = None
+    lifespan_months: Optional[int] = None
+    budget_account_id: Optional[int] = None
+    funding_capsule_id: Optional[int] = None
+    budget_treatment: Optional[ProductBudgetTreatmentLiteral] = None
+    purchase_price: Optional[float] = None
+    purchase_date: Optional[date] = None
+
+    model_config = ConfigDict(extra="forbid")
 
 class Product(ProductBase):
     id: int
@@ -471,7 +490,27 @@ class RecurringTransactionBase(BaseModel):
     source_registry_entry_id: Optional[int] = None
 
 class RecurringTransactionCreate(RecurringTransactionBase):
-    pass
+    model_config = ConfigDict(extra="forbid")
+
+
+class RecurringTransactionUpdate(BaseModel):
+    name: Optional[str] = None
+    amount: Optional[float] = None
+    currency: Optional[str] = None
+    type: Optional[TransactionTypeLiteral] = None
+    from_account_id: Optional[int] = None
+    to_account_id: Optional[int] = None
+    frequency: Optional[Literal['Monthly', 'Yearly']] = None
+    day_of_month: Optional[int] = None
+    month_of_year: Optional[int] = None
+    next_due_date: Optional[date] = None
+    start_period: Optional[str] = None
+    end_period: Optional[str] = None
+    auto_post: Optional[bool] = None
+    is_active: Optional[bool] = None
+    source_registry_entry_id: Optional[int] = None
+
+    model_config = ConfigDict(extra="forbid")
 
 class RecurringTransaction(RecurringTransactionBase):
     id: int

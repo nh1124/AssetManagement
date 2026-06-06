@@ -24,10 +24,10 @@ const milestoneUpdateSchema = z
 const milestoneSimulationInputSchema = z
   .object({
     life_event_id: z.number().int().min(1).describe("Life event ID"),
-    basis: simulationBasisSchema.optional().default("p50").describe("Simulation basis"),
-    interval: simulationIntervalSchema.optional().default("annual").describe("Milestone interval"),
-    mode: simulationModeSchema.optional().default("replace").describe("Whether to add or replace generated milestones"),
-    n_simulations: z.number().int().min(100).max(10000).optional().default(1000).describe("Monte Carlo simulations"),
+    basis: simulationBasisSchema.optional().describe("Simulation basis"),
+    interval: simulationIntervalSchema.optional().describe("Milestone interval"),
+    mode: simulationModeSchema.optional().describe("Whether to add or replace generated milestones"),
+    n_simulations: z.number().int().min(100).max(10000).optional().describe("Monte Carlo simulations"),
     annual_return: z.number().nullable().optional().describe("Expected annual return override"),
     inflation: z.number().nullable().optional().describe("Inflation override"),
     monthly_savings: z.number().min(0).nullable().optional().describe("Monthly savings override"),
@@ -109,9 +109,9 @@ export function registerRoadmapTools(server: McpServer): void {
           date: dateSchema.describe("Milestone date, YYYY-MM-DD"),
           target_amount: z.number().min(0).describe("Target amount"),
           note: z.string().nullable().optional().describe("Note"),
-          source: z.string().optional().default("manual").describe("Source label"),
+          source: z.string().optional().describe("Source label"),
           source_snapshot: z.record(z.unknown()).nullable().optional().describe("Optional source snapshot"),
-          is_active_plan: z.boolean().optional().default(true).describe("Whether this milestone is part of the active operating plan"),
+          is_active_plan: z.boolean().optional().describe("Whether this milestone is part of the active operating plan"),
         })
         .strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
