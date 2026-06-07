@@ -1,4 +1,4 @@
-import { Database, Flag, Package, Settings, ShieldCheck, Target, WalletCards } from 'lucide-react';
+import { Database, Flag, Inbox, Package, Settings, ShieldCheck, Target, WalletCards } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useClient } from '../../context/ClientContext';
 
@@ -11,6 +11,7 @@ export default function MobileMorePage() {
         { label: 'Goal', status: 'Compact summary lives in Plan', icon: Flag },
         { label: 'Strategy', status: 'Desktop planning view', icon: Target },
         { label: 'Registry', status: 'Desktop catalog view', icon: Package },
+        { label: 'Approval Inbox', status: 'Available in mobile AI tab', icon: Inbox },
         { label: 'Settings', status: 'Desktop admin view', icon: Settings },
     ];
 

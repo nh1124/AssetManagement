@@ -1,6 +1,6 @@
-import { ClipboardCheck, Grid2X2, List, Target, WalletCards } from 'lucide-react';
+import { ClipboardCheck, Grid2X2, Inbox, List, Target, WalletCards } from 'lucide-react';
 
-export type MobilePage = 'quick' | 'journal' | 'portfolio' | 'plan' | 'review' | 'more';
+export type MobilePage = 'quick' | 'journal' | 'portfolio' | 'plan' | 'review' | 'approvals' | 'more';
 
 interface MobileBottomNavProps {
     currentPage: MobilePage;
@@ -13,12 +13,13 @@ const navItems = [
     { id: 'portfolio', label: 'Portfolio', icon: WalletCards },
     { id: 'plan', label: 'Plan', icon: Target },
     { id: 'review', label: 'Review', icon: ClipboardCheck },
+    { id: 'approvals', label: 'AI', icon: Inbox },
 ] satisfies Array<{ id: MobilePage; label: string; icon: typeof Grid2X2 }>;
 
 export default function MobileBottomNav({ currentPage, onNavigate }: MobileBottomNavProps) {
     return (
         <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-800 bg-slate-950/95 backdrop-blur supports-[padding:max(0px)]:pb-[env(safe-area-inset-bottom)]">
-            <div className="grid h-16 grid-cols-5">
+            <div className="grid h-16 grid-cols-6">
                 {navItems.map((item) => {
                     const Icon = item.icon;
                     const isActive = currentPage === item.id;

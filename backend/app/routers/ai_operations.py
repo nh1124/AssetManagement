@@ -1,10 +1,16 @@
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
+from ..services.ai_context_service import (
+    get_context_resource,
+    get_context_summary,
+    list_context_resources,
+)
 from ..services.ai_policy_service import (
+    AiOperationDecision,
     AiOperationContext,
     evaluate_ai_operation,
     list_client_policies,
@@ -49,6 +55,68 @@ def get_ai_audit_logs(
     ).order_by(models.AiAuditLog.created_at.desc(), models.AiAuditLog.id.desc()).offset(offset).limit(limit).all()
 
 
+@router.get("/context/resources", response_model=list[schemas.AiContextResourceDescriptor])
+def get_ai_context_resources(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    context, decision = _ensure_context_read_allowed(db, current_client, request, "resources")
+    data = list_context_resources()
+    _write_context_read_audit(db, current_client, context, decision, {"count": len(data)})
+    return data
+
+
+@router.get("/context/summary", response_model=schemas.AiContextResponse)
+def get_ai_context_summary(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    context, decision = _ensure_context_read_allowed(db, current_client, request, "summary")
+    data = get_context_summary(db, current_client.id)
+    _write_context_read_audit(db, current_client, context, decision, {"resource": "summary"})
+    return data
+
+
+@router.get("/context/resource/{resource}", response_model=schemas.AiContextResponse)
+def get_ai_context_resource(
+    resource: str,
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=500),
+    period: str | None = Query(default=None, pattern=r"^\d{4}-\d{2}$"),
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    context, decision = _ensure_context_read_allowed(
+        db,
+        current_client,
+        request,
+        resource,
+        limit=limit,
+        period=period,
+    )
+    try:
+        data = get_context_resource(db, current_client.id, resource, limit=limit, period=period)
+    except HTTPException as exc:
+        _write_context_read_audit(
+            db,
+            current_client,
+            context,
+            decision,
+            {"error": exc.detail, "status_code": exc.status_code},
+        )
+        raise
+    _write_context_read_audit(
+        db,
+        current_client,
+        context,
+        decision,
+        {"resource": data["resource"], "classification": data["classification"]},
+    )
+    return data
+
+
 @router.post("/evaluate", response_model=schemas.AiOperationEvaluateResponse)
 def evaluate_ai_operation_api(
     payload: schemas.AiOperationEvaluateRequest,
@@ -84,3 +152,60 @@ def evaluate_ai_operation_api(
         "require_mfa": decision.require_mfa,
         "reason": decision.reason,
     }
+
+
+def _ensure_context_read_allowed(
+    db: Session,
+    current_client: models.Client,
+    request: Request,
+    context_resource: str,
+    *,
+    limit: int | None = None,
+    period: str | None = None,
+) -> tuple[AiOperationContext, AiOperationDecision]:
+    mcp_client_id = request.headers.get("x-mcp-client-id")
+    source = "mcp_http" if mcp_client_id else "backend"
+    context = AiOperationContext(
+        source=source,
+        tool_name=request.headers.get("x-mcp-tool-name"),
+        resource="ai_context",
+        action="read",
+        risk="low",
+        mcp_client_id=mcp_client_id,
+        request_summary={
+            "context_resource": context_resource,
+            "limit": limit,
+            "period": period,
+        },
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+    decision = evaluate_ai_operation(db, current_client.id, context)
+    if decision.decision != "allowed":
+        write_ai_audit_log(
+            db,
+            current_client.id,
+            context,
+            decision,
+            result={"decision": decision.decision, "reason": decision.reason},
+        )
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "ai_context_read_not_allowed",
+                "decision": decision.decision,
+                "resource": decision.resource,
+                "reason": decision.reason,
+            },
+        )
+    return context, decision
+
+
+def _write_context_read_audit(
+    db: Session,
+    current_client: models.Client,
+    context: AiOperationContext,
+    decision: AiOperationDecision,
+    result: dict,
+) -> None:
+    write_ai_audit_log(db, current_client.id, context, decision, result=result)

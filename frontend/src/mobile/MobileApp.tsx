@@ -7,6 +7,7 @@ import MobilePortfolioPage from './pages/Portfolio';
 import MobilePlanPage from './pages/Plan';
 import MobileReviewPage from './pages/Review';
 import MobileMorePage from './pages/More';
+import ApprovalInboxPage from '../pages/ApprovalInbox';
 
 export default function MobileApp() {
     const [currentPage, setCurrentPage] = useState<MobilePage>('quick');
@@ -23,6 +24,8 @@ export default function MobileApp() {
                 return <MobilePlanPage />;
             case 'review':
                 return <MobileReviewPage />;
+            case 'approvals':
+                return <ApprovalInboxPage />;
             case 'more':
                 return <MobileMorePage />;
             default:

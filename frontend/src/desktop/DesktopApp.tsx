@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import QuickInputDrawer from '../components/QuickInputDrawer';
+import ApprovalInbox from '../pages/ApprovalInbox';
 import Goal from '../pages/Goal';
 import Journal from '../pages/Journal';
 import Portfolio from '../pages/Portfolio';
@@ -27,6 +28,8 @@ export default function DesktopApp() {
                 return <Strategy />;
             case 'registry':
                 return <Registry />;
+            case 'approvals':
+                return <ApprovalInbox />;
             case 'settings':
                 return <SettingsPage />;
             default:

@@ -15,6 +15,7 @@ AiDecision = Literal["allowed", "denied", "approval_required", "applied", "faile
 AiSource = Literal["frontend", "mcp_http", "mcp_stdio", "backend"]
 
 AI_OPERATION_RESOURCES = [
+    "ai_context",
     "transactions",
     "accounts",
     "monthly_plan_lines",
@@ -27,6 +28,7 @@ AI_OPERATION_RESOURCES = [
     "milestones",
     "exchange_rates",
     "data_transfer",
+    "data_export",
     "client_settings",
     "ai_settings",
     "mfa_settings",
@@ -41,7 +43,10 @@ SENSITIVE_KEY_PARTS = (
     "api_key",
     "apikey",
     "authorization",
+    "encrypted",
+    "code_hash",
     "recovery_code",
+    "refresh_token",
     "totp",
     "otpauth",
 )

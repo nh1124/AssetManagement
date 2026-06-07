@@ -23,6 +23,7 @@ AiOperationModeLiteral = Literal["deny", "allow_read", "require_approval", "allo
 AiOperationDecisionLiteral = Literal["allowed", "denied", "approval_required", "applied", "failed"]
 AiOperationSourceLiteral = Literal["frontend", "mcp_http", "mcp_stdio", "backend"]
 AiChangeRequestStatusLiteral = Literal["draft", "pending", "approved", "applied", "rejected", "expired", "failed"]
+AiDataClassificationLiteral = Literal["normal", "sensitive", "secret"]
 
 # Account Schemas
 class AccountBase(BaseModel):
@@ -142,6 +143,26 @@ class AiOperationEvaluateResponse(BaseModel):
     risk: AiOperationRiskLiteral
     require_mfa: bool = False
     reason: str
+
+
+class AiContextResourceDescriptor(BaseModel):
+    resource: str
+    title: str
+    description: str
+    classification: AiDataClassificationLiteral
+    available: bool
+    risk: AiOperationRiskLiteral
+    includes: list[str] = Field(default_factory=list)
+    excludes: list[str] = Field(default_factory=list)
+    default_limit: Optional[int] = None
+
+
+class AiContextResponse(BaseModel):
+    resource: str
+    classification: AiDataClassificationLiteral
+    generated_at: datetime
+    data: dict[str, Any] | list[dict[str, Any]] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class AiChangeRequestBase(BaseModel):

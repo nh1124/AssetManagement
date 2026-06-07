@@ -3,16 +3,19 @@ import QRCode from 'qrcode';
 import {
     Activity,
     AlertTriangle,
+    Bot,
     CheckCircle2,
     Database,
     Download,
     Eye,
     EyeOff,
     Key,
+    ListChecks,
     PlusCircle,
     RefreshCw,
     Save,
     ShieldCheck,
+    Trash2,
     Upload,
     User,
     Wrench,
@@ -24,20 +27,76 @@ import {
     checkDataHealth,
     disableMfa,
     exportData,
+    getAiAuditLogs,
+    getAiPolicies,
     getMfaStatus,
     importData,
     regenerateMfaRecoveryCodes,
     repairDataHealth,
     startMfaSetup,
+    updateAiPolicies,
     updateClientKey,
     updateClientSettings,
     updateProfile,
     verifyMfaSetup,
 } from '../api';
 import { useToast } from '../components/Toast';
-import type { DataHealthResult, MfaSetupStart, MfaStatus } from '../types';
+import type {
+    AiAuditLog,
+    AiOperationMode,
+    AiOperationPolicy,
+    AiOperationPolicyPayload,
+    AiOperationRisk,
+    DataHealthResult,
+    MfaSetupStart,
+    MfaStatus,
+} from '../types';
 
-type SettingsTab = 'security' | 'preferences' | 'transfer' | 'health';
+type SettingsTab = 'security' | 'ai' | 'preferences' | 'transfer' | 'health';
+
+type PolicyDraft = Omit<AiOperationPolicy, 'id' | 'client_id' | 'created_at' | 'updated_at'> & {
+    id?: number;
+};
+
+const aiResources = [
+    'transactions',
+    'accounts',
+    'monthly_plan_lines',
+    'budget_plans',
+    'recurring_transactions',
+    'registry_entries',
+    'products',
+    'capsules',
+    'life_events',
+    'milestones',
+    'exchange_rates',
+    'data_transfer',
+    'client_settings',
+    'ai_settings',
+    'mfa_settings',
+];
+
+const aiActions = ['read', 'create', 'update', 'patch', 'delete', 'apply', 'import', 'replace', 'execute'];
+const aiRisks: AiOperationRisk[] = ['low', 'medium', 'high', 'critical'];
+const aiModes: AiOperationMode[] = ['deny', 'allow_read', 'require_approval', 'allow_execute'];
+
+const starterPolicies: PolicyDraft[] = [
+    { resource: 'transactions', action: 'create', risk: 'medium', mode: 'require_approval', require_mfa: false },
+    { resource: 'monthly_plan_lines', action: 'update', risk: 'medium', mode: 'require_approval', require_mfa: false },
+    { resource: 'recurring_transactions', action: 'update', risk: 'high', mode: 'require_approval', require_mfa: false },
+    { resource: 'data_transfer', action: 'replace', risk: 'critical', mode: 'require_approval', require_mfa: true },
+    { resource: 'ai_settings', action: 'update', risk: 'critical', mode: 'require_approval', require_mfa: true },
+];
+
+const blankPolicy = (): PolicyDraft => ({
+    resource: 'transactions',
+    action: 'create',
+    risk: 'medium',
+    mode: 'require_approval',
+    threshold_amount: null,
+    threshold_count: null,
+    require_mfa: false,
+});
 
 export default function SettingsPage() {
     const { user } = useAuth();
@@ -69,6 +128,10 @@ export default function SettingsPage() {
     const [mfaCode, setMfaCode] = useState('');
     const [mfaRecoveryCodes, setMfaRecoveryCodes] = useState<string[]>([]);
     const [isMfaBusy, setIsMfaBusy] = useState(false);
+    const [aiPolicies, setAiPolicies] = useState<PolicyDraft[]>([]);
+    const [aiAuditLogs, setAiAuditLogs] = useState<AiAuditLog[]>([]);
+    const [isAiLoading, setIsAiLoading] = useState(false);
+    const [isAiSaving, setIsAiSaving] = useState(false);
     const importInputRef = useRef<HTMLInputElement>(null);
 
     useEffect(() => {
@@ -84,6 +147,7 @@ export default function SettingsPage() {
 
     useEffect(() => {
         refreshMfaStatus();
+        refreshAiOperationData();
     }, [user?.id]);
 
     useEffect(() => {
@@ -117,6 +181,32 @@ export default function SettingsPage() {
             setMfaStatus(await getMfaStatus());
         } catch {
             setMfaStatus(null);
+        }
+    };
+
+    const refreshAiOperationData = async () => {
+        setIsAiLoading(true);
+        try {
+            const [policies, logs] = await Promise.all([
+                getAiPolicies(),
+                getAiAuditLogs({ limit: 25 }),
+            ]);
+            setAiPolicies(policies.map(({ id, ai_client_id, resource, action, risk, mode, threshold_amount, threshold_count, require_mfa }) => ({
+                id,
+                ai_client_id,
+                resource,
+                action,
+                risk,
+                mode,
+                threshold_amount,
+                threshold_count,
+                require_mfa,
+            })));
+            setAiAuditLogs(logs);
+        } catch (error: any) {
+            showToast(error.response?.data?.detail || 'Failed to load AI operation settings', 'error');
+        } finally {
+            setIsAiLoading(false);
         }
     };
 
@@ -305,6 +395,49 @@ export default function SettingsPage() {
             showToast(error.response?.data?.detail || 'Failed to regenerate recovery codes', 'error');
         } finally {
             setIsMfaBusy(false);
+        }
+    };
+
+    const updatePolicy = (index: number, patch: Partial<PolicyDraft>) => {
+        setAiPolicies((prev) => prev.map((policy, i) => i === index ? { ...policy, ...patch } : policy));
+    };
+
+    const addPolicy = () => setAiPolicies((prev) => [...prev, blankPolicy()]);
+    const loadStarterPolicies = () => setAiPolicies(starterPolicies.map((policy) => ({ ...policy })));
+    const removePolicy = (index: number) => setAiPolicies((prev) => prev.filter((_, i) => i !== index));
+
+    const policyPayload = (policy: PolicyDraft): AiOperationPolicyPayload => ({
+        ai_client_id: policy.ai_client_id ?? null,
+        resource: policy.resource,
+        action: policy.action,
+        risk: policy.risk,
+        mode: policy.mode,
+        threshold_amount: policy.threshold_amount ?? null,
+        threshold_count: policy.threshold_count ?? null,
+        require_mfa: policy.require_mfa,
+    });
+
+    const saveAiPolicies = async () => {
+        setIsAiSaving(true);
+        try {
+            const savedPolicies = await updateAiPolicies(aiPolicies.map(policyPayload));
+            setAiPolicies(savedPolicies.map(({ id, ai_client_id, resource, action, risk, mode, threshold_amount, threshold_count, require_mfa }) => ({
+                id,
+                ai_client_id,
+                resource,
+                action,
+                risk,
+                mode,
+                threshold_amount,
+                threshold_count,
+                require_mfa,
+            })));
+            showToast('AI operation policies updated', 'success');
+            await refreshAiOperationData();
+        } catch (error: any) {
+            showToast(error.response?.data?.detail || 'Failed to save AI policies', 'error');
+        } finally {
+            setIsAiSaving(false);
         }
     };
 
@@ -697,12 +830,199 @@ export default function SettingsPage() {
         </div>
     );
 
+    const aiOperationTab = (
+        <div className={sectionClass}>
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                    <Bot size={18} className="text-cyan-300" />
+                    <h2 className="text-sm font-semibold">AI Operation</h2>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                    <button
+                        type="button"
+                        onClick={refreshAiOperationData}
+                        disabled={isAiLoading || isAiSaving}
+                        className="flex items-center gap-2 border border-slate-700 bg-slate-800/60 px-3 py-2 text-xs hover:border-cyan-500 hover:text-cyan-300 disabled:opacity-50"
+                    >
+                        <RefreshCw size={14} className={isAiLoading ? 'animate-spin' : ''} />
+                        Refresh
+                    </button>
+                    <button
+                        type="button"
+                        onClick={loadStarterPolicies}
+                        disabled={isAiSaving}
+                        className="flex items-center gap-2 border border-slate-700 bg-slate-800/60 px-3 py-2 text-xs hover:border-amber-500 hover:text-amber-300 disabled:opacity-50"
+                    >
+                        <ListChecks size={14} />
+                        Starter
+                    </button>
+                    <button
+                        type="button"
+                        onClick={saveAiPolicies}
+                        disabled={isAiSaving}
+                        className="flex items-center gap-2 border border-emerald-500/40 bg-emerald-500/10 px-3 py-2 text-xs text-emerald-300 hover:bg-emerald-500/20 disabled:opacity-50"
+                    >
+                        <Save size={14} />
+                        {isAiSaving ? 'Saving...' : 'Save'}
+                    </button>
+                </div>
+            </div>
+
+            <div className="overflow-x-auto border border-slate-800 scrollbar-subtle">
+                <table className="min-w-[980px] w-full text-left text-xs">
+                    <thead className="border-b border-slate-800 bg-slate-950/60 text-[10px] uppercase tracking-wide text-slate-500">
+                        <tr>
+                            <th className="px-2 py-2">Resource</th>
+                            <th className="px-2 py-2">Action</th>
+                            <th className="px-2 py-2">Risk</th>
+                            <th className="px-2 py-2">Mode</th>
+                            <th className="px-2 py-2">Amount</th>
+                            <th className="px-2 py-2">Count</th>
+                            <th className="px-2 py-2">MFA</th>
+                            <th className="px-2 py-2"></th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-800">
+                        {aiPolicies.map((policy, index) => (
+                            <tr key={policy.id ?? `draft-${index}`} className="bg-slate-950/20">
+                                <td className="px-2 py-2">
+                                    <select
+                                        value={policy.resource}
+                                        onChange={(e) => updatePolicy(index, { resource: e.target.value })}
+                                        className={fieldClass}
+                                    >
+                                        {aiResources.map((resource) => <option key={resource} value={resource}>{resource}</option>)}
+                                    </select>
+                                </td>
+                                <td className="px-2 py-2">
+                                    <select
+                                        value={policy.action}
+                                        onChange={(e) => updatePolicy(index, { action: e.target.value })}
+                                        className={fieldClass}
+                                    >
+                                        {aiActions.map((action) => <option key={action} value={action}>{action}</option>)}
+                                    </select>
+                                </td>
+                                <td className="px-2 py-2">
+                                    <select
+                                        value={policy.risk}
+                                        onChange={(e) => updatePolicy(index, { risk: e.target.value as AiOperationRisk })}
+                                        className={fieldClass}
+                                    >
+                                        {aiRisks.map((risk) => <option key={risk} value={risk}>{risk}</option>)}
+                                    </select>
+                                </td>
+                                <td className="px-2 py-2">
+                                    <select
+                                        value={policy.mode}
+                                        onChange={(e) => updatePolicy(index, { mode: e.target.value as AiOperationMode })}
+                                        className={fieldClass}
+                                    >
+                                        {aiModes.map((mode) => <option key={mode} value={mode}>{mode}</option>)}
+                                    </select>
+                                </td>
+                                <td className="px-2 py-2">
+                                    <input
+                                        type="number"
+                                        value={policy.threshold_amount ?? ''}
+                                        onChange={(e) => updatePolicy(index, { threshold_amount: e.target.value === '' ? null : Number(e.target.value) })}
+                                        className={`${fieldClass} font-mono`}
+                                    />
+                                </td>
+                                <td className="px-2 py-2">
+                                    <input
+                                        type="number"
+                                        value={policy.threshold_count ?? ''}
+                                        onChange={(e) => updatePolicy(index, { threshold_count: e.target.value === '' ? null : Number(e.target.value) })}
+                                        className={`${fieldClass} font-mono`}
+                                    />
+                                </td>
+                                <td className="px-2 py-2">
+                                    <label className="inline-flex cursor-pointer items-center gap-2 text-slate-300">
+                                        <input
+                                            type="checkbox"
+                                            checked={policy.require_mfa}
+                                            onChange={(e) => updatePolicy(index, { require_mfa: e.target.checked })}
+                                            className="h-4 w-4 accent-emerald-500"
+                                        />
+                                        <span className="text-[10px]">Require</span>
+                                    </label>
+                                </td>
+                                <td className="px-2 py-2 text-right">
+                                    <button
+                                        type="button"
+                                        onClick={() => removePolicy(index)}
+                                        className="inline-flex items-center justify-center border border-slate-700 p-2 text-slate-500 hover:border-rose-500 hover:text-rose-300"
+                                        aria-label="Remove policy"
+                                        title="Remove policy"
+                                    >
+                                        <Trash2 size={14} />
+                                    </button>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+                {aiPolicies.length === 0 && (
+                    <div className="px-3 py-8 text-center text-xs text-slate-500">
+                        No explicit policies. Backend defaults still apply.
+                    </div>
+                )}
+            </div>
+
+            <div className="mt-3 flex justify-between gap-2">
+                <button
+                    type="button"
+                    onClick={addPolicy}
+                    className="flex items-center gap-2 border border-slate-700 bg-slate-800/60 px-3 py-2 text-xs hover:border-emerald-500 hover:text-emerald-300"
+                >
+                    <PlusCircle size={14} />
+                    Add Policy
+                </button>
+                <div className="text-[10px] text-slate-500">
+                    Save replaces the current policy set.
+                </div>
+            </div>
+
+            <div className="mt-5">
+                <div className="mb-2 flex items-center gap-2">
+                    <Activity size={16} className="text-emerald-300" />
+                    <h3 className="text-xs font-semibold text-slate-100">Recent Audit Logs</h3>
+                </div>
+                <div className="max-h-80 overflow-y-auto border border-slate-800 scrollbar-subtle">
+                    {aiAuditLogs.length === 0 ? (
+                        <div className="px-3 py-8 text-center text-xs text-slate-500">No audit logs.</div>
+                    ) : (
+                        <div className="divide-y divide-slate-800">
+                            {aiAuditLogs.map((log) => (
+                                <div key={log.id} className="grid grid-cols-[minmax(0,1fr)_96px_120px] gap-2 px-3 py-2 text-xs">
+                                    <div className="min-w-0">
+                                        <p className="truncate text-slate-200">{log.resource}:{log.action}</p>
+                                        <p className="truncate text-[10px] text-slate-500">{log.source} / {log.tool_name || 'no tool'} / {log.mcp_client_id || 'local'}</p>
+                                    </div>
+                                    <div className="text-slate-400">{log.decision}</div>
+                                    <div className="truncate text-right text-[10px] text-slate-500" title={log.created_at}>
+                                        {new Date(log.created_at).toLocaleString()}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+
     const rightPane = (
         <div className="h-full min-h-0 overflow-hidden border border-slate-800 bg-slate-900/70">
             <div className="flex flex-wrap border-b border-slate-800 px-2">
                 <button type="button" onClick={() => setActiveTab('security')} className={tabClass('security')}>
                     <ShieldCheck size={14} />
                     Security
+                </button>
+                <button type="button" onClick={() => setActiveTab('ai')} className={tabClass('ai')}>
+                    <Bot size={14} />
+                    AI Operation
                 </button>
                 <button type="button" onClick={() => setActiveTab('preferences')} className={tabClass('preferences')}>
                     <PlusCircle size={14} />
@@ -719,6 +1039,7 @@ export default function SettingsPage() {
             </div>
             <div className="h-[calc(100%-41px)] overflow-y-auto overflow-x-hidden p-3 pr-2 scrollbar-subtle">
                 {activeTab === 'security' && securityTab}
+                {activeTab === 'ai' && aiOperationTab}
                 {activeTab === 'preferences' && preferencesTab}
                 {activeTab === 'transfer' && transferTab}
                 {activeTab === 'health' && healthTab}

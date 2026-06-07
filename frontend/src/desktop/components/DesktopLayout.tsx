@@ -1,8 +1,9 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import {
     ClipboardCheck,
     Flag,
+    Inbox,
     List,
     LogOut,
     Package,
@@ -12,6 +13,7 @@ import {
     User as UserIcon,
     WalletCards,
 } from 'lucide-react';
+import { getAiChangeRequests } from '../../api';
 
 interface DesktopLayoutProps {
     children: ReactNode;
@@ -27,6 +29,7 @@ const navItems = [
     { id: 'goal', label: 'Goal', icon: Flag },
     { id: 'strategy', label: 'Strategy', icon: Target },
     { id: 'registry', label: 'Registry', icon: Package },
+    { id: 'approvals', label: 'Approvals', icon: Inbox },
     { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
@@ -37,6 +40,25 @@ export default function DesktopLayout({
     onOpenQuickInput,
 }: DesktopLayoutProps) {
     const { user, logout } = useAuth();
+    const [pendingApprovals, setPendingApprovals] = useState(0);
+
+    useEffect(() => {
+        let cancelled = false;
+        const loadPending = async () => {
+            try {
+                const items = await getAiChangeRequests({ status: 'pending', limit: 100 });
+                if (!cancelled) setPendingApprovals(items.length);
+            } catch {
+                if (!cancelled) setPendingApprovals(0);
+            }
+        };
+        loadPending();
+        const timer = window.setInterval(loadPending, 30000);
+        return () => {
+            cancelled = true;
+            window.clearInterval(timer);
+        };
+    }, [currentPage]);
 
     return (
         <div className="h-screen min-h-0 bg-slate-900 text-slate-50 flex flex-col overflow-hidden">
@@ -66,6 +88,11 @@ export default function DesktopLayout({
                                     >
                                         <Icon size={14} />
                                         <span>{item.label}</span>
+                                        {item.id === 'approvals' && pendingApprovals > 0 && (
+                                            <span className="ml-0.5 rounded-full bg-amber-500 px-1.5 py-0.5 text-[9px] font-semibold text-slate-950">
+                                                {pendingApprovals}
+                                            </span>
+                                        )}
                                     </button>
                                 );
                             })}

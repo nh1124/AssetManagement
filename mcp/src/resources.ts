@@ -140,11 +140,11 @@ export function registerResources(server: McpServer): void {
     "asset-management://summary",
     {
       title: "Financial summary",
-      description: "Current summary from /analysis/summary.",
+      description: "Current AI-safe summary from /ai/context/summary.",
       mimeType: "application/json",
     },
     async (uri) => {
-      const data = await api.get<unknown>("/analysis/summary");
+      const data = await api.get<unknown>("/ai/context/summary");
       return {
         contents: [{ uri: uri.href, mimeType: "application/json", text: jsonText(data) }],
       };
@@ -156,11 +156,27 @@ export function registerResources(server: McpServer): void {
     "asset-management://transactions/recent",
     {
       title: "Recent transactions",
-      description: "Newest 10 transactions from /transactions/.",
+      description: "Newest 10 AI-safe transactions from /ai/context/resource/transactions_recent.",
       mimeType: "application/json",
     },
     async (uri) => {
-      const data = await api.get<unknown>("/transactions/?limit=10");
+      const data = await api.get<unknown>("/ai/context/resource/transactions_recent?limit=10");
+      return {
+        contents: [{ uri: uri.href, mimeType: "application/json", text: jsonText(data) }],
+      };
+    },
+  );
+
+  server.registerResource(
+    "ai-context-resources",
+    "asset-management://ai/context/resources",
+    {
+      title: "AI context resource catalog",
+      description: "Available AI-safe context resources and their data classifications.",
+      mimeType: "application/json",
+    },
+    async (uri) => {
+      const data = await api.get<unknown>("/ai/context/resources");
       return {
         contents: [{ uri: uri.href, mimeType: "application/json", text: jsonText(data) }],
       };
