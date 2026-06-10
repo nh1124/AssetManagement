@@ -194,3 +194,20 @@ def test_policy_router_replaces_and_lists_policies() -> None:
         assert [policy.resource for policy in listed] == ["data_transfer", "transactions"]
     finally:
         db.close()
+
+
+def test_execution_settings_are_stored_in_general_settings() -> None:
+    db = _session()
+    try:
+        client = _client(db)
+        payload = schemas.AiExecutionSettings(mcp_write_mode="change_request")
+
+        saved = ai_operations.put_ai_execution_settings(payload, db, client)
+        listed = ai_operations.get_ai_execution_settings(client)
+
+        assert saved["mcp_write_mode"] == "change_request"
+        assert listed["mcp_write_mode"] == "change_request"
+        assert client.general_settings["ai_operation"]["mcp_write_mode"] == "change_request"
+        assert "transactions:create" in listed["supported_change_request_operations"]
+    finally:
+        db.close()

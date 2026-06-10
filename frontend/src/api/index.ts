@@ -10,6 +10,7 @@ import type {
     AiChangeRequestPayload,
     AiChangeRequestPreview,
     AiAuditLog,
+    AiExecutionSettings,
     AiOperationEvaluatePayload,
     AiOperationEvaluateResult,
     AiOperationPolicy,
@@ -143,6 +144,16 @@ export const getAiPolicies = async (): Promise<AiOperationPolicy[]> => {
 
 export const updateAiPolicies = async (policies: AiOperationPolicyPayload[]): Promise<AiOperationPolicy[]> => {
     const response = await api.put('/ai/policies', policies);
+    return response.data;
+};
+
+export const getAiExecutionSettings = async (): Promise<AiExecutionSettings> => {
+    const response = await api.get('/ai/execution-settings');
+    return response.data;
+};
+
+export const updateAiExecutionSettings = async (settings: AiExecutionSettings): Promise<AiExecutionSettings> => {
+    const response = await api.put('/ai/execution-settings', settings);
     return response.data;
 };
 

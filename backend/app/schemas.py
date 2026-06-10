@@ -24,6 +24,7 @@ AiOperationDecisionLiteral = Literal["allowed", "denied", "approval_required", "
 AiOperationSourceLiteral = Literal["frontend", "mcp_http", "mcp_stdio", "backend"]
 AiChangeRequestStatusLiteral = Literal["draft", "pending", "approved", "applied", "rejected", "expired", "failed"]
 AiDataClassificationLiteral = Literal["normal", "sensitive", "secret"]
+AiMcpWriteModeLiteral = Literal["direct_write", "change_request"]
 
 # Account Schemas
 class AccountBase(BaseModel):
@@ -143,6 +144,11 @@ class AiOperationEvaluateResponse(BaseModel):
     risk: AiOperationRiskLiteral
     require_mfa: bool = False
     reason: str
+
+
+class AiExecutionSettings(BaseModel):
+    mcp_write_mode: AiMcpWriteModeLiteral = "direct_write"
+    supported_change_request_operations: list[str] = Field(default_factory=list)
 
 
 class AiContextResourceDescriptor(BaseModel):

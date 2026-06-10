@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
@@ -21,6 +22,25 @@ from ..services.ai_policy_service import (
 
 router = APIRouter(prefix="/ai", tags=["ai-operations"])
 
+SUPPORTED_CHANGE_REQUEST_OPERATIONS = [
+    "transactions:create",
+    "monthly_plan_lines:update",
+    "recurring_transactions:create",
+    "recurring_transactions:update",
+]
+
+
+def _execution_settings_payload(current_client: models.Client) -> dict:
+    general = current_client.general_settings or {}
+    ai_operation = general.get("ai_operation") if isinstance(general.get("ai_operation"), dict) else {}
+    mode = ai_operation.get("mcp_write_mode") or "direct_write"
+    if mode not in {"direct_write", "change_request"}:
+        mode = "direct_write"
+    return {
+        "mcp_write_mode": mode,
+        "supported_change_request_operations": SUPPORTED_CHANGE_REQUEST_OPERATIONS,
+    }
+
 
 @router.get("/policies", response_model=list[schemas.AiOperationPolicy])
 def get_ai_policies(
@@ -41,6 +61,30 @@ def put_ai_policies(
         current_client.id,
         [policy.model_dump() for policy in policies],
     )
+
+
+@router.get("/execution-settings", response_model=schemas.AiExecutionSettings)
+def get_ai_execution_settings(
+    current_client: models.Client = Depends(get_current_client),
+):
+    return _execution_settings_payload(current_client)
+
+
+@router.put("/execution-settings", response_model=schemas.AiExecutionSettings)
+def put_ai_execution_settings(
+    payload: schemas.AiExecutionSettings,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    settings = dict(current_client.general_settings or {})
+    ai_operation = dict(settings.get("ai_operation") or {})
+    ai_operation["mcp_write_mode"] = payload.mcp_write_mode
+    settings["ai_operation"] = ai_operation
+    current_client.general_settings = settings
+    flag_modified(current_client, "general_settings")
+    db.commit()
+    db.refresh(current_client)
+    return _execution_settings_payload(current_client)
 
 
 @router.get("/audit-logs", response_model=list[schemas.AiAuditLog])

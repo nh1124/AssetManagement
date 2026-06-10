@@ -60,20 +60,61 @@ async function getToken(): Promise<string> {
   return stdioToken;
 }
 
+function contextHeaders(context: McpRequestContext | undefined): Record<string, string> {
+  return context ? {
+    "X-MCP-Client-Id": context.mcpClientId,
+    "X-MCP-Username": context.username,
+    "X-MCP-Backend-Client-Id": String(context.backendClientId),
+    ...(context.toolName ? { "X-MCP-Tool-Name": context.toolName } : {}),
+  } : {};
+}
+
+function methodOf(init: RequestInit): string {
+  return String(init.method ?? "GET").toUpperCase();
+}
+
+function isWriteRequest(path: string, init: RequestInit): boolean {
+  const method = methodOf(init);
+  if (method === "GET" || method === "HEAD" || method === "OPTIONS") return false;
+  if (path.startsWith("/auth/")) return false;
+  if (path.startsWith("/ai/change-requests")) return false;
+  if (path.startsWith("/ai/execution-settings")) return false;
+  if (path === "/ai/evaluate") return false;
+  if (path.startsWith("/api/analyze")) return false;
+  if (path.includes("/preview")) return false;
+  if (path.includes("/monte-carlo")) return false;
+  return true;
+}
+
+async function enforceMcpWriteMode(path: string, init: RequestInit, token: string, context: McpRequestContext | undefined): Promise<void> {
+  if (!isWriteRequest(path, init)) return;
+  const res = await fetch(`${BACKEND_URL}/ai/execution-settings`, {
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+      ...contextHeaders(context),
+    },
+  });
+  if (!res.ok) return;
+  const settings = await res.json() as { mcp_write_mode?: string };
+  if (settings.mcp_write_mode === "change_request") {
+    throw new Error(
+      "Change request mode is enabled in Settings. This MCP write tool is not applying a direct write. " +
+      "Use an approval-buffer-backed operation or create an AI change request and review it in Approval Inbox.",
+    );
+  }
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = await getToken();
   const context = requestContext.getStore();
+  await enforceMcpWriteMode(path, init, token, context);
   const res = await fetch(`${BACKEND_URL}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
-      ...(context ? {
-        "X-MCP-Client-Id": context.mcpClientId,
-        "X-MCP-Username": context.username,
-        "X-MCP-Backend-Client-Id": String(context.backendClientId),
-        ...(context.toolName ? { "X-MCP-Tool-Name": context.toolName } : {}),
-      } : {}),
+      ...contextHeaders(context),
       ...((init.headers ?? {}) as Record<string, string>),
     },
   });

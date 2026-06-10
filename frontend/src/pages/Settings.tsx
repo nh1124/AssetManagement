@@ -28,6 +28,7 @@ import {
     disableMfa,
     exportData,
     getAiAuditLogs,
+    getAiExecutionSettings,
     getAiPolicies,
     getMfaStatus,
     importData,
@@ -35,6 +36,7 @@ import {
     repairDataHealth,
     startMfaSetup,
     updateAiPolicies,
+    updateAiExecutionSettings,
     updateClientKey,
     updateClientSettings,
     updateProfile,
@@ -43,6 +45,8 @@ import {
 import { useToast } from '../components/Toast';
 import type {
     AiAuditLog,
+    AiExecutionSettings,
+    AiMcpWriteMode,
     AiOperationMode,
     AiOperationPolicy,
     AiOperationPolicyPayload,
@@ -79,6 +83,18 @@ const aiResources = [
 const aiActions = ['read', 'create', 'update', 'patch', 'delete', 'apply', 'import', 'replace', 'execute'];
 const aiRisks: AiOperationRisk[] = ['low', 'medium', 'high', 'critical'];
 const aiModes: AiOperationMode[] = ['deny', 'allow_read', 'require_approval', 'allow_execute'];
+const mcpWriteModes: Array<{ value: AiMcpWriteMode; label: string; description: string }> = [
+    {
+        value: 'change_request',
+        label: 'Change Request',
+        description: 'MCP write tools create approval requests instead of applying supported changes directly.',
+    },
+    {
+        value: 'direct_write',
+        label: 'Direct Write',
+        description: 'MCP write tools apply changes immediately when the underlying API allows it.',
+    },
+];
 
 const starterPolicies: PolicyDraft[] = [
     { resource: 'transactions', action: 'create', risk: 'medium', mode: 'require_approval', require_mfa: false },
@@ -130,6 +146,10 @@ export default function SettingsPage() {
     const [isMfaBusy, setIsMfaBusy] = useState(false);
     const [aiPolicies, setAiPolicies] = useState<PolicyDraft[]>([]);
     const [aiAuditLogs, setAiAuditLogs] = useState<AiAuditLog[]>([]);
+    const [aiExecutionSettings, setAiExecutionSettings] = useState<AiExecutionSettings>({
+        mcp_write_mode: 'direct_write',
+        supported_change_request_operations: [],
+    });
     const [isAiLoading, setIsAiLoading] = useState(false);
     const [isAiSaving, setIsAiSaving] = useState(false);
     const importInputRef = useRef<HTMLInputElement>(null);
@@ -187,9 +207,10 @@ export default function SettingsPage() {
     const refreshAiOperationData = async () => {
         setIsAiLoading(true);
         try {
-            const [policies, logs] = await Promise.all([
+            const [policies, logs, executionSettings] = await Promise.all([
                 getAiPolicies(),
                 getAiAuditLogs({ limit: 25 }),
+                getAiExecutionSettings(),
             ]);
             setAiPolicies(policies.map(({ id, ai_client_id, resource, action, risk, mode, threshold_amount, threshold_count, require_mfa }) => ({
                 id,
@@ -203,6 +224,7 @@ export default function SettingsPage() {
                 require_mfa,
             })));
             setAiAuditLogs(logs);
+            setAiExecutionSettings(executionSettings);
         } catch (error: any) {
             showToast(error.response?.data?.detail || 'Failed to load AI operation settings', 'error');
         } finally {
@@ -420,7 +442,10 @@ export default function SettingsPage() {
     const saveAiPolicies = async () => {
         setIsAiSaving(true);
         try {
-            const savedPolicies = await updateAiPolicies(aiPolicies.map(policyPayload));
+            const [savedPolicies, savedExecutionSettings] = await Promise.all([
+                updateAiPolicies(aiPolicies.map(policyPayload)),
+                updateAiExecutionSettings(aiExecutionSettings),
+            ]);
             setAiPolicies(savedPolicies.map(({ id, ai_client_id, resource, action, risk, mode, threshold_amount, threshold_count, require_mfa }) => ({
                 id,
                 ai_client_id,
@@ -432,7 +457,8 @@ export default function SettingsPage() {
                 threshold_count,
                 require_mfa,
             })));
-            showToast('AI operation policies updated', 'success');
+            setAiExecutionSettings(savedExecutionSettings);
+            showToast('AI operation settings updated', 'success');
             await refreshAiOperationData();
         } catch (error: any) {
             showToast(error.response?.data?.detail || 'Failed to save AI policies', 'error');
@@ -866,6 +892,52 @@ export default function SettingsPage() {
                         {isAiSaving ? 'Saving...' : 'Save'}
                     </button>
                 </div>
+            </div>
+
+            <div className="mb-4 border border-slate-800 bg-slate-950/40 p-3">
+                <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <div>
+                        <h3 className="text-xs font-semibold text-slate-100">MCP Write Handling</h3>
+                        <p className="mt-1 text-[10px] text-slate-500">
+                            Controls whether MCP write tools apply directly or create Approval Inbox requests.
+                        </p>
+                    </div>
+                    <span className="border border-cyan-500/30 bg-cyan-500/10 px-2 py-1 text-[10px] uppercase tracking-wide text-cyan-300">
+                        {aiExecutionSettings.mcp_write_mode === 'change_request' ? 'Approval First' : 'Direct'}
+                    </span>
+                </div>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {mcpWriteModes.map((mode) => (
+                        <label
+                            key={mode.value}
+                            className={`cursor-pointer border p-3 transition-colors ${aiExecutionSettings.mcp_write_mode === mode.value
+                                ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-100'
+                                : 'border-slate-800 bg-slate-900/50 text-slate-300 hover:border-slate-600'
+                            }`}
+                        >
+                            <div className="flex items-start gap-2">
+                                <input
+                                    type="radio"
+                                    name="mcp-write-mode"
+                                    checked={aiExecutionSettings.mcp_write_mode === mode.value}
+                                    onChange={() => setAiExecutionSettings((prev) => ({ ...prev, mcp_write_mode: mode.value }))}
+                                    className="mt-0.5 h-4 w-4 accent-cyan-500"
+                                />
+                                <div className="min-w-0">
+                                    <div className="text-xs font-semibold">{mode.label}</div>
+                                    <div className="mt-1 text-[10px] leading-relaxed text-slate-500">{mode.description}</div>
+                                </div>
+                            </div>
+                        </label>
+                    ))}
+                </div>
+                {aiExecutionSettings.mcp_write_mode === 'change_request' && (
+                    <div className="mt-3 border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-[10px] leading-relaxed text-amber-200">
+                        Supported operations: {aiExecutionSettings.supported_change_request_operations.length
+                            ? aiExecutionSettings.supported_change_request_operations.join(', ')
+                            : 'loading'}
+                    </div>
+                )}
             </div>
 
             <div className="overflow-x-auto border border-slate-800 scrollbar-subtle">

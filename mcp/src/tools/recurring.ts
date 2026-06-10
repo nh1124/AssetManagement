@@ -7,6 +7,12 @@ import { z } from "zod";
 import { api } from "../api-client.js";
 import { fetchAccounts, previewTransactionPayload } from "../domain-guidance.js";
 import { toStructured } from "../utils.js";
+import {
+  changeRequestUnsupportedResult,
+  createChangeRequestResult,
+  directWriteMessage,
+  shouldCreateChangeRequest,
+} from "../write-control.js";
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const transactionTypeSchema = z.enum([
@@ -123,9 +129,18 @@ export function registerRecurringTools(server: McpServer): void {
     },
     async (input) => {
       try {
-        const data = await api.post<unknown>("/recurring/", recurringPayload(input));
+        const payload = recurringPayload(input);
+        if (await shouldCreateChangeRequest()) {
+          return await createChangeRequestResult({
+            resource: "recurring_transactions",
+            action: "create",
+            risk: "medium",
+            input_payload: payload,
+          });
+        }
+        const data = await api.post<unknown>("/recurring/", payload);
         return {
-          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+          content: [{ type: "text", text: directWriteMessage("Created recurring transaction", data) }],
           structuredContent: toStructured(data),
         };
       } catch (err) {
@@ -193,9 +208,19 @@ export function registerRecurringTools(server: McpServer): void {
     },
     async ({ id, ...patch }) => {
       try {
-        const data = await api.patch<unknown>(`/recurring/${id}`, recurringPayload(patch));
+        const payload = recurringPayload(patch);
+        if (await shouldCreateChangeRequest()) {
+          return await createChangeRequestResult({
+            resource: "recurring_transactions",
+            action: "update",
+            risk: "high",
+            target_ref: { id },
+            input_payload: payload,
+          });
+        }
+        const data = await api.patch<unknown>(`/recurring/${id}`, payload);
         return {
-          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+          content: [{ type: "text", text: directWriteMessage("Updated recurring transaction", data) }],
           structuredContent: toStructured(data),
         };
       } catch (err) {
@@ -214,9 +239,12 @@ export function registerRecurringTools(server: McpServer): void {
     },
     async ({ id }) => {
       try {
+        if (await shouldCreateChangeRequest()) {
+          return changeRequestUnsupportedResult("recurring_transactions:process");
+        }
         const data = await api.post<unknown>(`/recurring/${id}/process`, {});
         return {
-          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+          content: [{ type: "text", text: directWriteMessage("Processed recurring transaction", data) }],
           structuredContent: toStructured(data),
         };
       } catch (err) {
@@ -235,9 +263,12 @@ export function registerRecurringTools(server: McpServer): void {
     },
     async ({ id }) => {
       try {
+        if (await shouldCreateChangeRequest()) {
+          return changeRequestUnsupportedResult("recurring_transactions:skip");
+        }
         const data = await api.post<unknown>(`/recurring/${id}/skip`, {});
         return {
-          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+          content: [{ type: "text", text: directWriteMessage("Skipped recurring transaction", data) }],
           structuredContent: toStructured(data),
         };
       } catch (err) {

@@ -7,6 +7,12 @@ import { z } from "zod";
 import { api } from "../api-client.js";
 import { fetchAccounts } from "../domain-guidance.js";
 import { toStructured } from "../utils.js";
+import {
+  changeRequestUnsupportedResult,
+  createChangeRequestResult,
+  directWriteMessage,
+  shouldCreateChangeRequest,
+} from "../write-control.js";
 
 const periodSchema = z.string().regex(/^\d{4}-\d{2}$/);
 
@@ -163,6 +169,26 @@ export function registerMonthlyPlanningTools(server: McpServer): void {
         const updates = lines
           .filter((line) => "id" in line && line.id !== undefined)
           .map((line) => toMonthlyPlanLineUpdatePayload(line));
+        if (await shouldCreateChangeRequest()) {
+          if (creates.length > 0) {
+            return changeRequestUnsupportedResult("monthly_plan_lines:create");
+          }
+          const requests = [];
+          for (const update of updates) {
+            requests.push(await createChangeRequestResult({
+              resource: "monthly_plan_lines",
+              action: "update",
+              risk: "medium",
+              target_ref: { id: update.id },
+              input_payload: update,
+            }));
+          }
+          const text = requests.map((request) => request.content[0]?.text ?? "").join("\n\n");
+          return {
+            content: [{ type: "text", text }],
+            structuredContent: toStructured({ change_requests_created: requests.length }),
+          };
+        }
         const created = creates.length > 0
           ? await api.post<unknown>("/life-events/monthly-plan-lines", creates)
           : null;
@@ -171,7 +197,7 @@ export function registerMonthlyPlanningTools(server: McpServer): void {
           : null;
         const data = { created, updated };
         return {
-          content: [{ type: "text", text: `Saved monthly plan lines:\n${JSON.stringify(data, null, 2)}` }],
+          content: [{ type: "text", text: directWriteMessage("Saved monthly plan lines", data) }],
           structuredContent: toStructured(data),
         };
       } catch (err) {
@@ -248,9 +274,12 @@ export function registerMonthlyPlanningTools(server: McpServer): void {
     },
     async ({ id }) => {
       try {
+        if (await shouldCreateChangeRequest()) {
+          return changeRequestUnsupportedResult("monthly_plan_lines:delete");
+        }
         const data = await api.delete<unknown>(`/life-events/monthly-plan-lines/${id}`);
         return {
-          content: [{ type: "text", text: `Deleted monthly plan line ${id}:\n${JSON.stringify(data, null, 2)}` }],
+          content: [{ type: "text", text: directWriteMessage(`Deleted monthly plan line ${id}`, data) }],
           structuredContent: toStructured(data),
         };
       } catch (err) {
@@ -297,9 +326,12 @@ export function registerMonthlyPlanningTools(server: McpServer): void {
     },
     async (input) => {
       try {
+        if (await shouldCreateChangeRequest()) {
+          return changeRequestUnsupportedResult("monthly_reviews:upsert");
+        }
         const data = await api.put<unknown>("/monthly-reviews/", input);
         return {
-          content: [{ type: "text", text: `Saved monthly review:\n${JSON.stringify(data, null, 2)}` }],
+          content: [{ type: "text", text: directWriteMessage("Saved monthly review", data) }],
           structuredContent: toStructured(data),
         };
       } catch (err) {

@@ -120,6 +120,12 @@ export type AiOperationMode = 'deny' | 'allow_read' | 'require_approval' | 'allo
 export type AiOperationDecision = 'allowed' | 'denied' | 'approval_required' | 'applied' | 'failed';
 export type AiOperationSource = 'frontend' | 'mcp_http' | 'mcp_stdio' | 'backend';
 export type AiChangeRequestStatus = 'draft' | 'pending' | 'approved' | 'applied' | 'rejected' | 'expired' | 'failed';
+export type AiMcpWriteMode = 'direct_write' | 'change_request';
+
+export interface AiExecutionSettings {
+    mcp_write_mode: AiMcpWriteMode;
+    supported_change_request_operations: string[];
+}
 
 export interface AiOperationPolicy {
     id: number;
