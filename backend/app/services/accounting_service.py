@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from .fx_service import calculate_account_valued_balance, calculate_account_valued_balances, convert_transaction_amount, get_client_currency
+from .budget_plan_service import resolve_budget_plan_id
 
 # Default accounts to create on startup
 DEFAULT_ACCOUNTS = [
@@ -499,9 +500,11 @@ def get_variance_analysis_for_range(
     start_date: date,
     end_date: date,
     client_id: int | None = None,
+    plan_id: int | None = None,
 ) -> dict:
     """Compare actual spending vs summed monthly budgets over an inclusive range."""
     month_keys = _period_months(start_date, end_date)
+    resolved_plan_id = resolve_budget_plan_id(db, client_id, plan_id) if client_id is not None else plan_id
 
     accounts = db.query(models.Account).filter(
         models.Account.client_id == client_id,
@@ -511,6 +514,7 @@ def get_variance_analysis_for_range(
 
     monthly_plan_lines = db.query(models.MonthlyPlanLine).filter(
         models.MonthlyPlanLine.client_id == client_id,
+        models.MonthlyPlanLine.plan_id == resolved_plan_id,
         models.MonthlyPlanLine.target_period.in_(month_keys),
         models.MonthlyPlanLine.line_type == "expense",
         models.MonthlyPlanLine.is_active.is_(True),
@@ -578,6 +582,7 @@ def get_variance_analysis_for_range(
         "period": f"{start_date.isoformat()}..{end_date.isoformat()}",
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
+        "plan_id": resolved_plan_id,
         "budget_months": month_keys,
         "items": variance_items,
         "total_budget": total_budget,
@@ -591,13 +596,14 @@ def get_variance_analysis(
     year: int,
     month: int,
     client_id: int | None = None,
+    plan_id: int | None = None,
 ) -> dict:
     start_date = date(year, month, 1)
     if month == 12:
         end_date = date(year + 1, 1, 1)
     else:
         end_date = date(year, month + 1, 1)
-    result = get_variance_analysis_for_range(db, start_date, end_date - date.resolution, client_id)
+    result = get_variance_analysis_for_range(db, start_date, end_date - date.resolution, client_id, plan_id)
     result["period"] = f"{year}-{month:02d}"
     return result
 

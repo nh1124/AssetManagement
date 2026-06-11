@@ -11,7 +11,9 @@ from ..services.budget_plan_service import (
     get_or_create_default_plan,
     get_cash_flow_projection,
     _liquid_cash,
+    replace_plan_lines_from_plan,
     resolve_budget_plan_id,
+    set_default_budget_plan,
 )
 
 router = APIRouter(prefix="/budget-plans", tags=["budget_plans"])
@@ -187,59 +189,27 @@ def copy_plan_from(
 ):
     if plan_id == source_plan_id:
         raise HTTPException(status_code=400, detail="Cannot copy a budget plan from itself")
-    target_plan = db.query(models.BudgetPlan).filter_by(id=plan_id, client_id=current_client.id).first()
-    if not target_plan:
-        raise HTTPException(status_code=404, detail="Target budget plan not found")
-    source_plan = db.query(models.BudgetPlan).filter_by(id=source_plan_id, client_id=current_client.id).first()
-    if not source_plan:
-        raise HTTPException(status_code=404, detail="Source budget plan not found")
-
-    source_lines = (
-        db.query(models.MonthlyPlanLine)
-        .filter(
-            models.MonthlyPlanLine.client_id == current_client.id,
-            models.MonthlyPlanLine.plan_id == source_plan_id,
-            models.MonthlyPlanLine.is_active.is_(True),
-        )
-        .all()
-    )
-
-    # Soft-delete all existing lines in the target plan
-    (
-        db.query(models.MonthlyPlanLine)
-        .filter(
-            models.MonthlyPlanLine.client_id == current_client.id,
-            models.MonthlyPlanLine.plan_id == plan_id,
-        )
-        .update({"is_active": False})
-    )
-
-    for src in source_lines:
-        new_line = models.MonthlyPlanLine(
-            client_id=current_client.id,
-            plan_id=plan_id,
-            target_period=src.target_period,
-            line_type=src.line_type,
-            target_type=src.target_type,
-            target_id=src.target_id,
-            account_id=src.account_id,
-            source_account_id=src.source_account_id,
-            name=src.name,
-            amount=src.amount,
-            source=src.source,
-            source_kind=src.source_kind,
-            source_id=src.source_id,
-            manual_override=src.manual_override,
-            cash_treatment=src.cash_treatment,
-            recurring_transaction_id=src.recurring_transaction_id,
-            is_active=True,
-        )
-        assign_plan_line_identity(new_line)
-        db.add(new_line)
-
+    try:
+        copied = replace_plan_lines_from_plan(db, current_client.id, plan_id, source_plan_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     db.commit()
     invalidate_client(current_client.id)
-    return {"status": "success", "copied": len(source_lines)}
+    return {"status": "success", "copied": copied}
+
+
+@router.post("/{plan_id}/adopt", response_model=schemas.BudgetPlan)
+def adopt_budget_plan(
+    plan_id: int,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    try:
+        default_plan = set_default_budget_plan(db, current_client.id, plan_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    invalidate_client(current_client.id)
+    return default_plan
 
 
 @router.put("/{plan_id}", response_model=schemas.BudgetPlan)

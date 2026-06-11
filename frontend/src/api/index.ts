@@ -239,12 +239,13 @@ export const getProfitLoss = async (year?: number, month?: number, rollup: boole
     return response.data;
 };
 
-export const getVarianceAnalysis = async (year?: number, month?: number, startDate?: string, endDate?: string) => {
+export const getVarianceAnalysis = async (year?: number, month?: number, startDate?: string, endDate?: string, planId?: number | null) => {
     const params = new URLSearchParams();
     if (year) params.append('year', String(year));
     if (month) params.append('month', String(month));
     if (startDate) params.append('start_date', startDate);
     if (endDate) params.append('end_date', endDate);
+    if (planId) params.append('plan_id', String(planId));
     const response = await api.get(`/analysis/variance?${params.toString()}`);
     return response.data;
 };
@@ -1123,6 +1124,11 @@ export const copyBudgetPlanFrom = async (targetPlanId: number, sourcePlanId: num
     await api.post(`/budget-plans/${targetPlanId}/copy-from`, null, {
         params: { source_plan_id: sourcePlanId },
     });
+};
+
+export const adoptBudgetPlan = async (planId: number): Promise<BudgetPlan> => {
+    const response = await api.post(`/budget-plans/${planId}/adopt`);
+    return response.data;
 };
 
 export const copyPeriodFullReplace = async (payload: {

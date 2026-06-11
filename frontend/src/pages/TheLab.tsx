@@ -27,6 +27,7 @@ import {
     getNetWorthHistory,
     getProfitLoss,
     getAccounts,
+    getBudgetPlans,
     getRecurringTransactions,
     createMonthlyAction,
     getMonthlyActions,
@@ -42,7 +43,7 @@ import {
 } from '../api';
 import { useToast } from '../components/Toast';
 import { formatCurrency as formatCurrencyWithSetting } from '../utils/currency';
-import type { AccountFlowAnalysis, AccountFlowGrain, AccountFlowTransaction, ActionProposal, AnalysisSummary, MonthlyAction, MonthlyReport, PeriodReview, NetWorthHistoryPoint, ReconcileResponse, ReviewActionKind } from '../types';
+import type { AccountFlowAnalysis, AccountFlowGrain, AccountFlowTransaction, ActionProposal, AnalysisSummary, BudgetPlan, MonthlyAction, MonthlyReport, PeriodReview, NetWorthHistoryPoint, ReconcileResponse, ReviewActionKind } from '../types';
 
 interface TheLabProps {
     onNavigate?: (page: string) => void;
@@ -179,6 +180,8 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
     const [capsules, setCapsules] = useState<any[]>([]);
     const [recurringItems, setRecurringItems] = useState<any[]>([]);
     const [accounts, setAccounts] = useState<any[]>([]);
+    const [budgetPlans, setBudgetPlans] = useState<BudgetPlan[]>([]);
+    const [selectedBudgetPlanId, setSelectedBudgetPlanId] = useState<number | null>(null);
     const [monthlyReport, setMonthlyReport] = useState<MonthlyReport | null>(null);
     const [periodReview, setPeriodReview] = useState<PeriodReview | null>(null);
     const [monthlyActions, setMonthlyActions] = useState<MonthlyAction[]>([]);
@@ -334,12 +337,12 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
             previousEnd.setDate(previousEnd.getDate() - 1);
             const previousStart = new Date(previousEnd);
             previousStart.setDate(previousStart.getDate() - spanDays + 1);
-            const [summaryData, bsData, plData, prevPlData, varianceData, capsuleData, reportData, reviewData, historyData, recurringData, accountData, actionData] = await Promise.all([
+            const [summaryData, bsData, plData, prevPlData, varianceData, capsuleData, reportData, reviewData, historyData, recurringData, accountData, actionData, budgetPlanData] = await Promise.all([
                 getAnalysisSummary(),
                 getBalanceSheet(undefined, undefined, periodEndDate),
                 getProfitLoss(undefined, undefined, plRollup, periodStartDate, periodEndDate),
                 getProfitLoss(undefined, undefined, plRollup, toISODate(previousStart), toISODate(previousEnd)),
-                getVarianceAnalysis(undefined, undefined, periodStartDate, periodEndDate),
+                getVarianceAnalysis(undefined, undefined, periodStartDate, periodEndDate, selectedBudgetPlanId),
                 getCapsules(),
                 getPeriodReport(periodStartDate, periodEndDate),
                 getPeriodReview(periodStartDate, periodEndDate),
@@ -347,6 +350,7 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
                 getRecurringTransactions(),
                 getAccounts(),
                 getMonthlyActions(periodKey),
+                getBudgetPlans(),
             ]);
             setSummary(summaryData);
             setBalanceSheet(bsData);
@@ -356,6 +360,12 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
             setCapsules(capsuleData);
             setRecurringItems(recurringData);
             setAccounts(accountData);
+            setBudgetPlans(budgetPlanData);
+            setSelectedBudgetPlanId((prev) => (
+                prev !== null && budgetPlanData.some((plan) => plan.id === prev)
+                    ? prev
+                    : budgetPlanData.find((plan) => plan.is_default)?.id ?? budgetPlanData[0]?.id ?? null
+            ));
             setMonthlyActions(actionData);
             setMonthlyReport(reportData);
             setPeriodReview(reviewData);
@@ -373,7 +383,7 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
 
     useEffect(() => {
         fetchData();
-    }, [periodStartDate, periodEndDate, historyMonths, plRollup]);
+    }, [periodStartDate, periodEndDate, historyMonths, plRollup, selectedBudgetPlanId]);
 
     useEffect(() => {
         loadAccountFlows();
@@ -516,7 +526,7 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
     const buildActionPayload = () => {
         switch (actionDraft.kind) {
             case 'set_budget':
-                return { account_id: Number(actionDraft.account_id), amount: Number(actionDraft.amount) };
+                return { account_id: Number(actionDraft.account_id), amount: Number(actionDraft.amount), plan_id: selectedBudgetPlanId };
             case 'add_recurring':
                 return {
                     name: actionDraft.name,
@@ -1085,6 +1095,18 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
             case 'variance':
                 return (
                     <div className="bg-slate-800/30 border border-slate-700 p-4 space-y-2">
+                        <div className="flex justify-end pb-2">
+                            <select
+                                aria-label="Budget plan"
+                                value={selectedBudgetPlanId ?? ''}
+                                onChange={(event) => setSelectedBudgetPlanId(event.target.value ? Number(event.target.value) : null)}
+                                className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
+                            >
+                                {budgetPlans.map((plan) => (
+                                    <option key={plan.id} value={plan.id}>{plan.name}{plan.is_default ? ' (default)' : ''}</option>
+                                ))}
+                            </select>
+                        </div>
                         {(variance?.items ?? []).map((item: any, idx: number) => (
                             <div key={idx} className="grid grid-cols-4 gap-2 text-xs">
                                 <span className="text-slate-300">{item.category}</span>
@@ -1995,6 +2017,15 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
                             <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
                                 {actionDraft.kind === 'set_budget' && (
                                     <>
+                                        <select
+                                            value={selectedBudgetPlanId ?? ''}
+                                            onChange={(event) => setSelectedBudgetPlanId(event.target.value ? Number(event.target.value) : null)}
+                                            className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs"
+                                        >
+                                            {budgetPlans.map((plan) => (
+                                                <option key={plan.id} value={plan.id}>{plan.name}{plan.is_default ? ' (default)' : ''}</option>
+                                            ))}
+                                        </select>
                                         <select value={actionDraft.account_id} onChange={(event) => setActionDraft({ ...actionDraft, account_id: event.target.value })} className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs">
                                             <option value="">Expense account</option>
                                             {accounts.filter((account) => account.account_type === 'expense').map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}

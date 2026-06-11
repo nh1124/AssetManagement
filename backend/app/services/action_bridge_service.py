@@ -6,7 +6,7 @@ from uuid import uuid4
 from sqlalchemy.orm import Session
 
 from .. import models
-from .budget_plan_service import assign_plan_line_identity
+from .budget_plan_service import assign_plan_line_identity, resolve_budget_plan_id
 
 
 ACTION_KINDS = {
@@ -105,10 +105,12 @@ def _apply_set_budget(db: Session, action: models.MonthlyAction) -> dict:
     payload = action.payload or {}
     account_id = int(payload["account_id"])
     amount = float(payload["amount"])
+    plan_id = resolve_budget_plan_id(db, action.client_id, payload.get("plan_id"))
     target_period = action.target_period or next_period(action.source_period)
     account = _require_account(db, action.client_id, account_id)
     plan_line = db.query(models.MonthlyPlanLine).filter(
         models.MonthlyPlanLine.client_id == action.client_id,
+        models.MonthlyPlanLine.plan_id == plan_id,
         models.MonthlyPlanLine.account_id == account_id,
         models.MonthlyPlanLine.target_period == target_period,
         models.MonthlyPlanLine.line_type == "expense",
@@ -120,6 +122,7 @@ def _apply_set_budget(db: Session, action: models.MonthlyAction) -> dict:
     else:
         plan_line = models.MonthlyPlanLine(
             client_id=action.client_id,
+            plan_id=plan_id,
             target_period=target_period,
             line_type="expense",
             target_type="account",
@@ -130,7 +133,7 @@ def _apply_set_budget(db: Session, action: models.MonthlyAction) -> dict:
         db.add(plan_line)
     assign_plan_line_identity(plan_line)
     db.flush()
-    return {"plan_line_id": plan_line.id, "target_period": target_period}
+    return {"plan_line_id": plan_line.id, "target_period": target_period, "plan_id": plan_id}
 
 
 def _apply_add_recurring(db: Session, action: models.MonthlyAction) -> dict:

@@ -1,10 +1,11 @@
 ﻿import { Fragment, useEffect, useState } from 'react';
 import { Bar, BarChart, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
-import { AlertTriangle, Archive, CalendarDays, ChevronLeft, ChevronRight, Copy, Edit2, Info, Plus, RefreshCw, Save, Search, Trash2, X } from 'lucide-react';
+import { AlertTriangle, Archive, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Copy, Edit2, Info, Plus, RefreshCw, Save, Search, Trash2, X } from 'lucide-react';
 import TabPanel from '../components/TabPanel';
 import { useToast } from '../components/Toast';
 import { useClient } from '../context/ClientContext';
 import {
+    adoptBudgetPlan,
     compareBudgetPlans,
     copyBudgetPlanFrom,
     copyPeriodFullReplace,
@@ -1674,13 +1675,32 @@ export default function Strategy() {
                         <>
                             <button
                                 type="button"
-                                title="Copy from Baseline"
+                                title="Set active plan as default"
+                                onClick={async () => {
+                                    try {
+                                        const adopted = await adoptBudgetPlan(activePlan.id);
+                                        showToast('Set active plan as default', 'success');
+                                        await fetchBudgetPlans();
+                                        setActivePlanId(adopted.id);
+                                        await fetchBudgetSummary(currentPeriod, adopted.id);
+                                        if (comparePlanIds.includes(adopted.id) || comparePlanIds.includes(activePlan.id)) await loadCompareData();
+                                    } catch {
+                                        showToast('Failed to adopt plan', 'error');
+                                    }
+                                }}
+                                className="p-1.5 text-slate-500 hover:text-emerald-400"
+                            >
+                                <CheckCircle2 size={13} />
+                            </button>
+                            <button
+                                type="button"
+                                title="Copy from default plan"
                                 onClick={async () => {
                                     const baseline = budgetPlans.find((p) => p.is_default);
                                     if (!baseline) return;
                                     try {
                                         await copyBudgetPlanFrom(activePlan.id, baseline.id);
-                                        showToast('Copied from Baseline', 'success');
+                                        showToast('Copied from default plan', 'success');
                                         await fetchBudgetSummary();
                                         if (comparePlanIds.includes(activePlan.id)) await loadCompareData();
                                     } catch {

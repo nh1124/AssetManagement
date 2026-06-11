@@ -52,9 +52,26 @@ def _period_transactions_cached(
 
 
 def get_or_create_default_plan(db: Session, client_id: int) -> models.BudgetPlan:
-    plan = db.query(models.BudgetPlan).filter_by(client_id=client_id, is_default=True).first()
+    defaults = (
+        db.query(models.BudgetPlan)
+        .filter_by(client_id=client_id, is_default=True)
+        .order_by(models.BudgetPlan.sort_order, models.BudgetPlan.id)
+        .all()
+    )
+    plan = defaults[0] if defaults else None
     if not plan:
-        plan = models.BudgetPlan(client_id=client_id, name="Baseline", is_default=True, sort_order=0)
+        plan = db.query(models.BudgetPlan).filter_by(client_id=client_id, name="Baseline").first()
+        if plan:
+            plan.is_default = True
+            plan.sort_order = min(plan.sort_order or 0, 0)
+        else:
+            plan = models.BudgetPlan(client_id=client_id, name="Baseline", is_default=True, sort_order=0)
+            db.add(plan)
+        db.commit()
+        db.refresh(plan)
+    elif len(defaults) > 1:
+        for extra in defaults[1:]:
+            extra.is_default = False
         db.add(plan)
         db.commit()
         db.refresh(plan)
@@ -66,6 +83,77 @@ def get_or_create_default_plan(db: Session, client_id: int) -> models.BudgetPlan
     if changed:
         db.commit()
         db.refresh(plan)
+    return plan
+
+
+def replace_plan_lines_from_plan(
+    db: Session,
+    client_id: int,
+    target_plan_id: int,
+    source_plan_id: int,
+) -> int:
+    if target_plan_id == source_plan_id:
+        return 0
+
+    target_plan = db.query(models.BudgetPlan).filter_by(id=target_plan_id, client_id=client_id).first()
+    if not target_plan:
+        raise ValueError("Target budget plan not found")
+    source_plan = db.query(models.BudgetPlan).filter_by(id=source_plan_id, client_id=client_id).first()
+    if not source_plan:
+        raise ValueError("Source budget plan not found")
+
+    source_lines = (
+        db.query(models.MonthlyPlanLine)
+        .filter(
+            models.MonthlyPlanLine.client_id == client_id,
+            models.MonthlyPlanLine.plan_id == source_plan_id,
+            models.MonthlyPlanLine.is_active.is_(True),
+        )
+        .all()
+    )
+
+    (
+        db.query(models.MonthlyPlanLine)
+        .filter(
+            models.MonthlyPlanLine.client_id == client_id,
+            models.MonthlyPlanLine.plan_id == target_plan_id,
+        )
+        .update({"is_active": False}, synchronize_session=False)
+    )
+
+    for src in source_lines:
+        new_line = models.MonthlyPlanLine(
+            client_id=client_id,
+            plan_id=target_plan_id,
+            target_period=src.target_period,
+            line_type=src.line_type,
+            target_type=src.target_type,
+            target_id=src.target_id,
+            account_id=src.account_id,
+            source_account_id=src.source_account_id,
+            name=src.name,
+            amount=src.amount,
+            source=src.source,
+            source_kind=src.source_kind,
+            source_id=src.source_id,
+            manual_override=src.manual_override,
+            cash_treatment=src.cash_treatment,
+            recurring_transaction_id=src.recurring_transaction_id,
+            is_active=True,
+        )
+        assign_plan_line_identity(new_line)
+        db.add(new_line)
+    return len(source_lines)
+
+
+def set_default_budget_plan(db: Session, client_id: int, plan_id: int) -> models.BudgetPlan:
+    plan = db.query(models.BudgetPlan).filter_by(id=plan_id, client_id=client_id).first()
+    if not plan:
+        raise ValueError("Budget plan not found")
+    for item in db.query(models.BudgetPlan).filter_by(client_id=client_id).all():
+        item.is_default = item.id == plan.id
+    db.commit()
+    db.refresh(plan)
     return plan
 
 
