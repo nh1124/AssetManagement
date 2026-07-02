@@ -91,7 +91,8 @@ def sync_registry_from_recurring(db: Session, recurring: models.RecurringTransac
             models.RegistryEntry.client_id == recurring.client_id,
             models.RegistryEntry.source_recurring_transaction_id == recurring.id,
         ).first()
-    if not entry:
+    created = entry is None
+    if created:
         entry = models.RegistryEntry(client_id=recurring.client_id)
         db.add(entry)
 
@@ -110,13 +111,90 @@ def sync_registry_from_recurring(db: Session, recurring: models.RecurringTransac
     entry.source_account_id = recurring.from_account_id
     entry.destination_account_id = recurring.to_account_id
     entry.generate_recurring = True
-    entry.budget_active = True
+    if created:
+        entry.budget_active = True
     entry.is_active = bool(recurring.is_active)
     entry.source_recurring_transaction_id = recurring.id
     entry.start_period = recurring.start_period
     entry.end_period = recurring.end_period
     recurring.source_registry_entry = entry
     return entry
+
+
+def linked_recurring_transactions(db: Session, entry: models.RegistryEntry) -> list[models.RecurringTransaction]:
+    """All recurring transactions tied to this registry entry via either link direction."""
+    rows = db.query(models.RecurringTransaction).filter(
+        models.RecurringTransaction.client_id == entry.client_id,
+        models.RecurringTransaction.source_registry_entry_id == entry.id,
+    ).all()
+    if entry.source_recurring_transaction_id and entry.source_recurring_transaction_id not in {row.id for row in rows}:
+        forward = db.query(models.RecurringTransaction).filter(
+            models.RecurringTransaction.id == entry.source_recurring_transaction_id,
+            models.RecurringTransaction.client_id == entry.client_id,
+        ).first()
+        # A forward link to a recurring owned by another entry is stale; do not steal it.
+        if forward and not (forward.source_registry_entry_id and forward.source_registry_entry_id != entry.id):
+            rows.append(forward)
+    return rows
+
+
+def registry_to_recurring_data(entry: models.RegistryEntry) -> dict:
+    return {
+        "name": entry.name,
+        "amount": entry.amount or 0.0,
+        "currency": entry.currency or "JPY",
+        "type": entry.transaction_type or "Expense",
+        "from_account_id": entry.source_account_id,
+        "to_account_id": entry.destination_account_id or entry.budget_account_id,
+        "frequency": entry.frequency if entry.frequency in {"Monthly", "Yearly"} else "Monthly",
+        "day_of_month": entry.day_of_month or 1,
+        "month_of_year": entry.month_of_year if entry.frequency == "Yearly" else None,
+        "start_period": entry.start_period,
+        "end_period": entry.end_period,
+        "auto_post": True,
+        "is_active": entry.is_active,
+        "source_registry_entry_id": entry.id,
+    }
+
+
+def sync_recurring_from_registry(db: Session, entry: models.RegistryEntry) -> None:
+    """Enforce the registry entry onto its generated recurring transaction (registry is the source of truth)."""
+    linked = linked_recurring_transactions(db, entry)
+    if not entry.generate_recurring:
+        entry.source_recurring_transaction_id = None
+        for recurring in linked:
+            db.delete(recurring)
+        return
+    recurring = next(
+        (row for row in linked if row.id == entry.source_recurring_transaction_id),
+        None,
+    ) or (max(linked, key=lambda row: row.id) if linked else None)
+    for row in linked:
+        if recurring is None or row.id != recurring.id:
+            db.delete(row)
+    if not recurring:
+        recurring = models.RecurringTransaction(client_id=entry.client_id)
+        db.add(recurring)
+        db.flush()
+    entry.source_recurring_transaction_id = recurring.id
+    for key, value in registry_to_recurring_data(entry).items():
+        setattr(recurring, key, value)
+
+
+def reconcile_registry_recurring_links(db: Session, client_id: int) -> dict[str, int]:
+    """Re-apply registry state onto generated recurrings: dedupe, relink, create missing ones."""
+    removed = 0
+    created = 0
+    entries = db.query(models.RegistryEntry).filter(models.RegistryEntry.client_id == client_id).all()
+    for entry in entries:
+        linked = linked_recurring_transactions(db, entry)
+        expected = 1 if entry.generate_recurring else 0
+        if len(linked) > expected:
+            removed += len(linked) - expected
+        if entry.generate_recurring and not linked:
+            created += 1
+        sync_recurring_from_registry(db, entry)
+    return {"removed": removed, "created": created}
 
 
 def detach_registry_from_recurring(db: Session, recurring: models.RecurringTransaction) -> None:

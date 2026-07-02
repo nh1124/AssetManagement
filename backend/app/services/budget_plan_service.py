@@ -1195,18 +1195,15 @@ def _registry_plan_line(
 def _virtual_registry_entries(
     db: Session,
     client_id: int,
-    existing_entries: list[models.RegistryEntry],
 ) -> list[SimpleNamespace]:
-    existing_product_ids = {
-        entry.source_product_id
-        for entry in existing_entries
-        if entry.source_product_id
-    }
-    existing_recurring_ids = {
-        entry.source_recurring_transaction_id
-        for entry in existing_entries
-        if entry.source_recurring_transaction_id
-    }
+    # The registry is the source of truth: anything already represented by a
+    # registry entry (active or not) must never resurface as a virtual line.
+    linked_rows = db.query(
+        models.RegistryEntry.source_product_id,
+        models.RegistryEntry.source_recurring_transaction_id,
+    ).filter(models.RegistryEntry.client_id == client_id).all()
+    existing_product_ids = {product_id for product_id, _ in linked_rows if product_id}
+    existing_recurring_ids = {recurring_id for _, recurring_id in linked_rows if recurring_id}
     entries: list[SimpleNamespace] = []
 
     products = db.query(models.Product).filter(models.Product.client_id == client_id).all()
@@ -1242,7 +1239,7 @@ def _virtual_registry_entries(
         models.RecurringTransaction.is_active.is_(True),
     ).all()
     for recurring in recurring_rows:
-        if recurring.id in existing_recurring_ids:
+        if recurring.id in existing_recurring_ids or recurring.source_registry_entry_id:
             continue
         line_type = recurring_line_type(recurring.type)
         entries.append(SimpleNamespace(
@@ -1292,7 +1289,7 @@ def registry_plan_lines(
         models.RegistryEntry.is_active.is_(True),
         models.RegistryEntry.budget_active.is_(True),
     ).all()
-    entries = [*entries, *_virtual_registry_entries(db, client_id, entries)]
+    entries = [*entries, *_virtual_registry_entries(db, client_id)]
     lines = [line for entry in entries if (line := _registry_plan_line(db, entry, period, name_maps)) is not None]
     aggregated: dict[tuple, dict] = {}
     for line in lines:

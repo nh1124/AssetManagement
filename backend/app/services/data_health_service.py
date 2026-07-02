@@ -10,7 +10,12 @@ from .. import models
 from .accounting_service import calculate_account_journal_balance
 from .budget_plan_service import assign_plan_line_identity, _line_identity_key, _newest_line_key, get_or_create_default_plan, period_to_range
 from .cache_service import invalidate_client
-from .registry_service import ensure_registry_entries, registry_entry_amount_for_period, registry_target_account_id
+from .registry_service import (
+    ensure_registry_entries,
+    reconcile_registry_recurring_links,
+    registry_entry_amount_for_period,
+    registry_target_account_id,
+)
 
 
 PLAN_SOURCE_LINE_TYPES = {"expense", "allocation", "debt_payment", "borrowing", "drawdown"}
@@ -252,7 +257,7 @@ def _registry_recurring_items(db: Session, client_id: int) -> list[dict[str, Any
                     "registry_entry_id": entry.id,
                     "name": entry.name,
                     "problem": "missing_recurring",
-                    "repairable": False,
+                    "repairable": True,
                 }
             )
             continue
@@ -275,6 +280,34 @@ def _registry_recurring_items(db: Session, client_id: int) -> list[dict[str, Any
                     "repairable": True,
                 }
             )
+    return items
+
+
+def _duplicate_recurring_items(db: Session, client_id: int) -> list[dict[str, Any]]:
+    grouped: dict[int, list[models.RecurringTransaction]] = defaultdict(list)
+    for recurring in (
+        db.query(models.RecurringTransaction)
+        .filter(
+            models.RecurringTransaction.client_id == client_id,
+            models.RecurringTransaction.source_registry_entry_id.isnot(None),
+        )
+        .all()
+    ):
+        grouped[recurring.source_registry_entry_id].append(recurring)
+
+    items: list[dict[str, Any]] = []
+    for entry_id, rows in grouped.items():
+        if len(rows) <= 1:
+            continue
+        items.append(
+            {
+                "problem": "duplicate_generated_recurring",
+                "registry_entry_id": entry_id,
+                "name": rows[0].name,
+                "recurring_ids": [row.id for row in rows],
+                "repairable": True,
+            }
+        )
     return items
 
 
@@ -325,6 +358,7 @@ def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
     missing_source = _missing_source_items(db, client_id)
     balance_drift = _balance_drift_items(db, client_id)
     registry_recurring = _registry_recurring_items(db, client_id)
+    duplicate_recurring = _duplicate_recurring_items(db, client_id)
     duplicate_plan_lines = _duplicate_plan_line_items(db, client_id)
 
     issues = [
@@ -370,6 +404,15 @@ def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
             "count": len(registry_recurring),
             "repairable": any(item["repairable"] for item in registry_recurring),
             "items": registry_recurring[:100],
+        },
+        {
+            "code": "duplicate_recurring",
+            "severity": "warning",
+            "title": "Duplicate generated recurring transactions",
+            "detail": "Each registry entry should generate at most one recurring transaction.",
+            "count": len(duplicate_recurring),
+            "repairable": bool(duplicate_recurring),
+            "items": duplicate_recurring[:100],
         },
         {
             "code": "duplicate_plan_lines",
@@ -421,6 +464,7 @@ def repair_data_health(db: Session, client_id: int) -> dict[str, Any]:
         .filter(models.RegistryEntry.client_id == client_id)
         .count()
     )
+    link_repairs = reconcile_registry_recurring_links(db, client_id)
     ensure_registry_entries(db, client_id)
     after_registry_count = (
         db.query(models.RegistryEntry)
@@ -428,6 +472,8 @@ def repair_data_health(db: Session, client_id: int) -> dict[str, Any]:
         .count()
     )
     actions.append({"code": "registry_entries", "updated": max(0, after_registry_count - before_registry_count)})
+    actions.append({"code": "duplicate_recurring", "updated": link_repairs["removed"]})
+    actions.append({"code": "missing_generated_recurring", "updated": link_repairs["created"]})
 
     source_updates = 0
     identity_updates = 0

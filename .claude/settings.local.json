@@ -29,7 +29,11 @@
       "PowerShell(docker exec finance-backend alembic upgrade head 2>&1)",
       "PowerShell(docker exec finance-backend alembic current 2>&1)",
       "PowerShell(docker exec finance-db psql -U finance -d finance -c \"\\\\d monthly_plan_lines\" 2>&1)",
-      "PowerShell(docker exec finance-backend python -c \"from app.database import engine; from sqlalchemy import inspect; cols = [c['name'] for c in inspect\\(engine\\).get_columns\\('monthly_plan_lines'\\)]; print\\(cols\\)\" 2>&1)"
+      "PowerShell(docker exec finance-backend python -c \"from app.database import engine; from sqlalchemy import inspect; cols = [c['name'] for c in inspect\\(engine\\).get_columns\\('monthly_plan_lines'\\)]; print\\(cols\\)\" 2>&1)",
+      "Bash(Get-ChildItem -Recurse -Depth 2 -Force)",
+      "Bash(Select-Object FullName, PSIsContainer)",
+      "mcp__visualize__read_me",
+      "mcp__visualize__show_widget"
     ]
   }
 }

@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from .budget_plan_service import assign_plan_line_identity, resolve_budget_plan_id
+from .registry_service import sync_registry_from_recurring
 
 
 ACTION_KINDS = {
@@ -152,6 +153,7 @@ def _apply_add_recurring(db: Session, action: models.MonthlyAction) -> dict:
     )
     db.add(recurring)
     db.flush()
+    sync_registry_from_recurring(db, recurring)
     return {"recurring_id": recurring.id}
 
 

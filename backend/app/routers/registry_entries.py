@@ -9,6 +9,7 @@ from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.cache_service import invalidate_client
+from ..services.registry_service import linked_recurring_transactions, sync_recurring_from_registry
 
 
 router = APIRouter(prefix="/registry-entries", tags=["registry-entries"])
@@ -62,51 +63,6 @@ def validate_accounts(db: Session, client_id: int, data: dict) -> None:
         ).first()
         if not account:
             raise HTTPException(status_code=400, detail=f"{key} must belong to this client")
-
-
-def registry_to_recurring_data(entry: models.RegistryEntry) -> dict:
-    return {
-        "name": entry.name,
-        "amount": entry.amount or 0.0,
-        "currency": entry.currency or "JPY",
-        "type": entry.transaction_type or "Expense",
-        "from_account_id": entry.source_account_id,
-        "to_account_id": entry.destination_account_id or entry.budget_account_id,
-        "frequency": entry.frequency if entry.frequency in {"Monthly", "Yearly"} else "Monthly",
-        "day_of_month": entry.day_of_month or 1,
-        "month_of_year": entry.month_of_year if entry.frequency == "Yearly" else None,
-        "start_period": entry.start_period,
-        "end_period": entry.end_period,
-        "auto_post": True,
-        "is_active": entry.is_active,
-        "source_registry_entry_id": entry.id,
-    }
-
-
-def sync_recurring_from_registry(db: Session, entry: models.RegistryEntry) -> None:
-    if not entry.generate_recurring:
-        if entry.source_recurring_transaction_id:
-            recurring = db.query(models.RecurringTransaction).filter(
-                models.RecurringTransaction.id == entry.source_recurring_transaction_id,
-                models.RecurringTransaction.client_id == entry.client_id,
-            ).first()
-            entry.source_recurring_transaction_id = None
-            if recurring:
-                db.delete(recurring)
-        return
-    recurring = None
-    if entry.source_recurring_transaction_id:
-        recurring = db.query(models.RecurringTransaction).filter(
-            models.RecurringTransaction.id == entry.source_recurring_transaction_id,
-            models.RecurringTransaction.client_id == entry.client_id,
-        ).first()
-    if not recurring:
-        recurring = models.RecurringTransaction(client_id=entry.client_id)
-        db.add(recurring)
-        db.flush()
-        entry.source_recurring_transaction_id = recurring.id
-    for key, value in registry_to_recurring_data(entry).items():
-        setattr(recurring, key, value)
 
 
 @router.get("/", response_model=List[schemas.RegistryEntry])
@@ -174,14 +130,9 @@ def delete_registry_entry(
     ).first()
     if not entry:
         raise HTTPException(status_code=404, detail="Registry entry not found")
-    if entry.source_recurring_transaction_id:
-        recurring = db.query(models.RecurringTransaction).filter(
-            models.RecurringTransaction.id == entry.source_recurring_transaction_id,
-            models.RecurringTransaction.client_id == current_client.id,
-        ).first()
-        entry.source_recurring_transaction_id = None
-        if recurring:
-            db.delete(recurring)
+    for recurring in linked_recurring_transactions(db, entry):
+        db.delete(recurring)
+    entry.source_recurring_transaction_id = None
     entry.is_active = False
     entry.budget_active = False
     entry.generate_recurring = False

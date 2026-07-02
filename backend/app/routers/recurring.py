@@ -8,7 +8,7 @@ from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.accounting_service import process_transaction
 from ..services.cache_service import invalidate_client
-from ..services.registry_service import detach_registry_from_recurring
+from ..services.registry_service import detach_registry_from_recurring, sync_registry_from_recurring
 
 router = APIRouter(prefix="/recurring", tags=["recurring"])
 
@@ -49,6 +49,9 @@ def create_recurring_transaction(
         client_id=current_client.id
     )
     db.add(db_recurring)
+    db.flush()
+    # Registry is the source of truth: link to (or create) the matching registry entry.
+    sync_registry_from_recurring(db, db_recurring)
     db.commit()
     db.refresh(db_recurring)
     invalidate_client(current_client.id)
@@ -73,6 +76,7 @@ def update_recurring_transaction(
     for key, value in update_data.items():
         setattr(db_recurring, key, value)
 
+    sync_registry_from_recurring(db, db_recurring)
     db.commit()
     db.refresh(db_recurring)
     invalidate_client(current_client.id)
@@ -98,6 +102,7 @@ def patch_recurring_transaction(
     for key, value in update_data.items():
         setattr(db_recurring, key, value)
 
+    sync_registry_from_recurring(db, db_recurring)
     db.commit()
     db.refresh(db_recurring)
     invalidate_client(current_client.id)

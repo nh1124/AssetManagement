@@ -1438,7 +1438,7 @@ export default function Registry() {
                             {filtered.map((entry) => (
                                 <tr key={entry.id} className="border-t border-slate-800 hover:bg-slate-800/30">
                                     <td className="p-2 text-slate-200">{entry.name}</td>
-                                    <td className="p-2 text-right font-mono-nums text-cyan-300">{formatCurrency(entry.amount)}</td>
+                                    <td className="p-2 text-right font-mono-nums text-cyan-300">{formatCurrencyWithSetting(entry.amount, entry.currency)}</td>
                                     <td className="p-2 text-slate-400">{entry.frequency}</td>
                                     <td className="p-2 text-slate-400">{entry.budget_account_name || entry.destination_account_name || entry.source_account_name || '-'}</td>
                                     <td className="p-2 space-x-1">

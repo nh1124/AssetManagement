@@ -14,6 +14,7 @@ from ..services.accounting_service import ensure_default_accounts, process_trans
 from ..services.budget_plan_service import update_plan_lines
 from ..services.cache_service import invalidate_client
 from ..services.capsule_service import apply_capsule_rules_for_transaction
+from ..services.registry_service import sync_registry_from_recurring
 from ..services.ai_policy_service import (
     AiOperationContext,
     evaluate_ai_operation,
@@ -519,6 +520,7 @@ def _apply_dispatch(db: Session, client_id: int, row: models.AiChangeRequest) ->
         recurring = models.RecurringTransaction(**data, client_id=client_id)
         db.add(recurring)
         db.flush()
+        sync_registry_from_recurring(db, recurring)
         invalidate_client(client_id)
         return {"recurring_transaction_id": recurring.id}
 
@@ -535,6 +537,7 @@ def _apply_dispatch(db: Session, client_id: int, row: models.AiChangeRequest) ->
         data = schemas.RecurringTransactionUpdate(**row.input_payload).model_dump(exclude_unset=True)
         for key, value in data.items():
             setattr(recurring, key, value)
+        sync_registry_from_recurring(db, recurring)
         db.flush()
         invalidate_client(client_id)
         return {"recurring_transaction_id": recurring.id}
