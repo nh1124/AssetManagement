@@ -49,6 +49,7 @@ def test_contract_manifest_exists_and_is_nonempty():
         "monthly_plan_lines_save_batch",
         "products_update",
         "recurring_update",
+        "recurring_process_due",
         "data_import_replace_current_client",
         "clients_update_settings",
         "clients_update_gemini_key",

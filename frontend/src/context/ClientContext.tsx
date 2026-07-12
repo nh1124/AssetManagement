@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { getClients } from '../api';
+import { getClients, processDueRecurringTransactions } from '../api';
 import { useAuth } from './AuthContext';
 
 interface Client {
@@ -59,6 +59,9 @@ export const ClientProvider: React.FC<{ children: React.ReactNode }> = ({ childr
         if (!user?.id) return;
         setClientIdState(user.id);
         localStorage.setItem('finance_client_id', user.id.toString());
+        void processDueRecurringTransactions().catch((error) => {
+            console.error('Failed to process due recurring transactions:', error);
+        });
     }, [user?.id]);
 
     const currentClient = clients.find((client) => client.id === clientId) || clients[0];

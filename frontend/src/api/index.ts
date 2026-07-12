@@ -852,6 +852,11 @@ export const getDueRecurringTransactions = async (): Promise<RecurringTransactio
     return response.data;
 };
 
+export const processDueRecurringTransactions = async () => {
+    const response = await api.post('/recurring/process-due');
+    return response.data;
+};
+
 export const processRecurringTransaction = async (id: number) => {
     const response = await api.post(`/recurring/${id}/process`);
     return response.data;

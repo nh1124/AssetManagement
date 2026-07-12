@@ -1664,6 +1664,7 @@ export default function Journal() {
                                         <p className="text-xs font-medium">{item.name}</p>
                                         <p className="text-[10px] text-slate-500">
                                             {item.frequency} / {formatCurrencyWithSetting(item.amount, item.currency || currentCurrency)}
+                                            {item.next_due_date && ` / 次回: ${item.next_due_date}`}
                                             {(item.start_period || item.end_period) && ` / ${item.start_period || '...'}-${item.end_period || '...'}`}
                                             {!item.auto_post && ' / no auto-post'}
                                             {item.source_registry_entry_name && ` / registry: ${item.source_registry_entry_name}`}

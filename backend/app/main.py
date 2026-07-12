@@ -1,3 +1,6 @@
+import asyncio
+import logging
+from datetime import date
 from pathlib import Path
 
 from alembic import command
@@ -35,6 +38,10 @@ from .routers import (
 )
 from .dependencies import get_current_client
 from .utils.password import verify_password
+
+
+logger = logging.getLogger(__name__)
+_recurring_auto_post_task: asyncio.Task | None = None
 
 app = FastAPI(
     title="Finance IDE API",
@@ -127,9 +134,52 @@ def ensure_no_default_admin_password(db) -> None:
         raise RuntimeError("Invalid production configuration: default admin password is still active")
 
 
+def backfill_recurring_next_due_dates(db, today: date | None = None) -> int:
+    from .services.recurring_service import ensure_next_due_date
+
+    rows = db.query(models.RecurringTransaction).filter(
+        models.RecurringTransaction.is_active.is_(True),
+        models.RecurringTransaction.next_due_date.is_(None),
+    ).all()
+    for recurring_row in rows:
+        ensure_next_due_date(recurring_row, today or date.today())
+    if rows:
+        db.commit()
+    return len(rows)
+
+
+async def run_recurring_auto_post_loop() -> None:
+    from .database import SessionLocal
+    from .services.recurring_service import process_due_for_client
+
+    while True:
+        db = SessionLocal()
+        try:
+            today = date.today()
+            client_rows = db.query(models.RecurringTransaction.client_id).filter(
+                models.RecurringTransaction.client_id.isnot(None),
+                models.RecurringTransaction.is_active.is_(True),
+                models.RecurringTransaction.auto_post.is_(True),
+                models.RecurringTransaction.next_due_date.isnot(None),
+                models.RecurringTransaction.next_due_date <= today,
+            ).distinct().all()
+            for (client_id,) in client_rows:
+                try:
+                    process_due_for_client(db, client_id, today=today)
+                except Exception:
+                    db.rollback()
+                    logger.exception("Recurring auto-post failed for client_id=%s", client_id)
+        except Exception:
+            db.rollback()
+            logger.exception("Recurring auto-post cycle failed")
+        finally:
+            db.close()
+        await asyncio.sleep(24 * 60 * 60)
+
+
 # Startup Seed Logic
 @app.on_event("startup")
-def startup_event():
+async def startup_event():
     from .database import SessionLocal
     from . import models
     from .utils.password import hash_password
@@ -200,8 +250,25 @@ def startup_event():
             db.commit()
             ensure_default_accounts(db, client_id=1)
 
+        backfill_recurring_next_due_dates(db)
+
     finally:
         db.close()
+
+    global _recurring_auto_post_task
+    _recurring_auto_post_task = asyncio.create_task(run_recurring_auto_post_loop())
+
+
+@app.on_event("shutdown")
+async def shutdown_event() -> None:
+    global _recurring_auto_post_task
+    if _recurring_auto_post_task:
+        _recurring_auto_post_task.cancel()
+        try:
+            await _recurring_auto_post_task
+        except asyncio.CancelledError:
+            pass
+        _recurring_auto_post_task = None
 
 # CORS for frontend
 app.add_middleware(

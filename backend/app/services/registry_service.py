@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from .. import models
 from .fx_service import convert_amount
 from .product_reserve_service import effective_budget_treatment
+from .recurring_service import ensure_next_due_date
 
 
 OUTFLOW_TRANSACTION_TYPES = {"Expense", "CreditExpense", "Transfer", "CreditAssetPurchase", "LiabilityPayment"}
@@ -177,8 +178,14 @@ def sync_recurring_from_registry(db: Session, entry: models.RegistryEntry) -> No
         db.add(recurring)
         db.flush()
     entry.source_recurring_transaction_id = recurring.id
-    for key, value in registry_to_recurring_data(entry).items():
+    data = registry_to_recurring_data(entry)
+    schedule_fields = {"frequency", "day_of_month", "month_of_year", "start_period"}
+    schedule_changed = any(getattr(recurring, key, None) != data[key] for key in schedule_fields)
+    for key, value in data.items():
         setattr(recurring, key, value)
+    if schedule_changed:
+        recurring.next_due_date = None
+    ensure_next_due_date(recurring, date.today())
 
 
 def reconcile_registry_recurring_links(db: Session, client_id: int) -> dict[str, int]:

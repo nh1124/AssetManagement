@@ -1,26 +1,22 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from datetime import date
-from dateutil.relativedelta import relativedelta
 from typing import List
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
-from ..services.accounting_service import process_transaction
 from ..services.cache_service import invalidate_client
 from ..services.registry_service import detach_registry_from_recurring, sync_registry_from_recurring
+from ..services.recurring_service import (
+    advance_next_due_date,
+    ensure_next_due_date,
+    is_past_end_period,
+    post_recurring_transaction,
+    process_due_for_client,
+)
 
 router = APIRouter(prefix="/recurring", tags=["recurring"])
 
-
-def advance_next_due_date(recurring: models.RecurringTransaction) -> None:
-    if recurring.next_due_date is None:
-        recurring.next_due_date = date.today()
-
-    if recurring.frequency == 'Monthly':
-        recurring.next_due_date += relativedelta(months=1)
-    elif recurring.frequency == 'Yearly':
-        recurring.next_due_date += relativedelta(years=1)
 
 @router.get("/", response_model=List[schemas.RecurringTransaction])
 def get_recurring_transactions(
@@ -50,6 +46,7 @@ def create_recurring_transaction(
     )
     db.add(db_recurring)
     db.flush()
+    ensure_next_due_date(db_recurring, date.today())
     # Registry is the source of truth: link to (or create) the matching registry entry.
     sync_registry_from_recurring(db, db_recurring)
     db.commit()
@@ -73,8 +70,17 @@ def update_recurring_transaction(
         raise HTTPException(status_code=404, detail="Recurring transaction not found")
 
     update_data = recurring_update.model_dump(exclude_unset=True)
+    explicit_next_due = "next_due_date" in recurring_update.model_fields_set
+    schedule_fields = {"frequency", "day_of_month", "month_of_year", "start_period"}
+    schedule_changed = any(
+        key in update_data and getattr(db_recurring, key) != update_data[key]
+        for key in schedule_fields
+    )
     for key, value in update_data.items():
         setattr(db_recurring, key, value)
+    if schedule_changed and not explicit_next_due:
+        db_recurring.next_due_date = None
+    ensure_next_due_date(db_recurring, date.today())
 
     sync_registry_from_recurring(db, db_recurring)
     db.commit()
@@ -99,8 +105,17 @@ def patch_recurring_transaction(
         raise HTTPException(status_code=404, detail="Recurring transaction not found")
 
     update_data = recurring_update.model_dump(exclude_unset=True)
+    explicit_next_due = "next_due_date" in recurring_update.model_fields_set
+    schedule_fields = {"frequency", "day_of_month", "month_of_year", "start_period"}
+    schedule_changed = any(
+        key in update_data and getattr(db_recurring, key) != update_data[key]
+        for key in schedule_fields
+    )
     for key, value in update_data.items():
         setattr(db_recurring, key, value)
+    if schedule_changed and not explicit_next_due:
+        db_recurring.next_due_date = None
+    ensure_next_due_date(db_recurring, date.today())
 
     sync_registry_from_recurring(db, db_recurring)
     db.commit()
@@ -138,9 +153,16 @@ def get_due_recurring_transactions(
     return db.query(models.RecurringTransaction).filter(
         models.RecurringTransaction.client_id == current_client.id,
         models.RecurringTransaction.is_active == True,
-        models.RecurringTransaction.auto_post == True,
         models.RecurringTransaction.next_due_date <= today
     ).all()
+
+
+@router.post("/process-due")
+def process_due_recurring_transactions(
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    return process_due_for_client(db, current_client.id)
 
 @router.post("/{recurring_id}/process")
 def process_recurring_transaction(
@@ -155,30 +177,22 @@ def process_recurring_transaction(
     
     if not db_recurring:
         raise HTTPException(status_code=404, detail="Recurring transaction not found")
+    if not db_recurring.is_active:
+        raise HTTPException(status_code=409, detail="Recurring transaction is inactive")
 
-    # 1. Create a real record in the transactions table
-    db_transaction = models.Transaction(
-        client_id=current_client.id,
-        date=date.today(),
-        description=db_recurring.name,
-        amount=db_recurring.amount,
-        currency=db_recurring.currency,
-        type=db_recurring.type,
-        from_account_id=db_recurring.from_account_id,
-        to_account_id=db_recurring.to_account_id,
-        category=db_recurring.name # Use name as category or default
-    )
-    db.add(db_transaction)
-    db.commit()
-    db.refresh(db_transaction)
+    posting_date = db_recurring.next_due_date or date.today()
+    if is_past_end_period(db_recurring, posting_date):
+        raise HTTPException(status_code=409, detail="Recurring transaction is past its end period")
 
-    # Process double-entry bookkeeping
-    process_transaction(db, db_transaction)
-
-    # 2. Update the next_due_date of the recurring item
-    advance_next_due_date(db_recurring)
-    
-    db.commit()
+    if db_recurring.next_due_date is None:
+        db_recurring.next_due_date = posting_date
+    try:
+        db_transaction = post_recurring_transaction(db, db_recurring, posting_date)
+        advance_next_due_date(db_recurring)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(db_recurring)
     invalidate_client(current_client.id)
 

@@ -76,6 +76,14 @@
     "required_fields": []
   },
   {
+    "tool": "recurring_process_due",
+    "method": "post",
+    "path": "/recurring/process-due",
+    "body": "none",
+    "source": "src/tools/recurring.ts",
+    "path_fragment": "/recurring/process-due"
+  },
+  {
     "tool": "monthly_plan_lines_save_batch",
     "method": "post",
     "path": "/life-events/monthly-plan-lines",

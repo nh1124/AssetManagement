@@ -102,7 +102,7 @@ export function registerRecurringTools(server: McpServer): void {
     "recurring_due",
     {
       title: "List due recurring transactions",
-      description: "Returns active recurring transactions whose next_due_date is today or earlier.",
+      description: "Returns all active due recurring transactions, regardless of auto_post setting.",
       inputSchema: z.object({}).strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
@@ -221,6 +221,30 @@ export function registerRecurringTools(server: McpServer): void {
         const data = await api.patch<unknown>(`/recurring/${id}`, payload);
         return {
           content: [{ type: "text", text: directWriteMessage("Updated recurring transaction", data) }],
+          structuredContent: toStructured(data),
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
+      }
+    },
+  );
+
+  server.registerTool(
+    "recurring_process_due",
+    {
+      title: "Process due recurring transactions",
+      description: "Posts every due auto_post recurring transaction for the current client, including catch-up periods.",
+      inputSchema: z.object({}).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async () => {
+      try {
+        if (await shouldCreateChangeRequest()) {
+          return changeRequestUnsupportedResult("recurring_transactions:process_due");
+        }
+        const data = await api.post<unknown>("/recurring/process-due", {});
+        return {
+          content: [{ type: "text", text: directWriteMessage("Processed due recurring transactions", data) }],
           structuredContent: toStructured(data),
         };
       } catch (err) {
