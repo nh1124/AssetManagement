@@ -30,16 +30,16 @@
 |---|---|---|
 | 取引 | `transactions_create/update/delete`, `transaction_batches_create` | JournalEntry は backend が自動生成。delete は明示指示時のみ |
 | Registry | `registry_entries_create/update/delete` | **定常収支はここから**。recurring が自動同期される |
-| Recurring | `recurring_create/update`, `recurring_process`, `recurring_skip` | 直接操作は明示指示時のみ。process は 1 回 = 1 期 |
+| Recurring | `recurring_create/update`, `recurring_process`, `recurring_skip`, `recurring_process_due` | 直接操作は明示指示時のみ。process は 1 回 = 1 期。一括は `recurring_process_due`（auto_post 対象を catch-up 込みで計上） |
 | Item | `products_create/update/delete` | `budget_account_id` と `category` を一致させる |
 | プラン | `budget_plans_create/update/copy_*`, `monthly_plan_lines_save_batch/delete` | 生成行（source_kind != manual）の手編集は避ける |
-| Capsule | `capsules_create/update/process`, `capsule_rules_*`, `capsule_holdings_*` | process は一括系。影響範囲を先に説明 |
+| Capsule | `capsules_create/update`, `capsule_rules_*`, `capsule_holdings_*` | 一括系は影響範囲を先に説明（`capsules_process` は deprecated のため削除済み） |
 | 口座 | `accounts_create/update/delete`, `accounts_seed_defaults` | delete は明示指示時のみ |
 | 目標 | `life_events_create/update/delete`, `roadmap_milestones_*` | |
 | レビュー | `monthly_reviews_upsert`, `period_reviews_upsert`, `actions_apply/skip/process_due` | actions は review 由来の提案適用 |
 | 為替 | `exchange_rates_create/update/delete/auto_update` | auto_update は外部取得 |
 | データ移送 | `data_export`, `data_import_validate`, `data_import_replace_current_client` | **replace は全置換・最危険**。validate → ユーザー確認必須 |
-| 設定 | `clients_create`, `clients_update_settings`, `clients_update_gemini_key` | |
+| 設定 | `clients_update_settings`, `clients_update_gemini_key` | client の新規作成は UI から（`clients_create` ツールは廃止済み） |
 
 ## AI 承認フロー
 
