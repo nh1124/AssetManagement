@@ -12,8 +12,8 @@ from ..services.goal_service import (
     generate_budget_from_goals,
     get_strategy_dashboard
 )
-from ..services.capsule_service import create_capsule_for_goal, capsule_balance
-from ..services.accounting_service import process_transaction
+from ..services.capsule_service import apply_capsule_rules_for_transaction, create_capsule_for_goal, capsule_balance
+from ..services.accounting_service import post_transaction_journal
 from ..services.budget_plan_service import create_plan_lines, get_budget_summary as build_budget_summary, update_plan_lines
 from ..services.cache_service import get_or_set, invalidate_client
 
@@ -295,7 +295,8 @@ def delete_life_event(
         )
         db.add(tx)
         db.flush()
-        process_transaction(db, tx)
+        post_transaction_journal(db, tx)
+        apply_capsule_rules_for_transaction(db, tx, commit=False)
 
     # Collect capsule account IDs before cascade deletion
     account_ids_to_delete = [

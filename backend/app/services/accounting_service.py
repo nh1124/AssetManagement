@@ -35,7 +35,7 @@ DEFAULT_ACCOUNTS = [
 ]
 
 
-def ensure_default_accounts(db: Session, client_id: int) -> None:
+def ensure_default_accounts(db: Session, client_id: int, *, commit: bool = True) -> None:
     """Create default accounts for a client if they don't exist."""
     for acc in DEFAULT_ACCOUNTS:
         existing = db.query(models.Account).filter(
@@ -44,7 +44,10 @@ def ensure_default_accounts(db: Session, client_id: int) -> None:
         ).first()
         if not existing:
             db.add(models.Account(**acc, client_id=client_id))
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
 
 
 def get_or_create_account(
@@ -52,6 +55,8 @@ def get_or_create_account(
     name: str,
     client_id: int,
     account_type: str = "expense",
+    *,
+    commit: bool = True,
 ) -> models.Account:
     """Get account by name or create it for a specific client."""
     normalized = (name or "").strip().lower()
@@ -69,8 +74,11 @@ def get_or_create_account(
             client_id=client_id,
         )
         db.add(account)
-        db.commit()
-        db.refresh(account)
+        if commit:
+            db.commit()
+            db.refresh(account)
+        else:
+            db.flush()
     return account
 
 
@@ -98,7 +106,7 @@ def _resolve_account(
     if by_id:
         return by_id
 
-    return get_or_create_account(db, fallback_name, client_id, fallback_type)
+    return get_or_create_account(db, fallback_name, client_id, fallback_type, commit=False)
 
 
 DEBIT_NORMAL_TYPES = {"asset", "expense", "item"}
@@ -275,10 +283,16 @@ def _rollback_transaction_effects(db: Session, transaction: models.Transaction) 
         _apply_credit(to_account, transaction.amount)
 
 
-def revert_transaction(db: Session, transaction: models.Transaction) -> None:
+def revert_transaction(
+    db: Session,
+    transaction: models.Transaction,
+    *,
+    commit: bool = True,
+) -> None:
     """Revert the impact of a transaction on account balances before deletion."""
     _rollback_transaction_effects(db, transaction)
-    db.commit()
+    if commit:
+        db.commit()
 
 
 def update_transaction(

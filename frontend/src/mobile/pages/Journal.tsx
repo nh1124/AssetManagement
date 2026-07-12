@@ -18,6 +18,7 @@ export default function MobileJournalPage() {
     const [showFilters, setShowFilters] = useState(false);
     const [fadeSide, setFadeSide] = useState<'none' | 'right' | 'left' | 'both'>('none');
     const typeScrollRef = useRef<HTMLDivElement>(null);
+    const latestRequestId = useRef(0);
 
     const filters = useMemo<TransactionQuery>(() => ({
         q: query.trim() || undefined,
@@ -27,15 +28,21 @@ export default function MobileJournalPage() {
     }), [query, type]);
 
     const loadTransactions = async (nextOffset = 0) => {
+        const requestId = ++latestRequestId.current;
         setIsLoading(true);
         try {
             const result = await getTransactionsPage({ ...filters, offset: nextOffset });
+            if (requestId !== latestRequestId.current) return;
             setTotal(result.total);
             setTransactions((prev) => nextOffset === 0 ? result.items : [...prev, ...result.items]);
         } catch {
-            showToast('Failed to load mobile journal', 'error');
+            if (requestId === latestRequestId.current) {
+                showToast('Failed to load mobile journal', 'error');
+            }
         } finally {
-            setIsLoading(false);
+            if (requestId === latestRequestId.current) {
+                setIsLoading(false);
+            }
         }
     };
 

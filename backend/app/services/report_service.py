@@ -14,8 +14,9 @@ from .accounting_service import (
     get_profit_loss_for_range,
     get_variance_analysis,
     get_variance_analysis_for_range,
-    process_transaction,
+    post_transaction_journal,
 )
+from .capsule_service import create_capsule_for_goal, upsert_capsule_holding
 from .goal_service import get_life_events_with_progress
 
 ANOMALY_THRESHOLD_PCT = 150
@@ -330,8 +331,8 @@ def _apply_allocate_to_goal(
     if not goal:
         raise LookupError("Target goal not found")
 
-    cash_account = get_or_create_account(db, "cash", client_id, "asset")
-    savings_account = get_or_create_account(db, "savings", client_id, "asset")
+    cash_account = get_or_create_account(db, "cash", client_id, "asset", commit=False)
+    savings_account = get_or_create_account(db, "savings", client_id, "asset", commit=False)
 
     transaction = models.Transaction(
         client_id=client_id,
@@ -345,47 +346,29 @@ def _apply_allocate_to_goal(
         category="monthly_action",
     )
     db.add(transaction)
-    db.commit()
-    db.refresh(transaction)
-    process_transaction(db, transaction)
-    db.refresh(savings_account)
+    db.flush()
+    post_transaction_journal(db, transaction)
+    db.flush()
 
-    existing = db.query(models.GoalAllocation).filter(
-        models.GoalAllocation.life_event_id == goal.id,
-        models.GoalAllocation.account_id == savings_account.id,
-    ).first()
-    other_allocations = db.query(models.GoalAllocation).join(models.LifeEvent).filter(
-        models.GoalAllocation.account_id == savings_account.id,
-        models.LifeEvent.client_id == client_id,
-        models.GoalAllocation.id != (existing.id if existing else -1),
-    ).all()
-    max_allowed = max(0.0, 100.0 - sum(a.allocation_percentage for a in other_allocations))
-    balance = max(abs(savings_account.balance or 0.0), amount)
-    proposed_pct = min(100.0, amount / balance * 100.0)
-
-    allocation = existing
-    if existing:
-        existing.allocation_percentage = min(
-            max_allowed,
-            (existing.allocation_percentage or 0.0) + proposed_pct,
-        )
-    elif max_allowed > 0:
-        allocation = models.GoalAllocation(
-            life_event_id=goal.id,
-            account_id=savings_account.id,
-            allocation_percentage=min(max_allowed, proposed_pct),
-        )
-        db.add(allocation)
-    db.commit()
-    if allocation:
-        db.refresh(allocation)
+    capsule = create_capsule_for_goal(db, client_id, goal)
+    if capsule.account_id is None:
+        capsule.account_id = savings_account.id
+    holding = upsert_capsule_holding(
+        db,
+        capsule,
+        savings_account.id,
+        amount,
+        note=f"Monthly action allocation {period}",
+    )
+    db.flush()
 
     return {
         "transaction_id": transaction.id,
         "goal_id": goal.id,
         "account_id": savings_account.id,
-        "allocation_id": allocation.id if allocation else None,
-        "allocation_percentage": round(allocation.allocation_percentage, 2) if allocation else 0.0,
+        "capsule_id": capsule.id,
+        "holding_id": holding.id,
+        "allocated_amount": amount,
     }
 
 
@@ -410,7 +393,7 @@ def apply_monthly_report_proposal(
     action = db.query(models.MonthlyAction).filter(
         models.MonthlyAction.client_id == client_id,
         models.MonthlyAction.idempotency_key == idempotency_key,
-    ).first()
+    ).with_for_update().first()
     if action and action.status == "applied":
         return {
             "status": "already_applied",
@@ -432,8 +415,7 @@ def apply_monthly_report_proposal(
             idempotency_key=idempotency_key,
         )
         db.add(action)
-        db.commit()
-        db.refresh(action)
+        db.flush()
 
     try:
         if proposal["kind"] == "allocate_to_goal":
@@ -450,10 +432,8 @@ def apply_monthly_report_proposal(
             "status": "applied",
             "action": _monthly_action_to_dict(action),
         }
-    except Exception as exc:
-        action.status = "failed"
-        action.result = {"error": str(exc)}
-        db.commit()
+    except Exception:
+        db.rollback()
         raise
 
 
@@ -479,7 +459,7 @@ def apply_period_report_proposal(
     action = db.query(models.MonthlyAction).filter(
         models.MonthlyAction.client_id == client_id,
         models.MonthlyAction.idempotency_key == idempotency_key,
-    ).first()
+    ).with_for_update().first()
     if action and action.status == "applied":
         return {"status": "already_applied", "action": _monthly_action_to_dict(action)}
 
@@ -498,8 +478,7 @@ def apply_period_report_proposal(
             idempotency_key=idempotency_key,
         )
         db.add(action)
-        db.commit()
-        db.refresh(action)
+        db.flush()
 
     try:
         if proposal["kind"] == "allocate_to_goal":
@@ -514,9 +493,7 @@ def apply_period_report_proposal(
         db.refresh(action)
         return {"status": "applied", "action": _monthly_action_to_dict(action)}
     except Exception:
-        action.status = "failed"
-        action.result = {"error": "Failed to apply proposal"}
-        db.commit()
+        db.rollback()
         raise
 
 

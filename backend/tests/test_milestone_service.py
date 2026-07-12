@@ -255,6 +255,7 @@ def test_preview_milestones_quarterly_bonus_reflected():
             monthly_savings=50_000,
             contribution_schedule=schedule,
             allocation_mode="direct",
+            reference_date=ref,
         )
         items = preview["items"]
         # First quarterly milestone ≈ 3 months from ref (Aug 1):
@@ -278,6 +279,7 @@ def test_preview_milestones_quarterly_bonus_reflected():
             monthly_savings=100_000,  # averaged equivalent (no bonus timing)
             contribution_schedule=None,
             allocation_mode="direct",
+            reference_date=ref,
         )
         first_avg = preview_avg["items"][0] if preview_avg["items"] else None
         if first_avg:

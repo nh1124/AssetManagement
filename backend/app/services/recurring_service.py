@@ -113,8 +113,10 @@ def post_recurring_transaction(
     db.add(transaction)
     db.flush()
     from .accounting_service import post_transaction_journal
+    from .capsule_service import apply_capsule_rules_for_transaction
 
     post_transaction_journal(db, transaction)
+    apply_capsule_rules_for_transaction(db, transaction, commit=False)
     return transaction
 
 

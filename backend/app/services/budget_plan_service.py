@@ -2371,7 +2371,13 @@ def create_plan_lines(db: Session, client_id: int, payloads: list) -> list[model
     return created
 
 
-def update_plan_lines(db: Session, client_id: int, payloads: list) -> list[models.MonthlyPlanLine]:
+def update_plan_lines(
+    db: Session,
+    client_id: int,
+    payloads: list,
+    *,
+    commit: bool = True,
+) -> list[models.MonthlyPlanLine]:
     saved: list[models.MonthlyPlanLine] = []
     for payload in payloads:
         data = _payload_data(payload)
@@ -2394,9 +2400,12 @@ def update_plan_lines(db: Session, client_id: int, payloads: list) -> list[model
             db.rollback()
             raise ValueError("Monthly plan line already exists for this period and source")
         saved.append(line)
-    db.commit()
-    for line in saved:
-        db.refresh(line)
+    if commit:
+        db.commit()
+        for line in saved:
+            db.refresh(line)
+    else:
+        db.flush()
     return saved
 
 

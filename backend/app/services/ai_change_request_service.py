@@ -10,7 +10,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
-from ..services.accounting_service import ensure_default_accounts, process_transaction
+from ..services.accounting_service import ensure_default_accounts, post_transaction_journal
 from ..services.budget_plan_service import update_plan_lines
 from ..services.cache_service import invalidate_client
 from ..services.capsule_service import apply_capsule_rules_for_transaction
@@ -358,7 +358,7 @@ def approve_change_request(
     change_request_id: int,
     step_up_token_payload: dict[str, Any] | None = None,
 ) -> models.AiChangeRequest:
-    row = _get_change_request(db, client_id, change_request_id)
+    row = _get_change_request(db, client_id, change_request_id, for_update=True)
     if row.status not in {"draft", "pending"}:
         raise HTTPException(status_code=400, detail=f"Change request cannot be approved from status {row.status}")
     if row.requires_mfa:
@@ -424,7 +424,7 @@ def apply_change_request(
     actor_client_id: int,
     change_request_id: int,
 ) -> models.AiChangeRequest:
-    row = _get_change_request(db, client_id, change_request_id)
+    row = _get_change_request(db, client_id, change_request_id, for_update=True)
     if row.status == "applied":
         return row
     if row.status != "approved":
@@ -454,56 +454,62 @@ def apply_change_request(
 
     try:
         result = _apply_dispatch(db, client_id, row)
-    except ValueError as exc:
-        row.status = "failed"
-        row.result = {"error": "apply_failed", "message": str(exc)}
+        row.status = "applied"
+        row.applied_at = datetime.utcnow()
         row.updated_at = datetime.utcnow()
+        row.result = result
+
+        context = AiOperationContext(
+            source=row.source,
+            tool_name=row.tool_name,
+            resource=row.resource,
+            action=row.action,
+            risk=row.risk,
+            ai_client_id=row.ai_client_id,
+            mcp_client_id=row.mcp_client_id,
+            request_summary=row.input_payload,
+            diff_summary=row.diff,
+            mfa_verified=row.requires_mfa,
+        )
+        decision = evaluate_ai_operation(db, client_id, context)
+        log = write_ai_audit_log(
+            db,
+            client_id,
+            context,
+            decision,
+            result={"change_request_id": row.id, "status": row.status, **result},
+            commit=False,
+        )
+        log.approval_request_id = row.id
         db.commit()
+    except ValueError as exc:
+        db.rollback()
+        failed_row = _get_change_request(db, client_id, change_request_id, for_update=True)
+        if failed_row.status == "approved":
+            failed_row.status = "failed"
+            failed_row.result = {"error": "apply_failed", "message": str(exc)}
+            failed_row.updated_at = datetime.utcnow()
+            db.commit()
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception:
+        db.rollback()
+        raise
 
-    row.status = "applied"
-    row.applied_at = datetime.utcnow()
-    row.updated_at = datetime.utcnow()
-    row.result = result
-
-    context = AiOperationContext(
-        source=row.source,
-        tool_name=row.tool_name,
-        resource=row.resource,
-        action=row.action,
-        risk=row.risk,
-        ai_client_id=row.ai_client_id,
-        mcp_client_id=row.mcp_client_id,
-        request_summary=row.input_payload,
-        diff_summary=row.diff,
-        mfa_verified=row.requires_mfa,
-    )
-    decision = evaluate_ai_operation(db, client_id, context)
-    log = write_ai_audit_log(
-        db,
-        client_id,
-        context,
-        decision,
-        result={"change_request_id": row.id, "status": row.status, **result},
-        commit=False,
-    )
-    log.approval_request_id = row.id
-    db.commit()
     db.refresh(row)
+    invalidate_client(client_id)
     return row
 
 
 def _apply_dispatch(db: Session, client_id: int, row: models.AiChangeRequest) -> dict[str, Any]:
     if (row.resource, row.action) == ("transactions", "create"):
-        ensure_default_accounts(db, client_id=client_id)
+        ensure_default_accounts(db, client_id=client_id, commit=False)
         data = schemas.TransactionCreate(**row.input_payload).model_dump()
         tx = models.Transaction(**data, client_id=client_id)
         db.add(tx)
         db.flush()
-        process_transaction(db, tx)
+        post_transaction_journal(db, tx)
         db.flush()
-        apply_capsule_rules_for_transaction(db, tx)
-        invalidate_client(client_id)
+        apply_capsule_rules_for_transaction(db, tx, commit=False)
         return {"transaction_id": tx.id}
 
     if (row.resource, row.action) == ("monthly_plan_lines", "update"):
@@ -511,8 +517,7 @@ def _apply_dispatch(db: Session, client_id: int, row: models.AiChangeRequest) ->
         if not line_id:
             raise ValueError("Monthly plan line id is required")
         payload = {**row.input_payload, "id": line_id}
-        saved = update_plan_lines(db, client_id, [payload])
-        invalidate_client(client_id)
+        saved = update_plan_lines(db, client_id, [payload], commit=False)
         return {"ids": [line.id for line in saved]}
 
     if (row.resource, row.action) == ("recurring_transactions", "create"):
@@ -521,7 +526,6 @@ def _apply_dispatch(db: Session, client_id: int, row: models.AiChangeRequest) ->
         db.add(recurring)
         db.flush()
         sync_registry_from_recurring(db, recurring)
-        invalidate_client(client_id)
         return {"recurring_transaction_id": recurring.id}
 
     if (row.resource, row.action) == ("recurring_transactions", "update"):
@@ -539,17 +543,25 @@ def _apply_dispatch(db: Session, client_id: int, row: models.AiChangeRequest) ->
             setattr(recurring, key, value)
         sync_registry_from_recurring(db, recurring)
         db.flush()
-        invalidate_client(client_id)
         return {"recurring_transaction_id": recurring.id}
 
     raise ValueError(f"Unsupported change request operation: {row.resource}:{row.action}")
 
 
-def _get_change_request(db: Session, client_id: int, change_request_id: int) -> models.AiChangeRequest:
-    row = db.query(models.AiChangeRequest).filter(
+def _get_change_request(
+    db: Session,
+    client_id: int,
+    change_request_id: int,
+    *,
+    for_update: bool = False,
+) -> models.AiChangeRequest:
+    query = db.query(models.AiChangeRequest).filter(
         models.AiChangeRequest.id == change_request_id,
         models.AiChangeRequest.client_id == client_id,
-    ).first()
+    )
+    if for_update:
+        query = query.with_for_update()
+    row = query.first()
     if not row:
         raise HTTPException(status_code=404, detail="Change request not found")
     return row

@@ -203,6 +203,7 @@ def create_transaction_batch(
             db.add(tx)
             db.flush()
             post_transaction_journal(db, tx)
+            apply_capsule_rules_for_transaction(db, tx, commit=False)
             created.append(tx)
         db.commit()
     except Exception as exc:
@@ -211,7 +212,6 @@ def create_transaction_batch(
 
     for tx in created:
         db.refresh(tx)
-        apply_capsule_rules_for_transaction(db, tx)
     db.refresh(batch)
     return _serialize_batch(batch)
 

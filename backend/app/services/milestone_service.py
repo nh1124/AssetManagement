@@ -222,6 +222,7 @@ def preview_milestones_from_simulation(
     monthly_savings: float | None = None,
     contribution_schedule: list[dict[str, Any]] | None = None,
     allocation_mode: str = "weighted",
+    reference_date: date | None = None,
 ) -> dict:
     """Build milestone candidates from the same normalized inputs as goal simulation."""
     if basis == "annual_plan":
@@ -261,6 +262,7 @@ def preview_milestones_from_simulation(
         monthly_savings=monthly_savings,
         contribution_schedule=contribution_schedule,
         allocation_mode=allocation_mode,
+        reference_date=reference_date,
     )
 
     today = context["reference_date"]

@@ -120,7 +120,10 @@ def create_capsule_for_goal(db: Session, client_id: int, goal: models.LifeEvent)
 
 
 def apply_capsule_rules_for_transaction(
-    db: Session, transaction: models.Transaction
+    db: Session,
+    transaction: models.Transaction,
+    *,
+    commit: bool = True,
 ) -> list[models.CapsuleHolding]:
     if transaction.client_id is None:
         return []
@@ -150,7 +153,7 @@ def apply_capsule_rules_for_transaction(
         holding = upsert_capsule_holding(db, capsule, source_account_id, amount, note=f"Auto-allocated: {rule.trigger_type}")
         updated.append(holding)
 
-    if updated:
+    if updated and commit:
         db.commit()
     return updated
 

@@ -546,11 +546,6 @@ export const getLifeEventsWithProgress = async () => {
     return response.data;
 };
 
-export const getGoalProbability = async () => {
-    const response = await api.get('/life-events/goal-probability');
-    return response.data;
-};
-
 const appendContributionSchedule = (params: Record<string, unknown>, contribution_schedule?: ContributionScheduleItem[]) => {
     if (contribution_schedule?.length) {
         params.contribution_schedule = JSON.stringify(contribution_schedule);
@@ -745,16 +740,6 @@ export const analyzeWithBackend = async (payload: { parts: any[] }) => {
     return response.data;
 };
 
-export const suggestBudget = async () => {
-    const response = await api.post('/api/analyze/suggest-budget');
-    return response.data;
-};
-
-export const optimizeAllocations = async () => {
-    const response = await api.post('/api/analyze/optimize-allocations');
-    return response.data;
-};
-
 // Client management
 export const getClients = async () => {
     const response = await api.get('/clients/');
@@ -768,11 +753,6 @@ export const updateClientKey = async (clientId: number, gemini_api_key: string) 
 
 export const updateClientSettings = async (clientId: number, general_settings: Record<string, unknown>) => {
     const response = await api.put(`/clients/${clientId}/settings`, { general_settings });
-    return response.data;
-};
-
-export const createClient = async (payload: { name: string; seed_defaults: boolean }) => {
-    const response = await api.post('/clients/', payload);
     return response.data;
 };
 
@@ -989,11 +969,6 @@ export const updateCapsule = async (id: number, capsule: any) => {
 export const deleteCapsule = async (id: number, transferAccountId?: number) => {
     const params = transferAccountId != null ? `?transfer_account_id=${transferAccountId}` : '';
     const response = await api.delete(`/capsules/${id}${params}`);
-    return response.data;
-};
-
-export const processCapsuleContributions = async () => {
-    const response = await api.post('/capsules/process_contributions');
     return response.data;
 };
 

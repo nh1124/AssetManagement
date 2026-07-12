@@ -43,6 +43,7 @@ def _latest_rate(
         ).first()
         if dated:
             return dated
+        return None
     return query.order_by(desc(models.ExchangeRate.as_of_date), desc(models.ExchangeRate.id)).first()
 
 
@@ -286,6 +287,8 @@ class RateLookup:
             selected = row
         if selected is not None:
             return selected
+        if as_of_date is not None:
+            return None
         return candidates[-1] if candidates else None
 
     def rate(self, base_currency: str | None, quote_currency: str | None, as_of_date: date | None) -> float | None:

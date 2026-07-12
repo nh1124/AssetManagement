@@ -10,7 +10,7 @@ from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.accounting_service import (
     ensure_default_accounts,
-    process_transaction,
+    post_transaction_journal,
     revert_transaction,
     update_transaction as update_transaction_service,
 )
@@ -94,14 +94,17 @@ def create_transaction(
     """Create a transaction for a specific client and process double-entry bookkeeping."""
     ensure_default_accounts(db, client_id=current_client.id)
 
-    db_transaction = models.Transaction(**transaction.model_dump(), client_id=current_client.id)
-    db.add(db_transaction)
-    db.commit()
-    db.refresh(db_transaction)
-
-    process_transaction(db, db_transaction)
-    db.refresh(db_transaction)
-    apply_capsule_rules_for_transaction(db, db_transaction)
+    try:
+        db_transaction = models.Transaction(**transaction.model_dump(), client_id=current_client.id)
+        db.add(db_transaction)
+        db.flush()
+        post_transaction_journal(db, db_transaction)
+        apply_capsule_rules_for_transaction(db, db_transaction, commit=False)
+        db.commit()
+        db.refresh(db_transaction)
+    except Exception:
+        db.rollback()
+        raise
     invalidate_client(current_client.id)
 
     return _serialize_transaction(db_transaction)
@@ -142,13 +145,15 @@ def delete_transaction(
     if not transaction:
         raise HTTPException(status_code=404, detail="Transaction not found")
 
-    revert_transaction(db, transaction)
-
-    db.query(models.JournalEntry).filter(
-        models.JournalEntry.transaction_id == transaction_id
-    ).delete()
-
-    db.delete(transaction)
-    db.commit()
+    try:
+        revert_transaction(db, transaction, commit=False)
+        db.query(models.JournalEntry).filter(
+            models.JournalEntry.transaction_id == transaction_id
+        ).delete()
+        db.delete(transaction)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     invalidate_client(current_client.id)
     return {"message": "Transaction deleted"}

@@ -14,9 +14,11 @@ from .fx_service import (
     build_rate_lookup,
     calculate_account_valued_balance,
     calculate_account_valued_balances,
+    convert_amount,
     convert_amount_with_lookup,
     convert_transaction_amount,
 )
+from .budget_plan_service import resolve_budget_plan_id
 
 
 LIQUID_ACCOUNT_NAMES = {"cash", "bank", "savings"}
@@ -138,7 +140,16 @@ def _upcoming_recurring_total(db: Session, client_id: int, days: int = 30) -> fl
             models.RecurringTransaction.type.in_(UPCOMING_OUTFLOW_TYPES),
         )
     ).all()
-    return sum((row.amount or 0.0) for row in rows)
+    return sum(
+        convert_amount(
+            db,
+            client_id,
+            row.amount,
+            row.currency,
+            as_of_date=row.next_due_date,
+        )
+        for row in rows
+    )
 
 
 def calculate_logical_balance(db: Session, client_id: int) -> float:
@@ -189,8 +200,10 @@ def get_summary(db: Session, client_id: int) -> dict:
     cc_unpaid = _sum_unpaid_liabilities(db, client_id)
 
     month_str = f"{today.year}-{today.month:02d}"
+    plan_id = resolve_budget_plan_id(db, client_id)
     monthly_plan_lines = db.query(models.MonthlyPlanLine).filter(
         models.MonthlyPlanLine.client_id == client_id,
+        models.MonthlyPlanLine.plan_id == plan_id,
         models.MonthlyPlanLine.target_period == month_str,
         models.MonthlyPlanLine.line_type == "expense",
         models.MonthlyPlanLine.is_active.is_(True),
@@ -294,7 +307,7 @@ def calculate_depreciation(product: models.Product) -> dict | None:
         }
 
     daily_rate = purchase_price / (product.lifespan_months * 30)
-    days_since_purchase = (date.today() - purchase_date).days
+    days_since_purchase = max(0, (date.today() - purchase_date).days)
     total_depreciation = daily_rate * days_since_purchase
     current_value = max(0, purchase_price - total_depreciation)
 

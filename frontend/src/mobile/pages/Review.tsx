@@ -112,7 +112,7 @@ export default function MobileReviewPage() {
                     <section className="grid grid-cols-2 gap-2">
                         <ReviewMetric label="Net Worth" value={formatCurrency(report.summary.net_worth, currentCurrency)} />
                         <ReviewMetric label="P/L" value={formatCurrency(report.summary.period_pl ?? report.summary.monthly_pl, currentCurrency)} />
-                        <ReviewMetric label="Savings" value={`${Math.round((report.summary.savings_rate ?? 0) * 100)}%`} />
+                        <ReviewMetric label="Savings" value={`${Math.round(report.summary.savings_rate ?? 0)}%`} />
                         <ReviewMetric label="Actions" value={String(report.action_proposals?.length ?? 0)} />
                     </section>
 

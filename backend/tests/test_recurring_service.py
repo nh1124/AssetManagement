@@ -122,6 +122,46 @@ def test_process_due_creates_transaction_and_two_journal_entries():
         db.close()
 
 
+def test_process_due_applies_capsule_rule_once_in_same_commit():
+    db = _session()
+    try:
+        _, cash, expense = _client_and_accounts(db)
+        recurring = _recurring(db, cash, expense, next_due_date=date(2026, 6, 15))
+        capsule = models.Capsule(
+            client_id=1,
+            name="Expense reserve",
+            target_amount=10_000,
+            monthly_contribution=0,
+            current_balance=0,
+        )
+        db.add(capsule)
+        db.flush()
+        db.add(models.CapsuleRule(
+            client_id=1,
+            capsule_id=capsule.id,
+            trigger_type="Expense",
+            source_mode="transaction_account",
+            amount_type="percentage",
+            amount_value=10,
+            is_active=True,
+        ))
+        db.commit()
+
+        process_due_for_client(db, 1, today=date(2026, 6, 15))
+
+        holding = db.query(models.CapsuleHolding).one()
+        assert holding.account_id == cash.id
+        assert holding.held_amount == 100
+        assert process_due_for_client(db, 1, today=date(2026, 6, 15)) == {
+            "processed": [],
+            "deactivated": [],
+        }
+        assert db.query(models.CapsuleHolding).one().held_amount == 100
+        assert recurring.next_due_date == date(2026, 7, 15)
+    finally:
+        db.close()
+
+
 def test_process_due_catches_up_and_is_idempotent_on_same_day():
     db = _session()
     try:

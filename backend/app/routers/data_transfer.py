@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from datetime import date, datetime
 from typing import Any
 
@@ -249,6 +250,51 @@ def _validate_import_payload(payload: ImportPayload) -> dict[str, Any]:
     check_ref("monthly_plan_lines", "recurring_transaction_id", "recurring_transactions")
     check_ref("monthly_plan_lines", "plan_id", "budget_plans")
 
+    journal_entries_by_transaction: dict[int, list[dict[str, Any]]] = {}
+    for entry in data.get("journal_entries", []):
+        transaction_id = _as_int(entry.get("transaction_id"))
+        if transaction_id is not None:
+            journal_entries_by_transaction.setdefault(transaction_id, []).append(entry)
+
+    for transaction in data.get("transactions", []):
+        transaction_id = _as_int(transaction.get("id"))
+        if transaction_id is None:
+            continue
+        entries = journal_entries_by_transaction.get(transaction_id, [])
+        if len(entries) < 2:
+            issue(
+                "error",
+                "journal_entries_missing",
+                "Each transaction must have at least two journal entries.",
+                "transactions",
+                transaction_id,
+            )
+            continue
+        try:
+            amount = float(transaction.get("amount") or 0.0)
+            total_debit = sum(float(entry.get("debit") or 0.0) for entry in entries)
+            total_credit = sum(float(entry.get("credit") or 0.0) for entry in entries)
+        except (TypeError, ValueError):
+            issue(
+                "error",
+                "journal_amount_invalid",
+                "Transaction and journal amounts must be numeric.",
+                "transactions",
+                transaction_id,
+            )
+            continue
+        if not (
+            math.isclose(total_debit, total_credit, abs_tol=0.01)
+            and math.isclose(total_debit, amount, abs_tol=0.01)
+        ):
+            issue(
+                "error",
+                "journal_unbalanced",
+                f"Journal totals must satisfy debit=credit=amount; got debit={total_debit}, credit={total_credit}, amount={amount}.",
+                "transactions",
+                transaction_id,
+            )
+
     for item in data.get("monthly_plan_lines", []):
         target_type = item.get("target_type")
         target_id = _as_int(item.get("target_id"))
@@ -314,6 +360,31 @@ def _validate_import_payload(payload: ImportPayload) -> dict[str, Any]:
         "counts": _data_counts(data),
         "issues": issues,
     }
+
+
+def _assert_imported_journal_invariant(
+    db: Session,
+    transaction_ids: list[int],
+) -> None:
+    for transaction_id in transaction_ids:
+        transaction = db.query(models.Transaction).filter(
+            models.Transaction.id == transaction_id
+        ).one()
+        entries = db.query(models.JournalEntry).filter(
+            models.JournalEntry.transaction_id == transaction_id
+        ).all()
+        if len(entries) < 2:
+            raise ValueError(f"Transaction {transaction_id} has fewer than two journal entries")
+        total_debit = sum(float(entry.debit or 0.0) for entry in entries)
+        total_credit = sum(float(entry.credit or 0.0) for entry in entries)
+        amount = float(transaction.amount or 0.0)
+        if not (
+            math.isclose(total_debit, total_credit, abs_tol=0.01)
+            and math.isclose(total_debit, amount, abs_tol=0.01)
+        ):
+            raise ValueError(
+                f"Transaction {transaction_id} journal totals do not satisfy debit=credit=amount"
+            )
 
 
 def _remap_nested_ids(value: Any, key_maps: dict[str, dict[int, int]]) -> Any:
@@ -1177,6 +1248,7 @@ def import_client_data(
                 )
 
         db.flush()
+        _assert_imported_journal_invariant(db, list(transaction_map.values()))
         for account in db.query(models.Account).filter(models.Account.client_id == current_client.id).all():
             account.balance = calculate_account_journal_balance(db, account)
 
