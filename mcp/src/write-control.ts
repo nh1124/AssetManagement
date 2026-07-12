@@ -16,17 +16,8 @@ interface ChangeRequestInput {
   input_payload?: Record<string, unknown>;
 }
 
-const DIRECT_WRITE_SETTINGS: AiExecutionSettings = {
-  mcp_write_mode: "direct_write",
-  supported_change_request_operations: [],
-};
-
 export async function getAiExecutionSettings(): Promise<AiExecutionSettings> {
-  try {
-    return await api.get<AiExecutionSettings>("/ai/execution-settings");
-  } catch {
-    return DIRECT_WRITE_SETTINGS;
-  }
+  return api.get<AiExecutionSettings>("/ai/execution-settings");
 }
 
 export async function shouldCreateChangeRequest(): Promise<boolean> {

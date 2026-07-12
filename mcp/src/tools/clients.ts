@@ -30,32 +30,6 @@ export function registerClientTools(server: McpServer): void {
   );
 
   server.registerTool(
-    "clients_create",
-    {
-      title: "Create client",
-      description: "Creates a new client profile, optionally seeding default accounts.",
-      inputSchema: z
-        .object({
-          name: z.string().min(1).describe("Client display name"),
-          seed_defaults: z.boolean().optional().default(true).describe("Seed default accounts"),
-        })
-        .strict(),
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-    },
-    async (input) => {
-      try {
-        const data = await api.post<unknown>("/clients/", input);
-        return {
-          content: [{ type: "text", text: `Created client:\n${JSON.stringify(data, null, 2)}` }],
-          structuredContent: toStructured(data),
-        };
-      } catch (err) {
-        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
-      }
-    },
-  );
-
-  server.registerTool(
     "clients_update_settings",
     {
       title: "Update current client settings",

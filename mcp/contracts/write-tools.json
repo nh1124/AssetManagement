@@ -418,5 +418,219 @@
     "path_fragment": "/key",
     "allowed_fields": ["gemini_api_key"],
     "required_fields": ["gemini_api_key"]
+  },
+  {
+    "tool": "accounts_seed_defaults",
+    "method": "post",
+    "path": "/accounts/seed-defaults",
+    "body": "none",
+    "source": "src/tools/accounts.ts",
+    "path_fragment": "/accounts/seed-defaults"
+  },
+  {
+    "tool": "actions_process_due",
+    "method": "post",
+    "path": "/actions/process-due",
+    "body": "none",
+    "source": "src/tools/actions.ts",
+    "path_fragment": "/actions/process-due"
+  },
+  {
+    "tool": "actions_apply",
+    "method": "post",
+    "path": "/actions/{action_id}/apply",
+    "body": "none",
+    "source": "src/tools/actions.ts",
+    "path_fragment": "/actions/${id}/apply"
+  },
+  {
+    "tool": "actions_skip",
+    "method": "post",
+    "path": "/actions/{action_id}/skip",
+    "body": "none",
+    "source": "src/tools/actions.ts",
+    "path_fragment": "/actions/${id}/skip"
+  },
+  {
+    "tool": "ai_change_requests_create",
+    "method": "post",
+    "path": "/ai/change-requests",
+    "body": "object",
+    "source": "src/tools/ai-change-requests.ts",
+    "path_fragment": "/ai/change-requests",
+    "allowed_fields": ["resource", "action", "risk", "target_ref", "input_payload", "idempotency_key", "status"],
+    "required_fields": ["resource", "action"]
+  },
+  {
+    "tool": "ai_change_requests_approve",
+    "method": "post",
+    "path": "/ai/change-requests/{change_request_id}/approve",
+    "body": "object",
+    "source": "src/tools/ai-change-requests.ts",
+    "path_fragment": "/ai/change-requests/${id}/approve",
+    "allowed_fields": ["step_up_token"],
+    "required_fields": []
+  },
+  {
+    "tool": "ai_change_requests_apply",
+    "method": "post",
+    "path": "/ai/change-requests/{change_request_id}/apply",
+    "body": "none",
+    "source": "src/tools/ai-change-requests.ts",
+    "path_fragment": "/ai/change-requests/${id}/apply"
+  },
+  {
+    "tool": "ai_change_requests_reject",
+    "method": "post",
+    "path": "/ai/change-requests/{change_request_id}/reject",
+    "body": "none",
+    "source": "src/tools/ai-change-requests.ts",
+    "path_fragment": "/ai/change-requests/${id}/reject"
+  },
+  {
+    "tool": "ai_change_requests_refresh_preview",
+    "method": "post",
+    "path": "/ai/change-requests/{change_request_id}/refresh-preview",
+    "body": "none",
+    "source": "src/tools/ai-change-requests.ts",
+    "path_fragment": "/ai/change-requests/${id}/refresh-preview"
+  },
+  {
+    "tool": "monthly_reviews_upsert",
+    "method": "put",
+    "path": "/monthly-reviews/",
+    "body": "object",
+    "source": "src/tools/monthly-planning.ts",
+    "path_fragment": "/monthly-reviews/",
+    "allowed_fields": ["target_period", "reflection", "next_actions"],
+    "required_fields": ["target_period"]
+  },
+  {
+    "tool": "period_reviews_upsert",
+    "method": "put",
+    "path": "/period-reviews/",
+    "body": "object",
+    "source": "src/tools/period-reviews.ts",
+    "path_fragment": "/period-reviews/",
+    "allowed_fields": ["start_date", "end_date", "label", "reflection", "next_actions"],
+    "required_fields": ["start_date", "end_date"]
+  },
+  {
+    "tool": "quick_templates_create",
+    "method": "post",
+    "path": "/quick-templates/",
+    "body": "object",
+    "source": "src/tools/quick-templates.ts",
+    "path_fragment": "/quick-templates/",
+    "allowed_fields": ["tray", "name", "template_kind", "description", "category", "default_currency", "default_from_account_id", "default_to_account_id", "config", "sort_order", "is_active"],
+    "required_fields": ["tray", "name", "template_kind"]
+  },
+  {
+    "tool": "quick_templates_update",
+    "method": "put",
+    "path": "/quick-templates/{template_id}",
+    "body": "object",
+    "source": "src/tools/quick-templates.ts",
+    "path_fragment": "/quick-templates/${id}",
+    "allowed_fields": ["tray", "name", "template_kind", "description", "category", "default_currency", "default_from_account_id", "default_to_account_id", "config", "sort_order", "is_active"],
+    "required_fields": []
+  },
+  {
+    "tool": "quick_templates_delete",
+    "method": "delete",
+    "path": "/quick-templates/{template_id}",
+    "body": "none",
+    "source": "src/tools/quick-templates.ts",
+    "path_fragment": "/quick-templates/${id}"
+  },
+  {
+    "tool": "transaction_batches_create",
+    "method": "post",
+    "path": "/transaction-batches/",
+    "body": "object",
+    "source": "src/tools/quick-templates.ts",
+    "path_fragment": "/transaction-batches/",
+    "allowed_fields": ["quick_template_id", "label", "source", "input_payload", "transactions"],
+    "required_fields": ["transactions"]
+  },
+  {
+    "tool": "recurring_process",
+    "method": "post",
+    "path": "/recurring/{recurring_id}/process",
+    "body": "none",
+    "source": "src/tools/recurring.ts",
+    "path_fragment": "/recurring/${id}/process"
+  },
+  {
+    "tool": "recurring_skip",
+    "method": "post",
+    "path": "/recurring/{recurring_id}/skip",
+    "body": "none",
+    "source": "src/tools/recurring.ts",
+    "path_fragment": "/recurring/${id}/skip"
+  },
+  {
+    "tool": "reports_apply_action",
+    "method": "post",
+    "path": "/reports/{period}/actions/{proposal_id}/apply",
+    "body": "none",
+    "source": "src/tools/reports.ts",
+    "path_fragment": "/reports/${encodeURIComponent(period)}/actions/${encodeURIComponent(proposal_id)}/apply"
+  },
+  {
+    "tool": "reports_apply_action",
+    "method": "post",
+    "path": "/reports/period/actions/{proposal_id}/apply",
+    "body": "none",
+    "source": "src/tools/reports.ts",
+    "path_fragment": "/reports/period/actions/${encodeURIComponent(proposal_id)}/apply"
+  },
+  {
+    "tool": "roadmap_milestones_apply_from_simulation",
+    "method": "post",
+    "path": "/roadmap/life-events/{life_event_id}/milestones/from-simulation",
+    "body": "object",
+    "source": "src/tools/roadmap.ts",
+    "path_fragment": "/roadmap/life-events/${life_event_id}/milestones/from-simulation",
+    "allowed_fields": ["basis", "interval", "mode", "n_simulations", "annual_return", "inflation", "monthly_savings"],
+    "required_fields": []
+  },
+  {
+    "tool": "simulation_config_update",
+    "method": "put",
+    "path": "/simulation/config",
+    "body": "object",
+    "source": "src/tools/simulation.ts",
+    "path_fragment": "/simulation/config",
+    "allowed_fields": ["annual_return", "tax_rate", "is_nisa", "monthly_savings", "volatility", "inflation_rate"],
+    "required_fields": []
+  },
+  {
+    "tool": "simulation_scenarios_create",
+    "method": "post",
+    "path": "/simulation/scenarios",
+    "body": "object",
+    "source": "src/tools/simulation.ts",
+    "path_fragment": "/simulation/scenarios",
+    "allowed_fields": ["life_event_id", "name", "description", "annual_return", "inflation", "monthly_savings", "contribution_schedule", "allocation_mode"],
+    "required_fields": ["life_event_id", "name", "annual_return", "inflation"]
+  },
+  {
+    "tool": "simulation_scenarios_update",
+    "method": "put",
+    "path": "/simulation/scenarios/{scenario_id}",
+    "body": "object",
+    "source": "src/tools/simulation.ts",
+    "path_fragment": "/simulation/scenarios/${id}",
+    "allowed_fields": ["name", "description", "annual_return", "inflation", "monthly_savings", "contribution_schedule", "allocation_mode"],
+    "required_fields": []
+  },
+  {
+    "tool": "simulation_scenarios_delete",
+    "method": "delete",
+    "path": "/simulation/scenarios/{scenario_id}",
+    "body": "none",
+    "source": "src/tools/simulation.ts",
+    "path_fragment": "/simulation/scenarios/${id}"
   }
 ]

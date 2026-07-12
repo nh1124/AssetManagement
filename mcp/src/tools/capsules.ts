@@ -137,30 +137,6 @@ Use when: カプセルの目標額・月額・残高を変更したいとき`,
     }
   );
 
-  // ── capsules_process ───────────────────────────────────────
-  server.registerTool(
-    "capsules_process",
-    {
-      title: "月次積立処理",
-      description: `全カプセルに月額積立を自動加算します。
-
-Use when: 月次の積立処理を実行したいとき`,
-      inputSchema: z.object({}).strict(),
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
-    },
-    async () => {
-      try {
-        const data = await api.post<unknown>("/capsules/process_contributions", {});
-        return {
-          content: [{ type: "text", text: `Monthly contributions processed:\n${JSON.stringify(data, null, 2)}` }],
-          structuredContent: toStructured(data ?? {})
-        };
-      } catch (err) {
-        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
-      }
-    }
-  );
-
   server.registerTool(
     "capsules_delete",
     {

@@ -95,7 +95,12 @@ async function enforceMcpWriteMode(path: string, init: RequestInit, token: strin
       ...contextHeaders(context),
     },
   });
-  if (!res.ok) return;
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(
+      `Cannot verify MCP write mode; refusing ${methodOf(init)} ${path} (${res.status}): ${body}`,
+    );
+  }
   const settings = await res.json() as { mcp_write_mode?: string };
   if (settings.mcp_write_mode === "change_request") {
     throw new Error(
@@ -105,7 +110,7 @@ async function enforceMcpWriteMode(path: string, init: RequestInit, token: strin
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function request<T>(path: string, init: RequestInit = {}, authRetried = false): Promise<T> {
   const token = await getToken();
   const context = requestContext.getStore();
   await enforceMcpWriteMode(path, init, token, context);
@@ -119,12 +124,16 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     },
   });
   if (res.status === 401) {
+    const body = await res.text();
+    if (authRetried) {
+      throw new Error(`API ${init.method ?? "GET"} ${path} -> 401 after one authentication retry: ${body}`);
+    }
     if (context) {
       mcpTokenCache.delete(context.mcpAccessToken);
     } else {
       stdioToken = await login();
     }
-    return request<T>(path, init);
+    return request<T>(path, init, true);
   }
   if (!res.ok) {
     const body = await res.text();

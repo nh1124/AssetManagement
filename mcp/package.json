@@ -13,6 +13,7 @@
     "typecheck": "node ./node_modules/typescript/bin/tsc --noEmit",
     "contract:write-tools": "node scripts/write-tool-contracts.mjs",
     "contract:monthly-planning": "node scripts/monthly-planning-contract.mjs",
+    "test:api-client-hardening": "node --import tsx scripts/api-client-hardening.mts",
     "security:config": "node scripts/security-config.mjs",
     "smoke": "node scripts/smoke.mjs",
     "clean": "node -e \"fs.rmSync('dist',{recursive:true,force:true})\""
