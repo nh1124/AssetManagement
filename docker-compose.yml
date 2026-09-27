@@ -29,7 +29,7 @@ services:
       - ./backend/alembic.ini:/app/alembic.ini
     environment:
       - APP_ENV=${APP_ENV:-development}
-      - DATABASE_URL=postgresql://postgres:postgres@db:5432/finance_ide
+      - DATABASE_URL=postgresql+psycopg2://postgres:postgres@db:5432/finance_ide
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-dev_jwt_secret_change_in_production_must_be_32_chars}
       - JWT_EXPIRE_MINUTES=${JWT_EXPIRE_MINUTES:-1440}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-YLM_ViHfrMWM0hUF3XoAMLLSaL4dVTy-JnHamAaIWTo=}
