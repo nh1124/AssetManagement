@@ -135,7 +135,7 @@ def ensure_no_default_admin_password(db) -> None:
 
 
 def backfill_recurring_next_due_dates(db, today: date | None = None) -> int:
-    from .services.recurring_service import ensure_next_due_date
+    from .services.schedule_rules import ensure_next_due_date
 
     rows = db.query(models.RecurringTransaction).filter(
         models.RecurringTransaction.is_active.is_(True),

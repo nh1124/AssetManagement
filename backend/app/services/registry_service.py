@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from .. import models
 from .fx_service import convert_amount
 from .product_reserve_service import effective_budget_treatment
-from .recurring_service import ensure_next_due_date
+from .schedule_rules import ensure_next_due_date
 
 
 OUTFLOW_TRANSACTION_TYPES = {"Expense", "CreditExpense", "Transfer", "CreditAssetPurchase", "LiabilityPayment"}
