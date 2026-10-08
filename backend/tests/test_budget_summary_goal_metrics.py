@@ -15,14 +15,14 @@ from sqlalchemy.orm import sessionmaker
 try:
     from backend.app import models
     from backend.app.database import Base
-    from backend.app.routers.life_events import get_budget_summary as budget_summary_endpoint
+    from backend.app.routers.budget_plans import get_budget_plan_summary as budget_summary_endpoint
     from backend.app.services.budget_plan_service import get_budget_summary
     from backend.app.services.cache_service import invalidate_client
     from backend.app.services.strategy_service import summarize_goal_funding_gap
 except ModuleNotFoundError:
     from app import models  # type: ignore[no-redef]
     from app.database import Base  # type: ignore[no-redef]
-    from app.routers.life_events import get_budget_summary as budget_summary_endpoint  # type: ignore[no-redef]
+    from app.routers.budget_plans import get_budget_plan_summary as budget_summary_endpoint  # type: ignore[no-redef]
     from app.services.budget_plan_service import get_budget_summary  # type: ignore[no-redef]
     from app.services.cache_service import invalidate_client  # type: ignore[no-redef]
     from app.services.strategy_service import summarize_goal_funding_gap  # type: ignore[no-redef]

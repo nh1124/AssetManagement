@@ -14,6 +14,22 @@ from .. import models
 from .capsule_service import capsule_balance
 from .fx_service import calculate_account_valued_balance, convert_amount, convert_transaction_amount
 from .product_reserve_service import effective_budget_treatment, product_reserve_values
+from .liability_schedule import (  # noqa: F401  (re-exported)
+    _account_has_liability_schedule,
+    _apply_liability_payment_policy,
+    _liability_activity_allocations,
+    _recurring_activity_date,
+    _recurring_applies_to_period,
+    _settlement_period_for_liability,
+    _statement_period_for_liability,
+)
+from .periods import (  # noqa: F401  (re-exported)
+    _last_day_of_month,
+    add_months,
+    current_period_key,
+    period_months_between,
+    period_to_range,
+)
 from .registry_service import (
     product_budget_active,
     product_line_type,
@@ -166,37 +182,6 @@ def resolve_budget_plan_id(db: Session, client_id: int, plan_id: int | None = No
     if not exists:
         raise ValueError("Budget plan not found")
     return plan_id
-
-
-def period_to_range(period: str) -> tuple[date, date]:
-    year, month = [int(part) for part in period.split("-")]
-    start = date(year, month, 1)
-    end = start + relativedelta(months=1)
-    return start, end
-
-
-def add_months(period: str, months: int) -> str:
-    start, _ = period_to_range(period)
-    shifted = start + relativedelta(months=months)
-    return f"{shifted.year}-{shifted.month:02d}"
-
-
-def period_months_between(start_period: str, end_period: str) -> list[str]:
-    start, _ = period_to_range(start_period)
-    end, _ = period_to_range(end_period)
-    periods = []
-    cursor = start
-    while cursor <= end:
-        periods.append(f"{cursor.year}-{cursor.month:02d}")
-        cursor += relativedelta(months=1)
-    return periods
-
-
-def current_period_key(today: date | None = None) -> str:
-    today = today or date.today()
-    return f"{today.year}-{today.month:02d}"
-
-
 
 
 def _target_name_maps(db: Session, client_id: int) -> dict[str, dict[int, str]]:
@@ -1419,81 +1404,6 @@ def _credit_settlement_plan_line(
     line["actual"] = round(actual, 0)
     line["variance"] = round(amount - actual, 0)
     return line
-
-
-def _account_has_liability_schedule(account: models.Account) -> bool:
-    return bool(
-        account.liability_closing_day
-        or account.liability_payment_day
-        or (account.liability_payment_month_offset or 0) > 0
-    )
-
-
-def _statement_period_for_liability(account: models.Account, activity_date: date) -> str:
-    period = f"{activity_date.year}-{activity_date.month:02d}"
-    closing_day = account.liability_closing_day
-    if closing_day and activity_date.day > closing_day:
-        period = add_months(period, 1)
-    return period
-
-
-def _settlement_period_for_liability(account: models.Account, activity_date: date) -> str:
-    offset = max(0, int(account.liability_payment_month_offset or 0))
-    return add_months(_statement_period_for_liability(account, activity_date), offset)
-
-
-def _liability_activity_allocations(account: models.Account, activity_date: date, amount: float) -> list[tuple[str, float]]:
-    amount = max(0.0, amount or 0.0)
-    if amount <= 0:
-        return []
-    first_period = _settlement_period_for_liability(account, activity_date)
-    if (account.liability_payment_policy or "full") == "installment":
-        months = max(1, int(account.liability_installment_months or 1))
-        installment_amount = amount / months
-        return [(add_months(first_period, index), installment_amount) for index in range(months)]
-    return [(first_period, amount)]
-
-
-def _last_day_of_month(period: str) -> int:
-    start, _ = period_to_range(period)
-    return (start + relativedelta(day=31)).day
-
-
-def _recurring_activity_date(row: models.RecurringTransaction, period: str) -> date:
-    start, _ = period_to_range(period)
-    day = min(max(1, row.day_of_month or 1), _last_day_of_month(period))
-    return date(start.year, start.month, day)
-
-
-def _recurring_applies_to_period(row: models.RecurringTransaction, period: str) -> bool:
-    if row.start_period and row.start_period > period:
-        return False
-    if row.end_period and row.end_period < period:
-        return False
-    if row.frequency == "Yearly":
-        month = int(period.split("-")[1])
-        return not row.month_of_year or row.month_of_year == month
-    return True
-
-
-def _apply_liability_payment_policy(account: models.Account, amount: float) -> float:
-    amount = max(0.0, amount or 0.0)
-    if amount <= 0:
-        return 0.0
-    policy = account.liability_payment_policy or "full"
-    minimum = max(0.0, account.liability_minimum_payment or 0.0)
-    if policy == "minimum":
-        return min(amount, minimum or amount)
-    if policy == "fixed":
-        fixed = max(0.0, account.liability_fixed_payment_amount or 0.0)
-        return min(amount, fixed or amount)
-    if policy == "installment":
-        return amount
-    if policy == "revolving":
-        rate_amount = amount * max(0.0, account.liability_revolving_rate or 0.0) / 100
-        payment = max(minimum, rate_amount)
-        return min(amount, payment or amount)
-    return amount
 
 
 def credit_settlement_plan_lines(

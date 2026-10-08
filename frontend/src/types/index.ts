@@ -396,15 +396,6 @@ export interface MonthlyPlanLine {
     manual_override?: boolean;
 }
 
-export interface MonthlyReview {
-    id: number;
-    target_period: string;
-    reflection: string;
-    next_actions: string;
-    created_at: string;
-    updated_at?: string | null;
-}
-
 export interface RecurringTransaction {
     id: number;
     name: string;

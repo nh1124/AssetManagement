@@ -1,22 +1,19 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from datetime import datetime
 import json
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import Optional
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.goal_service import (
-    get_life_events_with_progress, 
-    calculate_overall_goal_probability, 
+    get_life_events_with_progress,
+    calculate_overall_goal_probability,
     generate_budget_from_goals,
     get_strategy_dashboard,
-    summarize_goal_funding_gap,
 )
 from ..services.capsule_service import apply_capsule_rules_for_transaction, create_capsule_for_goal, capsule_balance
 from ..services.ledger_service import post_transaction_journal
-from ..services.budget_plan_service import create_plan_lines, get_budget_summary as build_budget_summary, update_plan_lines
-from ..services.cache_service import get_or_set, invalidate_client
+from ..services.cache_service import invalidate_client
 
 router = APIRouter(prefix="/life-events", tags=["life_events"])
 
@@ -78,100 +75,6 @@ def get_dashboard(
         allocation_mode=allocation_mode,
         roadmap_interval=roadmap_interval,
     )
-
-@router.get("/budget-summary")
-def get_budget_summary(
-    period: Optional[str] = Query(None, description="Format: YYYY-MM"),
-    plan_id: Optional[int] = Query(None, description="Budget plan ID"),
-    cash_flow_start_period: Optional[str] = Query(None, description="Format: YYYY-MM"),
-    cash_flow_months: int = Query(12, ge=1, le=36),
-    db: Session = Depends(get_db),
-    current_client: models.Client = Depends(get_current_client)
-):
-    """Get monthly cash-flow plan summary."""
-    if not period:
-        period = datetime.now().strftime("%Y-%m")
-    try:
-        key = (
-            f"client:{current_client.id}:budget_summary:{period}:{plan_id}:"
-            f"{cash_flow_start_period}:{cash_flow_months}"
-        )
-        return get_or_set(
-            key,
-            120,
-            lambda: build_budget_summary(
-                db,
-                current_client.id,
-                period,
-                plan_id=plan_id,
-                cash_flow_start_period=cash_flow_start_period,
-                cash_flow_months=cash_flow_months,
-                goal_metrics=summarize_goal_funding_gap(db, current_client.id),
-            ),
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-
-@router.get("/monthly-plan-lines")
-def get_monthly_plan_lines(
-    period: Optional[str] = Query(None, description="Format: YYYY-MM"),
-    plan_id: Optional[int] = Query(None, description="Budget plan ID"),
-    db: Session = Depends(get_db),
-    current_client: models.Client = Depends(get_current_client),
-):
-    if not period:
-        period = datetime.now().strftime("%Y-%m")
-    try:
-        return build_budget_summary(db, current_client.id, period, plan_id=plan_id)["plan_lines"]
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-
-
-@router.post("/monthly-plan-lines")
-def create_monthly_plan_lines(
-    lines: List[schemas.MonthlyPlanLineCreate],
-    db: Session = Depends(get_db),
-    current_client: models.Client = Depends(get_current_client),
-):
-    try:
-        saved = create_plan_lines(db, current_client.id, lines)
-    except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    invalidate_client(current_client.id)
-    return {"status": "success", "ids": [line.id for line in saved]}
-
-
-@router.put("/monthly-plan-lines/batch")
-def update_monthly_plan_lines(
-    lines: List[schemas.MonthlyPlanLineBatchUpdate],
-    db: Session = Depends(get_db),
-    current_client: models.Client = Depends(get_current_client),
-):
-    try:
-        saved = update_plan_lines(db, current_client.id, lines)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    invalidate_client(current_client.id)
-    return {"status": "success", "ids": [line.id for line in saved]}
-
-
-@router.delete("/monthly-plan-lines/{line_id}")
-def delete_monthly_plan_line(
-    line_id: int,
-    db: Session = Depends(get_db),
-    current_client: models.Client = Depends(get_current_client),
-):
-    line = db.query(models.MonthlyPlanLine).filter(
-        models.MonthlyPlanLine.id == line_id,
-        models.MonthlyPlanLine.client_id == current_client.id,
-    ).first()
-    if not line:
-        raise HTTPException(status_code=404, detail="Monthly plan line not found")
-    line.is_active = False
-    db.commit()
-    invalidate_client(current_client.id)
-    return {"message": "Monthly plan line deleted"}
 
 @router.post("/")
 def create_life_event(

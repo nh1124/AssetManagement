@@ -14,7 +14,7 @@
 | Registry | `registry_entries_list/get` | 定常収支の正本 |
 | Recurring | `recurring_list`, `recurring_due` | 定義と due 一覧 |
 | プラン | `budget_plans_list`, `monthly_plan_lines_list`, `monthly_plan_summary` | 予算プラン |
-| レポート | `reports_monthly`, `reports_period`, `monthly_reviews_get`, `period_reviews_get` | 月次/期間レビュー |
+| レポート | `reports_monthly`, `reports_period`, `period_reviews_get` | 月次/期間レビュー |
 | 戦略 | `strategy_dashboard`, `roadmap_projection`, `roadmap_milestones_list` | 戦略・ロードマップ |
 | シミュレーション | `simulation_config_get`, `simulation_scenarios_list/compare`, `simulation_monte_carlo` | 将来予測 |
 | 計算機 | `calc_future_value(_multi)`, `calc_nisa_cap_usage`, `calc_dc_tax_saving`, `calc_project_all` | 副作用なし |
@@ -36,7 +36,7 @@
 | Capsule | `capsules_create/update`, `capsule_rules_*`, `capsule_holdings_*` | 一括系は影響範囲を先に説明（`capsules_process` は deprecated のため削除済み） |
 | 口座 | `accounts_create/update/delete`, `accounts_seed_defaults` | delete は明示指示時のみ |
 | 目標 | `life_events_create/update/delete`, `roadmap_milestones_*` | |
-| レビュー | `monthly_reviews_upsert`, `period_reviews_upsert`, `actions_apply/skip/process_due` | actions は review 由来の提案適用 |
+| レビュー | `period_reviews_upsert`, `actions_apply/skip/process_due` | actions は review 由来の提案適用 |
 | 為替 | `exchange_rates_create/update/delete/auto_update` | auto_update は外部取得 |
 | データ移送 | `data_export`, `data_import_validate`, `data_import_replace_current_client` | **replace は全置換・最危険**。validate → ユーザー確認必須 |
 | 設定 | `clients_update_settings`, `clients_update_gemini_key` | client の新規作成は UI から（`clients_create` ツールは廃止済み） |

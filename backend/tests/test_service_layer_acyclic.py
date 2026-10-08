@@ -26,7 +26,9 @@ LAYERS: dict[str, int] = {
     "ai_policy_service": 0,
     "cache_service": 0,
     "fx_service": 0,
+    "liability_schedule": 0,
     "mfa_service": 0,
+    "periods": 0,
     "product_reserve_service": 0,
     "schedule_rules": 0,
     # L1 - the ledger itself

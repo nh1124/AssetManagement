@@ -86,10 +86,10 @@
   {
     "tool": "monthly_plan_lines_save_batch",
     "method": "post",
-    "path": "/life-events/monthly-plan-lines",
+    "path": "/budget-plans/lines",
     "body": "array",
     "source": "src/tools/monthly-planning.ts",
-    "path_fragment": "/life-events/monthly-plan-lines",
+    "path_fragment": "/budget-plans/lines",
     "allowed_fields": ["plan_id", "target_period", "line_type", "target_type", "target_id", "account_id", "source_account_id", "name", "amount", "source", "source_kind", "source_id", "identity_key", "manual_override", "cash_treatment", "recurring_transaction_id", "is_active"],
     "required_fields": ["target_period", "line_type"],
     "forbidden_fields": ["priority"]
@@ -97,10 +97,10 @@
   {
     "tool": "monthly_plan_lines_save_batch",
     "method": "put",
-    "path": "/life-events/monthly-plan-lines/batch",
+    "path": "/budget-plans/lines/batch",
     "body": "array",
     "source": "src/tools/monthly-planning.ts",
-    "path_fragment": "/life-events/monthly-plan-lines/batch",
+    "path_fragment": "/budget-plans/lines/batch",
     "allowed_fields": ["id", "plan_id", "target_period", "line_type", "target_type", "target_id", "account_id", "source_account_id", "name", "amount", "source", "source_kind", "source_id", "identity_key", "manual_override", "cash_treatment", "recurring_transaction_id", "is_active"],
     "required_fields": ["id", "target_period", "line_type"],
     "forbidden_fields": ["priority"]
@@ -108,10 +108,10 @@
   {
     "tool": "monthly_plan_lines_delete",
     "method": "delete",
-    "path": "/life-events/monthly-plan-lines/{line_id}",
+    "path": "/budget-plans/lines/{line_id}",
     "body": "none",
     "source": "src/tools/monthly-planning.ts",
-    "path_fragment": "/life-events/monthly-plan-lines/${id}"
+    "path_fragment": "/budget-plans/lines/${id}"
   },
   {
     "tool": "budget_plans_create",
@@ -494,16 +494,6 @@
     "body": "none",
     "source": "src/tools/ai-change-requests.ts",
     "path_fragment": "/ai/change-requests/${id}/refresh-preview"
-  },
-  {
-    "tool": "monthly_reviews_upsert",
-    "method": "put",
-    "path": "/monthly-reviews/",
-    "body": "object",
-    "source": "src/tools/monthly-planning.ts",
-    "path_fragment": "/monthly-reviews/",
-    "allowed_fields": ["target_period", "reflection", "next_actions"],
-    "required_fields": ["target_period"]
   },
   {
     "tool": "period_reviews_upsert",

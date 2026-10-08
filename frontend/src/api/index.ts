@@ -7,12 +7,8 @@ import type {
     AccountRole,
     AccountTreeNode,
     AiChangeRequest,
-    AiChangeRequestPayload,
-    AiChangeRequestPreview,
     AiAuditLog,
     AiExecutionSettings,
-    AiOperationEvaluatePayload,
-    AiOperationEvaluateResult,
     AiOperationPolicy,
     AiOperationPolicyPayload,
     AnalysisSummary,
@@ -28,7 +24,6 @@ import type {
     MfaSetupStart,
     MfaStatus,
     MonthlyReport,
-    MonthlyReview,
     Milestone,
     MilestoneSimulationPreview,
     MilestoneSimulationRequest,
@@ -166,11 +161,6 @@ export const getAiAuditLogs = async (params?: { limit?: number; offset?: number 
     return response.data;
 };
 
-export const evaluateAiOperation = async (payload: AiOperationEvaluatePayload): Promise<AiOperationEvaluateResult> => {
-    const response = await api.post('/ai/evaluate', payload);
-    return response.data;
-};
-
 export const getAiChangeRequests = async (params?: { status?: string; limit?: number; offset?: number }): Promise<AiChangeRequest[]> => {
     const search = new URLSearchParams();
     if (params?.status) search.set('status', params.status);
@@ -178,16 +168,6 @@ export const getAiChangeRequests = async (params?: { status?: string; limit?: nu
     if (params?.offset) search.set('offset', String(params.offset));
     const query = search.toString();
     const response = await api.get(`/ai/change-requests${query ? `?${query}` : ''}`);
-    return response.data;
-};
-
-export const previewAiChangeRequest = async (payload: AiChangeRequestPayload): Promise<AiChangeRequestPreview> => {
-    const response = await api.post('/ai/change-requests/preview', payload);
-    return response.data;
-};
-
-export const createAiChangeRequest = async (payload: AiChangeRequestPayload): Promise<AiChangeRequest> => {
-    const response = await api.post('/ai/change-requests', payload);
     return response.data;
 };
 
@@ -286,27 +266,8 @@ export const getAccountFlowTransactions = async (params: {
     return response.data;
 };
 
-export const getDepreciation = async () => {
-    const response = await api.get('/analysis/depreciation');
-    return response.data;
-};
-
 export const getNetWorthHistory = async (months: number = 36): Promise<NetWorthHistoryPoint[]> => {
     const response = await api.get('/analysis/net-worth-history', { params: { months } });
-    return response.data;
-};
-
-export const getMonthlyReview = async (period?: string): Promise<MonthlyReview> => {
-    const response = await api.get('/monthly-reviews/', { params: { period } });
-    return response.data;
-};
-
-export const saveMonthlyReview = async (review: {
-    target_period: string;
-    reflection: string;
-    next_actions: string;
-}): Promise<MonthlyReview> => {
-    const response = await api.put('/monthly-reviews/', review);
     return response.data;
 };
 
@@ -447,14 +408,6 @@ const appendTransactionQuery = (params: URLSearchParams, query?: TransactionQuer
     if (query.offset) params.append('offset', String(query.offset));
 };
 
-export const getTransactions = async (startDate?: string, endDate?: string): Promise<Transaction[]> => {
-    const params = new URLSearchParams();
-    if (startDate) params.append('start_date', startDate);
-    if (endDate) params.append('end_date', endDate);
-    const response = await api.get(`/transactions/?${params.toString()}`);
-    return response.data;
-};
-
 export const getTransactionsPage = async (
     query: TransactionQuery
 ): Promise<{ items: Transaction[]; total: number }> => {
@@ -525,16 +478,6 @@ export const createTransactionBatch = async (payload: {
     return response.data;
 };
 
-export const getTransactionBatches = async (params?: { limit?: number; offset?: number }): Promise<TransactionBatch[]> => {
-    const response = await api.get('/transaction-batches/', { params });
-    return response.data;
-};
-
-export const getTransactionBatch = async (id: number): Promise<TransactionBatch> => {
-    const response = await api.get(`/transaction-batches/${id}`);
-    return response.data;
-};
-
 // Life Events endpoints
 export const getLifeEvents = async () => {
     const response = await api.get('/life-events/');
@@ -553,7 +496,7 @@ const appendContributionSchedule = (params: Record<string, unknown>, contributio
     return params;
 };
 
-export const getStrategyDashboard = async (
+export const getGoalDashboard = async (
     annual_return: number = 5.0,
     inflation: number = 2.0,
     monthly_savings: number = 50000,
@@ -567,17 +510,17 @@ export const getStrategyDashboard = async (
     return response.data;
 };
 
-export const createLifeEvent = async (event: any) => {
+export const createGoal = async (event: any) => {
     const response = await api.post('/life-events/', event);
     return response.data;
 };
 
-export const updateLifeEvent = async (id: number, event: any) => {
+export const updateGoal = async (id: number, event: any) => {
     const response = await api.put(`/life-events/${id}`, event);
     return response.data;
 };
 
-export const deleteLifeEvent = async (id: number, transferAccountId?: number) => {
+export const deleteGoal = async (id: number, transferAccountId?: number) => {
     const params = transferAccountId != null ? `?transfer_account_id=${transferAccountId}` : '';
     const response = await api.delete(`/life-events/${id}${params}`);
     return response.data;
@@ -593,20 +536,13 @@ export const getGoalCapsules = async (goalId: number): Promise<Array<{
     return response.data;
 };
 
-// Goal-domain aliases. Backend routes remain compatible with the original
-// /life-events paths, while new UI code can depend on the Goal vocabulary.
-export const getGoalDashboard = getStrategyDashboard;
-export const createGoal = createLifeEvent;
-export const updateGoal = updateLifeEvent;
-export const deleteGoal = deleteLifeEvent;
-
 
 // Budget Builder
 export const getBudgetSummary = async (
     period?: string,
     options: { cash_flow_start_period?: string; cash_flow_months?: number; plan_id?: number } = {},
 ) => {
-    const response = await api.get('/life-events/budget-summary', {
+    const response = await api.get('/budget-plans/summary', {
         params: {
             period,
             plan_id: options.plan_id,
@@ -637,28 +573,12 @@ export type MonthlyPlanLinePayload = {
 };
 
 export const createMonthlyPlanLines = async (lines: MonthlyPlanLinePayload[]) => {
-    const response = await api.post('/life-events/monthly-plan-lines', lines);
+    const response = await api.post('/budget-plans/lines', lines);
     return response.data;
 };
 
 export const updateMonthlyPlanLines = async (lines: Array<MonthlyPlanLinePayload & { id: number }>) => {
-    const response = await api.put('/life-events/monthly-plan-lines/batch', lines);
-    return response.data;
-};
-
-export const updateAccountExpectedReturn = async (id: number, expected_return: number) => {
-    const response = await api.put(`/accounts/${id}`, { expected_return });
-    return response.data;
-};
-
-// Simulation endpoints
-export const getSimulationConfig = async () => {
-    const response = await api.get('/simulation/config');
-    return response.data;
-};
-
-export const saveSimulationConfig = async (config: any) => {
-    const response = await api.post('/simulation/config', config);
+    const response = await api.put('/budget-plans/lines/batch', lines);
     return response.data;
 };
 
@@ -686,18 +606,13 @@ export const runMonteCarloSimulation = async (
 };
 
 export const deleteMonthlyPlanLine = async (id: number) => {
-    const response = await api.delete(`/life-events/monthly-plan-lines/${id}`);
+    const response = await api.delete(`/budget-plans/lines/${id}`);
     return response.data;
 };
 
 // Products/Inventory endpoints
 export const getProducts = async () => {
     const response = await api.get('/products/');
-    return response.data;
-};
-
-export const getUnitEconomicsSummary = async () => {
-    const response = await api.get('/products/unit-economics-summary');
     return response.data;
 };
 
@@ -788,14 +703,6 @@ export const createExchangeRate = async (payload: Omit<ExchangeRate, 'id' | 'cre
     return response.data;
 };
 
-export const updateExchangeRate = async (
-    id: number,
-    payload: Partial<Omit<ExchangeRate, 'id' | 'created_at' | 'updated_at'>>
-): Promise<ExchangeRate> => {
-    const response = await api.put(`/exchange-rates/${id}`, payload);
-    return response.data;
-};
-
 export const deleteExchangeRate = async (id: number) => {
     const response = await api.delete(`/exchange-rates/${id}`);
     return response.data;
@@ -827,23 +734,8 @@ export const deleteRecurringTransaction = async (id: number) => {
     return response.data;
 };
 
-export const getDueRecurringTransactions = async (): Promise<RecurringTransaction[]> => {
-    const response = await api.get('/recurring/due');
-    return response.data;
-};
-
 export const processDueRecurringTransactions = async () => {
     const response = await api.post('/recurring/process-due');
-    return response.data;
-};
-
-export const processRecurringTransaction = async (id: number) => {
-    const response = await api.post(`/recurring/${id}/process`);
-    return response.data;
-};
-
-export const skipRecurringTransaction = async (id: number) => {
-    const response = await api.post(`/recurring/${id}/skip`);
     return response.data;
 };
 
@@ -888,11 +780,6 @@ export const deleteMilestone = async (id: number): Promise<Milestone> => {
     return response.data;
 };
 
-export const resetMilestonesFromAnnualPlan = async (lifeEventId: number): Promise<Milestone[]> => {
-    const response = await api.post(`/roadmap/life-events/${lifeEventId}/milestones/reset-from-annual`);
-    return response.data;
-};
-
 export const previewMilestonesFromSimulation = async (
     lifeEventId: number,
     payload: MilestoneSimulationRequest
@@ -918,14 +805,6 @@ export const createSimulationScenario = async (
     payload: SimulationScenarioCreatePayload,
 ): Promise<SimulationScenario> => {
     const response = await api.post('/simulation/scenarios', payload);
-    return response.data;
-};
-
-export const updateSimulationScenario = async (
-    id: number,
-    payload: Partial<Omit<SimulationScenarioCreatePayload, 'life_event_id'>>,
-): Promise<SimulationScenario> => {
-    const response = await api.put(`/simulation/scenarios/${id}`, payload);
     return response.data;
 };
 
@@ -982,14 +861,6 @@ export const syncProductReserves = async () => {
     return response.data;
 };
 
-export const contributeToCapsule = async (
-    capsuleId: number,
-    payload: { amount: number; from_account_id: number; contribution_date?: string }
-) => {
-    const response = await api.post(`/capsules/${capsuleId}/contribute`, payload);
-    return response.data;
-};
-
 export const getCapsuleHoldings = async (
     capsuleId: number
 ): Promise<Array<{ id: number; account_id: number; account_name?: string | null; held_amount: number; note?: string | null }>> => {
@@ -1009,11 +880,6 @@ export const getCapsuleRules = async () => {
 
 export const createCapsuleRule = async (rule: any) => {
     const response = await api.post('/capsules/rules', rule);
-    return response.data;
-};
-
-export const updateCapsuleRule = async (id: number, rule: any) => {
-    const response = await api.put(`/capsules/rules/${id}`, rule);
     return response.data;
 };
 
