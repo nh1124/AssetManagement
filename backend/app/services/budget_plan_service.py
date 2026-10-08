@@ -1,17 +1,15 @@
 """Monthly cash-flow planning and budget summary helpers."""
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import datetime
 import json
 from types import SimpleNamespace
 from typing import Iterable
 
-from dateutil.relativedelta import relativedelta
-from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from .. import models
-from .capsule_service import capsule_balance
+from .budget_context import BudgetContext
 from .fx_service import calculate_account_valued_balance, convert_amount, convert_transaction_amount
 from .product_reserve_service import effective_budget_treatment, product_reserve_values
 from .liability_schedule import (  # noqa: F401  (re-exported)
@@ -47,23 +45,6 @@ INFLOW_LINE_TYPES = {"income", "borrowing", "drawdown"}
 OUTFLOW_LINE_TYPES = {"expense", "allocation", "debt_payment"}
 NON_CASH_TRANSACTION_TYPES = {"CreditExpense", "CreditAssetPurchase"}
 ASSET_FLOW_BUCKETS = ("operating", "defense", "earmarked", "growth", "unassigned")
-
-
-BudgetSummaryContext = dict[str, dict]
-
-
-def _period_transactions_cached(
-    db: Session,
-    client_id: int,
-    period: str,
-    context: BudgetSummaryContext | None = None,
-) -> list[models.Transaction]:
-    if context is None:
-        return _period_transactions(db, client_id, period)
-    cache = context.setdefault("period_transactions", {})
-    if period not in cache:
-        cache[period] = _period_transactions(db, client_id, period)
-    return cache[period]
 
 
 def get_or_create_default_plan(db: Session, client_id: int) -> models.BudgetPlan:
@@ -184,19 +165,6 @@ def resolve_budget_plan_id(db: Session, client_id: int, plan_id: int | None = No
     return plan_id
 
 
-def _target_name_maps(db: Session, client_id: int) -> dict[str, dict[int, str]]:
-    accounts = db.query(models.Account).filter(models.Account.client_id == client_id).all()
-    capsules = db.query(models.Capsule).filter(models.Capsule.client_id == client_id).all()
-    life_events = db.query(models.LifeEvent).filter(models.LifeEvent.client_id == client_id).all()
-    products = db.query(models.Product).filter(models.Product.client_id == client_id).all()
-    return {
-        "account": {item.id: item.name for item in accounts},
-        "capsule": {item.id: item.name for item in capsules},
-        "life_event": {item.id: item.name for item in life_events},
-        "product": {item.id: item.name for item in products},
-    }
-
-
 def _line_display_name(line: models.MonthlyPlanLine, name_maps: dict[str, dict[int, str]]) -> str:
     if line.name:
         return line.name
@@ -207,29 +175,16 @@ def _line_display_name(line: models.MonthlyPlanLine, name_maps: dict[str, dict[i
     return line.line_type.replace("_", " ").title()
 
 
-def _period_transactions(db: Session, client_id: int, period: str) -> list[models.Transaction]:
-    start, end = period_to_range(period)
-    return db.query(models.Transaction).filter(
-        models.Transaction.client_id == client_id,
-        models.Transaction.date >= start,
-        models.Transaction.date < end,
-    ).all()
-
-
-def _sum_transactions(txs: Iterable[models.Transaction], db: Session, client_id: int) -> float:
-    return sum(convert_transaction_amount(db, tx, client_id=client_id) for tx in txs)
+def _sum_transactions(ctx: BudgetContext, txs: Iterable[models.Transaction]) -> float:
+    return sum(convert_transaction_amount(ctx.db, tx, client_id=ctx.client_id) for tx in txs)
 
 
 def actual_for_plan_line(
-    db: Session,
-    client_id: int,
+    ctx: BudgetContext,
     line: models.MonthlyPlanLine | dict,
     period: str,
-    capsule_accounts: dict[int, int | None] | None = None,
-    context: BudgetSummaryContext | None = None,
 ) -> float:
-    capsule_accounts = capsule_accounts or {}
-    txs = _period_transactions_cached(db, client_id, period, context)
+    txs = ctx.period_transactions(period)
     line_type = line["line_type"] if isinstance(line, dict) else line.line_type
     target_type = line["target_type"] if isinstance(line, dict) else line.target_type
     target_id = line.get("target_id") if isinstance(line, dict) else line.target_id
@@ -238,16 +193,10 @@ def actual_for_plan_line(
     needle = name.lower()
 
     if target_type == "capsule" and target_id:
-        capsule = (context or {}).get("capsule_by_id", {}).get(target_id)
-        if capsule is None:
-            capsule = db.query(models.Capsule).filter(
-                models.Capsule.id == target_id,
-                models.Capsule.client_id == client_id,
-            ).first()
+        capsule = ctx.capsule(target_id)
         if capsule:
-            cached_balances = (context or {}).get("capsule_balances", {})
-            return cached_balances.get(capsule.id, capsule_balance(db, capsule))
-        account_id = capsule_accounts.get(target_id)
+            return ctx.capsule_balance(capsule)
+        account_id = ctx.capsule_account_ids.get(target_id)
 
     if line_type == "income":
         selected = [
@@ -317,7 +266,7 @@ def actual_for_plan_line(
         ]
     else:
         selected = []
-    return _sum_transactions(selected, db, client_id)
+    return _sum_transactions(ctx, selected)
 
 
 def _line_attr(line: models.MonthlyPlanLine | dict, key: str):
@@ -367,55 +316,13 @@ def _line_source_id(line: models.MonthlyPlanLine | dict) -> int | None:
 
 
 def _linked_recurring_transaction_type(
-    db: Session,
-    client_id: int,
+    ctx: BudgetContext,
     line: models.MonthlyPlanLine | dict,
-    context: BudgetSummaryContext | None = None,
 ) -> str | None:
     transaction_type = _line_attr(line, "transaction_type")
     if transaction_type:
         return transaction_type
-    recurring_id = _line_attr(line, "recurring_transaction_id")
-    if not recurring_id:
-        return None
-    if context is not None:
-        cache = context.setdefault("recurring_transaction_types", {})
-        if recurring_id in cache:
-            return cache[recurring_id]
-    recurring = db.query(models.RecurringTransaction).filter(
-        models.RecurringTransaction.id == recurring_id,
-        models.RecurringTransaction.client_id == client_id,
-    ).first()
-    transaction_type = recurring.type if recurring else None
-    if context is not None:
-        context.setdefault("recurring_transaction_types", {})[recurring_id] = transaction_type
-    return transaction_type
-
-
-def _account_cache(db: Session, client_id: int, context: BudgetSummaryContext | None = None) -> dict[int, models.Account]:
-    if context is not None:
-        cache = context.setdefault("account_by_id", {})
-        if client_id not in cache:
-            cache[client_id] = {
-                account.id: account
-                for account in db.query(models.Account).filter(models.Account.client_id == client_id).all()
-            }
-        return cache[client_id]
-    return {
-        account.id: account
-        for account in db.query(models.Account).filter(models.Account.client_id == client_id).all()
-    }
-
-
-def _account_by_id(
-    db: Session,
-    client_id: int,
-    account_id: int | None,
-    context: BudgetSummaryContext | None = None,
-) -> models.Account | None:
-    if not account_id:
-        return None
-    return _account_cache(db, client_id, context).get(account_id)
+    return ctx.recurring_transaction_type(_line_attr(line, "recurring_transaction_id"))
 
 
 def account_flow_bucket(account: models.Account | None) -> str:
@@ -524,24 +431,20 @@ def _fallback_line_flow(line_type: str | None, amount: float) -> dict[str, float
 
 
 def plan_line_has_cash_impact(
-    db: Session,
-    client_id: int,
+    ctx: BudgetContext,
     line: models.MonthlyPlanLine | dict,
-    context: BudgetSummaryContext | None = None,
 ) -> bool:
     treatment = _line_cash_treatment(line)
     if treatment == "cash":
         return True
     if treatment == "non_cash":
         return False
-    return _linked_recurring_transaction_type(db, client_id, line, context) not in NON_CASH_TRANSACTION_TYPES
+    return _linked_recurring_transaction_type(ctx, line) not in NON_CASH_TRANSACTION_TYPES
 
 
 def _cash_flow_line_account_id(
-    db: Session,
-    client_id: int,
+    ctx: BudgetContext,
     line: models.MonthlyPlanLine | dict,
-    context: BudgetSummaryContext | None = None,
 ) -> int | None:
     account_id = _line_attr(line, "account_id")
     if account_id:
@@ -550,33 +453,19 @@ def _cash_flow_line_account_id(
     target_type = _line_attr(line, "target_type")
     target_id = _line_attr(line, "target_id")
     if target_type == "capsule" and target_id:
-        capsule_by_id = (context or {}).get("capsule_by_id", {})
-        capsule = capsule_by_id.get(target_id)
-        if capsule is None:
-            capsule = db.query(models.Capsule).filter(
-                models.Capsule.id == target_id,
-                models.Capsule.client_id == client_id,
-            ).first()
+        capsule = ctx.capsule(target_id)
         return capsule.account_id if capsule else None
 
     if target_type == "life_event" and target_id:
-        capsule_by_life_event_id = (context or {}).get("capsule_by_life_event_id", {})
-        capsule = capsule_by_life_event_id.get(target_id)
-        if capsule is None:
-            capsule = db.query(models.Capsule).filter(
-                models.Capsule.client_id == client_id,
-                models.Capsule.life_event_id == target_id,
-            ).first()
+        capsule = ctx.capsule_for_life_event(target_id)
         return capsule.account_id if capsule else None
 
     return None
 
 
 def _registry_line_for_plan_line(
-    db: Session,
-    client_id: int,
+    ctx: BudgetContext,
     line: models.MonthlyPlanLine | dict,
-    context: BudgetSummaryContext | None = None,
 ) -> dict | None:
     period = _line_attr(line, "target_period")
     if not period:
@@ -587,7 +476,7 @@ def _registry_line_for_plan_line(
     name = _line_attr(line, "name") or _line_attr(line, "target_name")
     cash_treatment = _line_attr(line, "cash_treatment") or "auto"
     key = _plan_match_key(line_type, target_type, account_id, name, None, cash_treatment)
-    for registry_line in registry_plan_lines(db, client_id, period, context):
+    for registry_line in registry_plan_lines(ctx, period):
         registry_key = _plan_match_key(
             registry_line.get("line_type"),
             registry_line.get("target_type"),
@@ -616,27 +505,23 @@ def _registry_line_for_plan_line(
 
 
 def _cash_flow_line_source_account_id(
-    db: Session,
-    client_id: int,
+    ctx: BudgetContext,
     line: models.MonthlyPlanLine | dict,
-    context: BudgetSummaryContext | None = None,
 ) -> int | None:
     source_account_id = _line_attr(line, "source_account_id")
     if source_account_id:
         return source_account_id
-    registry_line = _registry_line_for_plan_line(db, client_id, line, context)
+    registry_line = _registry_line_for_plan_line(ctx, line)
     return registry_line.get("source_account_id") if registry_line else None
 
 
 def _plan_line_movement_accounts(
-    db: Session,
-    client_id: int,
+    ctx: BudgetContext,
     line: models.MonthlyPlanLine | dict,
-    context: BudgetSummaryContext | None = None,
 ) -> tuple[models.Account | None, models.Account | None]:
     line_type = _line_attr(line, "line_type")
-    source_account = _account_by_id(db, client_id, _cash_flow_line_source_account_id(db, client_id, line, context), context)
-    target_account = _account_by_id(db, client_id, _cash_flow_line_account_id(db, client_id, line, context), context)
+    source_account = ctx.account(_cash_flow_line_source_account_id(ctx, line))
+    target_account = ctx.account(_cash_flow_line_account_id(ctx, line))
 
     if line_type == "income":
         return target_account, source_account
@@ -654,11 +539,9 @@ def _plan_line_movement_accounts(
 
 
 def plan_line_flow_for_amount(
-    db: Session,
-    client_id: int,
+    ctx: BudgetContext,
     line: models.MonthlyPlanLine | dict,
     amount: float,
-    context: BudgetSummaryContext | None = None,
 ) -> dict[str, float]:
     if amount <= 0:
         return _empty_flow()
@@ -668,7 +551,7 @@ def plan_line_flow_for_amount(
         flow["non_cash_budget"] = amount
         return flow
 
-    from_account, to_account = _plan_line_movement_accounts(db, client_id, line, context)
+    from_account, to_account = _plan_line_movement_accounts(ctx, line)
     if from_account or to_account:
         flow = _movement_flow(account_flow_bucket(from_account), account_flow_bucket(to_account), amount)
         has_classified_movement = any(
@@ -684,17 +567,15 @@ def plan_line_flow_for_amount(
 
 
 def _balance_movement_for_amount(
-    db: Session,
-    client_id: int,
+    ctx: BudgetContext,
     line: models.MonthlyPlanLine | dict,
     amount: float,
-    context: BudgetSummaryContext | None = None,
 ) -> dict[str, float]:
     movement = _empty_balance()
     if amount <= 0:
         return movement
 
-    from_account, to_account = _plan_line_movement_accounts(db, client_id, line, context)
+    from_account, to_account = _plan_line_movement_accounts(ctx, line)
     from_bucket = account_flow_bucket(from_account)
     to_bucket = account_flow_bucket(to_account)
 
@@ -718,11 +599,9 @@ def _balance_movement_for_amount(
 
 
 def _projection_amounts_for_period(
-    db: Session,
-    client_id: int,
+    ctx: BudgetContext,
     line: models.MonthlyPlanLine | dict,
     period: str,
-    context: BudgetSummaryContext | None = None,
 ) -> tuple[float, float, float]:
     planned = _line_attr(line, "amount") or 0.0
     if not _line_attr(line, "id") and planned <= 0:
@@ -734,21 +613,19 @@ def _projection_amounts_for_period(
         )
     if period != current_period_key():
         return planned, 0.0, planned
-    if plan_line_has_cash_impact(db, client_id, line, context):
-        actual = cash_flow_actual_for_plan_line(db, client_id, line, period, context)
+    if plan_line_has_cash_impact(ctx, line):
+        actual = cash_flow_actual_for_plan_line(ctx, line, period)
     else:
-        actual = actual_for_plan_line(db, client_id, line, period, context=context)
+        actual = actual_for_plan_line(ctx, line, period)
     remaining = max(0.0, planned - actual)
     projected = actual + remaining
     return projected, actual, remaining
 
 
 def cash_flow_actual_for_plan_line(
-    db: Session,
-    client_id: int,
+    ctx: BudgetContext,
     line: models.MonthlyPlanLine | dict,
     period: str,
-    context: BudgetSummaryContext | None = None,
 ) -> float:
     """Return transactions already executed for a plan line in a cash-flow period.
 
@@ -756,12 +633,12 @@ def cash_flow_actual_for_plan_line(
     current capsule balance for budget variance, but cash flow only needs the
     already-executed movement for the month.
     """
-    if not plan_line_has_cash_impact(db, client_id, line, context):
+    if not plan_line_has_cash_impact(ctx, line):
         return 0.0
-    txs = _period_transactions_cached(db, client_id, period, context)
+    txs = ctx.period_transactions(period)
     line_type = _line_attr(line, "line_type")
-    account_id = _cash_flow_line_account_id(db, client_id, line, context)
-    source_account_id = _cash_flow_line_source_account_id(db, client_id, line, context)
+    account_id = _cash_flow_line_account_id(ctx, line)
+    source_account_id = _cash_flow_line_source_account_id(ctx, line)
     name = (_line_attr(line, "name") or "").lower()
 
     def source_matches(tx: models.Transaction, attr: str) -> bool:
@@ -828,18 +705,15 @@ def cash_flow_actual_for_plan_line(
         ]
     else:
         selected = []
-    return _sum_transactions(selected, db, client_id)
+    return _sum_transactions(ctx, selected)
 
 
 def _serialize_plan_line(
-    db: Session,
-    client_id: int,
+    ctx: BudgetContext,
     line: models.MonthlyPlanLine,
-    name_maps: dict[str, dict[int, str]],
-    capsule_accounts: dict[int, int | None],
-    context: BudgetSummaryContext | None = None,
 ) -> dict:
-    actual = actual_for_plan_line(db, client_id, line, line.target_period, capsule_accounts, context)
+    name_maps = ctx.target_name_maps
+    actual = actual_for_plan_line(ctx, line, line.target_period)
     target_name = _line_display_name(line, name_maps)
     return {
         "id": line.id,
@@ -873,12 +747,9 @@ def _serialize_plan_line(
 
 
 def _virtual_capsule_line(
-    db: Session,
-    client_id: int,
+    ctx: BudgetContext,
     capsule: models.Capsule,
     period: str,
-    capsule_accounts: dict[int, int | None],
-    context: BudgetSummaryContext | None = None,
 ) -> dict:
     line = {
         "id": None,
@@ -896,7 +767,7 @@ def _virtual_capsule_line(
         "suggested_amount": round(capsule.monthly_contribution or 0.0, 0)
         if capsule.capsule_type == "product_pool" else 0.0,
         "suggested_source": "product_reserve" if capsule.capsule_type == "product_pool" else None,
-        "suggested_items": product_reserve_source_items(db, capsule) if capsule.capsule_type == "product_pool" else [],
+        "suggested_items": product_reserve_source_items(ctx.db, capsule) if capsule.capsule_type == "product_pool" else [],
         "suggested_status": "synced" if capsule.capsule_type == "product_pool" else None,
         "is_active": True,
         "source": "capsule",
@@ -908,7 +779,7 @@ def _virtual_capsule_line(
         "recurring_transaction_id": None,
         "sync_status": None,
     }
-    actual = actual_for_plan_line(db, client_id, line, period, capsule_accounts, context)
+    actual = actual_for_plan_line(ctx, line, period)
     line["actual"] = round(actual, 0)
     line["variance"] = round((capsule.monthly_contribution or 0.0) - actual, 0)
     return line
@@ -1098,13 +969,13 @@ def _active_duplicate_for_line(
 
 
 def _registry_plan_line(
-    db: Session,
+    ctx: BudgetContext,
     entry: models.RegistryEntry,
     period: str,
-    name_maps: dict[str, dict[int, str]],
 ) -> dict | None:
+    name_maps = ctx.target_name_maps
     period_start, _ = period_to_range(period)
-    amount = registry_entry_amount_for_period(db, entry, period, period_start, entry.client_id)
+    amount = registry_entry_amount_for_period(ctx.db, entry, period, period_start, entry.client_id)
     if amount <= 0:
         return None
     line_type = entry.line_type or "expense"
@@ -1160,27 +1031,22 @@ def _registry_plan_line(
     }
 
 
-def _virtual_registry_entries(
-    db: Session,
-    client_id: int,
-) -> list[SimpleNamespace]:
-    # The registry is the source of truth: anything already represented by a
-    # registry entry (active or not) must never resurface as a virtual line.
-    linked_rows = db.query(
+def _virtual_registry_entries(ctx: BudgetContext) -> list[SimpleNamespace]:
+    linked_rows = ctx.db.query(
         models.RegistryEntry.source_product_id,
         models.RegistryEntry.source_recurring_transaction_id,
-    ).filter(models.RegistryEntry.client_id == client_id).all()
+    ).filter(models.RegistryEntry.client_id == ctx.client_id).all()
     existing_product_ids = {product_id for product_id, _ in linked_rows if product_id}
     existing_recurring_ids = {recurring_id for _, recurring_id in linked_rows if recurring_id}
     entries: list[SimpleNamespace] = []
 
-    products = db.query(models.Product).filter(models.Product.client_id == client_id).all()
+    products = ctx.db.query(models.Product).filter(models.Product.client_id == ctx.client_id).all()
     for product in products:
         if product.id in existing_product_ids or not product_budget_active(product):
             continue
         entries.append(SimpleNamespace(
             id=-product.id,
-            client_id=client_id,
+            client_id=ctx.client_id,
             name=product.name,
             entry_type="asset" if product.is_asset else "item",
             amount=product_unit_amount(product),
@@ -1202,8 +1068,8 @@ def _virtual_registry_entries(
             end_period=None,
         ))
 
-    recurring_rows = db.query(models.RecurringTransaction).filter(
-        models.RecurringTransaction.client_id == client_id,
+    recurring_rows = ctx.db.query(models.RecurringTransaction).filter(
+        models.RecurringTransaction.client_id == ctx.client_id,
         models.RecurringTransaction.is_active.is_(True),
     ).all()
     for recurring in recurring_rows:
@@ -1212,7 +1078,7 @@ def _virtual_registry_entries(
         line_type = recurring_line_type(recurring.type)
         entries.append(SimpleNamespace(
             id=-(1000000 + recurring.id),
-            client_id=client_id,
+            client_id=ctx.client_id,
             name=recurring.name,
             entry_type=recurring_entry_type(recurring.type),
             amount=recurring.amount or 0.0,
@@ -1236,29 +1102,18 @@ def _virtual_registry_entries(
     return entries
 
 
-def registry_plan_lines(
-    db: Session,
-    client_id: int,
-    period: str,
-    context: BudgetSummaryContext | None = None,
-) -> list[dict]:
-    if context is not None:
-        cache = context.setdefault("registry_lines", {})
-        if period in cache:
-            return cache[period]
-        maps_cache = context.setdefault("target_name_maps", {})
-        if client_id not in maps_cache:
-            maps_cache[client_id] = _target_name_maps(db, client_id)
-        name_maps = maps_cache[client_id]
-    else:
-        name_maps = _target_name_maps(db, client_id)
-    entries = db.query(models.RegistryEntry).filter(
-        models.RegistryEntry.client_id == client_id,
+def registry_plan_lines(ctx: BudgetContext, period: str) -> list[dict]:
+    return ctx.registry_lines(period, lambda: _build_registry_plan_lines(ctx, period))
+
+
+def _build_registry_plan_lines(ctx: BudgetContext, period: str) -> list[dict]:
+    entries = ctx.db.query(models.RegistryEntry).filter(
+        models.RegistryEntry.client_id == ctx.client_id,
         models.RegistryEntry.is_active.is_(True),
         models.RegistryEntry.budget_active.is_(True),
     ).all()
-    entries = [*entries, *_virtual_registry_entries(db, client_id)]
-    lines = [line for entry in entries if (line := _registry_plan_line(db, entry, period, name_maps)) is not None]
+    entries = [*entries, *_virtual_registry_entries(ctx)]
+    lines = [line for entry in entries if (line := _registry_plan_line(ctx, entry, period)) is not None]
     aggregated: dict[tuple, dict] = {}
     for line in lines:
         key = _plan_match_key(
@@ -1302,18 +1157,10 @@ def registry_plan_lines(
             *line.get("product_expense_items", []),
         ]
         existing["recurring_transaction_id"] = existing.get("recurring_transaction_id") or line.get("recurring_transaction_id")
-    result = list(aggregated.values())
-    if context is not None:
-        cache[period] = result
-    return result
+    return list(aggregated.values())
 
 
-def registry_totals(
-    db: Session,
-    client_id: int,
-    period: str,
-    context: BudgetSummaryContext | None = None,
-) -> dict[str, float]:
+def registry_totals(ctx: BudgetContext, period: str) -> dict[str, float]:
     totals = {
         "income": 0.0,
         "fixed_costs": 0.0,
@@ -1321,7 +1168,7 @@ def registry_totals(
         "allocations": 0.0,
         "borrowing": 0.0,
     }
-    for line in registry_plan_lines(db, client_id, period, context):
+    for line in registry_plan_lines(ctx, period):
         amount = line.get("registry_amount") or line.get("suggested_amount") or 0.0
         line_type = line.get("line_type")
         if line_type == "income":
@@ -1338,12 +1185,10 @@ def registry_totals(
 
 
 def _credit_settlement_plan_line(
-    db: Session,
-    client_id: int,
+    ctx: BudgetContext,
     account: models.Account,
     period: str,
     amount: float,
-    context: BudgetSummaryContext | None = None,
 ) -> dict:
     policy = account.liability_payment_policy or "full"
     line = {
@@ -1384,42 +1229,32 @@ def _credit_settlement_plan_line(
         "sync_status": "missing",
         "is_active": True,
     }
-    actual = cash_flow_actual_for_plan_line(db, client_id, line, period, context)
+    actual = cash_flow_actual_for_plan_line(ctx, line, period)
     line["actual"] = round(actual, 0)
     line["variance"] = round(amount - actual, 0)
     return line
 
 
-def credit_settlement_plan_lines(
-    db: Session,
-    client_id: int,
-    period: str,
-    context: BudgetSummaryContext | None = None,
-) -> list[dict]:
-    if context is not None:
-        cache = context.setdefault("credit_settlement_lines", {})
-        if period in cache:
-            return cache[period]
+def credit_settlement_plan_lines(ctx: BudgetContext, period: str) -> list[dict]:
+    return ctx.credit_settlement_lines(period, lambda: _build_credit_settlement_plan_lines(ctx, period))
 
-    accounts = db.query(models.Account).filter(
-        models.Account.client_id == client_id,
-        models.Account.account_type == "liability",
-        models.Account.is_active.is_(True),
-    ).all()
-    accounts_by_id = {account.id: account for account in accounts}
+
+def _build_credit_settlement_plan_lines(ctx: BudgetContext, period: str) -> list[dict]:
+    accounts_by_id = {
+        account_id: account
+        for account_id, account in ctx.accounts.items()
+        if account.account_type == "liability" and account.is_active
+    }
     if not accounts_by_id:
-        result: list[dict] = []
-        if context is not None:
-            cache[period] = result
-        return result
+        return []
 
-    max_offset = max((account.liability_payment_month_offset or 0) for account in accounts)
-    max_installment_months = max((account.liability_installment_months or 1) for account in accounts)
+    max_offset = max((account.liability_payment_month_offset or 0) for account in accounts_by_id.values())
+    max_installment_months = max((account.liability_installment_months or 1) for account in accounts_by_id.values())
     search_start_period = add_months(period, -(max_offset + max_installment_months + 1))
     search_start, _ = period_to_range(search_start_period)
     _, search_end = period_to_range(period)
-    txs = db.query(models.Transaction).filter(
-        models.Transaction.client_id == client_id,
+    txs = ctx.db.query(models.Transaction).filter(
+        models.Transaction.client_id == ctx.client_id,
         models.Transaction.date >= search_start,
         models.Transaction.date < search_end,
         models.Transaction.type.in_(NON_CASH_TRANSACTION_TYPES),
@@ -1431,14 +1266,14 @@ def credit_settlement_plan_lines(
         account = accounts_by_id.get(tx.from_account_id)
         if not account:
             continue
-        tx_amount = convert_transaction_amount(db, tx, client_id=client_id)
+        tx_amount = convert_transaction_amount(ctx.db, tx, client_id=ctx.client_id)
         for settlement_period, amount in _liability_activity_allocations(account, tx.date, tx_amount):
             if settlement_period == period:
                 credit_usage_by_account[tx.from_account_id] = credit_usage_by_account.get(tx.from_account_id, 0.0) + amount
 
     recurring_credit_by_account: dict[int, float] = {}
-    recurring_rows = db.query(models.RecurringTransaction).filter(
-        models.RecurringTransaction.client_id == client_id,
+    recurring_rows = ctx.db.query(models.RecurringTransaction).filter(
+        models.RecurringTransaction.client_id == ctx.client_id,
         models.RecurringTransaction.is_active.is_(True),
         models.RecurringTransaction.type.in_(NON_CASH_TRANSACTION_TYPES),
     ).all()
@@ -1452,7 +1287,7 @@ def credit_settlement_plan_lines(
             if not _recurring_applies_to_period(row, activity_period):
                 continue
             activity_date = _recurring_activity_date(row, activity_period)
-            recurring_amount = convert_amount(db, client_id, row.amount or 0.0, row.currency or "JPY", as_of_date=activity_date)
+            recurring_amount = convert_amount(ctx.db, ctx.client_id, row.amount or 0.0, row.currency or "JPY", as_of_date=activity_date)
             for settlement_period, amount in _liability_activity_allocations(account, activity_date, recurring_amount):
                 if settlement_period == period:
                     recurring_credit_by_account[row.from_account_id] = (
@@ -1461,17 +1296,14 @@ def credit_settlement_plan_lines(
                     )
     account_ids = set(credit_usage_by_account) | set(recurring_credit_by_account)
     if not account_ids:
-        result: list[dict] = []
-        if context is not None:
-            cache[period] = result
-        return result
+        return []
 
     result = []
     for account_id in account_ids:
         account = accounts_by_id.get(account_id)
         if not account:
             continue
-        balance = max(0.0, calculate_account_valued_balance(db, account))
+        balance = max(0.0, calculate_account_valued_balance(ctx.db, account))
         activity_amount = credit_usage_by_account.get(account.id, 0.0) + recurring_credit_by_account.get(account.id, 0.0)
         if _account_has_liability_schedule(account):
             raw_amount = activity_amount if activity_amount > 0 else (balance if (account.liability_payment_month_offset or 0) == 0 else 0.0)
@@ -1479,13 +1311,11 @@ def credit_settlement_plan_lines(
             raw_amount = max(balance, activity_amount)
         amount = _apply_liability_payment_policy(account, raw_amount)
         if amount > 0:
-            result.append(_credit_settlement_plan_line(db, client_id, account, period, amount, context))
-    if context is not None:
-        cache[period] = result
+            result.append(_credit_settlement_plan_line(ctx, account, period, amount))
     return result
 
 
-def _merge_registry_context(plan_lines: list[dict], registry_lines: list[dict]) -> list[dict]:
+def _merge_registry_lines(plan_lines: list[dict], registry_lines: list[dict]) -> list[dict]:
     registry_by_key = {
         _plan_match_key(
             line["line_type"],
@@ -1598,7 +1428,7 @@ def _merge_registry_context(plan_lines: list[dict], registry_lines: list[dict]) 
     return plan_lines
 
 
-def _merge_credit_settlement_context(plan_lines: list[dict], settlement_lines: list[dict]) -> list[dict]:
+def _merge_credit_settlement_lines(plan_lines: list[dict], settlement_lines: list[dict]) -> list[dict]:
     for settlement in settlement_lines:
         matched = next(
             (
@@ -1627,24 +1457,26 @@ def _merge_credit_settlement_context(plan_lines: list[dict], settlement_lines: l
     return plan_lines
 
 
-def _liquid_cash(db: Session, client_id: int) -> float:
-    accounts = db.query(models.Account).filter(
-        models.Account.client_id == client_id,
-        models.Account.account_type == "asset",
-        models.Account.is_active.is_(True),
-        or_(models.Account.name.in_(LIQUID_ACCOUNT_NAMES), models.Account.role == "operating"),
-    ).all()
-    return sum(calculate_account_valued_balance(db, account) for account in accounts)
+def liquid_cash(ctx: BudgetContext) -> float:
+    """Cash the plan can actually draw on: operating accounts and plain cash."""
+    accounts = [
+        account
+        for account in ctx.accounts.values()
+        if account.account_type == "asset"
+        and account.is_active
+        and ((account.name or "") in LIQUID_ACCOUNT_NAMES or account.role == "operating")
+    ]
+    return sum(calculate_account_valued_balance(ctx.db, account) for account in accounts)
 
 
-def _starting_balance_state(db: Session, client_id: int) -> dict[str, float]:
+def _starting_balance_state(ctx: BudgetContext) -> dict[str, float]:
     state = _empty_balance()
-    accounts = db.query(models.Account).filter(
-        models.Account.client_id == client_id,
+    accounts = ctx.db.query(models.Account).filter(
+        models.Account.client_id == ctx.client_id,
         models.Account.is_active.is_(True),
     ).all()
     for account in accounts:
-        balance = calculate_account_valued_balance(db, account)
+        balance = calculate_account_valued_balance(ctx.db, account)
         bucket = account_flow_bucket(account)
         if bucket in ASSET_FLOW_BUCKETS:
             state[bucket] += balance
@@ -1685,7 +1517,7 @@ def get_budget_summary(
     see strategy_service.summarize_goal_funding_gap -- so that planning never
     depends on the goal domain.
     """
-    context: BudgetSummaryContext = {}
+    ctx = BudgetContext(db, client_id)
     plan_id = resolve_budget_plan_id(db, client_id, plan_id)
 
     goal_metrics = goal_metrics or {}
@@ -1693,19 +1525,10 @@ def get_budget_summary(
     total_gap = float(goal_metrics.get("total_goal_gap") or 0.0)
     required_monthly_savings = float(goal_metrics.get("required_monthly_savings") or 0.0)
 
-    recurring = registry_totals(db, client_id, period, context)
-    name_maps = _target_name_maps(db, client_id)
-    capsules = db.query(models.Capsule).filter(models.Capsule.client_id == client_id).all()
-    capsule_accounts = {capsule.id: capsule.account_id for capsule in capsules}
-    capsule_by_id = {capsule.id: capsule for capsule in capsules}
-    context["capsule_by_id"] = capsule_by_id
-    context["capsule_balances"] = {capsule.id: capsule_balance(db, capsule) for capsule in capsules}
-    capsule_by_life_event_id = {
-        capsule.life_event_id: capsule
-        for capsule in capsules
-        if capsule.life_event_id
-    }
-    context["capsule_by_life_event_id"] = capsule_by_life_event_id
+    recurring = registry_totals(ctx, period)
+    capsules = ctx.capsules
+    capsule_by_id = ctx.capsule_by_id
+    capsule_by_life_event_id = ctx.capsule_by_life_event_id
 
     plan_models = db.query(models.MonthlyPlanLine).filter(
         models.MonthlyPlanLine.client_id == client_id,
@@ -1714,10 +1537,7 @@ def get_budget_summary(
         models.MonthlyPlanLine.plan_id == plan_id,
     ).order_by(models.MonthlyPlanLine.line_type, models.MonthlyPlanLine.id).all()
     plan_models = _deduplicate_active_plan_models(db, plan_models)
-    plan_lines = [
-        _serialize_plan_line(db, client_id, line, name_maps, capsule_accounts, context)
-        for line in plan_models
-    ]
+    plan_lines = [_serialize_plan_line(ctx, line) for line in plan_models]
     for line in plan_lines:
         if line.get("line_type") == "allocation" and line.get("target_type") == "life_event":
             capsule = capsule_by_life_event_id.get(line.get("target_id"))
@@ -1728,7 +1548,7 @@ def get_budget_summary(
                 line["name"] = capsule.name
                 line["target_name"] = capsule.name
                 line["account_name"] = capsule.account.name if capsule.account else None
-                actual = actual_for_plan_line(db, client_id, line, period, capsule_accounts, context)
+                actual = actual_for_plan_line(ctx, line, period)
                 line["actual"] = round(actual, 0)
                 line["variance"] = round((line.get("amount") or 0.0) - actual, 0)
 
@@ -1740,9 +1560,9 @@ def get_budget_summary(
     }
     for capsule in capsules:
         if capsule.id not in existing_capsule_ids:
-            plan_lines.append(_virtual_capsule_line(db, client_id, capsule, period, capsule_accounts, context))
-    plan_lines = _merge_registry_context(plan_lines, registry_plan_lines(db, client_id, period, context))
-    plan_lines = _merge_credit_settlement_context(plan_lines, credit_settlement_plan_lines(db, client_id, period, context))
+            plan_lines.append(_virtual_capsule_line(ctx, capsule, period))
+    plan_lines = _merge_registry_lines(plan_lines, registry_plan_lines(ctx, period))
+    plan_lines = _merge_credit_settlement_lines(plan_lines, credit_settlement_plan_lines(ctx, period))
 
     expense_lines = [line for line in plan_lines if line["line_type"] == "expense"]
     allocation_lines = [line for line in plan_lines if line["line_type"] == "allocation"]
@@ -1768,7 +1588,7 @@ def get_budget_summary(
         - total_allocation_plan
         - total_debt_plan
     )
-    starting_cash = _liquid_cash(db, client_id)
+    starting_cash = liquid_cash(ctx)
     ending_cash_after_plan = starting_cash + remaining
     feasibility_status = "ok"
     if remaining < 0:
@@ -1777,9 +1597,9 @@ def get_budget_summary(
         feasibility_status = "shortfall"
 
     projection_start = cash_flow_start_period or period
-    projection = get_cash_flow_projection(db, client_id, projection_start, months=cash_flow_months, starting_cash=starting_cash, plan_id=plan_id, context=context)
+    projection = _cash_flow_projection(ctx, projection_start, months=cash_flow_months, starting_cash=starting_cash, plan_id=plan_id)
     cash_flow_summary = summarize_cash_flow_projection(projection, starting_cash, projection_start)
-    balance_projection = get_balance_projection(db, client_id, projection_start, months=cash_flow_months, plan_id=plan_id, context=context)
+    balance_projection = _balance_projection(ctx, projection_start, months=cash_flow_months, plan_id=plan_id)
     balance_summary = summarize_balance_projection(balance_projection)
 
     return {
@@ -1850,13 +1670,13 @@ def get_budget_summary(
                 "actual": line["actual"],
                 "variance": line["variance"],
                 "current_balance": round(
-                    capsule_balance(db, capsule)
-                    if (capsule := next((c for c in capsules if c.id == line.get("target_id")), None))
+                    ctx.capsule_balance(capsule)
+                    if (capsule := ctx.capsule(line.get("target_id")))
                     else 0.0,
                     0,
                 ),
                 "target_amount": round(
-                    capsule.target_amount if (capsule := next((c for c in capsules if c.id == line.get("target_id")), None)) else 0.0,
+                    capsule.target_amount if (capsule := ctx.capsule(line.get("target_id"))) else 0.0,
                     0,
                 ),
             }
@@ -1878,37 +1698,53 @@ def get_cash_flow_projection(
     months: int = 12,
     starting_cash: float | None = None,
     plan_id: int | None = None,
-    context: BudgetSummaryContext | None = None,
 ) -> list[dict]:
-    plan_id = resolve_budget_plan_id(db, client_id, plan_id)
-    cash = _liquid_cash(db, client_id) if starting_cash is None else starting_cash
+    return _cash_flow_projection(
+        BudgetContext(db, client_id),
+        start_period,
+        months=months,
+        starting_cash=starting_cash,
+        plan_id=plan_id,
+    )
+
+
+def _cash_flow_projection(
+    ctx: BudgetContext,
+    start_period: str,
+    *,
+    months: int = 12,
+    starting_cash: float | None = None,
+    plan_id: int | None = None,
+) -> list[dict]:
+    plan_id = resolve_budget_plan_id(ctx.db, ctx.client_id, plan_id)
+    cash = liquid_cash(ctx) if starting_cash is None else starting_cash
     rows = []
     for idx in range(months):
         period = add_months(start_period, idx)
-        q = db.query(models.MonthlyPlanLine).filter(
-            models.MonthlyPlanLine.client_id == client_id,
+        q = ctx.db.query(models.MonthlyPlanLine).filter(
+            models.MonthlyPlanLine.client_id == ctx.client_id,
             models.MonthlyPlanLine.target_period == period,
             models.MonthlyPlanLine.is_active.is_(True),
             models.MonthlyPlanLine.plan_id == plan_id,
         )
         lines = q.all()
-        lines = _deduplicate_active_plan_models(db, lines)
+        lines = _deduplicate_active_plan_models(ctx.db, lines)
         projection_lines: list[models.MonthlyPlanLine | dict] = list(lines)
         planned_flow = _empty_flow()
         actual_flow = _empty_flow()
         remaining_flow = _empty_flow()
         for line in projection_lines:
-            planned_amount, actual_amount, remaining_amount = _projection_amounts_for_period(db, client_id, line, period, context)
-            _add_flow(planned_flow, plan_line_flow_for_amount(db, client_id, line, planned_amount, context))
-            _add_flow(actual_flow, plan_line_flow_for_amount(db, client_id, line, actual_amount, context))
-            _add_flow(remaining_flow, plan_line_flow_for_amount(db, client_id, line, remaining_amount, context))
+            planned_amount, actual_amount, remaining_amount = _projection_amounts_for_period(ctx, line, period)
+            _add_flow(planned_flow, plan_line_flow_for_amount(ctx, line, planned_amount))
+            _add_flow(actual_flow, plan_line_flow_for_amount(ctx, line, actual_amount))
+            _add_flow(remaining_flow, plan_line_flow_for_amount(ctx, line, remaining_amount))
         income = remaining_flow["inflow"]
         expense = remaining_flow["expense"]
         allocation = remaining_flow["allocation"]
         debt = remaining_flow["debt"]
         net = remaining_flow["operating"]
         cash += net
-        setup_warnings = budget_setup_warnings(db, client_id, period, lines, context)
+        setup_warnings = budget_setup_warnings(ctx, period, lines)
         rows.append({
             "period": period,
             "inflow": round(income, 0),
@@ -1949,28 +1785,37 @@ def get_balance_projection(
     start_period: str,
     months: int = 12,
     plan_id: int | None = None,
-    context: BudgetSummaryContext | None = None,
 ) -> list[dict]:
-    plan_id = resolve_budget_plan_id(db, client_id, plan_id)
-    state = _starting_balance_state(db, client_id)
+    return _balance_projection(BudgetContext(db, client_id), start_period, months=months, plan_id=plan_id)
+
+
+def _balance_projection(
+    ctx: BudgetContext,
+    start_period: str,
+    *,
+    months: int = 12,
+    plan_id: int | None = None,
+) -> list[dict]:
+    plan_id = resolve_budget_plan_id(ctx.db, ctx.client_id, plan_id)
+    state = _starting_balance_state(ctx)
     rows = []
     for idx in range(months):
         period = add_months(start_period, idx)
         lines = (
-            db.query(models.MonthlyPlanLine)
+            ctx.db.query(models.MonthlyPlanLine)
             .filter(
-                models.MonthlyPlanLine.client_id == client_id,
+                models.MonthlyPlanLine.client_id == ctx.client_id,
                 models.MonthlyPlanLine.target_period == period,
                 models.MonthlyPlanLine.is_active.is_(True),
                 models.MonthlyPlanLine.plan_id == plan_id,
             )
             .all()
         )
-        lines = _deduplicate_active_plan_models(db, lines)
+        lines = _deduplicate_active_plan_models(ctx.db, lines)
         projection_lines: list[models.MonthlyPlanLine | dict] = list(lines)
         for line in projection_lines:
-            _, _, remaining_amount = _projection_amounts_for_period(db, client_id, line, period, context)
-            movement = _balance_movement_for_amount(db, client_id, line, remaining_amount, context)
+            _, _, remaining_amount = _projection_amounts_for_period(ctx, line, period)
+            movement = _balance_movement_for_amount(ctx, line, remaining_amount)
             for key, value in movement.items():
                 state[key] = state.get(key, 0.0) + (value or 0.0)
         rows.append(_balance_projection_row(period, state))
@@ -1996,27 +1841,23 @@ def summarize_balance_projection(projection: list[dict]) -> dict[str, float | in
 
 
 def budget_setup_warnings(
-    db: Session,
-    client_id: int,
+    ctx: BudgetContext,
     period: str,
     plan_models: list[models.MonthlyPlanLine],
-    context: BudgetSummaryContext | None = None,
 ) -> list[dict]:
     return [
-        *recurrence_setup_warnings(db, client_id, period, plan_models, context),
-        *credit_settlement_setup_warnings(db, client_id, period, plan_models, context),
-        *product_reserve_setup_warnings(db, client_id, plan_models),
+        *recurrence_setup_warnings(ctx, period, plan_models),
+        *credit_settlement_setup_warnings(ctx, period, plan_models),
+        *product_reserve_setup_warnings(ctx, plan_models),
     ]
 
 
 def recurrence_setup_warnings(
-    db: Session,
-    client_id: int,
+    ctx: BudgetContext,
     period: str,
     plan_models: list[models.MonthlyPlanLine],
-    context: BudgetSummaryContext | None = None,
 ) -> list[dict]:
-    registry_lines = registry_plan_lines(db, client_id, period, context)
+    registry_lines = registry_plan_lines(ctx, period)
     plan_by_key = {
         _plan_match_key(
             line.line_type,
@@ -2062,12 +1903,11 @@ def recurrence_setup_warnings(
 
 
 def product_reserve_setup_warnings(
-    db: Session,
-    client_id: int,
+    ctx: BudgetContext,
     plan_models: list[models.MonthlyPlanLine],
 ) -> list[dict]:
-    capsules = db.query(models.Capsule).filter(
-        models.Capsule.client_id == client_id,
+    capsules = ctx.db.query(models.Capsule).filter(
+        models.Capsule.client_id == ctx.client_id,
         models.Capsule.capsule_type == "product_pool",
         models.Capsule.monthly_contribution > 0,
     ).all()
@@ -2108,11 +1948,9 @@ def product_reserve_setup_warnings(
 
 
 def credit_settlement_setup_warnings(
-    db: Session,
-    client_id: int,
+    ctx: BudgetContext,
     period: str,
     plan_models: list[models.MonthlyPlanLine],
-    context: BudgetSummaryContext | None = None,
 ) -> list[dict]:
     plan_by_account = {
         line.account_id: line
@@ -2120,7 +1958,7 @@ def credit_settlement_setup_warnings(
         if line.line_type == "debt_payment" and line.account_id is not None
     }
     warnings = []
-    for settlement in credit_settlement_plan_lines(db, client_id, period, context):
+    for settlement in credit_settlement_plan_lines(ctx, period):
         amount = round(settlement.get("suggested_amount") or 0.0, 0)
         matched = plan_by_account.get(settlement.get("account_id"))
         if not matched:

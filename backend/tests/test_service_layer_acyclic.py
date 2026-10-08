@@ -37,6 +37,7 @@ LAYERS: dict[str, int] = {
     "capsule_service": 2,
     "registry_service": 2,
     # L3 - generated from the registry
+    "budget_context": 3,
     "budget_plan_service": 3,
     "recurring_service": 3,
     # L4 - statements and variance, which need the adopted plan

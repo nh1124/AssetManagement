@@ -8,13 +8,14 @@ from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.cache_service import invalidate_client
+from ..services.budget_context import BudgetContext
 from ..services.budget_plan_service import (
     assign_plan_line_identity,
     create_plan_lines,
     get_budget_summary as build_budget_summary,
     get_or_create_default_plan,
     get_cash_flow_projection,
-    _liquid_cash,
+    liquid_cash,
     replace_plan_lines_from_plan,
     resolve_budget_plan_id,
     set_default_budget_plan,
@@ -103,7 +104,7 @@ def compare_budget_plans(
         raise HTTPException(status_code=404, detail="Budget plan not found")
 
     results = []
-    starting_cash = _liquid_cash(db, current_client.id)
+    starting_cash = liquid_cash(BudgetContext(db, current_client.id))
     for plan_id in id_list:
         plan = plans_by_id[plan_id]
         projection = get_cash_flow_projection(
