@@ -11,7 +11,6 @@ from datetime import date, timedelta
 from typing import Optional
 
 from dateutil.relativedelta import relativedelta
-from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
 from .. import models
@@ -23,6 +22,7 @@ from .fx_service import (
     convert_transaction_amount,
     get_client_currency,
 )
+from .journal_legs import legs_in_range, signed_delta, valued_sides
 from .ledger_service import DEBIT_NORMAL_TYPES
 
 
@@ -73,25 +73,21 @@ def get_profit_loss_for_range(
     end_date: date,
     client_id: int | None = None,
 ) -> dict:
-    """Generate Profit & Loss statement for an inclusive date range."""
-    transactions = db.query(models.Transaction).filter(
-        and_(
-            models.Transaction.client_id == client_id,
-            models.Transaction.date >= start_date,
-            models.Transaction.date <= end_date,
-        )
-    ).all()
+    """Generate Profit & Loss statement for an inclusive date range.
 
+    Grouped by the account each leg touched, not by the transaction's category
+    string. The account is the ledger's own answer, and it is the only one that
+    works once a transaction can hit several expense accounts at once.
+    """
     income_by_category: dict[str, float] = {}
     expense_by_category: dict[str, float] = {}
 
-    for tx in transactions:
-        cat = tx.category or "Other"
-        amount = convert_transaction_amount(db, tx, client_id=client_id)
-        if tx.type == "Income":
-            income_by_category[cat] = income_by_category.get(cat, 0) + amount
-        elif tx.type in ("Expense", "CreditExpense"):
-            expense_by_category[cat] = expense_by_category.get(cat, 0) + amount
+    for leg in legs_in_range(
+        db, client_id, start_date, end_date, account_types={"income", "expense"}
+    ):
+        name = leg.account.name or "Other"
+        bucket = income_by_category if leg.account_type == "income" else expense_by_category
+        bucket[name] = bucket.get(name, 0.0) + leg.signed
 
     total_income = sum(income_by_category.values())
     total_expense = sum(expense_by_category.values())
@@ -143,24 +139,14 @@ def get_profit_loss_rollup_for_range(
             current = account_by_id[current.parent_id]
         return current.name or fallback or "Other"
 
-    transactions = db.query(models.Transaction).filter(
-        and_(
-            models.Transaction.client_id == client_id,
-            models.Transaction.date >= start_date,
-            models.Transaction.date <= end_date,
-        )
-    ).all()
-
     income_by_category: dict[str, float] = {}
     expense_by_category: dict[str, float] = {}
-    for tx in transactions:
-        amount = convert_transaction_amount(db, tx, client_id=client_id)
-        if tx.type == "Income":
-            category = root_name(tx.from_account_id, tx.category or "Other")
-            income_by_category[category] = income_by_category.get(category, 0) + amount
-        elif tx.type in ("Expense", "CreditExpense"):
-            category = root_name(tx.to_account_id, tx.category or "Other")
-            expense_by_category[category] = expense_by_category.get(category, 0) + amount
+    for leg in legs_in_range(
+        db, client_id, start_date, end_date, account_types={"income", "expense"}
+    ):
+        category = root_name(leg.account.id, leg.account.name or "Other")
+        bucket = income_by_category if leg.account_type == "income" else expense_by_category
+        bucket[category] = bucket.get(category, 0.0) + leg.signed
 
     total_income = sum(income_by_category.values())
     total_expense = sum(expense_by_category.values())
@@ -229,31 +215,15 @@ def get_variance_analysis_for_range(
         if line.account_id:
             budget_map[line.account_id] = budget_map.get(line.account_id, 0.0) + line.amount
 
-    account_name_to_id = {acc.name: acc.id for acc in accounts}
-
-    transactions = db.query(models.Transaction).filter(
-        and_(
-            models.Transaction.client_id == client_id,
-            models.Transaction.date >= start_date,
-            models.Transaction.date <= end_date,
-            models.Transaction.type.in_(["Expense", "CreditExpense"]),
-        )
-    ).all()
-
+    # Every expense leg names its own account, so the category fallback and the
+    # orphan bucket it produced are gone. A leg on an inactive expense account
+    # still has to be reported, or the actual total would silently shrink.
     actual_by_account_id: dict[int, float] = {}
-    orphan_actual_by_category: dict[str, float] = {}
-    for tx in transactions:
-        amount = convert_transaction_amount(db, tx, client_id=client_id)
-        if tx.to_account_id and tx.to_account_id in account_name_to_id.values():
-            actual_by_account_id[tx.to_account_id] = actual_by_account_id.get(tx.to_account_id, 0.0) + amount
-            continue
-
-        if tx.category and tx.category in account_name_to_id:
-            acc_id = account_name_to_id[tx.category]
-            actual_by_account_id[acc_id] = actual_by_account_id.get(acc_id, 0.0) + amount
-        else:
-            cat = tx.category or "Other"
-            orphan_actual_by_category[cat] = orphan_actual_by_category.get(cat, 0.0) + amount
+    inactive_accounts: dict[int, models.Account] = {}
+    for leg in legs_in_range(db, client_id, start_date, end_date, account_types={"expense"}):
+        actual_by_account_id[leg.account.id] = actual_by_account_id.get(leg.account.id, 0.0) + leg.signed
+        if not leg.account.is_active:
+            inactive_accounts[leg.account.id] = leg.account
 
     variance_items = []
     for acc in accounts:
@@ -269,10 +239,11 @@ def get_variance_analysis_for_range(
             }
         )
 
-    for cat, amount in orphan_actual_by_category.items():
+    for account_id, account in inactive_accounts.items():
+        amount = actual_by_account_id.get(account_id, 0.0)
         variance_items.append(
             {
-                "category": cat,
+                "category": account.name,
                 "budget": 0,
                 "actual": amount,
                 "variance": -amount,
@@ -361,20 +332,11 @@ def _flow_buckets(start_date: date, end_date: date, grain: str) -> list[dict]:
 
 
 def _valued_entry_sides(db: Session, entry: models.JournalEntry, tx: models.Transaction, client_id: int | None) -> tuple[float, float]:
-    raw_debit = entry.debit or 0.0
-    raw_credit = entry.credit or 0.0
-    if not tx.amount:
-        return raw_debit, raw_credit
-
-    valued_amount = convert_transaction_amount(db, tx, client_id=client_id)
-    factor = valued_amount / tx.amount
-    return raw_debit * factor, raw_credit * factor
+    return valued_sides(db, entry, tx, client_id)
 
 
 def _normal_balance_delta(account_type: str | None, debit: float, credit: float) -> float:
-    if account_type in DEBIT_NORMAL_TYPES:
-        return debit - credit
-    return credit - debit
+    return signed_delta(account_type, debit, credit)
 
 
 def get_account_flows_for_range(

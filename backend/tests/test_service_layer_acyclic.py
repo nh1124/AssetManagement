@@ -31,7 +31,8 @@ LAYERS: dict[str, int] = {
     "periods": 0,
     "product_reserve_service": 0,
     "schedule_rules": 0,
-    # L1 - the ledger itself
+    # L1 - the ledger itself, and reading it one journal leg at a time
+    "journal_legs": 1,
     "ledger_service": 1,
     # L2 - the source of truth for recurring cash flow, and its bucket model
     "capsule_service": 2,
