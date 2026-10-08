@@ -18,7 +18,7 @@ import {
     Wallet,
 } from 'lucide-react';
 import type { ComponentType } from 'react';
-import type { QuickTemplate, Transaction } from '../../types';
+import type { QuickTemplate, Transaction, TransactionLeg } from '../../types';
 
 export type LanguageCode = 'ja' | 'en';
 
@@ -757,30 +757,32 @@ export const buildQuickTransactions = ({
         const resolvedOwn = ownAmount > 0 ? ownAmount : Math.max(0, amount - resolvedAdvance);
         if (resolvedOwn + resolvedAdvance <= 0) return { transactions: [], error: 'Own share or advance amount is required' };
         if (resolvedAdvance > 0 && !receivableAccount) return { transactions: [], error: 'Receivable account is required' };
+        if (Math.abs(resolvedOwn + resolvedAdvance - amount) > 0.01) {
+            return { transactions: [], error: 'Own share and advance must add up to the amount' };
+        }
 
-        const transactions: Array<Omit<Transaction, 'id'>> = [];
+        // One payment, one entry. The card is credited the whole bill; the
+        // debits split it into what we spent and what we fronted.
+        const legs: TransactionLeg[] = [{ account_id: paymentAccount.id, credit: amount }];
         if (resolvedOwn > 0) {
-            transactions.push({
-                ...base,
-                description: `${description} ${generatedText.ownShare}`,
-                amount: resolvedOwn,
-                type: isCreditPayment ? 'CreditExpense' : 'Expense',
-                category,
-                from_account_id: paymentAccount.id,
-                to_account_id: expenseAccount.id,
-            });
+            legs.push({ account_id: expenseAccount.id, debit: resolvedOwn, memo: generatedText.ownShare });
         }
         if (resolvedAdvance > 0 && receivableAccount) {
-            transactions.push({
-                ...base,
-                description: `${description} ${generatedText.advance}`,
-                amount: resolvedAdvance,
-                type: isCreditPayment ? 'CreditAssetPurchase' : 'Transfer',
-                category: `${category}/${generatedText.advance}`,
-                from_account_id: paymentAccount.id,
-                to_account_id: receivableAccount.id,
-            });
+            legs.push({ account_id: receivableAccount.id, debit: resolvedAdvance, memo: generatedText.advance });
         }
+
+        const transactions: Array<Omit<Transaction, 'id'>> = [{
+            ...base,
+            description,
+            amount,
+            type: isCreditPayment ? 'CreditExpense' : 'Expense',
+            category,
+            from_account_id: paymentAccount.id,
+            legs,
+        }];
+
+        // Getting the money back is a different event on a different day, so it
+        // stays its own transaction.
         if (quickEntry.reimbursementReceived && resolvedAdvance > 0) {
             if (!receivableAccount || !reimbursementAccount) return { transactions: [], error: 'Deposit account is required for reimbursement' };
             transactions.push({
@@ -788,7 +790,7 @@ export const buildQuickTransactions = ({
                 description: `${description} ${generatedText.settlement}`,
                 amount: resolvedAdvance,
                 type: 'Transfer',
-                category: `${category}/${generatedText.settlement}`,
+                category,
                 from_account_id: receivableAccount.id,
                 to_account_id: reimbursementAccount.id,
             });

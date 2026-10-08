@@ -1,3 +1,16 @@
+export interface TransactionLeg {
+    account_id: number;
+    debit?: number;
+    credit?: number;
+    memo?: string | null;
+}
+
+export interface TransactionLegRead extends TransactionLeg {
+    id: number;
+    account_name?: string | null;
+    account_type?: string | null;
+}
+
 export interface Transaction {
     id: number;
     date: string;
@@ -6,11 +19,19 @@ export interface Transaction {
     type: 'Income' | 'Expense' | 'Transfer' | 'LiabilityPayment' | 'Borrowing' | 'CreditExpense' | 'CreditAssetPurchase';
     category?: string;
     currency: string;
+    /** The legs, when a payment splits across more than two accounts. Sending
+     *  legs makes from/to derived: they are filled only when a single leg sits
+     *  on that side. */
+    legs?: TransactionLeg[] | TransactionLegRead[];
     from_account_id?: number;
     to_account_id?: number;
     batch_id?: number | null;
     from_account_name?: string;
     to_account_name?: string;
+    /** Set when the list was filtered by account: what this transaction moved
+     *  on that account, which for a compound entry is not its total. */
+    matched_debit?: number | null;
+    matched_credit?: number | null;
 }
 
 export interface QuickTemplate {

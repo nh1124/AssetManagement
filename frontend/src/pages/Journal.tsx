@@ -644,6 +644,15 @@ export default function Journal() {
         }
     };
 
+    /** What a transaction moved on the account the list is filtered by.
+     *  Null unless filtering, or when it equals the total and would just repeat it. */
+    const matchedOnAccount = (tx: Transaction): number | null => {
+        if (!filters.accountId) return null;
+        const moved = (tx.matched_debit ?? 0) + (tx.matched_credit ?? 0);
+        if (!moved || Math.abs(moved - tx.amount) < 0.01) return null;
+        return moved;
+    };
+
     const handlePostQuickBatch = async () => {
         if (quickPreview.error || quickPreview.transactions.length === 0) {
             showToast(quickPreview.error || 'No transactions to post', 'error');
@@ -1505,7 +1514,14 @@ export default function Journal() {
                                                     <div className="min-w-0">
                                                         <p className="text-[11px] text-slate-200 truncate">{tx.description}</p>
                                                         <p className="text-[10px] text-slate-500 truncate">
-                                                            {tx.type} / {accountById(tx.from_account_id)?.name || '...'} → {accountById(tx.to_account_id)?.name || '...'}
+                                                            {tx.type} / {accountById(tx.from_account_id)?.name || '...'} → {
+                                                                tx.legs && tx.legs.length > 2
+                                                                    ? tx.legs
+                                                                        .filter((leg) => (leg.debit ?? 0) > 0)
+                                                                        .map((leg) => `${accountById(leg.account_id)?.name || leg.account_id} ${formatCurrencyWithSetting(leg.debit ?? 0, tx.currency || currentCurrency)}`)
+                                                                        .join(' + ')
+                                                                    : accountById(tx.to_account_id)?.name || '...'
+                                                            }
                                                         </p>
                                                     </div>
                                                     <span className="text-[11px] font-mono-nums text-emerald-300 whitespace-nowrap">
@@ -2013,14 +2029,34 @@ export default function Journal() {
                             <div className="flex items-center gap-2">
                                 {tx.type === 'Income' ? <ArrowUpCircle className="text-emerald-500" size={14} /> : tx.type === 'Expense' || tx.type === 'LiabilityPayment' ? <ArrowDownCircle className="text-rose-500" size={14} /> : <RefreshCw className="text-cyan-500" size={14} />}
                                 <div>
-                                    <p className="text-xs">{tx.description}</p>
+                                    <p className="text-xs">
+                                        {tx.description}
+                                        {tx.legs && tx.legs.length > 2 && (
+                                            <span className="ml-1.5 text-[9px] text-cyan-400 border border-cyan-800/60 px-1 py-0.5 align-middle">
+                                                {language === 'ja' ? `内訳 ${tx.legs.length}` : `${tx.legs.length} legs`}
+                                            </span>
+                                        )}
+                                    </p>
                                     <p className="text-[10px] text-slate-600">{tx.date} • {localizeQuickCategory(tx.category, language)}</p>
+                                    {tx.legs && tx.legs.length > 2 && (
+                                        <p className="text-[10px] text-slate-500">
+                                            {tx.legs
+                                                .filter((leg) => (leg.debit ?? 0) > 0)
+                                                .map((leg) => `${('account_name' in leg && leg.account_name) || accountById(leg.account_id)?.name || leg.account_id} ${formatCurrencyWithSetting(leg.debit ?? 0, tx.currency || currentCurrency)}`)
+                                                .join('  /  ')}
+                                        </p>
+                                    )}
                                 </div>
                             </div>
                             <div className="flex items-center gap-2">
                                 <span className={`text-xs font-mono-nums ${tx.type === 'Income' ? 'text-emerald-500' : tx.type === 'Expense' || tx.type === 'LiabilityPayment' ? 'text-rose-500' : 'text-cyan-500'}`}>
                                     {tx.type === 'Income' ? '+' : tx.type === 'Expense' || tx.type === 'LiabilityPayment' ? '-' : ''}{formatCurrencyWithSetting(tx.amount, tx.currency || currentCurrency)}
                                 </span>
+                                {matchedOnAccount(tx) !== null && (
+                                    <span className="text-[10px] font-mono-nums text-slate-400" title={language === 'ja' ? 'この口座が動いた額' : 'moved on this account'}>
+                                        ({formatCurrencyWithSetting(matchedOnAccount(tx) as number, tx.currency || currentCurrency)})
+                                    </span>
+                                )}
                                 <div className="flex gap-1 opacity-0 group-hover:opacity-100">
                                     <button
                                         type="button"

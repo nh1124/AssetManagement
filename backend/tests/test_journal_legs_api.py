@@ -15,6 +15,7 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.app import models, schemas
 from backend.app.database import Base
+from backend.app.routers import quick_templates as quick_template_router
 from backend.app.routers import transactions as transaction_router
 from backend.app.services.data_health_service import check_data_health
 from backend.app.utils.password import hash_password
@@ -316,5 +317,57 @@ def test_data_health_is_quiet_when_every_entry_balances() -> None:
         issue = next(i for i in report["issues"] if i["code"] == "journal_unbalanced")
 
         assert issue["count"] == 0
+    finally:
+        db.close()
+
+
+def test_a_batch_can_carry_a_compound_entry() -> None:
+    """The quick template posts through /transaction-batches/, not /transactions/.
+
+    "Expense with advance" used to expand into two or three transactions for one
+    payment. It is now one compound entry, plus a separate transaction only if
+    the money has already come back.
+    """
+    db = _session()
+    try:
+        client = _client(db)
+        card, food, advance = _accounts(db)
+        cash = models.Account(client_id=1, name="cash", account_type="asset", role="operating", balance=0)
+        db.add(cash)
+        db.commit()
+
+        batch = quick_template_router.create_transaction_batch(
+            schemas.TransactionBatchCreate(
+                label="dinner with a friend",
+                source="quick",
+                input_payload={"template_kind": "expense_with_advance"},
+                transactions=[
+                    schemas.TransactionCreate(
+                        date=WHEN, description="dinner with a friend", amount=5000,
+                        type="CreditExpense", currency="JPY", from_account_id=card.id,
+                        legs=[
+                            schemas.TransactionLeg(account_id=card.id, credit=5000),
+                            schemas.TransactionLeg(account_id=food.id, debit=3000, memo="own share"),
+                            schemas.TransactionLeg(account_id=advance.id, debit=2000, memo="advance"),
+                        ],
+                    ),
+                    # The friend paid their share back the same day.
+                    schemas.TransactionCreate(
+                        date=WHEN, description="dinner with a friend 精算", amount=2000,
+                        type="Transfer", currency="JPY",
+                        from_account_id=advance.id, to_account_id=cash.id,
+                    ),
+                ],
+            ),
+            db=db, current_client=client,
+        )
+
+        assert len(batch["transactions"]) == 2
+        entries = db.query(models.JournalEntry).count()
+        assert entries == 5          # three legs plus the settlement's two
+        db.refresh(advance)
+        assert advance.balance == 0  # fronted 2,000 and got it back
+        db.refresh(food)
+        assert food.balance == 3000
     finally:
         db.close()
