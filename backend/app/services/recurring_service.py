@@ -7,6 +7,8 @@ from sqlalchemy.orm import Session
 from .. import models
 from .cache_service import invalidate_client
 from .ledger_service import post_transaction_journal
+from .capsule_service import apply_capsule_rules_for_transaction
+from .registry_service import sync_registry_from_recurring
 from .schedule_rules import (
     _month_due,
     _parse_period,
@@ -43,7 +45,6 @@ def post_recurring_transaction(
     )
     db.add(transaction)
     db.flush()
-    from .capsule_service import apply_capsule_rules_for_transaction
 
     post_transaction_journal(db, transaction)
     apply_capsule_rules_for_transaction(db, transaction, commit=False)
@@ -76,7 +77,6 @@ def process_due_for_client(db: Session, client_id: int, today: date | None = Non
                 due = recurring.next_due_date
                 if is_past_end_period(recurring, due):
                     recurring.is_active = False
-                    from .registry_service import sync_registry_from_recurring
 
                     sync_registry_from_recurring(db, recurring)
                     deactivated.append(recurring.id)
@@ -89,7 +89,6 @@ def process_due_for_client(db: Session, client_id: int, today: date | None = Non
 
                 if recurring.next_due_date and is_past_end_period(recurring, recurring.next_due_date):
                     recurring.is_active = False
-                    from .registry_service import sync_registry_from_recurring
 
                     sync_registry_from_recurring(db, recurring)
                     deactivated.append(recurring.id)

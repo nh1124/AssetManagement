@@ -9,6 +9,7 @@ from ..services import analysis_service
 from ..services.cache_service import get_or_set
 from ..services.ledger_service import ensure_default_accounts
 from ..services.reporting_service import (
+    get_net_worth_history as reporting_get_net_worth_history,
     get_account_flows_for_range,
     get_account_transactions_for_range,
     get_balance_sheet,
@@ -185,7 +186,7 @@ def get_net_worth_history(
     return get_or_set(
         f"client:{current_client.id}:net_worth_history:{months}",
         300,
-        lambda: analysis_service.get_net_worth_history(db, client_id=current_client.id, months=months),
+        lambda: reporting_get_net_worth_history(db, client_id=current_client.id, months=months),
     )
 
 

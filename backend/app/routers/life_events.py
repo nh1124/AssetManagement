@@ -10,7 +10,8 @@ from ..services.goal_service import (
     get_life_events_with_progress, 
     calculate_overall_goal_probability, 
     generate_budget_from_goals,
-    get_strategy_dashboard
+    get_strategy_dashboard,
+    summarize_goal_funding_gap,
 )
 from ..services.capsule_service import apply_capsule_rules_for_transaction, create_capsule_for_goal, capsule_balance
 from ..services.ledger_service import post_transaction_journal
@@ -105,6 +106,7 @@ def get_budget_summary(
                 plan_id=plan_id,
                 cash_flow_start_period=cash_flow_start_period,
                 cash_flow_months=cash_flow_months,
+                goal_metrics=summarize_goal_funding_gap(db, current_client.id),
             ),
         )
     except ValueError as exc:

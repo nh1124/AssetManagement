@@ -13,6 +13,7 @@ import math
 import numpy as np
 from .. import models
 from .fx_service import calculate_account_valued_balance
+from .reporting_service import get_balance_sheet, get_net_worth_history
 
 
 def calculate_current_funded_and_weighted_return(event: models.LifeEvent, db: Optional[Session] = None) -> Tuple[float, float]:
@@ -782,7 +783,6 @@ def simulate_net_worth_forward(
     contribution_schedule: list[dict[str, Any]] | None = None,
 ) -> list[dict]:
     """Simulate total net worth forward as yearly P10/P50/P90 bands."""
-    from .reporting_service import get_balance_sheet
 
     years = max(1, min(years, 60))
     config = db.query(models.SimulationConfig).filter(
@@ -877,7 +877,6 @@ def get_roadmap_projection(
     allocation_mode: str = "weighted",
 ) -> dict:
     """Combine historical net worth, forward simulation, goals, and milestones."""
-    from .analysis_service import get_net_worth_history
 
     events = get_life_events_with_progress(
         db=db,
@@ -1004,3 +1003,22 @@ def generate_budget_from_goals(db: Session, month: str, client_id: int) -> List[
         })
     
     return budget_items
+
+
+def summarize_goal_funding_gap(db: Session, client_id: int) -> dict:
+    """Goal-side inputs for the budget summary.
+
+    Lives here rather than in budget_plan_service so that planning never has to
+    import the goal domain; the caller composes the two.
+    """
+    events = get_life_events_with_progress(db, client_id=client_id)
+    total_gap = sum(max(0, e["gap"]) for e in events)
+    avg_years = (
+        sum(e["years_remaining"] for e in events) / len(events)
+        if events else 10
+    )
+    return {
+        "goals_count": len(events),
+        "total_goal_gap": total_gap,
+        "required_monthly_savings": total_gap / (avg_years * 12) if avg_years > 0 else 0,
+    }

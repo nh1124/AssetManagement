@@ -10,6 +10,7 @@ from .strategy_service import (
     generate_budget_from_goals,
     get_life_events_with_progress,
     get_strategy_dashboard,
+    summarize_goal_funding_gap,
 )
 
 __all__ = [
@@ -17,4 +18,5 @@ __all__ = [
     "generate_budget_from_goals",
     "get_life_events_with_progress",
     "get_strategy_dashboard",
+    "summarize_goal_funding_gap",
 ]
