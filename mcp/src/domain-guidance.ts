@@ -13,6 +13,15 @@ export const transactionTypeSchema = z.enum([
 
 export const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
+export const transactionLegSchema = z
+  .object({
+    account_id: z.number().int().min(1).describe("Account this leg touches"),
+    debit: z.number().min(0).optional().default(0).describe("Debit amount; exactly one of debit or credit is above zero"),
+    credit: z.number().min(0).optional().default(0).describe("Credit amount"),
+    memo: z.string().optional().describe("Note for this leg alone, e.g. \"own share\" or \"advance for A\""),
+  })
+  .strict();
+
 export const transactionPayloadSchema = z
   .object({
     date: dateSchema.optional().describe("Transaction date, YYYY-MM-DD"),
@@ -23,6 +32,15 @@ export const transactionPayloadSchema = z
     from_account_id: z.number().int().min(1).optional().describe("Source account ID; this becomes the credit side"),
     to_account_id: z.number().int().min(1).optional().describe("Destination account ID; this becomes the debit side"),
     currency: z.string().optional().default("JPY").describe("Currency"),
+    legs: z
+      .array(transactionLegSchema)
+      .min(2)
+      .optional()
+      .describe(
+        "Journal legs, for a payment that splits across more than two accounts. " +
+          "Debits and credits must each total the amount. Omit for an ordinary two-sided entry, " +
+          "where from_account_id is the credit side and to_account_id the debit side.",
+      ),
   })
   .strict();
 
@@ -158,7 +176,41 @@ function accountRef(accounts: Account[], id: number | undefined, type: z.infer<t
   };
 }
 
+export function validateLegs(input: z.infer<typeof transactionPayloadSchema>, accounts: Account[]) {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const legs = input.legs ?? [];
+
+  let totalDebit = 0;
+  let totalCredit = 0;
+  for (const leg of legs) {
+    const debit = leg.debit ?? 0;
+    const credit = leg.credit ?? 0;
+    totalDebit += debit;
+    totalCredit += credit;
+    if ((debit > 0) === (credit > 0)) {
+      errors.push(`Leg on account ${leg.account_id} must be either a debit or a credit, not both or neither.`);
+    }
+    if (!findAccount(accounts, leg.account_id)) {
+      errors.push(`Leg account_id ${leg.account_id} was not found among active accounts.`);
+    }
+  }
+  if (Math.abs(totalDebit - totalCredit) > 0.01) {
+    errors.push(`Legs do not balance: debit ${totalDebit} vs credit ${totalCredit}.`);
+  } else if (Math.abs(totalDebit - input.amount) > 0.01) {
+    errors.push(`Legs total ${totalDebit} but amount is ${input.amount}. The amount is the whole payment.`);
+  }
+  if (input.from_account_id !== undefined || input.to_account_id !== undefined) {
+    warnings.push("from_account_id and to_account_id are ignored when legs are given; the legs decide.");
+  }
+
+  return { ok: errors.length === 0, errors, warnings };
+}
+
 export function validateTransactionPayload(input: z.infer<typeof transactionPayloadSchema>, accounts: Account[]) {
+  if (input.legs?.length) {
+    return validateLegs(input, accounts);
+  }
   const rule = TRANSACTION_RULES[input.type];
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -202,6 +254,31 @@ export function validateTransactionPayload(input: z.infer<typeof transactionPayl
 export function previewTransactionPayload(input: z.infer<typeof transactionPayloadSchema>, accounts: Account[]) {
   const rule = TRANSACTION_RULES[input.type];
   const validation = validateTransactionPayload(input, accounts);
+
+  if (input.legs?.length) {
+    return {
+      ok_to_submit: validation.ok,
+      transaction_type: input.type,
+      rule_summary: "Compound entry: the legs decide which accounts move, not the type.",
+      amount: input.amount,
+      currency: input.currency ?? "JPY",
+      journal_preview: input.legs.map((leg) => {
+        const account = findAccount(accounts, leg.account_id);
+        const debit = leg.debit ?? 0;
+        return {
+          side: debit > 0 ? "debit" : "credit",
+          account: account ? { id: account.id, name: account.name, account_type: account.account_type } : { id: leg.account_id },
+          amount: debit > 0 ? debit : leg.credit ?? 0,
+          memo: leg.memo ?? null,
+        };
+      }),
+      validation,
+      common_mistakes: [
+        "Do not put the whole payment on every leg. Each leg carries its own share and the sides must balance.",
+        "Money fronted for someone else is an asset leg on a receivable account, not an expense leg.",
+      ],
+    };
+  }
   const from = accountRef(accounts, input.from_account_id, input.type, "from", input.category);
   const to = accountRef(accounts, input.to_account_id, input.type, "to", input.category);
   const amount = input.amount;

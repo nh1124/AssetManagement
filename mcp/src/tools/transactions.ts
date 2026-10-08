@@ -5,7 +5,12 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { api } from "../api-client.js";
-import { fetchAccounts, previewTransactionPayload, transactionPayloadSchema } from "../domain-guidance.js";
+import {
+  fetchAccounts,
+  previewTransactionPayload,
+  transactionLegSchema,
+  transactionPayloadSchema,
+} from "../domain-guidance.js";
 import { toStructured } from "../utils.js";
 import {
   changeRequestUnsupportedResult,
@@ -90,28 +95,33 @@ export function registerTransactionTools(server: McpServer): void {
     {
       title: "Create transaction",
       description:
-        "Creates and posts a transaction. This changes account balances through the backend journal processing.",
+        "Creates and posts a transaction. This changes account balances through the backend journal processing. " +
+        "Pass legs for a payment that splits across more than two accounts, such as a bill partly fronted for someone else.",
       inputSchema: z
         .object({
           date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe("Transaction date, YYYY-MM-DD"),
           description: z.string().min(1).describe("Description"),
-          amount: z.number().min(0).describe("Amount"),
+          amount: z.number().min(0).describe("Amount; the whole payment, and the total each side of the legs must come to"),
           type: transactionTypeSchema.describe("Transaction type"),
           category: z.string().optional().describe("Category"),
-          from_account_id: z.number().int().min(1).optional().describe("Source account ID"),
-          to_account_id: z.number().int().min(1).optional().describe("Destination account ID"),
+          from_account_id: z.number().int().min(1).optional().describe("Source account ID; the credit side when legs are omitted"),
+          to_account_id: z.number().int().min(1).optional().describe("Destination account ID; the debit side when legs are omitted"),
           currency: z.string().optional().describe("Currency"),
+          legs: z.array(transactionLegSchema).min(2).optional().describe(
+            "Journal legs for a compound entry. Debits and credits must each total amount.",
+          ),
         })
         .strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    async ({ date, description, amount, type, category, from_account_id, to_account_id, currency }) => {
+    async ({ date, description, amount, type, category, from_account_id, to_account_id, currency, legs }) => {
       try {
         const body: Record<string, unknown> = { date, description, amount, type };
         if (category !== undefined) body.category = category;
         if (from_account_id !== undefined) body.from_account_id = from_account_id;
         if (to_account_id !== undefined) body.to_account_id = to_account_id;
         if (currency !== undefined) body.currency = currency;
+        if (legs !== undefined) body.legs = legs;
         if (await shouldCreateChangeRequest()) {
           return await createChangeRequestResult({
             resource: "transactions",
@@ -170,6 +180,9 @@ export function registerTransactionTools(server: McpServer): void {
           from_account_id: z.number().int().min(1).optional().describe("Source account ID"),
           to_account_id: z.number().int().min(1).optional().describe("Destination account ID"),
           currency: z.string().optional().describe("Currency"),
+          legs: z.array(transactionLegSchema).min(2).optional().describe(
+            "Replacement journal legs. Given, they rebuild the entry entirely.",
+          ),
         })
         .strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },

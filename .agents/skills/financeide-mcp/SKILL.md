@@ -31,9 +31,12 @@ FinanceIDE MCP（backend `/` FastAPI の facade）を通じてユーザーの実
    - クレカ購入: `CreditExpense`（from=クレカ liability, to=expense）
    - 現金/銀行支払い: `Expense`（from=asset, to=expense）
    - 口座間移動・積立: `Transfer` / 借入返済: `LiabilityPayment`
-3. **Transaction の不変条件**: Transaction には必ず JournalEntry（2 行, debit=credit=amount）が伴う。MCP / API 経由なら backend が自動生成する。**DB 直 INSERT は禁止**（やむを得ず DB を触る場合は `process_transaction` を必ず通す — 詳細は `docs/agent_instruction/data_entry_agent_guide.md`）。
-4. **change request モード**: AI 実行設定によっては write ツールが直接書き込まず `ai_change_requests` を作成する。その場合は preview 内容を報告し、ユーザーの approve / apply（ApprovalInbox または `ai_change_requests_approve/apply`）を待つ。勝手に approve しない。
-5. 書き込み後は必ず読み直して検証する（作成 ID を `transactions_list` 等で再取得）。mutation のレスポンスだけで成功を報告しない。
+3. **Transaction の不変条件**: Transaction には必ず JournalEntry が伴う。**2 行以上**で、借方合計 = 貸方合計 = `amount`。MCP / API 経由なら backend が検算する。**DB 直 INSERT は禁止**（やむを得ず DB を触る場合は `process_transaction` を必ず通す — 詳細は `docs/agent_instruction/data_entry_agent_guide.md`）。
+4. **1 回の支払いが複数科目に分かれる場合は `legs` を使う**（取引を 2 件に分けない）。立替込みの食事なら、貸方にカード 1 本、借方に 食費 と 立替科目。
+   - 誰への立替かは**勘定科目で表す**（`立替 / 友人A` を asset 科目として作る）。貸している額はその科目の残高そのもので、回収は その科目 → 現金 の Transfer 1 本。
+   - `amount` は支払総額のまま。各レグはその内訳で、合計が `amount` に一致しないと拒否される。
+5. **change request モード**: AI 実行設定によっては write ツールが直接書き込まず `ai_change_requests` を作成する。その場合は preview 内容を報告し、ユーザーの approve / apply（ApprovalInbox または `ai_change_requests_approve/apply`）を待つ。勝手に approve しない。
+6. 書き込み後は必ず読み直して検証する（作成 ID を `transactions_list` 等で再取得）。mutation のレスポンスだけで成功を報告しない。
 
 ## 3. Registry が正（source of truth）
 

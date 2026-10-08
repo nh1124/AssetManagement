@@ -23,8 +23,19 @@ Before write operations:
 3. Use exact account IDs from accounts_list.
 4. If unsure about transaction type, call help_choose_transaction_type.
 
+A transaction is its journal legs. Two legs is the ordinary case, where
+from_account_id is the credit side and to_account_id the debit side. A payment
+that splits across more than two accounts passes legs instead: each leg names
+an account and one of debit or credit, both sides total the amount, and the
+amount stays the whole payment.
+
+A bill partly fronted for someone else is the common case. The expense leg
+carries your own share; the part fronted is a debit on a receivable asset
+account, one per person, so what they owe is that account's balance. Getting it
+back is a plain Transfer from that account.
+
 Important write tools:
-- transactions_create / transactions_update: posts journal entries and changes balances.
+- transactions_create / transactions_update: posts journal entries and changes balances. Pass legs for a compound entry.
 - recurring_create: creates a definition only; no real transaction is posted until recurring_process.
 - transaction_batches_create: posts multiple transactions at once.
 - products_create / products_update: updates Product/Item registry and reserve planning metadata.
@@ -62,8 +73,10 @@ For receipt or purchase-history entry:
 1. Identify payment method.
 2. Identify whether the item is a consumable, ordinary expense, or fixed asset.
 3. Call help_choose_transaction_type if the type is not obvious.
-4. Call validate_transaction_payload or transactions_preview.
-5. Only then call transactions_create or transaction_batches_create.
+4. Decide whether the payment splits. If part of it was fronted for someone
+   else, or paid from two accounts, build legs rather than two transactions.
+5. Call validate_transaction_payload or transactions_preview.
+6. Only then call transactions_create or transaction_batches_create.
 
 Product/Item registry is separate from Transaction.
 - Register both when the user asks to track product economics/reserve planning and record the payment.
