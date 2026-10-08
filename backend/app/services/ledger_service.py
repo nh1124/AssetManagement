@@ -6,8 +6,9 @@ registry or reporting.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date
-from typing import Optional
+from typing import Optional, Sequence
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -203,71 +204,184 @@ def _apply_credit(account: models.Account, amount: float) -> None:
         account.balance += amount
 
 
-def _post_transaction_journal(db: Session, transaction: models.Transaction) -> None:
+BALANCE_TOLERANCE = 0.01
+
+
+@dataclass(frozen=True)
+class Leg:
+    """One side of an entry, as given to the posting code."""
+
+    account_id: int
+    debit: float = 0.0
+    credit: float = 0.0
+    memo: str | None = None
+
+
+def _coerce_leg(leg) -> Leg:
+    """Accept a Leg, a pydantic model or a plain mapping."""
+    if isinstance(leg, Leg):
+        return leg
+    if isinstance(leg, dict):
+        data = leg
+    else:
+        data = {
+            "account_id": getattr(leg, "account_id", None),
+            "debit": getattr(leg, "debit", 0.0),
+            "credit": getattr(leg, "credit", 0.0),
+            "memo": getattr(leg, "memo", None),
+        }
+    return Leg(
+        account_id=data.get("account_id"),
+        debit=float(data.get("debit") or 0.0),
+        credit=float(data.get("credit") or 0.0),
+        memo=data.get("memo"),
+    )
+
+
+def _validate_legs(legs: list[Leg], amount: float) -> None:
+    """The ledger invariant, in one place.
+
+    Two or more legs, each on exactly one side, and both sides summing to the
+    transaction amount. The amount is a denormalisation of the legs, so it
+    doubles as the checksum: a receipt total that disagrees with its breakdown
+    is a mistake, not a rounding difference.
     """
-    Post a transaction with double-entry bookkeeping without committing.
-    The UI uses from_account as the credit side and to_account as the debit side.
+    if len(legs) < 2:
+        raise ValueError("A journal entry needs at least two legs")
+
+    for leg in legs:
+        if not leg.account_id:
+            raise ValueError("Every journal leg needs an account")
+        if leg.debit < 0 or leg.credit < 0:
+            raise ValueError("Journal legs cannot be negative")
+        if (leg.debit > 0) == (leg.credit > 0):
+            raise ValueError("A journal leg is either a debit or a credit, not both or neither")
+
+    total_debit = sum(leg.debit for leg in legs)
+    total_credit = sum(leg.credit for leg in legs)
+    if abs(total_debit - total_credit) > BALANCE_TOLERANCE:
+        raise ValueError(
+            f"Journal entry does not balance: debit {total_debit} vs credit {total_credit}"
+        )
+    if abs(total_debit - (amount or 0.0)) > BALANCE_TOLERANCE:
+        raise ValueError(
+            f"Journal entry total {total_debit} does not match the transaction amount {amount}"
+        )
+
+
+def _primary_accounts(legs: list[Leg]) -> tuple[int | None, int | None]:
+    """from_account_id / to_account_id, which only mean something for one leg a side.
+
+    A compound entry has no single counterparty, so the denormalised columns
+    are left empty rather than made to name an arbitrary leg. Readers go to the
+    legs; these two stay for the 1:1 case the API and the UI still speak in.
+    """
+    credits = [leg for leg in legs if leg.credit > 0]
+    debits = [leg for leg in legs if leg.debit > 0]
+    return (
+        credits[0].account_id if len(credits) == 1 else None,
+        debits[0].account_id if len(debits) == 1 else None,
+    )
+
+
+def _legs_from_accounts(db: Session, transaction: models.Transaction) -> list[Leg]:
+    """The two legs a from/to transaction describes, resolving missing accounts.
+
+    from_account is the credit side and to_account the debit side, which is the
+    direction the UI has always used.
+    """
+    defaults = TRANSACTION_ACCOUNT_DEFAULTS.get(transaction.type)
+    if not defaults:
+        raise ValueError(f"Unsupported transaction type: {transaction.type}")
+
+    from_account = _resolve_account(
+        db=db,
+        client_id=transaction.client_id,
+        account_id=transaction.from_account_id,
+        fallback_name=defaults["from_name"],
+        fallback_type=defaults["from_type"],
+    )
+    to_account = _resolve_account(
+        db=db,
+        client_id=transaction.client_id,
+        account_id=transaction.to_account_id,
+        fallback_name=defaults["to_name"],
+        fallback_type=defaults["to_type"],
+    )
+    amount = transaction.amount or 0.0
+    return [
+        Leg(account_id=to_account.id, debit=amount),
+        Leg(account_id=from_account.id, credit=amount),
+    ]
+
+
+def _post_transaction_journal(
+    db: Session,
+    transaction: models.Transaction,
+    legs: Sequence | None = None,
+) -> None:
+    """Write a transaction's journal legs and move the cached balances.
+
+    Without `legs` the transaction's from/to accounts describe the two legs,
+    which is what every existing caller means. With `legs` it can be a compound
+    entry: any number of legs, as long as the two sides balance and come to the
+    transaction amount.
     """
     client_id = transaction.client_id
     if client_id is None:
         raise ValueError("transaction.client_id is required")
 
-    category = transaction.category or "expense"
-    defaults = TRANSACTION_ACCOUNT_DEFAULTS.get(transaction.type)
-    if not defaults:
-        raise ValueError(f"Unsupported transaction type: {transaction.type}")
+    if legs is None:
+        posted = _legs_from_accounts(db, transaction)
+    else:
+        posted = [_coerce_leg(leg) for leg in legs]
+    _validate_legs(posted, transaction.amount or 0.0)
 
-    from_fallback_name = category if transaction.type == "Income" else defaults["from_name"]
-    to_fallback_name = category if transaction.type in ("Expense", "CreditExpense") else defaults["to_name"]
+    accounts: dict[int, models.Account] = {}
+    for leg in posted:
+        if leg.account_id not in accounts:
+            account = _get_account_by_id(db, leg.account_id, client_id)
+            if account is None:
+                raise ValueError(f"Account {leg.account_id} not found for this client")
+            accounts[leg.account_id] = account
 
-    from_account = _resolve_account(
-        db=db,
-        client_id=client_id,
-        account_id=transaction.from_account_id,
-        fallback_name=from_fallback_name,
-        fallback_type=defaults["from_type"],
-    )
-    to_account = _resolve_account(
-        db=db,
-        client_id=client_id,
-        account_id=transaction.to_account_id,
-        fallback_name=to_fallback_name,
-        fallback_type=defaults["to_type"],
-    )
+    for leg in posted:
+        account = accounts[leg.account_id]
+        if leg.debit:
+            _apply_debit(account, leg.debit)
+        else:
+            _apply_credit(account, leg.credit)
 
-    _apply_credit(from_account, transaction.amount)
-    _apply_debit(to_account, transaction.amount)
+    transaction.from_account_id, transaction.to_account_id = _primary_accounts(posted)
 
-    # Persist resolved account linkage for read APIs.
-    transaction.from_account_id = from_account.id
-    transaction.to_account_id = to_account.id
-
-    debit_entry = models.JournalEntry(
-        transaction_id=transaction.id,
-        account_id=to_account.id,
-        debit=transaction.amount,
-        credit=0,
-    )
-    credit_entry = models.JournalEntry(
-        transaction_id=transaction.id,
-        account_id=from_account.id,
-        debit=0,
-        credit=transaction.amount,
-    )
-
-    db.add(debit_entry)
-    db.add(credit_entry)
+    for order, leg in enumerate(posted):
+        db.add(models.JournalEntry(
+            transaction_id=transaction.id,
+            account_id=leg.account_id,
+            debit=leg.debit,
+            credit=leg.credit,
+            memo=leg.memo,
+            sort_order=order,
+        ))
 
 
-def process_transaction(db: Session, transaction: models.Transaction) -> None:
+def process_transaction(
+    db: Session,
+    transaction: models.Transaction,
+    legs: Sequence | None = None,
+) -> None:
     """Process a transaction with double-entry bookkeeping and commit it."""
-    _post_transaction_journal(db, transaction)
+    _post_transaction_journal(db, transaction, legs)
     db.commit()
 
 
-def post_transaction_journal(db: Session, transaction: models.Transaction) -> None:
+def post_transaction_journal(
+    db: Session,
+    transaction: models.Transaction,
+    legs: Sequence | None = None,
+) -> None:
     """Post a transaction with double-entry bookkeeping without committing."""
-    _post_transaction_journal(db, transaction)
+    _post_transaction_journal(db, transaction, legs)
 
 
 def _rollback_transaction_effects(db: Session, transaction: models.Transaction) -> None:
@@ -327,18 +441,12 @@ def update_transaction(
         ).delete(synchronize_session=False)
 
         update_data = payload.model_dump(exclude_unset=True)
+        legs = update_data.pop("legs", None)
         for field, value in update_data.items():
             setattr(tx, field, value)
 
-        # Keep category in sync with to_account when account changes for expense types.
-        if 'to_account_id' in update_data and 'category' not in update_data:
-            if tx.type in ("Expense", "CreditExpense") and tx.to_account_id:
-                to_acct = _get_account_by_id(db, tx.to_account_id, client_id)
-                if to_acct:
-                    tx.category = to_acct.name
-
         db.flush()
-        _post_transaction_journal(db, tx)
+        _post_transaction_journal(db, tx, legs)
         db.commit()
         db.refresh(tx)
         return tx

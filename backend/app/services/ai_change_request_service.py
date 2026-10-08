@@ -504,10 +504,11 @@ def _apply_dispatch(db: Session, client_id: int, row: models.AiChangeRequest) ->
     if (row.resource, row.action) == ("transactions", "create"):
         ensure_default_accounts(db, client_id=client_id, commit=False)
         data = schemas.TransactionCreate(**row.input_payload).model_dump()
+        legs = data.pop("legs", None)
         tx = models.Transaction(**data, client_id=client_id)
         db.add(tx)
         db.flush()
-        post_transaction_journal(db, tx)
+        post_transaction_journal(db, tx, legs)
         db.flush()
         apply_capsule_rules_for_transaction(db, tx, commit=False)
         return {"transaction_id": tx.id}

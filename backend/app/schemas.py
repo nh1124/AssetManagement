@@ -1,7 +1,7 @@
 from pydantic import BaseModel, ConfigDict, Field
 from datetime import date, datetime
 from datetime import date as DateType
-from typing import Any, Optional, Literal
+from typing import Any, List, Optional, Literal
 
 TransactionTypeLiteral = Literal[
     'Income',
@@ -245,10 +245,23 @@ class TransactionBase(BaseModel):
     to_account_id: Optional[int] = None
     batch_id: Optional[int] = None
 
+class TransactionLeg(BaseModel):
+    """One side of an entry. Exactly one of debit or credit is above zero."""
+
+    account_id: int
+    debit: float = 0.0
+    credit: float = 0.0
+    memo: Optional[str] = None
+
+
 class TransactionCreate(TransactionBase):
-    pass
+    # Given legs, the transaction is a compound entry and from/to are derived
+    # from them. Left out, from_account_id and to_account_id describe the two
+    # legs as they always have.
+    legs: Optional[List[TransactionLeg]] = None
 
 class TransactionUpdate(BaseModel):
+    legs: Optional[List[TransactionLeg]] = None
     date: Optional[DateType] = None
     description: Optional[str] = None
     amount: Optional[float] = None
@@ -259,10 +272,21 @@ class TransactionUpdate(BaseModel):
     to_account_id: Optional[int] = None
     batch_id: Optional[int] = None
 
+class TransactionLegRead(TransactionLeg):
+    id: int
+    account_name: Optional[str] = None
+    account_type: Optional[str] = None
+
+
 class Transaction(TransactionBase):
     id: int
     from_account_name: Optional[str] = None
     to_account_name: Optional[str] = None
+    legs: Optional[List[TransactionLegRead]] = None
+    # Set when the list was filtered by account: the amount this transaction
+    # moved on that account, which for a compound entry is not its total.
+    matched_debit: Optional[float] = None
+    matched_credit: Optional[float] = None
 
     class Config:
         from_attributes = True

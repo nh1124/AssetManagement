@@ -195,14 +195,16 @@ def create_transaction_batch(
     created: list[models.Transaction] = []
     try:
         for item in payload.transactions:
+            data = item.model_dump(exclude={"batch_id"})
+            legs = data.pop("legs", None)
             tx = models.Transaction(
-                **item.model_dump(exclude={"batch_id"}),
+                **data,
                 batch_id=batch.id,
                 client_id=current_client.id,
             )
             db.add(tx)
             db.flush()
-            post_transaction_journal(db, tx)
+            post_transaction_journal(db, tx, legs)
             apply_capsule_rules_for_transaction(db, tx, commit=False)
             created.append(tx)
         db.commit()

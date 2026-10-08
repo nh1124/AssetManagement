@@ -4,10 +4,11 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .. import models
-from .ledger_service import calculate_account_journal_balance
+from .ledger_service import BALANCE_TOLERANCE, calculate_account_journal_balance
 from .budget_lines import assign_plan_line_identity, line_identity_key, newest_line_key
 from .budget_plan_store import get_or_create_default_plan
 from .periods import period_to_range
@@ -346,6 +347,58 @@ def _duplicate_plan_line_items(db: Session, client_id: int) -> list[dict[str, An
     return items
 
 
+def _unbalanced_journal_items(db: Session, client_id: int) -> list[dict[str, Any]]:
+    """Transactions whose legs break the ledger invariant.
+
+    Two or more legs, the two sides equal, and both equal to the transaction
+    amount. The posting code enforces this, and the import validator has
+    checked it since before compound entries existed; this reports anything
+    that got in another way -- a direct database edit, or an import from a
+    version that did not check.
+    """
+    rows = (
+        db.query(
+            models.Transaction.id,
+            models.Transaction.date,
+            models.Transaction.description,
+            models.Transaction.amount,
+            func.count(models.JournalEntry.id).label("legs"),
+            func.coalesce(func.sum(models.JournalEntry.debit), 0.0).label("total_debit"),
+            func.coalesce(func.sum(models.JournalEntry.credit), 0.0).label("total_credit"),
+        )
+        .outerjoin(models.JournalEntry, models.JournalEntry.transaction_id == models.Transaction.id)
+        .filter(models.Transaction.client_id == client_id)
+        .group_by(models.Transaction.id)
+        .all()
+    )
+
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        amount = row.amount or 0.0
+        problems = []
+        if row.legs < 2:
+            problems.append("too_few_legs")
+        if abs(row.total_debit - row.total_credit) > BALANCE_TOLERANCE:
+            problems.append("sides_disagree")
+        elif abs(row.total_debit - amount) > BALANCE_TOLERANCE:
+            problems.append("total_disagrees_with_amount")
+        if not problems:
+            continue
+        items.append({
+            "transaction_id": row.id,
+            "date": row.date.isoformat() if row.date else None,
+            "description": row.description,
+            "amount": round(amount, 2),
+            "legs": row.legs,
+            "total_debit": round(row.total_debit, 2),
+            "total_credit": round(row.total_credit, 2),
+            "problem": ",".join(problems),
+            # Only a person can say which of the amount and the legs is right.
+            "repairable": False,
+        })
+    return items
+
+
 def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
     default_plan = db.query(models.BudgetPlan).filter_by(client_id=client_id, is_default=True).first()
     null_plan_count = (
@@ -362,6 +415,7 @@ def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
     registry_recurring = _registry_recurring_items(db, client_id)
     duplicate_recurring = _duplicate_recurring_items(db, client_id)
     duplicate_plan_lines = _duplicate_plan_line_items(db, client_id)
+    unbalanced_journals = _unbalanced_journal_items(db, client_id)
 
     issues = [
         {
@@ -415,6 +469,15 @@ def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
             "count": len(duplicate_recurring),
             "repairable": bool(duplicate_recurring),
             "items": duplicate_recurring[:100],
+        },
+        {
+            "code": "journal_unbalanced",
+            "severity": "error",
+            "title": "Unbalanced journal entries",
+            "detail": "Every transaction needs two or more legs whose debits and credits are equal and come to the transaction amount.",
+            "count": len(unbalanced_journals),
+            "repairable": False,
+            "items": unbalanced_journals[:100],
         },
         {
             "code": "duplicate_plan_lines",
