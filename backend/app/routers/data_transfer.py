@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from .. import models
 from ..database import get_db
 from ..dependencies import get_current_client
-from ..services.accounting_service import calculate_account_journal_balance
+from ..services.ledger_service import calculate_account_journal_balance
 from ..services.budget_plan_service import assign_plan_line_identity
 from ..services.cache_service import invalidate_client
 from ..services.capsule_service import create_capsule_for_goal

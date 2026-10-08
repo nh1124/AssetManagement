@@ -183,7 +183,7 @@ async def startup_event():
     from .database import SessionLocal
     from . import models
     from .utils.password import hash_password
-    from .services.accounting_service import ensure_default_accounts
+    from .services.ledger_service import ensure_default_accounts
 
     settings.validate_production_settings()
     run_alembic_migrations()

@@ -375,7 +375,7 @@ def seed_default_accounts(
     current_client: models.Client = Depends(get_current_client)
 ):
     """Create default accounts for current client."""
-    from ..services.accounting_service import ensure_default_accounts
+    from ..services.ledger_service import ensure_default_accounts
     # We need to update ensure_default_accounts to accept client_id
     ensure_default_accounts(db, client_id=current_client.id)
     invalidate_client(current_client.id)

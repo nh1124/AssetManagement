@@ -181,7 +181,7 @@ def _roadmap_progression_status(goal_data: dict) -> str:
 
 def get_summary(db: Session, client_id: int) -> dict:
     """Calculate financial summary for a specific client."""
-    from .accounting_service import (
+    from .reporting_service import (
         get_balance_sheet,
         get_profit_loss,
         get_variance_analysis,
@@ -358,7 +358,7 @@ def get_depreciation_summary(db: Session, client_id: int) -> dict:
 
 def get_net_position(db: Session, client_id: int) -> dict:
     """Calculate Net Position = Assets - Current Debt - Future Life Event Costs for current client."""
-    from .accounting_service import get_balance_sheet
+    from .reporting_service import get_balance_sheet
     from .goal_service import calculate_overall_goal_probability
 
     bs = get_balance_sheet(db, client_id=client_id)

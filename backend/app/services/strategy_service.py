@@ -782,7 +782,7 @@ def simulate_net_worth_forward(
     contribution_schedule: list[dict[str, Any]] | None = None,
 ) -> list[dict]:
     """Simulate total net worth forward as yearly P10/P50/P90 bands."""
-    from .accounting_service import get_balance_sheet
+    from .reporting_service import get_balance_sheet
 
     years = max(1, min(years, 60))
     config = db.query(models.SimulationConfig).filter(

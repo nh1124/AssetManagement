@@ -6,7 +6,7 @@ from typing import List
 from sqlalchemy.orm import Session
 
 from .. import models
-from .accounting_service import calculate_account_journal_balance
+from .ledger_service import calculate_account_journal_balance
 
 
 def calculate_true_balance(db: Session, account: models.Account) -> float:
