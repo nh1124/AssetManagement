@@ -132,6 +132,7 @@ class Account(Base):
     expected_return = Column(Float, default=0.0)  # Annual return rate % for asset accounts
     role = Column(String, default=AccountRole.UNASSIGNED.value, server_default=AccountRole.UNASSIGNED.value, nullable=False)
     role_target_amount = Column(Float, nullable=True)
+    liability_kind = Column(String, nullable=True)  # card | loan | other; only a card settles monthly
     liability_closing_day = Column(Integer, nullable=True)
     liability_payment_day = Column(Integer, nullable=True)
     liability_payment_month_offset = Column(Integer, default=0, server_default="0", nullable=False)
@@ -146,14 +147,22 @@ class Account(Base):
     entries = relationship("JournalEntry", back_populates="account")
 
 class JournalEntry(Base):
-    """Double-entry: Each transaction creates debit and credit entries."""
+    """One leg of a transaction: an account, an amount, and a direction.
+
+    A transaction has two or more of these and the two sides must balance.
+    This is the only place that says which account a transaction touched, so
+    a compound entry -- a card payment split across an expense account and a
+    receivable, say -- is simply a transaction with three legs.
+    """
     __tablename__ = "journal_entries"
 
     id = Column(Integer, primary_key=True, index=True)
-    transaction_id = Column(Integer, ForeignKey("transactions.id"))
-    account_id = Column(Integer, ForeignKey("accounts.id"))
+    transaction_id = Column(Integer, ForeignKey("transactions.id"), index=True)
+    account_id = Column(Integer, ForeignKey("accounts.id"), index=True)
     debit = Column(Float, default=0)
     credit = Column(Float, default=0)
+    memo = Column(String, nullable=True)  # per-leg note, e.g. "own share" / "advance for A"
+    sort_order = Column(Integer, nullable=True)
     
     account = relationship("Account", back_populates="entries")
     transaction = relationship("Transaction", back_populates="journal_entries")
