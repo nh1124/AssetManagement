@@ -13,7 +13,6 @@ from sqlalchemy.orm import Session
 from .. import models
 from .capsule_service import capsule_balance
 from .fx_service import calculate_account_valued_balance, convert_amount, convert_transaction_amount
-from .goal_service import get_life_events_with_progress
 from .product_reserve_service import effective_budget_treatment, product_reserve_values
 from .registry_service import (
     product_budget_active,
@@ -1806,17 +1805,22 @@ def get_budget_summary(
     plan_id: int | None = None,
     cash_flow_start_period: str | None = None,
     cash_flow_months: int = 12,
+    goal_metrics: dict | None = None,
 ) -> dict:
+    """Build the monthly cash-flow plan summary.
+
+    goal_metrics carries the goal-derived advisory figures (goals_count /
+    total_goal_gap / required_monthly_savings). The caller supplies them --
+    see strategy_service.summarize_goal_funding_gap -- so that planning never
+    depends on the goal domain.
+    """
     context: BudgetSummaryContext = {}
     plan_id = resolve_budget_plan_id(db, client_id, plan_id)
 
-    events_with_progress = get_life_events_with_progress(db, client_id=client_id)
-    total_gap = sum(max(0, e["gap"]) for e in events_with_progress)
-    avg_years = (
-        sum(e["years_remaining"] for e in events_with_progress) / len(events_with_progress)
-        if events_with_progress else 10
-    )
-    required_monthly_savings = total_gap / (avg_years * 12) if avg_years > 0 else 0
+    goal_metrics = goal_metrics or {}
+    goals_count = int(goal_metrics.get("goals_count") or 0)
+    total_gap = float(goal_metrics.get("total_goal_gap") or 0.0)
+    required_monthly_savings = float(goal_metrics.get("required_monthly_savings") or 0.0)
 
     recurring = registry_totals(db, client_id, period, context)
     name_maps = _target_name_maps(db, client_id)
@@ -1993,7 +1997,7 @@ def get_budget_summary(
         "cash_flow_summary": cash_flow_summary,
         "balance_projection": balance_projection,
         "balance_summary": balance_summary,
-        "goals_count": len(events_with_progress),
+        "goals_count": goals_count,
         "total_goal_gap": round(total_gap, 0),
     }
 

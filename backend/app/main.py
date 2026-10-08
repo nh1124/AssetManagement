@@ -135,7 +135,7 @@ def ensure_no_default_admin_password(db) -> None:
 
 
 def backfill_recurring_next_due_dates(db, today: date | None = None) -> int:
-    from .services.recurring_service import ensure_next_due_date
+    from .services.schedule_rules import ensure_next_due_date
 
     rows = db.query(models.RecurringTransaction).filter(
         models.RecurringTransaction.is_active.is_(True),
@@ -183,7 +183,7 @@ async def startup_event():
     from .database import SessionLocal
     from . import models
     from .utils.password import hash_password
-    from .services.accounting_service import ensure_default_accounts
+    from .services.ledger_service import ensure_default_accounts
 
     settings.validate_production_settings()
     run_alembic_migrations()

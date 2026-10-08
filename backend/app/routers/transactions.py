@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
-from ..services.accounting_service import (
+from ..services.ledger_service import (
     ensure_default_accounts,
     post_transaction_journal,
     revert_transaction,

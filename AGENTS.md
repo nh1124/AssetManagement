@@ -24,8 +24,16 @@
 
 ## 開発コマンド
 
-- 起動: `docker-compose up` または `start_service.bat`
-- backend テスト: `pytest backend/tests`（Windows ローカルに Python が無い場合は WSL Ubuntu の venv `/tmp/amvenv2` を使用）
+リポジトリとツールチェーンは **WSL Ubuntu 側** (`~/AssetManagement`) にある。Windows の PowerShell / Git Bash には `docker` も Python も通っていないため、以下はすべて WSL 内で実行する。
+
+- 起動: `docker compose --env-file .env up -d`
+- 状態確認: `docker compose --env-file .env ps`（4 サービスすべて healthy が正常）
+- backend テスト: `~/amvenv/bin/python -m pytest backend/tests`。SQLite インメモリで動くため Docker は不要
+- venv の再作成: `python3 -m venv ~/amvenv && ~/amvenv/bin/pip install -r backend/requirements.txt pytest`
+- auto-reload は既定で無効（起動が決定的になるため）。使う場合は `BACKEND_RELOAD=1 docker compose --env-file .env up -d backend`。無効のままコードを反映するには `docker compose --env-file .env restart backend`
+- **Windows ファイルシステム上 (`/mnt/c/...`) にチェックアウトしない**こと。inotify が無いため auto-reload が `os error 5` で backend ごと落ち、ビルドも極端に遅くなる
+- node の依存を入れ直すときは `npm install` ではなく **`npm ci`** を使う。`npm ci` は node_modules を削除してから入れ直すため、外部から紛れ込んだディレクトリが残らない
+- `npm --prefix mcp run check:node-modules` で、lockfile に無いパッケージが node_modules に紛れていないか検査できる（過去に別リポジトリの workspace を再帰コピーで取り込み、20GB が 3 ヶ月放置された）
 - 型チェック: `frontend/` と `mcp/` それぞれで `npx tsc --noEmit`
 - MCP 契約チェック: `backend/tests/test_mcp_write_tool_contracts.py`
 

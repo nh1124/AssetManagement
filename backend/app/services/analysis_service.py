@@ -11,14 +11,18 @@ from sqlalchemy.orm import Session
 from .. import models
 from .fx_service import (
     DEBIT_NORMAL_TYPES,
-    build_rate_lookup,
     calculate_account_valued_balance,
     calculate_account_valued_balances,
     convert_amount,
-    convert_amount_with_lookup,
     convert_transaction_amount,
 )
 from .budget_plan_service import resolve_budget_plan_id
+from .goal_service import calculate_overall_goal_probability
+from .reporting_service import (
+    get_balance_sheet,
+    get_profit_loss,
+    get_variance_analysis,
+)
 
 
 LIQUID_ACCOUNT_NAMES = {"cash", "bank", "savings"}
@@ -181,12 +185,6 @@ def _roadmap_progression_status(goal_data: dict) -> str:
 
 def get_summary(db: Session, client_id: int) -> dict:
     """Calculate financial summary for a specific client."""
-    from .accounting_service import (
-        get_balance_sheet,
-        get_profit_loss,
-        get_variance_analysis,
-    )
-    from .goal_service import calculate_overall_goal_probability
 
     bs = get_balance_sheet(db, client_id=client_id)
     today = date.today()
@@ -358,8 +356,6 @@ def get_depreciation_summary(db: Session, client_id: int) -> dict:
 
 def get_net_position(db: Session, client_id: int) -> dict:
     """Calculate Net Position = Assets - Current Debt - Future Life Event Costs for current client."""
-    from .accounting_service import get_balance_sheet
-    from .goal_service import calculate_overall_goal_probability
 
     bs = get_balance_sheet(db, client_id=client_id)
     goal_data = calculate_overall_goal_probability(db, client_id=client_id)
@@ -373,84 +369,3 @@ def get_net_position(db: Session, client_id: int) -> dict:
         "future_life_event_costs": future_costs,
         "net_position": net_position,
     }
-
-
-def _calc_net_worth_at(db: Session, client_id: int, as_of: date) -> dict:
-    assets = 0.0
-    liabilities = 0.0
-    accounts = db.query(models.Account).filter(models.Account.client_id == client_id).all()
-    balances = calculate_account_valued_balances(db, accounts, as_of_date=as_of)
-    for account in accounts:
-        balance = balances.get(account.id, 0.0)
-        if account.account_type in ("asset", "item"):
-            assets += balance
-        elif account.account_type == "liability":
-            liabilities += abs(balance)
-
-    return {
-        "assets": assets,
-        "liabilities": liabilities,
-        "net_worth": assets - liabilities,
-    }
-
-
-def get_net_worth_history(db: Session, client_id: int, months: int = 36) -> list[dict]:
-    months = max(1, min(months, 240))
-    today = date.today()
-    periods = []
-    for i in range(months - 1, -1, -1):
-        target = today.replace(day=1) - relativedelta(months=i)
-        periods.append(target + relativedelta(months=1, days=-1))
-
-    accounts = db.query(models.Account).filter(models.Account.client_id == client_id).all()
-    account_by_id = {account.id: account for account in accounts}
-    balances = {account.id: 0.0 for account in accounts}
-    latest_period = periods[-1]
-    lookup = build_rate_lookup(db, client_id)
-    entries = db.query(models.JournalEntry, models.Transaction).join(
-        models.Transaction,
-        models.Transaction.id == models.JournalEntry.transaction_id,
-    ).filter(
-        models.JournalEntry.account_id.in_(account_by_id.keys() or {-1}),
-        models.Transaction.date <= latest_period,
-    ).order_by(models.Transaction.date, models.JournalEntry.id).all()
-
-    history = []
-    entry_index = 0
-    for eom in periods:
-        while entry_index < len(entries) and entries[entry_index][1].date <= eom:
-            entry, transaction = entries[entry_index]
-            entry_index += 1
-            account = account_by_id.get(entry.account_id)
-            if not account:
-                continue
-            if account.account_type in DEBIT_NORMAL_TYPES:
-                signed_amount = (entry.debit or 0.0) - (entry.credit or 0.0)
-            else:
-                signed_amount = (entry.credit or 0.0) - (entry.debit or 0.0)
-            balances[account.id] += convert_amount_with_lookup(
-                lookup,
-                signed_amount,
-                transaction.currency,
-                transaction.date,
-            )
-
-        assets = 0.0
-        liabilities = 0.0
-        for account in accounts:
-            balance = balances.get(account.id, 0.0)
-            if account.account_type in ("asset", "item"):
-                assets += balance
-            elif account.account_type == "liability":
-                liabilities += abs(balance)
-
-        history.append(
-            {
-                "period": eom.strftime("%Y-%m"),
-                "net_worth": round(assets - liabilities, 2),
-                "assets": round(assets, 2),
-                "liabilities": round(liabilities, 2),
-            }
-        )
-
-    return history

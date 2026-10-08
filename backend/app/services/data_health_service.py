@@ -7,7 +7,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from .. import models
-from .accounting_service import calculate_account_journal_balance
+from .ledger_service import calculate_account_journal_balance
 from .budget_plan_service import assign_plan_line_identity, _line_identity_key, _newest_line_key, get_or_create_default_plan, period_to_range
 from .cache_service import invalidate_client
 from .registry_service import (

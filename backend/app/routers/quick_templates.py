@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
-from ..services.accounting_service import ensure_default_accounts, post_transaction_journal
+from ..services.ledger_service import ensure_default_accounts, post_transaction_journal
 from ..services.capsule_service import apply_capsule_rules_for_transaction
 
 router = APIRouter(prefix="/quick-templates", tags=["quick-templates"])

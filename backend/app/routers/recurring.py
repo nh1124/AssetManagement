@@ -8,11 +8,13 @@ from ..dependencies import get_current_client
 from ..services.cache_service import invalidate_client
 from ..services.registry_service import detach_registry_from_recurring, sync_registry_from_recurring
 from ..services.recurring_service import (
+    post_recurring_transaction,
+    process_due_for_client,
+)
+from ..services.schedule_rules import (
     advance_next_due_date,
     ensure_next_due_date,
     is_past_end_period,
-    post_recurring_transaction,
-    process_due_for_client,
 )
 
 router = APIRouter(prefix="/recurring", tags=["recurring"])

@@ -20,7 +20,10 @@ config = context.config
 config.set_main_option("sqlalchemy.url", SQLALCHEMY_DATABASE_URL)
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # disable_existing_loggers defaults to True, which silences uvicorn's
+    # loggers when migrations run inside the app process on startup. That is
+    # why `docker logs finance-backend` showed nothing after boot.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 
