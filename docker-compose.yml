@@ -28,6 +28,9 @@ services:
       - ./backend/alembic:/app/alembic
       - ./backend/alembic.ini:/app/alembic.ini
     environment:
+      # Without this, uvicorn's access log sits in Python's stdout buffer and
+      # `docker logs` shows nothing until the container stops.
+      - PYTHONUNBUFFERED=1
       - APP_ENV=${APP_ENV:-development}
       - DATABASE_URL=postgresql+psycopg2://postgres:postgres@db:5432/finance_ide
       - JWT_SECRET_KEY=${JWT_SECRET_KEY:-dev_jwt_secret_change_in_production_must_be_32_chars}
@@ -38,8 +41,25 @@ services:
       - MCP_TOKEN_AUDIENCE=${MCP_TOKEN_AUDIENCE:-asset-management-backend}
       - MCP_BASE_URL=${MCP_BASE_URL:-http://localhost:13000}
       - MCP_ALLOWED_ISSUERS=${MCP_ALLOWED_ISSUERS:-http://localhost:13000,https://localhost:13000}
+      # Auto-reload is opt-in: BACKEND_RELOAD=1 docker compose up -d backend
+      # Off by default so startup stays deterministic. It works as long as the
+      # repository lives on a Linux filesystem. From a Windows bind mount
+      # (/mnt/c/...) there is no inotify, and the watcher dies with
+      # "Input/output error (os error 5)", taking the container with it.
+      - BACKEND_RELOAD=${BACKEND_RELOAD:-0}
     command: >
-      sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+      sh -c "alembic upgrade head &&
+      if [ \"$$BACKEND_RELOAD\" = \"1\" ]; then
+      exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app;
+      else
+      exec uvicorn app.main:app --host 0.0.0.0 --port 8000;
+      fi"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
     depends_on:
       db:
         condition: service_healthy
@@ -53,6 +73,16 @@ services:
     container_name: finance-frontend
     ports:
       - "${FRONTEND_PORT:-15173}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    # service_started, not service_healthy: nginx now resolves the backend at
+    # request time, so it should come up and serve the SPA even when the API is
+    # down. Blocking on backend health would hide the UI exactly when it is
+    # most useful for diagnosing.
     depends_on:
       - backend
     restart: unless-stopped
@@ -72,6 +102,12 @@ services:
       - BACKEND_URL=http://backend:8000
       - BACKEND_USERNAME=${BACKEND_USERNAME:-}
       - BACKEND_PASSWORD=${BACKEND_PASSWORD:-}
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
     depends_on:
       - backend
     restart: unless-stopped
