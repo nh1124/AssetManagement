@@ -37,7 +37,6 @@ DATA_COLLECTIONS = [
     "journal_entries",
     "budget_plans",
     "monthly_plan_lines",
-    "monthly_reviews",
     "period_reviews",
     "monthly_actions",
     "milestones",
@@ -717,23 +716,6 @@ def export_client_data(
                 .order_by(models.MonthlyPlanLine.target_period, models.MonthlyPlanLine.id)
                 .all()
             ],
-            "monthly_reviews": [
-                _row(
-                    review,
-                    [
-                        "id",
-                        "target_period",
-                        "reflection",
-                        "next_actions",
-                        "created_at",
-                        "updated_at",
-                    ],
-                )
-                for review in db.query(models.MonthlyReview)
-                .filter(models.MonthlyReview.client_id == current_client.id)
-                .order_by(models.MonthlyReview.target_period)
-                .all()
-            ],
             "period_reviews": [
                 _row(
                     review,
@@ -977,7 +959,6 @@ def import_client_data(
 
         for model in [
             models.MonthlyPlanLine,
-            models.MonthlyReview,
             models.PeriodReview,
             models.MonthlyAction,
             models.CapsuleRule,
@@ -1251,18 +1232,6 @@ def import_client_data(
         _assert_imported_journal_invariant(db, list(transaction_map.values()))
         for account in db.query(models.Account).filter(models.Account.client_id == current_client.id).all():
             account.balance = calculate_account_journal_balance(db, account)
-
-        for item in data.get("monthly_reviews", []):
-            db.add(
-                models.MonthlyReview(
-                    client_id=current_client.id,
-                    target_period=item["target_period"],
-                    reflection=item.get("reflection") or "",
-                    next_actions=item.get("next_actions") or "",
-                    created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
-                    updated_at=_parse_datetime(item.get("updated_at")),
-                )
-            )
 
         for item in data.get("period_reviews", []):
             db.add(

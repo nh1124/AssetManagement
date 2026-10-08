@@ -686,22 +686,7 @@ class BudgetPlanCompareResult(BaseModel):
 
 # ========== Monthly Reviews ==========
 
-class MonthlyReviewBase(BaseModel):
-    target_period: str
-    reflection: str = ""
-    next_actions: str = ""
-
-
-class MonthlyReviewCreate(MonthlyReviewBase):
-    pass
-
-
-class MonthlyReview(MonthlyReviewBase):
-    id: int
-    created_at: datetime
-    updated_at: Optional[datetime] = None
-
-    class Config:
+class Config:
         from_attributes = True
 
 

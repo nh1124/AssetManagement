@@ -496,16 +496,6 @@
     "path_fragment": "/ai/change-requests/${id}/refresh-preview"
   },
   {
-    "tool": "monthly_reviews_upsert",
-    "method": "put",
-    "path": "/monthly-reviews/",
-    "body": "object",
-    "source": "src/tools/monthly-planning.ts",
-    "path_fragment": "/monthly-reviews/",
-    "allowed_fields": ["target_period", "reflection", "next_actions"],
-    "required_fields": ["target_period"]
-  },
-  {
     "tool": "period_reviews_upsert",
     "method": "put",
     "path": "/period-reviews/",

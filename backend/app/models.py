@@ -65,7 +65,6 @@ class Client(Base):
     milestones = relationship("Milestone", back_populates="client")
     capsules = relationship("Capsule", back_populates="client")
     capsule_rules = relationship("CapsuleRule", back_populates="client")
-    monthly_reviews = relationship("MonthlyReview", back_populates="client")
     monthly_plan_lines = relationship("MonthlyPlanLine", back_populates="client")
     budget_plans = relationship("BudgetPlan", back_populates="client")
     period_reviews = relationship("PeriodReview", back_populates="client")
@@ -425,23 +424,6 @@ class MonthlyPlanLine(Base):
     source_account = relationship("Account", foreign_keys=[source_account_id])
     recurring_transaction = relationship("RecurringTransaction", foreign_keys=[recurring_transaction_id])
     budget_plan = relationship("BudgetPlan", back_populates="plan_lines")
-
-class MonthlyReview(Base):
-    """PDCA review notes for a specific month."""
-    __tablename__ = "monthly_reviews"
-
-    id = Column(Integer, primary_key=True, index=True)
-    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
-    target_period = Column(String, nullable=False)  # Format: "YYYY-MM"
-    reflection = Column(Text, default="")
-    next_actions = Column(Text, default="")
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    __table_args__ = (UniqueConstraint("client_id", "target_period", name="_client_review_period_uc"),)
-
-    client = relationship("Client", back_populates="monthly_reviews")
-
 
 class BudgetPlan(Base):
     """Named cash-flow planning scenario for comparing budget strategies."""
