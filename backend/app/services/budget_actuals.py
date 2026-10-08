@@ -8,8 +8,6 @@ amount into asset buckets by looking at the accounts on each side.
 """
 from __future__ import annotations
 
-from typing import Iterable
-
 from .. import models
 from .budget_context import BudgetContext
 from .budget_lines import (
@@ -24,12 +22,8 @@ from .budget_lines import (
     account_flow_bucket,
 )
 from .budget_registry_lines import registry_plan_lines
-from .fx_service import convert_transaction_amount
+from .journal_legs import Leg
 from .periods import current_period_key
-
-
-def _sum_transactions(ctx: BudgetContext, txs: Iterable[models.Transaction]) -> float:
-    return sum(convert_transaction_amount(ctx.db, tx, client_id=ctx.client_id) for tx in txs)
 
 
 def _funded_by_card(ctx: BudgetContext, line: models.MonthlyPlanLine | dict) -> bool:
@@ -55,18 +49,121 @@ def plan_line_has_cash_impact(
     return not _funded_by_card(ctx, line)
 
 
+# Which side of an entry a plan line's own account sits on. This is just the
+# bookkeeping convention: an expense line's account is debited, an income
+# line's account is credited, and the counterparty leg is whatever funded or
+# received it.
+_LINE_SIDE: dict[str, str] = {
+    "income": "credit",
+    "expense": "debit",
+    "allocation": "debit",
+    "debt_payment": "debit",
+    "borrowing": "credit",
+    "drawdown": "credit",
+}
+
+# Used only when a plan line names no account and has to be matched by text:
+# the leg still has to be on a plausible account for that line type.
+_LINE_ACCOUNT_TYPES: dict[str, set[str]] = {
+    "income": {"income"},
+    "expense": {"expense"},
+    "allocation": {"asset", "item"},
+    "debt_payment": {"liability"},
+    "borrowing": {"liability"},
+    "drawdown": {"asset", "item"},
+}
+
+
+def _leg_amount(leg: Leg, side: str) -> float:
+    return leg.debit if side == "debit" else leg.credit
+
+
+def _on_side(leg: Leg, side: str) -> bool:
+    return _leg_amount(leg, side) > 0
+
+
+def _matching_legs(
+    ctx: BudgetContext,
+    line: models.MonthlyPlanLine | dict,
+    period: str,
+    *,
+    account_id: int | None,
+    source_account_id: int | None = None,
+    exclude_card_funded: bool = False,
+) -> list[Leg]:
+    """The legs in `period` that belong to this plan line.
+
+    A plan line claims one side of an entry: the leg on its own account. The
+    other legs of the same transaction belong to whatever funded it, and to any
+    other plan line that happens to share the payment -- a card bill split
+    between an expense account and a receivable matches the expense line with
+    its expense leg only, and the receivable leg matches no plan line at all.
+    """
+    line_type = _line_attr(line, "line_type")
+    side = _LINE_SIDE.get(line_type)
+    if side is None:
+        return []
+    other = "credit" if side == "debit" else "debit"
+
+    name = (_line_attr(line, "name") or "").strip().lower()
+    legs = ctx.period_legs(period)
+    by_transaction: dict[int, list[Leg]] = {}
+    for leg in legs:
+        by_transaction.setdefault(leg.transaction.id, []).append(leg)
+
+    def counterparties(leg: Leg) -> list[Leg]:
+        return [
+            sibling
+            for sibling in by_transaction.get(leg.transaction.id, ())
+            if sibling.entry.id != leg.entry.id and _on_side(sibling, other)
+        ]
+
+    matched: list[Leg] = []
+    for leg in legs:
+        if not _on_side(leg, side):
+            continue
+
+        if account_id:
+            if leg.account.id != account_id:
+                continue
+        else:
+            if leg.account_type not in _LINE_ACCOUNT_TYPES.get(line_type, set()):
+                continue
+            tx = leg.transaction
+            haystack = "%s %s" % ((tx.description or "").lower(), (tx.category or "").lower())
+            if not name or name not in haystack:
+                continue
+
+        funding = counterparties(leg)
+        if source_account_id and not any(
+            # An allocation taken straight out of income -- a payroll deduction
+            # into a stock plan, say -- never passes through the account the
+            # plan nominated, and it is still that allocation.
+            f.account.id == source_account_id or f.account_type == "income"
+            for f in funding
+        ):
+            continue
+        if exclude_card_funded and any(f.account.liability_kind == "card" for f in funding):
+            # Settled later by budget_credit_settlement, so it is not cash now.
+            continue
+
+        matched.append(leg)
+    return matched
+
+
 def actual_for_plan_line(
     ctx: BudgetContext,
     line: models.MonthlyPlanLine | dict,
     period: str,
 ) -> float:
-    txs = ctx.period_transactions(period)
-    line_type = line["line_type"] if isinstance(line, dict) else line.line_type
-    target_type = line["target_type"] if isinstance(line, dict) else line.target_type
-    target_id = line.get("target_id") if isinstance(line, dict) else line.target_id
-    account_id = line.get("account_id") if isinstance(line, dict) else line.account_id
-    name = (line.get("name") if isinstance(line, dict) else line.name) or ""
-    needle = name.lower()
+    """What has been posted against this plan line, for budget variance.
+
+    A capsule line reports the capsule's balance rather than the month's
+    movement, which is what makes this differ from the cash-flow actual.
+    """
+    target_type = _line_attr(line, "target_type")
+    target_id = _line_attr(line, "target_id")
+    account_id = _line_attr(line, "account_id")
 
     if target_type == "capsule" and target_id:
         capsule = ctx.capsule(target_id)
@@ -74,75 +171,13 @@ def actual_for_plan_line(
             return ctx.capsule_balance(capsule)
         account_id = ctx.capsule_account_ids.get(target_id)
 
-    if line_type == "income":
-        selected = [
-            tx for tx in txs
-            if tx.type == "Income"
-            and (
-                (account_id and tx.from_account_id == account_id)
-                or (not account_id and needle and needle in (tx.description or "").lower())
-                or (not account_id and needle and needle in (tx.category or "").lower())
-            )
-        ]
-    elif line_type == "expense":
-        selected = [
-            tx for tx in txs
-            if tx.type in {"Expense", "CreditExpense"}
-            and (
-                (account_id and tx.to_account_id == account_id)
-                or (not account_id and needle and needle in (tx.description or "").lower())
-                or (not account_id and needle and needle in (tx.category or "").lower())
-            )
-        ]
-    elif line_type == "allocation":
-        selected = [
-            tx for tx in txs
-            if (
-                tx.type in {"Transfer", "CreditAssetPurchase"}
-                or tx.type == "Income"
-            )
-            and (
-                (account_id and tx.to_account_id == account_id)
-                or (
-                    not account_id
-                    and needle
-                    and (
-                        needle in (tx.description or "").lower()
-                        or needle in (tx.category or "").lower()
-                    )
-                )
-            )
-        ]
-    elif line_type == "debt_payment":
-        selected = [
-            tx for tx in txs
-            if tx.type == "LiabilityPayment"
-            and (
-                (account_id and tx.to_account_id == account_id)
-                or (not account_id and needle and needle in (tx.description or "").lower())
-            )
-        ]
-    elif line_type == "borrowing":
-        selected = [
-            tx for tx in txs
-            if tx.type == "Borrowing"
-            and (
-                (account_id and tx.from_account_id == account_id)
-                or (not account_id and needle and needle in (tx.description or "").lower())
-            )
-        ]
-    elif line_type == "drawdown":
-        selected = [
-            tx for tx in txs
-            if tx.type == "Transfer"
-            and (
-                (account_id and tx.from_account_id == account_id)
-                or (not account_id and needle and needle in (tx.description or "").lower())
-            )
-        ]
-    else:
-        selected = []
-    return _sum_transactions(ctx, selected)
+    side = _LINE_SIDE.get(_line_attr(line, "line_type"))
+    if side is None:
+        return 0.0
+    return sum(
+        _leg_amount(leg, side)
+        for leg in _matching_legs(ctx, line, period, account_id=account_id)
+    )
 
 
 def cash_flow_actual_for_plan_line(
@@ -150,85 +185,29 @@ def cash_flow_actual_for_plan_line(
     line: models.MonthlyPlanLine | dict,
     period: str,
 ) -> float:
-    """Return transactions already executed for a plan line in a cash-flow period.
+    """What has already moved cash for this plan line in the month.
 
-    This intentionally differs from actual_for_plan_line: capsule budget rows use
-    current capsule balance for budget variance, but cash flow only needs the
-    already-executed movement for the month.
+    Narrower than actual_for_plan_line in two ways. A capsule line reports its
+    month's movement, not the capsule balance. And a leg funded from a card is
+    left out: the budget was consumed, but the cash moves when the card is
+    settled.
     """
     if not plan_line_has_cash_impact(ctx, line):
         return 0.0
-    txs = ctx.period_transactions(period)
-    line_type = _line_attr(line, "line_type")
-    account_id = _cash_flow_line_account_id(ctx, line)
-    source_account_id = _cash_flow_line_source_account_id(ctx, line)
-    name = (_line_attr(line, "name") or "").lower()
-
-    def source_matches(tx: models.Transaction, attr: str) -> bool:
-        return not source_account_id or getattr(tx, attr) == source_account_id
-
-    def matches_text(tx: models.Transaction) -> bool:
-        return bool(
-            name
-            and (
-                name in (tx.description or "").lower()
-                or name in (tx.category or "").lower()
-            )
+    side = _LINE_SIDE.get(_line_attr(line, "line_type"))
+    if side is None:
+        return 0.0
+    return sum(
+        _leg_amount(leg, side)
+        for leg in _matching_legs(
+            ctx,
+            line,
+            period,
+            account_id=_cash_flow_line_account_id(ctx, line),
+            source_account_id=_cash_flow_line_source_account_id(ctx, line),
+            exclude_card_funded=True,
         )
-
-    if line_type == "income":
-        selected = [
-            tx for tx in txs
-            if tx.type == "Income"
-            and source_matches(tx, "to_account_id")
-            and ((account_id and tx.from_account_id == account_id) or (not account_id and matches_text(tx)))
-        ]
-    elif line_type == "expense":
-        selected = [
-            tx for tx in txs
-            if tx.type == "Expense"
-            and source_matches(tx, "from_account_id")
-            and ((account_id and tx.to_account_id == account_id) or (not account_id and matches_text(tx)))
-        ]
-    elif line_type == "allocation":
-        selected = [
-            tx for tx in txs
-            if (
-                (
-                    tx.type == "Transfer"
-                    and source_matches(tx, "from_account_id")
-                    and ((account_id and tx.to_account_id == account_id) or (not account_id and matches_text(tx)))
-                )
-                or (
-                    tx.type == "Income"
-                    and ((account_id and tx.to_account_id == account_id) or (not account_id and matches_text(tx)))
-                )
-            )
-        ]
-    elif line_type == "debt_payment":
-        selected = [
-            tx for tx in txs
-            if tx.type == "LiabilityPayment"
-            and source_matches(tx, "from_account_id")
-            and ((account_id and tx.to_account_id == account_id) or (not account_id and matches_text(tx)))
-        ]
-    elif line_type == "borrowing":
-        selected = [
-            tx for tx in txs
-            if tx.type == "Borrowing"
-            and source_matches(tx, "to_account_id")
-            and ((account_id and tx.from_account_id == account_id) or (not account_id and matches_text(tx)))
-        ]
-    elif line_type == "drawdown":
-        selected = [
-            tx for tx in txs
-            if tx.type == "Transfer"
-            and source_matches(tx, "to_account_id")
-            and ((account_id and tx.from_account_id == account_id) or (not account_id and matches_text(tx)))
-        ]
-    else:
-        selected = []
-    return _sum_transactions(ctx, selected)
+    )
 
 
 def _cash_flow_line_account_id(

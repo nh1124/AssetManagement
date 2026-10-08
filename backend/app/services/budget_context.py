@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from .capsule_service import capsule_balance as _capsule_balance
+from .journal_legs import Leg, legs_in_period
 from .periods import period_to_range
 
 
@@ -37,6 +38,7 @@ class BudgetContext:
         self.db = db
         self.client_id = client_id
         self._period_transactions: dict[str, list[models.Transaction]] = {}
+        self._period_legs: dict[str, list[Leg]] = {}
         self._capsule_balances: dict[int, float] = {}
         self._recurring_types: dict[int, str | None] = {}
         self._registry_lines: dict[str, list[dict]] = {}
@@ -55,6 +57,19 @@ class BudgetContext:
                 models.Transaction.date < end,
             ).all()
             self._period_transactions[period] = cached
+        return cached
+
+    def period_legs(self, period: str) -> list[Leg]:
+        """Every journal leg of the month, with its account resolved.
+
+        Matching a plan line against the ledger is a per-leg question -- which
+        account, which side -- so the leg list is cached the same way the
+        transaction list is.
+        """
+        cached = self._period_legs.get(period)
+        if cached is None:
+            cached = legs_in_period(self.db, self.client_id, period)
+            self._period_legs[period] = cached
         return cached
 
     # ------------------------------------------------------------------
