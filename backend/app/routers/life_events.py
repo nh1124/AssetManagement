@@ -1,22 +1,19 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from datetime import datetime
 import json
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import Optional
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.goal_service import (
-    get_life_events_with_progress, 
-    calculate_overall_goal_probability, 
+    get_life_events_with_progress,
+    calculate_overall_goal_probability,
     generate_budget_from_goals,
     get_strategy_dashboard,
-    summarize_goal_funding_gap,
 )
 from ..services.capsule_service import apply_capsule_rules_for_transaction, create_capsule_for_goal, capsule_balance
 from ..services.ledger_service import post_transaction_journal
-from ..services.budget_plan_service import create_plan_lines, get_budget_summary as build_budget_summary, update_plan_lines
-from ..services.cache_service import get_or_set, invalidate_client
+from ..services.cache_service import invalidate_client
 
 router = APIRouter(prefix="/life-events", tags=["life_events"])
 
