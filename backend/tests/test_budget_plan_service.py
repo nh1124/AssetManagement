@@ -569,7 +569,7 @@ def test_variance_analysis_uses_specified_plan_budget() -> None:
         db.close()
 
 
-def test_save_plan_lines_updates_capsule_contribution_and_monthly_plan_line() -> None:
+def test_create_plan_lines_updates_capsule_contribution_and_monthly_plan_line() -> None:
     db = _session()
     try:
         client = models.Client(id=1, name="test", general_settings={}, ai_config={})

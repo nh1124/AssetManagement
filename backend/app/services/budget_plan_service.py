@@ -831,22 +831,6 @@ def cash_flow_actual_for_plan_line(
     return _sum_transactions(selected, db, client_id)
 
 
-def _cash_flow_line_amount_for_period(
-    db: Session,
-    client_id: int,
-    line: models.MonthlyPlanLine,
-    period: str,
-    context: BudgetSummaryContext | None = None,
-) -> float:
-    planned = line.amount or 0.0
-    if period != current_period_key():
-        return planned
-    if not plan_line_has_cash_impact(db, client_id, line, context):
-        return planned
-    actual = cash_flow_actual_for_plan_line(db, client_id, line, period, context)
-    return max(0.0, planned - actual)
-
-
 def _serialize_plan_line(
     db: Session,
     client_id: int,
@@ -1643,29 +1627,6 @@ def _merge_credit_settlement_context(plan_lines: list[dict], settlement_lines: l
     return plan_lines
 
 
-def _plan_line_matches_registry_line(line: models.MonthlyPlanLine | dict, registry_line: dict) -> bool:
-    if _line_attr(line, "line_type") != registry_line.get("line_type"):
-        return False
-    if (_line_attr(line, "cash_treatment") or "auto") != (registry_line.get("cash_treatment") or "auto"):
-        return False
-    line_account_id = _line_attr(line, "account_id")
-    registry_account_id = registry_line.get("account_id")
-    if line_account_id and registry_account_id and line_account_id == registry_account_id:
-        return True
-    if line_account_id != registry_account_id:
-        return False
-    line_name = (_line_attr(line, "name") or _line_attr(line, "target_name") or "").strip().lower()
-    registry_names = {
-        (registry_line.get("name") or "").strip().lower(),
-        (registry_line.get("target_name") or "").strip().lower(),
-    }
-    registry_names.update(
-        (item.get("name") or "").strip().lower()
-        for item in registry_line.get("registry_items", [])
-    )
-    return bool(line_name and line_name in registry_names)
-
-
 def _liquid_cash(db: Session, client_id: int) -> float:
     accounts = db.query(models.Account).filter(
         models.Account.client_id == client_id,
@@ -1808,12 +1769,11 @@ def get_budget_summary(
         - total_debt_plan
     )
     starting_cash = _liquid_cash(db, client_id)
-    minimum_operating_cash = 0.0
     ending_cash_after_plan = starting_cash + remaining
     feasibility_status = "ok"
     if remaining < 0:
         feasibility_status = "warning"
-    if ending_cash_after_plan < minimum_operating_cash:
+    if ending_cash_after_plan < 0:
         feasibility_status = "shortfall"
 
     projection_start = cash_flow_start_period or period
@@ -1841,7 +1801,6 @@ def get_budget_summary(
         "remaining_balance": round(remaining, 0),
         "starting_cash": round(starting_cash, 0),
         "ending_cash_after_plan": round(ending_cash_after_plan, 0),
-        "minimum_operating_cash": round(minimum_operating_cash, 0),
         "feasibility_status": feasibility_status,
         "plan_lines": plan_lines,
         "expense_accounts": [
@@ -2321,8 +2280,3 @@ def update_plan_lines(
     else:
         db.flush()
     return saved
-
-
-def save_plan_lines(db: Session, client_id: int, payloads: list) -> list[models.MonthlyPlanLine]:
-    """Backward-compatible alias for id-required batch updates."""
-    return update_plan_lines(db, client_id, payloads)
