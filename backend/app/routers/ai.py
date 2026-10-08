@@ -6,6 +6,7 @@ import json
 from .. import models
 from ..database import get_db
 from ..dependencies import get_current_client
+from ..services.journal_legs import legs_in_range
 from ..security import decrypt_key
 
 router = APIRouter(prefix="/api/analyze", tags=["ai"])
@@ -132,17 +133,21 @@ async def suggest_budget(
     from datetime import datetime, timedelta
     start_date = datetime.now() - timedelta(days=90)
     
-    transactions = db.query(models.Transaction).filter(
-        models.Transaction.client_id == current_client.id,
-        models.Transaction.date >= start_date,
-        models.Transaction.type == "Expense"
-    ).all()
+    # Summarised by expense account, the axis the budget and the P/L both use.
+    # Reading legs also means a split payment contributes only the part that was
+    # actually an expense, not the amount fronted for someone else.
+    legs = legs_in_range(
+        db,
+        current_client.id,
+        start_date.date(),
+        datetime.now().date(),
+        account_types={"expense"},
+    )
     
-    # Summarize by category
-    summary = {}
-    for t in transactions:
-        cat = t.category or "Uncategorized"
-        summary[cat] = summary.get(cat, 0) + t.amount
+    summary: dict[str, float] = {}
+    for leg in legs:
+        name = leg.account.name or "Uncategorized"
+        summary[name] = summary.get(name, 0.0) + leg.signed
         
     # Calculate monthly average
     avg_summary = {k: round(v / 3) for k, v in summary.items()}

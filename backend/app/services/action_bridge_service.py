@@ -7,7 +7,8 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .. import models
-from .budget_plan_service import assign_plan_line_identity, resolve_budget_plan_id
+from .budget_lines import assign_plan_line_identity
+from .budget_plan_store import resolve_budget_plan_id
 from .capsule_service import create_capsule_for_goal, upsert_capsule_holding
 from .registry_service import sync_registry_from_recurring
 

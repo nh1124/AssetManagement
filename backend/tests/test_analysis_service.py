@@ -393,6 +393,11 @@ def test_profit_loss_rollup_uses_parent_account_category() -> None:
         )
         db.add(tx)
         db.commit()
+        db.refresh(tx)
+        # The P/L reads journal legs, so the transaction has to be posted. Every
+        # other test here already does this; this one used to get away with an
+        # unposted transaction because the P/L read tx.category instead.
+        process_transaction(db, tx)
 
         result = get_profit_loss_rollup(db, date.today().year, date.today().month, client_id=1)
 

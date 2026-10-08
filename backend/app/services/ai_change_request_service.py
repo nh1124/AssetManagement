@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..services.ledger_service import ensure_default_accounts, post_transaction_journal
-from ..services.budget_plan_service import update_plan_lines
+from ..services.budget_plan_store import update_plan_lines
 from ..services.cache_service import invalidate_client
 from ..services.capsule_service import apply_capsule_rules_for_transaction
 from ..services.registry_service import sync_registry_from_recurring

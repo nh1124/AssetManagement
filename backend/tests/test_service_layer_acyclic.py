@@ -31,13 +31,24 @@ LAYERS: dict[str, int] = {
     "periods": 0,
     "product_reserve_service": 0,
     "schedule_rules": 0,
-    # L1 - the ledger itself
+    # L1 - the ledger itself, and reading it one journal leg at a time
+    "journal_legs": 1,
     "ledger_service": 1,
     # L2 - the source of truth for recurring cash flow, and its bucket model
     "capsule_service": 2,
     "registry_service": 2,
-    # L3 - generated from the registry
+    # L3 - generated from the registry. The budget_* modules are one feature
+    # split across files: the loader and the line vocabulary at the bottom,
+    # the summary that assembles everything at the top.
+    "budget_actuals": 3,
+    "budget_context": 3,
+    "budget_credit_settlement": 3,
+    "budget_lines": 3,
     "budget_plan_service": 3,
+    "budget_plan_store": 3,
+    "budget_projection": 3,
+    "budget_registry_lines": 3,
+    "budget_warnings": 3,
     "recurring_service": 3,
     # L4 - statements and variance, which need the adopted plan
     "reporting_service": 4,

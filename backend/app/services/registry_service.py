@@ -13,27 +13,43 @@ from .schedule_rules import ensure_next_due_date
 OUTFLOW_TRANSACTION_TYPES = {"Expense", "CreditExpense", "Transfer", "CreditAssetPurchase", "LiabilityPayment"}
 
 
-def recurring_line_type(tx_type: str | None) -> str:
-    kind = tx_type or "Expense"
-    if kind == "Income":
+def account_line_type(
+    source: models.Account | None,
+    destination: models.Account | None,
+) -> str:
+    """The budget line type implied by the accounts a definition moves between.
+
+    Liability to asset is the one pair that two ledger types used to share:
+    drawing on a loan brings money in (borrowing), while buying something on a
+    card moves money between places you own (allocation). The liability's own
+    kind is what tells them apart.
+    """
+    if source is not None and source.account_type == "income":
         return "income"
-    if kind == "Borrowing":
-        return "borrowing"
-    if kind in {"Transfer", "CreditAssetPurchase"}:
-        return "allocation"
-    if kind == "LiabilityPayment":
-        return "debt_payment"
+    if destination is not None:
+        if destination.account_type == "expense":
+            return "expense"
+        if destination.account_type == "liability":
+            return "debt_payment"
+        if destination.account_type in {"asset", "item"}:
+            if source is not None and source.account_type == "liability":
+                return "borrowing" if source.liability_kind == "loan" else "allocation"
+            return "allocation"
     return "expense"
 
 
-def recurring_entry_type(tx_type: str | None) -> str:
-    kind = tx_type or "Expense"
-    if kind == "Income":
+def account_entry_type(
+    source: models.Account | None,
+    destination: models.Account | None,
+) -> str:
+    """What kind of thing a registry entry describes, from the same two accounts."""
+    if source is not None and source.account_type == "income":
         return "income"
-    if kind == "LiabilityPayment":
-        return "debt"
-    if kind in {"Transfer", "CreditAssetPurchase"}:
-        return "allocation"
+    if destination is not None:
+        if destination.account_type == "liability":
+            return "debt"
+        if destination.account_type in {"asset", "item"}:
+            return "allocation"
     return "service"
 
 
@@ -97,9 +113,9 @@ def sync_registry_from_recurring(db: Session, recurring: models.RecurringTransac
         entry = models.RegistryEntry(client_id=recurring.client_id)
         db.add(entry)
 
-    line_type = recurring_line_type(recurring.type)
+    line_type = account_line_type(recurring.from_account, recurring.to_account)
     entry.name = recurring.name
-    entry.entry_type = recurring_entry_type(recurring.type)
+    entry.entry_type = account_entry_type(recurring.from_account, recurring.to_account)
     entry.amount = recurring.amount or 0.0
     entry.currency = recurring.currency or "JPY"
     entry.frequency = recurring.frequency or "Monthly"

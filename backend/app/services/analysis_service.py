@@ -10,13 +10,12 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from .fx_service import (
-    DEBIT_NORMAL_TYPES,
     calculate_account_valued_balance,
     calculate_account_valued_balances,
     convert_amount,
-    convert_transaction_amount,
 )
-from .budget_plan_service import resolve_budget_plan_id
+from .budget_plan_store import resolve_budget_plan_id
+from .journal_legs import legs_in_range
 from .goal_service import calculate_overall_goal_probability
 from .reporting_service import (
     get_balance_sheet,
@@ -220,12 +219,10 @@ def get_summary(db: Session, client_id: int) -> dict:
     savings_rate = (fcf / total_income * 100) if total_income > 0 else 0.0
 
     three_months_ago = today - relativedelta(months=3)
-    recent_expense_txs = db.query(models.Transaction).filter(
-        models.Transaction.client_id == client_id,
-        models.Transaction.type.in_(["Expense", "CreditExpense"]),
-        models.Transaction.date >= three_months_ago,
-    ).all()
-    recent_expenses = sum(convert_transaction_amount(db, tx, client_id=client_id) for tx in recent_expense_txs)
+    recent_expenses = sum(
+        leg.signed
+        for leg in legs_in_range(db, client_id, three_months_ago, today, account_types={"expense"})
+    )
     avg_monthly_expense = recent_expenses / 3 if recent_expenses > 0 else 1.0
     runway_months = (
         (logical_balance / avg_monthly_expense)

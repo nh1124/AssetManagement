@@ -271,20 +271,28 @@ def post_transaction_journal(db: Session, transaction: models.Transaction) -> No
 
 
 def _rollback_transaction_effects(db: Session, transaction: models.Transaction) -> None:
-    """
-    Revert the impact of a transaction on account balances without committing.
+    """Revert a transaction's impact on the cached balances, without committing.
+
+    Each leg is reversed on its own account. Reading the legs rather than the
+    header's two accounts is what makes this correct for a compound entry,
+    where there are more than two of them and the header amount belongs to
+    none of them individually.
     """
     client_id = transaction.client_id
     if client_id is None:
         return
 
-    from_account = _get_account_by_id(db, transaction.from_account_id, client_id)
-    to_account = _get_account_by_id(db, transaction.to_account_id, client_id)
-
-    if from_account:
-        _apply_debit(from_account, transaction.amount)
-    if to_account:
-        _apply_credit(to_account, transaction.amount)
+    entries = db.query(models.JournalEntry).filter(
+        models.JournalEntry.transaction_id == transaction.id,
+    ).all()
+    for entry in entries:
+        account = _get_account_by_id(db, entry.account_id, client_id)
+        if not account:
+            continue
+        if entry.debit:
+            _apply_credit(account, entry.debit)
+        if entry.credit:
+            _apply_debit(account, entry.credit)
 
 
 def revert_transaction(
