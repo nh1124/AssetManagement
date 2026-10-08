@@ -14,7 +14,6 @@ from .. import models
 from .budget_context import BudgetContext
 from .budget_lines import (
     ASSET_FLOW_BUCKETS,
-    NON_CASH_TRANSACTION_TYPES,
     _empty_balance,
     _empty_flow,
     _fallback_line_flow,
@@ -33,14 +32,15 @@ def _sum_transactions(ctx: BudgetContext, txs: Iterable[models.Transaction]) -> 
     return sum(convert_transaction_amount(ctx.db, tx, client_id=ctx.client_id) for tx in txs)
 
 
-def _linked_recurring_transaction_type(
-    ctx: BudgetContext,
-    line: models.MonthlyPlanLine | dict,
-) -> str | None:
-    transaction_type = _line_attr(line, "transaction_type")
-    if transaction_type:
-        return transaction_type
-    return ctx.recurring_transaction_type(_line_attr(line, "recurring_transaction_id"))
+def _funded_by_card(ctx: BudgetContext, line: models.MonthlyPlanLine | dict) -> bool:
+    """Whether the account paying for this line settles on a monthly cycle.
+
+    This replaces reading the ledger type of the linked recurring definition.
+    A line paid by card does not move cash in its own month; the cash moves
+    when the card is settled, and budget_credit_settlement projects that.
+    """
+    account = ctx.account(_cash_flow_line_source_account_id(ctx, line))
+    return bool(account and account.liability_kind == "card")
 
 
 def plan_line_has_cash_impact(
@@ -52,7 +52,7 @@ def plan_line_has_cash_impact(
         return True
     if treatment == "non_cash":
         return False
-    return _linked_recurring_transaction_type(ctx, line) not in NON_CASH_TRANSACTION_TYPES
+    return not _funded_by_card(ctx, line)
 
 
 def actual_for_plan_line(

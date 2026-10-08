@@ -157,6 +157,8 @@ def _cash_flow_projection(
             "financing_flow": round(remaining_flow["financing"], 0),
             "internal_transfer": round(remaining_flow["internal_transfer"], 0),
             "non_cash_budget": round(remaining_flow["non_cash_budget"], 0),
+            "planned_non_cash_budget": round(planned_flow["non_cash_budget"], 0),
+            "actual_non_cash_budget": round(actual_flow["non_cash_budget"], 0),
             "status": "shortfall" if cash < 0 else ("warning" if setup_warnings or net < 0 else "ok"),
             "setup_warnings": setup_warnings,
         })

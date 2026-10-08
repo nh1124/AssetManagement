@@ -1289,7 +1289,7 @@ def test_auto_cash_treatment_excludes_credit_expense_and_projects_card_payment()
         next_period = add_months(current_period_key(), 1)
         client = models.Client(id=1, name="test", general_settings={}, ai_config={})
         cash = models.Account(client_id=1, name="cash", account_type="asset")
-        credit = models.Account(client_id=1, name="credit", account_type="liability")
+        credit = models.Account(client_id=1, name="credit", account_type="liability", liability_kind="card")
         subscription = models.Account(client_id=1, name="subscription", account_type="expense")
         db.add_all([client, cash, credit, subscription])
         db.flush()
@@ -1617,7 +1617,7 @@ def test_credit_expense_creates_credit_settlement_projection() -> None:
         start, _ = period_to_range(period)
         client = models.Client(id=1, name="test", general_settings={}, ai_config={})
         cash = models.Account(client_id=1, name="cash", account_type="asset", role="operating")
-        card = models.Account(client_id=1, name="credit card", account_type="liability")
+        card = models.Account(client_id=1, name="credit card", account_type="liability", liability_kind="card")
         food = models.Account(client_id=1, name="food", account_type="expense")
         db.add_all([client, cash, card, food])
         db.flush()
@@ -1658,7 +1658,10 @@ def test_credit_expense_creates_credit_settlement_projection() -> None:
         assert settlement["line_type"] == "debt_payment"
         assert settlement["account_id"] == card.id
         assert settlement["suggested_amount"] == 50000
-        assert row["non_cash_budget"] == 50000
+        # The charge is already posted, so no non-cash budget is left to consume
+        # this month; the actual figure is where the 50000 shows up.
+        assert row["actual_non_cash_budget"] == 50000
+        assert row["non_cash_budget"] == 0
         assert row["debt"] == 0
         assert row["setup_warnings"][0]["type"] == "missing_credit_settlement"
     finally:
@@ -1673,6 +1676,7 @@ def test_credit_settlement_uses_liability_closing_day_and_payment_offset() -> No
             client_id=1,
             name="card",
             account_type="liability",
+            liability_kind="card",
             liability_closing_day=15,
             liability_payment_day=27,
             liability_payment_month_offset=1,
@@ -1681,7 +1685,7 @@ def test_credit_settlement_uses_liability_closing_day_and_payment_offset() -> No
         food = models.Account(client_id=1, name="food", account_type="expense")
         db.add_all([client, card, food])
         db.flush()
-        db.add_all([
+        charges = [
             models.Transaction(
                 client_id=1,
                 date=date(2026, 5, 10),
@@ -1702,8 +1706,11 @@ def test_credit_settlement_uses_liability_closing_day_and_payment_offset() -> No
                 to_account_id=food.id,
                 currency="JPY",
             ),
-        ])
+        ]
+        db.add_all(charges)
         db.commit()
+        for charge in charges:
+            process_transaction(db, charge)
 
         june = get_budget_summary(db, client_id=1, period="2026-06", cash_flow_start_period="2026-06", cash_flow_months=1)
         july = get_budget_summary(db, client_id=1, period="2026-07", cash_flow_start_period="2026-07", cash_flow_months=1)
@@ -1726,13 +1733,14 @@ def test_credit_settlement_applies_fixed_payment_policy() -> None:
             client_id=1,
             name="card",
             account_type="liability",
+            liability_kind="card",
             liability_payment_policy="fixed",
             liability_fixed_payment_amount=5000,
         )
         food = models.Account(client_id=1, name="food", account_type="expense")
         db.add_all([client, card, food])
         db.flush()
-        db.add(models.Transaction(
+        charge = models.Transaction(
             client_id=1,
             date=date(2026, 5, 10),
             description="credit food",
@@ -1741,8 +1749,10 @@ def test_credit_settlement_applies_fixed_payment_policy() -> None:
             from_account_id=card.id,
             to_account_id=food.id,
             currency="JPY",
-        ))
+        )
+        db.add(charge)
         db.commit()
+        process_transaction(db, charge)
 
         summary = get_budget_summary(db, client_id=1, period=period, cash_flow_start_period=period, cash_flow_months=1)
         settlement = next(line for line in summary["plan_lines"] if line.get("source_kind") == "credit_settlement")
@@ -1761,6 +1771,7 @@ def test_credit_settlement_spreads_installment_policy_across_future_months() -> 
             client_id=1,
             name="card",
             account_type="liability",
+            liability_kind="card",
             liability_payment_month_offset=1,
             liability_payment_policy="installment",
             liability_installment_months=3,
@@ -1768,7 +1779,7 @@ def test_credit_settlement_spreads_installment_policy_across_future_months() -> 
         equipment = models.Account(client_id=1, name="equipment", account_type="expense")
         db.add_all([client, card, equipment])
         db.flush()
-        db.add(models.Transaction(
+        charge = models.Transaction(
             client_id=1,
             date=date(2026, 5, 10),
             description="installment purchase",
@@ -1777,8 +1788,10 @@ def test_credit_settlement_spreads_installment_policy_across_future_months() -> 
             from_account_id=card.id,
             to_account_id=equipment.id,
             currency="JPY",
-        ))
+        )
+        db.add(charge)
         db.commit()
+        process_transaction(db, charge)
 
         amounts = []
         for period in ("2026-06", "2026-07", "2026-08"):
