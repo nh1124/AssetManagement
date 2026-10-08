@@ -112,7 +112,7 @@ export function registerMonthlyPlanningTools(server: McpServer): void {
         if (plan_id !== undefined) params.append("plan_id", String(plan_id));
         if (cash_flow_start_period !== undefined) params.append("cash_flow_start_period", cash_flow_start_period);
         params.append("cash_flow_months", String(cash_flow_months));
-        const data = await api.get<unknown>(`/life-events/budget-summary?${params.toString()}`);
+        const data = await api.get<unknown>(`/budget-plans/summary?${params.toString()}`);
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
           structuredContent: toStructured(data),
@@ -142,7 +142,7 @@ export function registerMonthlyPlanningTools(server: McpServer): void {
         if (period !== undefined) params.append("period", period);
         if (plan_id !== undefined) params.append("plan_id", String(plan_id));
         const query = params.toString() ? `?${params.toString()}` : "";
-        const data = await api.get<unknown>(`/life-events/monthly-plan-lines${query}`);
+        const data = await api.get<unknown>(`/budget-plans/lines${query}`);
         return {
           content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
           structuredContent: toStructured({ plan_lines: data }),
@@ -190,10 +190,10 @@ export function registerMonthlyPlanningTools(server: McpServer): void {
           };
         }
         const created = creates.length > 0
-          ? await api.post<unknown>("/life-events/monthly-plan-lines", creates)
+          ? await api.post<unknown>("/budget-plans/lines", creates)
           : null;
         const updated = updates.length > 0
-          ? await api.put<unknown>("/life-events/monthly-plan-lines/batch", updates)
+          ? await api.put<unknown>("/budget-plans/lines/batch", updates)
           : null;
         const data = { created, updated };
         return {
@@ -277,7 +277,7 @@ export function registerMonthlyPlanningTools(server: McpServer): void {
         if (await shouldCreateChangeRequest()) {
           return changeRequestUnsupportedResult("monthly_plan_lines:delete");
         }
-        const data = await api.delete<unknown>(`/life-events/monthly-plan-lines/${id}`);
+        const data = await api.delete<unknown>(`/budget-plans/lines/${id}`);
         return {
           content: [{ type: "text", text: directWriteMessage(`Deleted monthly plan line ${id}`, data) }],
           structuredContent: toStructured(data),

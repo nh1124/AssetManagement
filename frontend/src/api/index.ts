@@ -542,7 +542,7 @@ export const getBudgetSummary = async (
     period?: string,
     options: { cash_flow_start_period?: string; cash_flow_months?: number; plan_id?: number } = {},
 ) => {
-    const response = await api.get('/life-events/budget-summary', {
+    const response = await api.get('/budget-plans/summary', {
         params: {
             period,
             plan_id: options.plan_id,
@@ -573,12 +573,12 @@ export type MonthlyPlanLinePayload = {
 };
 
 export const createMonthlyPlanLines = async (lines: MonthlyPlanLinePayload[]) => {
-    const response = await api.post('/life-events/monthly-plan-lines', lines);
+    const response = await api.post('/budget-plans/lines', lines);
     return response.data;
 };
 
 export const updateMonthlyPlanLines = async (lines: Array<MonthlyPlanLinePayload & { id: number }>) => {
-    const response = await api.put('/life-events/monthly-plan-lines/batch', lines);
+    const response = await api.put('/budget-plans/lines/batch', lines);
     return response.data;
 };
 
@@ -606,7 +606,7 @@ export const runMonteCarloSimulation = async (
 };
 
 export const deleteMonthlyPlanLine = async (id: number) => {
-    const response = await api.delete(`/life-events/monthly-plan-lines/${id}`);
+    const response = await api.delete(`/budget-plans/lines/${id}`);
     return response.data;
 };
 

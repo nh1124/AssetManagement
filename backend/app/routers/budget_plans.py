@@ -1,20 +1,27 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.cache_service import invalidate_client
 from ..services.budget_plan_service import (
     assign_plan_line_identity,
+    create_plan_lines,
+    get_budget_summary as build_budget_summary,
     get_or_create_default_plan,
     get_cash_flow_projection,
     _liquid_cash,
     replace_plan_lines_from_plan,
     resolve_budget_plan_id,
     set_default_budget_plan,
+    update_plan_lines,
 )
+from ..services.cache_service import get_or_set
+from ..services.goal_service import summarize_goal_funding_gap
 
 router = APIRouter(prefix="/budget-plans", tags=["budget_plans"])
 
@@ -179,6 +186,100 @@ def copy_period_full_replace(
     invalidate_client(current_client.id)
     return {"status": "success", "copied": len(source_lines)}
 
+
+@router.get("/summary")
+def get_budget_plan_summary(
+    period: Optional[str] = Query(None, description="Format: YYYY-MM"),
+    plan_id: Optional[int] = Query(None, description="Budget plan ID"),
+    cash_flow_start_period: Optional[str] = Query(None, description="Format: YYYY-MM"),
+    cash_flow_months: int = Query(12, ge=1, le=36),
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client)
+):
+    """Get monthly cash-flow plan summary."""
+    if not period:
+        period = datetime.now().strftime("%Y-%m")
+    try:
+        key = (
+            f"client:{current_client.id}:budget_summary:{period}:{plan_id}:"
+            f"{cash_flow_start_period}:{cash_flow_months}"
+        )
+        return get_or_set(
+            key,
+            120,
+            lambda: build_budget_summary(
+                db,
+                current_client.id,
+                period,
+                plan_id=plan_id,
+                cash_flow_start_period=cash_flow_start_period,
+                cash_flow_months=cash_flow_months,
+                goal_metrics=summarize_goal_funding_gap(db, current_client.id),
+            ),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/lines")
+def get_plan_lines(
+    period: Optional[str] = Query(None, description="Format: YYYY-MM"),
+    plan_id: Optional[int] = Query(None, description="Budget plan ID"),
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    if not period:
+        period = datetime.now().strftime("%Y-%m")
+    try:
+        return build_budget_summary(db, current_client.id, period, plan_id=plan_id)["plan_lines"]
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/lines")
+def create_plan_lines_endpoint(
+    lines: List[schemas.MonthlyPlanLineCreate],
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    try:
+        saved = create_plan_lines(db, current_client.id, lines)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    invalidate_client(current_client.id)
+    return {"status": "success", "ids": [line.id for line in saved]}
+
+
+@router.put("/lines/batch")
+def update_plan_lines_endpoint(
+    lines: List[schemas.MonthlyPlanLineBatchUpdate],
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    try:
+        saved = update_plan_lines(db, current_client.id, lines)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    invalidate_client(current_client.id)
+    return {"status": "success", "ids": [line.id for line in saved]}
+
+
+@router.delete("/lines/{line_id}")
+def delete_plan_line(
+    line_id: int,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    line = db.query(models.MonthlyPlanLine).filter(
+        models.MonthlyPlanLine.id == line_id,
+        models.MonthlyPlanLine.client_id == current_client.id,
+    ).first()
+    if not line:
+        raise HTTPException(status_code=404, detail="Monthly plan line not found")
+    line.is_active = False
+    db.commit()
+    invalidate_client(current_client.id)
+    return {"message": "Monthly plan line deleted"}
 
 @router.post("/{plan_id}/copy-from")
 def copy_plan_from(
