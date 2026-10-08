@@ -119,16 +119,47 @@ def create_capsule_for_goal(db: Session, client_id: int, goal: models.LifeEvent)
     return capsule
 
 
+# What a rule's trigger_type describes, as a statement about the entry's legs:
+# which side the triggering leg is on, what kind of account it is, and what has
+# to be on the other side. The transaction's own type is not consulted.
+_TRIGGER_LEGS: dict[str, tuple[str, set[str], set[str] | None]] = {
+    "Income": ("credit", {"income"}, None),
+    "Expense": ("debit", {"expense"}, {"asset", "item"}),
+    "CreditExpense": ("debit", {"expense"}, {"liability"}),
+    "Transfer": ("debit", {"asset", "item"}, {"asset", "item"}),
+}
+
+
+def _side_amount(entry: models.JournalEntry, side: str) -> float:
+    return (entry.debit or 0.0) if side == "debit" else (entry.credit or 0.0)
+
+
 def apply_capsule_rules_for_transaction(
     db: Session,
     transaction: models.Transaction,
     *,
     commit: bool = True,
 ) -> list[models.CapsuleHolding]:
+    """Reserve part of an account's balance for a capsule, per the client's rules.
+
+    Called straight after the journal is posted and before the caller commits,
+    so the legs are in the session but not yet written. The flush is what makes
+    them readable; committing here would break the atomicity the posting path
+    depends on (P5-002), which is why every caller passes commit=False.
+    """
     if transaction.client_id is None:
         return []
-    if transaction.category == "capsule_auto_allocation" or transaction.description.startswith("Capsule rule:"):
+
+    db.flush()
+    entries = list(transaction.journal_entries)
+    if not entries:
         return []
+    accounts = {
+        account.id: account
+        for account in db.query(models.Account).filter(
+            models.Account.id.in_({entry.account_id for entry in entries}),
+        ).all()
+    }
 
     rules = db.query(models.CapsuleRule).filter(
         models.CapsuleRule.client_id == transaction.client_id,
@@ -137,12 +168,13 @@ def apply_capsule_rules_for_transaction(
     updated: list[models.CapsuleHolding] = []
 
     for rule in rules:
-        if not _rule_matches(rule, transaction):
+        triggered = _triggered_legs(rule, transaction, entries, accounts)
+        if not triggered:
             continue
         capsule = rule.capsule
         if not capsule:
             continue
-        source_account_id = _resolve_rule_source_account_id(rule, transaction)
+        source_account_id = _resolve_rule_source_account_id(rule, entries, triggered[0])
         if not source_account_id:
             continue
         amount = _resolve_rule_amount(rule, transaction)
@@ -158,29 +190,81 @@ def apply_capsule_rules_for_transaction(
     return updated
 
 
-def _rule_matches(rule: models.CapsuleRule, transaction: models.Transaction) -> bool:
-    if rule.trigger_type != transaction.type:
-        return False
-    if rule.trigger_category:
-        category = (transaction.category or "").lower()
-        if rule.trigger_category.lower() not in category:
-            return False
+def _triggered_legs(
+    rule: models.CapsuleRule,
+    transaction: models.Transaction,
+    entries: list[models.JournalEntry],
+    accounts: dict[int, models.Account],
+) -> list[models.JournalEntry]:
+    """The legs of this transaction that the rule's trigger describes."""
+    spec = _TRIGGER_LEGS.get(rule.trigger_type)
+    if spec is None:
+        return []
+    side, account_types, funding_types = spec
+    other = "credit" if side == "debit" else "debit"
+
     if rule.trigger_description:
-        description = (transaction.description or "").lower()
-        if rule.trigger_description.lower() not in description:
-            return False
-    return True
+        if rule.trigger_description.lower() not in (transaction.description or "").lower():
+            return []
+
+    if funding_types is not None:
+        funded_as_expected = any(
+            _side_amount(entry, other) > 0
+            and (accounts.get(entry.account_id) is not None)
+            and accounts[entry.account_id].account_type in funding_types
+            for entry in entries
+        )
+        if not funded_as_expected:
+            return []
+
+    needle = (rule.trigger_category or "").strip().lower()
+    matched: list[models.JournalEntry] = []
+    for entry in entries:
+        if _side_amount(entry, side) <= 0:
+            continue
+        account = accounts.get(entry.account_id)
+        if account is None or account.account_type not in account_types:
+            continue
+        if needle:
+            # The account is the axis. The free-text category stays as a
+            # fallback so a rule written against it keeps working.
+            names = {(account.name or "").strip().lower()}
+            if needle not in names and needle not in (transaction.category or "").lower():
+                continue
+        matched.append(entry)
+
+    matched.sort(key=lambda entry: _side_amount(entry, side), reverse=True)
+    return matched
 
 
-def _resolve_rule_source_account_id(rule: models.CapsuleRule, transaction: models.Transaction) -> int | None:
+def _resolve_rule_source_account_id(
+    rule: models.CapsuleRule,
+    entries: list[models.JournalEntry],
+    triggered: models.JournalEntry,
+) -> int | None:
+    """Which account's balance the reservation is taken out of."""
     if rule.source_mode == "fixed_account":
         return rule.source_account_id
-    if transaction.type == "Income":
-        return transaction.to_account_id
-    return transaction.from_account_id
+
+    # transaction_account: the other side of the triggering leg. A compound
+    # entry has more than one, and picking one would be a guess, so the rule is
+    # skipped instead -- fixed_account is how to say which account you mean.
+    other = "credit" if (triggered.debit or 0.0) > 0 else "debit"
+    candidates = [
+        entry for entry in entries
+        if entry is not triggered and _side_amount(entry, other) > 0
+    ]
+    if len(candidates) != 1:
+        return None
+    return candidates[0].account_id
 
 
 def _resolve_rule_amount(rule: models.CapsuleRule, transaction: models.Transaction) -> float:
+    """A percentage applies to the whole payment, not to the triggering leg.
+
+    "10% of my salary" means the gross, so a payroll entry split across a bank
+    account, a savings plan and a stock plan is measured on its total.
+    """
     value = max(0.0, rule.amount_value or 0.0)
     if rule.amount_type == "percentage":
         return max(0.0, (transaction.amount or 0.0) * value / 100.0)

@@ -26,6 +26,7 @@ try:
     )
     from backend.app.services.budget_context import BudgetContext
     from backend.app.services.budget_credit_settlement import credit_settlement_plan_lines
+    from backend.app.services.capsule_service import apply_capsule_rules_for_transaction
     from backend.app.services.reporting_service import get_profit_loss_for_range
 except ModuleNotFoundError:  # pragma: no cover - import shim used by the container
     from app import models  # type: ignore[no-redef]
@@ -37,6 +38,7 @@ except ModuleNotFoundError:  # pragma: no cover - import shim used by the contai
     )
     from app.services.budget_context import BudgetContext  # type: ignore[no-redef]
     from app.services.budget_credit_settlement import credit_settlement_plan_lines  # type: ignore[no-redef]
+    from app.services.capsule_service import apply_capsule_rules_for_transaction  # type: ignore[no-redef]
     from app.services.reporting_service import get_profit_loss_for_range  # type: ignore[no-redef]
 
 PERIOD = "2026-10"
@@ -253,5 +255,194 @@ def test_a_cash_funded_line_still_reports_its_own_leg_as_cash() -> None:
 
         assert plan_line_has_cash_impact(ctx, line) is True
         assert cash_flow_actual_for_plan_line(ctx, line, PERIOD) == 3000
+    finally:
+        db.close()
+
+
+# ----------------------------------------------------------------------
+# Capsule rules
+#
+# The payroll case: one credit leg on the salary account, three debit legs --
+# the bank account, a savings plan and a stock plan. Recorded today as three
+# separate Income transactions; as one compound entry it is a single payment.
+
+
+def _split_payroll(db):
+    client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+    salary = models.Account(client_id=1, name="salary", account_type="income", balance=0)
+    bank = models.Account(client_id=1, name="bank", account_type="asset", role="operating", balance=0)
+    savings = models.Account(client_id=1, name="savings plan", account_type="asset", balance=0)
+    stock = models.Account(client_id=1, name="stock plan", account_type="asset", role="growth", balance=0)
+    db.add_all([client, salary, bank, savings, stock])
+    db.flush()
+
+    tx = models.Transaction(
+        client_id=1,
+        date=WHEN,
+        description="October payroll",
+        amount=258272,
+        type="Income",
+        currency="JPY",
+        # The category says nothing useful; the accounts do.
+        category="payroll",
+        from_account_id=salary.id,
+    )
+    db.add(tx)
+    db.flush()
+    db.add_all([
+        models.JournalEntry(transaction_id=tx.id, account_id=salary.id, debit=0, credit=258272),
+        models.JournalEntry(transaction_id=tx.id, account_id=bank.id, debit=202757, credit=0),
+        models.JournalEntry(transaction_id=tx.id, account_id=savings.id, debit=1000, credit=0),
+        models.JournalEntry(transaction_id=tx.id, account_id=stock.id, debit=54515, credit=0),
+    ])
+    salary.balance = 258272
+    bank.balance = 202757
+    savings.balance = 1000
+    stock.balance = 54515
+    db.commit()
+    return client, salary, bank, savings, stock, tx
+
+
+def _reserve_capsule(db, *, target=400000):
+    capsule = models.Capsule(
+        client_id=1, name="asset reserve", target_amount=target, monthly_contribution=0, current_balance=0
+    )
+    db.add(capsule)
+    db.flush()
+    return capsule
+
+
+def test_a_rule_triggers_on_the_income_account_not_the_category() -> None:
+    """The live rules named an account in trigger_category and so never fired."""
+    db = _session()
+    try:
+        _client, salary, bank, _savings, _stock, tx = _split_payroll(db)
+        capsule = _reserve_capsule(db)
+        db.add(models.CapsuleRule(
+            client_id=1,
+            capsule_id=capsule.id,
+            trigger_type="Income",
+            trigger_category="salary",      # the account's name, not tx.category
+            source_mode="fixed_account",
+            source_account_id=bank.id,
+            amount_type="fixed",
+            amount_value=8808,
+            is_active=True,
+        ))
+        db.commit()
+
+        updated = apply_capsule_rules_for_transaction(db, tx)
+
+        assert len(updated) == 1
+        assert updated[0].account_id == bank.id
+        assert updated[0].held_amount == 8808
+    finally:
+        db.close()
+
+
+def test_fixed_account_mode_is_unambiguous_on_a_split() -> None:
+    db = _session()
+    try:
+        _client, _salary, _bank, savings, _stock, tx = _split_payroll(db)
+        capsule = _reserve_capsule(db)
+        db.add(models.CapsuleRule(
+            client_id=1,
+            capsule_id=capsule.id,
+            trigger_type="Income",
+            trigger_category="salary",
+            source_mode="fixed_account",
+            source_account_id=savings.id,
+            amount_type="fixed",
+            amount_value=1000,
+            is_active=True,
+        ))
+        db.commit()
+
+        updated = apply_capsule_rules_for_transaction(db, tx)
+
+        # Three debit legs, and the rule still knows which account it meant.
+        assert [(h.account_id, h.held_amount) for h in updated] == [(savings.id, 1000)]
+    finally:
+        db.close()
+
+
+def test_transaction_account_mode_skips_a_compound_entry_rather_than_guessing() -> None:
+    db = _session()
+    try:
+        _client, _salary, _bank, _savings, _stock, tx = _split_payroll(db)
+        capsule = _reserve_capsule(db)
+        db.add(models.CapsuleRule(
+            client_id=1,
+            capsule_id=capsule.id,
+            trigger_type="Income",
+            trigger_category="salary",
+            source_mode="transaction_account",
+            amount_type="fixed",
+            amount_value=8808,
+            is_active=True,
+        ))
+        db.commit()
+
+        assert apply_capsule_rules_for_transaction(db, tx) == []
+    finally:
+        db.close()
+
+
+def test_transaction_account_mode_still_works_on_a_two_leg_entry() -> None:
+    db = _session()
+    try:
+        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        salary = models.Account(client_id=1, name="salary", account_type="income", balance=0)
+        bank = models.Account(client_id=1, name="bank", account_type="asset", role="operating", balance=0)
+        db.add_all([client, salary, bank])
+        db.flush()
+        tx = models.Transaction(
+            client_id=1, date=WHEN, description="payroll", amount=200000,
+            type="Income", currency="JPY", from_account_id=salary.id, to_account_id=bank.id,
+        )
+        db.add(tx)
+        db.flush()
+        db.add_all([
+            models.JournalEntry(transaction_id=tx.id, account_id=salary.id, debit=0, credit=200000),
+            models.JournalEntry(transaction_id=tx.id, account_id=bank.id, debit=200000, credit=0),
+        ])
+        salary.balance = 200000
+        bank.balance = 200000
+        capsule = _reserve_capsule(db)
+        db.add(models.CapsuleRule(
+            client_id=1, capsule_id=capsule.id, trigger_type="Income", trigger_category="salary",
+            source_mode="transaction_account", amount_type="fixed", amount_value=8808, is_active=True,
+        ))
+        db.commit()
+
+        updated = apply_capsule_rules_for_transaction(db, tx)
+
+        assert [(h.account_id, h.held_amount) for h in updated] == [(bank.id, 8808)]
+    finally:
+        db.close()
+
+
+def test_a_percentage_rule_measures_the_whole_payment() -> None:
+    db = _session()
+    try:
+        _client, _salary, bank, _savings, _stock, tx = _split_payroll(db)
+        capsule = _reserve_capsule(db)
+        db.add(models.CapsuleRule(
+            client_id=1,
+            capsule_id=capsule.id,
+            trigger_type="Income",
+            trigger_category="salary",
+            source_mode="fixed_account",
+            source_account_id=bank.id,
+            amount_type="percentage",
+            amount_value=10,
+            is_active=True,
+        ))
+        db.commit()
+
+        updated = apply_capsule_rules_for_transaction(db, tx)
+
+        # 10% of the gross 258,272, not of the 202,757 that reached the bank.
+        assert updated[0].held_amount == 25827.2
     finally:
         db.close()
