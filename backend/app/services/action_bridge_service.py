@@ -3,10 +3,12 @@ from __future__ import annotations
 from datetime import date, datetime
 from uuid import uuid4
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .. import models
 from .budget_plan_service import assign_plan_line_identity, resolve_budget_plan_id
+from .capsule_service import create_capsule_for_goal, upsert_capsule_holding
 from .registry_service import sync_registry_from_recurring
 
 
@@ -170,31 +172,59 @@ def _apply_pause_recurring(db: Session, action: models.MonthlyAction) -> dict:
 
 
 def _apply_boost_allocation(db: Session, action: models.MonthlyAction) -> dict:
+    """Earmark a larger share of one account for a goal.
+
+    This used to write a GoalAllocation row holding a percentage per
+    (goal, account) pair. That table was dropped in v5 and capsule_holdings
+    carries the same idea as an amount, so `delta_percent` is now applied
+    against the account's balance and accumulated on the goal's capsule.
+    """
     payload = action.payload or {}
     life_event_id = int(payload["life_event_id"])
     account_id = int(payload["account_id"])
-    delta = float(payload.get("delta_percent") or payload.get("percent") or 0)
+    delta_percent = float(payload.get("delta_percent") or payload.get("percent") or 0)
+
     goal = db.query(models.LifeEvent).filter(
         models.LifeEvent.id == life_event_id,
         models.LifeEvent.client_id == action.client_id,
     ).first()
     if not goal:
         raise ValueError("Life event not found")
-    _require_account(db, action.client_id, account_id)
-    allocation = db.query(models.GoalAllocation).filter(
-        models.GoalAllocation.life_event_id == life_event_id,
-        models.GoalAllocation.account_id == account_id,
-    ).first()
-    if allocation:
-        allocation.allocation_percentage = min(100.0, allocation.allocation_percentage + delta)
-    else:
-        allocation = models.GoalAllocation(
-            life_event_id=life_event_id,
-            account_id=account_id,
-            allocation_percentage=min(100.0, max(0.1, delta)),
-        )
-        db.add(allocation)
-    return {"allocation_id": allocation.id, "allocation_percentage": allocation.allocation_percentage}
+    account = _require_account(db, action.client_id, account_id)
+
+    capsule = create_capsule_for_goal(db, action.client_id, goal)
+    db.flush()
+
+    balance = account.balance or 0.0
+    requested = balance * delta_percent / 100.0
+
+    # An account cannot have more earmarked against it than it holds, counting
+    # what other capsules already claim.
+    claimed = db.query(func.coalesce(func.sum(models.CapsuleHolding.held_amount), 0.0)).filter(
+        models.CapsuleHolding.account_id == account_id,
+    ).scalar() or 0.0
+    headroom = max(0.0, balance - float(claimed))
+    applied = min(requested, headroom) if requested > 0 else requested
+
+    holding = upsert_capsule_holding(
+        db,
+        capsule,
+        account_id,
+        applied,
+        note=f"boost_allocation {delta_percent:+g}% ({action.source_period})",
+    )
+    db.flush()
+
+    return {
+        "capsule_id": capsule.id,
+        "account_id": account_id,
+        "delta_percent": delta_percent,
+        "requested_amount": round(requested, 2),
+        "applied_amount": round(applied, 2),
+        "clamped": applied < requested,
+        "held_amount": round(holding.held_amount, 2),
+        "capsule_balance": round(capsule.current_balance or 0.0, 2),
+    }
 
 
 def _apply_change_capsule_contribution(db: Session, action: models.MonthlyAction) -> dict:
