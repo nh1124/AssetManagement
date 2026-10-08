@@ -16,7 +16,10 @@ try:
     from backend.app.schemas import CopyPeriodRequest, MonthlyPlanLineBatchUpdate, MonthlyPlanLineCreate
     from backend.app.services.accounting_service import get_variance_analysis_for_range, process_transaction
     from backend.app.services.action_bridge_service import apply_action, create_action
-    from backend.app.services.budget_plan_service import add_months, assign_plan_line_identity, create_plan_lines, current_period_key, get_budget_summary, period_to_range, set_default_budget_plan, update_plan_lines
+    from backend.app.services.budget_lines import assign_plan_line_identity
+    from backend.app.services.budget_plan_service import get_budget_summary
+    from backend.app.services.budget_plan_store import create_plan_lines, set_default_budget_plan, update_plan_lines
+    from backend.app.services.periods import add_months, current_period_key, period_to_range
     from backend.app.services.data_health_service import check_data_health, repair_data_health
 except ModuleNotFoundError:
     from app import models  # type: ignore[no-redef]
@@ -26,7 +29,10 @@ except ModuleNotFoundError:
     from app.schemas import CopyPeriodRequest, MonthlyPlanLineBatchUpdate, MonthlyPlanLineCreate  # type: ignore[no-redef]
     from app.services.accounting_service import get_variance_analysis_for_range, process_transaction  # type: ignore[no-redef]
     from app.services.action_bridge_service import apply_action, create_action  # type: ignore[no-redef]
-    from app.services.budget_plan_service import add_months, assign_plan_line_identity, create_plan_lines, current_period_key, get_budget_summary, period_to_range, set_default_budget_plan, update_plan_lines  # type: ignore[no-redef]
+    from app.services.budget_lines import assign_plan_line_identity  # type: ignore[no-redef]
+    from app.services.budget_plan_service import get_budget_summary  # type: ignore[no-redef]
+    from app.services.budget_plan_store import create_plan_lines, set_default_budget_plan, update_plan_lines  # type: ignore[no-redef]
+    from app.services.periods import add_months, current_period_key, period_to_range  # type: ignore[no-redef]
     from app.services.data_health_service import check_data_health, repair_data_health  # type: ignore[no-redef]
 
 

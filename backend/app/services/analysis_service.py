@@ -16,7 +16,7 @@ from .fx_service import (
     convert_amount,
     convert_transaction_amount,
 )
-from .budget_plan_service import resolve_budget_plan_id
+from .budget_plan_store import resolve_budget_plan_id
 from .goal_service import calculate_overall_goal_probability
 from .reporting_service import (
     get_balance_sheet,

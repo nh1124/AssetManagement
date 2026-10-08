@@ -15,7 +15,7 @@ from sqlalchemy import and_
 from sqlalchemy.orm import Session
 
 from .. import models
-from .budget_plan_service import resolve_budget_plan_id
+from .budget_plan_store import resolve_budget_plan_id
 from .fx_service import (
     build_rate_lookup,
     calculate_account_valued_balances,

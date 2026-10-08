@@ -8,7 +8,9 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from .ledger_service import calculate_account_journal_balance
-from .budget_plan_service import assign_plan_line_identity, _line_identity_key, _newest_line_key, get_or_create_default_plan, period_to_range
+from .budget_lines import assign_plan_line_identity, line_identity_key, newest_line_key
+from .budget_plan_store import get_or_create_default_plan
+from .periods import period_to_range
 from .cache_service import invalidate_client
 from .registry_service import (
     ensure_registry_entries,
@@ -321,13 +323,13 @@ def _duplicate_plan_line_items(db: Session, client_id: int) -> list[dict[str, An
         )
         .all()
     ):
-        grouped[_line_identity_key(line)].append(line)
+        grouped[line_identity_key(line)].append(line)
 
     items = []
     for lines in grouped.values():
         if len(lines) <= 1:
             continue
-        keeper = max(lines, key=_newest_line_key)
+        keeper = max(lines, key=newest_line_key)
         items.append(
             {
                 "problem": "duplicate_active_plan_lines",
@@ -552,11 +554,11 @@ def repair_data_health(db: Session, client_id: int) -> dict[str, Any]:
         )
         .all()
     ):
-        grouped[_line_identity_key(line)].append(line)
+        grouped[line_identity_key(line)].append(line)
     for lines in grouped.values():
         if len(lines) <= 1:
             continue
-        keeper = max(lines, key=_newest_line_key)
+        keeper = max(lines, key=newest_line_key)
         for duplicate in lines:
             if duplicate.id != keeper.id:
                 duplicate.is_active = False
