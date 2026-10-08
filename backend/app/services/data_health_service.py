@@ -47,27 +47,27 @@ def _account_name(names: dict[int, str], account_id: int | None) -> str | None:
 
 
 def _line_source_from_transaction(line: models.MonthlyPlanLine, tx: models.Transaction) -> int | None:
-    if line.line_type == "expense":
-        if tx.type in {"Expense", "CreditExpense"} and tx.to_account_id == line.account_id:
-            return tx.from_account_id
+    """The account that funded this line, read from the transaction's legs.
+
+    For an expense, an allocation or a debt payment the line's own account sits
+    on the debit side and the funding account is the credit side; for borrowing
+    and a drawdown it is the other way round. A compound entry with more than
+    one funding leg is ambiguous, so it is left alone rather than guessed at.
+    """
+    if line.line_type in {"expense", "allocation", "debt_payment"}:
+        near = [e for e in tx.journal_entries if (e.debit or 0) > 0]
+        far = [e for e in tx.journal_entries if (e.credit or 0) > 0]
+    elif line.line_type in {"borrowing", "drawdown"}:
+        near = [e for e in tx.journal_entries if (e.credit or 0) > 0]
+        far = [e for e in tx.journal_entries if (e.debit or 0) > 0]
+    else:
         return None
-    if line.line_type == "allocation":
-        if tx.type in {"Transfer", "CreditAssetPurchase"} and tx.to_account_id == line.account_id:
-            return tx.from_account_id
+
+    if not any(entry.account_id == line.account_id for entry in near):
         return None
-    if line.line_type == "debt_payment":
-        if tx.type == "LiabilityPayment" and tx.to_account_id == line.account_id:
-            return tx.from_account_id
+    if len(far) != 1:
         return None
-    if line.line_type == "borrowing":
-        if tx.type == "Borrowing" and tx.from_account_id == line.account_id:
-            return tx.to_account_id
-        return None
-    if line.line_type == "drawdown":
-        if tx.type == "Transfer" and tx.from_account_id == line.account_id:
-            return tx.to_account_id
-        return None
-    return None
+    return far[0].account_id
 
 
 def _infer_source_from_recurring(db: Session, line: models.MonthlyPlanLine) -> SourceCandidate | None:

@@ -46,27 +46,25 @@ def account_name(account_by_id: dict[int, models.Account], account_id: int | Non
 
 
 def line_source_from_transaction(line: models.MonthlyPlanLine, tx: models.Transaction) -> int | None:
-    if line.line_type == "expense":
-        if tx.type in {"Expense", "CreditExpense"} and tx.to_account_id == line.account_id:
-            return tx.from_account_id
+    """The account that funded this line, read from the transaction's legs.
+
+    Kept in step with data_health_service._line_source_from_transaction, which
+    this script predates and duplicates.
+    """
+    if line.line_type in {"expense", "allocation", "debt_payment"}:
+        near = [e for e in tx.journal_entries if (e.debit or 0) > 0]
+        far = [e for e in tx.journal_entries if (e.credit or 0) > 0]
+    elif line.line_type in {"borrowing", "drawdown"}:
+        near = [e for e in tx.journal_entries if (e.credit or 0) > 0]
+        far = [e for e in tx.journal_entries if (e.debit or 0) > 0]
+    else:
         return None
-    if line.line_type == "allocation":
-        if tx.type in {"Transfer", "CreditAssetPurchase"} and tx.to_account_id == line.account_id:
-            return tx.from_account_id
+
+    if not any(entry.account_id == line.account_id for entry in near):
         return None
-    if line.line_type == "debt_payment":
-        if tx.type == "LiabilityPayment" and tx.to_account_id == line.account_id:
-            return tx.from_account_id
+    if len(far) != 1:
         return None
-    if line.line_type == "borrowing":
-        if tx.type == "Borrowing" and tx.from_account_id == line.account_id:
-            return tx.to_account_id
-        return None
-    if line.line_type == "drawdown":
-        if tx.type == "Transfer" and tx.from_account_id == line.account_id:
-            return tx.to_account_id
-        return None
-    return None
+    return far[0].account_id
 
 
 def infer_from_transactions(db: Session, line: models.MonthlyPlanLine) -> SourceCandidate | None:

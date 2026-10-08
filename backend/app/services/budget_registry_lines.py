@@ -17,8 +17,8 @@ from .registry_service import (
     product_budget_active,
     product_line_type,
     product_unit_amount,
-    recurring_entry_type,
-    recurring_line_type,
+    account_entry_type,
+    account_line_type,
     registry_entry_amount_for_period,
     registry_source_account_id,
     registry_target_account_id,
@@ -132,12 +132,12 @@ def _virtual_registry_entries(ctx: BudgetContext) -> list[SimpleNamespace]:
     for recurring in recurring_rows:
         if recurring.id in existing_recurring_ids or recurring.source_registry_entry_id:
             continue
-        line_type = recurring_line_type(recurring.type)
+        line_type = account_line_type(recurring.from_account, recurring.to_account)
         entries.append(SimpleNamespace(
             id=-(1000000 + recurring.id),
             client_id=ctx.client_id,
             name=recurring.name,
-            entry_type=recurring_entry_type(recurring.type),
+            entry_type=account_entry_type(recurring.from_account, recurring.to_account),
             amount=recurring.amount or 0.0,
             currency=recurring.currency or "JPY",
             frequency=recurring.frequency or "Monthly",
