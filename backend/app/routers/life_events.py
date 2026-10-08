@@ -192,7 +192,6 @@ def delete_life_event(
             date=_date.today(),
             description=f"Goal deleted – funds returned from Capsule: {cap.name}",
             amount=bal,
-            type="Transfer",
             from_account_id=cap.account_id,
             to_account_id=transfer_account_id,
             currency="JPY",

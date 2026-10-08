@@ -85,7 +85,6 @@ def sync_registry_from_product(db: Session, product: models.Product) -> models.R
     entry.currency = "JPY"
     entry.frequency = "EveryNDays" if product.frequency_days and product.frequency_days > 0 else "Irregular"
     entry.frequency_days = product.frequency_days or None
-    entry.transaction_type = "Expense"
     entry.line_type = product_line_type(product)
     entry.budget_account_id = product.budget_account_id
     entry.funding_capsule_id = product.funding_capsule_id
@@ -122,7 +121,6 @@ def sync_registry_from_recurring(db: Session, recurring: models.RecurringTransac
     entry.frequency_days = None
     entry.day_of_month = recurring.day_of_month or 1
     entry.month_of_year = recurring.month_of_year
-    entry.transaction_type = recurring.type or "Expense"
     entry.line_type = line_type
     entry.budget_account_id = recurring.to_account_id if line_type in {"expense", "debt_payment"} else None
     entry.source_account_id = recurring.from_account_id
@@ -160,7 +158,6 @@ def registry_to_recurring_data(entry: models.RegistryEntry) -> dict:
         "name": entry.name,
         "amount": entry.amount or 0.0,
         "currency": entry.currency or "JPY",
-        "type": entry.transaction_type or "Expense",
         "from_account_id": entry.source_account_id,
         "to_account_id": entry.destination_account_id or entry.budget_account_id,
         "frequency": entry.frequency if entry.frequency in {"Monthly", "Yearly"} else "Monthly",

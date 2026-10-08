@@ -15,22 +15,11 @@ import {
 } from "../write-control.js";
 
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
-const transactionTypeSchema = z.enum([
-  "Income",
-  "Expense",
-  "Transfer",
-  "LiabilityPayment",
-  "Borrowing",
-  "CreditExpense",
-  "CreditAssetPurchase",
-]);
-
 const recurringInputSchema = z
   .object({
     name: z.string().min(1).describe("Name"),
     amount: z.number().min(0).describe("Amount"),
     currency: z.string().optional().describe("Currency"),
-    type: transactionTypeSchema.describe("Transaction type"),
     from_account_id: z.number().int().min(1).optional().describe("Source account ID"),
     to_account_id: z.number().int().min(1).optional().describe("Destination account ID"),
     frequency: z.enum(["Monthly", "Yearly"]).describe("Frequency"),
@@ -53,7 +42,6 @@ const recurringPayloadKeys = [
   "name",
   "amount",
   "currency",
-  "type",
   "from_account_id",
   "to_account_id",
   "frequency",
@@ -165,7 +153,6 @@ export function registerRecurringTools(server: McpServer): void {
           {
             description: input.name,
             amount: input.amount,
-            type: input.type,
             from_account_id: input.from_account_id,
             to_account_id: input.to_account_id,
             currency: input.currency ?? "JPY",

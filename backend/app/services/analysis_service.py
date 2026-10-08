@@ -25,7 +25,7 @@ from .reporting_service import (
 
 
 LIQUID_ACCOUNT_NAMES = {"cash", "bank", "savings"}
-UPCOMING_OUTFLOW_TYPES = {"Expense", "LiabilityPayment", "CreditExpense"}
+OUTFLOW_DESTINATION_TYPES = {"expense", "liability"}
 ACCOUNT_ROLES = ("defense", "growth", "earmarked", "operating", "unassigned")
 
 
@@ -133,16 +133,21 @@ def calculate_idle_money(db: Session, client_id: int) -> dict:
 def _upcoming_recurring_total(db: Session, client_id: int, days: int = 30) -> float:
     today = date.today()
     horizon = today + timedelta(days=days)
-    rows = db.query(models.RecurringTransaction).filter(
-        and_(
-            models.RecurringTransaction.client_id == client_id,
-            models.RecurringTransaction.is_active.is_(True),
-            models.RecurringTransaction.next_due_date.isnot(None),
-            models.RecurringTransaction.next_due_date >= today,
-            models.RecurringTransaction.next_due_date <= horizon,
-            models.RecurringTransaction.type.in_(UPCOMING_OUTFLOW_TYPES),
+    rows = (
+        db.query(models.RecurringTransaction)
+        .join(models.Account, models.Account.id == models.RecurringTransaction.to_account_id)
+        .filter(
+            and_(
+                models.RecurringTransaction.client_id == client_id,
+                models.RecurringTransaction.is_active.is_(True),
+                models.RecurringTransaction.next_due_date.isnot(None),
+                models.RecurringTransaction.next_due_date >= today,
+                models.RecurringTransaction.next_due_date <= horizon,
+                models.Account.account_type.in_(OUTFLOW_DESTINATION_TYPES),
+            )
         )
-    ).all()
+        .all()
+    )
     return sum(
         convert_amount(
             db,

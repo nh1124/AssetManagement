@@ -42,7 +42,6 @@ def _serialize_transaction(tx: models.Transaction, *, account_id: int | None = N
         "date": tx.date,
         "description": tx.description,
         "amount": tx.amount,
-        "type": tx.type,
         "currency": tx.currency,
         "from_account_id": tx.from_account_id,
         "to_account_id": tx.to_account_id,
@@ -67,7 +66,6 @@ def _serialize_transaction(tx: models.Transaction, *, account_id: int | None = N
 def get_transactions(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
-    type: Optional[str] = Query(None),
     amount_min: Optional[float] = Query(None),
     amount_max: Optional[float] = Query(None),
     account_id: Optional[int] = Query(None),
@@ -84,8 +82,6 @@ def get_transactions(
         query = query.filter(models.Transaction.date >= start_date)
     if end_date:
         query = query.filter(models.Transaction.date <= end_date)
-    if type:
-        query = query.filter(models.Transaction.type == type)
     if amount_min is not None:
         query = query.filter(models.Transaction.amount >= amount_min)
     if amount_max is not None:

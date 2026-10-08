@@ -58,8 +58,7 @@ def _post_opening_balances(db, accounts: list[tuple[models.Account, float]]) -> 
         date=date.today(),
         description="Opening balances",
         amount=0,
-        type="Transfer",
-    )
+        )
     db.add(tx)
     db.flush()
     for account, amount in accounts:
@@ -97,15 +96,18 @@ def test_logical_balance_subtracts_due_recurring_outflow() -> None:
                 current_balance=25000,
             )
         )
+        rent = models.Account(client_id=1, name="rent", account_type="expense")
+        db.add(rent)
+        db.flush()
         db.add(
             models.RecurringTransaction(
                 client_id=1,
                 name="Rent",
                 amount=50000,
-                type="Expense",
                 frequency="Monthly",
                 next_due_date=date.today() + timedelta(days=10),
                 is_active=True,
+                to_account_id=rent.id,
             )
         )
         db.commit()
@@ -124,12 +126,9 @@ def test_update_transaction_rebuilds_journal_and_keeps_reconcile_clean() -> None
     try:
         client = models.Client(id=1, name="test", general_settings={}, ai_config={})
         db.add(client)
-        db.add_all(
-            [
-                models.Account(client_id=1, name="cash", account_type="asset", balance=0),
-                models.Account(client_id=1, name="food", account_type="expense", balance=0),
-            ]
-        )
+        cash = models.Account(client_id=1, name="cash", account_type="asset", balance=0)
+        food = models.Account(client_id=1, name="food", account_type="expense", balance=0)
+        db.add_all([cash, food])
         db.commit()
 
         tx = models.Transaction(
@@ -137,8 +136,9 @@ def test_update_transaction_rebuilds_journal_and_keeps_reconcile_clean() -> None
             date=date.today(),
             description="Lunch",
             amount=1000,
-            type="Expense",
-        )
+            from_account_id=cash.id,
+            to_account_id=food.id,
+            )
         db.add(tx)
         db.commit()
         db.refresh(tx)
@@ -185,7 +185,6 @@ def test_foreign_currency_transactions_are_valued_with_exchange_rates() -> None:
             date=date.today(),
             description="USD income",
             amount=10,
-            type="Income",
             currency="USD",
             from_account_id=salary.id,
             to_account_id=cash.id,
@@ -219,7 +218,6 @@ def test_auto_update_detects_used_currency_once_per_day() -> None:
             date=date.today(),
             description="USD income",
             amount=10,
-            type="Income",
             currency="USD",
             from_account_id=salary.id,
             to_account_id=cash.id,
@@ -265,8 +263,7 @@ def test_roadmap_projection_returns_projection_and_liability_demand() -> None:
             date=today,
             description="Opening balances",
             amount=0,
-            type="Transfer",
-        )
+            )
         db.add(opening)
         db.flush()
         db.add_all(
@@ -383,7 +380,6 @@ def test_profit_loss_rollup_uses_parent_account_category() -> None:
             date=date.today(),
             description="Lunch",
             amount=1200,
-            type="Expense",
             from_account_id=10,
             to_account_id=21,
         )
@@ -417,7 +413,6 @@ def test_period_pl_and_balance_sheet_respect_explicit_dates() -> None:
             date=date(2026, 4, 30),
             description="April salary",
             amount=100000,
-            type="Income",
             from_account_id=11,
             to_account_id=10,
         )
@@ -426,7 +421,6 @@ def test_period_pl_and_balance_sheet_respect_explicit_dates() -> None:
             date=date(2026, 5, 1),
             description="May salary",
             amount=200000,
-            type="Income",
             from_account_id=11,
             to_account_id=10,
         )
@@ -459,7 +453,6 @@ def test_account_flows_and_account_transactions_use_journal_sides() -> None:
             date=date(2026, 5, 1),
             description="Salary",
             amount=500000,
-            type="Income",
             currency="JPY",
             from_account_id=salary.id,
             to_account_id=cash.id,
@@ -469,7 +462,6 @@ def test_account_flows_and_account_transactions_use_journal_sides() -> None:
             date=date(2026, 5, 3),
             description="Lunch",
             amount=1200,
-            type="Expense",
             currency="JPY",
             from_account_id=cash.id,
             to_account_id=food.id,

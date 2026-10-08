@@ -17,7 +17,6 @@ def _serialize_transaction(tx: models.Transaction) -> dict:
         "date": tx.date,
         "description": tx.description,
         "amount": tx.amount,
-        "type": tx.type,
         "currency": tx.currency,
         "from_account_id": tx.from_account_id,
         "to_account_id": tx.to_account_id,

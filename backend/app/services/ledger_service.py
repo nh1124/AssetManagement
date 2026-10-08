@@ -100,67 +100,7 @@ def _get_account_by_id(
     ).first()
 
 
-def _resolve_account(
-    db: Session,
-    client_id: int,
-    account_id: Optional[int],
-    fallback_name: str,
-    fallback_type: str,
-) -> models.Account:
-    by_id = _get_account_by_id(db, account_id, client_id)
-    if by_id:
-        return by_id
-
-    return get_or_create_account(db, fallback_name, client_id, fallback_type, commit=False)
-
-
 DEBIT_NORMAL_TYPES = {"asset", "expense", "item"}
-
-
-TRANSACTION_ACCOUNT_DEFAULTS = {
-    "Income": {
-        "from_name": "salary",
-        "from_type": "income",
-        "to_name": "cash",
-        "to_type": "asset",
-    },
-    "Expense": {
-        "from_name": "cash",
-        "from_type": "asset",
-        "to_name": "expense",
-        "to_type": "expense",
-    },
-    "Transfer": {
-        "from_name": "cash",
-        "from_type": "asset",
-        "to_name": "savings",
-        "to_type": "asset",
-    },
-    "LiabilityPayment": {
-        "from_name": "cash",
-        "from_type": "asset",
-        "to_name": "loan",
-        "to_type": "liability",
-    },
-    "Borrowing": {
-        "from_name": "loan",
-        "from_type": "liability",
-        "to_name": "cash",
-        "to_type": "asset",
-    },
-    "CreditExpense": {
-        "from_name": "credit",
-        "from_type": "liability",
-        "to_name": "expense",
-        "to_type": "expense",
-    },
-    "CreditAssetPurchase": {
-        "from_name": "credit",
-        "from_type": "liability",
-        "to_name": "savings",
-        "to_type": "asset",
-    },
-}
 
 
 def calculate_account_journal_balance(
@@ -285,29 +225,19 @@ def _primary_accounts(legs: list[Leg]) -> tuple[int | None, int | None]:
 
 
 def _legs_from_accounts(db: Session, transaction: models.Transaction) -> list[Leg]:
-    """The two legs a from/to transaction describes, resolving missing accounts.
+    """The two legs a from/to transaction describes.
 
     from_account is the credit side and to_account the debit side, which is the
-    direction the UI has always used.
+    direction the UI has always used. Both are required: there is nothing left
+    to infer a missing account from, and inferring one is how transactions used
+    to land on whichever account happened to come first.
     """
-    defaults = TRANSACTION_ACCOUNT_DEFAULTS.get(transaction.type)
-    if not defaults:
-        raise ValueError(f"Unsupported transaction type: {transaction.type}")
-
-    from_account = _resolve_account(
-        db=db,
-        client_id=transaction.client_id,
-        account_id=transaction.from_account_id,
-        fallback_name=defaults["from_name"],
-        fallback_type=defaults["from_type"],
-    )
-    to_account = _resolve_account(
-        db=db,
-        client_id=transaction.client_id,
-        account_id=transaction.to_account_id,
-        fallback_name=defaults["to_name"],
-        fallback_type=defaults["to_type"],
-    )
+    from_account = _get_account_by_id(db, transaction.from_account_id, transaction.client_id)
+    to_account = _get_account_by_id(db, transaction.to_account_id, transaction.client_id)
+    if from_account is None or to_account is None:
+        raise ValueError(
+            "A transaction needs both from_account_id and to_account_id, or explicit legs"
+        )
     amount = transaction.amount or 0.0
     return [
         Leg(account_id=to_account.id, debit=amount),

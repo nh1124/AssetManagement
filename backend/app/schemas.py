@@ -3,15 +3,11 @@ from datetime import date, datetime
 from datetime import date as DateType
 from typing import Any, List, Optional, Literal
 
-TransactionTypeLiteral = Literal[
-    'Income',
-    'Expense',
-    'Transfer',
-    'LiabilityPayment',
-    'Borrowing',
-    'CreditExpense',
-    'CreditAssetPurchase',
-]
+# What a capsule rule's trigger describes, as a statement about an entry's
+# legs: Income is a credit leg on an income account, Expense a debit leg on an
+# expense account funded from an asset, CreditExpense the same funded from a
+# liability, Transfer asset to asset. See capsule_service._TRIGGER_LEGS.
+CapsuleTriggerLiteral = Literal['Income', 'Expense', 'CreditExpense', 'Transfer']
 ProductBudgetTreatmentLiteral = Literal["auto", "expense_only", "reserve_allocation", "asset_replacement"]
 RegistryEntryTypeLiteral = Literal["asset", "item", "service", "income", "allocation", "debt"]
 RegistryFrequencyLiteral = Literal["Monthly", "Yearly", "EveryNDays", "Irregular"]
@@ -238,7 +234,6 @@ class TransactionBase(BaseModel):
     date: date
     description: Optional[str] = ''
     amount: float
-    type: TransactionTypeLiteral
     currency: str = 'JPY'
     from_account_id: Optional[int] = None
     to_account_id: Optional[int] = None
@@ -264,7 +259,6 @@ class TransactionUpdate(BaseModel):
     date: Optional[DateType] = None
     description: Optional[str] = None
     amount: Optional[float] = None
-    type: Optional[TransactionTypeLiteral] = None
     currency: Optional[str] = None
     from_account_id: Optional[int] = None
     to_account_id: Optional[int] = None
@@ -446,7 +440,6 @@ class RegistryEntryBase(BaseModel):
     frequency_days: Optional[int] = None
     day_of_month: int = 1
     month_of_year: Optional[int] = None
-    transaction_type: TransactionTypeLiteral = "Expense"
     line_type: RegistryLineTypeLiteral = "expense"
     budget_account_id: Optional[int] = None
     source_account_id: Optional[int] = None
@@ -525,7 +518,6 @@ class RecurringTransactionBase(BaseModel):
     name: str
     amount: float
     currency: str = "JPY"
-    type: TransactionTypeLiteral
     from_account_id: Optional[int] = None
     to_account_id: Optional[int] = None
     frequency: Literal['Monthly', 'Yearly']
@@ -546,7 +538,6 @@ class RecurringTransactionUpdate(BaseModel):
     name: Optional[str] = None
     amount: Optional[float] = None
     currency: Optional[str] = None
-    type: Optional[TransactionTypeLiteral] = None
     from_account_id: Optional[int] = None
     to_account_id: Optional[int] = None
     frequency: Optional[Literal['Monthly', 'Yearly']] = None
@@ -928,7 +919,7 @@ class Capsule(CapsuleBase):
 
 class CapsuleRuleBase(BaseModel):
     capsule_id: int
-    trigger_type: TransactionTypeLiteral
+    trigger_type: CapsuleTriggerLiteral
     trigger_category: Optional[str] = None
     trigger_description: Optional[str] = None
     source_mode: Literal["transaction_account", "fixed_account"] = "transaction_account"
@@ -944,7 +935,7 @@ class CapsuleRuleCreate(CapsuleRuleBase):
 
 class CapsuleRuleUpdate(BaseModel):
     capsule_id: Optional[int] = None
-    trigger_type: Optional[TransactionTypeLiteral] = None
+    trigger_type: Optional[CapsuleTriggerLiteral] = None
     trigger_category: Optional[str] = None
     trigger_description: Optional[str] = None
     source_mode: Optional[Literal["transaction_account", "fixed_account"]] = None

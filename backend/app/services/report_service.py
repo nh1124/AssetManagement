@@ -338,7 +338,6 @@ def _apply_allocate_to_goal(
         date=date.today(),
         description=f"Monthly action allocation {period}: {goal.name}",
         amount=amount,
-        type="Transfer",
         from_account_id=cash_account.id,
         to_account_id=savings_account.id,
         currency="JPY",

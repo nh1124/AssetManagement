@@ -36,11 +36,20 @@ def _client(db):
     db.refresh(client)
     return client
 
+def _accounts(db):
+    """A payment account and an expense account, which every entry now needs."""
+    cash = models.Account(client_id=1, name="cash", account_type="asset", balance=0)
+    food = models.Account(client_id=1, name="food", account_type="expense", balance=0)
+    db.add_all([cash, food])
+    db.commit()
+    return cash, food
+
 
 def test_transaction_change_request_preview_approve_apply() -> None:
     db = _session()
     try:
         client = _client(db)
+        cash, food = _accounts(db)
         payload = schemas.AiChangeRequestCreate(
             resource="transactions",
             action="create",
@@ -50,9 +59,9 @@ def test_transaction_change_request_preview_approve_apply() -> None:
                 "date": "2026-06-06",
                 "description": "Lunch",
                 "amount": 1200,
-                "type": "Expense",
-                "category": "food",
                 "currency": "JPY",
+                "from_account_id": cash.id,
+                "to_account_id": food.id,
             },
         )
 
@@ -88,7 +97,6 @@ def test_change_request_idempotency_returns_existing_request() -> None:
                 "date": "2026-06-06",
                 "description": "Coffee",
                 "amount": 500,
-                "type": "Expense",
                 "category": "food",
                 "currency": "JPY",
             },
@@ -127,7 +135,6 @@ def test_denied_policy_blocks_change_request_preview() -> None:
                         "date": "2026-06-06",
                         "description": "Coffee",
                         "amount": 500,
-                        "type": "Expense",
                         "category": "food",
                         "currency": "JPY",
                     },
@@ -157,7 +164,6 @@ def test_recurring_transaction_change_request_apply() -> None:
                     "name": "Rent",
                     "amount": 100000,
                     "currency": "JPY",
-                    "type": "Expense",
                     "frequency": "Monthly",
                     "day_of_month": 25,
                     "auto_post": True,

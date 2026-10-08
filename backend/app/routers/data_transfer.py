@@ -22,7 +22,7 @@ from ..services.data_health_service import check_data_health, repair_data_health
 
 router = APIRouter(prefix="/data", tags=["data"])
 
-EXPORT_VERSION = 5
+EXPORT_VERSION = 6
 
 DATA_COLLECTIONS = [
     "accounts",
@@ -516,7 +516,6 @@ def export_client_data(
                         "name",
                         "amount",
                         "currency",
-                        "type",
                         "from_account_id",
                         "to_account_id",
                         "frequency",
@@ -550,7 +549,6 @@ def export_client_data(
                         "frequency_days",
                         "day_of_month",
                         "month_of_year",
-                        "transaction_type",
                         "line_type",
                         "budget_account_id",
                         "source_account_id",
@@ -646,7 +644,6 @@ def export_client_data(
                         "date",
                         "description",
                         "amount",
-                        "type",
                         "currency",
                         "from_account_id",
                         "to_account_id",
@@ -1074,7 +1071,6 @@ def import_client_data(
                 name=item["name"],
                 amount=item.get("amount") or 0,
                 currency=item.get("currency") or "JPY",
-                type=item["type"],
                 from_account_id=account_map.get(item.get("from_account_id")),
                 to_account_id=account_map.get(item.get("to_account_id")),
                 frequency=item["frequency"],
@@ -1106,7 +1102,6 @@ def import_client_data(
                 frequency_days=item.get("frequency_days"),
                 day_of_month=item.get("day_of_month") or 1,
                 month_of_year=item.get("month_of_year"),
-                transaction_type=item.get("transaction_type") or "Expense",
                 line_type=item.get("line_type") or "expense",
                 budget_account_id=account_map.get(item.get("budget_account_id")),
                 source_account_id=account_map.get(item.get("source_account_id")),
@@ -1202,7 +1197,6 @@ def import_client_data(
                 date=_parse_date(item.get("date")),
                 description=item["description"],
                 amount=item.get("amount") or 0,
-                type=item["type"],
                 currency=item.get("currency") or "JPY",
                 from_account_id=account_map.get(item.get("from_account_id")),
                 to_account_id=account_map.get(item.get("to_account_id")),

@@ -40,7 +40,6 @@ class BudgetContext:
         self._period_transactions: dict[str, list[models.Transaction]] = {}
         self._period_legs: dict[str, list[Leg]] = {}
         self._capsule_balances: dict[int, float] = {}
-        self._recurring_types: dict[int, str | None] = {}
         self._registry_lines: dict[str, list[dict]] = {}
         self._credit_settlement_lines: dict[str, list[dict]] = {}
 
@@ -154,20 +153,6 @@ class BudgetContext:
             "life_event": {item.id: item.name for item in life_events},
             "product": {item.id: item.name for item in products},
         }
-
-    # ------------------------------------------------------------------
-    # recurring definitions
-
-    def recurring_transaction_type(self, recurring_id: int | None) -> str | None:
-        if not recurring_id:
-            return None
-        if recurring_id not in self._recurring_types:
-            recurring = self.db.query(models.RecurringTransaction).filter(
-                models.RecurringTransaction.id == recurring_id,
-                models.RecurringTransaction.client_id == self.client_id,
-            ).first()
-            self._recurring_types[recurring_id] = recurring.type if recurring else None
-        return self._recurring_types[recurring_id]
 
     # ------------------------------------------------------------------
     # derived collections, built by the caller

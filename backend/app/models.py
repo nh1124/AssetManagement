@@ -4,15 +4,6 @@ from datetime import datetime
 import enum
 from .database import Base
 
-class TransactionType(str, enum.Enum):
-    INCOME = "Income"
-    EXPENSE = "Expense"
-    TRANSFER = "Transfer"
-    LIABILITY_PAYMENT = "LiabilityPayment"
-    BORROWING = "Borrowing"
-    CREDIT_EXPENSE = "CreditExpense"
-    CREDIT_ASSET_PURCHASE = "CreditAssetPurchase"
-
 class AccountType(str, enum.Enum):
     ASSET = "asset"
     LIABILITY = "liability"
@@ -175,7 +166,6 @@ class Transaction(Base):
     date = Column(Date)
     description = Column(String)
     amount = Column(Float)
-    type = Column(String)
     currency = Column(String, default='JPY')
     from_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     to_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
@@ -304,7 +294,6 @@ class RecurringTransaction(Base):
     name = Column(String, index=True)
     amount = Column(Float)
     currency = Column(String, default="JPY", server_default="JPY", nullable=False)
-    type = Column(String)  # Income, Expense, Transfer, LiabilityPayment, Borrowing, CreditExpense, CreditAssetPurchase
     from_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     to_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     frequency = Column(String)  # Monthly, Yearly
@@ -339,7 +328,6 @@ class RegistryEntry(Base):
     frequency_days = Column(Integer, nullable=True)
     day_of_month = Column(Integer, default=1, server_default="1", nullable=False)
     month_of_year = Column(Integer, nullable=True)
-    transaction_type = Column(String, nullable=False, default="Expense")
     line_type = Column(String, nullable=False, default="expense")
     budget_account_id = Column(Integer, ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True)
     source_account_id = Column(Integer, ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True)

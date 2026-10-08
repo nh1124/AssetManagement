@@ -504,7 +504,6 @@ def get_account_transactions_for_range(
                 "transaction_id": tx.id,
                 "date": tx.date.isoformat(),
                 "description": tx.description,
-                "type": tx.type,
                 "currency": tx.currency,
                 "amount": convert_transaction_amount(db, tx, client_id=client_id) if tx.amount else 0.0,
                 "raw_amount": tx.amount,

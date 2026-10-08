@@ -43,7 +43,6 @@ def _post_opening_cash(db, client_id: int, amount: float) -> models.Account:
         date=date.today(),
         description="Opening cash",
         amount=amount,
-        type="Income",
         currency="JPY",
         from_account_id=equity.id,
         to_account_id=cash.id,
@@ -135,6 +134,9 @@ def test_logical_balance_converts_foreign_currency_recurring_outflow() -> None:
     try:
         _client(db)
         _post_opening_cash(db, 1, 20000)
+        subscription_account = models.Account(client_id=1, name="subscriptions", account_type="expense")
+        db.add(subscription_account)
+        db.flush()
         due_date = date.today() + timedelta(days=10)
         db.add_all(
             [
@@ -151,10 +153,10 @@ def test_logical_balance_converts_foreign_currency_recurring_outflow() -> None:
                     name="USD subscription",
                     amount=10,
                     currency="USD",
-                    type="Expense",
                     frequency="Monthly",
                     next_due_date=due_date,
                     is_active=True,
+                    to_account_id=subscription_account.id,
                 ),
             ]
         )

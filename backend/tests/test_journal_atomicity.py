@@ -56,7 +56,6 @@ def test_create_transaction_rolls_back_when_journal_posting_fails(monkeypatch) -
                     date=date(2026, 7, 1),
                     description="Atomic lunch",
                     amount=1200,
-                    type="Expense",
                     currency="JPY",
                 ),
                 db=db,
@@ -199,6 +198,10 @@ def test_report_goal_allocation_commits_journal_and_capsule(monkeypatch) -> None
 
 
 def _approved_transaction_change_request(db, client: models.Client) -> models.AiChangeRequest:
+    cash = models.Account(client_id=client.id, name="cash", account_type="asset", balance=0)
+    food = models.Account(client_id=client.id, name="food", account_type="expense", balance=0)
+    db.add_all([cash, food])
+    db.commit()
     request = create_change_request(
         db,
         client.id,
@@ -212,9 +215,9 @@ def _approved_transaction_change_request(db, client: models.Client) -> models.Ai
                 "date": "2026-07-01",
                 "description": "AI lunch",
                 "amount": 900,
-                "type": "Expense",
-                "category": "food",
                 "currency": "JPY",
+                "from_account_id": cash.id,
+                "to_account_id": food.id,
             },
         ),
     )
@@ -277,7 +280,6 @@ def test_import_validation_and_import_reject_missing_journal_entries() -> None:
                         "date": "2026-07-01",
                         "description": "Missing journal",
                         "amount": 1000,
-                        "type": "Expense",
                         "from_account_id": 10,
                         "to_account_id": 11,
                     }
@@ -313,7 +315,6 @@ def test_delete_transaction_rolls_back_reversal_and_rows_when_commit_fails(monke
             date=date(2026, 7, 1),
             description="Delete rollback",
             amount=1000,
-            type="Expense",
             from_account_id=cash.id,
             to_account_id=food.id,
         )

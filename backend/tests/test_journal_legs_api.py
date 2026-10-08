@@ -58,7 +58,7 @@ def _list_transactions(db, client, **overrides):
     defaults are Query objects, and a Query object is truthy.
     """
     params = {
-        "start_date": None, "end_date": None, "type": None,
+        "start_date": None, "end_date": None,
         "amount_min": None, "amount_max": None, "account_id": None, "q": None,
         "limit": 50, "offset": 0, "paginated": False,
     }
@@ -71,7 +71,6 @@ def _split_payload(card, food, advance, amount=5000):
         date=WHEN,
         description="dinner with a friend",
         amount=amount,
-        type="CreditExpense",
         currency="JPY",
         legs=[
             schemas.TransactionLeg(account_id=card.id, credit=amount),
@@ -142,7 +141,7 @@ def test_an_entry_that_breaks_the_invariant_is_refused(legs_kwargs, message) -> 
         card, food, advance = _accounts(db)
         by_name = {"card": card, "food": food, "advance": advance}
         payload = schemas.TransactionCreate(
-            date=WHEN, description="bad entry", amount=5000, type="CreditExpense", currency="JPY",
+            date=WHEN, description="bad entry", amount=5000, currency="JPY",
             legs=[
                 schemas.TransactionLeg(account_id=by_name[name].id, debit=debit, credit=credit)
                 for name, debit, credit in legs_kwargs
@@ -167,7 +166,7 @@ def test_an_account_from_another_client_is_refused() -> None:
         db.add(other)
         db.commit()
         payload = schemas.TransactionCreate(
-            date=WHEN, description="leak", amount=1000, type="Expense", currency="JPY",
+            date=WHEN, description="leak", amount=1000, currency="JPY",
             legs=[
                 schemas.TransactionLeg(account_id=card.id, credit=1000),
                 schemas.TransactionLeg(account_id=other.id, debit=1000),
@@ -189,8 +188,7 @@ def test_a_two_leg_transaction_still_posts_without_legs() -> None:
 
         result = transaction_router.create_transaction(
             schemas.TransactionCreate(
-                date=WHEN, description="coffee", amount=500, type="CreditExpense",
-                currency="JPY", from_account_id=card.id, to_account_id=food.id,
+                date=WHEN, description="coffee", amount=500, currency="JPY", from_account_id=card.id, to_account_id=food.id,
             ),
             db=db, current_client=client,
         )
@@ -283,7 +281,7 @@ def test_data_health_reports_an_entry_whose_legs_do_not_balance() -> None:
         card, food, _advance = _accounts(db)
         tx = models.Transaction(
             client_id=1, date=WHEN, description="hand-edited", amount=5000,
-            type="CreditExpense", currency="JPY",
+            currency="JPY",
         )
         db.add(tx)
         db.flush()
@@ -344,7 +342,7 @@ def test_a_batch_can_carry_a_compound_entry() -> None:
                 transactions=[
                     schemas.TransactionCreate(
                         date=WHEN, description="dinner with a friend", amount=5000,
-                        type="CreditExpense", currency="JPY", from_account_id=card.id,
+                        currency="JPY", from_account_id=card.id,
                         legs=[
                             schemas.TransactionLeg(account_id=card.id, credit=5000),
                             schemas.TransactionLeg(account_id=food.id, debit=3000, memo="own share"),
@@ -354,7 +352,7 @@ def test_a_batch_can_carry_a_compound_entry() -> None:
                     # The friend paid their share back the same day.
                     schemas.TransactionCreate(
                         date=WHEN, description="dinner with a friend 精算", amount=2000,
-                        type="Transfer", currency="JPY",
+                        currency="JPY",
                         from_account_id=advance.id, to_account_id=cash.id,
                     ),
                 ],

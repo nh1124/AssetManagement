@@ -19,22 +19,11 @@ import {
   shouldCreateChangeRequest,
 } from "../write-control.js";
 
-const transactionTypeSchema = z.enum([
-  "Income",
-  "Expense",
-  "Transfer",
-  "LiabilityPayment",
-  "Borrowing",
-  "CreditExpense",
-  "CreditAssetPurchase",
-]);
-
 interface Transaction {
   id: number;
   date: string;
   description: string;
   amount: number;
-  type: z.infer<typeof transactionTypeSchema>;
   currency?: string;
   from_account_id?: number | null;
   to_account_id?: number | null;
@@ -54,7 +43,6 @@ export function registerTransactionTools(server: McpServer): void {
           offset: z.number().int().min(0).optional().default(0).describe("Rows to skip"),
           start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Start date, YYYY-MM-DD"),
           end_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("End date, YYYY-MM-DD"),
-          type: transactionTypeSchema.optional().describe("Transaction type"),
           amount_min: z.number().optional().describe("Minimum amount"),
           amount_max: z.number().optional().describe("Maximum amount"),
           account_id: z.number().int().min(1).optional().describe("From or to account ID"),
@@ -63,14 +51,13 @@ export function registerTransactionTools(server: McpServer): void {
         .strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async ({ limit = 30, offset = 0, start_date, end_date, type, amount_min, amount_max, account_id, q }) => {
+    async ({ limit = 30, offset = 0, start_date, end_date, amount_min, amount_max, account_id, q }) => {
       try {
         const params = new URLSearchParams();
         params.append("limit", String(limit));
         params.append("offset", String(offset));
         if (start_date !== undefined) params.append("start_date", start_date);
         if (end_date !== undefined) params.append("end_date", end_date);
-        if (type !== undefined) params.append("type", type);
         if (amount_min !== undefined) params.append("amount_min", String(amount_min));
         if (amount_max !== undefined) params.append("amount_max", String(amount_max));
         if (account_id !== undefined) params.append("account_id", String(account_id));
@@ -99,7 +86,6 @@ export function registerTransactionTools(server: McpServer): void {
           date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe("Transaction date, YYYY-MM-DD"),
           description: z.string().min(1).describe("Description"),
           amount: z.number().min(0).describe("Amount; the whole payment, and the total each side of the legs must come to"),
-          type: transactionTypeSchema.describe("Transaction type"),
           from_account_id: z.number().int().min(1).optional().describe("Source account ID; the credit side when legs are omitted"),
           to_account_id: z.number().int().min(1).optional().describe("Destination account ID; the debit side when legs are omitted"),
           currency: z.string().optional().describe("Currency"),
@@ -110,9 +96,9 @@ export function registerTransactionTools(server: McpServer): void {
         .strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    async ({ date, description, amount, type, from_account_id, to_account_id, currency, legs }) => {
+    async ({ date, description, amount, from_account_id, to_account_id, currency, legs }) => {
       try {
-        const body: Record<string, unknown> = { date, description, amount, type };
+        const body: Record<string, unknown> = { date, description, amount };
         if (from_account_id !== undefined) body.from_account_id = from_account_id;
         if (to_account_id !== undefined) body.to_account_id = to_account_id;
         if (currency !== undefined) body.currency = currency;
@@ -170,7 +156,6 @@ export function registerTransactionTools(server: McpServer): void {
           date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Transaction date, YYYY-MM-DD"),
           description: z.string().min(1).optional().describe("Description"),
           amount: z.number().min(0).optional().describe("Amount"),
-          type: transactionTypeSchema.optional().describe("Transaction type"),
           from_account_id: z.number().int().min(1).optional().describe("Source account ID"),
           to_account_id: z.number().int().min(1).optional().describe("Destination account ID"),
           currency: z.string().optional().describe("Currency"),
@@ -239,10 +224,10 @@ export function registerTransactionTools(server: McpServer): void {
         if (!data || data.length === 0) {
           return { content: [{ type: "text", text: "No transactions found." }] };
         }
-        const lines = data.map(
-          (t) =>
-            `${t.date}  ${t.type.padEnd(18)}  ${String(t.amount.toLocaleString()).padStart(12)} JPY  ${t.description}`,
-        );
+        const lines = data.map((t) => {
+          const route = `${t.from_account_name ?? "?"} -> ${t.to_account_name ?? "several"}`;
+          return `${t.date}  ${route.padEnd(34)}  ${String(t.amount.toLocaleString()).padStart(12)} JPY  ${t.description}`;
+        });
         const text = `Recent ${data.length} transactions:\n\n${lines.join("\n")}`;
         return {
           content: [{ type: "text", text }],
