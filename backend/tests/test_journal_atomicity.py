@@ -57,7 +57,6 @@ def test_create_transaction_rolls_back_when_journal_posting_fails(monkeypatch) -
                     description="Atomic lunch",
                     amount=1200,
                     type="Expense",
-                    category="food",
                     currency="JPY",
                 ),
                 db=db,

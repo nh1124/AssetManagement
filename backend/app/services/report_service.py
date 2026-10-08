@@ -342,7 +342,6 @@ def _apply_allocate_to_goal(
         from_account_id=cash_account.id,
         to_account_id=savings_account.id,
         currency="JPY",
-        category="monthly_action",
     )
     db.add(transaction)
     db.flush()

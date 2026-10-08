@@ -26,7 +26,6 @@ import {
     QUICK_PRESETS,
     QUICK_TEMPLATE_GROUPS,
     QUICK_TEMPLATE_KINDS,
-    localizeQuickCategory,
     quickGroupLabel,
     quickHelp,
     quickKindGroup,
@@ -161,7 +160,6 @@ const defaultFilters = {
     endDate: '',
     type: '',
     q: '',
-    category: '',
     amountMin: '',
     amountMax: '',
     accountId: '',
@@ -206,7 +204,6 @@ export default function Journal() {
         description: '',
         amount: '',
         type: 'Expense' as TransactionKind,
-        category: '',
         currency: 'JPY',
         fromAccountId: '',
         toAccountId: '',
@@ -689,14 +686,12 @@ export default function Journal() {
         try {
             const fromAccountId = formData.fromAccountId ? parseInt(formData.fromAccountId, 10) : undefined;
             const toAccountId = formData.toAccountId ? parseInt(formData.toAccountId, 10) : undefined;
-            const toAccount = toAccounts.find((acc) => acc.id === toAccountId);
 
             const payload = {
                 date: formData.date,
                 description: formData.description,
                 amount: parseFloat(formData.amount),
                 type: formData.type,
-                category: toAccount?.name || formData.category || '',
                 currency: formData.currency,
                 from_account_id: fromAccountId,
                 to_account_id: toAccountId,
@@ -709,7 +704,7 @@ export default function Journal() {
                 showToast('Record saved', 'success');
             }
             setEditingTransactionId(null);
-            setFormData({ ...formData, description: '', amount: '', category: '' });
+            setFormData({ ...formData, description: '', amount: '' });
             fetchTransactionsOnly();
         } catch (error) {
             showToast('Failed to save record', 'error');
@@ -782,14 +777,12 @@ export default function Journal() {
                 } else {
                     const fromAccountId = resolveAccountId(suggestion.from_account, rules.fromTypes, true);
                     const toAccountId = resolveAccountId(suggestion.to_account, rules.toTypes, true);
-                    const toAccount = accounts.find((acc) => acc.id === toAccountId);
 
                     await createTransaction({
                         date: suggestion.date || formData.date,
                         description: suggestion.description,
                         amount: suggestion.amount,
                         type: txType,
-                        category: suggestion.category || toAccount?.name || '',
                         currency: suggestion.currency || 'JPY',
                         from_account_id: fromAccountId,
                         to_account_id: toAccountId,
@@ -831,7 +824,6 @@ export default function Journal() {
             description: tx.description,
             amount: String(tx.amount),
             type: tx.type,
-            category: tx.category || '',
             currency: tx.currency || 'JPY',
             fromAccountId: tx.from_account_id ? String(tx.from_account_id) : '',
             toAccountId: tx.to_account_id ? String(tx.to_account_id) : '',
@@ -845,7 +837,6 @@ export default function Journal() {
             description: '',
             amount: '',
             type: 'Expense',
-            category: '',
             currency: 'JPY',
             fromAccountId: '',
             toAccountId: '',
@@ -1025,10 +1016,7 @@ export default function Journal() {
                                 <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">To Account</label>
                                 <select
                                     value={formData.toAccountId}
-                                    onChange={(e) => {
-                                        const newToAccount = toAccounts.find((a) => String(a.id) === e.target.value);
-                                        setFormData({ ...formData, toAccountId: e.target.value, category: newToAccount?.name || formData.category });
-                                    }}
+                                    onChange={(e) => setFormData({ ...formData, toAccountId: e.target.value })}
                                     className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
                                 >
                                     <option value="">Select...</option>
@@ -1984,13 +1972,6 @@ export default function Journal() {
                         className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs"
                     />
                     <input
-                        type="text"
-                        value={filters.category}
-                        onChange={(e) => setFilters({ ...filters, category: e.target.value })}
-                        placeholder="Category"
-                        className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs"
-                    />
-                    <input
                         type="number"
                         value={filters.amountMin}
                         onChange={(e) => setFilters({ ...filters, amountMin: e.target.value })}
@@ -2037,7 +2018,12 @@ export default function Journal() {
                                             </span>
                                         )}
                                     </p>
-                                    <p className="text-[10px] text-slate-600">{tx.date} • {localizeQuickCategory(tx.category, language)}</p>
+                                    <p className="text-[10px] text-slate-600">
+                                        {tx.date}
+                                        {(tx.from_account_name || tx.to_account_name) && (
+                                            <> • {tx.from_account_name || '—'} → {tx.to_account_name || (tx.legs && tx.legs.length > 2 ? (language === 'ja' ? '複数' : 'several') : '—')}</>
+                                        )}
+                                    </p>
                                     {tx.legs && tx.legs.length > 2 && (
                                         <p className="text-[10px] text-slate-500">
                                             {tx.legs

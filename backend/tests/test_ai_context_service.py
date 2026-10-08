@@ -75,7 +75,6 @@ def _client_with_data(db):
         description="Lunch",
         amount=1200,
         type="Expense",
-        category="Food",
         currency="JPY",
         from_account_id=cash.id,
         to_account_id=food.id,

@@ -115,7 +115,6 @@ def test_process_due_creates_transaction_and_two_journal_entries():
         assert len(result["processed"]) == 1
         transaction = db.query(models.Transaction).one()
         assert transaction.date == date(2026, 6, 15)
-        assert transaction.category == "Rent expense"
         assert db.query(models.JournalEntry).filter_by(transaction_id=transaction.id).count() == 2
         assert recurring.next_due_date == date(2026, 7, 15)
     finally:

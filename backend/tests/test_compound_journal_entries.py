@@ -284,7 +284,6 @@ def _split_payroll(db):
         type="Income",
         currency="JPY",
         # The category says nothing useful; the accounts do.
-        category="payroll",
         from_account_id=salary.id,
     )
     db.add(tx)

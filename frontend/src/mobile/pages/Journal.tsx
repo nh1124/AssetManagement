@@ -177,9 +177,9 @@ function TransactionRow({ tx }: { tx: Transaction }) {
         <article className="px-3 py-3">
             <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-slate-100">{tx.description || tx.category || tx.type}</p>
+                    <p className="truncate text-sm font-medium text-slate-100">{tx.description || tx.type}</p>
                     <p className="mt-1 text-[10px] text-slate-500">
-                        {tx.date} - {tx.type}{tx.category ? ` - ${tx.category}` : ''}
+                        {tx.date} - {tx.type}
                     </p>
                     {(tx.from_account_name || tx.to_account_name) && (
                         <p className="mt-1 truncate text-[10px] text-slate-600">

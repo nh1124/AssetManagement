@@ -196,7 +196,6 @@ def delete_life_event(
             from_account_id=cap.account_id,
             to_account_id=transfer_account_id,
             currency="JPY",
-            category="capsule_return",
         )
         db.add(tx)
         db.flush()

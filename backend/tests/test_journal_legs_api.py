@@ -58,7 +58,7 @@ def _list_transactions(db, client, **overrides):
     defaults are Query objects, and a Query object is truthy.
     """
     params = {
-        "start_date": None, "end_date": None, "type": None, "category": None,
+        "start_date": None, "end_date": None, "type": None,
         "amount_min": None, "amount_max": None, "account_id": None, "q": None,
         "limit": 50, "offset": 0, "paginated": False,
     }

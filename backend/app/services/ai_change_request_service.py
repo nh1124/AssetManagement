@@ -55,7 +55,6 @@ TRANSACTION_FIELDS = [
     "description",
     "amount",
     "type",
-    "category",
     "currency",
     "from_account_id",
     "to_account_id",

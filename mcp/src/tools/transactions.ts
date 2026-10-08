@@ -35,7 +35,6 @@ interface Transaction {
   description: string;
   amount: number;
   type: z.infer<typeof transactionTypeSchema>;
-  category?: string | null;
   currency?: string;
   from_account_id?: number | null;
   to_account_id?: number | null;
@@ -56,7 +55,6 @@ export function registerTransactionTools(server: McpServer): void {
           start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Start date, YYYY-MM-DD"),
           end_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("End date, YYYY-MM-DD"),
           type: transactionTypeSchema.optional().describe("Transaction type"),
-          category: z.string().optional().describe("Category contains this text"),
           amount_min: z.number().optional().describe("Minimum amount"),
           amount_max: z.number().optional().describe("Maximum amount"),
           account_id: z.number().int().min(1).optional().describe("From or to account ID"),
@@ -65,7 +63,7 @@ export function registerTransactionTools(server: McpServer): void {
         .strict(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async ({ limit = 30, offset = 0, start_date, end_date, type, category, amount_min, amount_max, account_id, q }) => {
+    async ({ limit = 30, offset = 0, start_date, end_date, type, amount_min, amount_max, account_id, q }) => {
       try {
         const params = new URLSearchParams();
         params.append("limit", String(limit));
@@ -73,7 +71,6 @@ export function registerTransactionTools(server: McpServer): void {
         if (start_date !== undefined) params.append("start_date", start_date);
         if (end_date !== undefined) params.append("end_date", end_date);
         if (type !== undefined) params.append("type", type);
-        if (category !== undefined) params.append("category", category);
         if (amount_min !== undefined) params.append("amount_min", String(amount_min));
         if (amount_max !== undefined) params.append("amount_max", String(amount_max));
         if (account_id !== undefined) params.append("account_id", String(account_id));
@@ -103,7 +100,6 @@ export function registerTransactionTools(server: McpServer): void {
           description: z.string().min(1).describe("Description"),
           amount: z.number().min(0).describe("Amount; the whole payment, and the total each side of the legs must come to"),
           type: transactionTypeSchema.describe("Transaction type"),
-          category: z.string().optional().describe("Category"),
           from_account_id: z.number().int().min(1).optional().describe("Source account ID; the credit side when legs are omitted"),
           to_account_id: z.number().int().min(1).optional().describe("Destination account ID; the debit side when legs are omitted"),
           currency: z.string().optional().describe("Currency"),
@@ -114,10 +110,9 @@ export function registerTransactionTools(server: McpServer): void {
         .strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    async ({ date, description, amount, type, category, from_account_id, to_account_id, currency, legs }) => {
+    async ({ date, description, amount, type, from_account_id, to_account_id, currency, legs }) => {
       try {
         const body: Record<string, unknown> = { date, description, amount, type };
-        if (category !== undefined) body.category = category;
         if (from_account_id !== undefined) body.from_account_id = from_account_id;
         if (to_account_id !== undefined) body.to_account_id = to_account_id;
         if (currency !== undefined) body.currency = currency;
@@ -176,7 +171,6 @@ export function registerTransactionTools(server: McpServer): void {
           description: z.string().min(1).optional().describe("Description"),
           amount: z.number().min(0).optional().describe("Amount"),
           type: transactionTypeSchema.optional().describe("Transaction type"),
-          category: z.string().optional().describe("Category"),
           from_account_id: z.number().int().min(1).optional().describe("Source account ID"),
           to_account_id: z.number().int().min(1).optional().describe("Destination account ID"),
           currency: z.string().optional().describe("Currency"),

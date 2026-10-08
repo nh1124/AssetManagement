@@ -385,7 +385,6 @@ export interface TransactionQuery {
     startDate?: string;
     endDate?: string;
     type?: string;
-    category?: string;
     amountMin?: string;
     amountMax?: string;
     accountId?: string;
@@ -399,7 +398,6 @@ const appendTransactionQuery = (params: URLSearchParams, query?: TransactionQuer
     if (query.startDate) params.append('start_date', query.startDate);
     if (query.endDate) params.append('end_date', query.endDate);
     if (query.type) params.append('type', query.type);
-    if (query.category) params.append('category', query.category);
     if (query.amountMin) params.append('amount_min', query.amountMin);
     if (query.amountMax) params.append('amount_max', query.amountMax);
     if (query.accountId) params.append('account_id', query.accountId);

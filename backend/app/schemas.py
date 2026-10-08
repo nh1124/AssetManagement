@@ -239,7 +239,6 @@ class TransactionBase(BaseModel):
     description: Optional[str] = ''
     amount: float
     type: TransactionTypeLiteral
-    category: Optional[str] = None
     currency: str = 'JPY'
     from_account_id: Optional[int] = None
     to_account_id: Optional[int] = None
@@ -266,7 +265,6 @@ class TransactionUpdate(BaseModel):
     description: Optional[str] = None
     amount: Optional[float] = None
     type: Optional[TransactionTypeLiteral] = None
-    category: Optional[str] = None
     currency: Optional[str] = None
     from_account_id: Optional[int] = None
     to_account_id: Optional[int] = None

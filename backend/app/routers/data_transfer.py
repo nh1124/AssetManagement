@@ -22,7 +22,7 @@ from ..services.data_health_service import check_data_health, repair_data_health
 
 router = APIRouter(prefix="/data", tags=["data"])
 
-EXPORT_VERSION = 4
+EXPORT_VERSION = 5
 
 DATA_COLLECTIONS = [
     "accounts",
@@ -647,7 +647,6 @@ def export_client_data(
                         "description",
                         "amount",
                         "type",
-                        "category",
                         "currency",
                         "from_account_id",
                         "to_account_id",
@@ -661,7 +660,7 @@ def export_client_data(
                 .all()
             ],
             "journal_entries": [
-                _row(entry, ["id", "transaction_id", "account_id", "debit", "credit"])
+                _row(entry, ["id", "transaction_id", "account_id", "debit", "credit", "memo", "sort_order"])
                 for entry in db.query(models.JournalEntry)
                 .filter(models.JournalEntry.transaction_id.in_(tx_ids or [-1]))
                 .order_by(models.JournalEntry.id)
@@ -1204,7 +1203,6 @@ def import_client_data(
                 description=item["description"],
                 amount=item.get("amount") or 0,
                 type=item["type"],
-                category=item.get("category"),
                 currency=item.get("currency") or "JPY",
                 from_account_id=account_map.get(item.get("from_account_id")),
                 to_account_id=account_map.get(item.get("to_account_id")),
@@ -1225,6 +1223,8 @@ def import_client_data(
                         account_id=account_id,
                         debit=item.get("debit") or 0,
                         credit=item.get("credit") or 0,
+                        memo=item.get("memo"),
+                        sort_order=item.get("sort_order"),
                     )
                 )
 

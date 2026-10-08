@@ -28,7 +28,6 @@ export const transactionPayloadSchema = z
     description: z.string().min(1).optional().describe("Description"),
     amount: z.number().min(0).describe("Amount"),
     type: transactionTypeSchema.describe("Transaction type"),
-    category: z.string().optional().describe("Category"),
     from_account_id: z.number().int().min(1).optional().describe("Source account ID; this becomes the credit side"),
     to_account_id: z.number().int().min(1).optional().describe("Destination account ID; this becomes the debit side"),
     currency: z.string().optional().default("JPY").describe("Currency"),
@@ -237,9 +236,6 @@ export function validateTransactionPayload(input: z.infer<typeof transactionPayl
   if (input.from_account_id !== undefined && input.from_account_id === input.to_account_id) {
     errors.push("from_account_id and to_account_id are the same. A transaction must move value between two sides.");
   }
-  if ((input.type === "Expense" || input.type === "CreditExpense") && to && input.category && to.name !== input.category) {
-    warnings.push(`Category "${input.category}" differs from destination expense account "${to.name}". Backend may preserve category, but reports often group by account.`);
-  }
   if (input.type === "CreditAssetPurchase") {
     warnings.push("Use CreditAssetPurchase only when the purchase should be capitalized as an asset. Ordinary household consumables should usually be CreditExpense.");
   }
@@ -279,8 +275,8 @@ export function previewTransactionPayload(input: z.infer<typeof transactionPaylo
       ],
     };
   }
-  const from = accountRef(accounts, input.from_account_id, input.type, "from", input.category);
-  const to = accountRef(accounts, input.to_account_id, input.type, "to", input.category);
+  const from = accountRef(accounts, input.from_account_id, input.type, "from");
+  const to = accountRef(accounts, input.to_account_id, input.type, "to");
   const amount = input.amount;
 
   return {
@@ -289,7 +285,6 @@ export function previewTransactionPayload(input: z.infer<typeof transactionPaylo
     rule_summary: rule.summary,
     amount,
     currency: input.currency ?? "JPY",
-    category: input.category ?? null,
     from_account: from,
     to_account: to,
     journal_preview: [

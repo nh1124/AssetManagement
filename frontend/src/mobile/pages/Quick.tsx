@@ -543,7 +543,6 @@ function buildFallbackTransaction(
         description: entry.description.trim() || display.name,
         amount: Number(entry.amount || 0),
         type: fallbackTransactionType(template.template_kind, paymentAccount),
-        category: display.category,
         currency: entry.currency || template.default_currency || currentCurrency,
         from_account_id: entry.payment_account_id ? Number(entry.payment_account_id) : undefined,
         to_account_id: entry.expense_account_id ? Number(entry.expense_account_id) : undefined,

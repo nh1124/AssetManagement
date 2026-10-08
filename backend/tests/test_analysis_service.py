@@ -138,7 +138,6 @@ def test_update_transaction_rebuilds_journal_and_keeps_reconcile_clean() -> None
             description="Lunch",
             amount=1000,
             type="Expense",
-            category="food",
         )
         db.add(tx)
         db.commit()
@@ -187,7 +186,6 @@ def test_foreign_currency_transactions_are_valued_with_exchange_rates() -> None:
             description="USD income",
             amount=10,
             type="Income",
-            category="salary",
             currency="USD",
             from_account_id=salary.id,
             to_account_id=cash.id,
@@ -222,7 +220,6 @@ def test_auto_update_detects_used_currency_once_per_day() -> None:
             description="USD income",
             amount=10,
             type="Income",
-            category="salary",
             currency="USD",
             from_account_id=salary.id,
             to_account_id=cash.id,
@@ -387,7 +384,6 @@ def test_profit_loss_rollup_uses_parent_account_category() -> None:
             description="Lunch",
             amount=1200,
             type="Expense",
-            category="lunch",
             from_account_id=10,
             to_account_id=21,
         )
@@ -422,7 +418,6 @@ def test_period_pl_and_balance_sheet_respect_explicit_dates() -> None:
             description="April salary",
             amount=100000,
             type="Income",
-            category="salary",
             from_account_id=11,
             to_account_id=10,
         )
@@ -432,7 +427,6 @@ def test_period_pl_and_balance_sheet_respect_explicit_dates() -> None:
             description="May salary",
             amount=200000,
             type="Income",
-            category="salary",
             from_account_id=11,
             to_account_id=10,
         )
@@ -466,7 +460,6 @@ def test_account_flows_and_account_transactions_use_journal_sides() -> None:
             description="Salary",
             amount=500000,
             type="Income",
-            category="salary",
             currency="JPY",
             from_account_id=salary.id,
             to_account_id=cash.id,
@@ -477,7 +470,6 @@ def test_account_flows_and_account_transactions_use_journal_sides() -> None:
             description="Lunch",
             amount=1200,
             type="Expense",
-            category="food",
             currency="JPY",
             from_account_id=cash.id,
             to_account_id=food.id,

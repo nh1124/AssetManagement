@@ -17,7 +17,6 @@ export interface Transaction {
     description: string;
     amount: number;
     type: 'Income' | 'Expense' | 'Transfer' | 'LiabilityPayment' | 'Borrowing' | 'CreditExpense' | 'CreditAssetPurchase';
-    category?: string;
     currency: string;
     /** The legs, when a payment splits across more than two accounts. Sending
      *  legs makes from/to derived: they are filled only when a single leg sits

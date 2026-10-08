@@ -676,7 +676,6 @@ export const buildQuickTransactions = ({
     const reimbursementAccount = accountById(quickEntry.reimbursement_account_id || quickEntry.expense_account_id);
     const display = quickTemplateDisplay(selectedTemplate, language);
     const description = quickEntry.description.trim() || display.name;
-    const category = display.category || expenseAccount?.name;
     const generatedText = {
         ownShare: language === 'ja' ? '自分負担' : 'Own Share',
         advance: language === 'ja' ? '立替' : 'Advance',
@@ -697,7 +696,6 @@ export const buildQuickTransactions = ({
                 description,
                 amount,
                 type: 'Transfer',
-                category: display.category || 'reimbursement',
                 from_account_id: receivableAccount.id,
                 to_account_id: reimbursementAccount.id,
             }],
@@ -712,7 +710,6 @@ export const buildQuickTransactions = ({
                 description,
                 amount,
                 type: 'Transfer',
-                category: display.category || 'transfer',
                 from_account_id: paymentAccount.id,
                 to_account_id: expenseAccount.id,
             }],
@@ -727,7 +724,6 @@ export const buildQuickTransactions = ({
                 description,
                 amount,
                 type: 'LiabilityPayment',
-                category: display.category || expenseAccount.name,
                 from_account_id: paymentAccount.id,
                 to_account_id: expenseAccount.id,
             }],
@@ -742,7 +738,6 @@ export const buildQuickTransactions = ({
                 description,
                 amount,
                 type: 'Income',
-                category: display.category || paymentAccount.name,
                 from_account_id: paymentAccount.id,
                 to_account_id: expenseAccount.id,
             }],
@@ -776,7 +771,6 @@ export const buildQuickTransactions = ({
             description,
             amount,
             type: isCreditPayment ? 'CreditExpense' : 'Expense',
-            category,
             from_account_id: paymentAccount.id,
             legs,
         }];
@@ -790,7 +784,6 @@ export const buildQuickTransactions = ({
                 description: `${description} ${generatedText.settlement}`,
                 amount: resolvedAdvance,
                 type: 'Transfer',
-                category,
                 from_account_id: receivableAccount.id,
                 to_account_id: reimbursementAccount.id,
             });
@@ -804,7 +797,6 @@ export const buildQuickTransactions = ({
             description,
             amount,
             type: isCreditPayment ? 'CreditExpense' : 'Expense',
-            category,
             from_account_id: paymentAccount.id,
             to_account_id: expenseAccount.id,
         }],

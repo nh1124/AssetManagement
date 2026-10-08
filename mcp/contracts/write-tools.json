@@ -34,7 +34,7 @@
     "body": "object",
     "source": "src/tools/transactions.ts",
     "path_fragment": "/transactions/",
-    "allowed_fields": ["date", "description", "amount", "type", "category", "currency", "from_account_id", "to_account_id", "legs"],
+    "allowed_fields": ["date", "description", "amount", "type", "currency", "from_account_id", "to_account_id", "legs"],
     "required_fields": ["date", "amount", "type"]
   },
   {
@@ -44,7 +44,7 @@
     "body": "object",
     "source": "src/tools/transactions.ts",
     "path_fragment": "/transactions/${id}",
-    "allowed_fields": ["date", "description", "amount", "type", "category", "currency", "from_account_id", "to_account_id", "legs"],
+    "allowed_fields": ["date", "description", "amount", "type", "currency", "from_account_id", "to_account_id", "legs"],
     "required_fields": []
   },
   {

@@ -166,7 +166,6 @@ export function registerRecurringTools(server: McpServer): void {
             description: input.name,
             amount: input.amount,
             type: input.type,
-            category: undefined,
             from_account_id: input.from_account_id,
             to_account_id: input.to_account_id,
             currency: input.currency ?? "JPY",

@@ -124,7 +124,6 @@ export default function QuickInputDrawer({ isOpen, onClose }: QuickInputDrawerPr
         const fromAccountId = parseInt(formData.fromAccountId, 10);
         const toAccountId = parseInt(formData.toAccountId, 10);
         const fromAccount = fromAccounts.find((acc) => acc.id === fromAccountId);
-        const toAccount = toAccounts.find((acc) => acc.id === toAccountId);
 
         try {
             await createTransaction({
@@ -132,7 +131,6 @@ export default function QuickInputDrawer({ isOpen, onClose }: QuickInputDrawerPr
                 description: formData.description || `${activeType} transaction`,
                 amount: parseFloat(formData.amount),
                 type: activeType,
-                category: toAccount?.name || '',
                 currency: formData.currency,
                 from_account_id: fromAccountId,
                 to_account_id: toAccountId,

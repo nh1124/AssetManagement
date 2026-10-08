@@ -176,7 +176,6 @@ class Transaction(Base):
     description = Column(String)
     amount = Column(Float)
     type = Column(String)
-    category = Column(String, nullable=True)
     currency = Column(String, default='JPY')
     from_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     to_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)

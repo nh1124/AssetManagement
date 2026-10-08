@@ -31,7 +31,6 @@ def post_recurring_transaction(
             models.Account.id == recurring.to_account_id,
             models.Account.client_id == recurring.client_id,
         ).first()
-    category = to_account.name if to_account else recurring.name
     transaction = models.Transaction(
         client_id=recurring.client_id,
         date=posting_date,
@@ -41,7 +40,6 @@ def post_recurring_transaction(
         type=recurring.type,
         from_account_id=recurring.from_account_id,
         to_account_id=recurring.to_account_id,
-        category=category,
     )
     db.add(transaction)
     db.flush()

@@ -157,7 +157,7 @@ def test_data_export_manifest_and_validate_include_monthly_actions() -> None:
         payload = ImportPayload(**snapshot)
         validation = validate_import_client_data(payload=payload, current_client=client)
 
-        assert snapshot["version"] == 4
+        assert snapshot["version"] == 5
         assert snapshot["manifest"]["counts"]["monthly_actions"] == 1
         assert snapshot["data"]["monthly_actions"][0]["kind"] == "set_budget"
         assert validation["status"] == "valid"
@@ -1462,7 +1462,6 @@ def test_income_direct_to_asset_counts_as_allocation_actual_without_remaining_ca
             from_account_id=salary.id,
             to_account_id=stock.id,
             currency="JPY",
-            category="employee stock",
         )
         db.add_all([line, tx])
         db.commit()
