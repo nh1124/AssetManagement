@@ -8,6 +8,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .. import models
+from .journal_legs import primary_accounts
 from .ledger_service import BALANCE_TOLERANCE, calculate_account_journal_balance
 from .budget_lines import assign_plan_line_identity, line_identity_key, newest_line_key
 from .budget_plan_store import get_or_create_default_plan
@@ -399,6 +400,93 @@ def _unbalanced_journal_items(db: Session, client_id: int) -> list[dict[str, Any
     return items
 
 
+# Words that mark a transaction as part of a hand-rolled advance, and the
+# narrower set that marks the half where the money came back.
+ADVANCE_MARKERS = ("立替", "advance", "reimburse")
+SETTLEMENT_MARKERS = ("返金", "精算", "settle", "reimburse")
+SETTLEMENT_WINDOW_DAYS = 45
+
+
+def _mentions(text: str | None, markers: tuple[str, ...]) -> bool:
+    if not text:
+        return False
+    lowered = text.lower()
+    return any(marker in lowered for marker in markers)
+
+
+def _advance_pair_items(db: Session, client_id: int) -> list[dict[str, Any]]:
+    """Two transactions that a single compound entry would now cover.
+
+    Before a payment could split, fronting money for someone was recorded as
+    two entries: the whole payment, and a second one when they paid it back.
+    The arithmetic is right -- it is how the balances got where they are --
+    but the first entry books the fronted share as spending, so that month
+    reads high until the settlement lands, and in between nothing says who
+    owed what.
+
+    The shape looked for is an entry that mentions fronting money and a later
+    entry of exactly the same amount that mentions getting it back.
+
+    Reported, never repaired. Rewriting them is editing recorded history, and
+    the split needs the one thing the rows do not carry: whose share was
+    whose.
+    """
+    rows = (
+        db.query(models.Transaction)
+        .filter(models.Transaction.client_id == client_id)
+        .order_by(models.Transaction.date, models.Transaction.id)
+        .all()
+    )
+    candidates = [row for row in rows if _mentions(row.description, ADVANCE_MARKERS)]
+    settlements = [row for row in candidates if _mentions(row.description, SETTLEMENT_MARKERS)]
+    if not candidates or not settlements:
+        return []
+
+    claimed: set[int] = set()
+    items: list[dict[str, Any]] = []
+    for row in candidates:
+        if _mentions(row.description, SETTLEMENT_MARKERS):
+            continue
+        match = None
+        for settlement in settlements:
+            if settlement.id in claimed or settlement.id == row.id:
+                continue
+            if abs((settlement.amount or 0.0) - (row.amount or 0.0)) > BALANCE_TOLERANCE:
+                continue
+            if row.date is None or settlement.date is None:
+                continue
+            gap = (settlement.date - row.date).days
+            if gap < 0 or gap > SETTLEMENT_WINDOW_DAYS:
+                continue
+            match = settlement
+            break
+        if match is None:
+            continue
+        claimed.add(match.id)
+
+        funding, destination = primary_accounts(row)
+        items.append({
+            "transaction_id": row.id,
+            "settlement_transaction_id": match.id,
+            "date": row.date.isoformat() if row.date else None,
+            "settlement_date": match.date.isoformat() if match.date else None,
+            "description": row.description,
+            "amount": round(row.amount or 0.0, 2),
+            "funding_account_id": funding.id if funding else None,
+            "destination_account_id": destination.id if destination else None,
+            "problem": "fronted_share_booked_as_own_expense",
+            "proposal": (
+                "The first entry can carry the fronted share as a debit on a receivable "
+                "account instead of as your own expense, in one compound entry with the "
+                "funding account credited for the whole payment. The second entry is then "
+                "an ordinary transfer out of that receivable account."
+            ),
+            # Only the person who was there knows which share was whose.
+            "repairable": False,
+        })
+    return items
+
+
 def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
     default_plan = db.query(models.BudgetPlan).filter_by(client_id=client_id, is_default=True).first()
     null_plan_count = (
@@ -416,6 +504,7 @@ def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
     duplicate_recurring = _duplicate_recurring_items(db, client_id)
     duplicate_plan_lines = _duplicate_plan_line_items(db, client_id)
     unbalanced_journals = _unbalanced_journal_items(db, client_id)
+    advance_pairs = _advance_pair_items(db, client_id)
 
     issues = [
         {
@@ -478,6 +567,19 @@ def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
             "count": len(unbalanced_journals),
             "repairable": False,
             "items": unbalanced_journals[:100],
+        },
+        {
+            "code": "advance_pair_candidate",
+            "severity": "info",
+            "title": "Advance recorded as two transactions",
+            "detail": (
+                "A payment partly fronted for someone else can now be one entry with a receivable leg. "
+                "These pairs predate that and book the fronted share as your own expense. Re-entering "
+                "them is a judgement about whose share was whose, so nothing here is repaired."
+            ),
+            "count": len(advance_pairs),
+            "repairable": False,
+            "items": advance_pairs[:100],
         },
         {
             "code": "duplicate_plan_lines",
