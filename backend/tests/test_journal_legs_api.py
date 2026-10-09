@@ -230,6 +230,53 @@ def test_editing_the_legs_rebuilds_them_and_the_balances() -> None:
         db.close()
 
 
+def test_two_legs_on_one_account_are_kept_as_two_rows() -> None:
+    """One receipt, two lines that happen to hit the same expense account.
+
+    Netting them to one leg would lose what the memos say -- which is the
+    reason to enter a split by hand in the first place -- so both rows stay,
+    and the account simply moves twice.
+    """
+    db = _session()
+    try:
+        client = _client(db)
+        card, food, _advance = _accounts(db)
+
+        created = transaction_router.create_transaction(
+            schemas.TransactionCreate(
+                date=WHEN,
+                description="groceries, two baskets",
+                amount=4000,
+                currency="JPY",
+                legs=[
+                    schemas.TransactionLeg(account_id=card.id, credit=4000),
+                    schemas.TransactionLeg(account_id=food.id, debit=2500, memo="dinner"),
+                    schemas.TransactionLeg(account_id=food.id, debit=1500, memo="breakfast"),
+                ],
+            ),
+            db=db,
+            current_client=client,
+        )
+
+        food_legs = [leg for leg in created["legs"] if leg["account_id"] == food.id]
+        assert [leg["debit"] for leg in food_legs] == [2500.0, 1500.0]
+        assert [leg["memo"] for leg in food_legs] == ["dinner", "breakfast"]
+
+        db.refresh(food)
+        assert food.balance == 4000
+
+        # Two debit legs, so no single destination to name.
+        assert created["from_account_id"] == card.id
+        assert created["to_account_id"] is None
+
+        # Filtered by that account, what moved on it is the sum of its legs.
+        rows = _list_transactions(db, client, account_id=food.id)
+        assert len(rows) == 1
+        assert rows[0]["matched_debit"] == 4000
+    finally:
+        db.close()
+
+
 def test_deleting_a_compound_entry_puts_every_balance_back() -> None:
     db = _session()
     try:
