@@ -39,6 +39,7 @@ import {
     quickKindGroup,
     quickKindLabelFor,
     quickPresetFor,
+    receivableAccounts,
     quickTemplateDisplay,
     quickText,
     type AccountItem,
@@ -266,6 +267,39 @@ export default function Journal() {
     const quickDraftFromAccounts = accounts.filter((a) => quickDraftRules.fromTypes.includes(a.account_type));
     const quickDraftToAccounts = accounts.filter((a) => quickDraftRules.toTypes.includes(a.account_type));
     const assetAccounts = accounts.filter((a) => ['asset', 'item'].includes(a.account_type));
+    const receivables = receivableAccounts(accounts).filter((a) => Math.abs(a.balance ?? 0) >= 0.01);
+    const receivableTotal = receivables.reduce((sum, account) => sum + (account.balance ?? 0), 0);
+
+    /** Open the reimbursement template for one receivable, for its whole
+     *  balance. Collecting is an ordinary transfer out of that account, so
+     *  nothing new is needed beyond putting it one click away from the
+     *  balance it clears. */
+    const startReimbursement = (account: AccountItem) => {
+        const template = quickTemplates.find((item) => item.template_kind === 'reimbursement');
+        if (!template) {
+            showToast(
+                language === 'ja'
+                    ? '返金・精算テンプレートを追加してください'
+                    : 'Add the Reimbursement quick template first',
+                'warning'
+            );
+            return;
+        }
+        setActiveQuickGroup(quickKindGroup(template.template_kind));
+        setActiveQuickTray(quickTemplateDisplay(template, language).tray);
+        setSelectedQuickTemplateId(template.id);
+        setQuickEntry((prev) => ({
+            ...prev,
+            description: language === 'ja' ? `${account.name} の精算` : `Settlement: ${account.name}`,
+            amount: String(Math.abs(account.balance ?? 0)),
+            receivable_account_id: String(account.id),
+            reimbursement_account_id:
+                prev.reimbursement_account_id
+                || (configAccountId(template, 'reimbursement_account_id')
+                    ? String(configAccountId(template, 'reimbursement_account_id'))
+                    : ''),
+        }));
+    };
 
     const text = quickText(language);
     const help = quickHelp(language);
@@ -1140,6 +1174,38 @@ export default function Journal() {
 
                 {activeTab === 'quick' && (
                     <div className="space-y-4 pt-2">
+                        {receivables.length > 0 && (
+                            <div className="border border-slate-800 bg-slate-900/40">
+                                <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
+                                    <span className="text-[10px] uppercase tracking-wider text-slate-500">
+                                        {language === 'ja' ? '立替残高' : 'Receivables'}
+                                    </span>
+                                    <span className="font-mono-nums text-[11px] text-slate-400">
+                                        {formatCurrencyWithSetting(receivableTotal, currentCurrency)}
+                                    </span>
+                                </div>
+                                {receivables.map((account) => (
+                                    <div
+                                        key={account.id}
+                                        className="flex items-center justify-between gap-2 border-b border-slate-800/50 px-3 py-1.5 last:border-0"
+                                    >
+                                        <span className="truncate text-[11px] text-slate-300">{account.name}</span>
+                                        <div className="flex shrink-0 items-center gap-2">
+                                            <span className="font-mono-nums text-[11px] text-amber-400">
+                                                {formatCurrencyWithSetting(account.balance ?? 0, currentCurrency)}
+                                            </span>
+                                            <button
+                                                type="button"
+                                                onClick={() => startReimbursement(account)}
+                                                className="bg-slate-800 px-2 py-1 text-[10px] text-slate-300 hover:bg-slate-700"
+                                            >
+                                                {language === 'ja' ? '回収' : 'Collect'}
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                         <div className="relative flex items-center justify-center">
                             <div className="mx-auto flex w-fit rounded-full border border-slate-800 bg-slate-900/80 p-1">
                                 {QUICK_TEMPLATE_GROUPS.map((group) => (
