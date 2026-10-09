@@ -136,13 +136,11 @@ def test_update_transaction_rebuilds_journal_and_keeps_reconcile_clean() -> None
             date=date.today(),
             description="Lunch",
             amount=1000,
-            from_account_id=cash.id,
-            to_account_id=food.id,
             )
         db.add(tx)
         db.commit()
         db.refresh(tx)
-        process_transaction(db, tx)
+        process_transaction(db, tx, from_account_id=cash.id, to_account_id=food.id)
 
         class Payload:
             def model_dump(self, exclude_unset: bool = False) -> dict:
@@ -186,13 +184,11 @@ def test_foreign_currency_transactions_are_valued_with_exchange_rates() -> None:
             description="USD income",
             amount=10,
             currency="USD",
-            from_account_id=salary.id,
-            to_account_id=cash.id,
         )
         db.add(tx)
         db.commit()
         db.refresh(tx)
-        process_transaction(db, tx)
+        process_transaction(db, tx, from_account_id=salary.id, to_account_id=cash.id)
 
         bs = get_balance_sheet(db, client_id=1)
         pl = get_profit_loss_for_range(db, date.today(), date.today(), client_id=1)
@@ -219,8 +215,6 @@ def test_auto_update_detects_used_currency_once_per_day() -> None:
             description="USD income",
             amount=10,
             currency="USD",
-            from_account_id=salary.id,
-            to_account_id=cash.id,
         )
         db.add(tx)
         db.commit()
@@ -380,8 +374,6 @@ def test_profit_loss_rollup_uses_parent_account_category() -> None:
             date=date.today(),
             description="Lunch",
             amount=1200,
-            from_account_id=10,
-            to_account_id=21,
         )
         db.add(tx)
         db.commit()
@@ -389,7 +381,7 @@ def test_profit_loss_rollup_uses_parent_account_category() -> None:
         # The P/L reads journal legs, so the transaction has to be posted. Every
         # other test here already does this; this one used to get away with an
         # unposted transaction because the P/L read tx.category instead.
-        process_transaction(db, tx)
+        process_transaction(db, tx, from_account_id=10, to_account_id=21)
 
         result = get_profit_loss_rollup(db, date.today().year, date.today().month, client_id=1)
 
@@ -413,21 +405,17 @@ def test_period_pl_and_balance_sheet_respect_explicit_dates() -> None:
             date=date(2026, 4, 30),
             description="April salary",
             amount=100000,
-            from_account_id=11,
-            to_account_id=10,
         )
         may_income = models.Transaction(
             client_id=1,
             date=date(2026, 5, 1),
             description="May salary",
             amount=200000,
-            from_account_id=11,
-            to_account_id=10,
         )
         db.add_all([april_income, may_income])
         db.commit()
-        process_transaction(db, april_income)
-        process_transaction(db, may_income)
+        process_transaction(db, april_income, from_account_id=11, to_account_id=10)
+        process_transaction(db, may_income, from_account_id=11, to_account_id=10)
 
         april_bs = get_balance_sheet(db, date(2026, 4, 30), client_id=1)
         may_pl = get_profit_loss_for_range(db, date(2026, 5, 1), date(2026, 5, 31), client_id=1)
@@ -454,8 +442,6 @@ def test_account_flows_and_account_transactions_use_journal_sides() -> None:
             description="Salary",
             amount=500000,
             currency="JPY",
-            from_account_id=salary.id,
-            to_account_id=cash.id,
         )
         lunch = models.Transaction(
             client_id=1,
@@ -463,15 +449,13 @@ def test_account_flows_and_account_transactions_use_journal_sides() -> None:
             description="Lunch",
             amount=1200,
             currency="JPY",
-            from_account_id=cash.id,
-            to_account_id=food.id,
         )
         db.add(income)
         db.commit()
-        process_transaction(db, income)
+        process_transaction(db, income, from_account_id=salary.id, to_account_id=cash.id)
         db.add(lunch)
         db.commit()
-        process_transaction(db, lunch)
+        process_transaction(db, lunch, from_account_id=cash.id, to_account_id=food.id)
 
         flows = get_account_flows_for_range(
             db,

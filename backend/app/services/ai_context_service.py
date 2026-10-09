@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from .ai_policy_service import SENSITIVE_KEY_PARTS
+from .journal_legs import primary_accounts
 from .analysis_service import get_summary
 
 AiDataClassification = Literal["normal", "sensitive", "secret"]
@@ -313,6 +314,7 @@ def _transactions_recent(db: Session, client_id: int, limit: int) -> dict[str, A
     rows = db.query(models.Transaction).filter(
         models.Transaction.client_id == client_id,
     ).order_by(models.Transaction.date.desc(), models.Transaction.id.desc()).limit(limit).all()
+    pairs = {tx.id: primary_accounts(tx) for tx in rows}
     return {
         "count": len(rows),
         "transactions": [
@@ -322,8 +324,8 @@ def _transactions_recent(db: Session, client_id: int, limit: int) -> dict[str, A
                 "description": tx.description,
                 "amount": tx.amount,
                 "currency": tx.currency,
-                "from_account": _account_ref(tx.from_account_rel),
-                "to_account": _account_ref(tx.to_account_rel),
+                "from_account": _account_ref(pairs[tx.id][0]),
+                "to_account": _account_ref(pairs[tx.id][1]),
                 "created_at": _iso(tx.created_at),
             }
             for tx in rows

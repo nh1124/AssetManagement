@@ -209,39 +209,27 @@ def _validate_legs(legs: list[Leg], amount: float) -> None:
         )
 
 
-def _primary_accounts(legs: list[Leg]) -> tuple[int | None, int | None]:
-    """from_account_id / to_account_id, which only mean something for one leg a side.
-
-    A compound entry has no single counterparty, so the denormalised columns
-    are left empty rather than made to name an arbitrary leg. Readers go to the
-    legs; these two stay for the 1:1 case the API and the UI still speak in.
-    """
-    credits = [leg for leg in legs if leg.credit > 0]
-    debits = [leg for leg in legs if leg.debit > 0]
-    return (
-        credits[0].account_id if len(credits) == 1 else None,
-        debits[0].account_id if len(debits) == 1 else None,
-    )
-
-
-def _legs_from_accounts(db: Session, transaction: models.Transaction) -> list[Leg]:
-    """The two legs a from/to transaction describes.
+def simple_legs(
+    amount: float | None,
+    from_account_id: int | None,
+    to_account_id: int | None,
+) -> list[Leg]:
+    """The two legs a from/to pair describes.
 
     from_account is the credit side and to_account the debit side, which is the
-    direction the UI has always used. Both are required: there is nothing left
-    to infer a missing account from, and inferring one is how transactions used
-    to land on whichever account happened to come first.
+    direction the API and the UI have always used. Both are required: there is
+    nothing left to infer a missing account from, and inferring one is how
+    transactions used to land on whichever account happened to come first.
+    The accounts themselves are checked where every leg is.
     """
-    from_account = _get_account_by_id(db, transaction.from_account_id, transaction.client_id)
-    to_account = _get_account_by_id(db, transaction.to_account_id, transaction.client_id)
-    if from_account is None or to_account is None:
+    if from_account_id is None or to_account_id is None:
         raise ValueError(
             "A transaction needs both from_account_id and to_account_id, or explicit legs"
         )
-    amount = transaction.amount or 0.0
+    total = amount or 0.0
     return [
-        Leg(account_id=to_account.id, debit=amount),
-        Leg(account_id=from_account.id, credit=amount),
+        Leg(account_id=to_account_id, debit=total),
+        Leg(account_id=from_account_id, credit=total),
     ]
 
 
@@ -249,20 +237,22 @@ def _post_transaction_journal(
     db: Session,
     transaction: models.Transaction,
     legs: Sequence | None = None,
+    *,
+    from_account_id: int | None = None,
+    to_account_id: int | None = None,
 ) -> None:
     """Write a transaction's journal legs and move the cached balances.
 
-    Without `legs` the transaction's from/to accounts describe the two legs,
-    which is what every existing caller means. With `legs` it can be a compound
-    entry: any number of legs, as long as the two sides balance and come to the
-    transaction amount.
+    Either `legs`, for any number of them, or a from/to pair, which describes
+    the two legs of an ordinary entry. The two sides must balance and come to
+    the transaction amount.
     """
     client_id = transaction.client_id
     if client_id is None:
         raise ValueError("transaction.client_id is required")
 
     if legs is None:
-        posted = _legs_from_accounts(db, transaction)
+        posted = simple_legs(transaction.amount, from_account_id, to_account_id)
     else:
         posted = [_coerce_leg(leg) for leg in legs]
     _validate_legs(posted, transaction.amount or 0.0)
@@ -282,8 +272,6 @@ def _post_transaction_journal(
         else:
             _apply_credit(account, leg.credit)
 
-    transaction.from_account_id, transaction.to_account_id = _primary_accounts(posted)
-
     for order, leg in enumerate(posted):
         db.add(models.JournalEntry(
             transaction_id=transaction.id,
@@ -299,9 +287,14 @@ def process_transaction(
     db: Session,
     transaction: models.Transaction,
     legs: Sequence | None = None,
+    *,
+    from_account_id: int | None = None,
+    to_account_id: int | None = None,
 ) -> None:
     """Process a transaction with double-entry bookkeeping and commit it."""
-    _post_transaction_journal(db, transaction, legs)
+    _post_transaction_journal(
+        db, transaction, legs, from_account_id=from_account_id, to_account_id=to_account_id
+    )
     db.commit()
 
 
@@ -309,9 +302,14 @@ def post_transaction_journal(
     db: Session,
     transaction: models.Transaction,
     legs: Sequence | None = None,
+    *,
+    from_account_id: int | None = None,
+    to_account_id: int | None = None,
 ) -> None:
     """Post a transaction with double-entry bookkeeping without committing."""
-    _post_transaction_journal(db, transaction, legs)
+    _post_transaction_journal(
+        db, transaction, legs, from_account_id=from_account_id, to_account_id=to_account_id
+    )
 
 
 def _rollback_transaction_effects(db: Session, transaction: models.Transaction) -> None:
@@ -365,6 +363,19 @@ def update_transaction(
         return None
 
     try:
+        prior = [
+            Leg(
+                account_id=entry.account_id,
+                debit=entry.debit or 0.0,
+                credit=entry.credit or 0.0,
+                memo=entry.memo,
+            )
+            for entry in db.query(models.JournalEntry)
+            .filter(models.JournalEntry.transaction_id == transaction_id)
+            .order_by(models.JournalEntry.sort_order, models.JournalEntry.id)
+            .all()
+        ]
+
         _rollback_transaction_effects(db, tx)
         db.query(models.JournalEntry).filter(
             models.JournalEntry.transaction_id == transaction_id
@@ -372,8 +383,29 @@ def update_transaction(
 
         update_data = payload.model_dump(exclude_unset=True)
         legs = update_data.pop("legs", None)
+        given_from = update_data.pop("from_account_id", None)
+        given_to = update_data.pop("to_account_id", None)
         for field, value in update_data.items():
             setattr(tx, field, value)
+
+        if legs is None:
+            # Neither legs nor a full pair of accounts: keep the accounts the
+            # entry already had. A two-sided entry is rebuilt at the new
+            # amount; a compound one keeps its legs, so changing only its
+            # amount is refused by the balance check rather than silently
+            # reshaped.
+            prior_credits = [leg for leg in prior if leg.credit > 0]
+            prior_debits = [leg for leg in prior if leg.debit > 0]
+            resolved_from = given_from if given_from is not None else (
+                prior_credits[0].account_id if len(prior_credits) == 1 else None
+            )
+            resolved_to = given_to if given_to is not None else (
+                prior_debits[0].account_id if len(prior_debits) == 1 else None
+            )
+            if resolved_from is not None and resolved_to is not None:
+                legs = simple_legs(tx.amount, resolved_from, resolved_to)
+            else:
+                legs = prior
 
         db.flush()
         _post_transaction_journal(db, tx, legs)

@@ -22,7 +22,7 @@ from ..services.data_health_service import check_data_health, repair_data_health
 
 router = APIRouter(prefix="/data", tags=["data"])
 
-EXPORT_VERSION = 6
+EXPORT_VERSION = 7
 
 DATA_COLLECTIONS = [
     "accounts",
@@ -231,6 +231,7 @@ def _validate_import_payload(payload: ImportPayload) -> dict[str, Any]:
     check_ref("quick_templates", "default_from_account_id", "accounts")
     check_ref("quick_templates", "default_to_account_id", "accounts")
     check_ref("transaction_batches", "quick_template_id", "quick_templates")
+    # Only present in a v6 or older payload, where the columns still existed.
     check_ref("transactions", "from_account_id", "accounts")
     check_ref("transactions", "to_account_id", "accounts")
     check_ref("transactions", "batch_id", "transaction_batches")
@@ -645,8 +646,6 @@ def export_client_data(
                         "description",
                         "amount",
                         "currency",
-                        "from_account_id",
-                        "to_account_id",
                         "batch_id",
                         "created_at",
                     ],
@@ -1198,8 +1197,9 @@ def import_client_data(
                 description=item["description"],
                 amount=item.get("amount") or 0,
                 currency=item.get("currency") or "JPY",
-                from_account_id=account_map.get(item.get("from_account_id")),
-                to_account_id=account_map.get(item.get("to_account_id")),
+                # from_account_id / to_account_id in a v6 or older payload are
+                # ignored: the journal_entries below are the accounts, and they
+                # were already required to balance.
                 batch_id=batch_map.get(item.get("batch_id")),
                 created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
             )

@@ -167,16 +167,15 @@ class Transaction(Base):
     description = Column(String)
     amount = Column(Float)
     currency = Column(String, default='JPY')
-    from_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
-    to_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     batch_id = Column(Integer, ForeignKey("transaction_batches.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     
     client = relationship("Client", back_populates="transactions")
     batch = relationship("TransactionBatch", back_populates="transactions")
+    # No from_account_id / to_account_id columns: the legs are the accounts.
+    # Both are still accepted as input and still reported, derived by
+    # services.journal_legs.primary_accounts from the leg on each side.
     journal_entries = relationship("JournalEntry", back_populates="transaction")
-    from_account_rel = relationship("Account", foreign_keys=[from_account_id])
-    to_account_rel = relationship("Account", foreign_keys=[to_account_id])
 
 
 class QuickTemplate(Base):

@@ -15,6 +15,7 @@ from ..services.ledger_service import (
 )
 from ..services.cache_service import invalidate_client
 from ..services.capsule_service import apply_capsule_rules_for_transaction
+from ..services.journal_legs import primary_accounts
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
 
@@ -37,17 +38,18 @@ def _serialize_transaction(tx: models.Transaction, *, account_id: int | None = N
         tx.journal_entries,
         key=lambda entry: (entry.sort_order if entry.sort_order is not None else 0, entry.id or 0),
     )
+    from_account, to_account = primary_accounts(tx)
     row = {
         "id": tx.id,
         "date": tx.date,
         "description": tx.description,
         "amount": tx.amount,
         "currency": tx.currency,
-        "from_account_id": tx.from_account_id,
-        "to_account_id": tx.to_account_id,
+        "from_account_id": from_account.id if from_account else None,
+        "to_account_id": to_account.id if to_account else None,
         "batch_id": tx.batch_id,
-        "from_account_name": tx.from_account_rel.name if tx.from_account_rel else None,
-        "to_account_name": tx.to_account_rel.name if tx.to_account_rel else None,
+        "from_account_name": from_account.name if from_account else None,
+        "to_account_name": to_account.name if to_account else None,
         "legs": [_serialize_leg(entry) for entry in legs],
     }
     if account_id:
@@ -122,11 +124,19 @@ def create_transaction(
 
     data = transaction.model_dump()
     legs = data.pop("legs", None)
+    from_account_id = data.pop("from_account_id", None)
+    to_account_id = data.pop("to_account_id", None)
     try:
         db_transaction = models.Transaction(**data, client_id=current_client.id)
         db.add(db_transaction)
         db.flush()
-        post_transaction_journal(db, db_transaction, legs)
+        post_transaction_journal(
+            db,
+            db_transaction,
+            legs,
+            from_account_id=from_account_id,
+            to_account_id=to_account_id,
+        )
         apply_capsule_rules_for_transaction(db, db_transaction, commit=False)
         db.commit()
         db.refresh(db_transaction)

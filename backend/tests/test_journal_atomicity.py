@@ -315,8 +315,6 @@ def test_delete_transaction_rolls_back_reversal_and_rows_when_commit_fails(monke
             date=date(2026, 7, 1),
             description="Delete rollback",
             amount=1000,
-            from_account_id=cash.id,
-            to_account_id=food.id,
         )
         db.add(transaction)
         db.flush()

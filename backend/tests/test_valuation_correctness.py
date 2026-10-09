@@ -44,8 +44,6 @@ def _post_opening_cash(db, client_id: int, amount: float) -> models.Account:
         description="Opening cash",
         amount=amount,
         currency="JPY",
-        from_account_id=equity.id,
-        to_account_id=cash.id,
     )
     db.add(transaction)
     db.flush()

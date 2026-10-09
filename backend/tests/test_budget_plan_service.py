@@ -65,13 +65,11 @@ def test_data_health_repairs_plan_line_source_from_posted_transaction() -> None:
             date=date(2026, 5, 10),
             description="credit beauty",
             amount=120000,
-            from_account_id=payable.id,
-            to_account_id=beauty.id,
             currency="JPY",
         )
         db.add_all([line, tx])
         db.commit()
-        process_transaction(db, tx)
+        process_transaction(db, tx, from_account_id=payable.id, to_account_id=beauty.id)
 
         health = check_data_health(db, 1)
         source_issue = next(issue for issue in health["issues"] if issue["code"] == "plan_line_sources")
@@ -156,7 +154,7 @@ def test_data_export_manifest_and_validate_include_monthly_actions() -> None:
         payload = ImportPayload(**snapshot)
         validation = validate_import_client_data(payload=payload, current_client=client)
 
-        assert snapshot["version"] == 6
+        assert snapshot["version"] == 7
         assert snapshot["manifest"]["counts"]["monthly_actions"] == 1
         assert snapshot["data"]["monthly_actions"][0]["kind"] == "set_budget"
         assert validation["status"] == "valid"
@@ -395,13 +393,11 @@ def test_budget_summary_combines_income_spending_allocations_and_debt() -> None:
             date=date(2026, 5, 10),
             description="NISA transfer",
             amount=50000,
-            from_account_id=cash.id,
-            to_account_id=nisa.id,
             currency="JPY",
         )
         db.add(tx)
         db.commit()
-        process_transaction(db, tx)
+        process_transaction(db, tx, from_account_id=cash.id, to_account_id=nisa.id)
 
         summary = get_budget_summary(db, client_id=1, period="2026-05")
 
@@ -1055,8 +1051,6 @@ def test_cash_flow_projection_uses_remaining_current_month_plan_after_actuals() 
             date=date.today(),
             description="salary",
             amount=100000,
-            from_account_id=salary.id,
-            to_account_id=cash.id,
             currency="JPY",
         )
         expense_tx = models.Transaction(
@@ -1064,14 +1058,12 @@ def test_cash_flow_projection_uses_remaining_current_month_plan_after_actuals() 
             date=date.today(),
             description="food",
             amount=30000,
-            from_account_id=cash.id,
-            to_account_id=food.id,
             currency="JPY",
         )
         db.add_all([income_tx, expense_tx])
         db.commit()
-        process_transaction(db, income_tx)
-        process_transaction(db, expense_tx)
+        process_transaction(db, income_tx, from_account_id=salary.id, to_account_id=cash.id)
+        process_transaction(db, expense_tx, from_account_id=cash.id, to_account_id=food.id)
 
         summary = get_budget_summary(db, client_id=1, period=current_period, cash_flow_months=2)
         current_row = summary["cash_flow_projection"][0]
@@ -1125,8 +1117,6 @@ def test_cash_flow_projection_does_not_double_count_current_month_over_actuals()
             date=period_to_range(add_months(current_period, -1))[0],
             description="opening income",
             amount=100000,
-            from_account_id=salary.id,
-            to_account_id=cash.id,
             currency="JPY",
         )
         expense_tx = models.Transaction(
@@ -1134,14 +1124,12 @@ def test_cash_flow_projection_does_not_double_count_current_month_over_actuals()
             date=date.today(),
             description="food",
             amount=70000,
-            from_account_id=cash.id,
-            to_account_id=food.id,
             currency="JPY",
         )
         db.add_all([opening_tx, expense_tx])
         db.commit()
-        process_transaction(db, opening_tx)
-        process_transaction(db, expense_tx)
+        process_transaction(db, opening_tx, from_account_id=salary.id, to_account_id=cash.id)
+        process_transaction(db, expense_tx, from_account_id=cash.id, to_account_id=food.id)
 
         summary = get_budget_summary(db, client_id=1, period=current_period, cash_flow_months=1)
         current_row = summary["cash_flow_projection"][0]
@@ -1216,8 +1204,6 @@ def test_financed_expense_counts_as_budget_usage_without_cash_flow_expense() -> 
             date=period_to_range(add_months(current_period, -1))[0],
             description="opening income",
             amount=100000,
-            from_account_id=salary.id,
-            to_account_id=cash.id,
             currency="JPY",
         )
         financed_expense = models.Transaction(
@@ -1225,8 +1211,6 @@ def test_financed_expense_counts_as_budget_usage_without_cash_flow_expense() -> 
             date=date.today(),
             description="beauty",
             amount=600000,
-            from_account_id=loan.id,
-            to_account_id=beauty.id,
             currency="JPY",
         )
         repayment = models.Transaction(
@@ -1234,15 +1218,13 @@ def test_financed_expense_counts_as_budget_usage_without_cash_flow_expense() -> 
             date=date.today(),
             description="medical loan repayment",
             amount=30000,
-            from_account_id=cash.id,
-            to_account_id=loan.id,
             currency="JPY",
         )
         db.add_all([opening_tx, financed_expense, repayment])
         db.commit()
-        process_transaction(db, opening_tx)
-        process_transaction(db, financed_expense)
-        process_transaction(db, repayment)
+        process_transaction(db, opening_tx, from_account_id=salary.id, to_account_id=cash.id)
+        process_transaction(db, financed_expense, from_account_id=loan.id, to_account_id=beauty.id)
+        process_transaction(db, repayment, from_account_id=cash.id, to_account_id=loan.id)
 
         summary = get_budget_summary(db, client_id=1, period=current_period, cash_flow_months=2)
         current_row = summary["cash_flow_projection"][0]
@@ -1444,13 +1426,11 @@ def test_income_direct_to_asset_counts_as_allocation_actual_without_remaining_ca
             date=date.today(),
             description="payroll stock contribution",
             amount=54515,
-            from_account_id=salary.id,
-            to_account_id=stock.id,
             currency="JPY",
         )
         db.add_all([line, tx])
         db.commit()
-        process_transaction(db, tx)
+        process_transaction(db, tx, from_account_id=salary.id, to_account_id=stock.id)
 
         summary = get_budget_summary(db, client_id=1, period=current_period, cash_flow_months=1)
         plan_line = next(item for item in summary["plan_lines"] if item["line_type"] == "allocation")
@@ -1485,13 +1465,11 @@ def test_balance_projection_tracks_debt_payment_and_liability_asset_purchase() -
             date=period_to_range(add_months(next_period, -2))[0],
             description="opening borrowing",
             amount=100000,
-            from_account_id=loan.id,
-            to_account_id=cash.id,
             currency="JPY",
         )
         db.add(opening)
         db.commit()
-        process_transaction(db, opening)
+        process_transaction(db, opening, from_account_id=loan.id, to_account_id=cash.id)
 
         db.add_all([
             models.MonthlyPlanLine(
@@ -1608,8 +1586,6 @@ def test_credit_expense_creates_credit_settlement_projection() -> None:
             date=start,
             description="credit food",
             amount=50000,
-            from_account_id=card.id,
-            to_account_id=food.id,
             currency="JPY",
         )
         db.add(tx)
@@ -1624,7 +1600,7 @@ def test_credit_expense_creates_credit_settlement_projection() -> None:
             amount=50000,
         ))
         db.commit()
-        process_transaction(db, tx)
+        process_transaction(db, tx, from_account_id=card.id, to_account_id=food.id)
 
         summary = get_budget_summary(
             db,
@@ -1672,8 +1648,6 @@ def test_credit_settlement_uses_liability_closing_day_and_payment_offset() -> No
                 date=date(2026, 5, 10),
                 description="before close",
                 amount=10000,
-                from_account_id=card.id,
-                to_account_id=food.id,
                 currency="JPY",
             ),
             models.Transaction(
@@ -1681,15 +1655,13 @@ def test_credit_settlement_uses_liability_closing_day_and_payment_offset() -> No
                 date=date(2026, 5, 20),
                 description="after close",
                 amount=20000,
-                from_account_id=card.id,
-                to_account_id=food.id,
                 currency="JPY",
             ),
         ]
         db.add_all(charges)
         db.commit()
         for charge in charges:
-            process_transaction(db, charge)
+            process_transaction(db, charge, from_account_id=card.id, to_account_id=food.id)
 
         june = get_budget_summary(db, client_id=1, period="2026-06", cash_flow_start_period="2026-06", cash_flow_months=1)
         july = get_budget_summary(db, client_id=1, period="2026-07", cash_flow_start_period="2026-07", cash_flow_months=1)
@@ -1724,13 +1696,11 @@ def test_credit_settlement_applies_fixed_payment_policy() -> None:
             date=date(2026, 5, 10),
             description="credit food",
             amount=20000,
-            from_account_id=card.id,
-            to_account_id=food.id,
             currency="JPY",
         )
         db.add(charge)
         db.commit()
-        process_transaction(db, charge)
+        process_transaction(db, charge, from_account_id=card.id, to_account_id=food.id)
 
         summary = get_budget_summary(db, client_id=1, period=period, cash_flow_start_period=period, cash_flow_months=1)
         settlement = next(line for line in summary["plan_lines"] if line.get("source_kind") == "credit_settlement")
@@ -1762,13 +1732,11 @@ def test_credit_settlement_spreads_installment_policy_across_future_months() -> 
             date=date(2026, 5, 10),
             description="installment purchase",
             amount=30000,
-            from_account_id=card.id,
-            to_account_id=equipment.id,
             currency="JPY",
         )
         db.add(charge)
         db.commit()
-        process_transaction(db, charge)
+        process_transaction(db, charge, from_account_id=card.id, to_account_id=equipment.id)
 
         amounts = []
         for period in ("2026-06", "2026-07", "2026-08"):

@@ -70,7 +70,6 @@ def _split_meal(db):
         description="dinner with a friend",
         amount=5000,
         currency="JPY",
-        from_account_id=card.id,
     )
     db.add(tx)
     db.flush()
@@ -232,7 +231,7 @@ def test_a_cash_funded_line_still_reports_its_own_leg_as_cash() -> None:
         db.flush()
         tx = models.Transaction(
             client_id=1, date=WHEN, description="dinner", amount=5000,
-            currency="JPY", from_account_id=cash.id,
+            currency="JPY",
         )
         db.add(tx)
         db.flush()
@@ -281,8 +280,6 @@ def _split_payroll(db):
         description="October payroll",
         amount=258272,
         currency="JPY",
-        # The category says nothing useful; the accounts do.
-        from_account_id=salary.id,
     )
     db.add(tx)
     db.flush()
@@ -395,7 +392,7 @@ def test_transaction_account_mode_still_works_on_a_two_leg_entry() -> None:
         db.flush()
         tx = models.Transaction(
             client_id=1, date=WHEN, description="payroll", amount=200000,
-            currency="JPY", from_account_id=salary.id, to_account_id=bank.id,
+            currency="JPY",
         )
         db.add(tx)
         db.flush()

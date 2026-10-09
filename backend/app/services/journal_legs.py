@@ -61,6 +61,25 @@ class Leg:
         return self.raw_debit > 0
 
 
+def primary_accounts(
+    transaction: models.Transaction,
+) -> tuple[models.Account | None, models.Account | None]:
+    """The (from, to) accounts an entry can be summarised by, or None a side.
+
+    from is the credited account and to the debited one, which is the direction
+    the API and the UI have always used. A side with more than one leg has no
+    single account, and saying so is the point: a three-leg meal has no one
+    destination, and the legs are right there in the same payload.
+    """
+    entries = list(transaction.journal_entries or [])
+    credits = [entry for entry in entries if (entry.credit or 0.0) > 0]
+    debits = [entry for entry in entries if (entry.debit or 0.0) > 0]
+    return (
+        credits[0].account if len(credits) == 1 else None,
+        debits[0].account if len(debits) == 1 else None,
+    )
+
+
 def signed_delta(account_type: str | None, debit: float, credit: float) -> float:
     if account_type in DEBIT_NORMAL_TYPES:
         return debit - credit

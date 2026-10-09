@@ -338,13 +338,13 @@ def _apply_allocate_to_goal(
         date=date.today(),
         description=f"Monthly action allocation {period}: {goal.name}",
         amount=amount,
-        from_account_id=cash_account.id,
-        to_account_id=savings_account.id,
         currency="JPY",
     )
     db.add(transaction)
     db.flush()
-    post_transaction_journal(db, transaction)
+    post_transaction_journal(
+        db, transaction, from_account_id=cash_account.id, to_account_id=savings_account.id
+    )
     db.flush()
 
     capsule = create_capsule_for_goal(db, client_id, goal)

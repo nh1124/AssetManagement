@@ -192,13 +192,13 @@ def delete_life_event(
             date=_date.today(),
             description=f"Goal deleted – funds returned from Capsule: {cap.name}",
             amount=bal,
-            from_account_id=cap.account_id,
-            to_account_id=transfer_account_id,
             currency="JPY",
         )
         db.add(tx)
         db.flush()
-        post_transaction_journal(db, tx)
+        post_transaction_journal(
+            db, tx, from_account_id=cap.account_id, to_account_id=transfer_account_id
+        )
         apply_capsule_rules_for_transaction(db, tx, commit=False)
 
     # Collect capsule account IDs before cascade deletion

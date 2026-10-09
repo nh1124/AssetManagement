@@ -22,7 +22,7 @@ from .fx_service import (
     convert_transaction_amount,
     get_client_currency,
 )
-from .journal_legs import legs_in_range, signed_delta, valued_sides
+from .journal_legs import legs_in_range, primary_accounts, signed_delta, valued_sides
 from .ledger_service import DEBIT_NORMAL_TYPES
 
 
@@ -483,6 +483,7 @@ def get_account_transactions_for_range(
     items = []
     for entry, tx in entries:
         debit, credit = _valued_entry_sides(db, entry, tx, client_id)
+        tx_from, tx_to = primary_accounts(tx)
         counterparts = []
         for other in tx.journal_entries:
             if other.id == entry.id:
@@ -516,10 +517,10 @@ def get_account_transactions_for_range(
                 "raw_credit": entry.credit or 0.0,
                 "normal_balance_delta": _normal_balance_delta(account.account_type, debit, credit),
                 "counterpart_accounts": counterparts,
-                "from_account_id": tx.from_account_id,
-                "from_account_name": tx.from_account_rel.name if tx.from_account_rel else None,
-                "to_account_id": tx.to_account_id,
-                "to_account_name": tx.to_account_rel.name if tx.to_account_rel else None,
+                "from_account_id": tx_from.id if tx_from else None,
+                "from_account_name": tx_from.name if tx_from else None,
+                "to_account_id": tx_to.id if tx_to else None,
+                "to_account_name": tx_to.name if tx_to else None,
             }
         )
 
