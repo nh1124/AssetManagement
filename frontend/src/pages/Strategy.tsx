@@ -47,7 +47,7 @@ import type {
     MonthlyPlanTargetType,
     MonthlyPlanLineType,
     Product,
-    Transaction,
+    CapsuleTriggerKind,
 } from '../types';
 
 interface BudgetAccount {
@@ -191,7 +191,6 @@ interface BudgetSummary {
     total_goal_gap: number;
 }
 
-type TransactionKind = Transaction['type'];
 type EditablePlanLine = MonthlyPlanLine & { local_id: string; budget_amount?: number };
 
 const TABS = [
@@ -277,7 +276,7 @@ export default function Strategy() {
     const [capsuleForm, setCapsuleForm] = useState({ name: '', target_amount: '', current_balance: '0' });
     const [ruleForm, setRuleForm] = useState({
         capsule_id: '',
-        trigger_type: 'Income' as TransactionKind,
+        trigger_type: 'Income' as CapsuleTriggerKind,
         trigger_category: '',
         trigger_description: '',
         source_mode: 'transaction_account',
@@ -2378,8 +2377,8 @@ export default function Strategy() {
     const renderAutoRuleForm = () => (
         <div className="border border-cyan-800/50 bg-cyan-900/10 p-3 space-y-2">
             <div className="grid grid-cols-2 gap-2">
-                <select value={ruleForm.trigger_type} onChange={(event) => setRuleForm({ ...ruleForm, trigger_type: event.target.value as TransactionKind })} className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs">
-                    {(['Income', 'Expense', 'CreditExpense', 'Transfer'] as TransactionKind[]).map((type) => <option key={type} value={type}>{type}</option>)}
+                <select value={ruleForm.trigger_type} onChange={(event) => setRuleForm({ ...ruleForm, trigger_type: event.target.value as CapsuleTriggerKind })} className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs">
+                    {(['Income', 'Expense', 'CreditExpense', 'Transfer'] as CapsuleTriggerKind[]).map((type) => <option key={type} value={type}>{type}</option>)}
                 </select>
                 <input value={ruleForm.trigger_category} onChange={(event) => setRuleForm({ ...ruleForm, trigger_category: event.target.value })} placeholder="Category contains" className="bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs" />
             </div>

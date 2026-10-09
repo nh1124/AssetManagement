@@ -16,7 +16,6 @@ export interface Transaction {
     date: string;
     description: string;
     amount: number;
-    type: 'Income' | 'Expense' | 'Transfer' | 'LiabilityPayment' | 'Borrowing' | 'CreditExpense' | 'CreditAssetPurchase';
     currency: string;
     /** The legs, when a payment splits across more than two accounts. Sending
      *  legs makes from/to derived: they are filled only when a single leg sits
@@ -347,7 +346,6 @@ export interface RegistryEntry {
     frequency_days?: number | null;
     day_of_month: number;
     month_of_year?: number | null;
-    transaction_type: Transaction['type'];
     line_type: MonthlyPlanLineType;
     budget_account_id?: number | null;
     budget_account_name?: string | null;
@@ -421,7 +419,6 @@ export interface RecurringTransaction {
     name: string;
     amount: number;
     currency: string;
-    type: Transaction['type'];
     from_account_id?: number | null;
     to_account_id?: number | null;
     frequency: 'Monthly' | 'Yearly';
@@ -690,8 +687,6 @@ export interface AccountFlowTransaction {
     transaction_id: number;
     date: string;
     description: string;
-    type: Transaction['type'];
-    category?: string | null;
     currency: string;
     amount: number;
     raw_amount: number;
@@ -791,11 +786,16 @@ export interface Capsule {
     holdings: CapsuleHolding[];
 }
 
+/** What a capsule rule fires on. It reads as a statement about an entry's
+ *  legs -- CreditExpense means the expense was funded by a liability -- and
+ *  is the rule's own vocabulary, not a field on the transaction. */
+export type CapsuleTriggerKind = 'Income' | 'Expense' | 'CreditExpense' | 'Transfer';
+
 export interface CapsuleRule {
     id: number;
     capsule_id: number;
     capsule_name?: string | null;
-    trigger_type: Transaction['type'];
+    trigger_type: CapsuleTriggerKind;
     trigger_category?: string | null;
     trigger_description?: string | null;
     source_mode: 'transaction_account' | 'fixed_account';

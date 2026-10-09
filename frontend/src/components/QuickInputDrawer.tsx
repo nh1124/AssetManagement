@@ -10,7 +10,8 @@ interface QuickInputDrawerProps {
     onClose: () => void;
 }
 
-type TransactionKind = 'Expense' | 'Income' | 'Transfer' | 'LiabilityPayment';
+// Which accounts the two pickers offer. A hint for this form only.
+type EntryShape = 'expense' | 'income' | 'transfer' | 'debt_payment';
 type AccountGroup = 'asset' | 'liability' | 'income' | 'expense';
 
 interface AccountOption {
@@ -18,16 +19,16 @@ interface AccountOption {
     name: string;
 }
 
-const TRANSACTION_TYPES: Array<{
-    value: TransactionKind;
+const ENTRY_SHAPES: Array<{
+    value: EntryShape;
     label: string;
     fromType: AccountGroup;
     toType: AccountGroup;
 }> = [
-    { value: 'Expense', label: 'Expense', fromType: 'asset', toType: 'expense' },
-    { value: 'Income', label: 'Income', fromType: 'income', toType: 'asset' },
-    { value: 'Transfer', label: 'Transfer', fromType: 'asset', toType: 'asset' },
-    { value: 'LiabilityPayment', label: 'Debt Pay', fromType: 'asset', toType: 'liability' },
+    { value: 'expense', label: 'Expense', fromType: 'asset', toType: 'expense' },
+    { value: 'income', label: 'Income', fromType: 'income', toType: 'asset' },
+    { value: 'transfer', label: 'Transfer', fromType: 'asset', toType: 'asset' },
+    { value: 'debt_payment', label: 'Debt Pay', fromType: 'asset', toType: 'liability' },
 ];
 
 const EMPTY_ACCOUNTS: Record<AccountGroup, AccountOption[]> = {
@@ -48,7 +49,7 @@ function normalizeAccountsByType(raw: unknown): Record<AccountGroup, AccountOpti
 }
 
 export default function QuickInputDrawer({ isOpen, onClose }: QuickInputDrawerProps) {
-    const [activeType, setActiveType] = useState<TransactionKind>('Expense');
+    const [activeShape, setActiveShape] = useState<EntryShape>('expense');
     const [isProcessing, setIsProcessing] = useState(false);
     const [accountsByType, setAccountsByType] = useState<Record<AccountGroup, AccountOption[]>>(EMPTY_ACCOUNTS);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -68,14 +69,14 @@ export default function QuickInputDrawer({ isOpen, onClose }: QuickInputDrawerPr
     const [aiInput, setAiInput] = useState('');
     const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
-    const currentTypeConfig = TRANSACTION_TYPES.find((t) => t.value === activeType) ?? TRANSACTION_TYPES[0];
-    const fromAccounts = accountsByType[currentTypeConfig.fromType] ?? [];
-    const toAccounts = accountsByType[currentTypeConfig.toType] ?? [];
+    const currentShape = ENTRY_SHAPES.find((s) => s.value === activeShape) ?? ENTRY_SHAPES[0];
+    const fromAccounts = accountsByType[currentShape.fromType] ?? [];
+    const toAccounts = accountsByType[currentShape.toType] ?? [];
 
-    const resetAccountSelection = (type: TransactionKind, groupedAccounts: Record<AccountGroup, AccountOption[]>) => {
-        const typeConfig = TRANSACTION_TYPES.find((t) => t.value === type) ?? TRANSACTION_TYPES[0];
-        const from = groupedAccounts[typeConfig.fromType] ?? [];
-        const to = groupedAccounts[typeConfig.toType] ?? [];
+    const resetAccountSelection = (shape: EntryShape, groupedAccounts: Record<AccountGroup, AccountOption[]>) => {
+        const config = ENTRY_SHAPES.find((s) => s.value === shape) ?? ENTRY_SHAPES[0];
+        const from = groupedAccounts[config.fromType] ?? [];
+        const to = groupedAccounts[config.toType] ?? [];
 
         setFormData((prev) => ({
             ...prev,
@@ -89,13 +90,13 @@ export default function QuickInputDrawer({ isOpen, onClose }: QuickInputDrawerPr
             const response = await getAccountsByType();
             const normalized = normalizeAccountsByType(response);
             setAccountsByType(normalized);
-            resetAccountSelection(activeType, normalized);
+            resetAccountSelection(activeShape, normalized);
         } catch {
             await seedDefaultAccounts();
             const response = await getAccountsByType();
             const normalized = normalizeAccountsByType(response);
             setAccountsByType(normalized);
-            resetAccountSelection(activeType, normalized);
+            resetAccountSelection(activeShape, normalized);
         }
     };
 
@@ -109,9 +110,9 @@ export default function QuickInputDrawer({ isOpen, onClose }: QuickInputDrawerPr
         setFormData((prev) => ({ ...prev, currency: currentCurrency }));
     }, [currentCurrency]);
 
-    const handleTypeChange = (type: TransactionKind) => {
-        setActiveType(type);
-        resetAccountSelection(type, accountsByType);
+    const handleShapeChange = (shape: EntryShape) => {
+        setActiveShape(shape);
+        resetAccountSelection(shape, accountsByType);
     };
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -128,16 +129,15 @@ export default function QuickInputDrawer({ isOpen, onClose }: QuickInputDrawerPr
         try {
             await createTransaction({
                 date: formData.date,
-                description: formData.description || `${activeType} transaction`,
+                description: formData.description || `${currentShape.label} transaction`,
                 amount: parseFloat(formData.amount),
-                type: activeType,
                 currency: formData.currency,
                 from_account_id: fromAccountId,
                 to_account_id: toAccountId,
             });
 
             showToast(
-                `Saved: ${activeType === 'Income' ? '+' : '-'} ${formatCurrency(parseFloat(formData.amount), formData.currency)} from ${fromAccount?.name ?? 'account'}`,
+                `Saved: ${activeShape === 'income' ? '+' : '-'} ${formatCurrency(parseFloat(formData.amount), formData.currency)} from ${fromAccount?.name ?? 'account'}`,
                 'success'
             );
 
@@ -230,11 +230,11 @@ export default function QuickInputDrawer({ isOpen, onClose }: QuickInputDrawerPr
 
                 <div className="p-3 space-y-3">
                     <div className="grid grid-cols-4 gap-1">
-                        {TRANSACTION_TYPES.map((type) => (
+                        {ENTRY_SHAPES.map((type) => (
                             <button
                                 key={type.value}
-                                onClick={() => handleTypeChange(type.value)}
-                                className={`py-1.5 text-[10px] transition-colors ${activeType === type.value
+                                onClick={() => handleShapeChange(type.value)}
+                                className={`py-1.5 text-[10px] transition-colors ${activeShape === type.value
                                     ? 'bg-emerald-600 text-white'
                                     : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
                                     }`}
@@ -352,7 +352,7 @@ export default function QuickInputDrawer({ isOpen, onClose }: QuickInputDrawerPr
                         </button>
                     </form>
 
-                    {activeType === 'LiabilityPayment' && (
+                    {activeShape === 'debt_payment' && (
                         <div className="flex items-center gap-1 text-[9px] text-slate-500 border-t border-slate-800 pt-2">
                             <CreditCard size={10} /> Paying off liability account
                         </div>

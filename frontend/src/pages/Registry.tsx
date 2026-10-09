@@ -44,13 +44,13 @@ const SOURCES_INNER_TABS = [
 ];
 
 const TAB_DEFAULTS: Record<string, Partial<{
-    entry_type: string; transaction_type: string; line_type: string;
+    entry_type: string; line_type: string;
     generate_recurring: boolean; budget_active: boolean;
 }>> = {
-    service:    { entry_type: 'service',    transaction_type: 'Expense',          line_type: 'expense',      generate_recurring: true,  budget_active: true  },
-    income:     { entry_type: 'income',     transaction_type: 'Income',           line_type: 'income',       generate_recurring: true,  budget_active: true  },
-    debt:       { entry_type: 'debt',       transaction_type: 'LiabilityPayment', line_type: 'debt_payment', generate_recurring: true,  budget_active: true  },
-    allocation: { entry_type: 'allocation', transaction_type: 'Transfer',         line_type: 'allocation',   generate_recurring: false, budget_active: false },
+    service:    { entry_type: 'service',    line_type: 'expense',      generate_recurring: true,  budget_active: true  },
+    income:     { entry_type: 'income',     line_type: 'income',       generate_recurring: true,  budget_active: true  },
+    debt:       { entry_type: 'debt',       line_type: 'debt_payment', generate_recurring: true,  budget_active: true  },
+    allocation: { entry_type: 'allocation', line_type: 'allocation',   generate_recurring: false, budget_active: false },
 };
 
 const ACCOUNT_TYPES = [
@@ -123,7 +123,6 @@ const EMPTY_REGISTRY_FORM = {
     frequency_days: '',
     day_of_month: '1',
     month_of_year: '1',
-    transaction_type: 'Expense',
     line_type: 'expense',
     budget_account_id: '',
     source_account_id: '',
@@ -668,7 +667,6 @@ export default function Registry() {
         frequency_days: registryForm.frequency === 'EveryNDays' && registryForm.frequency_days ? Number(registryForm.frequency_days) : null,
         day_of_month: Number(registryForm.day_of_month || 1),
         month_of_year: registryForm.frequency === 'Yearly' ? Number(registryForm.month_of_year || 1) : null,
-        transaction_type: registryForm.transaction_type,
         line_type: registryForm.line_type,
         budget_account_id: registryForm.budget_account_id ? Number(registryForm.budget_account_id) : null,
         source_account_id: registryForm.source_account_id ? Number(registryForm.source_account_id) : null,
@@ -700,7 +698,6 @@ export default function Registry() {
             frequency_days: entry.frequency_days != null ? String(entry.frequency_days) : '',
             day_of_month: String(entry.day_of_month ?? 1),
             month_of_year: String(entry.month_of_year ?? 1),
-            transaction_type: entry.transaction_type,
             line_type: entry.line_type,
             budget_account_id: entry.budget_account_id ? String(entry.budget_account_id) : '',
             source_account_id: entry.source_account_id ? String(entry.source_account_id) : '',

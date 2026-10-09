@@ -695,7 +695,6 @@ export const buildQuickTransactions = ({
                 ...base,
                 description,
                 amount,
-                type: 'Transfer',
                 from_account_id: receivableAccount.id,
                 to_account_id: reimbursementAccount.id,
             }],
@@ -709,7 +708,6 @@ export const buildQuickTransactions = ({
                 ...base,
                 description,
                 amount,
-                type: 'Transfer',
                 from_account_id: paymentAccount.id,
                 to_account_id: expenseAccount.id,
             }],
@@ -723,7 +721,6 @@ export const buildQuickTransactions = ({
                 ...base,
                 description,
                 amount,
-                type: 'LiabilityPayment',
                 from_account_id: paymentAccount.id,
                 to_account_id: expenseAccount.id,
             }],
@@ -737,7 +734,6 @@ export const buildQuickTransactions = ({
                 ...base,
                 description,
                 amount,
-                type: 'Income',
                 from_account_id: paymentAccount.id,
                 to_account_id: expenseAccount.id,
             }],
@@ -745,7 +741,6 @@ export const buildQuickTransactions = ({
     }
 
     if (!paymentAccount || !expenseAccount) return { transactions: [], error: 'Payment and expense accounts are required' };
-    const isCreditPayment = paymentAccount.account_type === 'liability';
 
     if (kind === 'expense_with_advance') {
         const resolvedAdvance = advanceAmount > 0 ? advanceAmount : Math.max(0, amount - ownAmount);
@@ -770,7 +765,6 @@ export const buildQuickTransactions = ({
             ...base,
             description,
             amount,
-            type: isCreditPayment ? 'CreditExpense' : 'Expense',
             from_account_id: paymentAccount.id,
             legs,
         }];
@@ -783,7 +777,6 @@ export const buildQuickTransactions = ({
                 ...base,
                 description: `${description} ${generatedText.settlement}`,
                 amount: resolvedAdvance,
-                type: 'Transfer',
                 from_account_id: receivableAccount.id,
                 to_account_id: reimbursementAccount.id,
             });
@@ -796,7 +789,6 @@ export const buildQuickTransactions = ({
             ...base,
             description,
             amount,
-            type: isCreditPayment ? 'CreditExpense' : 'Expense',
             from_account_id: paymentAccount.id,
             to_account_id: expenseAccount.id,
         }],

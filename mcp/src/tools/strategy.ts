@@ -39,9 +39,6 @@ const registryEntryBaseSchema = z.object({
   frequency_days: z.number().int().min(1).nullable().optional(),
   day_of_month: z.number().int().min(1).max(31).optional(),
   month_of_year: z.number().int().min(1).max(12).nullable().optional(),
-  transaction_type: z
-    .enum(["Income", "Expense", "Transfer", "LiabilityPayment", "Borrowing", "CreditExpense", "CreditAssetPurchase"])
-    .optional(),
   line_type: z.enum(["income", "expense", "allocation", "debt_payment", "borrowing", "drawdown"]).optional(),
   budget_account_id: z.number().int().min(1).nullable().optional(),
   source_account_id: z.number().int().min(1).nullable().optional(),

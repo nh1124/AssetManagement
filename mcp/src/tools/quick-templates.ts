@@ -5,31 +5,14 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { api } from "../api-client.js";
-import { fetchAccounts, previewTransactionPayload } from "../domain-guidance.js";
+import { dateSchema, fetchAccounts, previewTransactionPayload, transactionPayloadSchema } from "../domain-guidance.js";
 import { toStructured } from "../utils.js";
 
-const transactionTypeSchema = z.enum([
-  "Income",
-  "Expense",
-  "Transfer",
-  "LiabilityPayment",
-  "Borrowing",
-  "CreditExpense",
-  "CreditAssetPurchase",
-]);
-
-const transactionInputSchema = z
-  .object({
-    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe("Transaction date, YYYY-MM-DD"),
-    description: z.string().min(1).optional().default("").describe("Description"),
-    amount: z.number().min(0).describe("Amount"),
-    type: transactionTypeSchema.describe("Transaction type"),
-    category: z.string().optional().describe("Category"),
-    currency: z.string().optional().default("JPY").describe("Currency"),
-    from_account_id: z.number().int().min(1).optional().describe("Source account ID"),
-    to_account_id: z.number().int().min(1).optional().describe("Destination account ID"),
-  })
-  .strict();
+// One transaction inside a batch, with the same legs as a standalone one.
+const transactionInputSchema = transactionPayloadSchema.extend({
+  date: dateSchema.describe("Transaction date, YYYY-MM-DD"),
+  description: z.string().min(1).optional().default("").describe("Description"),
+});
 
 const quickTemplateCreateSchema = z
   .object({

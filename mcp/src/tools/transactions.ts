@@ -36,7 +36,7 @@ export function registerTransactionTools(server: McpServer): void {
     "transactions_list",
     {
       title: "List transactions",
-      description: "Returns transactions with optional date, type, category, amount, account, and text filters.",
+      description: "Returns transactions with optional date, amount, account, and text filters. Filtering by account gives each row the amount that moved on that account, which for a compound entry is not its total.",
       inputSchema: z
         .object({
           limit: z.number().int().min(1).max(500).optional().default(30).describe("Maximum number of rows"),

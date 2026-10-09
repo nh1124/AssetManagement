@@ -17,6 +17,14 @@ import { useToast } from '../components/Toast';
 import { useClient } from '../context/ClientContext';
 import { formatCurrency as formatCurrencyWithSetting, getCurrencySymbol } from '../utils/currency';
 import type { QuickTemplate, RecurringTransaction, Transaction } from '../types';
+import { directionClass, directionSign, transactionDirection } from '../features/journal/direction';
+import {
+    ENTRY_SHAPES,
+    entryShapeForAccounts,
+    SHAPE_RULES,
+    shapeDescription,
+    type EntryShape,
+} from '../features/journal/entryShape';
 import {
     buildQuickTransactions,
     configAccountId,
@@ -52,80 +60,6 @@ const MAIN_TABS = [
 const CURRENCIES = ['JPY', 'USD', 'EUR', 'GBP', 'CNY'];
 const FILTER_STORAGE_KEY = 'finance_journal_filters';
 const PAGE_SIZE = 50;
-type TransactionKind =
-    | 'Income'
-    | 'Expense'
-    | 'Transfer'
-    | 'LiabilityPayment'
-    | 'Borrowing'
-    | 'CreditExpense'
-    | 'CreditAssetPurchase';
-
-const TRANSACTION_TYPES: Array<{
-    value: TransactionKind;
-    label: string;
-    description: string;
-    fromTypes: string[];
-    toTypes: string[];
-}> = [
-    {
-        value: 'Expense',
-        label: 'Expense',
-        description: 'Record spending from cash, card liability, or income deduction.',
-        fromTypes: ['asset', 'item', 'liability', 'income'],
-        toTypes: ['expense', 'item'],
-    },
-    {
-        value: 'Income',
-        label: 'Income',
-        description: 'Receive income into cash/bank. Dr asset, Cr income.',
-        fromTypes: ['income'],
-        toTypes: ['asset', 'item'],
-    },
-    {
-        value: 'Transfer',
-        label: 'Transfer',
-        description: 'Move value between accounts.',
-        fromTypes: ['asset', 'item', 'liability', 'income'],
-        toTypes: ['asset', 'item', 'liability', 'income'],
-    },
-    {
-        value: 'Borrowing',
-        label: 'Borrowing',
-        description: 'Borrow loan/cash advance and increase assets. Dr asset, Cr liability.',
-        fromTypes: ['liability'],
-        toTypes: ['asset', 'item'],
-    },
-    {
-        value: 'CreditExpense',
-        label: 'Credit Expense',
-        description: 'Buy expenses on credit. Dr expense, Cr liability.',
-        fromTypes: ['asset', 'item', 'liability', 'income'],
-        toTypes: ['expense', 'item'],
-    },
-    {
-        value: 'CreditAssetPurchase',
-        label: 'Credit Asset Purchase',
-        description: 'Buy an asset/item with credit or a loan. Dr asset or item, Cr liability.',
-        fromTypes: ['liability'],
-        toTypes: ['asset', 'item'],
-    },
-    {
-        value: 'LiabilityPayment',
-        label: 'Debt Repayment',
-        description: 'Repay debt from cash/bank. Dr liability, Cr asset.',
-        fromTypes: ['asset', 'item'],
-        toTypes: ['liability'],
-    },
-];
-
-const ACCOUNT_RULES = Object.fromEntries(
-    TRANSACTION_TYPES.map(({ value, fromTypes, toTypes }) => [value, { fromTypes, toTypes }])
-) as Record<TransactionKind, { fromTypes: string[]; toTypes: string[] }>;
-
-const typeDescription = (type: string) =>
-    TRANSACTION_TYPES.find((option) => option.value === type)?.description ?? '';
-
 function QuickCategoryTile({
     label,
     meta,
@@ -158,7 +92,6 @@ function QuickCategoryTile({
 const defaultFilters = {
     startDate: '',
     endDate: '',
-    type: '',
     q: '',
     amountMin: '',
     amountMax: '',
@@ -203,7 +136,7 @@ export default function Journal() {
         date: new Date().toISOString().split('T')[0],
         description: '',
         amount: '',
-        type: 'Expense' as TransactionKind,
+        shape: 'expense' as EntryShape,
         currency: 'JPY',
         fromAccountId: '',
         toAccountId: '',
@@ -247,7 +180,7 @@ export default function Journal() {
         name: '',
         amount: '',
         currency: currentCurrency,
-        type: 'Expense' as TransactionKind,
+        shape: 'expense' as EntryShape,
         from_account_id: '',
         to_account_id: '',
         frequency: 'Monthly',
@@ -258,10 +191,10 @@ export default function Journal() {
         auto_post: true,
     });
 
-    const fromAccounts = accounts.filter((a) => ACCOUNT_RULES[formData.type].fromTypes.includes(a.account_type));
-    const toAccounts = accounts.filter((a) => ACCOUNT_RULES[formData.type].toTypes.includes(a.account_type));
-    const recurringFromAccounts = accounts.filter((a) => ACCOUNT_RULES[newRecurring.type].fromTypes.includes(a.account_type));
-    const recurringToAccounts = accounts.filter((a) => ACCOUNT_RULES[newRecurring.type].toTypes.includes(a.account_type));
+    const fromAccounts = accounts.filter((a) => SHAPE_RULES[formData.shape].fromTypes.includes(a.account_type));
+    const toAccounts = accounts.filter((a) => SHAPE_RULES[formData.shape].toTypes.includes(a.account_type));
+    const recurringFromAccounts = accounts.filter((a) => SHAPE_RULES[newRecurring.shape].fromTypes.includes(a.account_type));
+    const recurringToAccounts = accounts.filter((a) => SHAPE_RULES[newRecurring.shape].toTypes.includes(a.account_type));
     const quickDraftRules = QUICK_KIND_RULES[quickTemplateDraft.template_kind];
     const quickDraftFromAccounts = accounts.filter((a) => quickDraftRules.fromTypes.includes(a.account_type));
     const quickDraftToAccounts = accounts.filter((a) => quickDraftRules.toTypes.includes(a.account_type));
@@ -390,7 +323,7 @@ export default function Journal() {
                 toAccountId: nextTo,
             };
         });
-    }, [formData.type, accounts.length]);
+    }, [formData.shape, accounts.length]);
 
     const fetchInitialData = async () => {
         try {
@@ -691,7 +624,6 @@ export default function Journal() {
                 date: formData.date,
                 description: formData.description,
                 amount: parseFloat(formData.amount),
-                type: formData.type,
                 currency: formData.currency,
                 from_account_id: fromAccountId,
                 to_account_id: toAccountId,
@@ -756,8 +688,8 @@ export default function Journal() {
             };
 
             for (const suggestion of suggestedTransactions) {
-                const txType = (suggestion.type as TransactionKind) || 'Expense';
-                const rules = ACCOUNT_RULES[txType];
+                const shape = (suggestion.shape as EntryShape) || 'expense';
+                const rules = SHAPE_RULES[shape] ?? SHAPE_RULES.expense;
                 if (suggestion.is_recurring) {
                     // Map account names to IDs for recurring transaction
                     const fromAccountId = resolveAccountId(suggestion.from_account, rules.fromTypes, true);
@@ -767,7 +699,6 @@ export default function Journal() {
                         name: suggestion.description,
                         amount: suggestion.amount,
                         currency: suggestion.currency || currentCurrency,
-                        type: txType,
                         from_account_id: fromAccountId ?? null,
                         to_account_id: toAccountId ?? null,
                         frequency: suggestion.frequency || 'Monthly',
@@ -782,7 +713,6 @@ export default function Journal() {
                         date: suggestion.date || formData.date,
                         description: suggestion.description,
                         amount: suggestion.amount,
-                        type: txType,
                         currency: suggestion.currency || 'JPY',
                         from_account_id: fromAccountId,
                         to_account_id: toAccountId,
@@ -823,7 +753,7 @@ export default function Journal() {
             date: tx.date,
             description: tx.description,
             amount: String(tx.amount),
-            type: tx.type,
+            shape: entryShapeForAccounts(accounts, tx.from_account_id, tx.to_account_id),
             currency: tx.currency || 'JPY',
             fromAccountId: tx.from_account_id ? String(tx.from_account_id) : '',
             toAccountId: tx.to_account_id ? String(tx.to_account_id) : '',
@@ -836,7 +766,7 @@ export default function Journal() {
             date: new Date().toISOString().split('T')[0],
             description: '',
             amount: '',
-            type: 'Expense',
+            shape: 'expense',
             currency: 'JPY',
             fromAccountId: '',
             toAccountId: '',
@@ -852,7 +782,6 @@ export default function Journal() {
                 name: newRecurring.name,
                 amount: parseFloat(newRecurring.amount),
                 currency: newRecurring.currency,
-                type: newRecurring.type,
                 from_account_id: parseInt(newRecurring.from_account_id) || null,
                 to_account_id: parseInt(newRecurring.to_account_id) || null,
                 frequency: newRecurring.frequency,
@@ -876,7 +805,7 @@ export default function Journal() {
             setShowAddRecurring(false);
             setEditingRecurringId(null);
             setNewRecurring({
-                name: '', amount: '', type: 'Expense', from_account_id: '',
+                name: '', amount: '', shape: 'expense', from_account_id: '',
                 currency: currentCurrency,
                 to_account_id: '', frequency: 'Monthly', day_of_month: '1', month_of_year: '1',
                 start_period: '', end_period: '', auto_post: true,
@@ -894,7 +823,7 @@ export default function Journal() {
             name: item.name,
             amount: item.amount.toString(),
             currency: item.currency || currentCurrency,
-            type: item.type as TransactionKind,
+            shape: entryShapeForAccounts(accounts, item.from_account_id, item.to_account_id),
             from_account_id: item.from_account_id ? item.from_account_id.toString() : '',
             to_account_id: item.to_account_id ? item.to_account_id.toString() : '',
             frequency: item.frequency,
@@ -920,10 +849,10 @@ export default function Journal() {
     };
 
     const loadedIncome = transactions
-        .filter((tx) => tx.type === 'Income')
+        .filter((tx) => transactionDirection(tx) === 'in')
         .reduce((sum, tx) => sum + tx.amount, 0);
     const loadedOutflow = transactions
-        .filter((tx) => tx.type !== 'Income')
+        .filter((tx) => transactionDirection(tx) !== 'in')
         .reduce((sum, tx) => sum + tx.amount, 0);
     const loadedNet = loadedIncome - loadedOutflow;
     const loadedAverage = transactions.length
@@ -946,14 +875,14 @@ export default function Journal() {
                                 />
                             </div>
                             <div>
-                                <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Type</label>
+                                <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Shape</label>
                                 <select
-                                    value={formData.type}
-                                    onChange={(e) => setFormData({ ...formData, type: e.target.value as TransactionKind })}
-                                    title={typeDescription(formData.type)}
+                                    value={formData.shape}
+                                    onChange={(e) => setFormData({ ...formData, shape: e.target.value as EntryShape })}
+                                    title={shapeDescription(formData.shape)}
                                     className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
                                 >
-                                    {TRANSACTION_TYPES.map((option) => (
+                                    {ENTRY_SHAPES.map((option) => (
                                         <option key={option.value} value={option.value} title={option.description}>
                                             {option.label}
                                         </option>
@@ -1502,7 +1431,7 @@ export default function Journal() {
                                                     <div className="min-w-0">
                                                         <p className="text-[11px] text-slate-200 truncate">{tx.description}</p>
                                                         <p className="text-[10px] text-slate-500 truncate">
-                                                            {tx.type} / {accountById(tx.from_account_id)?.name || '...'} → {
+                                                            {accountById(tx.from_account_id)?.name || '...'} → {
                                                                 tx.legs && tx.legs.length > 2
                                                                     ? tx.legs
                                                                         .filter((leg) => (leg.debit ?? 0) > 0)
@@ -1615,7 +1544,7 @@ export default function Journal() {
                                                 {st.is_recurring
                                                     ? `${st.frequency} (Day ${st.day_of_month})`
                                                     : st.date}
-                                                / {st.category} / {formatCurrency(st.amount)}
+                                                / {formatCurrency(st.amount)}
                                             </p>
                                             <button
                                                 type="button"
@@ -1648,7 +1577,7 @@ export default function Journal() {
                                     setShowAddRecurring(true);
                                     setEditingRecurringId(null);
                                     setNewRecurring({
-                                        name: '', amount: '', type: 'Expense', from_account_id: '',
+                                        name: '', amount: '', shape: 'expense', from_account_id: '',
                                         currency: currentCurrency,
                                         to_account_id: '', frequency: 'Monthly', day_of_month: '1', month_of_year: '1',
                                         start_period: '', end_period: '', auto_post: true,
@@ -1751,17 +1680,17 @@ export default function Journal() {
                                     </div>
 
                                     <div>
-                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Type</label>
+                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Shape</label>
                                         <select
-                                            value={newRecurring.type}
+                                            value={newRecurring.shape}
                                             onChange={e => {
-                                                const nextType = e.target.value as TransactionKind;
-                                                setNewRecurring({ ...newRecurring, type: nextType, from_account_id: '', to_account_id: '' });
+                                                const nextShape = e.target.value as EntryShape;
+                                                setNewRecurring({ ...newRecurring, shape: nextShape, from_account_id: '', to_account_id: '' });
                                             }}
-                                            title={typeDescription(newRecurring.type)}
+                                            title={shapeDescription(newRecurring.shape)}
                                             className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs focus:border-cyan-500 focus:outline-none"
                                         >
-                                            {TRANSACTION_TYPES.map((option) => (
+                                            {ENTRY_SHAPES.map((option) => (
                                                 <option key={option.value} value={option.value} title={option.description}>
                                                     {option.label}
                                                 </option>
@@ -1943,17 +1872,6 @@ export default function Journal() {
                         title="End date"
                     />
                     <select
-                        value={filters.type}
-                        onChange={(e) => setFilters({ ...filters, type: e.target.value })}
-                        className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs"
-                        title="Transaction type"
-                    >
-                        <option value="">All types</option>
-                        {TRANSACTION_TYPES.map((option) => (
-                            <option key={option.value} value={option.value}>{option.label}</option>
-                        ))}
-                    </select>
-                    <select
                         value={filters.accountId}
                         onChange={(e) => setFilters({ ...filters, accountId: e.target.value })}
                         className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs"
@@ -2008,7 +1926,7 @@ export default function Journal() {
                     transactions.map((tx) => (
                         <div key={tx.id} className="flex items-center justify-between py-2 px-2 hover:bg-slate-800/50 transition-colors group">
                             <div className="flex items-center gap-2">
-                                {tx.type === 'Income' ? <ArrowUpCircle className="text-emerald-500" size={14} /> : tx.type === 'Expense' || tx.type === 'LiabilityPayment' ? <ArrowDownCircle className="text-rose-500" size={14} /> : <RefreshCw className="text-cyan-500" size={14} />}
+                                {transactionDirection(tx) === 'in' ? <ArrowUpCircle className="text-emerald-500" size={14} /> : transactionDirection(tx) === 'out' ? <ArrowDownCircle className="text-rose-500" size={14} /> : <RefreshCw className="text-cyan-500" size={14} />}
                                 <div>
                                     <p className="text-xs">
                                         {tx.description}
@@ -2035,8 +1953,8 @@ export default function Journal() {
                                 </div>
                             </div>
                             <div className="flex items-center gap-2">
-                                <span className={`text-xs font-mono-nums ${tx.type === 'Income' ? 'text-emerald-500' : tx.type === 'Expense' || tx.type === 'LiabilityPayment' ? 'text-rose-500' : 'text-cyan-500'}`}>
-                                    {tx.type === 'Income' ? '+' : tx.type === 'Expense' || tx.type === 'LiabilityPayment' ? '-' : ''}{formatCurrencyWithSetting(tx.amount, tx.currency || currentCurrency)}
+                                <span className={`text-xs font-mono-nums ${directionClass(transactionDirection(tx))}`}>
+                                    {directionSign(transactionDirection(tx))}{formatCurrencyWithSetting(tx.amount, tx.currency || currentCurrency)}
                                 </span>
                                 {matchedOnAccount(tx) !== null && (
                                     <span className="text-[10px] font-mono-nums text-slate-400" title={language === 'ja' ? 'この口座が動いた額' : 'moved on this account'}>

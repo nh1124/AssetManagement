@@ -21,7 +21,7 @@ Before write operations:
 1. Read the relevant guide resource.
 2. Prefer preview/validate tools before create/update tools.
 3. Use exact account IDs from accounts_list.
-4. If unsure about transaction type, call help_choose_transaction_type.
+4. If unsure which accounts belong on an entry, read the accounting-rules guide and call validate_transaction_payload.
 
 A transaction is its journal legs. Two legs is the ordinary case, where
 from_account_id is the credit side and to_account_id the debit side. A payment
@@ -43,26 +43,33 @@ Important write tools:
   },
   "asset-management://guide/accounting-rules": {
     title: "Accounting rules",
-    description: "Transaction type, account side, and double-entry rules.",
+    description: "Which accounts belong on which side, and the double-entry rules.",
     text: `# Accounting Rules
 
-The UI/MCP payload uses from_account_id as the credit side and to_account_id as the debit side.
+The payload uses from_account_id as the credit side and to_account_id as the
+debit side. A payment that splits across more than two accounts passes legs
+instead, and then both are derived: each is filled only when a single leg sits
+on that side.
 
-Transaction types:
-- Income: from income, to asset. Example: salary account -> bank.
-- Expense: from asset, to expense. Example: cash/bank -> food.
-- Transfer: from asset, to asset. Example: bank -> savings.
-- LiabilityPayment: from asset, to liability. Example: bank -> loan or credit card settlement.
-- Borrowing: from liability, to asset. Example: loan -> bank.
-- CreditExpense: from liability, to expense. Example: credit card -> food.
-- CreditAssetPurchase: from liability, to asset. Use only for purchases that should be capitalized.
+The accounts say what happened. There is no transaction type to choose:
+- Income: credit an income account, debit an asset. Salary -> bank.
+- Expense: credit the funding account, debit an expense account. Cash -> food.
+- Card purchase: credit the card liability, debit the expense. The liability
+  grows and no cash moves until the statement is settled.
+- Transfer: credit one asset, debit another. Bank -> savings.
+- Debt repayment: credit an asset, debit the liability. Bank -> loan.
+- Borrowing: credit the liability, debit the asset. Loan -> bank.
 
 Common mistakes:
-- Credit-card purchases are usually CreditExpense, not Expense.
-- Credit-card repayment is LiabilityPayment, not Expense.
-- Borrowed money is Borrowing, not Income.
-- Ordinary household consumables paid by card are CreditExpense plus Product registration if needed.
-- Never set Account.balance directly; create a transaction instead.`,
+- A card purchase is funded from the card account, not from cash. The purchase
+  and the statement settlement are two separate entries.
+- Borrowed money is a liability, not income.
+- Money fronted for someone else is not your expense: debit a receivable asset
+  account for their share, one account per person.
+- Never set Account.balance directly; create a transaction instead.
+- accounts.liability_kind says how a liability is settled: 'card' is billed on a
+  monthly cycle, 'loan' repays on its own registry schedule. The projection
+  proposes a settlement only for a card.`,
   },
   "asset-management://guide/data-entry": {
     title: "Data entry guide",
@@ -72,7 +79,7 @@ Common mistakes:
 For receipt or purchase-history entry:
 1. Identify payment method.
 2. Identify whether the item is a consumable, ordinary expense, or fixed asset.
-3. Call help_choose_transaction_type if the type is not obvious.
+3. Pick the funding account and the destination account. A card purchase is funded from the card.
 4. Decide whether the payment splits. If part of it was fronted for someone
    else, or paid from two accounts, build legs rather than two transactions.
 5. Call validate_transaction_payload or transactions_preview.
@@ -91,11 +98,10 @@ Product/Item registry is separate from Transaction.
 
 recurring_create creates a schedule definition only. It does not post a real transaction.
 
-Use the same account-side rules as normal transactions:
-- Expense: from asset, to expense.
-- CreditExpense: from liability, to expense.
-- Income: from income, to asset.
-- LiabilityPayment: from asset, to liability.
+Use the same account sides as a normal transaction: from_account_id is
+credited and to_account_id debited. An expense is funded from an asset or a
+card, income lands from an income account into an asset, and a repayment is
+funded from an asset into the liability.
 
 Before recurring_create:
 1. Call recurring_preview with the intended fields.
