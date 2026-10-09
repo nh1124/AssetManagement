@@ -25,28 +25,22 @@ def post_recurring_transaction(
     posting_date: date,
 ) -> models.Transaction:
     """Create a transaction and its journal entries without committing."""
-    to_account = None
-    if recurring.to_account_id:
-        to_account = db.query(models.Account).filter(
-            models.Account.id == recurring.to_account_id,
-            models.Account.client_id == recurring.client_id,
-        ).first()
-    category = to_account.name if to_account else recurring.name
     transaction = models.Transaction(
         client_id=recurring.client_id,
         date=posting_date,
         description=recurring.name,
         amount=recurring.amount,
         currency=recurring.currency,
-        type=recurring.type,
-        from_account_id=recurring.from_account_id,
-        to_account_id=recurring.to_account_id,
-        category=category,
     )
     db.add(transaction)
     db.flush()
 
-    post_transaction_journal(db, transaction)
+    post_transaction_journal(
+        db,
+        transaction,
+        from_account_id=recurring.from_account_id,
+        to_account_id=recurring.to_account_id,
+    )
     apply_capsule_rules_for_transaction(db, transaction, commit=False)
     return transaction
 

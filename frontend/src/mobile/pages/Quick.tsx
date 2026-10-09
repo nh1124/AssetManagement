@@ -210,7 +210,7 @@ export default function MobileQuickPage() {
                             <div key={tx.id} className="flex items-center justify-between gap-3 px-3 py-2">
                                 <div className="min-w-0">
                                     <p className="truncate text-sm text-slate-100">{tx.description}</p>
-                                    <p className="text-[10px] text-slate-500">{tx.date} - {tx.type}</p>
+                                    <p className="text-[10px] text-slate-500">{tx.date}</p>
                                 </div>
                                 <p className="shrink-0 font-mono-nums text-xs text-slate-200">
                                     {formatCurrency(tx.amount, tx.currency)}
@@ -357,7 +357,7 @@ function MobileQuickEntrySheet({
         });
 
         const resolvedTransactions = error && isMissingAccountError(error)
-            ? [buildFallbackTransaction(template, resolvedEntry, accountItems, currentCurrency, language)]
+            ? [buildFallbackTransaction(template, resolvedEntry, currentCurrency, language)]
             : transactions;
 
         if (error && resolvedTransactions.length === 0) {
@@ -520,30 +520,17 @@ function isMissingAccountError(error: string) {
     return error.toLowerCase().includes('account');
 }
 
-function fallbackTransactionType(kind: string, paymentAccount?: AccountItem): Transaction['type'] {
-    if (kind === 'income') return 'Income';
-    if (kind === 'credit_expense' && paymentAccount?.account_type === 'liability') return 'CreditExpense';
-    if (paymentAccount?.account_type === 'liability') return 'CreditExpense';
-    if (kind === 'transfer') return 'Transfer';
-    if (kind === 'debt_payment') return 'LiabilityPayment';
-    return 'Expense';
-}
-
 function buildFallbackTransaction(
     template: QuickTemplate,
     entry: QuickEntry,
-    accounts: AccountItem[],
     currentCurrency: string,
     language: LanguageCode,
 ): Omit<Transaction, 'id'> {
-    const paymentAccount = accounts.find((account) => account.id === Number(entry.payment_account_id));
     const display = quickTemplateDisplay(template, language);
     return {
         date: entry.date,
         description: entry.description.trim() || display.name,
         amount: Number(entry.amount || 0),
-        type: fallbackTransactionType(template.template_kind, paymentAccount),
-        category: display.category,
         currency: entry.currency || template.default_currency || currentCurrency,
         from_account_id: entry.payment_account_id ? Number(entry.payment_account_id) : undefined,
         to_account_id: entry.expense_account_id ? Number(entry.expense_account_id) : undefined,

@@ -22,7 +22,7 @@ from ..services.data_health_service import check_data_health, repair_data_health
 
 router = APIRouter(prefix="/data", tags=["data"])
 
-EXPORT_VERSION = 4
+EXPORT_VERSION = 7
 
 DATA_COLLECTIONS = [
     "accounts",
@@ -231,6 +231,7 @@ def _validate_import_payload(payload: ImportPayload) -> dict[str, Any]:
     check_ref("quick_templates", "default_from_account_id", "accounts")
     check_ref("quick_templates", "default_to_account_id", "accounts")
     check_ref("transaction_batches", "quick_template_id", "quick_templates")
+    # Only present in a v6 or older payload, where the columns still existed.
     check_ref("transactions", "from_account_id", "accounts")
     check_ref("transactions", "to_account_id", "accounts")
     check_ref("transactions", "batch_id", "transaction_batches")
@@ -516,7 +517,6 @@ def export_client_data(
                         "name",
                         "amount",
                         "currency",
-                        "type",
                         "from_account_id",
                         "to_account_id",
                         "frequency",
@@ -550,7 +550,6 @@ def export_client_data(
                         "frequency_days",
                         "day_of_month",
                         "month_of_year",
-                        "transaction_type",
                         "line_type",
                         "budget_account_id",
                         "source_account_id",
@@ -646,11 +645,7 @@ def export_client_data(
                         "date",
                         "description",
                         "amount",
-                        "type",
-                        "category",
                         "currency",
-                        "from_account_id",
-                        "to_account_id",
                         "batch_id",
                         "created_at",
                     ],
@@ -661,7 +656,7 @@ def export_client_data(
                 .all()
             ],
             "journal_entries": [
-                _row(entry, ["id", "transaction_id", "account_id", "debit", "credit"])
+                _row(entry, ["id", "transaction_id", "account_id", "debit", "credit", "memo", "sort_order"])
                 for entry in db.query(models.JournalEntry)
                 .filter(models.JournalEntry.transaction_id.in_(tx_ids or [-1]))
                 .order_by(models.JournalEntry.id)
@@ -1075,7 +1070,6 @@ def import_client_data(
                 name=item["name"],
                 amount=item.get("amount") or 0,
                 currency=item.get("currency") or "JPY",
-                type=item["type"],
                 from_account_id=account_map.get(item.get("from_account_id")),
                 to_account_id=account_map.get(item.get("to_account_id")),
                 frequency=item["frequency"],
@@ -1107,7 +1101,6 @@ def import_client_data(
                 frequency_days=item.get("frequency_days"),
                 day_of_month=item.get("day_of_month") or 1,
                 month_of_year=item.get("month_of_year"),
-                transaction_type=item.get("transaction_type") or "Expense",
                 line_type=item.get("line_type") or "expense",
                 budget_account_id=account_map.get(item.get("budget_account_id")),
                 source_account_id=account_map.get(item.get("source_account_id")),
@@ -1203,11 +1196,10 @@ def import_client_data(
                 date=_parse_date(item.get("date")),
                 description=item["description"],
                 amount=item.get("amount") or 0,
-                type=item["type"],
-                category=item.get("category"),
                 currency=item.get("currency") or "JPY",
-                from_account_id=account_map.get(item.get("from_account_id")),
-                to_account_id=account_map.get(item.get("to_account_id")),
+                # from_account_id / to_account_id in a v6 or older payload are
+                # ignored: the journal_entries below are the accounts, and they
+                # were already required to balance.
                 batch_id=batch_map.get(item.get("batch_id")),
                 created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
             )
@@ -1225,6 +1217,8 @@ def import_client_data(
                         account_id=account_id,
                         debit=item.get("debit") or 0,
                         credit=item.get("credit") or 0,
+                        memo=item.get("memo"),
+                        sort_order=item.get("sort_order"),
                     )
                 )
 

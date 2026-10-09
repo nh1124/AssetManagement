@@ -129,9 +129,7 @@ def _matching_legs(
         else:
             if leg.account_type not in _LINE_ACCOUNT_TYPES.get(line_type, set()):
                 continue
-            tx = leg.transaction
-            haystack = "%s %s" % ((tx.description or "").lower(), (tx.category or "").lower())
-            if not name or name not in haystack:
+            if not name or name not in (leg.transaction.description or "").lower():
                 continue
 
         funding = counterparties(leg)

@@ -16,6 +16,7 @@ from backend.app.services.ai_context_service import (
     get_context_resource,
     list_context_resources,
 )
+from backend.app.services.ledger_service import process_transaction
 from backend.app.utils.password import hash_password
 
 
@@ -69,17 +70,18 @@ def _client_with_data(db):
     )
     db.add_all([cash, food])
     db.flush()
-    db.add(models.Transaction(
+    # The accounts a context row reports come from the legs, so the entry has
+    # to be posted rather than inserted as a bare header.
+    tx = models.Transaction(
         client_id=client.id,
         date=date(2026, 6, 1),
         description="Lunch",
         amount=1200,
-        type="Expense",
-        category="Food",
         currency="JPY",
-        from_account_id=cash.id,
-        to_account_id=food.id,
-    ))
+    )
+    db.add(tx)
+    db.flush()
+    process_transaction(db, tx, from_account_id=cash.id, to_account_id=food.id)
     db.commit()
     db.refresh(client)
     return client

@@ -16,21 +16,19 @@ interface Capsule {
   progress_pct: number;
 }
 
-const transactionTypeSchema = z.enum([
-  "Income",
-  "Expense",
-  "Transfer",
-  "LiabilityPayment",
-  "Borrowing",
-  "CreditExpense",
-  "CreditAssetPurchase",
-]);
+// What the rule fires on, read off the posted entry's legs: CreditExpense is
+// an expense funded by a liability, Expense one funded by anything else.
+const capsuleTriggerSchema = z.enum(["Income", "Expense", "CreditExpense", "Transfer"]);
 
 const capsuleRuleInputSchema = z
   .object({
     capsule_id: z.number().int().min(1).describe("Capsule ID"),
-    trigger_type: transactionTypeSchema.describe("Transaction type that triggers the rule"),
-    trigger_category: z.string().nullable().optional().describe("Optional category substring"),
+    trigger_type: capsuleTriggerSchema.describe("What kind of entry triggers the rule"),
+    trigger_category: z
+      .string()
+      .nullable()
+      .optional()
+      .describe("Optional account-name or description substring the entry must match"),
     trigger_description: z.string().nullable().optional().describe("Optional description substring"),
     source_mode: z.enum(["transaction_account", "fixed_account"]).optional(),
     source_account_id: z.number().int().min(1).nullable().optional().describe("Required when source_mode is fixed_account"),

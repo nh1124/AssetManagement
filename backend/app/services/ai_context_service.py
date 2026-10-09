@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from .ai_policy_service import SENSITIVE_KEY_PARTS
+from .journal_legs import primary_accounts
 from .analysis_service import get_summary
 
 AiDataClassification = Literal["normal", "sensitive", "secret"]
@@ -64,7 +65,7 @@ AI_CONTEXT_CATALOG: tuple[AiContextResourceDescriptor, ...] = (
         classification="sensitive",
         available=True,
         risk="low",
-        includes=("transaction_id", "date", "description", "amount", "type", "category", "accounts"),
+        includes=("transaction_id", "date", "description", "amount", "accounts"),
         excludes=SECRET_EXCLUDES,
         default_limit=50,
     ),
@@ -86,7 +87,7 @@ AI_CONTEXT_CATALOG: tuple[AiContextResourceDescriptor, ...] = (
         classification="sensitive",
         available=True,
         risk="low",
-        includes=("name", "amount", "type", "frequency", "next_due_date", "account_refs"),
+        includes=("name", "amount", "frequency", "next_due_date", "account_refs"),
         excludes=SECRET_EXCLUDES,
         default_limit=100,
     ),
@@ -313,6 +314,7 @@ def _transactions_recent(db: Session, client_id: int, limit: int) -> dict[str, A
     rows = db.query(models.Transaction).filter(
         models.Transaction.client_id == client_id,
     ).order_by(models.Transaction.date.desc(), models.Transaction.id.desc()).limit(limit).all()
+    pairs = {tx.id: primary_accounts(tx) for tx in rows}
     return {
         "count": len(rows),
         "transactions": [
@@ -321,11 +323,9 @@ def _transactions_recent(db: Session, client_id: int, limit: int) -> dict[str, A
                 "date": _iso(tx.date),
                 "description": tx.description,
                 "amount": tx.amount,
-                "type": tx.type,
-                "category": tx.category,
                 "currency": tx.currency,
-                "from_account": _account_ref(tx.from_account_rel),
-                "to_account": _account_ref(tx.to_account_rel),
+                "from_account": _account_ref(pairs[tx.id][0]),
+                "to_account": _account_ref(pairs[tx.id][1]),
                 "created_at": _iso(tx.created_at),
             }
             for tx in rows
@@ -377,7 +377,6 @@ def _recurring_transactions(db: Session, client_id: int, limit: int) -> dict[str
                 "name": row.name,
                 "amount": row.amount,
                 "currency": row.currency,
-                "type": row.type,
                 "frequency": row.frequency,
                 "day_of_month": row.day_of_month,
                 "month_of_year": row.month_of_year,
@@ -459,7 +458,6 @@ def _registry_entries(db: Session, client_id: int, limit: int) -> dict[str, Any]
                 "currency": row.currency,
                 "frequency": row.frequency,
                 "day_of_month": row.day_of_month,
-                "transaction_type": row.transaction_type,
                 "line_type": row.line_type,
                 "budget_treatment": row.budget_treatment,
                 "budget_active": row.budget_active,

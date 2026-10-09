@@ -6,25 +6,25 @@ from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.ledger_service import ensure_default_accounts, post_transaction_journal
 from ..services.capsule_service import apply_capsule_rules_for_transaction
+from ..services.journal_legs import primary_accounts
 
 router = APIRouter(prefix="/quick-templates", tags=["quick-templates"])
 batch_router = APIRouter(prefix="/transaction-batches", tags=["transaction-batches"])
 
 
 def _serialize_transaction(tx: models.Transaction) -> dict:
+    from_account, to_account = primary_accounts(tx)
     return {
         "id": tx.id,
         "date": tx.date,
         "description": tx.description,
         "amount": tx.amount,
-        "type": tx.type,
-        "category": tx.category,
         "currency": tx.currency,
-        "from_account_id": tx.from_account_id,
-        "to_account_id": tx.to_account_id,
+        "from_account_id": from_account.id if from_account else None,
+        "to_account_id": to_account.id if to_account else None,
         "batch_id": tx.batch_id,
-        "from_account_name": tx.from_account_rel.name if tx.from_account_rel else None,
-        "to_account_name": tx.to_account_rel.name if tx.to_account_rel else None,
+        "from_account_name": from_account.name if from_account else None,
+        "to_account_name": to_account.name if to_account else None,
     }
 
 
@@ -195,14 +195,20 @@ def create_transaction_batch(
     created: list[models.Transaction] = []
     try:
         for item in payload.transactions:
+            data = item.model_dump(exclude={"batch_id"})
+            legs = data.pop("legs", None)
+            from_account_id = data.pop("from_account_id", None)
+            to_account_id = data.pop("to_account_id", None)
             tx = models.Transaction(
-                **item.model_dump(exclude={"batch_id"}),
+                **data,
                 batch_id=batch.id,
                 client_id=current_client.id,
             )
             db.add(tx)
             db.flush()
-            post_transaction_journal(db, tx)
+            post_transaction_journal(
+                db, tx, legs, from_account_id=from_account_id, to_account_id=to_account_id
+            )
             apply_capsule_rules_for_transaction(db, tx, commit=False)
             created.append(tx)
         db.commit()

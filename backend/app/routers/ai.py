@@ -18,14 +18,16 @@ You can also extract RECURRING payment rules if the input implies a repeating in
 Return a JSON array of objects.
 
 Field definitions:
-- type: "Expense" | "Income" | "Transfer" | "LiabilityPayment" | "Borrowing" | "CreditExpense" | "CreditAssetPurchase" | "Product"
+- shape: "expense" | "income" | "transfer" | "borrowing" | "debt_payment" | "product"
+  (a hint for which accounts to offer; the ledger records the accounts themselves)
 - date: "YYYY-MM-DD" (Default to today if not found)
 - amount: number
 - currency: "JPY" | "USD" | "EUR" (Default to JPY)
-- category: string (Food, Transport, Entertainment, etc.)
 - description: string
-- from_account: "cash" | "bank" | "credit" | null
-- to_account: "expense" | "savings" | "investment" | null
+- from_account: the funding account, by the name the user uses for it when they
+  say one; otherwise "cash" | "bank" | "credit" | null
+- to_account: the account the money lands on, by name when the user says one;
+  otherwise "expense" | "savings" | "investment" | null
 - is_recurring: boolean (true if this is a recurring rule)
 - frequency: "Monthly" | "Yearly" (Required if is_recurring is true)
 - day_of_month: number (1-31, Required if is_recurring is true)
@@ -33,19 +35,17 @@ Field definitions:
 Return format (JSON ONLY array):
 [
   {
-    "type": "Expense",
+    "shape": "expense",
     "amount": 1500,
     "currency": "JPY",
-    "category": "Food",
     "description": "Lunch at Yoshinoya",
     "date": "2026-01-14",
     "is_recurring": false
   },
   {
-    "type": "Expense",
+    "shape": "expense",
     "amount": 1200,
     "currency": "USD",
-    "category": "Software",
     "description": "Netflix Subscription",
     "is_recurring": true,
     "frequency": "Monthly",

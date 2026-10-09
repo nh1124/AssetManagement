@@ -22,13 +22,13 @@
 
 ## preview（副作用なし・write 前に必ず）
 
-`transactions_preview`, `validate_transaction_payload`, `recurring_preview`, `monthly_plan_lines_preview`, `products_preview`, `transaction_batches_preview`, `roadmap_milestones_preview_from_simulation`, `help_choose_transaction_type`
+`transactions_preview`, `validate_transaction_payload`, `recurring_preview`, `monthly_plan_lines_preview`, `products_preview`, `transaction_batches_preview`, `roadmap_milestones_preview_from_simulation`
 
 ## 書き込み（対象 client 確認 + preview 後）
 
 | グループ | 主なツール | 注意 |
 |---|---|---|
-| 取引 | `transactions_create/update/delete`, `transaction_batches_create` | JournalEntry は backend が自動生成。delete は明示指示時のみ |
+| 取引 | `transactions_create/update/delete`, `transaction_batches_create` | JournalEntry は backend が自動生成（2 行以上、借方計 = 貸方計 = `amount`）。1 回の支払いが複数科目に分かれるときは `legs` を渡す。delete は明示指示時のみ |
 | Registry | `registry_entries_create/update/delete` | **定常収支はここから**。recurring が自動同期される |
 | Recurring | `recurring_create/update`, `recurring_process`, `recurring_skip`, `recurring_process_due` | 直接操作は明示指示時のみ。process は 1 回 = 1 期。一括は `recurring_process_due`（auto_post 対象を catch-up 込みで計上） |
 | Item | `products_create/update/delete` | `budget_account_id` と `category` を一致させる |
@@ -50,5 +50,6 @@
 ## 書き込み契約の要点
 
 - write ツールの payload はフィールド allowlist 制（`mcp/contracts/write-tools.json`）。allowlist 外のフィールドは送っても無視 or エラー。
+- `transactions_create` / `transactions_update` の `legs` は `[{account_id, debit|credit, memo?}]`。借方計 = 貸方計 = `amount` を満たさないと backend が拒否する。渡した場合 `from_account_id` / `to_account_id` は無視される（レグが正）。
 - update 系は部分更新（送ったフィールドだけ変わる）。
 - 金額は数値、日付は `YYYY-MM-DD`、期間は `YYYY-MM`、通貨コードは `JPY` など ISO。

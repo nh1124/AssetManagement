@@ -50,7 +50,6 @@ def _recurring(db, cash, expense, **overrides):
         "name": "Rent",
         "amount": 1000,
         "currency": "JPY",
-        "type": "Expense",
         "from_account_id": cash.id,
         "to_account_id": expense.id,
         "frequency": "Monthly",
@@ -115,7 +114,6 @@ def test_process_due_creates_transaction_and_two_journal_entries():
         assert len(result["processed"]) == 1
         transaction = db.query(models.Transaction).one()
         assert transaction.date == date(2026, 6, 15)
-        assert transaction.category == "Rent expense"
         assert db.query(models.JournalEntry).filter_by(transaction_id=transaction.id).count() == 2
         assert recurring.next_due_date == date(2026, 7, 15)
     finally:
@@ -210,7 +208,6 @@ def test_process_due_deactivates_past_end_period_and_syncs_registry():
             currency="JPY",
             frequency="Monthly",
             day_of_month=15,
-            transaction_type="Expense",
             line_type="expense",
             generate_recurring=True,
             budget_active=True,
@@ -267,7 +264,6 @@ def test_registry_sync_initializes_due_date_and_preserves_progress():
             currency="JPY",
             frequency="Monthly",
             day_of_month=10,
-            transaction_type="Expense",
             line_type="expense",
             generate_recurring=True,
             budget_active=True,

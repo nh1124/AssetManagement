@@ -1,9 +1,8 @@
 from datetime import date
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from .. import models, schemas
 from ..database import get_db
@@ -16,33 +15,59 @@ from ..services.ledger_service import (
 )
 from ..services.cache_service import invalidate_client
 from ..services.capsule_service import apply_capsule_rules_for_transaction
+from ..services.journal_legs import primary_accounts
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
 
 
-def _serialize_transaction(tx: models.Transaction) -> dict:
+def _serialize_leg(entry: models.JournalEntry) -> dict:
+    account = entry.account
     return {
+        "id": entry.id,
+        "account_id": entry.account_id,
+        "account_name": account.name if account else None,
+        "account_type": account.account_type if account else None,
+        "debit": entry.debit or 0.0,
+        "credit": entry.credit or 0.0,
+        "memo": entry.memo,
+    }
+
+
+def _serialize_transaction(tx: models.Transaction, *, account_id: int | None = None) -> dict:
+    legs = sorted(
+        tx.journal_entries,
+        key=lambda entry: (entry.sort_order if entry.sort_order is not None else 0, entry.id or 0),
+    )
+    from_account, to_account = primary_accounts(tx)
+    row = {
         "id": tx.id,
         "date": tx.date,
         "description": tx.description,
         "amount": tx.amount,
-        "type": tx.type,
-        "category": tx.category,
         "currency": tx.currency,
-        "from_account_id": tx.from_account_id,
-        "to_account_id": tx.to_account_id,
+        "from_account_id": from_account.id if from_account else None,
+        "to_account_id": to_account.id if to_account else None,
         "batch_id": tx.batch_id,
-        "from_account_name": tx.from_account_rel.name if tx.from_account_rel else None,
-        "to_account_name": tx.to_account_rel.name if tx.to_account_rel else None,
+        "from_account_name": from_account.name if from_account else None,
+        "to_account_name": to_account.name if to_account else None,
+        "legs": [_serialize_leg(entry) for entry in legs],
     }
+    if account_id:
+        # Filtered by account, the useful figure is what moved on that account.
+        # A compound entry's total says nothing about any one of its legs.
+        row["matched_debit"] = sum(
+            (entry.debit or 0.0) for entry in legs if entry.account_id == account_id
+        )
+        row["matched_credit"] = sum(
+            (entry.credit or 0.0) for entry in legs if entry.account_id == account_id
+        )
+    return row
 
 
 @router.get("/")
 def get_transactions(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
-    type: Optional[str] = Query(None),
-    category: Optional[str] = Query(None),
     amount_min: Optional[float] = Query(None),
     amount_max: Optional[float] = Query(None),
     account_id: Optional[int] = Query(None),
@@ -59,27 +84,30 @@ def get_transactions(
         query = query.filter(models.Transaction.date >= start_date)
     if end_date:
         query = query.filter(models.Transaction.date <= end_date)
-    if type:
-        query = query.filter(models.Transaction.type == type)
-    if category:
-        query = query.filter(models.Transaction.category.ilike(f"%{category}%"))
     if amount_min is not None:
         query = query.filter(models.Transaction.amount >= amount_min)
     if amount_max is not None:
         query = query.filter(models.Transaction.amount <= amount_max)
     if account_id:
+        # A leg query, not from/to: a compound entry touches accounts that the
+        # denormalised columns cannot name.
         query = query.filter(
-            or_(
-                models.Transaction.from_account_id == account_id,
-                models.Transaction.to_account_id == account_id,
-            )
+            models.Transaction.journal_entries.any(models.JournalEntry.account_id == account_id)
         )
     if q:
         query = query.filter(models.Transaction.description.ilike(f"%{q}%"))
 
     total = query.count() if paginated else None
-    txs = query.order_by(models.Transaction.date.desc(), models.Transaction.id.desc()).offset(offset).limit(limit).all()
-    items = [_serialize_transaction(tx) for tx in txs]
+    txs = (
+        query.options(
+            selectinload(models.Transaction.journal_entries).selectinload(models.JournalEntry.account)
+        )
+        .order_by(models.Transaction.date.desc(), models.Transaction.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    items = [_serialize_transaction(tx, account_id=account_id) for tx in txs]
     if paginated:
         return {"items": items, "total": total}
     return items
@@ -94,11 +122,21 @@ def create_transaction(
     """Create a transaction for a specific client and process double-entry bookkeeping."""
     ensure_default_accounts(db, client_id=current_client.id)
 
+    data = transaction.model_dump()
+    legs = data.pop("legs", None)
+    from_account_id = data.pop("from_account_id", None)
+    to_account_id = data.pop("to_account_id", None)
     try:
-        db_transaction = models.Transaction(**transaction.model_dump(), client_id=current_client.id)
+        db_transaction = models.Transaction(**data, client_id=current_client.id)
         db.add(db_transaction)
         db.flush()
-        post_transaction_journal(db, db_transaction)
+        post_transaction_journal(
+            db,
+            db_transaction,
+            legs,
+            from_account_id=from_account_id,
+            to_account_id=to_account_id,
+        )
         apply_capsule_rules_for_transaction(db, db_transaction, commit=False)
         db.commit()
         db.refresh(db_transaction)

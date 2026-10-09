@@ -18,7 +18,7 @@ import {
     Wallet,
 } from 'lucide-react';
 import type { ComponentType } from 'react';
-import type { QuickTemplate, Transaction } from '../../types';
+import type { QuickTemplate, Transaction, TransactionLeg } from '../../types';
 
 export type LanguageCode = 'ja' | 'en';
 
@@ -27,6 +27,30 @@ export type AccountItem = {
     name: string;
     account_type: string;
     balance?: number;
+    parent_id?: number | null;
+};
+
+/** The asset accounts that hold what someone else owes you.
+ *
+ *  A split entry debits one of these for the part fronted, so the balance is
+ *  the outstanding loan. They are found by name -- 立替 / advance /
+ *  receivable -- and anything parented under one of them counts too, which is
+ *  how one account per person is meant to be organised.
+ */
+export const receivableAccounts = (accounts: AccountItem[]): AccountItem[] => {
+    const named = accounts.filter(
+        (account) =>
+            account.account_type === 'asset' && /立替|receivable|advance/i.test(account.name)
+    );
+    const roots = new Set(named.map((account) => account.id));
+    const children = accounts.filter(
+        (account) =>
+            account.account_type === 'asset' &&
+            account.parent_id != null &&
+            roots.has(account.parent_id) &&
+            !roots.has(account.id)
+    );
+    return [...named, ...children];
 };
 
 export type QuickTemplateKind =
@@ -676,7 +700,6 @@ export const buildQuickTransactions = ({
     const reimbursementAccount = accountById(quickEntry.reimbursement_account_id || quickEntry.expense_account_id);
     const display = quickTemplateDisplay(selectedTemplate, language);
     const description = quickEntry.description.trim() || display.name;
-    const category = display.category || expenseAccount?.name;
     const generatedText = {
         ownShare: language === 'ja' ? '自分負担' : 'Own Share',
         advance: language === 'ja' ? '立替' : 'Advance',
@@ -696,8 +719,6 @@ export const buildQuickTransactions = ({
                 ...base,
                 description,
                 amount,
-                type: 'Transfer',
-                category: display.category || 'reimbursement',
                 from_account_id: receivableAccount.id,
                 to_account_id: reimbursementAccount.id,
             }],
@@ -711,8 +732,6 @@ export const buildQuickTransactions = ({
                 ...base,
                 description,
                 amount,
-                type: 'Transfer',
-                category: display.category || 'transfer',
                 from_account_id: paymentAccount.id,
                 to_account_id: expenseAccount.id,
             }],
@@ -726,8 +745,6 @@ export const buildQuickTransactions = ({
                 ...base,
                 description,
                 amount,
-                type: 'LiabilityPayment',
-                category: display.category || expenseAccount.name,
                 from_account_id: paymentAccount.id,
                 to_account_id: expenseAccount.id,
             }],
@@ -741,8 +758,6 @@ export const buildQuickTransactions = ({
                 ...base,
                 description,
                 amount,
-                type: 'Income',
-                category: display.category || paymentAccount.name,
                 from_account_id: paymentAccount.id,
                 to_account_id: expenseAccount.id,
             }],
@@ -750,45 +765,42 @@ export const buildQuickTransactions = ({
     }
 
     if (!paymentAccount || !expenseAccount) return { transactions: [], error: 'Payment and expense accounts are required' };
-    const isCreditPayment = paymentAccount.account_type === 'liability';
 
     if (kind === 'expense_with_advance') {
         const resolvedAdvance = advanceAmount > 0 ? advanceAmount : Math.max(0, amount - ownAmount);
         const resolvedOwn = ownAmount > 0 ? ownAmount : Math.max(0, amount - resolvedAdvance);
         if (resolvedOwn + resolvedAdvance <= 0) return { transactions: [], error: 'Own share or advance amount is required' };
         if (resolvedAdvance > 0 && !receivableAccount) return { transactions: [], error: 'Receivable account is required' };
+        if (Math.abs(resolvedOwn + resolvedAdvance - amount) > 0.01) {
+            return { transactions: [], error: 'Own share and advance must add up to the amount' };
+        }
 
-        const transactions: Array<Omit<Transaction, 'id'>> = [];
+        // One payment, one entry. The card is credited the whole bill; the
+        // debits split it into what we spent and what we fronted.
+        const legs: TransactionLeg[] = [{ account_id: paymentAccount.id, credit: amount }];
         if (resolvedOwn > 0) {
-            transactions.push({
-                ...base,
-                description: `${description} ${generatedText.ownShare}`,
-                amount: resolvedOwn,
-                type: isCreditPayment ? 'CreditExpense' : 'Expense',
-                category,
-                from_account_id: paymentAccount.id,
-                to_account_id: expenseAccount.id,
-            });
+            legs.push({ account_id: expenseAccount.id, debit: resolvedOwn, memo: generatedText.ownShare });
         }
         if (resolvedAdvance > 0 && receivableAccount) {
-            transactions.push({
-                ...base,
-                description: `${description} ${generatedText.advance}`,
-                amount: resolvedAdvance,
-                type: isCreditPayment ? 'CreditAssetPurchase' : 'Transfer',
-                category: `${category}/${generatedText.advance}`,
-                from_account_id: paymentAccount.id,
-                to_account_id: receivableAccount.id,
-            });
+            legs.push({ account_id: receivableAccount.id, debit: resolvedAdvance, memo: generatedText.advance });
         }
+
+        const transactions: Array<Omit<Transaction, 'id'>> = [{
+            ...base,
+            description,
+            amount,
+            from_account_id: paymentAccount.id,
+            legs,
+        }];
+
+        // Getting the money back is a different event on a different day, so it
+        // stays its own transaction.
         if (quickEntry.reimbursementReceived && resolvedAdvance > 0) {
             if (!receivableAccount || !reimbursementAccount) return { transactions: [], error: 'Deposit account is required for reimbursement' };
             transactions.push({
                 ...base,
                 description: `${description} ${generatedText.settlement}`,
                 amount: resolvedAdvance,
-                type: 'Transfer',
-                category: `${category}/${generatedText.settlement}`,
                 from_account_id: receivableAccount.id,
                 to_account_id: reimbursementAccount.id,
             });
@@ -801,8 +813,6 @@ export const buildQuickTransactions = ({
             ...base,
             description,
             amount,
-            type: isCreditPayment ? 'CreditExpense' : 'Expense',
-            category,
             from_account_id: paymentAccount.id,
             to_account_id: expenseAccount.id,
         }],

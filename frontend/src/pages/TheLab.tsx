@@ -165,8 +165,6 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
         date: '',
         description: '',
         amount: '',
-        type: 'Expense',
-        category: '',
         currency: 'JPY',
         from_account_id: '',
         to_account_id: '',
@@ -269,8 +267,6 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
             date: item.date,
             description: item.description || '',
             amount: String(item.raw_amount ?? item.amount ?? ''),
-            type: item.type,
-            category: item.category || '',
             currency: item.currency || currentCurrency,
             from_account_id: item.from_account_id ? String(item.from_account_id) : '',
             to_account_id: item.to_account_id ? String(item.to_account_id) : '',
@@ -285,8 +281,6 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
                 date: flowEditDraft.date,
                 description: flowEditDraft.description,
                 amount: Number(flowEditDraft.amount),
-                type: flowEditDraft.type as any,
-                category: flowEditDraft.category,
                 currency: flowEditDraft.currency,
                 from_account_id: flowEditDraft.from_account_id ? Number(flowEditDraft.from_account_id) : undefined,
                 to_account_id: flowEditDraft.to_account_id ? Number(flowEditDraft.to_account_id) : undefined,
@@ -674,9 +668,10 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
             ]
             : sortedExpenses;
         const accountNameById = new Map(accounts.map((account) => [account.id, String(account.name).toLowerCase()]));
+        const accountTypeById = new Map(accounts.map((account) => [account.id, account.account_type]));
         const fixedCategories = new Set(
             recurringItems
-                .filter((item) => ['Expense', 'CreditExpense', 'LiabilityPayment'].includes(item.type))
+                .filter((item) => ['expense', 'liability'].includes(accountTypeById.get(item.to_account_id ?? -1) ?? ''))
                 .flatMap((item) => [
                     String(item.name || '').toLowerCase(),
                     accountNameById.get(item.to_account_id),
@@ -1687,7 +1682,7 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
                                                     <div className="min-w-0">
                                                         <p className="truncate text-slate-200">{item.description}</p>
                                                         <p className="truncate text-[10px] text-slate-600">
-                                                            {item.type} / {(item.counterpart_accounts ?? []).map((counterpart) => counterpart.account_name).filter(Boolean).join(', ') || 'No counterpart'}
+                                                            {(item.counterpart_accounts ?? []).map((counterpart) => counterpart.account_name).filter(Boolean).join(', ') || 'No counterpart'}
                                                         </p>
                                                     </div>
                                                     <span className="text-right font-mono-nums text-cyan-300">{item.debit ? formatCurrency(item.debit) : '-'}</span>
@@ -1725,18 +1720,6 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
                                                 onChange={(event) => setFlowEditDraft({ ...flowEditDraft, date: event.target.value })}
                                                 className="mt-1 w-full border border-slate-700 bg-slate-900 px-2 py-2 text-sm text-slate-100"
                                             />
-                                        </label>
-                                        <label className="block text-xs text-slate-400">
-                                            Type
-                                            <select
-                                                value={flowEditDraft.type}
-                                                onChange={(event) => setFlowEditDraft({ ...flowEditDraft, type: event.target.value })}
-                                                className="mt-1 w-full border border-slate-700 bg-slate-900 px-2 py-2 text-sm text-slate-100"
-                                            >
-                                                {['Income', 'Expense', 'Transfer', 'LiabilityPayment', 'Borrowing', 'CreditExpense', 'CreditAssetPurchase'].map((type) => (
-                                                    <option key={type} value={type}>{type}</option>
-                                                ))}
-                                            </select>
                                         </label>
                                         <label className="block text-xs text-slate-400 md:col-span-2">
                                             Description
@@ -1784,14 +1767,6 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
                                                 <option value="">Resolve automatically</option>
                                                 {accounts.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
                                             </select>
-                                        </label>
-                                        <label className="block text-xs text-slate-400 md:col-span-2">
-                                            Category
-                                            <input
-                                                value={flowEditDraft.category}
-                                                onChange={(event) => setFlowEditDraft({ ...flowEditDraft, category: event.target.value })}
-                                                className="mt-1 w-full border border-slate-700 bg-slate-900 px-2 py-2 text-sm text-slate-100"
-                                            />
                                         </label>
                                     </div>
 

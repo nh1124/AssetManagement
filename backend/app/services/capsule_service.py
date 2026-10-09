@@ -225,12 +225,8 @@ def _triggered_legs(
         account = accounts.get(entry.account_id)
         if account is None or account.account_type not in account_types:
             continue
-        if needle:
-            # The account is the axis. The free-text category stays as a
-            # fallback so a rule written against it keeps working.
-            names = {(account.name or "").strip().lower()}
-            if needle not in names and needle not in (transaction.category or "").lower():
-                continue
+        if needle and needle != (account.name or "").strip().lower():
+            continue
         matched.append(entry)
 
     matched.sort(key=lambda entry: _side_amount(entry, side), reverse=True)

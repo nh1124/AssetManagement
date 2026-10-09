@@ -4,15 +4,6 @@ from datetime import datetime
 import enum
 from .database import Base
 
-class TransactionType(str, enum.Enum):
-    INCOME = "Income"
-    EXPENSE = "Expense"
-    TRANSFER = "Transfer"
-    LIABILITY_PAYMENT = "LiabilityPayment"
-    BORROWING = "Borrowing"
-    CREDIT_EXPENSE = "CreditExpense"
-    CREDIT_ASSET_PURCHASE = "CreditAssetPurchase"
-
 class AccountType(str, enum.Enum):
     ASSET = "asset"
     LIABILITY = "liability"
@@ -175,19 +166,16 @@ class Transaction(Base):
     date = Column(Date)
     description = Column(String)
     amount = Column(Float)
-    type = Column(String)
-    category = Column(String, nullable=True)
     currency = Column(String, default='JPY')
-    from_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
-    to_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     batch_id = Column(Integer, ForeignKey("transaction_batches.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     
     client = relationship("Client", back_populates="transactions")
     batch = relationship("TransactionBatch", back_populates="transactions")
+    # No from_account_id / to_account_id columns: the legs are the accounts.
+    # Both are still accepted as input and still reported, derived by
+    # services.journal_legs.primary_accounts from the leg on each side.
     journal_entries = relationship("JournalEntry", back_populates="transaction")
-    from_account_rel = relationship("Account", foreign_keys=[from_account_id])
-    to_account_rel = relationship("Account", foreign_keys=[to_account_id])
 
 
 class QuickTemplate(Base):
@@ -305,7 +293,6 @@ class RecurringTransaction(Base):
     name = Column(String, index=True)
     amount = Column(Float)
     currency = Column(String, default="JPY", server_default="JPY", nullable=False)
-    type = Column(String)  # Income, Expense, Transfer, LiabilityPayment, Borrowing, CreditExpense, CreditAssetPurchase
     from_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     to_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     frequency = Column(String)  # Monthly, Yearly
@@ -340,7 +327,6 @@ class RegistryEntry(Base):
     frequency_days = Column(Integer, nullable=True)
     day_of_month = Column(Integer, default=1, server_default="1", nullable=False)
     month_of_year = Column(Integer, nullable=True)
-    transaction_type = Column(String, nullable=False, default="Expense")
     line_type = Column(String, nullable=False, default="expense")
     budget_account_id = Column(Integer, ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True)
     source_account_id = Column(Integer, ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True)

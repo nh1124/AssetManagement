@@ -9,7 +9,6 @@ from __future__ import annotations
 from .ledger_service import (  # noqa: F401
     DEBIT_NORMAL_TYPES,
     DEFAULT_ACCOUNTS,
-    TRANSACTION_ACCOUNT_DEFAULTS,
     calculate_account_journal_balance,
     ensure_default_accounts,
     get_or_create_account,

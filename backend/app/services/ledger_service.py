@@ -6,8 +6,9 @@ registry or reporting.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import date
-from typing import Optional
+from typing import Optional, Sequence
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -99,67 +100,7 @@ def _get_account_by_id(
     ).first()
 
 
-def _resolve_account(
-    db: Session,
-    client_id: int,
-    account_id: Optional[int],
-    fallback_name: str,
-    fallback_type: str,
-) -> models.Account:
-    by_id = _get_account_by_id(db, account_id, client_id)
-    if by_id:
-        return by_id
-
-    return get_or_create_account(db, fallback_name, client_id, fallback_type, commit=False)
-
-
 DEBIT_NORMAL_TYPES = {"asset", "expense", "item"}
-
-
-TRANSACTION_ACCOUNT_DEFAULTS = {
-    "Income": {
-        "from_name": "salary",
-        "from_type": "income",
-        "to_name": "cash",
-        "to_type": "asset",
-    },
-    "Expense": {
-        "from_name": "cash",
-        "from_type": "asset",
-        "to_name": "expense",
-        "to_type": "expense",
-    },
-    "Transfer": {
-        "from_name": "cash",
-        "from_type": "asset",
-        "to_name": "savings",
-        "to_type": "asset",
-    },
-    "LiabilityPayment": {
-        "from_name": "cash",
-        "from_type": "asset",
-        "to_name": "loan",
-        "to_type": "liability",
-    },
-    "Borrowing": {
-        "from_name": "loan",
-        "from_type": "liability",
-        "to_name": "cash",
-        "to_type": "asset",
-    },
-    "CreditExpense": {
-        "from_name": "credit",
-        "from_type": "liability",
-        "to_name": "expense",
-        "to_type": "expense",
-    },
-    "CreditAssetPurchase": {
-        "from_name": "credit",
-        "from_type": "liability",
-        "to_name": "savings",
-        "to_type": "asset",
-    },
-}
 
 
 def calculate_account_journal_balance(
@@ -203,71 +144,172 @@ def _apply_credit(account: models.Account, amount: float) -> None:
         account.balance += amount
 
 
-def _post_transaction_journal(db: Session, transaction: models.Transaction) -> None:
+BALANCE_TOLERANCE = 0.01
+
+
+@dataclass(frozen=True)
+class Leg:
+    """One side of an entry, as given to the posting code."""
+
+    account_id: int
+    debit: float = 0.0
+    credit: float = 0.0
+    memo: str | None = None
+
+
+def _coerce_leg(leg) -> Leg:
+    """Accept a Leg, a pydantic model or a plain mapping."""
+    if isinstance(leg, Leg):
+        return leg
+    if isinstance(leg, dict):
+        data = leg
+    else:
+        data = {
+            "account_id": getattr(leg, "account_id", None),
+            "debit": getattr(leg, "debit", 0.0),
+            "credit": getattr(leg, "credit", 0.0),
+            "memo": getattr(leg, "memo", None),
+        }
+    return Leg(
+        account_id=data.get("account_id"),
+        debit=float(data.get("debit") or 0.0),
+        credit=float(data.get("credit") or 0.0),
+        memo=data.get("memo"),
+    )
+
+
+def _validate_legs(legs: list[Leg], amount: float) -> None:
+    """The ledger invariant, in one place.
+
+    Two or more legs, each on exactly one side, and both sides summing to the
+    transaction amount. The amount is a denormalisation of the legs, so it
+    doubles as the checksum: a receipt total that disagrees with its breakdown
+    is a mistake, not a rounding difference.
     """
-    Post a transaction with double-entry bookkeeping without committing.
-    The UI uses from_account as the credit side and to_account as the debit side.
+    if len(legs) < 2:
+        raise ValueError("A journal entry needs at least two legs")
+
+    for leg in legs:
+        if not leg.account_id:
+            raise ValueError("Every journal leg needs an account")
+        if leg.debit < 0 or leg.credit < 0:
+            raise ValueError("Journal legs cannot be negative")
+        if (leg.debit > 0) == (leg.credit > 0):
+            raise ValueError("A journal leg is either a debit or a credit, not both or neither")
+
+    total_debit = sum(leg.debit for leg in legs)
+    total_credit = sum(leg.credit for leg in legs)
+    if abs(total_debit - total_credit) > BALANCE_TOLERANCE:
+        raise ValueError(
+            f"Journal entry does not balance: debit {total_debit} vs credit {total_credit}"
+        )
+    if abs(total_debit - (amount or 0.0)) > BALANCE_TOLERANCE:
+        raise ValueError(
+            f"Journal entry total {total_debit} does not match the transaction amount {amount}"
+        )
+
+
+def simple_legs(
+    amount: float | None,
+    from_account_id: int | None,
+    to_account_id: int | None,
+) -> list[Leg]:
+    """The two legs a from/to pair describes.
+
+    from_account is the credit side and to_account the debit side, which is the
+    direction the API and the UI have always used. Both are required: there is
+    nothing left to infer a missing account from, and inferring one is how
+    transactions used to land on whichever account happened to come first.
+    The accounts themselves are checked where every leg is.
+    """
+    if from_account_id is None or to_account_id is None:
+        raise ValueError(
+            "A transaction needs both from_account_id and to_account_id, or explicit legs"
+        )
+    total = amount or 0.0
+    return [
+        Leg(account_id=to_account_id, debit=total),
+        Leg(account_id=from_account_id, credit=total),
+    ]
+
+
+def _post_transaction_journal(
+    db: Session,
+    transaction: models.Transaction,
+    legs: Sequence | None = None,
+    *,
+    from_account_id: int | None = None,
+    to_account_id: int | None = None,
+) -> None:
+    """Write a transaction's journal legs and move the cached balances.
+
+    Either `legs`, for any number of them, or a from/to pair, which describes
+    the two legs of an ordinary entry. The two sides must balance and come to
+    the transaction amount.
     """
     client_id = transaction.client_id
     if client_id is None:
         raise ValueError("transaction.client_id is required")
 
-    category = transaction.category or "expense"
-    defaults = TRANSACTION_ACCOUNT_DEFAULTS.get(transaction.type)
-    if not defaults:
-        raise ValueError(f"Unsupported transaction type: {transaction.type}")
+    if legs is None:
+        posted = simple_legs(transaction.amount, from_account_id, to_account_id)
+    else:
+        posted = [_coerce_leg(leg) for leg in legs]
+    _validate_legs(posted, transaction.amount or 0.0)
 
-    from_fallback_name = category if transaction.type == "Income" else defaults["from_name"]
-    to_fallback_name = category if transaction.type in ("Expense", "CreditExpense") else defaults["to_name"]
+    accounts: dict[int, models.Account] = {}
+    for leg in posted:
+        if leg.account_id not in accounts:
+            account = _get_account_by_id(db, leg.account_id, client_id)
+            if account is None:
+                raise ValueError(f"Account {leg.account_id} not found for this client")
+            accounts[leg.account_id] = account
 
-    from_account = _resolve_account(
-        db=db,
-        client_id=client_id,
-        account_id=transaction.from_account_id,
-        fallback_name=from_fallback_name,
-        fallback_type=defaults["from_type"],
-    )
-    to_account = _resolve_account(
-        db=db,
-        client_id=client_id,
-        account_id=transaction.to_account_id,
-        fallback_name=to_fallback_name,
-        fallback_type=defaults["to_type"],
-    )
+    for leg in posted:
+        account = accounts[leg.account_id]
+        if leg.debit:
+            _apply_debit(account, leg.debit)
+        else:
+            _apply_credit(account, leg.credit)
 
-    _apply_credit(from_account, transaction.amount)
-    _apply_debit(to_account, transaction.amount)
-
-    # Persist resolved account linkage for read APIs.
-    transaction.from_account_id = from_account.id
-    transaction.to_account_id = to_account.id
-
-    debit_entry = models.JournalEntry(
-        transaction_id=transaction.id,
-        account_id=to_account.id,
-        debit=transaction.amount,
-        credit=0,
-    )
-    credit_entry = models.JournalEntry(
-        transaction_id=transaction.id,
-        account_id=from_account.id,
-        debit=0,
-        credit=transaction.amount,
-    )
-
-    db.add(debit_entry)
-    db.add(credit_entry)
+    for order, leg in enumerate(posted):
+        db.add(models.JournalEntry(
+            transaction_id=transaction.id,
+            account_id=leg.account_id,
+            debit=leg.debit,
+            credit=leg.credit,
+            memo=leg.memo,
+            sort_order=order,
+        ))
 
 
-def process_transaction(db: Session, transaction: models.Transaction) -> None:
+def process_transaction(
+    db: Session,
+    transaction: models.Transaction,
+    legs: Sequence | None = None,
+    *,
+    from_account_id: int | None = None,
+    to_account_id: int | None = None,
+) -> None:
     """Process a transaction with double-entry bookkeeping and commit it."""
-    _post_transaction_journal(db, transaction)
+    _post_transaction_journal(
+        db, transaction, legs, from_account_id=from_account_id, to_account_id=to_account_id
+    )
     db.commit()
 
 
-def post_transaction_journal(db: Session, transaction: models.Transaction) -> None:
+def post_transaction_journal(
+    db: Session,
+    transaction: models.Transaction,
+    legs: Sequence | None = None,
+    *,
+    from_account_id: int | None = None,
+    to_account_id: int | None = None,
+) -> None:
     """Post a transaction with double-entry bookkeeping without committing."""
-    _post_transaction_journal(db, transaction)
+    _post_transaction_journal(
+        db, transaction, legs, from_account_id=from_account_id, to_account_id=to_account_id
+    )
 
 
 def _rollback_transaction_effects(db: Session, transaction: models.Transaction) -> None:
@@ -321,24 +363,52 @@ def update_transaction(
         return None
 
     try:
+        prior = [
+            Leg(
+                account_id=entry.account_id,
+                debit=entry.debit or 0.0,
+                credit=entry.credit or 0.0,
+                memo=entry.memo,
+            )
+            for entry in db.query(models.JournalEntry)
+            .filter(models.JournalEntry.transaction_id == transaction_id)
+            .order_by(models.JournalEntry.sort_order, models.JournalEntry.id)
+            .all()
+        ]
+
         _rollback_transaction_effects(db, tx)
         db.query(models.JournalEntry).filter(
             models.JournalEntry.transaction_id == transaction_id
         ).delete(synchronize_session=False)
 
         update_data = payload.model_dump(exclude_unset=True)
+        legs = update_data.pop("legs", None)
+        given_from = update_data.pop("from_account_id", None)
+        given_to = update_data.pop("to_account_id", None)
         for field, value in update_data.items():
             setattr(tx, field, value)
 
-        # Keep category in sync with to_account when account changes for expense types.
-        if 'to_account_id' in update_data and 'category' not in update_data:
-            if tx.type in ("Expense", "CreditExpense") and tx.to_account_id:
-                to_acct = _get_account_by_id(db, tx.to_account_id, client_id)
-                if to_acct:
-                    tx.category = to_acct.name
+        if legs is None:
+            # Neither legs nor a full pair of accounts: keep the accounts the
+            # entry already had. A two-sided entry is rebuilt at the new
+            # amount; a compound one keeps its legs, so changing only its
+            # amount is refused by the balance check rather than silently
+            # reshaped.
+            prior_credits = [leg for leg in prior if leg.credit > 0]
+            prior_debits = [leg for leg in prior if leg.debit > 0]
+            resolved_from = given_from if given_from is not None else (
+                prior_credits[0].account_id if len(prior_credits) == 1 else None
+            )
+            resolved_to = given_to if given_to is not None else (
+                prior_debits[0].account_id if len(prior_debits) == 1 else None
+            )
+            if resolved_from is not None and resolved_to is not None:
+                legs = simple_legs(tx.amount, resolved_from, resolved_to)
+            else:
+                legs = prior
 
         db.flush()
-        _post_transaction_journal(db, tx)
+        _post_transaction_journal(db, tx, legs)
         db.commit()
         db.refresh(tx)
         return tx

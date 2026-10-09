@@ -16,7 +16,15 @@ import {
 import { useToast } from '../components/Toast';
 import { useClient } from '../context/ClientContext';
 import { formatCurrency as formatCurrencyWithSetting, getCurrencySymbol } from '../utils/currency';
-import type { QuickTemplate, RecurringTransaction, Transaction } from '../types';
+import type { QuickTemplate, RecurringTransaction, Transaction, TransactionLeg, TransactionLegRead } from '../types';
+import { directionClass, directionSign, transactionDirection } from '../features/journal/direction';
+import {
+    ENTRY_SHAPES,
+    entryShapeForAccounts,
+    SHAPE_RULES,
+    shapeDescription,
+    type EntryShape,
+} from '../features/journal/entryShape';
 import {
     buildQuickTransactions,
     configAccountId,
@@ -26,12 +34,12 @@ import {
     QUICK_PRESETS,
     QUICK_TEMPLATE_GROUPS,
     QUICK_TEMPLATE_KINDS,
-    localizeQuickCategory,
     quickGroupLabel,
     quickHelp,
     quickKindGroup,
     quickKindLabelFor,
     quickPresetFor,
+    receivableAccounts,
     quickTemplateDisplay,
     quickText,
     type AccountItem,
@@ -53,80 +61,6 @@ const MAIN_TABS = [
 const CURRENCIES = ['JPY', 'USD', 'EUR', 'GBP', 'CNY'];
 const FILTER_STORAGE_KEY = 'finance_journal_filters';
 const PAGE_SIZE = 50;
-type TransactionKind =
-    | 'Income'
-    | 'Expense'
-    | 'Transfer'
-    | 'LiabilityPayment'
-    | 'Borrowing'
-    | 'CreditExpense'
-    | 'CreditAssetPurchase';
-
-const TRANSACTION_TYPES: Array<{
-    value: TransactionKind;
-    label: string;
-    description: string;
-    fromTypes: string[];
-    toTypes: string[];
-}> = [
-    {
-        value: 'Expense',
-        label: 'Expense',
-        description: 'Record spending from cash, card liability, or income deduction.',
-        fromTypes: ['asset', 'item', 'liability', 'income'],
-        toTypes: ['expense', 'item'],
-    },
-    {
-        value: 'Income',
-        label: 'Income',
-        description: 'Receive income into cash/bank. Dr asset, Cr income.',
-        fromTypes: ['income'],
-        toTypes: ['asset', 'item'],
-    },
-    {
-        value: 'Transfer',
-        label: 'Transfer',
-        description: 'Move value between accounts.',
-        fromTypes: ['asset', 'item', 'liability', 'income'],
-        toTypes: ['asset', 'item', 'liability', 'income'],
-    },
-    {
-        value: 'Borrowing',
-        label: 'Borrowing',
-        description: 'Borrow loan/cash advance and increase assets. Dr asset, Cr liability.',
-        fromTypes: ['liability'],
-        toTypes: ['asset', 'item'],
-    },
-    {
-        value: 'CreditExpense',
-        label: 'Credit Expense',
-        description: 'Buy expenses on credit. Dr expense, Cr liability.',
-        fromTypes: ['asset', 'item', 'liability', 'income'],
-        toTypes: ['expense', 'item'],
-    },
-    {
-        value: 'CreditAssetPurchase',
-        label: 'Credit Asset Purchase',
-        description: 'Buy an asset/item with credit or a loan. Dr asset or item, Cr liability.',
-        fromTypes: ['liability'],
-        toTypes: ['asset', 'item'],
-    },
-    {
-        value: 'LiabilityPayment',
-        label: 'Debt Repayment',
-        description: 'Repay debt from cash/bank. Dr liability, Cr asset.',
-        fromTypes: ['asset', 'item'],
-        toTypes: ['liability'],
-    },
-];
-
-const ACCOUNT_RULES = Object.fromEntries(
-    TRANSACTION_TYPES.map(({ value, fromTypes, toTypes }) => [value, { fromTypes, toTypes }])
-) as Record<TransactionKind, { fromTypes: string[]; toTypes: string[] }>;
-
-const typeDescription = (type: string) =>
-    TRANSACTION_TYPES.find((option) => option.value === type)?.description ?? '';
-
 function QuickCategoryTile({
     label,
     meta,
@@ -156,12 +90,47 @@ function QuickCategoryTile({
     );
 }
 
+/** The debit legs of an entry, as editor rows. Two-sided entries come back
+ *  empty: the To account already says where the money landed. */
+const splitRowsFromLegs = (tx: Transaction): Array<{ accountId: string; amount: string; memo: string }> => {
+    const legs = (tx.legs ?? []) as Array<TransactionLeg | TransactionLegRead>;
+    if (legs.length <= 2) return [];
+    return legs
+        .filter((leg) => (leg.debit ?? 0) > 0)
+        .map((leg) => ({
+            accountId: String(leg.account_id),
+            amount: String(leg.debit ?? 0),
+            memo: leg.memo ?? '',
+        }));
+};
+
+/** The model is asked for a shape and a rough account hint ("cash", "credit"),
+ *  not for one of this client's accounts. Guess from the hint, by exact name
+ *  and then by substring, and leave it unset when nothing matches: the row is
+ *  then not saveable until someone picks an account. Guessing the first
+ *  account of the right type, which is what this did before, booked card
+ *  spending to whichever card came first.
+ */
+const guessAccountId = (
+    accounts: AccountItem[],
+    hint: string | undefined,
+    candidateTypes: string[],
+): number | undefined => {
+    if (!hint) return undefined;
+    const needle = hint.toLowerCase().trim();
+    if (!needle) return undefined;
+    const pool = accounts.filter((account) => candidateTypes.includes(account.account_type));
+    return (
+        pool.find((account) => account.name.toLowerCase() === needle)?.id ??
+        pool.find((account) => account.name.toLowerCase().includes(needle))?.id ??
+        undefined
+    );
+};
+
 const defaultFilters = {
     startDate: '',
     endDate: '',
-    type: '',
     q: '',
-    category: '',
     amountMin: '',
     amountMax: '',
     accountId: '',
@@ -185,6 +154,12 @@ export default function Journal() {
     const [filters, setFilters] = useState(loadStoredFilters);
     const [showFilters, setShowFilters] = useState(false);
     const [editingTransactionId, setEditingTransactionId] = useState<number | null>(null);
+    /** The debit side of the entry being written, when one payment lands on
+     *  more than one account. Empty means the ordinary two-sided entry, where
+     *  the To account is the whole debit. The From account stays the single
+     *  credit leg either way: splitting what funds a payment is rare enough
+     *  to belong in the MCP tools, which take arbitrary legs. */
+    const [splitRows, setSplitRows] = useState<Array<{ accountId: string; amount: string; memo: string }>>([]);
     const [recurringItems, setRecurringItems] = useState<RecurringTransaction[]>([]);
     const [quickTemplates, setQuickTemplates] = useState<QuickTemplate[]>([]);
     const [activeQuickTray, setActiveQuickTray] = useState('');
@@ -205,8 +180,7 @@ export default function Journal() {
         date: new Date().toISOString().split('T')[0],
         description: '',
         amount: '',
-        type: 'Expense' as TransactionKind,
-        category: '',
+        shape: 'expense' as EntryShape,
         currency: 'JPY',
         fromAccountId: '',
         toAccountId: '',
@@ -250,7 +224,7 @@ export default function Journal() {
         name: '',
         amount: '',
         currency: currentCurrency,
-        type: 'Expense' as TransactionKind,
+        shape: 'expense' as EntryShape,
         from_account_id: '',
         to_account_id: '',
         frequency: 'Monthly',
@@ -261,14 +235,71 @@ export default function Journal() {
         auto_post: true,
     });
 
-    const fromAccounts = accounts.filter((a) => ACCOUNT_RULES[formData.type].fromTypes.includes(a.account_type));
-    const toAccounts = accounts.filter((a) => ACCOUNT_RULES[formData.type].toTypes.includes(a.account_type));
-    const recurringFromAccounts = accounts.filter((a) => ACCOUNT_RULES[newRecurring.type].fromTypes.includes(a.account_type));
-    const recurringToAccounts = accounts.filter((a) => ACCOUNT_RULES[newRecurring.type].toTypes.includes(a.account_type));
+    const fromAccounts = accounts.filter((a) => SHAPE_RULES[formData.shape].fromTypes.includes(a.account_type));
+    const toAccounts = accounts.filter((a) => SHAPE_RULES[formData.shape].toTypes.includes(a.account_type));
+    const recurringFromAccounts = accounts.filter((a) => SHAPE_RULES[newRecurring.shape].fromTypes.includes(a.account_type));
+    const recurringToAccounts = accounts.filter((a) => SHAPE_RULES[newRecurring.shape].toTypes.includes(a.account_type));
+    const splitActive = splitRows.length > 0;
+    const splitTotal = splitRows.reduce((sum, row) => sum + (parseFloat(row.amount) || 0), 0);
+    const splitRemainder = (parseFloat(formData.amount) || 0) - splitTotal;
+    const splitBalanced = Math.abs(splitRemainder) < 0.01;
+
+    const addSplitRow = () => {
+        const remainder = splitRows.length ? splitRemainder : parseFloat(formData.amount) || 0;
+        setSplitRows((rows) => [
+            ...rows,
+            { accountId: rows.length ? '' : formData.toAccountId, amount: remainder > 0 ? String(remainder) : '', memo: '' },
+        ]);
+    };
+    const updateSplitRow = (index: number, patch: Partial<{ accountId: string; amount: string; memo: string }>) =>
+        setSplitRows((rows) => rows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+    const removeSplitRow = (index: number) => setSplitRows((rows) => rows.filter((_, i) => i !== index));
+    const fillSplitRemainder = () =>
+        setSplitRows((rows) =>
+            rows.map((row, i) =>
+                i === rows.length - 1
+                    ? { ...row, amount: String((parseFloat(row.amount) || 0) + splitRemainder) }
+                    : row
+            )
+        );
+
     const quickDraftRules = QUICK_KIND_RULES[quickTemplateDraft.template_kind];
     const quickDraftFromAccounts = accounts.filter((a) => quickDraftRules.fromTypes.includes(a.account_type));
     const quickDraftToAccounts = accounts.filter((a) => quickDraftRules.toTypes.includes(a.account_type));
     const assetAccounts = accounts.filter((a) => ['asset', 'item'].includes(a.account_type));
+    const receivables = receivableAccounts(accounts).filter((a) => Math.abs(a.balance ?? 0) >= 0.01);
+    const receivableTotal = receivables.reduce((sum, account) => sum + (account.balance ?? 0), 0);
+
+    /** Open the reimbursement template for one receivable, for its whole
+     *  balance. Collecting is an ordinary transfer out of that account, so
+     *  nothing new is needed beyond putting it one click away from the
+     *  balance it clears. */
+    const startReimbursement = (account: AccountItem) => {
+        const template = quickTemplates.find((item) => item.template_kind === 'reimbursement');
+        if (!template) {
+            showToast(
+                language === 'ja'
+                    ? '返金・精算テンプレートを追加してください'
+                    : 'Add the Reimbursement quick template first',
+                'warning'
+            );
+            return;
+        }
+        setActiveQuickGroup(quickKindGroup(template.template_kind));
+        setActiveQuickTray(quickTemplateDisplay(template, language).tray);
+        setSelectedQuickTemplateId(template.id);
+        setQuickEntry((prev) => ({
+            ...prev,
+            description: language === 'ja' ? `${account.name} の精算` : `Settlement: ${account.name}`,
+            amount: String(Math.abs(account.balance ?? 0)),
+            receivable_account_id: String(account.id),
+            reimbursement_account_id:
+                prev.reimbursement_account_id
+                || (configAccountId(template, 'reimbursement_account_id')
+                    ? String(configAccountId(template, 'reimbursement_account_id'))
+                    : ''),
+        }));
+    };
 
     const text = quickText(language);
     const help = quickHelp(language);
@@ -393,7 +424,7 @@ export default function Journal() {
                 toAccountId: nextTo,
             };
         });
-    }, [formData.type, accounts.length]);
+    }, [formData.shape, accounts.length]);
 
     const fetchInitialData = async () => {
         try {
@@ -644,6 +675,15 @@ export default function Journal() {
         }
     };
 
+    /** What a transaction moved on the account the list is filtered by.
+     *  Null unless filtering, or when it equals the total and would just repeat it. */
+    const matchedOnAccount = (tx: Transaction): number | null => {
+        if (!filters.accountId) return null;
+        const moved = (tx.matched_debit ?? 0) + (tx.matched_credit ?? 0);
+        if (!moved || Math.abs(moved - tx.amount) < 0.01) return null;
+        return moved;
+    };
+
     const handlePostQuickBatch = async () => {
         if (quickPreview.error || quickPreview.transactions.length === 0) {
             showToast(quickPreview.error || 'No transactions to post', 'error');
@@ -680,17 +720,37 @@ export default function Journal() {
         try {
             const fromAccountId = formData.fromAccountId ? parseInt(formData.fromAccountId, 10) : undefined;
             const toAccountId = formData.toAccountId ? parseInt(formData.toAccountId, 10) : undefined;
-            const toAccount = toAccounts.find((acc) => acc.id === toAccountId);
+
+            const amount = parseFloat(formData.amount);
+            let legs: TransactionLeg[] | undefined;
+            if (splitActive) {
+                const lines = splitRows.filter((row) => row.accountId && (parseFloat(row.amount) || 0) > 0);
+                if (!fromAccountId || !lines.length) {
+                    showToast('A split needs a From account and at least one line', 'warning');
+                    return;
+                }
+                if (!splitBalanced) {
+                    showToast('The lines must add up to the amount', 'warning');
+                    return;
+                }
+                legs = [
+                    { account_id: fromAccountId, credit: amount },
+                    ...lines.map((row) => ({
+                        account_id: Number(row.accountId),
+                        debit: parseFloat(row.amount),
+                        memo: row.memo.trim() || undefined,
+                    })),
+                ];
+            }
 
             const payload = {
                 date: formData.date,
                 description: formData.description,
-                amount: parseFloat(formData.amount),
-                type: formData.type,
-                category: toAccount?.name || formData.category || '',
+                amount,
                 currency: formData.currency,
                 from_account_id: fromAccountId,
-                to_account_id: toAccountId,
+                to_account_id: legs ? undefined : toAccountId,
+                ...(legs ? { legs } : {}),
             };
             if (editingTransactionId) {
                 await updateTransaction(editingTransactionId, payload);
@@ -700,7 +760,8 @@ export default function Journal() {
                 showToast('Record saved', 'success');
             }
             setEditingTransactionId(null);
-            setFormData({ ...formData, description: '', amount: '', category: '' });
+            setFormData({ ...formData, description: '', amount: '' });
+            setSplitRows([]);
             fetchTransactionsOnly();
         } catch (error) {
             showToast('Failed to save record', 'error');
@@ -721,7 +782,7 @@ export default function Journal() {
                 parts.push({ inline_data: { mime_type: mimeType, data: base64Data } });
             }
             const results = await analyzeWithBackend({ parts });
-            if (Array.isArray(results)) setSuggestedTransactions(results);
+            if (Array.isArray(results)) setSuggestedTransactions(results.map(withGuessedAccounts));
         } catch (error) {
             showToast('AI analysis failed', 'error');
         } finally {
@@ -729,58 +790,44 @@ export default function Journal() {
         }
     };
 
+    const withGuessedAccounts = (suggestion: any) => {
+        const shape = (suggestion.shape as EntryShape) || 'expense';
+        const rules = SHAPE_RULES[shape] ?? SHAPE_RULES.expense;
+        return {
+            ...suggestion,
+            from_account_id: guessAccountId(accounts, suggestion.from_account, rules.fromTypes),
+            to_account_id: guessAccountId(accounts, suggestion.to_account, rules.toTypes),
+        };
+    };
+
     const handleConfirmSuggestions = async () => {
         setIsProcessing(true);
         try {
             let processedCount = 0;
-            const resolveAccountId = (
-                accountName: string | undefined,
-                candidateTypes: string[],
-                fallbackToFirst: boolean
-            ): number | undefined => {
-                if (accountName) {
-                    const matched = accounts.find(
-                        (acc) =>
-                            candidateTypes.includes(acc.account_type) &&
-                            acc.name.toLowerCase() === accountName.toLowerCase()
-                    );
-                    if (matched) return matched.id;
-                }
-                if (!fallbackToFirst) return undefined;
-                const first = accounts.find((acc) => candidateTypes.includes(acc.account_type));
-                return first?.id;
-            };
+            if (suggestedTransactions.some((suggestion) => !suggestion.from_account_id || !suggestion.to_account_id)) {
+                showToast('Choose both accounts on every suggestion first', 'warning');
+                return;
+            }
 
             for (const suggestion of suggestedTransactions) {
-                const txType = (suggestion.type as TransactionKind) || 'Expense';
-                const rules = ACCOUNT_RULES[txType];
+                const fromAccountId = Number(suggestion.from_account_id);
+                const toAccountId = Number(suggestion.to_account_id);
                 if (suggestion.is_recurring) {
-                    // Map account names to IDs for recurring transaction
-                    const fromAccountId = resolveAccountId(suggestion.from_account, rules.fromTypes, true);
-                    const toAccountId = resolveAccountId(suggestion.to_account, rules.toTypes, true);
-
                     await createRecurringTransaction({
                         name: suggestion.description,
                         amount: suggestion.amount,
                         currency: suggestion.currency || currentCurrency,
-                        type: txType,
-                        from_account_id: fromAccountId ?? null,
-                        to_account_id: toAccountId ?? null,
+                        from_account_id: fromAccountId,
+                        to_account_id: toAccountId,
                         frequency: suggestion.frequency || 'Monthly',
                         day_of_month: suggestion.day_of_month || 1,
                         month_of_year: suggestion.frequency === 'Yearly' ? (suggestion.month_of_year || 1) : null,
                     });
                 } else {
-                    const fromAccountId = resolveAccountId(suggestion.from_account, rules.fromTypes, true);
-                    const toAccountId = resolveAccountId(suggestion.to_account, rules.toTypes, true);
-                    const toAccount = accounts.find((acc) => acc.id === toAccountId);
-
                     await createTransaction({
                         date: suggestion.date || formData.date,
                         description: suggestion.description,
                         amount: suggestion.amount,
-                        type: txType,
-                        category: suggestion.category || toAccount?.name || '',
                         currency: suggestion.currency || 'JPY',
                         from_account_id: fromAccountId,
                         to_account_id: toAccountId,
@@ -821,12 +868,12 @@ export default function Journal() {
             date: tx.date,
             description: tx.description,
             amount: String(tx.amount),
-            type: tx.type,
-            category: tx.category || '',
+            shape: entryShapeForAccounts(accounts, tx.from_account_id, tx.to_account_id),
             currency: tx.currency || 'JPY',
             fromAccountId: tx.from_account_id ? String(tx.from_account_id) : '',
             toAccountId: tx.to_account_id ? String(tx.to_account_id) : '',
         });
+        setSplitRows(splitRowsFromLegs(tx));
     };
 
     const cancelEditTransaction = () => {
@@ -835,12 +882,12 @@ export default function Journal() {
             date: new Date().toISOString().split('T')[0],
             description: '',
             amount: '',
-            type: 'Expense',
-            category: '',
+            shape: 'expense',
             currency: 'JPY',
             fromAccountId: '',
             toAccountId: '',
         });
+        setSplitRows([]);
     };
 
     const [editingRecurringId, setEditingRecurringId] = useState<number | null>(null); // State for editing
@@ -852,7 +899,6 @@ export default function Journal() {
                 name: newRecurring.name,
                 amount: parseFloat(newRecurring.amount),
                 currency: newRecurring.currency,
-                type: newRecurring.type,
                 from_account_id: parseInt(newRecurring.from_account_id) || null,
                 to_account_id: parseInt(newRecurring.to_account_id) || null,
                 frequency: newRecurring.frequency,
@@ -876,7 +922,7 @@ export default function Journal() {
             setShowAddRecurring(false);
             setEditingRecurringId(null);
             setNewRecurring({
-                name: '', amount: '', type: 'Expense', from_account_id: '',
+                name: '', amount: '', shape: 'expense', from_account_id: '',
                 currency: currentCurrency,
                 to_account_id: '', frequency: 'Monthly', day_of_month: '1', month_of_year: '1',
                 start_period: '', end_period: '', auto_post: true,
@@ -894,7 +940,7 @@ export default function Journal() {
             name: item.name,
             amount: item.amount.toString(),
             currency: item.currency || currentCurrency,
-            type: item.type as TransactionKind,
+            shape: entryShapeForAccounts(accounts, item.from_account_id, item.to_account_id),
             from_account_id: item.from_account_id ? item.from_account_id.toString() : '',
             to_account_id: item.to_account_id ? item.to_account_id.toString() : '',
             frequency: item.frequency,
@@ -920,10 +966,10 @@ export default function Journal() {
     };
 
     const loadedIncome = transactions
-        .filter((tx) => tx.type === 'Income')
+        .filter((tx) => transactionDirection(tx) === 'in')
         .reduce((sum, tx) => sum + tx.amount, 0);
     const loadedOutflow = transactions
-        .filter((tx) => tx.type !== 'Income')
+        .filter((tx) => transactionDirection(tx) !== 'in')
         .reduce((sum, tx) => sum + tx.amount, 0);
     const loadedNet = loadedIncome - loadedOutflow;
     const loadedAverage = transactions.length
@@ -946,14 +992,14 @@ export default function Journal() {
                                 />
                             </div>
                             <div>
-                                <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Type</label>
+                                <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Shape</label>
                                 <select
-                                    value={formData.type}
-                                    onChange={(e) => setFormData({ ...formData, type: e.target.value as TransactionKind })}
-                                    title={typeDescription(formData.type)}
+                                    value={formData.shape}
+                                    onChange={(e) => setFormData({ ...formData, shape: e.target.value as EntryShape })}
+                                    title={shapeDescription(formData.shape)}
                                     className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
                                 >
-                                    {TRANSACTION_TYPES.map((option) => (
+                                    {ENTRY_SHAPES.map((option) => (
                                         <option key={option.value} value={option.value} title={option.description}>
                                             {option.label}
                                         </option>
@@ -1016,10 +1062,7 @@ export default function Journal() {
                                 <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">To Account</label>
                                 <select
                                     value={formData.toAccountId}
-                                    onChange={(e) => {
-                                        const newToAccount = toAccounts.find((a) => String(a.id) === e.target.value);
-                                        setFormData({ ...formData, toAccountId: e.target.value, category: newToAccount?.name || formData.category });
-                                    }}
+                                    onChange={(e) => setFormData({ ...formData, toAccountId: e.target.value })}
                                     className="w-full bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs focus:outline-none focus:border-emerald-500"
                                 >
                                     <option value="">Select...</option>
@@ -1028,6 +1071,83 @@ export default function Journal() {
                                     ))}
                                 </select>
                             </div>
+                        </div>
+
+                        <div className="border border-slate-800 bg-slate-900/40 p-2 space-y-2">
+                            <div className="flex items-center justify-between">
+                                <span className="text-[10px] text-slate-500 uppercase tracking-wider">Split / 内訳</span>
+                                <button
+                                    type="button"
+                                    onClick={addSplitRow}
+                                    className="flex items-center gap-1 px-2 py-1 bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300"
+                                >
+                                    <Plus size={10} /> Add line
+                                </button>
+                            </div>
+                            {!splitActive ? (
+                                <p className="text-[10px] text-slate-600">
+                                    One payment landing on several accounts: a meal partly fronted for someone else, or a
+                                    receipt split between food and household. The From account funds the whole amount; each
+                                    line is one account it lands on.
+                                </p>
+                            ) : (
+                                <div className="space-y-1">
+                                    {splitRows.map((row, index) => (
+                                        <div key={index} className="grid grid-cols-[1fr_84px_1fr_20px] gap-1 items-center">
+                                            <select
+                                                value={row.accountId}
+                                                onChange={(e) => updateSplitRow(index, { accountId: e.target.value })}
+                                                className="bg-slate-800 border border-slate-700 px-1 py-1 text-[11px] focus:outline-none focus:border-emerald-500"
+                                            >
+                                                <option value="">Account...</option>
+                                                {accounts.map((a) => (
+                                                    <option key={a.id} value={a.id}>{a.name}</option>
+                                                ))}
+                                            </select>
+                                            <input
+                                                type="number"
+                                                placeholder="0"
+                                                value={row.amount}
+                                                onChange={(e) => updateSplitRow(index, { amount: e.target.value })}
+                                                className="bg-slate-800 border border-slate-700 px-1 py-1 text-[11px] font-mono-nums focus:outline-none focus:border-emerald-500"
+                                            />
+                                            <input
+                                                placeholder="Memo"
+                                                value={row.memo}
+                                                onChange={(e) => updateSplitRow(index, { memo: e.target.value })}
+                                                className="bg-slate-800 border border-slate-700 px-1 py-1 text-[11px] focus:outline-none focus:border-emerald-500"
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => removeSplitRow(index)}
+                                                className="text-slate-600 hover:text-rose-500"
+                                                aria-label="Remove line"
+                                                title="Remove line"
+                                            >
+                                                <Trash2 size={12} />
+                                            </button>
+                                        </div>
+                                    ))}
+                                    <div className="flex items-center justify-between pt-1">
+                                        <span className={`text-[10px] font-mono-nums ${splitBalanced ? 'text-emerald-500' : 'text-amber-500'}`}>
+                                            {splitBalanced
+                                                ? `Balanced / ${formatCurrencyWithSetting(splitTotal, formData.currency)}`
+                                                : `Remaining ${formatCurrencyWithSetting(splitRemainder, formData.currency)}`}
+                                        </span>
+                                        <button
+                                            type="button"
+                                            onClick={fillSplitRemainder}
+                                            disabled={splitBalanced}
+                                            className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300 disabled:opacity-40"
+                                        >
+                                            Fill last line
+                                        </button>
+                                    </div>
+                                    <p className="text-[10px] text-slate-600">
+                                        The To account above is ignored while lines are present.
+                                    </p>
+                                </div>
+                            )}
                         </div>
 
                         <div className="flex gap-2">
@@ -1054,6 +1174,38 @@ export default function Journal() {
 
                 {activeTab === 'quick' && (
                     <div className="space-y-4 pt-2">
+                        {receivables.length > 0 && (
+                            <div className="border border-slate-800 bg-slate-900/40">
+                                <div className="flex items-center justify-between border-b border-slate-800 px-3 py-2">
+                                    <span className="text-[10px] uppercase tracking-wider text-slate-500">
+                                        {language === 'ja' ? '立替残高' : 'Receivables'}
+                                    </span>
+                                    <span className="font-mono-nums text-[11px] text-slate-400">
+                                        {formatCurrencyWithSetting(receivableTotal, currentCurrency)}
+                                    </span>
+                                </div>
+                                {receivables.map((account) => (
+                                    <div
+                                        key={account.id}
+                                        className="flex items-center justify-between gap-2 border-b border-slate-800/50 px-3 py-1.5 last:border-0"
+                                    >
+                                        <span className="truncate text-[11px] text-slate-300">{account.name}</span>
+                                        <div className="flex shrink-0 items-center gap-2">
+                                            <span className="font-mono-nums text-[11px] text-amber-400">
+                                                {formatCurrencyWithSetting(account.balance ?? 0, currentCurrency)}
+                                            </span>
+                                            <button
+                                                type="button"
+                                                onClick={() => startReimbursement(account)}
+                                                className="bg-slate-800 px-2 py-1 text-[10px] text-slate-300 hover:bg-slate-700"
+                                            >
+                                                {language === 'ja' ? '回収' : 'Collect'}
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                         <div className="relative flex items-center justify-center">
                             <div className="mx-auto flex w-fit rounded-full border border-slate-800 bg-slate-900/80 p-1">
                                 {QUICK_TEMPLATE_GROUPS.map((group) => (
@@ -1505,7 +1657,14 @@ export default function Journal() {
                                                     <div className="min-w-0">
                                                         <p className="text-[11px] text-slate-200 truncate">{tx.description}</p>
                                                         <p className="text-[10px] text-slate-500 truncate">
-                                                            {tx.type} / {accountById(tx.from_account_id)?.name || '...'} → {accountById(tx.to_account_id)?.name || '...'}
+                                                            {accountById(tx.from_account_id)?.name || '...'} → {
+                                                                tx.legs && tx.legs.length > 2
+                                                                    ? tx.legs
+                                                                        .filter((leg) => (leg.debit ?? 0) > 0)
+                                                                        .map((leg) => `${accountById(leg.account_id)?.name || leg.account_id} ${formatCurrencyWithSetting(leg.debit ?? 0, tx.currency || currentCurrency)}`)
+                                                                        .join(' + ')
+                                                                    : accountById(tx.to_account_id)?.name || '...'
+                                                            }
                                                         </p>
                                                     </div>
                                                     <span className="text-[11px] font-mono-nums text-emerald-300 whitespace-nowrap">
@@ -1611,8 +1770,33 @@ export default function Journal() {
                                                 {st.is_recurring
                                                     ? `${st.frequency} (Day ${st.day_of_month})`
                                                     : st.date}
-                                                / {st.category} / {formatCurrency(st.amount)}
+                                                / {formatCurrency(st.amount)}
                                             </p>
+                                            <div className="mt-1 grid grid-cols-2 gap-1">
+                                                {(['from_account_id', 'to_account_id'] as const).map((field) => {
+                                                    const shape = (st.shape as EntryShape) || 'expense';
+                                                    const rules = SHAPE_RULES[shape] ?? SHAPE_RULES.expense;
+                                                    const candidates = accounts.filter((a) =>
+                                                        (field === 'from_account_id' ? rules.fromTypes : rules.toTypes).includes(a.account_type)
+                                                    );
+                                                    return (
+                                                        <select
+                                                            key={field}
+                                                            value={st[field] ? String(st[field]) : ''}
+                                                            onChange={(e) => setSuggestedTransactions((prev) => prev.map((row, i) => (
+                                                                i === idx ? { ...row, [field]: e.target.value ? Number(e.target.value) : undefined } : row
+                                                            )))}
+                                                            className={`bg-slate-900 border px-1 py-1 text-[10px] focus:outline-none ${st[field] ? 'border-slate-700' : 'border-amber-600'}`}
+                                                            title={field === 'from_account_id' ? 'From account' : 'To account'}
+                                                        >
+                                                            <option value="">{field === 'from_account_id' ? 'From...' : 'To...'}</option>
+                                                            {candidates.map((a) => (
+                                                                <option key={a.id} value={a.id}>{a.name}</option>
+                                                            ))}
+                                                        </select>
+                                                    );
+                                                })}
+                                            </div>
                                             <button
                                                 type="button"
                                                 onClick={() => setSuggestedTransactions(prev => prev.filter((_, i) => i !== idx))}
@@ -1625,7 +1809,17 @@ export default function Journal() {
                                         </div>
                                     ))}
                                 </div>
-                                <button onClick={handleConfirmSuggestions} disabled={isProcessing} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-2 flex items-center justify-center gap-2 text-xs font-bold transition-all">
+                                {suggestedTransactions.some((st) => !st.from_account_id || !st.to_account_id) && (
+                                    <p className="text-[10px] text-amber-500">
+                                        The model names a kind of account, not one of yours. Pick the accounts outlined in amber,
+                                        or create the account first in Registry.
+                                    </p>
+                                )}
+                                <button
+                                    onClick={handleConfirmSuggestions}
+                                    disabled={isProcessing || suggestedTransactions.some((st) => !st.from_account_id || !st.to_account_id)}
+                                    className="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-2 flex items-center justify-center gap-2 text-xs font-bold transition-all disabled:opacity-50"
+                                >
                                     {isProcessing ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
                                     Confirm & Save All ({suggestedTransactions.length})
                                 </button>
@@ -1644,7 +1838,7 @@ export default function Journal() {
                                     setShowAddRecurring(true);
                                     setEditingRecurringId(null);
                                     setNewRecurring({
-                                        name: '', amount: '', type: 'Expense', from_account_id: '',
+                                        name: '', amount: '', shape: 'expense', from_account_id: '',
                                         currency: currentCurrency,
                                         to_account_id: '', frequency: 'Monthly', day_of_month: '1', month_of_year: '1',
                                         start_period: '', end_period: '', auto_post: true,
@@ -1747,17 +1941,17 @@ export default function Journal() {
                                     </div>
 
                                     <div>
-                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Type</label>
+                                        <label className="block text-[10px] text-slate-500 uppercase tracking-wider mb-1">Shape</label>
                                         <select
-                                            value={newRecurring.type}
+                                            value={newRecurring.shape}
                                             onChange={e => {
-                                                const nextType = e.target.value as TransactionKind;
-                                                setNewRecurring({ ...newRecurring, type: nextType, from_account_id: '', to_account_id: '' });
+                                                const nextShape = e.target.value as EntryShape;
+                                                setNewRecurring({ ...newRecurring, shape: nextShape, from_account_id: '', to_account_id: '' });
                                             }}
-                                            title={typeDescription(newRecurring.type)}
+                                            title={shapeDescription(newRecurring.shape)}
                                             className="w-full bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs focus:border-cyan-500 focus:outline-none"
                                         >
-                                            {TRANSACTION_TYPES.map((option) => (
+                                            {ENTRY_SHAPES.map((option) => (
                                                 <option key={option.value} value={option.value} title={option.description}>
                                                     {option.label}
                                                 </option>
@@ -1939,17 +2133,6 @@ export default function Journal() {
                         title="End date"
                     />
                     <select
-                        value={filters.type}
-                        onChange={(e) => setFilters({ ...filters, type: e.target.value })}
-                        className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs"
-                        title="Transaction type"
-                    >
-                        <option value="">All types</option>
-                        {TRANSACTION_TYPES.map((option) => (
-                            <option key={option.value} value={option.value}>{option.label}</option>
-                        ))}
-                    </select>
-                    <select
                         value={filters.accountId}
                         onChange={(e) => setFilters({ ...filters, accountId: e.target.value })}
                         className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs"
@@ -1965,13 +2148,6 @@ export default function Journal() {
                         value={filters.q}
                         onChange={(e) => setFilters({ ...filters, q: e.target.value })}
                         placeholder="Description"
-                        className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs"
-                    />
-                    <input
-                        type="text"
-                        value={filters.category}
-                        onChange={(e) => setFilters({ ...filters, category: e.target.value })}
-                        placeholder="Category"
                         className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs"
                     />
                     <input
@@ -2011,16 +2187,41 @@ export default function Journal() {
                     transactions.map((tx) => (
                         <div key={tx.id} className="flex items-center justify-between py-2 px-2 hover:bg-slate-800/50 transition-colors group">
                             <div className="flex items-center gap-2">
-                                {tx.type === 'Income' ? <ArrowUpCircle className="text-emerald-500" size={14} /> : tx.type === 'Expense' || tx.type === 'LiabilityPayment' ? <ArrowDownCircle className="text-rose-500" size={14} /> : <RefreshCw className="text-cyan-500" size={14} />}
+                                {transactionDirection(tx) === 'in' ? <ArrowUpCircle className="text-emerald-500" size={14} /> : transactionDirection(tx) === 'out' ? <ArrowDownCircle className="text-rose-500" size={14} /> : <RefreshCw className="text-cyan-500" size={14} />}
                                 <div>
-                                    <p className="text-xs">{tx.description}</p>
-                                    <p className="text-[10px] text-slate-600">{tx.date} • {localizeQuickCategory(tx.category, language)}</p>
+                                    <p className="text-xs">
+                                        {tx.description}
+                                        {tx.legs && tx.legs.length > 2 && (
+                                            <span className="ml-1.5 text-[9px] text-cyan-400 border border-cyan-800/60 px-1 py-0.5 align-middle">
+                                                {language === 'ja' ? `内訳 ${tx.legs.length}` : `${tx.legs.length} legs`}
+                                            </span>
+                                        )}
+                                    </p>
+                                    <p className="text-[10px] text-slate-600">
+                                        {tx.date}
+                                        {(tx.from_account_name || tx.to_account_name) && (
+                                            <> • {tx.from_account_name || '—'} → {tx.to_account_name || (tx.legs && tx.legs.length > 2 ? (language === 'ja' ? '複数' : 'several') : '—')}</>
+                                        )}
+                                    </p>
+                                    {tx.legs && tx.legs.length > 2 && (
+                                        <p className="text-[10px] text-slate-500">
+                                            {tx.legs
+                                                .filter((leg) => (leg.debit ?? 0) > 0)
+                                                .map((leg) => `${('account_name' in leg && leg.account_name) || accountById(leg.account_id)?.name || leg.account_id} ${formatCurrencyWithSetting(leg.debit ?? 0, tx.currency || currentCurrency)}`)
+                                                .join('  /  ')}
+                                        </p>
+                                    )}
                                 </div>
                             </div>
                             <div className="flex items-center gap-2">
-                                <span className={`text-xs font-mono-nums ${tx.type === 'Income' ? 'text-emerald-500' : tx.type === 'Expense' || tx.type === 'LiabilityPayment' ? 'text-rose-500' : 'text-cyan-500'}`}>
-                                    {tx.type === 'Income' ? '+' : tx.type === 'Expense' || tx.type === 'LiabilityPayment' ? '-' : ''}{formatCurrencyWithSetting(tx.amount, tx.currency || currentCurrency)}
+                                <span className={`text-xs font-mono-nums ${directionClass(transactionDirection(tx))}`}>
+                                    {directionSign(transactionDirection(tx))}{formatCurrencyWithSetting(tx.amount, tx.currency || currentCurrency)}
                                 </span>
+                                {matchedOnAccount(tx) !== null && (
+                                    <span className="text-[10px] font-mono-nums text-slate-400" title={language === 'ja' ? 'この口座が動いた額' : 'moved on this account'}>
+                                        ({formatCurrencyWithSetting(matchedOnAccount(tx) as number, tx.currency || currentCurrency)})
+                                    </span>
+                                )}
                                 <div className="flex gap-1 opacity-0 group-hover:opacity-100">
                                     <button
                                         type="button"

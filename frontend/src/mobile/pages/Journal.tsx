@@ -2,18 +2,17 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Filter, Loader2, RefreshCw, Search, SlidersHorizontal, X } from 'lucide-react';
 import { getTransactionsPage, type TransactionQuery } from '../../api';
 import { useToast } from '../../components/Toast';
+import { transactionDirection } from '../../features/journal/direction';
 import type { Transaction } from '../../types';
 import { formatCurrency } from '../../utils/currency';
 
 const PAGE_SIZE = 20;
-const TYPES = ['All', 'Expense', 'Income', 'Transfer', 'LiabilityPayment', 'CreditExpense'] as const;
 
 export default function MobileJournalPage() {
     const { showToast } = useToast();
     const [transactions, setTransactions] = useState<Transaction[]>([]);
     const [total, setTotal] = useState(0);
     const [query, setQuery] = useState('');
-    const [type, setType] = useState<(typeof TYPES)[number]>('All');
     const [isLoading, setIsLoading] = useState(false);
     const [showFilters, setShowFilters] = useState(false);
     const [fadeSide, setFadeSide] = useState<'none' | 'right' | 'left' | 'both'>('none');
@@ -22,10 +21,9 @@ export default function MobileJournalPage() {
 
     const filters = useMemo<TransactionQuery>(() => ({
         q: query.trim() || undefined,
-        type: type === 'All' ? undefined : type,
         limit: PAGE_SIZE,
         offset: 0,
-    }), [query, type]);
+    }), [query]);
 
     const loadTransactions = async (nextOffset = 0) => {
         const requestId = ++latestRequestId.current;
@@ -67,7 +65,7 @@ export default function MobileJournalPage() {
         updateFadeSide();
         window.addEventListener('resize', updateFadeSide);
         return () => window.removeEventListener('resize', updateFadeSide);
-    }, [showFilters, type]);
+    }, [showFilters]);
 
     const fadeClass = {
         none: '',
@@ -118,26 +116,13 @@ export default function MobileJournalPage() {
                     onScroll={updateFadeSide}
                     className={`${fadeClass} scrollbar-none flex gap-2 overflow-x-auto pb-1`}
                 >
-                    {TYPES.map((item) => (
-                        <button
-                            key={item}
-                            type="button"
-                            onClick={() => setType(item)}
-                            className={`shrink-0 border px-3 py-2 text-xs ${type === item
-                                ? 'border-emerald-500 bg-emerald-950/30 text-emerald-200'
-                                : 'border-slate-800 bg-slate-900 text-slate-400'
-                                }`}
-                        >
-                            {item}
-                        </button>
-                    ))}
                 </div>
             </section>
             )}
 
             <section className="space-y-2">
                 <div className="flex items-center justify-between text-xs text-slate-500">
-                    <span>{type === 'All' ? 'All types' : type}{query.trim() ? ` - "${query.trim()}"` : ''}</span>
+                    <span>{query.trim() ? `"${query.trim()}"` : 'All transactions'}</span>
                     <span>{transactions.length}/{total}</span>
                 </div>
 
@@ -170,17 +155,16 @@ export default function MobileJournalPage() {
 }
 
 function TransactionRow({ tx }: { tx: Transaction }) {
-    const isIncome = tx.type === 'Income';
-    const isExpense = tx.type === 'Expense' || tx.type === 'CreditExpense';
+    const direction = transactionDirection(tx);
+    const isIncome = direction === 'in';
+    const isExpense = direction === 'out';
 
     return (
         <article className="px-3 py-3">
             <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-slate-100">{tx.description || tx.category || tx.type}</p>
-                    <p className="mt-1 text-[10px] text-slate-500">
-                        {tx.date} - {tx.type}{tx.category ? ` - ${tx.category}` : ''}
-                    </p>
+                    <p className="truncate text-sm font-medium text-slate-100">{tx.description || '(no description)'}</p>
+                    <p className="mt-1 text-[10px] text-slate-500">{tx.date}</p>
                     {(tx.from_account_name || tx.to_account_name) && (
                         <p className="mt-1 truncate text-[10px] text-slate-600">
                             {tx.from_account_name || 'source'} to {tx.to_account_name || 'target'}

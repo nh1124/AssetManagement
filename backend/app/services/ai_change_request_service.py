@@ -55,7 +55,6 @@ TRANSACTION_FIELDS = [
     "description",
     "amount",
     "type",
-    "category",
     "currency",
     "from_account_id",
     "to_account_id",
@@ -504,10 +503,15 @@ def _apply_dispatch(db: Session, client_id: int, row: models.AiChangeRequest) ->
     if (row.resource, row.action) == ("transactions", "create"):
         ensure_default_accounts(db, client_id=client_id, commit=False)
         data = schemas.TransactionCreate(**row.input_payload).model_dump()
+        legs = data.pop("legs", None)
+        from_account_id = data.pop("from_account_id", None)
+        to_account_id = data.pop("to_account_id", None)
         tx = models.Transaction(**data, client_id=client_id)
         db.add(tx)
         db.flush()
-        post_transaction_journal(db, tx)
+        post_transaction_journal(
+            db, tx, legs, from_account_id=from_account_id, to_account_id=to_account_id
+        )
         db.flush()
         apply_capsule_rules_for_transaction(db, tx, commit=False)
         return {"transaction_id": tx.id}
