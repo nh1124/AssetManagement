@@ -22,7 +22,7 @@
 
 ## preview（副作用なし・write 前に必ず）
 
-`transactions_preview`, `validate_transaction_payload`, `recurring_preview`, `monthly_plan_lines_preview`, `products_preview`, `transaction_batches_preview`, `roadmap_milestones_preview_from_simulation`, `help_choose_transaction_type`
+`transactions_preview`, `validate_transaction_payload`, `recurring_preview`, `monthly_plan_lines_preview`, `products_preview`, `transaction_batches_preview`, `roadmap_milestones_preview_from_simulation`
 
 ## 書き込み（対象 client 確認 + preview 後）
 
