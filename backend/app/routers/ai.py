@@ -24,8 +24,10 @@ Field definitions:
 - amount: number
 - currency: "JPY" | "USD" | "EUR" (Default to JPY)
 - description: string
-- from_account: "cash" | "bank" | "credit" | null
-- to_account: "expense" | "savings" | "investment" | null
+- from_account: the funding account, by the name the user uses for it when they
+  say one; otherwise "cash" | "bank" | "credit" | null
+- to_account: the account the money lands on, by name when the user says one;
+  otherwise "expense" | "savings" | "investment" | null
 - is_recurring: boolean (true if this is a recurring rule)
 - frequency: "Monthly" | "Yearly" (Required if is_recurring is true)
 - day_of_month: number (1-31, Required if is_recurring is true)

@@ -16,7 +16,7 @@ import {
 import { useToast } from '../components/Toast';
 import { useClient } from '../context/ClientContext';
 import { formatCurrency as formatCurrencyWithSetting, getCurrencySymbol } from '../utils/currency';
-import type { QuickTemplate, RecurringTransaction, Transaction } from '../types';
+import type { QuickTemplate, RecurringTransaction, Transaction, TransactionLeg, TransactionLegRead } from '../types';
 import { directionClass, directionSign, transactionDirection } from '../features/journal/direction';
 import {
     ENTRY_SHAPES,
@@ -89,6 +89,43 @@ function QuickCategoryTile({
     );
 }
 
+/** The debit legs of an entry, as editor rows. Two-sided entries come back
+ *  empty: the To account already says where the money landed. */
+const splitRowsFromLegs = (tx: Transaction): Array<{ accountId: string; amount: string; memo: string }> => {
+    const legs = (tx.legs ?? []) as Array<TransactionLeg | TransactionLegRead>;
+    if (legs.length <= 2) return [];
+    return legs
+        .filter((leg) => (leg.debit ?? 0) > 0)
+        .map((leg) => ({
+            accountId: String(leg.account_id),
+            amount: String(leg.debit ?? 0),
+            memo: leg.memo ?? '',
+        }));
+};
+
+/** The model is asked for a shape and a rough account hint ("cash", "credit"),
+ *  not for one of this client's accounts. Guess from the hint, by exact name
+ *  and then by substring, and leave it unset when nothing matches: the row is
+ *  then not saveable until someone picks an account. Guessing the first
+ *  account of the right type, which is what this did before, booked card
+ *  spending to whichever card came first.
+ */
+const guessAccountId = (
+    accounts: AccountItem[],
+    hint: string | undefined,
+    candidateTypes: string[],
+): number | undefined => {
+    if (!hint) return undefined;
+    const needle = hint.toLowerCase().trim();
+    if (!needle) return undefined;
+    const pool = accounts.filter((account) => candidateTypes.includes(account.account_type));
+    return (
+        pool.find((account) => account.name.toLowerCase() === needle)?.id ??
+        pool.find((account) => account.name.toLowerCase().includes(needle))?.id ??
+        undefined
+    );
+};
+
 const defaultFilters = {
     startDate: '',
     endDate: '',
@@ -116,6 +153,12 @@ export default function Journal() {
     const [filters, setFilters] = useState(loadStoredFilters);
     const [showFilters, setShowFilters] = useState(false);
     const [editingTransactionId, setEditingTransactionId] = useState<number | null>(null);
+    /** The debit side of the entry being written, when one payment lands on
+     *  more than one account. Empty means the ordinary two-sided entry, where
+     *  the To account is the whole debit. The From account stays the single
+     *  credit leg either way: splitting what funds a payment is rare enough
+     *  to belong in the MCP tools, which take arbitrary legs. */
+    const [splitRows, setSplitRows] = useState<Array<{ accountId: string; amount: string; memo: string }>>([]);
     const [recurringItems, setRecurringItems] = useState<RecurringTransaction[]>([]);
     const [quickTemplates, setQuickTemplates] = useState<QuickTemplate[]>([]);
     const [activeQuickTray, setActiveQuickTray] = useState('');
@@ -195,6 +238,30 @@ export default function Journal() {
     const toAccounts = accounts.filter((a) => SHAPE_RULES[formData.shape].toTypes.includes(a.account_type));
     const recurringFromAccounts = accounts.filter((a) => SHAPE_RULES[newRecurring.shape].fromTypes.includes(a.account_type));
     const recurringToAccounts = accounts.filter((a) => SHAPE_RULES[newRecurring.shape].toTypes.includes(a.account_type));
+    const splitActive = splitRows.length > 0;
+    const splitTotal = splitRows.reduce((sum, row) => sum + (parseFloat(row.amount) || 0), 0);
+    const splitRemainder = (parseFloat(formData.amount) || 0) - splitTotal;
+    const splitBalanced = Math.abs(splitRemainder) < 0.01;
+
+    const addSplitRow = () => {
+        const remainder = splitRows.length ? splitRemainder : parseFloat(formData.amount) || 0;
+        setSplitRows((rows) => [
+            ...rows,
+            { accountId: rows.length ? '' : formData.toAccountId, amount: remainder > 0 ? String(remainder) : '', memo: '' },
+        ]);
+    };
+    const updateSplitRow = (index: number, patch: Partial<{ accountId: string; amount: string; memo: string }>) =>
+        setSplitRows((rows) => rows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
+    const removeSplitRow = (index: number) => setSplitRows((rows) => rows.filter((_, i) => i !== index));
+    const fillSplitRemainder = () =>
+        setSplitRows((rows) =>
+            rows.map((row, i) =>
+                i === rows.length - 1
+                    ? { ...row, amount: String((parseFloat(row.amount) || 0) + splitRemainder) }
+                    : row
+            )
+        );
+
     const quickDraftRules = QUICK_KIND_RULES[quickTemplateDraft.template_kind];
     const quickDraftFromAccounts = accounts.filter((a) => quickDraftRules.fromTypes.includes(a.account_type));
     const quickDraftToAccounts = accounts.filter((a) => quickDraftRules.toTypes.includes(a.account_type));
@@ -620,13 +687,36 @@ export default function Journal() {
             const fromAccountId = formData.fromAccountId ? parseInt(formData.fromAccountId, 10) : undefined;
             const toAccountId = formData.toAccountId ? parseInt(formData.toAccountId, 10) : undefined;
 
+            const amount = parseFloat(formData.amount);
+            let legs: TransactionLeg[] | undefined;
+            if (splitActive) {
+                const lines = splitRows.filter((row) => row.accountId && (parseFloat(row.amount) || 0) > 0);
+                if (!fromAccountId || !lines.length) {
+                    showToast('A split needs a From account and at least one line', 'warning');
+                    return;
+                }
+                if (!splitBalanced) {
+                    showToast('The lines must add up to the amount', 'warning');
+                    return;
+                }
+                legs = [
+                    { account_id: fromAccountId, credit: amount },
+                    ...lines.map((row) => ({
+                        account_id: Number(row.accountId),
+                        debit: parseFloat(row.amount),
+                        memo: row.memo.trim() || undefined,
+                    })),
+                ];
+            }
+
             const payload = {
                 date: formData.date,
                 description: formData.description,
-                amount: parseFloat(formData.amount),
+                amount,
                 currency: formData.currency,
                 from_account_id: fromAccountId,
-                to_account_id: toAccountId,
+                to_account_id: legs ? undefined : toAccountId,
+                ...(legs ? { legs } : {}),
             };
             if (editingTransactionId) {
                 await updateTransaction(editingTransactionId, payload);
@@ -637,6 +727,7 @@ export default function Journal() {
             }
             setEditingTransactionId(null);
             setFormData({ ...formData, description: '', amount: '' });
+            setSplitRows([]);
             fetchTransactionsOnly();
         } catch (error) {
             showToast('Failed to save record', 'error');
@@ -657,7 +748,7 @@ export default function Journal() {
                 parts.push({ inline_data: { mime_type: mimeType, data: base64Data } });
             }
             const results = await analyzeWithBackend({ parts });
-            if (Array.isArray(results)) setSuggestedTransactions(results);
+            if (Array.isArray(results)) setSuggestedTransactions(results.map(withGuessedAccounts));
         } catch (error) {
             showToast('AI analysis failed', 'error');
         } finally {
@@ -665,50 +756,40 @@ export default function Journal() {
         }
     };
 
+    const withGuessedAccounts = (suggestion: any) => {
+        const shape = (suggestion.shape as EntryShape) || 'expense';
+        const rules = SHAPE_RULES[shape] ?? SHAPE_RULES.expense;
+        return {
+            ...suggestion,
+            from_account_id: guessAccountId(accounts, suggestion.from_account, rules.fromTypes),
+            to_account_id: guessAccountId(accounts, suggestion.to_account, rules.toTypes),
+        };
+    };
+
     const handleConfirmSuggestions = async () => {
         setIsProcessing(true);
         try {
             let processedCount = 0;
-            const resolveAccountId = (
-                accountName: string | undefined,
-                candidateTypes: string[],
-                fallbackToFirst: boolean
-            ): number | undefined => {
-                if (accountName) {
-                    const matched = accounts.find(
-                        (acc) =>
-                            candidateTypes.includes(acc.account_type) &&
-                            acc.name.toLowerCase() === accountName.toLowerCase()
-                    );
-                    if (matched) return matched.id;
-                }
-                if (!fallbackToFirst) return undefined;
-                const first = accounts.find((acc) => candidateTypes.includes(acc.account_type));
-                return first?.id;
-            };
+            if (suggestedTransactions.some((suggestion) => !suggestion.from_account_id || !suggestion.to_account_id)) {
+                showToast('Choose both accounts on every suggestion first', 'warning');
+                return;
+            }
 
             for (const suggestion of suggestedTransactions) {
-                const shape = (suggestion.shape as EntryShape) || 'expense';
-                const rules = SHAPE_RULES[shape] ?? SHAPE_RULES.expense;
+                const fromAccountId = Number(suggestion.from_account_id);
+                const toAccountId = Number(suggestion.to_account_id);
                 if (suggestion.is_recurring) {
-                    // Map account names to IDs for recurring transaction
-                    const fromAccountId = resolveAccountId(suggestion.from_account, rules.fromTypes, true);
-                    const toAccountId = resolveAccountId(suggestion.to_account, rules.toTypes, true);
-
                     await createRecurringTransaction({
                         name: suggestion.description,
                         amount: suggestion.amount,
                         currency: suggestion.currency || currentCurrency,
-                        from_account_id: fromAccountId ?? null,
-                        to_account_id: toAccountId ?? null,
+                        from_account_id: fromAccountId,
+                        to_account_id: toAccountId,
                         frequency: suggestion.frequency || 'Monthly',
                         day_of_month: suggestion.day_of_month || 1,
                         month_of_year: suggestion.frequency === 'Yearly' ? (suggestion.month_of_year || 1) : null,
                     });
                 } else {
-                    const fromAccountId = resolveAccountId(suggestion.from_account, rules.fromTypes, true);
-                    const toAccountId = resolveAccountId(suggestion.to_account, rules.toTypes, true);
-
                     await createTransaction({
                         date: suggestion.date || formData.date,
                         description: suggestion.description,
@@ -758,6 +839,7 @@ export default function Journal() {
             fromAccountId: tx.from_account_id ? String(tx.from_account_id) : '',
             toAccountId: tx.to_account_id ? String(tx.to_account_id) : '',
         });
+        setSplitRows(splitRowsFromLegs(tx));
     };
 
     const cancelEditTransaction = () => {
@@ -771,6 +853,7 @@ export default function Journal() {
             fromAccountId: '',
             toAccountId: '',
         });
+        setSplitRows([]);
     };
 
     const [editingRecurringId, setEditingRecurringId] = useState<number | null>(null); // State for editing
@@ -954,6 +1037,83 @@ export default function Journal() {
                                     ))}
                                 </select>
                             </div>
+                        </div>
+
+                        <div className="border border-slate-800 bg-slate-900/40 p-2 space-y-2">
+                            <div className="flex items-center justify-between">
+                                <span className="text-[10px] text-slate-500 uppercase tracking-wider">Split / 内訳</span>
+                                <button
+                                    type="button"
+                                    onClick={addSplitRow}
+                                    className="flex items-center gap-1 px-2 py-1 bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300"
+                                >
+                                    <Plus size={10} /> Add line
+                                </button>
+                            </div>
+                            {!splitActive ? (
+                                <p className="text-[10px] text-slate-600">
+                                    One payment landing on several accounts: a meal partly fronted for someone else, or a
+                                    receipt split between food and household. The From account funds the whole amount; each
+                                    line is one account it lands on.
+                                </p>
+                            ) : (
+                                <div className="space-y-1">
+                                    {splitRows.map((row, index) => (
+                                        <div key={index} className="grid grid-cols-[1fr_84px_1fr_20px] gap-1 items-center">
+                                            <select
+                                                value={row.accountId}
+                                                onChange={(e) => updateSplitRow(index, { accountId: e.target.value })}
+                                                className="bg-slate-800 border border-slate-700 px-1 py-1 text-[11px] focus:outline-none focus:border-emerald-500"
+                                            >
+                                                <option value="">Account...</option>
+                                                {accounts.map((a) => (
+                                                    <option key={a.id} value={a.id}>{a.name}</option>
+                                                ))}
+                                            </select>
+                                            <input
+                                                type="number"
+                                                placeholder="0"
+                                                value={row.amount}
+                                                onChange={(e) => updateSplitRow(index, { amount: e.target.value })}
+                                                className="bg-slate-800 border border-slate-700 px-1 py-1 text-[11px] font-mono-nums focus:outline-none focus:border-emerald-500"
+                                            />
+                                            <input
+                                                placeholder="Memo"
+                                                value={row.memo}
+                                                onChange={(e) => updateSplitRow(index, { memo: e.target.value })}
+                                                className="bg-slate-800 border border-slate-700 px-1 py-1 text-[11px] focus:outline-none focus:border-emerald-500"
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => removeSplitRow(index)}
+                                                className="text-slate-600 hover:text-rose-500"
+                                                aria-label="Remove line"
+                                                title="Remove line"
+                                            >
+                                                <Trash2 size={12} />
+                                            </button>
+                                        </div>
+                                    ))}
+                                    <div className="flex items-center justify-between pt-1">
+                                        <span className={`text-[10px] font-mono-nums ${splitBalanced ? 'text-emerald-500' : 'text-amber-500'}`}>
+                                            {splitBalanced
+                                                ? `Balanced / ${formatCurrencyWithSetting(splitTotal, formData.currency)}`
+                                                : `Remaining ${formatCurrencyWithSetting(splitRemainder, formData.currency)}`}
+                                        </span>
+                                        <button
+                                            type="button"
+                                            onClick={fillSplitRemainder}
+                                            disabled={splitBalanced}
+                                            className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-[10px] text-slate-300 disabled:opacity-40"
+                                        >
+                                            Fill last line
+                                        </button>
+                                    </div>
+                                    <p className="text-[10px] text-slate-600">
+                                        The To account above is ignored while lines are present.
+                                    </p>
+                                </div>
+                            )}
                         </div>
 
                         <div className="flex gap-2">
@@ -1546,6 +1706,31 @@ export default function Journal() {
                                                     : st.date}
                                                 / {formatCurrency(st.amount)}
                                             </p>
+                                            <div className="mt-1 grid grid-cols-2 gap-1">
+                                                {(['from_account_id', 'to_account_id'] as const).map((field) => {
+                                                    const shape = (st.shape as EntryShape) || 'expense';
+                                                    const rules = SHAPE_RULES[shape] ?? SHAPE_RULES.expense;
+                                                    const candidates = accounts.filter((a) =>
+                                                        (field === 'from_account_id' ? rules.fromTypes : rules.toTypes).includes(a.account_type)
+                                                    );
+                                                    return (
+                                                        <select
+                                                            key={field}
+                                                            value={st[field] ? String(st[field]) : ''}
+                                                            onChange={(e) => setSuggestedTransactions((prev) => prev.map((row, i) => (
+                                                                i === idx ? { ...row, [field]: e.target.value ? Number(e.target.value) : undefined } : row
+                                                            )))}
+                                                            className={`bg-slate-900 border px-1 py-1 text-[10px] focus:outline-none ${st[field] ? 'border-slate-700' : 'border-amber-600'}`}
+                                                            title={field === 'from_account_id' ? 'From account' : 'To account'}
+                                                        >
+                                                            <option value="">{field === 'from_account_id' ? 'From...' : 'To...'}</option>
+                                                            {candidates.map((a) => (
+                                                                <option key={a.id} value={a.id}>{a.name}</option>
+                                                            ))}
+                                                        </select>
+                                                    );
+                                                })}
+                                            </div>
                                             <button
                                                 type="button"
                                                 onClick={() => setSuggestedTransactions(prev => prev.filter((_, i) => i !== idx))}
@@ -1558,7 +1743,17 @@ export default function Journal() {
                                         </div>
                                     ))}
                                 </div>
-                                <button onClick={handleConfirmSuggestions} disabled={isProcessing} className="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-2 flex items-center justify-center gap-2 text-xs font-bold transition-all">
+                                {suggestedTransactions.some((st) => !st.from_account_id || !st.to_account_id) && (
+                                    <p className="text-[10px] text-amber-500">
+                                        The model names a kind of account, not one of yours. Pick the accounts outlined in amber,
+                                        or create the account first in Registry.
+                                    </p>
+                                )}
+                                <button
+                                    onClick={handleConfirmSuggestions}
+                                    disabled={isProcessing || suggestedTransactions.some((st) => !st.from_account_id || !st.to_account_id)}
+                                    className="w-full bg-emerald-600 hover:bg-emerald-500 text-white py-2 flex items-center justify-center gap-2 text-xs font-bold transition-all disabled:opacity-50"
+                                >
                                     {isProcessing ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
                                     Confirm & Save All ({suggestedTransactions.length})
                                 </button>
