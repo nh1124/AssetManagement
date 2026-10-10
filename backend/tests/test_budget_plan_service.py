@@ -10,6 +10,7 @@ from sqlalchemy.orm import sessionmaker
 
 try:
     from backend.app import models
+    from backend.app.services import registry_service
     from backend.app.database import Base
     from backend.app.routers.budget_plans import compare_budget_plans, copy_period_full_replace, copy_plan_from
     from backend.app.routers.data_transfer import ImportPayload, export_client_data, import_client_data, validate_import_client_data
@@ -23,6 +24,7 @@ try:
     from backend.app.services.data_health_service import check_data_health, repair_data_health
 except ModuleNotFoundError:
     from app import models  # type: ignore[no-redef]
+    from app.services import registry_service  # type: ignore[no-redef]
     from app.database import Base  # type: ignore[no-redef]
     from app.routers.budget_plans import compare_budget_plans, copy_period_full_replace, copy_plan_from  # type: ignore[no-redef]
     from app.routers.data_transfer import ImportPayload, export_client_data, import_client_data, validate_import_client_data  # type: ignore[no-redef]
@@ -331,26 +333,22 @@ def test_budget_summary_combines_income_spending_allocations_and_debt() -> None:
         loan = models.Account(client_id=1, name="loan", account_type="liability")
         db.add_all([client, salary, cash, food, nisa, loan])
         db.flush()
-        db.add_all([
-            models.RecurringTransaction(
-                client_id=1,
-                name="salary",
-                amount=200000,
-                from_account_id=salary.id,
-                to_account_id=cash.id,
-                frequency="Monthly",
-                is_active=True,
-            ),
-            models.RecurringTransaction(
-                client_id=1,
-                name="rent",
-                amount=80000,
-                from_account_id=cash.id,
-                to_account_id=food.id,
-                frequency="Monthly",
-                is_active=True,
-            ),
-        ])
+        registry_service.upsert_registry_from_recurring_payload(db, 1, {
+            "name": "salary",
+            "amount": 200000,
+            "from_account_id": salary.id,
+            "to_account_id": cash.id,
+            "frequency": "Monthly",
+            "is_active": True,
+        })
+        registry_service.upsert_registry_from_recurring_payload(db, 1, {
+            "name": "rent",
+            "amount": 80000,
+            "from_account_id": cash.id,
+            "to_account_id": food.id,
+            "frequency": "Monthly",
+            "is_active": True,
+        })
         db.add_all([
             models.MonthlyPlanLine(
                 client_id=1,
@@ -971,16 +969,15 @@ def test_cash_flow_projection_warns_about_unsynced_yearly_income() -> None:
         cash = models.Account(client_id=1, name="cash", account_type="asset")
         db.add_all([client, salary, cash])
         db.flush()
-        db.add(models.RecurringTransaction(
-            client_id=1,
-            name="summer bonus",
-            amount=600000,
-            from_account_id=salary.id,
-            to_account_id=cash.id,
-            frequency="Yearly",
-            month_of_year=6,
-            is_active=True,
-        ))
+        registry_service.upsert_registry_from_recurring_payload(db, 1, {
+            "name": "summer bonus",
+            "amount": 600000,
+            "from_account_id": salary.id,
+            "to_account_id": cash.id,
+            "frequency": "Yearly",
+            "month_of_year": 6,
+            "is_active": True,
+        })
         db.commit()
 
         summary = get_budget_summary(db, client_id=1, period="2026-05")
@@ -1863,15 +1860,14 @@ def test_cash_flow_summary_reports_buffer_and_shortfall_month() -> None:
         rent = models.Account(client_id=1, name="rent", account_type="expense")
         db.add_all([client, cash, rent])
         db.flush()
-        db.add(models.RecurringTransaction(
-            client_id=1,
-            name="rent",
-            amount=80000,
-            from_account_id=cash.id,
-            to_account_id=rent.id,
-            frequency="Monthly",
-            is_active=True,
-        ))
+        registry_service.upsert_registry_from_recurring_payload(db, 1, {
+            "name": "rent",
+            "amount": 80000,
+            "from_account_id": cash.id,
+            "to_account_id": rent.id,
+            "frequency": "Monthly",
+            "is_active": True,
+        })
         db.commit()
 
         summary = get_budget_summary(db, client_id=1, period="2026-05")
@@ -1904,26 +1900,24 @@ def test_recurring_budget_context_converts_currency_to_client_currency() -> None
             as_of_date=date(2026, 5, 1),
             source="manual",
         ))
-        db.add(models.RecurringTransaction(
-            client_id=1,
-            name="AI Subscription",
-            amount=20,
-            currency="USD",
-            from_account_id=cash.id,
-            to_account_id=subscription.id,
-            frequency="Monthly",
-            is_active=True,
-        ))
-        db.add(models.RecurringTransaction(
-            client_id=1,
-            name="Storage Subscription",
-            amount=1000,
-            currency="JPY",
-            from_account_id=cash.id,
-            to_account_id=subscription.id,
-            frequency="Monthly",
-            is_active=True,
-        ))
+        registry_service.upsert_registry_from_recurring_payload(db, 1, {
+            "name": "AI Subscription",
+            "amount": 20,
+            "currency": "USD",
+            "from_account_id": cash.id,
+            "to_account_id": subscription.id,
+            "frequency": "Monthly",
+            "is_active": True,
+        })
+        registry_service.upsert_registry_from_recurring_payload(db, 1, {
+            "name": "Storage Subscription",
+            "amount": 1000,
+            "currency": "JPY",
+            "from_account_id": cash.id,
+            "to_account_id": subscription.id,
+            "frequency": "Monthly",
+            "is_active": True,
+        })
         db.commit()
 
         summary = get_budget_summary(db, client_id=1, period="2026-05")

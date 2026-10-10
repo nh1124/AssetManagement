@@ -9,7 +9,7 @@ from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.cache_service import invalidate_client
-from ..services.registry_service import linked_recurring_transactions, sync_recurring_from_registry
+from ..services.registry_service import linked_recurring_transactions, normalise_registry_flags, sync_recurring_from_registry
 
 
 router = APIRouter(prefix="/registry-entries", tags=["registry-entries"])
@@ -27,7 +27,6 @@ def enrich_entry(entry: models.RegistryEntry) -> dict:
         "frequency_days": entry.frequency_days,
         "day_of_month": entry.day_of_month,
         "month_of_year": entry.month_of_year,
-        "transaction_type": entry.transaction_type,
         "line_type": entry.line_type,
         "budget_account_id": entry.budget_account_id,
         "budget_account_name": entry.budget_account.name if entry.budget_account else None,
@@ -87,6 +86,7 @@ def create_registry_entry(
     entry = models.RegistryEntry(**data, client_id=current_client.id)
     db.add(entry)
     db.flush()
+    normalise_registry_flags(entry)
     sync_recurring_from_registry(db, entry)
     db.commit()
     db.refresh(entry)
@@ -111,6 +111,7 @@ def update_registry_entry(
     validate_accounts(db, current_client.id, data)
     for key, value in data.items():
         setattr(entry, key, value)
+    normalise_registry_flags(entry)
     sync_recurring_from_registry(db, entry)
     db.commit()
     db.refresh(entry)

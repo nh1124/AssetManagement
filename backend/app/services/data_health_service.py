@@ -289,6 +289,47 @@ def _registry_recurring_items(db: Session, client_id: int) -> list[dict[str, Any
     return items
 
 
+def _recurring_without_registry_items(db: Session, client_id: int) -> list[dict[str, Any]]:
+    registry_ids = {
+        entry_id for (entry_id,) in db.query(models.RegistryEntry.id)
+        .filter(models.RegistryEntry.client_id == client_id).all()
+    }
+    rows = db.query(models.RecurringTransaction).filter(
+        models.RecurringTransaction.client_id == client_id,
+        models.RecurringTransaction.is_active.is_(True),
+    ).order_by(models.RecurringTransaction.id).all()
+    items: list[dict[str, Any]] = []
+    for recurring in rows:
+        if recurring.source_registry_entry_id in registry_ids:
+            continue
+        items.append({
+            "recurring_id": recurring.id,
+            "name": recurring.name,
+            "next_due_date": recurring.next_due_date.isoformat() if recurring.next_due_date else None,
+            "auto_post": recurring.auto_post,
+            "source_registry_entry_id": recurring.source_registry_entry_id,
+            "problem": "no_registry_entry" if recurring.source_registry_entry_id is None else "dangling_registry_entry",
+        })
+    return items
+
+
+def _recurring_budget_inactive_items(db: Session, client_id: int) -> list[dict[str, Any]]:
+    entries = db.query(models.RegistryEntry).filter(
+        models.RegistryEntry.client_id == client_id,
+        models.RegistryEntry.is_active.is_(True),
+        models.RegistryEntry.generate_recurring.is_(True),
+        models.RegistryEntry.budget_active.is_(False),
+    ).order_by(models.RegistryEntry.id).all()
+    return [{
+        "registry_entry_id": entry.id,
+        "name": entry.name,
+        "line_type": entry.line_type,
+        "generate_recurring": entry.generate_recurring,
+        "budget_active": entry.budget_active,
+        "problem": "auto_posts_but_not_budgeted",
+    } for entry in entries]
+
+
 def _duplicate_recurring_items(db: Session, client_id: int) -> list[dict[str, Any]]:
     grouped: dict[int, list[models.RecurringTransaction]] = defaultdict(list)
     for recurring in (
@@ -570,12 +611,32 @@ def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
     balance_drift = _balance_drift_items(db, client_id)
     registry_recurring = _registry_recurring_items(db, client_id)
     duplicate_recurring = _duplicate_recurring_items(db, client_id)
+    recurring_without_registry = _recurring_without_registry_items(db, client_id)
+    recurring_budget_inactive = _recurring_budget_inactive_items(db, client_id)
     duplicate_plan_lines = _duplicate_plan_line_items(db, client_id)
     unbalanced_journals = _unbalanced_journal_items(db, client_id)
     advance_pairs = _advance_pair_items(db, client_id)
     unclaimed_legs = _unclaimed_budget_leg_items(db, client_id)
 
     issues = [
+        {
+            "code": "recurring_without_registry",
+            "severity": "error",
+            "title": "Recurring definitions without a registry entry",
+            "detail": "The registry owns recurring definitions. A row without a valid registry entry is written by nothing in the application.",
+            "count": len(recurring_without_registry),
+            "repairable": False,
+            "items": recurring_without_registry[:100],
+        },
+        {
+            "code": "recurring_budget_inactive",
+            "severity": "error",
+            "title": "Automatic posting excluded from the budget",
+            "detail": "A definition that posts automatically while the budget ignores it moves money nothing forecasts.",
+            "count": len(recurring_budget_inactive),
+            "repairable": False,
+            "items": recurring_budget_inactive[:100],
+        },
         {
             "code": "budget_plan_defaults",
             "severity": "warning",

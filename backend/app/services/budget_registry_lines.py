@@ -1,9 +1,9 @@
 """The registry side of a month: what the source of truth says should happen.
 
 The registry is the source of truth for recurring cash flow, so these lines
-are derived, never stored. Products and recurring transactions that have no
-registry entry yet are projected as virtual entries so they still show up in
-a plan, and lines that describe the same movement are aggregated into one.
+are derived, never stored. Products that have no registry entry yet are
+projected as virtual entries so they still show up in a plan, and lines that
+describe the same movement are aggregated into one.
 """
 from __future__ import annotations
 
@@ -17,8 +17,6 @@ from .registry_service import (
     product_budget_active,
     product_line_type,
     product_unit_amount,
-    account_entry_type,
-    account_line_type,
     registry_entry_amount_for_period,
     registry_source_account_id,
     registry_target_account_id,
@@ -94,7 +92,6 @@ def _virtual_registry_entries(ctx: BudgetContext) -> list[SimpleNamespace]:
         models.RegistryEntry.source_recurring_transaction_id,
     ).filter(models.RegistryEntry.client_id == ctx.client_id).all()
     existing_product_ids = {product_id for product_id, _ in linked_rows if product_id}
-    existing_recurring_ids = {recurring_id for _, recurring_id in linked_rows if recurring_id}
     entries: list[SimpleNamespace] = []
 
     products = ctx.db.query(models.Product).filter(models.Product.client_id == ctx.client_id).all()
@@ -124,36 +121,6 @@ def _virtual_registry_entries(ctx: BudgetContext) -> list[SimpleNamespace]:
             end_period=None,
         ))
 
-    recurring_rows = ctx.db.query(models.RecurringTransaction).filter(
-        models.RecurringTransaction.client_id == ctx.client_id,
-        models.RecurringTransaction.is_active.is_(True),
-    ).all()
-    for recurring in recurring_rows:
-        if recurring.id in existing_recurring_ids or recurring.source_registry_entry_id:
-            continue
-        line_type = account_line_type(recurring.from_account, recurring.to_account)
-        entries.append(SimpleNamespace(
-            id=-(1000000 + recurring.id),
-            client_id=ctx.client_id,
-            name=recurring.name,
-            entry_type=account_entry_type(recurring.from_account, recurring.to_account),
-            amount=recurring.amount or 0.0,
-            currency=recurring.currency or "JPY",
-            frequency=recurring.frequency or "Monthly",
-            frequency_days=None,
-            day_of_month=recurring.day_of_month or 1,
-            month_of_year=recurring.month_of_year,
-            line_type=line_type,
-            budget_account_id=recurring.to_account_id if line_type in {"expense", "debt_payment"} else None,
-            source_account_id=recurring.from_account_id,
-            destination_account_id=recurring.to_account_id,
-            source_recurring_transaction_id=recurring.id,
-            source_product_id=None,
-            is_active=True,
-            budget_active=True,
-            start_period=recurring.start_period,
-            end_period=recurring.end_period,
-        ))
     return entries
 
 

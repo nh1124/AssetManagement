@@ -206,6 +206,17 @@ def registry_to_recurring_data(entry: models.RegistryEntry) -> dict:
     }
 
 
+def normalise_registry_flags(entry: models.RegistryEntry) -> None:
+    """An entry that posts automatically has to appear in the budget.
+
+    Otherwise money moves on a schedule that nothing forecasts: the plan would
+    not carry the line, and the card settlement projection -- which reads the
+    plan -- would not know the charge is coming.
+    """
+    if entry.generate_recurring:
+        entry.budget_active = True
+
+
 def sync_recurring_from_registry(db: Session, entry: models.RegistryEntry) -> None:
     """Enforce the registry entry onto its generated recurring transaction (registry is the source of truth)."""
     linked = linked_recurring_transactions(db, entry)
