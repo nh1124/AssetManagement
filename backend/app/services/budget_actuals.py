@@ -53,7 +53,7 @@ def plan_line_has_cash_impact(
 # bookkeeping convention: an expense line's account is debited, an income
 # line's account is credited, and the counterparty leg is whatever funded or
 # received it.
-_LINE_SIDE: dict[str, str] = {
+LINE_SIDE: dict[str, str] = {
     "income": "credit",
     "expense": "debit",
     "allocation": "debit",
@@ -100,7 +100,7 @@ def _matching_legs(
     its expense leg only, and the receivable leg matches no plan line at all.
     """
     line_type = _line_attr(line, "line_type")
-    side = _LINE_SIDE.get(line_type)
+    side = LINE_SIDE.get(line_type)
     if side is None:
         return []
     other = "credit" if side == "debit" else "debit"
@@ -174,7 +174,7 @@ def actual_for_plan_line(
             return ctx.capsule_balance(capsule)
         account_id = ctx.capsule_account_ids.get(target_id)
 
-    side = _LINE_SIDE.get(_line_attr(line, "line_type"))
+    side = LINE_SIDE.get(_line_attr(line, "line_type"))
     if side is None:
         return 0.0
     return sum(
@@ -205,7 +205,7 @@ def claimed_leg_ids(
     account_id = _line_attr(line, "account_id")
     if target_type == "capsule" and target_id and not account_id:
         account_id = ctx.capsule_account_ids.get(target_id)
-    if _LINE_SIDE.get(_line_attr(line, "line_type")) is None:
+    if LINE_SIDE.get(_line_attr(line, "line_type")) is None:
         return set()
     return {
         leg.entry.id
@@ -230,7 +230,7 @@ def posted_amount_for_plan_line(
     account_id = _line_attr(line, "account_id")
     if target_type == "capsule" and target_id and not account_id:
         account_id = ctx.capsule_account_ids.get(target_id)
-    side = _LINE_SIDE.get(_line_attr(line, "line_type"))
+    side = LINE_SIDE.get(_line_attr(line, "line_type"))
     if side is None:
         return 0.0
     return sum(
@@ -259,7 +259,7 @@ def cash_flow_actual_for_plan_line(
     """
     if not plan_line_has_cash_impact(ctx, line):
         return 0.0
-    side = _LINE_SIDE.get(_line_attr(line, "line_type"))
+    side = LINE_SIDE.get(_line_attr(line, "line_type"))
     if side is None:
         return 0.0
     return sum(

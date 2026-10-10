@@ -8,7 +8,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .. import models
-from .budget_actuals import _LINE_SIDE as LINE_SIDE, claimed_leg_ids
+from .budget_actuals import LINE_SIDE, claimed_leg_ids
 from .budget_context import BudgetContext
 from .journal_legs import primary_accounts
 from .ledger_service import BALANCE_TOLERANCE, calculate_account_journal_balance
