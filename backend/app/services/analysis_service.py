@@ -9,7 +9,7 @@ from sqlalchemy import extract, func
 from sqlalchemy.orm import Session
 
 from .. import models
-from .fx_service import (
+from .ledger_valuation import (
     calculate_account_valued_balance,
     calculate_account_valued_balances,
 )

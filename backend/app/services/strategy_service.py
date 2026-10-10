@@ -12,7 +12,7 @@ from typing import Any, List, Optional, Tuple
 import math
 import numpy as np
 from .. import models
-from .fx_service import calculate_account_valued_balance
+from .ledger_valuation import calculate_account_valued_balance
 from .reporting_service import get_balance_sheet, get_net_worth_history
 
 

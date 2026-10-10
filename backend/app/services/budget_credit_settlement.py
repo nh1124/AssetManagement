@@ -27,7 +27,7 @@ from .budget_actuals import (
 )
 from .budget_context import BudgetContext
 from .budget_plan_store import resolve_budget_plan_id
-from .fx_service import calculate_account_valued_balance
+from .ledger_valuation import calculate_account_valued_balance
 from .journal_legs import legs_in_range
 from .liability_schedule import (
     _account_has_liability_schedule,

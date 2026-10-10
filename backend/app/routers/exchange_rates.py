@@ -10,7 +10,8 @@ from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.cache_service import invalidate_client
-from ..services.fx_service import normalize_currency, update_used_exchange_rates
+from ..services.fx_service import normalize_currency
+from ..services.ledger_valuation import update_used_exchange_rates
 
 router = APIRouter(prefix="/exchange-rates", tags=["exchange_rates"])
 

@@ -25,7 +25,7 @@ try:
     from backend.app.services.action_bridge_service import apply_action, create_action
     from backend.app.services.strategy_service import get_roadmap_projection
     from backend.app.services.milestone_service import apply_milestones_from_simulation, preview_milestones_from_simulation
-    from backend.app.services.fx_service import update_used_exchange_rates
+    from backend.app.services.ledger_valuation import update_used_exchange_rates
 except ModuleNotFoundError:
     from app import models  # type: ignore[no-redef]
     from app.database import Base  # type: ignore[no-redef]
@@ -46,7 +46,7 @@ except ModuleNotFoundError:
     from app.services.action_bridge_service import apply_action, create_action  # type: ignore[no-redef]
     from app.services.strategy_service import get_roadmap_projection  # type: ignore[no-redef]
     from app.services.milestone_service import apply_milestones_from_simulation, preview_milestones_from_simulation  # type: ignore[no-redef]
-    from app.services.fx_service import update_used_exchange_rates  # type: ignore[no-redef]
+    from app.services.ledger_valuation import update_used_exchange_rates  # type: ignore[no-redef]
 
 
 def _session():

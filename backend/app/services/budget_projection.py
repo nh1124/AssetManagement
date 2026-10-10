@@ -27,7 +27,7 @@ from .budget_lines import (
 )
 from .budget_plan_store import _deduplicate_active_plan_models, resolve_budget_plan_id
 from .budget_warnings import budget_setup_warnings
-from .fx_service import calculate_account_valued_balance
+from .ledger_valuation import calculate_account_valued_balance
 from .periods import add_months
 
 

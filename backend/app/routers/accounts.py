@@ -5,7 +5,7 @@ from .. import models
 from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.cache_service import invalidate_client
-from ..services.fx_service import calculate_account_valued_balance, calculate_account_valued_balances
+from ..services.ledger_valuation import calculate_account_valued_balance, calculate_account_valued_balances
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])

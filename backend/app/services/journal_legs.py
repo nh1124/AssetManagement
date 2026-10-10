@@ -24,7 +24,7 @@ from datetime import date, timedelta
 from sqlalchemy.orm import Session
 
 from .. import models
-from .fx_service import convert_transaction_amount
+from .ledger_valuation import convert_transaction_amount
 from .ledger_service import DEBIT_NORMAL_TYPES
 from .periods import period_to_range
 
