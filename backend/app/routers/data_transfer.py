@@ -22,7 +22,7 @@ from ..services.data_health_service import check_data_health, repair_data_health
 
 router = APIRouter(prefix="/data", tags=["data"])
 
-EXPORT_VERSION = 7
+EXPORT_VERSION = 8
 
 DATA_COLLECTIONS = [
     "accounts",
@@ -647,6 +647,7 @@ def export_client_data(
                         "amount",
                         "currency",
                         "batch_id",
+                        "recurring_transaction_id",
                         "created_at",
                     ],
                 )
@@ -1201,6 +1202,7 @@ def import_client_data(
                 # ignored: the journal_entries below are the accounts, and they
                 # were already required to balance.
                 batch_id=batch_map.get(item.get("batch_id")),
+                recurring_transaction_id=recurring_map.get(item.get("recurring_transaction_id")),
                 created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
             )
             db.add(transaction)

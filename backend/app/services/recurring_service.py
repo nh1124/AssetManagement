@@ -26,6 +26,7 @@ def post_recurring_transaction(
     """Create a transaction and its journal entries without committing."""
     transaction = models.Transaction(
         client_id=recurring.client_id,
+        recurring_transaction_id=recurring.id,
         date=posting_date,
         description=recurring.name,
         amount=recurring.amount,
