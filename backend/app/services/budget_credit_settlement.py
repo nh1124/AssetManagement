@@ -141,8 +141,18 @@ def _build_credit_settlement_plan_lines(ctx: BudgetContext, period: str) -> list
         account = accounts_by_id.get(row.from_account_id)
         if not account:
             continue
+        # Everything before next_due_date has been posted, and posted activity
+        # is already counted above. Projecting it again charged the card twice
+        # for the same subscription.
+        first_unposted = (
+            f"{row.next_due_date.year}-{row.next_due_date.month:02d}"
+            if row.next_due_date
+            else None
+        )
         for activity_period in period_months_between(search_start_period, period):
             if not _recurring_applies_to_period(row, activity_period):
+                continue
+            if first_unposted and activity_period < first_unposted:
                 continue
             activity_date = _recurring_activity_date(row, activity_period)
             recurring_amount = convert_amount(ctx.db, ctx.client_id, row.amount or 0.0, row.currency or "JPY", as_of_date=activity_date)

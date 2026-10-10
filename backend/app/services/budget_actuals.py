@@ -158,6 +158,11 @@ def actual_for_plan_line(
 
     A capsule line reports the capsule's balance rather than the month's
     movement, which is what makes this differ from the cash-flow actual.
+
+    The line's own source account narrows the match, exactly as it does for
+    the cash-flow actual. Two lines on one expense account -- a subscription
+    paid from a bank and another paid by card -- would otherwise each claim
+    the whole account's movement and the month would count it twice.
     """
     target_type = _line_attr(line, "target_type")
     target_id = _line_attr(line, "target_id")
@@ -174,8 +179,44 @@ def actual_for_plan_line(
         return 0.0
     return sum(
         _leg_amount(leg, side)
-        for leg in _matching_legs(ctx, line, period, account_id=account_id)
+        for leg in _matching_legs(
+            ctx,
+            line,
+            period,
+            account_id=account_id,
+            source_account_id=_line_attr(line, "source_account_id"),
+        )
     )
+
+
+def claimed_leg_ids(
+    ctx: BudgetContext,
+    line: models.MonthlyPlanLine | dict,
+    period: str,
+) -> set[int]:
+    """The journal entries this plan line claims as its actuals.
+
+    Exposed so that data_health can ask the opposite question -- which legs on
+    a budgeted account no line claims -- with the same rule rather than a
+    second copy of it.
+    """
+    target_type = _line_attr(line, "target_type")
+    target_id = _line_attr(line, "target_id")
+    account_id = _line_attr(line, "account_id")
+    if target_type == "capsule" and target_id and not account_id:
+        account_id = ctx.capsule_account_ids.get(target_id)
+    if _LINE_SIDE.get(_line_attr(line, "line_type")) is None:
+        return set()
+    return {
+        leg.entry.id
+        for leg in _matching_legs(
+            ctx,
+            line,
+            period,
+            account_id=account_id,
+            source_account_id=_line_attr(line, "source_account_id"),
+        )
+    }
 
 
 def cash_flow_actual_for_plan_line(

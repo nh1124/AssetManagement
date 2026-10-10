@@ -8,6 +8,8 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .. import models
+from .budget_actuals import _LINE_SIDE as LINE_SIDE, claimed_leg_ids
+from .budget_context import BudgetContext
 from .journal_legs import primary_accounts
 from .ledger_service import BALANCE_TOLERANCE, calculate_account_journal_balance
 from .budget_lines import assign_plan_line_identity, line_identity_key, newest_line_key
@@ -487,6 +489,72 @@ def _advance_pair_items(db: Session, client_id: int) -> list[dict[str, Any]]:
     return items
 
 
+def _unclaimed_budget_leg_items(db: Session, client_id: int) -> list[dict[str, Any]]:
+    """Spending on a budgeted account that no plan line reports.
+
+    A plan line claims the leg on its own account funded by its own source, so
+    a line that names a card as its source does not claim the same spending
+    paid in cash. That is deliberate -- it is what stops two lines counting
+    one payment twice -- but it leaves the cash-paid leg belonging to nothing,
+    and the variance table would quietly read low. This reports those legs so
+    the line's source can be corrected or a second line added.
+    """
+    lines = (
+        db.query(models.MonthlyPlanLine)
+        .filter(
+            models.MonthlyPlanLine.client_id == client_id,
+            models.MonthlyPlanLine.is_active.is_(True),
+            models.MonthlyPlanLine.account_id.isnot(None),
+        )
+        .order_by(models.MonthlyPlanLine.target_period, models.MonthlyPlanLine.id)
+        .all()
+    )
+    if not lines:
+        return []
+
+    by_period: dict[str, list[models.MonthlyPlanLine]] = defaultdict(list)
+    for line in lines:
+        if line.target_period:
+            by_period[line.target_period].append(line)
+
+    items: list[dict[str, Any]] = []
+    for period, period_lines in sorted(by_period.items()):
+        ctx = BudgetContext(db, client_id)
+        claimed: set[int] = set()
+        sides: dict[int, set[str]] = defaultdict(set)
+        sources: dict[int, set[int]] = defaultdict(set)
+        for line in period_lines:
+            claimed |= claimed_leg_ids(ctx, line, period)
+            side = LINE_SIDE.get(line.line_type)
+            if side:
+                sides[line.account_id].add(side)
+                if line.source_account_id:
+                    sources[line.account_id].add(line.source_account_id)
+        for leg in ctx.period_legs(period):
+            account_id = leg.account.id
+            if account_id not in sides or leg.entry.id in claimed:
+                continue
+            amount = leg.debit if "debit" in sides[account_id] else leg.credit
+            if (amount or 0.0) <= 0:
+                continue
+            items.append({
+                "period": period,
+                "transaction_id": leg.transaction.id,
+                "entry_id": leg.entry.id,
+                "date": leg.transaction.date.isoformat() if leg.transaction.date else None,
+                "description": leg.transaction.description,
+                "account_id": account_id,
+                "account_name": leg.account.name,
+                "amount": round(amount or 0.0, 2),
+                "line_sources": sorted(sources.get(account_id, set())),
+                "problem": "no_plan_line_claims_this_leg",
+                # Which line should own it, or whether a line's source is
+                # simply wrong, is a judgement about intent.
+                "repairable": False,
+            })
+    return items
+
+
 def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
     default_plan = db.query(models.BudgetPlan).filter_by(client_id=client_id, is_default=True).first()
     null_plan_count = (
@@ -505,6 +573,7 @@ def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
     duplicate_plan_lines = _duplicate_plan_line_items(db, client_id)
     unbalanced_journals = _unbalanced_journal_items(db, client_id)
     advance_pairs = _advance_pair_items(db, client_id)
+    unclaimed_legs = _unclaimed_budget_leg_items(db, client_id)
 
     issues = [
         {
@@ -567,6 +636,20 @@ def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
             "count": len(unbalanced_journals),
             "repairable": False,
             "items": unbalanced_journals[:100],
+        },
+        {
+            "code": "budget_leg_unclaimed",
+            "severity": "warning",
+            "title": "Spending on a budgeted account that no plan line reports",
+            "detail": (
+                "A plan line claims the leg on its own account funded by its own source. "
+                "These legs sit on an account a plan line watches, but came from somewhere "
+                "that line does not name, so the variance table reads low for that month. "
+                "Correct the line's source account, or add a line for the other funding route."
+            ),
+            "count": len(unclaimed_legs),
+            "repairable": False,
+            "items": unclaimed_legs[:100],
         },
         {
             "code": "advance_pair_candidate",
