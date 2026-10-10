@@ -233,7 +233,10 @@ def sync_recurring_from_registry(db: Session, entry: models.RegistryEntry) -> No
         if recurring is None or row.id != recurring.id:
             db.delete(row)
     if not recurring:
-        recurring = models.RecurringTransaction(client_id=entry.client_id)
+        recurring = models.RecurringTransaction(
+            client_id=entry.client_id,
+            source_registry_entry_id=entry.id,
+        )
         db.add(recurring)
         db.flush()
     entry.source_recurring_transaction_id = recurring.id

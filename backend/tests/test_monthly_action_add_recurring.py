@@ -78,8 +78,15 @@ def test_pausing_deactivates_the_definition() -> None:
     db = _session()
     try:
         db.add(models.Client(id=1, name="test", general_settings={}, ai_config={}))
+        registry_entry = models.RegistryEntry(
+            client_id=1,
+            name="recurring owner",
+        )
+        db.add(registry_entry)
+        db.flush()
         recurring = models.RecurringTransaction(
             client_id=1,
+            source_registry_entry_id=registry_entry.id,
             name="a subscription",
             amount=1200,
             currency="JPY",

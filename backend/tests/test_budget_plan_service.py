@@ -269,8 +269,15 @@ def test_data_import_backfills_plan_line_source_identity_for_legacy_payload() ->
         food = models.Account(client_id=1, name="food", account_type="expense")
         source_db.add_all([source_client, cash, food])
         source_db.flush()
+        registry_entry = models.RegistryEntry(
+            client_id=1,
+            name="recurring owner",
+        )
+        source_db.add(registry_entry)
+        source_db.flush()
         recurring = models.RecurringTransaction(
             client_id=1,
+            source_registry_entry_id=registry_entry.id,
             name="food",
             amount=10000,
             from_account_id=cash.id,
@@ -1259,8 +1266,15 @@ def test_auto_cash_treatment_excludes_credit_expense_and_projects_card_payment()
         subscription = models.Account(client_id=1, name="subscription", account_type="expense")
         db.add_all([client, cash, credit, subscription])
         db.flush()
+        registry_entry = models.RegistryEntry(
+            client_id=1,
+            name="recurring owner",
+        )
+        db.add(registry_entry)
+        db.flush()
         recurring = models.RecurringTransaction(
             client_id=1,
+            source_registry_entry_id=registry_entry.id,
             name="subscription",
             amount=10000,
             from_account_id=credit.id,

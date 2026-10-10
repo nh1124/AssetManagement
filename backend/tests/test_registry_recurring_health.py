@@ -59,23 +59,9 @@ def test_registry_created_definition_has_no_health_violations(db):
         assert issues[code]["items"] == []
 
 
-def test_recurring_without_registry_is_reported_once(db):
-    recurring = models.RecurringTransaction(client_id=1, **_payload(db),
-        source_registry_entry_id=None, next_due_date=date(2026, 11, 1), auto_post=False)
-    db.add(recurring)
-    issue = _issues(db)["recurring_without_registry"]
-    assert issue["count"] == 1
-    assert issue["severity"] == "error"
-    assert issue["repairable"] is False
-    assert issue["items"] == [{
-        "recurring_id": recurring.id, "name": "subscription",
-        "next_due_date": "2026-11-01", "auto_post": False,
-        "source_registry_entry_id": None, "problem": "no_registry_entry",
-    }]
-
-
 @pytest.mark.parametrize("foreign_client", [False, True], ids=["missing", "another_client"])
 def test_recurring_with_dangling_registry_is_reported(db, foreign_client):
+    # SQLite leaves FKs off; missing pins check logic despite PostgreSQL rejecting it.
     if foreign_client:
         db.add(models.Client(id=2, name="other", general_settings={}, ai_config={}))
         db.add(models.RegistryEntry(id=999, client_id=2, name="other entry"))
@@ -107,12 +93,33 @@ def test_recurring_budget_inactive_clears_when_budget_enabled(db):
 
 def test_inactive_rows_and_other_clients_are_excluded(db):
     db.add(models.Client(id=2, name="other", general_settings={}, ai_config={}))
+    inactive_entry = models.RegistryEntry(
+        client_id=1,
+        name="inactive",
+        is_active=False,
+        generate_recurring=True,
+        budget_active=False,
+    )
+    other_entry = models.RegistryEntry(
+        client_id=2,
+        name="other",
+        generate_recurring=True,
+        budget_active=False,
+    )
+    db.add_all([inactive_entry, other_entry])
+    db.flush()
     db.add_all([
-        models.RecurringTransaction(client_id=1, name="inactive", is_active=False),
-        models.RecurringTransaction(client_id=2, name="other"),
-        models.RegistryEntry(client_id=1, name="inactive", is_active=False,
-                             generate_recurring=True, budget_active=False),
-        models.RegistryEntry(client_id=2, name="other", generate_recurring=True, budget_active=False),
+        models.RecurringTransaction(
+            client_id=1,
+            name="inactive",
+            is_active=False,
+            source_registry_entry_id=inactive_entry.id,
+        ),
+        models.RecurringTransaction(
+            client_id=2,
+            name="other",
+            source_registry_entry_id=other_entry.id,
+        ),
     ])
     issues = _issues(db)
     assert issues["recurring_without_registry"]["count"] == 0
@@ -142,8 +149,19 @@ def test_registry_router_update_forces_budget_active(db):
     assert _issues(db)["recurring_budget_inactive"]["count"] == 0
 
 
-def test_registry_plan_lines_do_not_project_orphan_recurring(db):
-    db.add(models.RecurringTransaction(client_id=1, **_payload(db), source_registry_entry_id=None))
+def test_registry_plan_lines_do_not_project_a_definition_of_an_inactive_entry(db):
+    entry = models.RegistryEntry(
+        client_id=1,
+        name="inactive owner",
+        is_active=False,
+    )
+    db.add(entry)
+    db.flush()
+    db.add(models.RecurringTransaction(
+        client_id=1,
+        **_payload(db),
+        source_registry_entry_id=entry.id,
+    ))
     db.commit()
     lines = registry_plan_lines(BudgetContext(db, 1), "2026-10")
     assert not any(line["name"] == "subscription" for line in lines)

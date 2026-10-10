@@ -221,7 +221,7 @@ def _validate_import_payload(payload: ImportPayload) -> dict[str, Any]:
     check_ref("products", "funding_capsule_id", "capsules")
     check_ref("recurring_transactions", "from_account_id", "accounts")
     check_ref("recurring_transactions", "to_account_id", "accounts")
-    check_ref("recurring_transactions", "source_registry_entry_id", "registry_entries")
+    # Definitions without a restorable registry owner are skipped during import.
     check_ref("registry_entries", "budget_account_id", "accounts")
     check_ref("registry_entries", "source_account_id", "accounts")
     check_ref("registry_entries", "destination_account_id", "accounts")
@@ -1064,29 +1064,6 @@ def import_client_data(
                 )
             )
 
-        for item in data.get("recurring_transactions", []):
-            old_id = int(item["id"])
-            recurring = models.RecurringTransaction(
-                client_id=current_client.id,
-                name=item["name"],
-                amount=item.get("amount") or 0,
-                currency=item.get("currency") or "JPY",
-                from_account_id=account_map.get(item.get("from_account_id")),
-                to_account_id=account_map.get(item.get("to_account_id")),
-                frequency=item["frequency"],
-                day_of_month=item.get("day_of_month") or 1,
-                month_of_year=item.get("month_of_year"),
-                next_due_date=_parse_date(item.get("next_due_date")),
-                start_period=item.get("start_period"),
-                end_period=item.get("end_period"),
-                auto_post=item.get("auto_post", True),
-                is_active=item.get("is_active", True),
-                created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
-            )
-            db.add(recurring)
-            db.flush()
-            recurring_map[old_id] = recurring.id
-
         registry_map: dict[int, int] = {}
         registry_funding_updates: list[tuple[models.RegistryEntry, int]] = []
         for item in data.get("registry_entries", []):
@@ -1112,7 +1089,6 @@ def import_client_data(
                 budget_active=item.get("budget_active", True),
                 is_active=item.get("is_active", True),
                 source_product_id=product_map.get(item.get("source_product_id")),
-                source_recurring_transaction_id=recurring_map.get(item.get("source_recurring_transaction_id")),
                 note=item.get("note"),
                 start_period=item.get("start_period"),
                 end_period=item.get("end_period"),
@@ -1125,15 +1101,47 @@ def import_client_data(
             if item.get("funding_capsule_id"):
                 registry_funding_updates.append((entry, int(item["funding_capsule_id"])))
 
+        skipped_recurring = 0
         for item in data.get("recurring_transactions", []):
+            old_id = int(item["id"])
             source_registry_id = registry_map.get(item.get("source_registry_entry_id"))
-            if source_registry_id and (recurring_id := recurring_map.get(int(item["id"]))):
-                recurring = db.query(models.RecurringTransaction).filter(
-                    models.RecurringTransaction.id == recurring_id,
-                    models.RecurringTransaction.client_id == current_client.id,
-                ).first()
-                if recurring:
-                    recurring.source_registry_entry_id = source_registry_id
+            if source_registry_id is None:
+                skipped_recurring += 1
+                continue
+            recurring = models.RecurringTransaction(
+                client_id=current_client.id,
+                source_registry_entry_id=source_registry_id,
+                name=item["name"],
+                amount=item.get("amount") or 0,
+                currency=item.get("currency") or "JPY",
+                from_account_id=account_map.get(item.get("from_account_id")),
+                to_account_id=account_map.get(item.get("to_account_id")),
+                frequency=item["frequency"],
+                day_of_month=item.get("day_of_month") or 1,
+                month_of_year=item.get("month_of_year"),
+                next_due_date=_parse_date(item.get("next_due_date")),
+                start_period=item.get("start_period"),
+                end_period=item.get("end_period"),
+                auto_post=item.get("auto_post", True),
+                is_active=item.get("is_active", True),
+                created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
+            )
+            db.add(recurring)
+            db.flush()
+            recurring_map[old_id] = recurring.id
+
+        for item in data.get("registry_entries", []):
+            entry = db.get(models.RegistryEntry, registry_map[int(item["id"])])
+            entry.source_recurring_transaction_id = recurring_map.get(item.get("source_recurring_transaction_id"))
+
+        if skipped_recurring:
+            validation["issues"].append({
+                "severity": "warning",
+                "code": "recurring_without_registry_skipped",
+                "detail": f"Skipped {skipped_recurring} recurring definitions without a restorable registry entry.",
+                "collection": "recurring_transactions",
+            })
+            validation["warning_count"] += 1
 
         for item in data.get("quick_templates", []):
             old_id = int(item["id"])

@@ -44,8 +44,15 @@ def _setup(db):
     )
     db.add_all([client, cash, expense])
     db.flush()
+    registry_entry = models.RegistryEntry(
+        client_id=1,
+        name="recurring owner",
+    )
+    db.add(registry_entry)
+    db.flush()
     recurring = models.RecurringTransaction(
         client_id=1,
+        source_registry_entry_id=registry_entry.id,
         name="Rent",
         amount=1000,
         currency="JPY",

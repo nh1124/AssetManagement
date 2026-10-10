@@ -311,7 +311,13 @@ class RecurringTransaction(Base):
     end_period = Column(String, nullable=True)  # Format: "YYYY-MM"; included through this month
     auto_post = Column(Boolean, default=True, server_default="true", nullable=False)
     is_active = Column(Boolean, default=True)
-    source_registry_entry_id = Column(Integer, ForeignKey("registry_entries.id", ondelete="SET NULL"), nullable=True)
+    # The registry is the only writer and owns the definition. The router deletes
+    # it first; CASCADE also supports the import's bulk registry wipe.
+    source_registry_entry_id = Column(
+        Integer,
+        ForeignKey("registry_entries.id", ondelete="CASCADE"),
+        nullable=False,
+    )
     created_at = Column(DateTime, default=datetime.utcnow)
 
     client = relationship("Client", back_populates="recurring_transactions")

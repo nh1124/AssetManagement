@@ -45,7 +45,14 @@ def _client_and_accounts(db):
 
 
 def _recurring(db, cash, expense, **overrides):
+    registry_entry = models.RegistryEntry(
+        client_id=1,
+        name="recurring owner",
+    )
+    db.add(registry_entry)
+    db.flush()
     values = {
+        "source_registry_entry_id": registry_entry.id,
         "client_id": 1,
         "name": "Rent",
         "amount": 1000,

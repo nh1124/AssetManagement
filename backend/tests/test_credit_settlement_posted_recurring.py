@@ -81,8 +81,15 @@ def card_plan(monkeypatch):
 
 def test_a_posted_occurrence_is_counted_once(card_plan):
     db, card, subs = card_plan
+    registry_entry = models.RegistryEntry(
+        client_id=1,
+        name="recurring owner",
+    )
+    db.add(registry_entry)
+    db.flush()
     db.add(models.RecurringTransaction(
         client_id=1, name="subscription", amount=3000, currency="JPY",
+        source_registry_entry_id=registry_entry.id,
         from_account_id=card.id, to_account_id=subs.id, frequency="Monthly",
         day_of_month=11, next_due_date=date(2026, 10, 11), is_active=True,
     ))

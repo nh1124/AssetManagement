@@ -138,6 +138,12 @@ def test_logical_balance_subtracts_the_plan_remainder_not_the_recurring_definiti
         db.add(subscription_account)
         db.flush()
         due_date = date.today() + timedelta(days=10)
+        registry_entry = models.RegistryEntry(
+            client_id=1,
+            name="recurring owner",
+        )
+        db.add(registry_entry)
+        db.flush()
         db.add_all(
             [
                 models.ExchangeRate(
@@ -150,6 +156,7 @@ def test_logical_balance_subtracts_the_plan_remainder_not_the_recurring_definiti
                 ),
                 models.RecurringTransaction(
                     client_id=1,
+                    source_registry_entry_id=registry_entry.id,
                     name="USD subscription",
                     amount=10,
                     currency="USD",
