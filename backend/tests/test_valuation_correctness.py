@@ -12,7 +12,9 @@ from backend.app.services.analysis_service import (
     calculate_logical_balance,
     get_summary,
 )
+from backend.app.services.budget_plan_store import resolve_budget_plan_id
 from backend.app.services.fx_service import RateLookup, get_exchange_rate
+from backend.app.services.periods import current_period_key
 
 
 def _session():
@@ -127,7 +129,7 @@ def test_summary_budget_deduction_uses_only_default_plan() -> None:
         db.close()
 
 
-def test_logical_balance_converts_foreign_currency_recurring_outflow() -> None:
+def test_logical_balance_subtracts_the_plan_remainder_not_the_recurring_definition() -> None:
     db = _session()
     try:
         _client(db)
@@ -160,6 +162,19 @@ def test_logical_balance_converts_foreign_currency_recurring_outflow() -> None:
         )
         db.commit()
 
+        db.add(models.MonthlyPlanLine(
+            client_id=1,
+            plan_id=resolve_budget_plan_id(db, 1),
+            target_period=current_period_key(),
+            line_type="expense",
+            account_id=subscription_account.id,
+            name="Subscription plan",
+            amount=1500,
+            is_active=True,
+        ))
+        db.commit()
+
+        # The definition is not read; the plan line is.
         assert calculate_logical_balance(db, 1) == 18500
     finally:
         db.close()

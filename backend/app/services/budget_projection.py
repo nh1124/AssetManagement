@@ -75,6 +75,30 @@ def _balance_projection_row(period: str, state: dict[str, float]) -> dict:
     }
 
 
+def _period_plan_lines(ctx: BudgetContext, period: str, plan_id: int) -> list[models.MonthlyPlanLine]:
+    lines = ctx.db.query(models.MonthlyPlanLine).filter(
+        models.MonthlyPlanLine.client_id == ctx.client_id,
+        models.MonthlyPlanLine.target_period == period,
+        models.MonthlyPlanLine.is_active.is_(True),
+        models.MonthlyPlanLine.plan_id == plan_id,
+    ).all()
+    return _deduplicate_active_plan_models(ctx.db, lines)
+
+
+def planned_cash_outflow_remaining(
+    ctx: BudgetContext,
+    period: str,
+    plan_id: int | None = None,
+) -> float:
+    """Remaining planned spending to reserve when calculating logical balance."""
+    plan_id = resolve_budget_plan_id(ctx.db, ctx.client_id, plan_id)
+    flow = _empty_flow()
+    for line in _period_plan_lines(ctx, period, plan_id):
+        _, _, remaining = _projection_amounts_for_period(ctx, line, period)
+        _add_flow(flow, plan_line_flow_for_amount(ctx, line, remaining))
+    return flow["expense"] + flow["non_cash_budget"]
+
+
 def get_cash_flow_projection(
     db: Session,
     client_id: int,
@@ -105,14 +129,7 @@ def _cash_flow_projection(
     rows = []
     for idx in range(months):
         period = add_months(start_period, idx)
-        q = ctx.db.query(models.MonthlyPlanLine).filter(
-            models.MonthlyPlanLine.client_id == ctx.client_id,
-            models.MonthlyPlanLine.target_period == period,
-            models.MonthlyPlanLine.is_active.is_(True),
-            models.MonthlyPlanLine.plan_id == plan_id,
-        )
-        lines = q.all()
-        lines = _deduplicate_active_plan_models(ctx.db, lines)
+        lines = _period_plan_lines(ctx, period, plan_id)
         projection_lines: list[models.MonthlyPlanLine | dict] = list(lines)
         planned_flow = _empty_flow()
         actual_flow = _empty_flow()
@@ -187,17 +204,7 @@ def _balance_projection(
     rows = []
     for idx in range(months):
         period = add_months(start_period, idx)
-        lines = (
-            ctx.db.query(models.MonthlyPlanLine)
-            .filter(
-                models.MonthlyPlanLine.client_id == ctx.client_id,
-                models.MonthlyPlanLine.target_period == period,
-                models.MonthlyPlanLine.is_active.is_(True),
-                models.MonthlyPlanLine.plan_id == plan_id,
-            )
-            .all()
-        )
-        lines = _deduplicate_active_plan_models(ctx.db, lines)
+        lines = _period_plan_lines(ctx, period, plan_id)
         projection_lines: list[models.MonthlyPlanLine | dict] = list(lines)
         for line in projection_lines:
             _, _, remaining_amount = _projection_amounts_for_period(ctx, line, period)

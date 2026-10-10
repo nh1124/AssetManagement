@@ -2,19 +2,21 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import date, timedelta
+from datetime import date
 
 from dateutil.relativedelta import relativedelta
-from sqlalchemy import and_, extract, func
+from sqlalchemy import extract, func
 from sqlalchemy.orm import Session
 
 from .. import models
 from .fx_service import (
     calculate_account_valued_balance,
     calculate_account_valued_balances,
-    convert_amount,
 )
+from .budget_context import BudgetContext
 from .budget_plan_store import resolve_budget_plan_id
+from .budget_projection import planned_cash_outflow_remaining
+from .periods import current_period_key
 from .journal_legs import legs_in_range
 from .goal_service import calculate_overall_goal_probability
 from .reporting_service import (
@@ -25,7 +27,6 @@ from .reporting_service import (
 
 
 LIQUID_ACCOUNT_NAMES = {"cash", "bank", "savings"}
-OUTFLOW_DESTINATION_TYPES = {"expense", "liability"}
 ACCOUNT_ROLES = ("defense", "growth", "earmarked", "operating", "unassigned")
 
 
@@ -130,41 +131,20 @@ def calculate_idle_money(db: Session, client_id: int) -> dict:
     }
 
 
-def _upcoming_recurring_total(db: Session, client_id: int, days: int = 30) -> float:
-    today = date.today()
-    horizon = today + timedelta(days=days)
-    rows = (
-        db.query(models.RecurringTransaction)
-        .join(models.Account, models.Account.id == models.RecurringTransaction.to_account_id)
-        .filter(
-            and_(
-                models.RecurringTransaction.client_id == client_id,
-                models.RecurringTransaction.is_active.is_(True),
-                models.RecurringTransaction.next_due_date.isnot(None),
-                models.RecurringTransaction.next_due_date >= today,
-                models.RecurringTransaction.next_due_date <= horizon,
-                models.Account.account_type.in_(OUTFLOW_DESTINATION_TYPES),
-            )
-        )
-        .all()
-    )
-    return sum(
-        convert_amount(
-            db,
-            client_id,
-            row.amount,
-            row.currency,
-            as_of_date=row.next_due_date,
-        )
-        for row in rows
-    )
-
-
-def calculate_logical_balance(db: Session, client_id: int) -> float:
+def calculate_logical_balance(
+    db: Session,
+    client_id: int,
+    *,
+    ctx: BudgetContext | None = None,
+) -> float:
+    if ctx is None:
+        ctx = BudgetContext(db, client_id)
     return (
         _sum_liquid_assets(db, client_id)
         - _sum_unpaid_liabilities(db, client_id)
-        - _upcoming_recurring_total(db, client_id, days=30)
+        # Expense and non_cash_budget reserve unposted spending; debt is already
+        # covered by the whole outstanding liability balance above.
+        - planned_cash_outflow_remaining(ctx, current_period_key())
         - _sum_capsule_balance(db, client_id)
     )
 

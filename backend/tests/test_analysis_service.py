@@ -17,6 +17,8 @@ try:
         process_transaction,
     )
     from backend.app.services.analysis_service import calculate_idle_money, get_summary
+    from backend.app.services.budget_plan_store import resolve_budget_plan_id
+    from backend.app.services.periods import current_period_key
     from backend.app.services.reconcile_service import run_reconcile
     from backend.app.services.report_service import apply_monthly_report_proposal, generate_monthly_report
     from backend.app.services.accounting_service import update_transaction
@@ -36,6 +38,8 @@ except ModuleNotFoundError:
         process_transaction,
     )
     from app.services.analysis_service import calculate_idle_money, get_summary  # type: ignore[no-redef]
+    from app.services.budget_plan_store import resolve_budget_plan_id  # type: ignore[no-redef]
+    from app.services.periods import current_period_key  # type: ignore[no-redef]
     from app.services.reconcile_service import run_reconcile  # type: ignore[no-redef]
     from app.services.report_service import apply_monthly_report_proposal, generate_monthly_report  # type: ignore[no-redef]
     from app.services.accounting_service import update_transaction  # type: ignore[no-redef]
@@ -68,7 +72,7 @@ def _post_opening_balances(db, accounts: list[tuple[models.Account, float]]) -> 
             db.add(models.JournalEntry(transaction_id=tx.id, account_id=account.id, debit=0, credit=amount))
 
 
-def test_logical_balance_subtracts_due_recurring_outflow() -> None:
+def test_logical_balance_follows_the_plan_and_ignores_the_recurring_definition() -> None:
     db = _session()
     try:
         client = models.Client(id=1, name="test", general_settings={}, ai_config={})
@@ -112,10 +116,25 @@ def test_logical_balance_subtracts_due_recurring_outflow() -> None:
         )
         db.commit()
 
+        db.add(
+            models.MonthlyPlanLine(
+                client_id=1,
+                plan_id=resolve_budget_plan_id(db, 1),
+                target_period=current_period_key(),
+                line_type="expense",
+                account_id=rent.id,
+                name="Rent plan",
+                amount=50000,
+                is_active=True,
+            )
+        )
+        db.commit()
+
         summary = get_summary(db, client_id=1)
 
-        assert summary["effective_cash"] == 875000
-        assert summary["logical_balance"] == summary["effective_cash"] - 50000
+        # The 50,000 is subtracted once, from the plan; the definition contributes nothing.
+        assert summary["effective_cash"] == 825000
+        assert summary["logical_balance"] == 825000
     finally:
         db.close()
 
