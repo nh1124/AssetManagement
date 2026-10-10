@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from .. import models
 from .fx_service import convert_amount
 from .product_reserve_service import effective_budget_treatment
+from .periods import current_period_key
 from .schedule_rules import ensure_next_due_date
 
 
@@ -95,45 +96,79 @@ def sync_registry_from_product(db: Session, product: models.Product) -> models.R
     return entry
 
 
-def sync_registry_from_recurring(db: Session, recurring: models.RecurringTransaction) -> models.RegistryEntry:
+def upsert_registry_from_recurring_payload(
+    db: Session,
+    client_id: int,
+    payload: dict,
+    recurring: models.RecurringTransaction | None = None,
+) -> models.RecurringTransaction:
+    if recurring is not None and recurring.client_id != client_id:
+        raise ValueError("Recurring transaction belongs to another client")
+    defaults = {
+        "name": None, "amount": 0.0, "currency": "JPY",
+        "from_account_id": None, "to_account_id": None,
+        "frequency": "Monthly", "day_of_month": 1, "month_of_year": None,
+        "start_period": None, "end_period": None,
+        "is_active": True,
+    }
+    data = {
+        key: payload.get(key, getattr(recurring, key) if recurring is not None else default)
+        for key, default in defaults.items()
+    }
+    auto_post = payload.get("auto_post", recurring.auto_post if recurring is not None else True)
     entry = None
-    if recurring.source_registry_entry_id:
-        entry = db.query(models.RegistryEntry).filter(
-            models.RegistryEntry.id == recurring.source_registry_entry_id,
-            models.RegistryEntry.client_id == recurring.client_id,
-        ).first()
-    if not entry:
-        entry = db.query(models.RegistryEntry).filter(
-            models.RegistryEntry.client_id == recurring.client_id,
-            models.RegistryEntry.source_recurring_transaction_id == recurring.id,
-        ).first()
-    created = entry is None
-    if created:
-        entry = models.RegistryEntry(client_id=recurring.client_id)
+    if recurring is not None:
+        if recurring.source_registry_entry_id:
+            entry = db.query(models.RegistryEntry).filter(
+                models.RegistryEntry.id == recurring.source_registry_entry_id,
+                models.RegistryEntry.client_id == client_id,
+            ).first()
+        if entry is None:
+            entry = db.query(models.RegistryEntry).filter(
+                models.RegistryEntry.client_id == client_id,
+                models.RegistryEntry.source_recurring_transaction_id == recurring.id,
+            ).first()
+    if entry is None:
+        entry = models.RegistryEntry(client_id=client_id)
         db.add(entry)
 
-    line_type = account_line_type(recurring.from_account, recurring.to_account)
-    entry.name = recurring.name
-    entry.entry_type = account_entry_type(recurring.from_account, recurring.to_account)
-    entry.amount = recurring.amount or 0.0
-    entry.currency = recurring.currency or "JPY"
-    entry.frequency = recurring.frequency or "Monthly"
+    accounts = db.query(models.Account).filter(
+        models.Account.client_id == client_id,
+        models.Account.id.in_([data["from_account_id"], data["to_account_id"]]),
+    ).all()
+    accounts_by_id = {account.id: account for account in accounts}
+    source = accounts_by_id.get(data["from_account_id"])
+    destination = accounts_by_id.get(data["to_account_id"])
+    for key in ("name", "amount", "currency", "frequency", "day_of_month",
+                "month_of_year", "start_period", "end_period"):
+        setattr(entry, key, data[key])
+    entry.day_of_month = data["day_of_month"] or 1
     entry.frequency_days = None
-    entry.day_of_month = recurring.day_of_month or 1
-    entry.month_of_year = recurring.month_of_year
-    entry.line_type = line_type
-    entry.budget_account_id = recurring.to_account_id if line_type in {"expense", "debt_payment"} else None
-    entry.source_account_id = recurring.from_account_id
-    entry.destination_account_id = recurring.to_account_id
+    entry.source_account_id = data["from_account_id"]
+    entry.destination_account_id = data["to_account_id"]
+    entry.line_type = account_line_type(source, destination)
+    entry.entry_type = account_entry_type(source, destination)
+    entry.budget_account_id = data["to_account_id"] if entry.line_type in {"expense", "debt_payment"} else None
     entry.generate_recurring = True
-    if created:
-        entry.budget_active = True
-    entry.is_active = bool(recurring.is_active)
-    entry.source_recurring_transaction_id = recurring.id
-    entry.start_period = recurring.start_period
-    entry.end_period = recurring.end_period
-    recurring.source_registry_entry = entry
-    return entry
+    entry.budget_active = True
+    entry.is_active = bool(data["is_active"])
+    if recurring is not None:
+        entry.source_recurring_transaction_id = recurring.id
+    db.flush()
+    sync_recurring_from_registry(db, entry)
+    db.flush()
+    linked = db.query(models.RecurringTransaction).filter(
+        models.RecurringTransaction.id == entry.source_recurring_transaction_id,
+        models.RecurringTransaction.client_id == client_id,
+    ).first()
+    if linked is None:
+        raise ValueError("Registry entry did not produce a recurring transaction")
+    # The registry cannot express these posting-only fields yet.
+    linked.auto_post = auto_post
+    if "next_due_date" in payload:
+        linked.next_due_date = payload["next_due_date"]
+    db.flush()
+    return linked
 
 
 def linked_recurring_transactions(db: Session, entry: models.RegistryEntry) -> list[models.RecurringTransaction]:
@@ -166,7 +201,7 @@ def registry_to_recurring_data(entry: models.RegistryEntry) -> dict:
         "start_period": entry.start_period,
         "end_period": entry.end_period,
         "auto_post": True,
-        "is_active": entry.is_active,
+        "is_active": entry.is_active and (not entry.end_period or entry.end_period >= current_period_key()),
         "source_registry_entry_id": entry.id,
     }
 
@@ -252,7 +287,7 @@ def ensure_registry_entries(db: Session, client_id: int) -> None:
             models.RegistryEntry.client_id == client_id,
             models.RegistryEntry.source_recurring_transaction_id == recurring.id,
         ).first():
-            sync_registry_from_recurring(db, recurring)
+            upsert_registry_from_recurring_payload(db, client_id, {}, recurring)
             changed = True
 
     if changed:

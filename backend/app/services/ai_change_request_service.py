@@ -14,7 +14,7 @@ from ..services.ledger_service import ensure_default_accounts, post_transaction_
 from ..services.budget_plan_store import update_plan_lines
 from ..services.cache_service import invalidate_client
 from ..services.capsule_service import apply_capsule_rules_for_transaction
-from ..services.registry_service import sync_registry_from_recurring
+from ..services.registry_service import upsert_registry_from_recurring_payload
 from ..services.ai_policy_service import (
     AiOperationContext,
     evaluate_ai_operation,
@@ -526,10 +526,7 @@ def _apply_dispatch(db: Session, client_id: int, row: models.AiChangeRequest) ->
 
     if (row.resource, row.action) == ("recurring_transactions", "create"):
         data = schemas.RecurringTransactionCreate(**row.input_payload).model_dump()
-        recurring = models.RecurringTransaction(**data, client_id=client_id)
-        db.add(recurring)
-        db.flush()
-        sync_registry_from_recurring(db, recurring)
+        recurring = upsert_registry_from_recurring_payload(db, client_id, data)
         return {"recurring_transaction_id": recurring.id}
 
     if (row.resource, row.action) == ("recurring_transactions", "update"):
@@ -543,9 +540,7 @@ def _apply_dispatch(db: Session, client_id: int, row: models.AiChangeRequest) ->
         if not recurring:
             raise ValueError("Recurring transaction not found")
         data = schemas.RecurringTransactionUpdate(**row.input_payload).model_dump(exclude_unset=True)
-        for key, value in data.items():
-            setattr(recurring, key, value)
-        sync_registry_from_recurring(db, recurring)
+        recurring = upsert_registry_from_recurring_payload(db, client_id, data, recurring)
         db.flush()
         return {"recurring_transaction_id": recurring.id}
 

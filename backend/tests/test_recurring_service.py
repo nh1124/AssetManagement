@@ -197,7 +197,7 @@ def test_process_due_limits_each_recurring_to_24_periods():
         db.close()
 
 
-def test_process_due_deactivates_past_end_period_and_syncs_registry():
+def test_process_due_deactivates_past_end_period_and_leaves_the_registry_alone():
     db = _session()
     try:
         _client_and_accounts(db)
@@ -219,6 +219,8 @@ def test_process_due_deactivates_past_end_period_and_syncs_registry():
         sync_recurring_from_registry(db, entry)
         db.flush()
         recurring = db.query(models.RecurringTransaction).one()
+        # Simulate an active posting cursor that has reached the ended period.
+        recurring.is_active = True
         recurring.next_due_date = date(2026, 6, 15)
         db.commit()
 
@@ -226,8 +228,11 @@ def test_process_due_deactivates_past_end_period_and_syncs_registry():
 
         assert result["deactivated"] == [recurring.id]
         assert recurring.is_active is False
-        assert entry.is_active is False
+        # The end period preserves the registry definition as a historical budget row.
+        assert entry.is_active is True
         assert db.query(models.Transaction).count() == 0
+        sync_recurring_from_registry(db, entry)
+        assert recurring.is_active is False
     finally:
         db.close()
 

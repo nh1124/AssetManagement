@@ -8,7 +8,6 @@ from .. import models
 from .cache_service import invalidate_client
 from .ledger_service import post_transaction_journal
 from .capsule_service import apply_capsule_rules_for_transaction
-from .registry_service import sync_registry_from_recurring
 from .schedule_rules import (
     _month_due,
     _parse_period,
@@ -72,7 +71,6 @@ def process_due_for_client(db: Session, client_id: int, today: date | None = Non
                 if is_past_end_period(recurring, due):
                     recurring.is_active = False
 
-                    sync_registry_from_recurring(db, recurring)
                     deactivated.append(recurring.id)
                     break
 
@@ -84,7 +82,6 @@ def process_due_for_client(db: Session, client_id: int, today: date | None = Non
                 if recurring.next_due_date and is_past_end_period(recurring, recurring.next_due_date):
                     recurring.is_active = False
 
-                    sync_registry_from_recurring(db, recurring)
                     deactivated.append(recurring.id)
                     break
             if transaction_ids:

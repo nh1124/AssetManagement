@@ -6,14 +6,13 @@ from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.cache_service import invalidate_client
-from ..services.registry_service import detach_registry_from_recurring, sync_registry_from_recurring
+from ..services.registry_service import detach_registry_from_recurring, upsert_registry_from_recurring_payload
 from ..services.recurring_service import (
     post_recurring_transaction,
     process_due_for_client,
 )
 from ..services.schedule_rules import (
     advance_next_due_date,
-    ensure_next_due_date,
     is_past_end_period,
 )
 
@@ -42,15 +41,9 @@ def create_recurring_transaction(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
-    db_recurring = models.RecurringTransaction(
-        **recurring.model_dump(),
-        client_id=current_client.id
+    db_recurring = upsert_registry_from_recurring_payload(
+        db, current_client.id, recurring.model_dump()
     )
-    db.add(db_recurring)
-    db.flush()
-    ensure_next_due_date(db_recurring, date.today())
-    # Registry is the source of truth: link to (or create) the matching registry entry.
-    sync_registry_from_recurring(db, db_recurring)
     db.commit()
     db.refresh(db_recurring)
     invalidate_client(current_client.id)
@@ -71,20 +64,9 @@ def update_recurring_transaction(
     if not db_recurring:
         raise HTTPException(status_code=404, detail="Recurring transaction not found")
 
-    update_data = recurring_update.model_dump(exclude_unset=True)
-    explicit_next_due = "next_due_date" in recurring_update.model_fields_set
-    schedule_fields = {"frequency", "day_of_month", "month_of_year", "start_period"}
-    schedule_changed = any(
-        key in update_data and getattr(db_recurring, key) != update_data[key]
-        for key in schedule_fields
+    db_recurring = upsert_registry_from_recurring_payload(
+        db, current_client.id, recurring_update.model_dump(exclude_unset=True), db_recurring
     )
-    for key, value in update_data.items():
-        setattr(db_recurring, key, value)
-    if schedule_changed and not explicit_next_due:
-        db_recurring.next_due_date = None
-    ensure_next_due_date(db_recurring, date.today())
-
-    sync_registry_from_recurring(db, db_recurring)
     db.commit()
     db.refresh(db_recurring)
     invalidate_client(current_client.id)
@@ -106,20 +88,9 @@ def patch_recurring_transaction(
     if not db_recurring:
         raise HTTPException(status_code=404, detail="Recurring transaction not found")
 
-    update_data = recurring_update.model_dump(exclude_unset=True)
-    explicit_next_due = "next_due_date" in recurring_update.model_fields_set
-    schedule_fields = {"frequency", "day_of_month", "month_of_year", "start_period"}
-    schedule_changed = any(
-        key in update_data and getattr(db_recurring, key) != update_data[key]
-        for key in schedule_fields
+    db_recurring = upsert_registry_from_recurring_payload(
+        db, current_client.id, recurring_update.model_dump(exclude_unset=True), db_recurring
     )
-    for key, value in update_data.items():
-        setattr(db_recurring, key, value)
-    if schedule_changed and not explicit_next_due:
-        db_recurring.next_due_date = None
-    ensure_next_due_date(db_recurring, date.today())
-
-    sync_registry_from_recurring(db, db_recurring)
     db.commit()
     db.refresh(db_recurring)
     invalidate_client(current_client.id)

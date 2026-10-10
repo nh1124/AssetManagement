@@ -10,8 +10,7 @@ from .. import models
 from .budget_lines import assign_plan_line_identity
 from .budget_plan_store import resolve_budget_plan_id
 from .capsule_service import create_capsule_for_goal, upsert_capsule_holding
-from .registry_service import sync_registry_from_recurring
-from .schedule_rules import ensure_next_due_date
+from .registry_service import upsert_registry_from_recurring_payload
 
 
 ACTION_KINDS = {
@@ -143,24 +142,18 @@ def _apply_set_budget(db: Session, action: models.MonthlyAction) -> dict:
 
 def _apply_add_recurring(db: Session, action: models.MonthlyAction) -> dict:
     payload = action.payload or {}
-    recurring = models.RecurringTransaction(
-        client_id=action.client_id,
-        name=payload["name"],
-        amount=float(payload["amount"]),
-        currency=payload.get("currency") or "JPY",
-        from_account_id=payload.get("from_account_id"),
-        to_account_id=payload.get("to_account_id"),
-        frequency=payload.get("frequency", "Monthly"),
-        day_of_month=int(payload.get("day_of_month") or 1),
-        month_of_year=payload.get("month_of_year"),
-        is_active=True,
-    )
-    db.add(recurring)
-    db.flush()
-    # Without a due date the auto-post query skips it, so the definition would
-    # sit idle until the next startup backfill. The registry path sets it too.
-    ensure_next_due_date(recurring, date.today())
-    sync_registry_from_recurring(db, recurring)
+    recurring_payload = {
+        "name": payload["name"],
+        "amount": float(payload["amount"]),
+        "currency": payload.get("currency") or "JPY",
+        "from_account_id": payload.get("from_account_id"),
+        "to_account_id": payload.get("to_account_id"),
+        "frequency": payload.get("frequency", "Monthly"),
+        "day_of_month": int(payload.get("day_of_month") or 1),
+        "month_of_year": payload.get("month_of_year"),
+        "is_active": True,
+    }
+    recurring = upsert_registry_from_recurring_payload(db, action.client_id, recurring_payload)
     return {"recurring_id": recurring.id}
 
 
