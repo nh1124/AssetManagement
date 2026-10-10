@@ -11,6 +11,7 @@ from .budget_lines import assign_plan_line_identity
 from .budget_plan_store import resolve_budget_plan_id
 from .capsule_service import create_capsule_for_goal, upsert_capsule_holding
 from .registry_service import sync_registry_from_recurring
+from .schedule_rules import ensure_next_due_date
 
 
 ACTION_KINDS = {
@@ -146,7 +147,7 @@ def _apply_add_recurring(db: Session, action: models.MonthlyAction) -> dict:
         client_id=action.client_id,
         name=payload["name"],
         amount=float(payload["amount"]),
-        type=payload.get("type", "Expense"),
+        currency=payload.get("currency") or "JPY",
         from_account_id=payload.get("from_account_id"),
         to_account_id=payload.get("to_account_id"),
         frequency=payload.get("frequency", "Monthly"),
@@ -156,6 +157,9 @@ def _apply_add_recurring(db: Session, action: models.MonthlyAction) -> dict:
     )
     db.add(recurring)
     db.flush()
+    # Without a due date the auto-post query skips it, so the definition would
+    # sit idle until the next startup backfill. The registry path sets it too.
+    ensure_next_due_date(recurring, date.today())
     sync_registry_from_recurring(db, recurring)
     return {"recurring_id": recurring.id}
 

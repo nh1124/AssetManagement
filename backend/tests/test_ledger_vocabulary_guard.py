@@ -70,3 +70,59 @@ def test_no_service_or_router_reads_a_removed_field():
         for path in sorted((APP_DIR / directory).rglob("*.py")):
             offenders.extend(_transaction_attribute_reads(path))
     assert not offenders, "removed transaction fields are referenced:\n" + "\n".join(offenders)
+
+
+def _model_classes() -> dict[str, set[str]]:
+    """Every mapped class in models, with the keywords its constructor takes."""
+    from sqlalchemy import inspect as sa_inspect
+
+    classes: dict[str, set[str]] = {}
+    for name in dir(models):
+        candidate = getattr(models, name)
+        if not isinstance(candidate, type) or not hasattr(candidate, "__tablename__"):
+            continue
+        try:
+            mapper = sa_inspect(candidate)
+        except Exception:  # pragma: no cover - not a mapped class
+            continue
+        classes[name] = set(mapper.attrs.keys()) | set(candidate.__table__.columns.keys())
+    return classes
+
+
+def _model_constructor_keywords(path: pathlib.Path):
+    """`models.Thing(foo=...)` calls, as (class name, keyword, line)."""
+    tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not (
+            isinstance(func, ast.Attribute)
+            and isinstance(func.value, ast.Name)
+            and func.value.id == "models"
+        ):
+            continue
+        for keyword in node.keywords:
+            if keyword.arg is None:  # **kwargs, unknowable here
+                continue
+            yield func.attr, keyword.arg, node.lineno
+
+
+def test_no_model_is_constructed_with_a_field_it_does_not_have():
+    """A dropped column passed as a keyword is a TypeError at runtime.
+
+    That is how the add_recurring monthly action broke when
+    recurring_transactions.type went: nothing read the attribute, so the
+    attribute guard above stayed quiet, and no test applied that action.
+    """
+    known = _model_classes()
+    offenders: list[str] = []
+    for path in sorted(APP_DIR.rglob("*.py")):
+        for class_name, keyword, lineno in _model_constructor_keywords(path):
+            fields = known.get(class_name)
+            if fields is None or keyword in fields:
+                continue
+            offenders.append(
+                f"{path.relative_to(APP_DIR)}:{lineno} models.{class_name}({keyword}=...)"
+            )
+    assert not offenders, "model constructors pass unknown fields:\n" + "\n".join(offenders)
