@@ -9,7 +9,7 @@ from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.ledger_service import (
     ensure_default_accounts,
-    post_transaction_journal,
+    create_transaction as create_transaction_service,
     revert_transaction,
     update_transaction as update_transaction_service,
 )
@@ -127,15 +127,13 @@ def create_transaction(
     from_account_id = data.pop("from_account_id", None)
     to_account_id = data.pop("to_account_id", None)
     try:
-        db_transaction = models.Transaction(**data, client_id=current_client.id)
-        db.add(db_transaction)
-        db.flush()
-        post_transaction_journal(
+        db_transaction = create_transaction_service(
             db,
-            db_transaction,
-            legs,
+            client_id=current_client.id,
+            legs=legs,
             from_account_id=from_account_id,
             to_account_id=to_account_id,
+            **data,
         )
         apply_capsule_rules_for_transaction(db, db_transaction, commit=False)
         db.commit()

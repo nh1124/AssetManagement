@@ -10,7 +10,7 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
-from ..services.ledger_service import ensure_default_accounts, post_transaction_journal
+from ..services.ledger_service import ensure_default_accounts, create_transaction
 from ..services.budget_plan_store import update_plan_lines
 from ..services.cache_service import invalidate_client
 from ..services.capsule_service import apply_capsule_rules_for_transaction
@@ -506,11 +506,13 @@ def _apply_dispatch(db: Session, client_id: int, row: models.AiChangeRequest) ->
         legs = data.pop("legs", None)
         from_account_id = data.pop("from_account_id", None)
         to_account_id = data.pop("to_account_id", None)
-        tx = models.Transaction(**data, client_id=client_id)
-        db.add(tx)
-        db.flush()
-        post_transaction_journal(
-            db, tx, legs, from_account_id=from_account_id, to_account_id=to_account_id
+        tx = create_transaction(
+            db,
+            client_id=client_id,
+            legs=legs,
+            from_account_id=from_account_id,
+            to_account_id=to_account_id,
+            **data,
         )
         db.flush()
         apply_capsule_rules_for_transaction(db, tx, commit=False)

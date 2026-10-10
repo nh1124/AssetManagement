@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
-from ..services.ledger_service import ensure_default_accounts, post_transaction_journal
+from ..services.ledger_service import ensure_default_accounts, create_transaction
 from ..services.capsule_service import apply_capsule_rules_for_transaction
 from ..services.journal_legs import primary_accounts
 
@@ -199,15 +199,14 @@ def create_transaction_batch(
             legs = data.pop("legs", None)
             from_account_id = data.pop("from_account_id", None)
             to_account_id = data.pop("to_account_id", None)
-            tx = models.Transaction(
-                **data,
-                batch_id=batch.id,
+            tx = create_transaction(
+                db,
                 client_id=current_client.id,
-            )
-            db.add(tx)
-            db.flush()
-            post_transaction_journal(
-                db, tx, legs, from_account_id=from_account_id, to_account_id=to_account_id
+                legs=legs,
+                from_account_id=from_account_id,
+                to_account_id=to_account_id,
+                batch_id=batch.id,
+                **data,
             )
             apply_capsule_rules_for_transaction(db, tx, commit=False)
             created.append(tx)

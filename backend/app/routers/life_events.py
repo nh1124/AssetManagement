@@ -12,7 +12,7 @@ from ..services.goal_service import (
     get_strategy_dashboard,
 )
 from ..services.capsule_service import apply_capsule_rules_for_transaction, create_capsule_for_goal, capsule_balance
-from ..services.ledger_service import post_transaction_journal
+from ..services.ledger_service import create_transaction
 from ..services.cache_service import invalidate_client
 
 router = APIRouter(prefix="/life-events", tags=["life_events"])
@@ -187,17 +187,15 @@ def delete_life_event(
     from datetime import date as _date
     for cap in capsules_with_balance:
         bal = capsule_balance(db, cap)
-        tx = models.Transaction(
+        tx = create_transaction(
+            db,
             client_id=current_client.id,
             date=_date.today(),
             description=f"Goal deleted – funds returned from Capsule: {cap.name}",
             amount=bal,
             currency="JPY",
-        )
-        db.add(tx)
-        db.flush()
-        post_transaction_journal(
-            db, tx, from_account_id=cap.account_id, to_account_id=transfer_account_id
+            from_account_id=cap.account_id,
+            to_account_id=transfer_account_id,
         )
         apply_capsule_rules_for_transaction(db, tx, commit=False)
 

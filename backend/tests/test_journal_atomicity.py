@@ -10,7 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from backend.app import models, schemas
 from backend.app.database import Base
 from backend.app.routers import data_transfer, transactions as transaction_router
-from backend.app.services import ai_change_request_service, report_service
+from backend.app.services import ai_change_request_service, ledger_service, report_service
 from backend.app.services.ai_change_request_service import (
     apply_change_request,
     approve_change_request,
@@ -44,11 +44,18 @@ def _raise_journal_failure(*_args, **_kwargs) -> None:
     raise ValueError("forced journal failure")
 
 
+# Every caller creates the row and its legs through
+# ledger_service.create_transaction, so the failure is injected where the legs
+# are written: the row still reaches the session first, which is the state
+# these tests exist to prove nothing keeps.
+_JOURNAL_SEAM = (ledger_service, "_post_transaction_journal")
+
+
 def test_create_transaction_rolls_back_when_journal_posting_fails(monkeypatch) -> None:
     db = _session()
     try:
         client = _client(db)
-        monkeypatch.setattr(transaction_router, "post_transaction_journal", _raise_journal_failure)
+        monkeypatch.setattr(*_JOURNAL_SEAM, _raise_journal_failure)
 
         with pytest.raises(ValueError, match="forced journal failure"):
             transaction_router.create_transaction(
@@ -91,7 +98,7 @@ def test_report_goal_allocation_rolls_back_when_journal_posting_fails(monkeypatc
             "target_id": goal.id,
             "auto_executable": True,
         }
-        monkeypatch.setattr(report_service, "post_transaction_journal", _raise_journal_failure)
+        monkeypatch.setattr(*_JOURNAL_SEAM, _raise_journal_failure)
 
         if period_kind == "monthly":
             monkeypatch.setattr(
@@ -229,7 +236,7 @@ def test_ai_apply_rolls_back_transaction_when_journal_posting_fails(monkeypatch)
     try:
         client = _client(db)
         request = _approved_transaction_change_request(db, client)
-        monkeypatch.setattr(ai_change_request_service, "post_transaction_journal", _raise_journal_failure)
+        monkeypatch.setattr(*_JOURNAL_SEAM, _raise_journal_failure)
 
         with pytest.raises(HTTPException) as exc_info:
             apply_change_request(db, client.id, client.id, request.id)

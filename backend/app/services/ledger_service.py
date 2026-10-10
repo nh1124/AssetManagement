@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -310,6 +310,35 @@ def post_transaction_journal(
     _post_transaction_journal(
         db, transaction, legs, from_account_id=from_account_id, to_account_id=to_account_id
     )
+
+
+def create_transaction(
+    db: Session,
+    *,
+    client_id: int,
+    legs: Sequence | None = None,
+    from_account_id: int | None = None,
+    to_account_id: int | None = None,
+    **columns: Any,
+) -> models.Transaction:
+    """Create the row and its legs together because journal legs are not optional.
+
+    Does not commit; the caller owns the transaction boundary.
+    """
+    for name in columns:
+        if name not in models.Transaction.__table__.columns:
+            raise TypeError(f"Unknown keyword {name!r} for table transactions")
+    transaction = models.Transaction(client_id=client_id, **columns)
+    db.add(transaction)
+    db.flush()
+    _post_transaction_journal(
+        db,
+        transaction,
+        legs,
+        from_account_id=from_account_id,
+        to_account_id=to_account_id,
+    )
+    return transaction
 
 
 def _rollback_transaction_effects(db: Session, transaction: models.Transaction) -> None:

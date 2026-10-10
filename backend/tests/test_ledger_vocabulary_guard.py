@@ -92,20 +92,33 @@ def _model_classes() -> dict[str, set[str]]:
 def _model_constructor_keywords(path: pathlib.Path):
     """`models.Thing(foo=...)` calls, as (class name, keyword, line)."""
     tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+    creators = {"create_transaction"}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            creators.update(
+                alias.asname or alias.name
+                for alias in node.names
+                if alias.name == "create_transaction"
+            )
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         func = node.func
-        if not (
+        if isinstance(func, ast.Name) and func.id in creators:
+            # These parameters describe journal legs, not Transaction columns.
+            excluded = {"legs", "from_account_id", "to_account_id"}
+            for keyword in node.keywords:
+                if keyword.arg is not None and keyword.arg not in excluded:
+                    yield "Transaction", keyword.arg, node.lineno
+        elif (
             isinstance(func, ast.Attribute)
             and isinstance(func.value, ast.Name)
             and func.value.id == "models"
         ):
-            continue
-        for keyword in node.keywords:
-            if keyword.arg is None:  # **kwargs, unknowable here
-                continue
-            yield func.attr, keyword.arg, node.lineno
+            for keyword in node.keywords:
+                if keyword.arg is None:  # **kwargs, unknowable here
+                    continue
+                yield func.attr, keyword.arg, node.lineno
 
 
 def test_no_model_is_constructed_with_a_field_it_does_not_have():

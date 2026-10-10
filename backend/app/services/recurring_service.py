@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from .cache_service import invalidate_client
-from .ledger_service import post_transaction_journal
+from .ledger_service import create_transaction
 from .capsule_service import apply_capsule_rules_for_transaction
 from .schedule_rules import (
     _month_due,
@@ -24,20 +24,14 @@ def post_recurring_transaction(
     posting_date: date,
 ) -> models.Transaction:
     """Create a transaction and its journal entries without committing."""
-    transaction = models.Transaction(
+    transaction = create_transaction(
+        db,
         client_id=recurring.client_id,
         recurring_transaction_id=recurring.id,
         date=posting_date,
         description=recurring.name,
         amount=recurring.amount,
         currency=recurring.currency,
-    )
-    db.add(transaction)
-    db.flush()
-
-    post_transaction_journal(
-        db,
-        transaction,
         from_account_id=recurring.from_account_id,
         to_account_id=recurring.to_account_id,
     )

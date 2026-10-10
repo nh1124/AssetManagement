@@ -86,14 +86,6 @@ ALLOWED: dict[str, dict[str, str]] = {
     "registry_entries": {
         "routers/registry_entries": "registry CRUD lives in the router",
     },
-    "transactions": {
-        "routers/transactions": "E4 will move this to ledger_service.create_transaction",
-        "routers/life_events": "E4",
-        "routers/quick_templates": "E4",
-        "services/recurring_service": "E4",
-        "services/report_service": "E4",
-        "services/ai_change_request_service": "E4",
-    },
 }
 
 
