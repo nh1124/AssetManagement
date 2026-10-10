@@ -378,6 +378,19 @@ def revert_transaction(
         db.commit()
 
 
+def delete_transaction(db: Session, transaction: models.Transaction) -> None:
+    """Reverse balances before removing the legs that describe their effects.
+
+    Balance reversal, leg deletion, and row deletion belong together to preserve
+    ledger consistency. The caller owns the transaction boundary; this does not commit.
+    """
+    _rollback_transaction_effects(db, transaction)
+    db.query(models.JournalEntry).filter(
+        models.JournalEntry.transaction_id == transaction.id
+    ).delete()
+    db.delete(transaction)
+
+
 def update_transaction(
     db: Session,
     transaction_id: int,

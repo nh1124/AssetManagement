@@ -10,7 +10,7 @@ from ..dependencies import get_current_client
 from ..services.ledger_service import (
     ensure_default_accounts,
     create_transaction as create_transaction_service,
-    revert_transaction,
+    delete_transaction as delete_transaction_service,
     update_transaction as update_transaction_service,
 )
 from ..services.cache_service import invalidate_client
@@ -182,11 +182,7 @@ def delete_transaction(
         raise HTTPException(status_code=404, detail="Transaction not found")
 
     try:
-        revert_transaction(db, transaction, commit=False)
-        db.query(models.JournalEntry).filter(
-            models.JournalEntry.transaction_id == transaction_id
-        ).delete()
-        db.delete(transaction)
+        delete_transaction_service(db, transaction)
         db.commit()
     except Exception:
         db.rollback()
