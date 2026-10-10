@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import date
 
 from .. import models
-from .periods import _last_day_of_month, add_months, period_to_range
+from .periods import add_months
 
 
 def _account_has_liability_schedule(account: models.Account) -> bool:
@@ -43,23 +43,6 @@ def _liability_activity_allocations(account: models.Account, activity_date: date
         installment_amount = amount / months
         return [(add_months(first_period, index), installment_amount) for index in range(months)]
     return [(first_period, amount)]
-
-
-def _recurring_activity_date(row: models.RecurringTransaction, period: str) -> date:
-    start, _ = period_to_range(period)
-    day = min(max(1, row.day_of_month or 1), _last_day_of_month(period))
-    return date(start.year, start.month, day)
-
-
-def _recurring_applies_to_period(row: models.RecurringTransaction, period: str) -> bool:
-    if row.start_period and row.start_period > period:
-        return False
-    if row.end_period and row.end_period < period:
-        return False
-    if row.frequency == "Yearly":
-        month = int(period.split("-")[1])
-        return not row.month_of_year or row.month_of_year == month
-    return True
 
 
 def _apply_liability_payment_policy(account: models.Account, amount: float) -> float:
