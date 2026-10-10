@@ -213,14 +213,19 @@ def delete_life_event(
     db.delete(db_event)
     db.flush()
 
-    # Delete the (now-empty) earmarked accounts that belonged to capsules
+    # Removing journal history would leave each transaction's counterparty unbalanced.
+    # Keep accounts with history inactive even when capsule holdings are empty.
     for account_id in account_ids_to_delete:
         account = db.get(models.Account, account_id)
-        if account:
-            db.query(models.JournalEntry).filter(
-                models.JournalEntry.account_id == account_id
-            ).delete(synchronize_session=False)
-            db.delete(account)
+        if not account:
+            continue
+        has_history = db.query(models.JournalEntry).filter(
+            models.JournalEntry.account_id == account_id
+        ).first() is not None
+        if has_history:
+            account.is_active = False
+            continue
+        db.delete(account)
 
     db.commit()
     invalidate_client(current_client.id)
