@@ -200,7 +200,6 @@ def registry_to_recurring_data(entry: models.RegistryEntry) -> dict:
         "month_of_year": entry.month_of_year if entry.frequency == "Yearly" else None,
         "start_period": entry.start_period,
         "end_period": entry.end_period,
-        "auto_post": True,
         "is_active": entry.is_active and (not entry.end_period or entry.end_period >= current_period_key()),
         "source_registry_entry_id": entry.id,
     }

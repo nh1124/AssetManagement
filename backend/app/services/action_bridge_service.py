@@ -10,7 +10,7 @@ from .. import models
 from .budget_lines import assign_plan_line_identity
 from .budget_plan_store import resolve_budget_plan_id
 from .capsule_service import create_capsule_for_goal, upsert_capsule_holding
-from .registry_service import upsert_registry_from_recurring_payload
+from .registry_service import sync_recurring_from_registry, upsert_registry_from_recurring_payload
 
 
 ACTION_KINDS = {
@@ -165,7 +165,15 @@ def _apply_pause_recurring(db: Session, action: models.MonthlyAction) -> dict:
     ).first()
     if not recurring:
         raise ValueError("Recurring transaction not found")
-    recurring.is_active = False
+    entry = db.query(models.RegistryEntry).filter(
+        models.RegistryEntry.id == recurring.source_registry_entry_id,
+        models.RegistryEntry.client_id == action.client_id,
+    ).first()
+    if entry is None:
+        raise ValueError("Recurring transaction not found")
+    # A paused definition moves no money, so its entry must stop forecasting it too.
+    entry.is_active = False
+    sync_recurring_from_registry(db, entry)
     return {"recurring_id": recurring.id, "is_active": False}
 
 

@@ -240,7 +240,7 @@ def posted_amount_for_plan_line(
             line,
             period,
             account_id=account_id,
-            source_account_id=_line_attr(line, "source_account_id"),
+            source_account_id=_cash_flow_line_source_account_id(ctx, line),
         )
     )
 

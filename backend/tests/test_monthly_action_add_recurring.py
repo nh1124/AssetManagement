@@ -81,6 +81,7 @@ def test_pausing_deactivates_the_definition() -> None:
         registry_entry = models.RegistryEntry(
             client_id=1,
             name="recurring owner",
+            generate_recurring=True,
         )
         db.add(registry_entry)
         db.flush()

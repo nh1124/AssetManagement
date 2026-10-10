@@ -151,3 +151,67 @@ def test_capsule_allocation_subtracts_month_movement_not_balance(card_plan, monk
     assert item["posted_amount"] == 4000
     assert item["planned_remaining"] == 0
     assert item["posted_amount"] + item["planned_remaining"] == line["suggested_amount"]
+
+
+@pytest.mark.parametrize("posted", [0, 2000, 5000])
+def test_inferred_card_source_settles_only_remaining_plan(card_plan, posted):
+    db, card, subs = card_plan
+    db.add(models.RegistryEntry(
+        client_id=1,
+        name="subscriptions",
+        amount=5000,
+        frequency="Monthly",
+        line_type="expense",
+        source_account_id=card.id,
+        destination_account_id=subs.id,
+        budget_account_id=subs.id,
+        budget_active=True,
+        is_active=True,
+    ))
+    plan = _plan(db, card, subs)
+    plan.source_account_id = None
+    if posted:
+        _post(db, card, subs, posted)
+    db.commit()
+    ctx = BudgetContext(db, 1)
+    assert budget_actuals._cash_flow_line_source_account_id(ctx, plan) == card.id
+    assert budget_actuals.posted_amount_for_plan_line(ctx, plan, "2026-10") == posted
+    line = credit_settlement_plan_lines(ctx, "2026-11")[0]
+    assert line["suggested_amount"] == 5000
+    item = line["suggested_items"][0]
+    assert item["posted_amount"] == posted
+    assert item["planned_remaining"] == 5000 - posted
+
+
+def test_settlement_queries_plan_lines_once_for_shared_statement_month(card_plan):
+    from sqlalchemy import event
+
+    db, card, subs = card_plan
+    other = models.Account(
+        client_id=1,
+        name="other card",
+        account_type="liability",
+        liability_kind="card",
+        liability_payment_month_offset=1,
+        liability_payment_policy="full",
+        balance=0,
+    )
+    db.add(other)
+    db.flush()
+    _plan(db, card, subs)
+    _plan(db, other, subs, 3000)
+    db.commit()
+    queries = []
+
+    def capture_query(connection, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().upper().startswith("SELECT") and "FROM monthly_plan_lines" in statement:
+            queries.append(statement)
+
+    engine = db.get_bind()
+    event.listen(engine, "before_cursor_execute", capture_query)
+    try:
+        lines = credit_settlement_plan_lines(BudgetContext(db, 1), "2026-11")
+    finally:
+        event.remove(engine, "before_cursor_execute", capture_query)
+    assert sorted(line["suggested_amount"] for line in lines) == [3000, 5000]
+    assert len(queries) == 1

@@ -20,7 +20,11 @@ from __future__ import annotations
 from datetime import timedelta
 
 from .. import models
-from .budget_actuals import cash_flow_actual_for_plan_line, posted_amount_for_plan_line
+from .budget_actuals import (
+    _cash_flow_line_source_account_id,
+    cash_flow_actual_for_plan_line,
+    posted_amount_for_plan_line,
+)
 from .budget_context import BudgetContext
 from .budget_plan_store import resolve_budget_plan_id
 from .fx_service import calculate_account_valued_balance
@@ -142,16 +146,24 @@ def _build_credit_settlement_plan_lines(
                 )
 
     plan_remaining_by_account: dict[int, float] = {}
+    # Cards sharing a statement month must use the same resolved plan snapshot.
+    resolved_by_period: dict[str, list[tuple[models.MonthlyPlanLine, int | None]]] = {}
     for account in accounts_by_id.values():
         statement_period = add_months(period, -(account.liability_payment_month_offset or 0))
-        plan_rows = ctx.db.query(models.MonthlyPlanLine).filter(
-            models.MonthlyPlanLine.client_id == ctx.client_id,
-            models.MonthlyPlanLine.target_period == statement_period,
-            models.MonthlyPlanLine.plan_id == plan_id,
-            models.MonthlyPlanLine.source_account_id == account.id,
-            models.MonthlyPlanLine.is_active.is_(True),
-        ).all()
-        for line in plan_rows:
+        if statement_period not in resolved_by_period:
+            plan_rows = ctx.db.query(models.MonthlyPlanLine).filter(
+                models.MonthlyPlanLine.client_id == ctx.client_id,
+                models.MonthlyPlanLine.target_period == statement_period,
+                models.MonthlyPlanLine.plan_id == plan_id,
+                models.MonthlyPlanLine.is_active.is_(True),
+            ).all()
+            resolved_by_period[statement_period] = [
+                (line, _cash_flow_line_source_account_id(ctx, line))
+                for line in plan_rows
+            ]
+        for line, source_account_id in resolved_by_period[statement_period]:
+            if source_account_id != account.id:
+                continue
             # Subtract each line's posted part from its own plan, so only what
             # the plan still expects is added to the ledger activity above.
             remaining = max(
