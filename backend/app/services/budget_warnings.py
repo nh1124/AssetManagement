@@ -18,10 +18,11 @@ def budget_setup_warnings(
     ctx: BudgetContext,
     period: str,
     plan_models: list[models.MonthlyPlanLine],
+    plan_id: int | None = None,
 ) -> list[dict]:
     return [
         *recurrence_setup_warnings(ctx, period, plan_models),
-        *credit_settlement_setup_warnings(ctx, period, plan_models),
+        *credit_settlement_setup_warnings(ctx, period, plan_models, plan_id),
         *product_reserve_setup_warnings(ctx, plan_models),
     ]
 
@@ -125,6 +126,7 @@ def credit_settlement_setup_warnings(
     ctx: BudgetContext,
     period: str,
     plan_models: list[models.MonthlyPlanLine],
+    plan_id: int | None = None,
 ) -> list[dict]:
     plan_by_account = {
         line.account_id: line
@@ -132,7 +134,7 @@ def credit_settlement_setup_warnings(
         if line.line_type == "debt_payment" and line.account_id is not None
     }
     warnings = []
-    for settlement in credit_settlement_plan_lines(ctx, period):
+    for settlement in credit_settlement_plan_lines(ctx, period, plan_id):
         amount = round(settlement.get("suggested_amount") or 0.0, 0)
         matched = plan_by_account.get(settlement.get("account_id"))
         if not matched:

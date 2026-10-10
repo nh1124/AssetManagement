@@ -208,7 +208,7 @@ def get_budget_summary(
         if capsule.id not in existing_capsule_ids:
             plan_lines.append(_virtual_capsule_line(ctx, capsule, period))
     plan_lines = _merge_registry_lines(plan_lines, registry_plan_lines(ctx, period))
-    plan_lines = _merge_credit_settlement_lines(plan_lines, credit_settlement_plan_lines(ctx, period))
+    plan_lines = _merge_credit_settlement_lines(plan_lines, credit_settlement_plan_lines(ctx, period, plan_id))
 
     expense_lines = [line for line in plan_lines if line["line_type"] == "expense"]
     allocation_lines = [line for line in plan_lines if line["line_type"] == "allocation"]

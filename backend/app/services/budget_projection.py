@@ -128,7 +128,7 @@ def _cash_flow_projection(
         debt = remaining_flow["debt"]
         net = remaining_flow["operating"]
         cash += net
-        setup_warnings = budget_setup_warnings(ctx, period, lines)
+        setup_warnings = budget_setup_warnings(ctx, period, lines, plan_id)
         rows.append({
             "period": period,
             "inflow": round(income, 0),

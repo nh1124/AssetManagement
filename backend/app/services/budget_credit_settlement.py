@@ -2,8 +2,8 @@
 
 A card payment does not move cash when it happens, it moves cash when the card
 is settled. These lines reconstruct that: activity on a card -- past
-transactions and recurring definitions alike -- is allocated to the settlement
-period the account's closing day, payment offset and installment policy imply,
+transactions allocated by the account's statement schedule and remaining
+card-funded plan amounts -- is assigned to the settlement period,
 then turned into a debt_payment suggestion for that period.
 
 "Activity on a card" means a credit leg on an account whose liability_kind is
@@ -20,18 +20,17 @@ from __future__ import annotations
 from datetime import timedelta
 
 from .. import models
-from .budget_actuals import cash_flow_actual_for_plan_line
+from .budget_actuals import cash_flow_actual_for_plan_line, posted_amount_for_plan_line
 from .budget_context import BudgetContext
-from .fx_service import calculate_account_valued_balance, convert_amount
+from .budget_plan_store import resolve_budget_plan_id
+from .fx_service import calculate_account_valued_balance
 from .journal_legs import legs_in_range
 from .liability_schedule import (
     _account_has_liability_schedule,
     _apply_liability_payment_policy,
     _liability_activity_allocations,
-    _recurring_activity_date,
-    _recurring_applies_to_period,
 )
-from .periods import add_months, period_months_between, period_to_range
+from .periods import add_months, period_to_range
 
 
 def _credit_settlement_plan_line(
@@ -39,6 +38,8 @@ def _credit_settlement_plan_line(
     account: models.Account,
     period: str,
     amount: float,
+    posted_amount: float,
+    planned_remaining: float,
 ) -> dict:
     policy = account.liability_payment_policy or "full"
     line = {
@@ -63,6 +64,8 @@ def _credit_settlement_plan_line(
             "name": account.name,
             "amount": round(amount, 0),
             "source": "credit_settlement",
+            "posted_amount": round(posted_amount, 0),
+            "planned_remaining": round(planned_remaining, 0),
             "payment_policy": policy,
             "closing_day": account.liability_closing_day,
             "payment_day": account.liability_payment_day,
@@ -85,8 +88,14 @@ def _credit_settlement_plan_line(
     return line
 
 
-def credit_settlement_plan_lines(ctx: BudgetContext, period: str) -> list[dict]:
-    return ctx.credit_settlement_lines(period, lambda: _build_credit_settlement_plan_lines(ctx, period))
+def credit_settlement_plan_lines(
+    ctx: BudgetContext, period: str, plan_id: int | None = None,
+) -> list[dict]:
+    plan_id = resolve_budget_plan_id(ctx.db, ctx.client_id, plan_id)
+    return ctx.credit_settlement_lines(
+        f"{period}:{plan_id}",
+        lambda: _build_credit_settlement_plan_lines(ctx, period, plan_id),
+    )
 
 
 def _settling_accounts(ctx: BudgetContext) -> dict[int, models.Account]:
@@ -100,7 +109,10 @@ def _settling_accounts(ctx: BudgetContext) -> dict[int, models.Account]:
     }
 
 
-def _build_credit_settlement_plan_lines(ctx: BudgetContext, period: str) -> list[dict]:
+def _build_credit_settlement_plan_lines(
+    ctx: BudgetContext, period: str, plan_id: int | None = None,
+) -> list[dict]:
+    plan_id = resolve_budget_plan_id(ctx.db, ctx.client_id, plan_id)
     accounts_by_id = _settling_accounts(ctx)
     if not accounts_by_id:
         return []
@@ -129,40 +141,27 @@ def _build_credit_settlement_plan_lines(ctx: BudgetContext, period: str) -> list
                     credit_usage_by_account.get(leg.account.id, 0.0) + amount
                 )
 
-    recurring_credit_by_account: dict[int, float] = {}
-    # A recurring definition funded from a card is future card activity,
-    # whatever its type says.
-    recurring_rows = ctx.db.query(models.RecurringTransaction).filter(
-        models.RecurringTransaction.client_id == ctx.client_id,
-        models.RecurringTransaction.is_active.is_(True),
-        models.RecurringTransaction.from_account_id.in_(accounts_by_id or {-1}),
-    ).all()
-    for row in recurring_rows:
-        account = accounts_by_id.get(row.from_account_id)
-        if not account:
-            continue
-        # Everything before next_due_date has been posted, and posted activity
-        # is already counted above. Projecting it again charged the card twice
-        # for the same subscription.
-        first_unposted = (
-            f"{row.next_due_date.year}-{row.next_due_date.month:02d}"
-            if row.next_due_date
-            else None
-        )
-        for activity_period in period_months_between(search_start_period, period):
-            if not _recurring_applies_to_period(row, activity_period):
-                continue
-            if first_unposted and activity_period < first_unposted:
-                continue
-            activity_date = _recurring_activity_date(row, activity_period)
-            recurring_amount = convert_amount(ctx.db, ctx.client_id, row.amount or 0.0, row.currency or "JPY", as_of_date=activity_date)
-            for settlement_period, amount in _liability_activity_allocations(account, activity_date, recurring_amount):
-                if settlement_period == period:
-                    recurring_credit_by_account[row.from_account_id] = (
-                        recurring_credit_by_account.get(row.from_account_id, 0.0)
-                        + amount
-                    )
-    account_ids = set(credit_usage_by_account) | set(recurring_credit_by_account)
+    plan_remaining_by_account: dict[int, float] = {}
+    for account in accounts_by_id.values():
+        statement_period = add_months(period, -(account.liability_payment_month_offset or 0))
+        plan_rows = ctx.db.query(models.MonthlyPlanLine).filter(
+            models.MonthlyPlanLine.client_id == ctx.client_id,
+            models.MonthlyPlanLine.target_period == statement_period,
+            models.MonthlyPlanLine.plan_id == plan_id,
+            models.MonthlyPlanLine.source_account_id == account.id,
+            models.MonthlyPlanLine.is_active.is_(True),
+        ).all()
+        for line in plan_rows:
+            # Subtract each line's posted part from its own plan, so only what
+            # the plan still expects is added to the ledger activity above.
+            remaining = max(
+                0.0,
+                (line.amount or 0.0) - posted_amount_for_plan_line(ctx, line, statement_period),
+            )
+            plan_remaining_by_account[account.id] = (
+                plan_remaining_by_account.get(account.id, 0.0) + remaining
+            )
+    account_ids = set(credit_usage_by_account) | set(plan_remaining_by_account)
     if not account_ids:
         return []
 
@@ -172,14 +171,18 @@ def _build_credit_settlement_plan_lines(ctx: BudgetContext, period: str) -> list
         if not account:
             continue
         balance = max(0.0, calculate_account_valued_balance(ctx.db, account))
-        activity_amount = credit_usage_by_account.get(account.id, 0.0) + recurring_credit_by_account.get(account.id, 0.0)
+        activity_amount = credit_usage_by_account.get(account.id, 0.0) + plan_remaining_by_account.get(account.id, 0.0)
         if _account_has_liability_schedule(account):
             raw_amount = activity_amount if activity_amount > 0 else (balance if (account.liability_payment_month_offset or 0) == 0 else 0.0)
         else:
             raw_amount = max(balance, activity_amount)
         amount = _apply_liability_payment_policy(account, raw_amount)
         if amount > 0:
-            result.append(_credit_settlement_plan_line(ctx, account, period, amount))
+            result.append(_credit_settlement_plan_line(
+                ctx, account, period, amount,
+                credit_usage_by_account.get(account.id, 0.0),
+                plan_remaining_by_account.get(account.id, 0.0),
+            ))
     return result
 
 

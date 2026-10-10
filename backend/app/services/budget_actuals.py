@@ -219,6 +219,32 @@ def claimed_leg_ids(
     }
 
 
+def posted_amount_for_plan_line(
+    ctx: BudgetContext,
+    line: models.MonthlyPlanLine | dict,
+    period: str,
+) -> float:
+    """Return posted month movement rather than actual_for_plan_line's capsule balance."""
+    target_type = _line_attr(line, "target_type")
+    target_id = _line_attr(line, "target_id")
+    account_id = _line_attr(line, "account_id")
+    if target_type == "capsule" and target_id and not account_id:
+        account_id = ctx.capsule_account_ids.get(target_id)
+    side = _LINE_SIDE.get(_line_attr(line, "line_type"))
+    if side is None:
+        return 0.0
+    return sum(
+        _leg_amount(leg, side)
+        for leg in _matching_legs(
+            ctx,
+            line,
+            period,
+            account_id=account_id,
+            source_account_id=_line_attr(line, "source_account_id"),
+        )
+    )
+
+
 def cash_flow_actual_for_plan_line(
     ctx: BudgetContext,
     line: models.MonthlyPlanLine | dict,

@@ -1,18 +1,10 @@
-"""A card charge the recurring rule already posted is not projected again.
-
-The settlement projection adds the card activity posted in the statement month
-to the card-funded recurring definitions that fall in it. For a month already
-posted that is the same subscription twice. It stayed hidden while the card had
-no statement schedule, because the projection then took the whole balance and
-ignored the activity total.
-
-next_due_date is how far posting has got: occurrences before it are on the
-ledger already.
-"""
+"""Card settlements add posted activity and the plan's remaining expectation."""
 
 from __future__ import annotations
 
 from datetime import date
+
+import pytest
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -20,12 +12,14 @@ from sqlalchemy.orm import sessionmaker
 try:
     from backend.app import models
     from backend.app.database import Base
+    from backend.app.services import budget_actuals
     from backend.app.services.budget_context import BudgetContext
     from backend.app.services.budget_credit_settlement import credit_settlement_plan_lines
     from backend.app.services.ledger_service import process_transaction
 except ModuleNotFoundError:  # pragma: no cover - import shim used by the container
     from app import models  # type: ignore[no-redef]
     from app.database import Base  # type: ignore[no-redef]
+    from app.services import budget_actuals  # type: ignore[no-redef]
     from app.services.budget_context import BudgetContext  # type: ignore[no-redef]
     from app.services.budget_credit_settlement import credit_settlement_plan_lines  # type: ignore[no-redef]
     from app.services.ledger_service import process_transaction  # type: ignore[no-redef]
@@ -56,90 +50,59 @@ def _card_and_subscription(db):
     return card, subs
 
 
-def _recurring(db, card, subs, *, next_due: date) -> models.RecurringTransaction:
-    row = models.RecurringTransaction(
-        client_id=1,
-        name="a monthly subscription",
-        amount=3000,
-        currency="JPY",
-        from_account_id=card.id,
-        to_account_id=subs.id,
-        frequency="Monthly",
-        day_of_month=11,
-        next_due_date=next_due,
-        auto_post=True,
-        is_active=True,
+def _plan(db, card, subs, amount=5000, plan_id=None):
+    row = models.MonthlyPlanLine(
+        client_id=1, plan_id=plan_id, target_period="2026-10", line_type="expense",
+        target_type="account", account_id=subs.id, source_account_id=card.id,
+        name="subscriptions", amount=amount, is_active=True,
     )
     db.add(row)
     db.flush()
     return row
 
 
-def _settlement(db, period: str) -> float:
-    ctx = BudgetContext(db, 1)
-    lines = [
-        line for line in credit_settlement_plan_lines(ctx, period)
-        if line.get("source_kind") == "credit_settlement"
-    ]
-    return sum(line.get("suggested_amount") or 0.0 for line in lines)
+def _post(db, card, subs, amount):
+    tx = models.Transaction(client_id=1, date=date(2026, 10, 11), description="subscription", amount=amount, currency="JPY")
+    db.add(tx)
+    db.flush()
+    process_transaction(db, tx, from_account_id=card.id, to_account_id=subs.id)
 
 
-def test_a_posted_occurrence_is_counted_once() -> None:
+@pytest.fixture
+def card_plan(monkeypatch):
+    monkeypatch.setattr(budget_actuals, "current_period_key", lambda: "2026-10")
     db = _session()
+    card, subs = _card_and_subscription(db)
     try:
-        card, subs = _card_and_subscription(db)
-        # October is posted; the rule has moved on to November.
-        _recurring(db, card, subs, next_due=date(2026, 11, 11))
-        tx = models.Transaction(
-            client_id=1, date=date(2026, 10, 11), description="a monthly subscription",
-            amount=3000, currency="JPY",
-        )
-        db.add(tx)
-        db.flush()
-        process_transaction(db, tx, from_account_id=card.id, to_account_id=subs.id)
-        db.commit()
-
-        # The October statement is paid in November: the charge, once.
-        assert _settlement(db, "2026-11") == 3000
+        yield db, card, subs
     finally:
         db.close()
 
 
-def test_an_occurrence_still_to_come_is_projected() -> None:
-    db = _session()
-    try:
-        card, subs = _card_and_subscription(db)
-        _recurring(db, card, subs, next_due=date(2026, 10, 11))
-        db.commit()
+def test_a_posted_occurrence_is_counted_once(card_plan):
+    db, card, subs = card_plan
+    db.add(models.RecurringTransaction(
+        client_id=1, name="subscription", amount=3000, currency="JPY",
+        from_account_id=card.id, to_account_id=subs.id, frequency="Monthly",
+        day_of_month=11, next_due_date=date(2026, 10, 11), is_active=True,
+    ))
+    _post(db, card, subs, 3000)
+    db.commit()
+    assert credit_settlement_plan_lines(BudgetContext(db, 1), "2026-11")[0]["suggested_amount"] == 3000
 
-        # Nothing posted yet, so October's statement is the projection alone.
-        assert _settlement(db, "2026-11") == 3000
-    finally:
-        db.close()
+
+def test_an_unspent_plan_line_is_added_to_settlement(card_plan):
+    db, card, subs = card_plan
+    _plan(db, card, subs, 3000)
+    db.commit()
+    assert credit_settlement_plan_lines(BudgetContext(db, 1), "2026-11")[0]["suggested_amount"] == 3000
 
 
-def test_a_posted_rule_and_a_pending_one_are_each_counted_once() -> None:
-    db = _session()
-    try:
-        card, subs = _card_and_subscription(db)
-        # Two card-funded subscriptions in the same statement month: one the
-        # auto-post has already written and moved past, one still to come.
-        _recurring(db, card, subs, next_due=date(2026, 11, 11))
-        pending = _recurring(db, card, subs, next_due=date(2026, 10, 20))
-        pending.amount = 5000
-        pending.day_of_month = 20
-        db.flush()
-        tx = models.Transaction(
-            client_id=1, date=date(2026, 10, 11), description="a monthly subscription",
-            amount=3000, currency="JPY",
-        )
-        db.add(tx)
-        db.flush()
-        process_transaction(db, tx, from_account_id=card.id, to_account_id=subs.id)
-        db.commit()
-
-        # The posted 3,000 off the ledger and the pending 5,000 from the
-        # definition, each exactly once.
-        assert _settlement(db, "2026-11") == 8000
-    finally:
-        db.close()
+def test_a_fully_spent_plan_line_is_counted_once(card_plan):
+    db, card, subs = card_plan
+    _plan(db, card, subs, 3000)
+    _post(db, card, subs, 3000)
+    db.commit()
+    line = credit_settlement_plan_lines(BudgetContext(db, 1), "2026-11")[0]
+    assert line["suggested_amount"] == 3000
+    assert line["suggested_items"][0]["planned_remaining"] == 0
