@@ -9,7 +9,7 @@ from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.cache_service import invalidate_client
-from ..services.registry_service import linked_recurring_transactions, normalise_registry_flags, sync_recurring_from_registry
+from ..services.registry_service import create_entry, delete_entry, list_entries, update_entry
 
 
 router = APIRouter(prefix="/registry-entries", tags=["registry-entries"])
@@ -51,27 +51,12 @@ def enrich_entry(entry: models.RegistryEntry) -> dict:
     }
 
 
-def validate_accounts(db: Session, client_id: int, data: dict) -> None:
-    for key in ("budget_account_id", "source_account_id", "destination_account_id"):
-        account_id = data.get(key)
-        if account_id is None:
-            continue
-        account = db.query(models.Account).filter(
-            models.Account.id == account_id,
-            models.Account.client_id == client_id,
-        ).first()
-        if not account:
-            raise HTTPException(status_code=400, detail=f"{key} must belong to this client")
-
-
 @router.get("/", response_model=List[schemas.RegistryEntry])
 def get_registry_entries(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    entries = db.query(models.RegistryEntry).filter(
-        models.RegistryEntry.client_id == current_client.id,
-    ).order_by(models.RegistryEntry.entry_type, models.RegistryEntry.name).all()
+    entries = list_entries(db, current_client.id)
     return [enrich_entry(entry) for entry in entries]
 
 
@@ -81,15 +66,7 @@ def create_registry_entry(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    data = payload.model_dump()
-    validate_accounts(db, current_client.id, data)
-    entry = models.RegistryEntry(**data, client_id=current_client.id)
-    db.add(entry)
-    db.flush()
-    normalise_registry_flags(entry)
-    sync_recurring_from_registry(db, entry)
-    db.commit()
-    db.refresh(entry)
+    entry = create_entry(db, current_client.id, payload.model_dump())
     invalidate_client(current_client.id)
     return enrich_entry(entry)
 
@@ -101,20 +78,9 @@ def update_registry_entry(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    entry = db.query(models.RegistryEntry).filter(
-        models.RegistryEntry.id == entry_id,
-        models.RegistryEntry.client_id == current_client.id,
-    ).first()
-    if not entry:
+    entry = update_entry(db, current_client.id, entry_id, payload.model_dump())
+    if entry is None:
         raise HTTPException(status_code=404, detail="Registry entry not found")
-    data = payload.model_dump()
-    validate_accounts(db, current_client.id, data)
-    for key, value in data.items():
-        setattr(entry, key, value)
-    normalise_registry_flags(entry)
-    sync_recurring_from_registry(db, entry)
-    db.commit()
-    db.refresh(entry)
     invalidate_client(current_client.id)
     return enrich_entry(entry)
 
@@ -125,17 +91,6 @@ def delete_registry_entry(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    entry = db.query(models.RegistryEntry).filter(
-        models.RegistryEntry.id == entry_id,
-        models.RegistryEntry.client_id == current_client.id,
-    ).first()
-    if not entry:
+    if not delete_entry(db, current_client.id, entry_id):
         raise HTTPException(status_code=404, detail="Registry entry not found")
-    for recurring in linked_recurring_transactions(db, entry):
-        db.delete(recurring)
-    entry.source_recurring_transaction_id = None
-    entry.is_active = False
-    entry.budget_active = False
-    entry.generate_recurring = False
-    db.commit()
     invalidate_client(current_client.id)

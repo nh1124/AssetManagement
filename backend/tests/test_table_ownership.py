@@ -75,9 +75,6 @@ ALLOWED: dict[str, dict[str, str]] = {
     "clients": {
         "main": "development seeding of the default client at startup",
     },
-    "exchange_rates": {
-        "routers/exchange_rates": "manual rate entry lives in the router",
-    },
     "milestones": {
         "routers/roadmap": "milestone CRUD lives in the router",
     },
@@ -87,9 +84,6 @@ ALLOWED: dict[str, dict[str, str]] = {
     "monthly_plan_lines": {
         "routers/budget_plans": "plan line CRUD and batch edit live in the router",
         "workflows/monthly_action_workflow": "applying a set_budget action writes a line",
-    },
-    "registry_entries": {
-        "routers/registry_entries": "registry CRUD lives in the router",
     },
 }
 

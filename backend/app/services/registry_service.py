@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from .. import models
@@ -12,6 +13,88 @@ from .schedule_rules import ensure_next_due_date
 
 
 OUTFLOW_TRANSACTION_TYPES = {"Expense", "CreditExpense", "Transfer", "CreditAssetPurchase", "LiabilityPayment"}
+
+
+def validate_account_refs(db: Session, client_id: int, data: dict) -> None:
+    # This read-only FK check enforces client ownership, which the database's
+    # account-id foreign keys do not enforce; accounts remain ledger-owned.
+    for key in ("budget_account_id", "source_account_id", "destination_account_id"):
+        account_id = data.get(key)
+        if account_id is None:
+            continue
+        account = db.query(models.Account).filter(
+            models.Account.id == account_id,
+            models.Account.client_id == client_id,
+        ).first()
+        if not account:
+            raise HTTPException(status_code=400, detail=f"{key} must belong to this client")
+
+
+def list_entries(db: Session, client_id: int) -> list[models.RegistryEntry]:
+    return db.query(models.RegistryEntry).filter(
+        models.RegistryEntry.client_id == client_id,
+    ).order_by(models.RegistryEntry.entry_type, models.RegistryEntry.name).all()
+
+
+def create_entry(
+    db: Session, client_id: int, data: dict, *, commit: bool = True,
+) -> models.RegistryEntry:
+    validate_account_refs(db, client_id, data)
+    entry = models.RegistryEntry(**data, client_id=client_id)
+    db.add(entry)
+    db.flush()
+    normalise_registry_flags(entry)
+    sync_recurring_from_registry(db, entry)
+    if commit:
+        db.commit()
+        db.refresh(entry)
+    else:
+        db.flush()
+    return entry
+
+
+def update_entry(
+    db: Session, client_id: int, entry_id: int, data: dict, *, commit: bool = True,
+) -> models.RegistryEntry | None:
+    entry = db.query(models.RegistryEntry).filter(
+        models.RegistryEntry.id == entry_id,
+        models.RegistryEntry.client_id == client_id,
+    ).first()
+    if not entry:
+        return None
+    validate_account_refs(db, client_id, data)
+    for key, value in data.items():
+        setattr(entry, key, value)
+    normalise_registry_flags(entry)
+    sync_recurring_from_registry(db, entry)
+    if commit:
+        db.commit()
+        db.refresh(entry)
+    else:
+        db.flush()
+    return entry
+
+
+def delete_entry(
+    db: Session, client_id: int, entry_id: int, *, commit: bool = True,
+) -> bool:
+    entry = db.query(models.RegistryEntry).filter(
+        models.RegistryEntry.id == entry_id,
+        models.RegistryEntry.client_id == client_id,
+    ).first()
+    if not entry:
+        return False
+    for recurring in linked_recurring_transactions(db, entry):
+        db.delete(recurring)
+    entry.source_recurring_transaction_id = None
+    entry.is_active = False
+    entry.budget_active = False
+    entry.generate_recurring = False
+    if commit:
+        db.commit()
+    else:
+        db.flush()
+    return True
 
 
 def account_line_type(

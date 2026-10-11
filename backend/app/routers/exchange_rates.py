@@ -10,7 +10,7 @@ from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.cache_service import invalidate_client
-from ..services.fx_service import normalize_currency
+from ..services.fx_service import delete_rate, list_rates, normalize_currency, update_rate, upsert_exchange_rate
 from ..services.ledger_valuation import update_used_exchange_rates
 
 router = APIRouter(prefix="/exchange-rates", tags=["exchange_rates"])
@@ -36,18 +36,7 @@ def get_exchange_rates(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    query = db.query(models.ExchangeRate).filter(
-        models.ExchangeRate.client_id == current_client.id
-    )
-    if base_currency:
-        query = query.filter(models.ExchangeRate.base_currency == normalize_currency(base_currency))
-    if quote_currency:
-        query = query.filter(models.ExchangeRate.quote_currency == normalize_currency(quote_currency))
-    rates = query.order_by(
-        models.ExchangeRate.base_currency,
-        models.ExchangeRate.quote_currency,
-        models.ExchangeRate.as_of_date.desc(),
-    ).all()
+    rates = list_rates(db, current_client.id, base_currency, quote_currency)
     return [_serialize(rate) for rate in rates]
 
 
@@ -73,31 +62,16 @@ def create_exchange_rate(
     if base == quote:
         raise HTTPException(status_code=400, detail="Currencies must differ")
 
-    existing = db.query(models.ExchangeRate).filter(
-        models.ExchangeRate.client_id == current_client.id,
-        models.ExchangeRate.base_currency == base,
-        models.ExchangeRate.quote_currency == quote,
-        models.ExchangeRate.as_of_date == payload.as_of_date,
-    ).first()
-    if existing:
-        existing.rate = payload.rate
-        existing.source = payload.source or "manual"
-        db.commit()
-        db.refresh(existing)
-        invalidate_client(current_client.id)
-        return _serialize(existing)
-
-    rate = models.ExchangeRate(
-        client_id=current_client.id,
+    rate = upsert_exchange_rate(
+        db,
+        current_client.id,
         base_currency=base,
         quote_currency=quote,
         rate=payload.rate,
         as_of_date=payload.as_of_date,
         source=payload.source or "manual",
+        commit=True,
     )
-    db.add(rate)
-    db.commit()
-    db.refresh(rate)
     invalidate_client(current_client.id)
     return _serialize(rate)
 
@@ -109,21 +83,9 @@ def update_exchange_rate(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    rate = db.query(models.ExchangeRate).filter(
-        models.ExchangeRate.id == rate_id,
-        models.ExchangeRate.client_id == current_client.id,
-    ).first()
-    if not rate:
+    rate = update_rate(db, current_client.id, rate_id, payload)
+    if rate is None:
         raise HTTPException(status_code=404, detail="Exchange rate not found")
-
-    for field, value in payload.model_dump(exclude_unset=True).items():
-        if field in ("base_currency", "quote_currency"):
-            value = normalize_currency(value)
-        setattr(rate, field, value)
-    if rate.base_currency == rate.quote_currency:
-        raise HTTPException(status_code=400, detail="Currencies must differ")
-    db.commit()
-    db.refresh(rate)
     invalidate_client(current_client.id)
     return _serialize(rate)
 
@@ -134,13 +96,7 @@ def delete_exchange_rate(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    rate = db.query(models.ExchangeRate).filter(
-        models.ExchangeRate.id == rate_id,
-        models.ExchangeRate.client_id == current_client.id,
-    ).first()
-    if not rate:
+    if not delete_rate(db, current_client.id, rate_id):
         raise HTTPException(status_code=404, detail="Exchange rate not found")
-    db.delete(rate)
-    db.commit()
     invalidate_client(current_client.id)
     return {"message": "Exchange rate deleted"}

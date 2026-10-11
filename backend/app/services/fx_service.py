@@ -3,10 +3,11 @@ from __future__ import annotations
 from datetime import date
 
 import httpx
+from fastapi import HTTPException
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
-from .. import models
+from .. import models, schemas
 
 FRANKFURTER_URL = "https://api.frankfurter.dev/v1/latest"
 
@@ -101,6 +102,8 @@ def upsert_exchange_rate(
     rate: float,
     as_of_date: date,
     source: str,
+    *,
+    commit: bool = False,
 ) -> models.ExchangeRate:
     base = normalize_currency(base_currency)
     quote = normalize_currency(quote_currency)
@@ -113,20 +116,84 @@ def upsert_exchange_rate(
     if existing:
         existing.rate = rate
         existing.source = source
+        row = existing
+    else:
+        row = models.ExchangeRate(
+            client_id=client_id,
+            base_currency=base,
+            quote_currency=quote,
+            rate=rate,
+            as_of_date=as_of_date,
+            source=source,
+        )
+        db.add(row)
+    # Auto-update batches rates in one transaction; manual CRUD closes its own.
+    if commit:
+        db.commit()
+        db.refresh(row)
+    else:
         db.flush()
-        return existing
-
-    row = models.ExchangeRate(
-        client_id=client_id,
-        base_currency=base,
-        quote_currency=quote,
-        rate=rate,
-        as_of_date=as_of_date,
-        source=source,
-    )
-    db.add(row)
-    db.flush()
     return row
+
+
+def list_rates(
+    db: Session, client_id: int,
+    base_currency: str | None = None, quote_currency: str | None = None,
+) -> list[models.ExchangeRate]:
+    query = db.query(models.ExchangeRate).filter(
+        models.ExchangeRate.client_id == client_id,
+    )
+    if base_currency:
+        query = query.filter(models.ExchangeRate.base_currency == normalize_currency(base_currency))
+    if quote_currency:
+        query = query.filter(models.ExchangeRate.quote_currency == normalize_currency(quote_currency))
+    return query.order_by(
+        models.ExchangeRate.base_currency,
+        models.ExchangeRate.quote_currency,
+        models.ExchangeRate.as_of_date.desc(),
+    ).all()
+
+
+def update_rate(
+    db: Session, client_id: int, rate_id: int, payload: schemas.ExchangeRateUpdate,
+    *, commit: bool = True,
+) -> models.ExchangeRate | None:
+    rate = db.query(models.ExchangeRate).filter(
+        models.ExchangeRate.id == rate_id,
+        models.ExchangeRate.client_id == client_id,
+    ).first()
+    if not rate:
+        return None
+
+    for field, value in payload.model_dump(exclude_unset=True).items():
+        if field in ("base_currency", "quote_currency"):
+            value = normalize_currency(value)
+        setattr(rate, field, value)
+    if rate.base_currency == rate.quote_currency:
+        raise HTTPException(status_code=400, detail="Currencies must differ")
+    if commit:
+        db.commit()
+        db.refresh(rate)
+    else:
+        db.flush()
+    return rate
+
+
+def delete_rate(
+    db: Session, client_id: int, rate_id: int, *, commit: bool = True,
+) -> bool:
+    rate = db.query(models.ExchangeRate).filter(
+        models.ExchangeRate.id == rate_id,
+        models.ExchangeRate.client_id == client_id,
+    ).first()
+    if not rate:
+        return False
+    db.delete(rate)
+    if commit:
+        db.commit()
+    else:
+        db.flush()
+    return True
 
 
 def convert_amount(
