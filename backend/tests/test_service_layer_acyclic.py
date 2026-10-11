@@ -31,6 +31,7 @@ LAYERS: dict[str, int] = {
     "liability_schedule": 0,
     "mfa_service": 0,
     "period_review_service": 0,
+    "quick_template_service": 0,
     "periods": 0,
     "product_reserve_service": 0,
     "schedule_rules": 0,
@@ -74,6 +75,7 @@ LAYERS: dict[str, int] = {
     "ai_change_request_workflow": 6,
     "transaction_approval_workflow": 6,
     "ledger_entry_workflow": 6,
+    "transaction_batch_workflow": 6,
     "simulation_workflow": 6,
 }
 

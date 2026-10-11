@@ -19,8 +19,8 @@ OWNERS: dict[str, str] = {
     "journal_entries": "services/ledger_service",
     "transactions": "services/ledger_service",
     "transaction_proposals": "services/ledger_service",
-    "transaction_batches": "routers/quick_templates",
-    "quick_templates": "routers/quick_templates",
+    "transaction_batches": "services/quick_template_service",
+    "quick_templates": "services/quick_template_service",
     "registry_entries": "services/registry_service",
     "recurring_transactions": "services/registry_service",
     "budget_plans": "services/budget_plan_store",
@@ -56,9 +56,6 @@ WHOLE_DATABASE = "routers/data_transfer"
 # each line is a boundary the redesign intends to close, and the test above fails
 # if a new one appears. The reason says what would have to change to remove it.
 ALLOWED: dict[str, dict[str, str]] = {
-    "accounts": {
-        "routers/accounts": "account CRUD predates ledger_service owning the table",
-    },
     "budget_plans": {
         "routers/budget_plans": "plan CRUD lives in the router, not in budget_plan_store",
     },

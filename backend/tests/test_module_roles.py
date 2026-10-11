@@ -38,7 +38,6 @@ ROLE_BY_MODULE: dict[str, str] = {
 # Each exception records work that must leave the HTTP adapter, using §3.6's
 # waves only where that section actually assigns the router a wave.
 ALLOWED: dict[str, str] = {
-    "routers/accounts": "account CRUD; moves to the account service in L5b",
     "routers/ai": "goal and asset reads for AI allocation; moves with the read-only composers in L7",
     "routers/auth": "client registration and authentication lookup; L9, held back because identity is not a feature like the others",
     "routers/budget_plans": "plan and plan-line CRUD; moves to budget_plan_store in L5c",
@@ -46,7 +45,6 @@ ALLOWED: dict[str, str] = {
     "routers/data_transfer": "client-wide dump and restore; 21 tables across 7 features, L6 and split further there",
     "routers/life_events": "goal CRUD and account cleanup; moves to goal_service in L5d",
     "routers/products": "product CRUD and reserve updates; moves to a product service in L5d",
-    "routers/quick_templates": "template CRUD and transaction-batch persistence; L5b",
 }
 
 SESSION_METHODS = {

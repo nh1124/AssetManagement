@@ -4,6 +4,7 @@ from typing import List, Optional, Literal
 from .. import models
 from ..database import get_db
 from ..dependencies import get_current_client
+from ..services import ledger_service
 from ..services.cache_service import invalidate_client
 from ..services.ledger_valuation import calculate_account_valued_balance, calculate_account_valued_balances
 from pydantic import BaseModel
@@ -96,82 +97,8 @@ def _serialize_account(
     }
 
 
-def _validate_parent(
-    db: Session,
-    client_id: int,
-    account_type: str,
-    parent_id: int | None,
-    account_id: int | None = None,
-) -> None:
-    if parent_id is None:
-        return
-    if account_id is not None and parent_id == account_id:
-        raise HTTPException(status_code=400, detail="Account cannot be its own parent")
-
-    parent = db.query(models.Account).filter(
-        models.Account.id == parent_id,
-        models.Account.client_id == client_id,
-        models.Account.is_active == True,
-    ).first()
-    if not parent:
-        raise HTTPException(status_code=404, detail="Parent account not found")
-    if parent.account_type != account_type:
-        raise HTTPException(status_code=400, detail="Parent account must have the same account_type")
-
-    seen = set()
-    current = parent
-    while current:
-        if current.id in seen:
-            raise HTTPException(status_code=400, detail="Account hierarchy cycle detected")
-        if account_id is not None and current.id == account_id:
-            raise HTTPException(status_code=400, detail="Account hierarchy cycle detected")
-        seen.add(current.id)
-        if current.parent_id is None:
-            break
-        current = db.query(models.Account).filter(
-            models.Account.id == current.parent_id,
-            models.Account.client_id == client_id,
-        ).first()
-
-
-def _normalize_liability_settings(payload: dict, account_type: str) -> None:
-    liability_keys = {
-        "liability_closing_day",
-        "liability_payment_day",
-        "liability_payment_month_offset",
-        "liability_payment_policy",
-        "liability_minimum_payment",
-        "liability_fixed_payment_amount",
-        "liability_installment_months",
-        "liability_revolving_rate",
-    }
-    if account_type != "liability":
-        for key in liability_keys:
-            payload.pop(key, None)
-        return
-    if payload.get("liability_payment_policy") is None:
-        payload["liability_payment_policy"] = "full"
-    if payload.get("liability_payment_month_offset") is None:
-        payload["liability_payment_month_offset"] = 0
-    for key in ("liability_closing_day", "liability_payment_day"):
-        value = payload.get(key)
-        if value is not None and not 1 <= value <= 31:
-            raise HTTPException(status_code=400, detail=f"{key} must be between 1 and 31")
-    offset = payload.get("liability_payment_month_offset")
-    if offset is not None and not 0 <= offset <= 24:
-        raise HTTPException(status_code=400, detail="liability_payment_month_offset must be between 0 and 24")
-    installment_months = payload.get("liability_installment_months")
-    if installment_months is not None and installment_months < 1:
-        raise HTTPException(status_code=400, detail="liability_installment_months must be positive")
-    for key in ("liability_minimum_payment", "liability_fixed_payment_amount", "liability_revolving_rate"):
-        value = payload.get(key)
-        if value is not None and value < 0:
-            raise HTTPException(status_code=400, detail=f"{key} must not be negative")
-
-
-def _build_tree(db: Session, accounts: list[models.Account]) -> dict:
+def _build_tree(accounts: list[models.Account], balances: dict[int, float]) -> dict:
     by_id = {account.id: account for account in accounts}
-    balances = calculate_account_valued_balances(db, accounts)
     children_by_parent: dict[int | None, list[models.Account]] = {}
     for account in accounts:
         parent_id = account.parent_id if account.parent_id in by_id else None
@@ -200,15 +127,9 @@ def get_accounts(
     current_client: models.Client = Depends(get_current_client)
 ):
     """Get all accounts for current client, optionally filtered by type."""
-    query = db.query(models.Account).filter(
-        models.Account.client_id == current_client.id,
-        models.Account.is_active == is_active
+    accounts = ledger_service.list_accounts(
+        db, current_client.id, account_type=account_type, is_active=is_active,
     )
-    
-    if account_type:
-        query = query.filter(models.Account.account_type == account_type)
-    
-    accounts = query.order_by(models.Account.account_type, models.Account.name).all()
     balances = calculate_account_valued_balances(db, accounts)
     return [
         _serialize_account(account, balance=balances.get(account.id, 0.0))
@@ -221,11 +142,9 @@ def get_account_tree(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    accounts = db.query(models.Account).filter(
-        models.Account.client_id == current_client.id,
-        models.Account.is_active == True,
-    ).all()
-    return _build_tree(db, accounts)
+    accounts = ledger_service.list_accounts(db, current_client.id, ordered=False)
+    balances = calculate_account_valued_balances(db, accounts)
+    return _build_tree(accounts, balances)
 
 @router.get("/by-type")
 def get_accounts_grouped_by_type(
@@ -233,10 +152,7 @@ def get_accounts_grouped_by_type(
     current_client: models.Client = Depends(get_current_client)
 ):
     """Get accounts for current client grouped by type."""
-    accounts = db.query(models.Account).filter(
-        models.Account.client_id == current_client.id,
-        models.Account.is_active == True
-    ).all()
+    accounts = ledger_service.list_accounts(db, current_client.id, ordered=False)
     balances = calculate_account_valued_balances(db, accounts)
     
     grouped = {
@@ -273,18 +189,7 @@ def create_account(
     current_client: models.Client = Depends(get_current_client)
 ):
     """Create a new account for current client."""
-    payload = account.model_dump()
-    if abs(payload.pop("balance", 0) or 0) > 0.01:
-        raise HTTPException(
-            status_code=400,
-            detail="Journal is the source of truth. Create an opening-balance transaction instead of setting account.balance.",
-        )
-    _normalize_liability_settings(payload, payload["account_type"])
-    _validate_parent(db, current_client.id, payload["account_type"], payload.get("parent_id"))
-    db_account = models.Account(**payload, client_id=current_client.id)
-    db.add(db_account)
-    db.commit()
-    db.refresh(db_account)
+    db_account = ledger_service.create_account(db, current_client.id, account.model_dump())
     invalidate_client(current_client.id)
     return _serialize_account(db_account, balance=calculate_account_valued_balance(db, db_account))
 
@@ -296,34 +201,11 @@ def update_account(
     current_client: models.Client = Depends(get_current_client)
 ):
     """Update an account belonging to current client."""
-    db_account = db.query(models.Account).filter(
-        models.Account.id == account_id,
-        models.Account.client_id == current_client.id
-    ).first()
-    
-    if not db_account:
+    db_account = ledger_service.update_account(
+        db, current_client.id, account_id, account.model_dump(exclude_unset=True),
+    )
+    if db_account is None:
         raise HTTPException(status_code=404, detail="Account not found")
-        
-    update_data = account.model_dump(exclude_unset=True)
-    if "balance" in update_data:
-        raise HTTPException(
-            status_code=400,
-            detail="Journal is the source of truth. Use transactions to change balances.",
-        )
-    if "parent_id" in update_data:
-        next_parent_id = update_data["parent_id"]
-        _validate_parent(
-            db,
-            current_client.id,
-            db_account.account_type,
-            next_parent_id,
-            account_id=db_account.id,
-        )
-    _normalize_liability_settings(update_data, db_account.account_type)
-    for key, value in update_data.items():
-        setattr(db_account, key, value)
-    db.commit()
-    db.refresh(db_account)
     invalidate_client(current_client.id)
     return _serialize_account(db_account, balance=calculate_account_valued_balance(db, db_account))
 
@@ -334,38 +216,8 @@ def delete_account(
     current_client: models.Client = Depends(get_current_client)
 ):
     """Soft delete an account belonging to current client."""
-    db_account = db.query(models.Account).filter(
-        models.Account.id == account_id,
-        models.Account.client_id == current_client.id
-    ).first()
-    
-    if not db_account:
+    if not ledger_service.delete_account(db, current_client.id, account_id):
         raise HTTPException(status_code=404, detail="Account not found")
-
-    child_count = db.query(models.Account).filter(
-        models.Account.parent_id == account_id,
-        models.Account.client_id == current_client.id,
-        models.Account.is_active == True,
-    ).count()
-    if child_count:
-        raise HTTPException(status_code=400, detail="Account has child accounts")
-
-    template_count = db.query(models.QuickTemplate).filter(
-        models.QuickTemplate.client_id == current_client.id,
-        models.QuickTemplate.is_active == True,
-        (
-            (models.QuickTemplate.default_from_account_id == account_id)
-            | (models.QuickTemplate.default_to_account_id == account_id)
-        ),
-    ).count()
-    if template_count:
-        raise HTTPException(
-            status_code=400,
-            detail="Account is used by active quick templates. Delete or update those templates first.",
-        )
-        
-    db_account.is_active = False
-    db.commit()
     invalidate_client(current_client.id)
     return {"message": "Account deactivated"}
 
