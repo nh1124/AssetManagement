@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..domain.errors import Invalid, NotFound
 from ..services import capsule_service, ledger_service
 from ..services.cache_service import invalidate_client
 from ..services.goal_service import get_life_event
@@ -19,12 +19,12 @@ def contribute(
 ) -> dict:
     capsule = capsule_service.get_capsule(db, client_id, capsule_id)
     if not capsule:
-        raise HTTPException(status_code=404, detail="Capsule not found")
+        raise NotFound("Capsule not found")
     from_account = ledger_service.get_account(db, client_id, from_account_id)
     if not from_account:
-        raise HTTPException(status_code=404, detail="Source account not found")
+        raise NotFound("Source account not found")
     if amount <= 0:
-        raise HTTPException(status_code=400, detail="Contribution amount must be positive")
+        raise Invalid("Contribution amount must be positive")
 
     # This holding-only path is retired by capsule_design_review.md §7.6 (H6).
     remaining = capsule_service.remaining_target(db, capsule)
@@ -72,7 +72,7 @@ def create_goal_capsule(
 ) -> models.Capsule:
     goal = get_life_event(db, client_id, life_event_id)
     if not goal:
-        raise HTTPException(status_code=404, detail="Life event not found")
+        raise NotFound("Life event not found")
     capsule = capsule_service.create_capsule_for_goal(db, client_id, goal)
     if commit:
         db.commit()

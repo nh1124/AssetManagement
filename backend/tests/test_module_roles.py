@@ -61,12 +61,8 @@ WORKFLOW_ALLOWED: dict[str, str] = {}
 HTTP_EXCEPTION_ALLOWED: dict[str, int] = {
     "services/data_transfer_service": 2,
     "workflows/ai_change_request_workflow": 10,
-    "services/capsule_service": 6,
     "services/ai_context_service": 4,
-    "workflows/capsule_workflow": 4,
     "services/ai_policy_service": 2,
-    "services/goal_service": 2,
-    "workflows/product_workflow": 2,
     "workflows/simulation_workflow": 1,
 }
 

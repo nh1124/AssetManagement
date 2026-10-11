@@ -7,10 +7,10 @@ strategy execution services directly.
 
 from datetime import date
 
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
+from ..domain.errors import NotFound, Refused
 from .cache_service import invalidate_client
 from .capsule_service import apply_capsule_rules_for_transaction, capsule_balance
 from .ledger_service import create_transaction
@@ -107,15 +107,15 @@ def delete_goal(
         if c.account_id is not None and capsule_balance(db, c) > 0
     ]
     if capsules_with_balance and transfer_account_id is None:
-        raise HTTPException(
+        raise Refused(
+            "transfer_account_id is required because one or more capsules have a non-zero balance.",
             status_code=422,
-            detail="transfer_account_id is required because one or more capsules have a non-zero balance."
         )
 
     if transfer_account_id is not None:
         dest_account = db.get(models.Account, transfer_account_id)
         if not dest_account or dest_account.client_id != client_id:
-            raise HTTPException(status_code=404, detail="Transfer destination account not found")
+            raise NotFound("Transfer destination account not found")
 
     for cap in capsules_with_balance:
         bal = capsule_balance(db, cap)

@@ -1,12 +1,12 @@
 from datetime import date
 
 import pytest
-from fastapi import HTTPException
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from app import models, schemas
 from app.database import Base
+from app.domain.errors import Invalid
 from app.services import capsule_service, ledger_service, registry_service
 from app.workflows import ledger_entry_workflow, product_workflow
 
@@ -50,10 +50,9 @@ def test_product_account_reads_preserve_type_scope_and_inactive_account_acceptan
     product_workflow.validate_budget_account(db, 1, None)
     for account_id in (asset.id, other.id, 999999):
         assert ledger_service.get_expense_account(db, 1, account_id) is None
-        with pytest.raises(HTTPException) as exc:
+        with pytest.raises(Invalid) as exc:
             product_workflow.validate_budget_account(db, 1, account_id)
-        assert exc.value.status_code == 400
-        assert exc.value.detail == "Budget account must be an expense account for this client"
+        assert str(exc.value) == "Budget account must be an expense account for this client"
 
 
 def test_product_funding_reads_refuse_goal_other_client_and_missing_capsules(db):
@@ -71,10 +70,9 @@ def test_product_funding_reads_refuse_goal_other_client_and_missing_capsules(db)
     product_workflow.validate_funding_capsule(db, 1, None)
     for capsule_id in (goal_capsule.id, other.id, 999999):
         assert capsule_service.get_product_funding_capsule(db, 1, capsule_id) is None
-        with pytest.raises(HTTPException) as exc:
+        with pytest.raises(Invalid) as exc:
             product_workflow.validate_funding_capsule(db, 1, capsule_id)
-        assert exc.value.status_code == 400
-        assert exc.value.detail == "Funding capsule must be a non-LifeEvent capsule for this client"
+        assert str(exc.value) == "Funding capsule must be a non-LifeEvent capsule for this client"
 
 
 def test_product_registry_read_finds_inactive_definition_and_scopes_detachment(db):

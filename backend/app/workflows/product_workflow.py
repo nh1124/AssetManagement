@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from sqlalchemy.orm import Session
-from fastapi import HTTPException
 
 from .. import models, schemas
+from ..domain.errors import Invalid
 from ..services import capsule_service, ledger_service, product_service
 from ..services.cache_service import invalidate_client
 from ..services.product_reserve_service import ensure_default_product_reserve_pools
@@ -15,7 +15,7 @@ def validate_budget_account(db: Session, client_id: int, budget_account_id: int 
         return
     account = ledger_service.get_expense_account(db, client_id, budget_account_id)
     if not account:
-        raise HTTPException(status_code=400, detail="Budget account must be an expense account for this client")
+        raise Invalid("Budget account must be an expense account for this client")
 
 
 def validate_funding_capsule(db: Session, client_id: int, funding_capsule_id: int | None) -> None:
@@ -23,7 +23,7 @@ def validate_funding_capsule(db: Session, client_id: int, funding_capsule_id: in
         return
     capsule = capsule_service.get_product_funding_capsule(db, client_id, funding_capsule_id)
     if not capsule:
-        raise HTTPException(status_code=400, detail="Funding capsule must be a non-LifeEvent capsule for this client")
+        raise Invalid("Funding capsule must be a non-LifeEvent capsule for this client")
 
 
 def default_funding_capsule_id(db: Session, client_id: int, is_asset: bool) -> int:

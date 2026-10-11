@@ -7,6 +7,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app import models, schemas
 from app.database import Base
+from app.domain.errors import NotFound
 from app.routers import capsules as capsule_router
 from app.services import capsule_service, ledger_service
 from app.services.capsule_service import delete_capsule
@@ -151,9 +152,9 @@ def test_rule_crud_rejects_other_clients_capsule_and_keeps_attachment_on_partial
         (_rule_payload(other.id), "Capsule not found"),
         (_rule_payload(capsule_id, source_account_id=other_cash.id), "Source account not found"),
     ]:
-        with pytest.raises(HTTPException) as error:
+        with pytest.raises(NotFound) as error:
             capsule_service.create_rule(db, 1, payload)
-        assert (error.value.status_code, error.value.detail) == (404, detail)
+        assert str(error.value) == detail
     assert _snapshot(db) == before
     rule = capsule_service.create_rule(db, 1, _rule_payload(capsule_id, source_account_id=cash.id))
     rule_id = rule.id
@@ -313,9 +314,13 @@ def test_holding_http_errors_keep_capsule_and_holding_not_found_distinct(db, met
         "update": lambda capsule_id: capsule_router.update_capsule_holding(capsule_id, 99999, schemas.CapsuleHoldingUpdate(held_amount=10), db=db, current_client=client),
         "delete": lambda capsule_id: capsule_router.delete_capsule_holding(capsule_id, 99999, db=db, current_client=client),
     }
-    with pytest.raises(HTTPException) as error:
+    error_type = NotFound if method == "create" else HTTPException
+    with pytest.raises(error_type) as error:
         calls[method](99999)
-    assert (error.value.status_code, error.value.detail) == (404, "Capsule not found")
+    if method == "create":
+        assert str(error.value) == "Capsule not found"
+    else:
+        assert (error.value.status_code, error.value.detail) == (404, "Capsule not found")
     if method in {"update", "delete"}:
         with pytest.raises(HTTPException) as error:
             calls[method](capsule.id)

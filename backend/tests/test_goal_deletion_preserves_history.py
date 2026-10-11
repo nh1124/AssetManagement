@@ -3,18 +3,19 @@ from __future__ import annotations
 from datetime import date
 
 import pytest
-from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 try:
     from backend.app import models
     from backend.app.database import Base
+    from backend.app.domain.errors import Refused
     from backend.app.routers.life_events import delete_life_event
     from backend.app.services import ledger_service
 except ModuleNotFoundError:
     from app import models  # type: ignore[no-redef]
     from app.database import Base  # type: ignore[no-redef]
+    from app.domain.errors import Refused  # type: ignore[no-redef]
     from app.routers.life_events import delete_life_event  # type: ignore[no-redef]
     from app.services import ledger_service  # type: ignore[no-redef]
 
@@ -161,7 +162,7 @@ def test_goal_deletion_requires_destination_for_capsule_holdings():
     try:
         client, goal, _, _, _ = _setup(db, held_amount=500)
 
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(Refused) as exc_info:
             delete_life_event(
                 goal.id,
                 transfer_account_id=None,
@@ -170,6 +171,7 @@ def test_goal_deletion_requires_destination_for_capsule_holdings():
             )
 
         assert exc_info.value.status_code == 422
+        assert str(exc_info.value) == "transfer_account_id is required because one or more capsules have a non-zero balance."
         assert db.get(models.LifeEvent, goal.id) is not None
         assert db.query(models.CapsuleHolding).one().held_amount == 500
         assert db.query(models.JournalEntry).count() == 0

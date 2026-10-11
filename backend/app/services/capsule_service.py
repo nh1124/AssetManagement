@@ -3,11 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, Sequence
 
-from fastapi import HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
+from ..domain.errors import Invalid, NotFound
 from . import ledger_service
 from .cache_service import invalidate_client
 from .product_reserve_service import product_reserve_values
@@ -124,13 +124,13 @@ def delete_capsule(db: Session, client_id: int, capsule_id: int, *, commit: bool
     if capsule is None:
         return False
     if capsule.life_event_id:
-        raise HTTPException(status_code=400, detail="LifeEvent capsules are managed by their LifeEvent and cannot be deleted directly")
+        raise Invalid("LifeEvent capsules are managed by their LifeEvent and cannot be deleted directly")
     linked_products = db.query(models.Product.id).filter(
         models.Product.client_id == client_id,
         models.Product.funding_capsule_id == capsule.id,
     ).first()
     if linked_products:
-        raise HTTPException(status_code=400, detail="Capsules linked to Product/Item reserves cannot be deleted while products use them")
+        raise Invalid("Capsules linked to Product/Item reserves cannot be deleted while products use them")
     db.delete(capsule)
     _finish_write(db, client_id, commit=commit)
     return True
@@ -146,14 +146,14 @@ def create_rule(
     db: Session, client_id: int, payload: schemas.CapsuleRuleCreate, *, commit: bool = True,
 ) -> models.CapsuleRule:
     if get_capsule(db, client_id, payload.capsule_id) is None:
-        raise HTTPException(status_code=404, detail="Capsule not found")
+        raise NotFound("Capsule not found")
     if payload.source_account_id:
         account = db.query(models.Account).filter(
             models.Account.id == payload.source_account_id,
             models.Account.client_id == client_id,
         ).first()
         if not account:
-            raise HTTPException(status_code=404, detail="Source account not found")
+            raise NotFound("Source account not found")
     rule = models.CapsuleRule(**payload.model_dump(), client_id=client_id)
     db.add(rule)
     _finish_write(db, client_id, rule, commit=commit)
@@ -199,13 +199,13 @@ def create_holding(
     *, commit: bool = True,
 ) -> models.CapsuleHolding:
     if get_capsule(db, client_id, capsule_id) is None:
-        raise HTTPException(status_code=404, detail="Capsule not found")
+        raise NotFound("Capsule not found")
     account = db.query(models.Account).filter(
         models.Account.id == payload.account_id,
         models.Account.client_id == client_id,
     ).first()
     if not account:
-        raise HTTPException(status_code=404, detail="Account not found")
+        raise NotFound("Account not found")
     holding = db.query(models.CapsuleHolding).filter(
         models.CapsuleHolding.capsule_id == capsule_id,
         models.CapsuleHolding.account_id == payload.account_id,
