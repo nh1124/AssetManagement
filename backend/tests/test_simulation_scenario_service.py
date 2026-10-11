@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import get_args
+from unittest.mock import Mock
 
 import pytest
 from fastapi import HTTPException
@@ -227,6 +229,37 @@ def test_create_and_reset_milestones_reuse_event_check_and_preserve_404(db, life
             endpoint(argument, db, client)
         assert (error.value.status_code, error.value.detail) == (404, "Life event not found")
     assert db.query(models.Milestone).count() == 0
+
+
+@pytest.mark.parametrize("basis", get_args(schemas.MilestoneSimulationRequest.model_fields["basis"].annotation))
+@pytest.mark.parametrize("life_event_id", [2, 999])
+def test_milestone_preview_missing_goal_is_404_before_computation(db, monkeypatch, basis, life_event_id):
+    annual_rows = Mock(wraps=milestone_service.build_default_milestone_rows)
+    simulation_context = Mock(wraps=milestone_service.get_goal_simulation_context)
+    monkeypatch.setattr(milestone_service, "build_default_milestone_rows", annual_rows)
+    monkeypatch.setattr(milestone_service, "get_goal_simulation_context", simulation_context)
+    with pytest.raises(HTTPException) as error:
+        roadmap.preview_life_event_milestones_from_simulation(
+            life_event_id, schemas.MilestoneSimulationRequest(basis=basis),
+            db, db.get(models.Client, 1),
+        )
+    assert (error.value.status_code, error.value.detail) == (404, "Life event not found")
+    annual_rows.assert_not_called()
+    simulation_context.assert_not_called()
+
+
+def test_milestone_preview_annual_plan_preserves_existing_goal_result(db):
+    milestone_service.create_milestone(db, 1, _milestone())
+    inputs = dict(annual_return=0, inflation=0, monthly_savings=100, allocation_mode="direct")
+    expected_rows = milestone_service.build_default_milestone_rows(db, 1, 1, **inputs)
+    assert expected_rows
+    preview = milestone_service.preview_milestones_from_simulation(
+        db, 1, 1, basis="annual_plan", interval="quarterly", mode="add", **inputs,
+    )
+    assert preview == {
+        "life_event_id": 1, "basis": "annual_plan", "interval": "quarterly",
+        "mode": "add", "existing_count": 1, "items": expected_rows,
+    }
 
 
 def test_create_and_update_milestones_keep_nullable_event_and_patch_semantics(db):

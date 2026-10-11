@@ -255,9 +255,14 @@ def apply_action(db: Session, client_id: int, action_id: int) -> dict:
         db.refresh(action)
         return action_to_dict(action)
     except Exception as exc:
-        action.status = "failed"
-        action.result = {"error": str(exc)}
-        db.commit()
+        # Deliberately match ai_change_request_workflow.apply_change_request so
+        # recording a failure cannot commit partial feature writes.
+        db.rollback()
+        failed_action = monthly_action_store.get(db, client_id, action_id)
+        if failed_action is not None:
+            failed_action.status = "failed"
+            failed_action.result = {"error": str(exc)}
+            db.commit()
         raise
 
 

@@ -33,9 +33,12 @@ def post_transaction_batch(
             entry = item.model_copy(update={"batch_id": batch.id})
             created.append(record_entry(db, client_id, entry, commit=False))
         db.commit()
-    except Exception as exc:
+    except ValueError as exc:
         db.rollback()
         raise BatchPostingError(str(exc)) from exc
+    except Exception:
+        db.rollback()
+        raise
 
     for transaction in created:
         db.refresh(transaction)

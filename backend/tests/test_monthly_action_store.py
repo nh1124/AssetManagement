@@ -155,3 +155,41 @@ def test_apply_set_budget_keeps_plan_line_writes_in_budget_service(db):
     assert result["result"]["plan_line_id"] == line.id
     assert (line.amount, line.is_active) == (2345, True)
     assert (line.source_account_id, line.cash_treatment, line.manual_override) == (account.id, "non_cash", True)
+
+
+def test_apply_set_budget_failure_rolls_back_feature_rows_and_commits_failed_action(db, monkeypatch):
+    account = models.Account(client_id=1, name="Food", account_type="expense")
+    plan = models.BudgetPlan(client_id=1, name="Baseline", is_default=True)
+    db.add_all([account, plan])
+    db.commit()
+    action = store.create(db, 1, _fields("failed-budget", payload={
+        "account_id": account.id, "amount": 1234, "plan_id": plan.id,
+    }), commit=True)
+    action_id = action.id
+    failure = RuntimeError("failure after writing the budget line")
+    apply_budget = workflow.DISPATCH["set_budget"]
+
+    def fail_after_write(session, row):
+        apply_budget(session, row)
+        assert session.query(models.MonthlyPlanLine).count() == 1
+        raise failure
+
+    monkeypatch.setitem(workflow.DISPATCH, "set_budget", fail_after_write)
+    with patch.object(store, "get", wraps=store.get) as get_action:
+        with pytest.raises(RuntimeError) as error:
+            workflow.apply_action(db, 1, action_id)
+    assert error.value is failure
+    db.rollback()
+    db.expire_all()
+    for model in (
+        models.MonthlyPlanLine, models.RegistryEntry, models.RecurringTransaction,
+        models.Capsule, models.CapsuleHolding,
+    ):
+        assert db.query(model).count() == 0, model.__tablename__
+    assert db.query(models.BudgetPlan).count() == 1
+    failed = store.get(db, 1, action_id)
+    assert failed.status == "failed"
+    assert failed.result == {"error": str(failure)}
+    assert failed.applied_at is None
+    assert get_action.call_count == 2
+    assert all(call.args == (db, 1, action_id) for call in get_action.call_args_list)

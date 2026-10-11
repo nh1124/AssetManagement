@@ -288,6 +288,7 @@ def preview_milestones_from_simulation(
     reference_date: date | None = None,
 ) -> dict:
     """Build milestone candidates from the same normalized inputs as goal simulation."""
+    event = _get_event(db, client_id, life_event_id)
     if basis == "annual_plan":
         existing_count = db.query(models.Milestone).filter(
             models.Milestone.client_id == client_id,
@@ -311,7 +312,6 @@ def preview_milestones_from_simulation(
             ),
         }
 
-    event = _get_event(db, client_id, life_event_id)
     config = db.query(models.SimulationConfig).filter(
         models.SimulationConfig.client_id == client_id
     ).first()

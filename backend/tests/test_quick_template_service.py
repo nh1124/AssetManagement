@@ -7,7 +7,7 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.app import models, schemas
 from backend.app.database import Base
-from backend.app.domain.errors import Invalid
+from backend.app.domain.errors import Conflict, Invalid, NotFound, Refused, status_for
 from backend.app.routers import quick_templates as router
 from backend.app.services import ledger_service as ledger
 from backend.app.services import quick_template_service as service
@@ -277,3 +277,46 @@ def test_router_keeps_empty_batch_400(posting):
     assert isinstance(exc.value, Invalid)
     assert str(exc.value) == "At least one transaction is required"
     assert _counts(db) == (0, 0, 0, 0)
+
+
+def test_batch_unbalanced_legs_remain_400_and_roll_back_all_writes(posting):
+    db, client, cash, food, reserve = posting
+    _rule(posting, auto_post=False)
+    payload = _payload(posting)
+    payload.transactions[-1].legs[-1].debit = 40
+    with pytest.raises(workflow.BatchPostingError) as error:
+        workflow.post_transaction_batch(db, client.id, payload)
+    assert status_for(error.value) == 400
+    assert str(error.value) == "Journal entry does not balance: debit 290.0 vs credit 300.0"
+    assert _counts(db) == (0, 0, 0, 0)
+    assert db.query(models.CapsuleHolding).count() == 0
+    assert all(account.balance == 0 for account in (cash, food, reserve))
+
+
+@pytest.mark.parametrize("failure", [
+    TypeError("Unknown keyword 'unknown_column' for table transactions"),
+    RuntimeError("unexpected posting bug"),
+    NotFound("missing resource"),
+    Invalid("invalid request"),
+    Conflict("conflicting request"),
+    Refused("request refused"),
+    Invalid("explicit status", status_code=422, payload={"reason": "invalid"}),
+], ids=["type_error", "runtime_error", "not_found", "invalid", "conflict", "refused", "explicit_status"])
+def test_batch_non_value_errors_propagate_unchanged_and_roll_back_all_writes(posting, monkeypatch, failure):
+    db, client, cash, food, reserve = posting
+    _rule(posting, auto_post=False)
+    original = workflow.record_entry
+
+    def fail_second(session, client_id, entry, **kwargs):
+        if entry.description == "entry-2":
+            assert _counts(session) == (1, 1, 2, 1)
+            raise failure
+        return original(session, client_id, entry, **kwargs)
+
+    monkeypatch.setattr(workflow, "record_entry", fail_second)
+    with pytest.raises(type(failure)) as error:
+        workflow.post_transaction_batch(db, client.id, _payload(posting))
+    assert error.value is failure
+    assert _counts(db) == (0, 0, 0, 0)
+    assert db.query(models.CapsuleHolding).count() == 0
+    assert all(account.balance == 0 for account in (cash, food, reserve))
