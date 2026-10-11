@@ -47,7 +47,6 @@ ALLOWED: dict[str, str] = {
     "routers/ai": "goal and asset reads for AI allocation; moves with the read-only composers in L7",
     "routers/auth": "client registration and authentication lookup; L9, held back because identity is not a feature like the others",
     "routers/budget_plans": "compare plan lookup remains with ledger-backed comparison; compare, summary (goal/registry/ledger), and enriched lines composition are deferred to L7",
-    "routers/data_transfer": "client-wide restore remains until L6c; backup reads belong to data_export_service",
 }
 
 SESSION_METHODS = {
@@ -66,6 +65,7 @@ WORKFLOW_ALLOWED: dict[str, str] = {}
 # C1 preserves existing service/workflow responses; later waves convert one
 # module at a time. Counts prevent a listed module from accumulating more debt.
 HTTP_EXCEPTION_ALLOWED: dict[str, int] = {
+    "services/data_transfer_service": 2,
     "services/ledger_service": 13,
     "workflows/ai_change_request_workflow": 10,
     "services/capsule_service": 6,

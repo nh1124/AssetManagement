@@ -11,7 +11,7 @@ from sqlalchemy.orm import sessionmaker
 from app import models
 from app.database import Base
 from app.domain.transfer import DATA_COLLECTIONS, EXPORT_VERSION, validate_import_payload
-from app.services.data_export_service import export_client
+from app.services.data_transfer_service import export_client
 
 # Freeze the file format independently of both ORM metadata and the exporter.
 FORMAT_FIELDS = {

@@ -44,9 +44,10 @@ OWNERS: dict[str, str] = {
     "client_recovery_codes": "services/mfa_service",
 }
 
-# The import/export endpoint restores every table of a client from a payload, so
-# it is the one module that is allowed to create rows anywhere.
-WHOLE_DATABASE = "routers/data_transfer"
+# A restore's job is to rebuild every table of a client from a payload, so
+# per-feature ownership cannot apply. Only this restore service
+# may create rows across all table owners; ordinary feature writes still obey OWNERS.
+WHOLE_DATABASE = "services/data_transfer_service"
 
 # Known writers that are not the owner. This is the starting point, not a target:
 # each line is a boundary the redesign intends to close, and the test above fails

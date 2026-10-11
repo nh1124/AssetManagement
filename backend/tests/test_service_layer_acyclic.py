@@ -65,7 +65,7 @@ LAYERS: dict[str, int] = {
     "ai_context_service": 5,
     "analysis_service": 5,
     "data_health_service": 5,
-    "data_export_service": 5,  # Backup includes L5 health; no service depends on it.
+    "data_transfer_service": 5,  # Backup includes L5 health; no service depends on it.
     "goal_service": 5,
     "milestone_service": 5,
     "reconcile_service": 5,
