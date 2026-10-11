@@ -3,13 +3,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol, Sequence
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from .. import models
+from .. import models, schemas
 from . import ledger_service
+from .cache_service import invalidate_client
 from .product_reserve_service import product_reserve_values
 
 
+# Holdings-based balances and their cache are retired by capsule_design_review.md §7.6 (H6).
 def capsule_balance(db: Session, capsule: models.Capsule) -> float:
     return sum(h.held_amount for h in capsule.holdings)
 
@@ -18,6 +21,226 @@ def remaining_target(db: Session, capsule: models.Capsule) -> float:
     return max(0.0, (capsule.target_amount or 0.0) - capsule_balance(db, capsule))
 
 
+def get_capsule(db: Session, client_id: int, capsule_id: int) -> models.Capsule | None:
+    return db.query(models.Capsule).filter(
+        models.Capsule.id == capsule_id,
+        models.Capsule.client_id == client_id,
+    ).first()
+
+
+def list_capsules(db: Session, client_id: int, skip: int = 0, limit: int = 100) -> list[models.Capsule]:
+    return db.query(models.Capsule).filter(
+        models.Capsule.client_id == client_id,
+    ).offset(skip).limit(limit).all()
+
+
+def list_capsule_details(
+    db: Session, client_id: int, skip: int = 0, limit: int = 100, *, commit: bool = True,
+) -> list[dict]:
+    result = [capsule_to_dict(db, capsule) for capsule in list_capsules(db, client_id, skip, limit)]
+    # Serialization updates the legacy cache; keep the original GET commit boundary.
+    if commit:
+        db.commit()
+    else:
+        db.flush()
+    return result
+
+
+def _finish_write(db: Session, client_id: int, record=None, *, commit: bool) -> None:
+    if commit:
+        db.commit()
+        if record is not None:
+            db.refresh(record)
+        invalidate_client(client_id)
+    else:
+        db.flush()
+
+
+def create_capsule(
+    db: Session, client_id: int, payload: schemas.CapsuleCreate, *, commit: bool = True,
+) -> models.Capsule:
+    capsule = models.Capsule(
+        client_id=client_id,
+        life_event_id=payload.life_event_id,
+        name=payload.name,
+        target_amount=max(0.0, payload.target_amount or 0.0),
+        monthly_contribution=max(0.0, payload.monthly_contribution or 0.0),
+        # This cache column is slated for removal in capsule_design_review.md §7.6.
+        current_balance=0.0,
+        account_id=payload.account_id,
+        auto_post=payload.auto_post,
+        capsule_type=payload.capsule_type or "manual",
+        target_amount_source=payload.target_amount_source or "manual",
+        monthly_contribution_source=payload.monthly_contribution_source or "manual",
+    )
+    db.add(capsule)
+    _finish_write(db, client_id, capsule, commit=commit)
+    return capsule
+
+
+def update_capsule(
+    db: Session, client_id: int, capsule_id: int, patch: schemas.CapsuleUpdate,
+    *, commit: bool = True,
+) -> models.Capsule | None:
+    capsule = get_capsule(db, client_id, capsule_id)
+    if capsule is None:
+        return None
+    for key, value in patch.model_dump(exclude_unset=True).items():
+        if key == "current_balance":
+            continue
+        elif key == "target_amount":
+            capsule.target_amount = max(0.0, value or 0.0)
+        elif key == "monthly_contribution":
+            capsule.monthly_contribution = max(0.0, value or 0.0)
+        elif key in {"capsule_type", "target_amount_source", "monthly_contribution_source"}:
+            setattr(capsule, key, value or "manual")
+        else:
+            setattr(capsule, key, value)
+    # Holdings-based cache refresh is retired by capsule_design_review.md §7.6 (H6).
+    capsule.current_balance = capsule_balance(db, capsule)
+    _finish_write(db, client_id, capsule, commit=commit)
+    return capsule
+
+
+def delete_capsule(db: Session, client_id: int, capsule_id: int, *, commit: bool = True) -> bool:
+    capsule = get_capsule(db, client_id, capsule_id)
+    if capsule is None:
+        return False
+    if capsule.life_event_id:
+        raise HTTPException(status_code=400, detail="LifeEvent capsules are managed by their LifeEvent and cannot be deleted directly")
+    linked_products = db.query(models.Product.id).filter(
+        models.Product.client_id == client_id,
+        models.Product.funding_capsule_id == capsule.id,
+    ).first()
+    if linked_products:
+        raise HTTPException(status_code=400, detail="Capsules linked to Product/Item reserves cannot be deleted while products use them")
+    db.delete(capsule)
+    _finish_write(db, client_id, commit=commit)
+    return True
+
+
+def list_rules(db: Session, client_id: int) -> list[models.CapsuleRule]:
+    return db.query(models.CapsuleRule).filter(
+        models.CapsuleRule.client_id == client_id,
+    ).order_by(models.CapsuleRule.id).all()
+
+
+def create_rule(
+    db: Session, client_id: int, payload: schemas.CapsuleRuleCreate, *, commit: bool = True,
+) -> models.CapsuleRule:
+    if get_capsule(db, client_id, payload.capsule_id) is None:
+        raise HTTPException(status_code=404, detail="Capsule not found")
+    if payload.source_account_id:
+        account = db.query(models.Account).filter(
+            models.Account.id == payload.source_account_id,
+            models.Account.client_id == client_id,
+        ).first()
+        if not account:
+            raise HTTPException(status_code=404, detail="Source account not found")
+    rule = models.CapsuleRule(**payload.model_dump(), client_id=client_id)
+    db.add(rule)
+    _finish_write(db, client_id, rule, commit=commit)
+    return rule
+
+
+def update_rule(
+    db: Session, client_id: int, rule_id: int, patch: schemas.CapsuleRuleUpdate,
+    *, commit: bool = True,
+) -> models.CapsuleRule | None:
+    rule = db.query(models.CapsuleRule).filter(
+        models.CapsuleRule.id == rule_id,
+        models.CapsuleRule.client_id == client_id,
+    ).first()
+    if rule is None:
+        return None
+    for key, value in patch.model_dump(exclude_unset=True).items():
+        setattr(rule, key, value)
+    _finish_write(db, client_id, rule, commit=commit)
+    return rule
+
+
+def delete_rule(db: Session, client_id: int, rule_id: int, *, commit: bool = True) -> bool:
+    rule = db.query(models.CapsuleRule).filter(
+        models.CapsuleRule.id == rule_id,
+        models.CapsuleRule.client_id == client_id,
+    ).first()
+    if rule is None:
+        return False
+    db.delete(rule)
+    _finish_write(db, client_id, commit=commit)
+    return True
+
+
+# Holding CRUD preserves the claims slated for removal in capsule_design_review.md §7.6 (H6).
+def list_holdings(db: Session, client_id: int, capsule_id: int) -> list[models.CapsuleHolding] | None:
+    capsule = get_capsule(db, client_id, capsule_id)
+    return list(capsule.holdings) if capsule is not None else None
+
+
+def create_holding(
+    db: Session, client_id: int, capsule_id: int, payload: schemas.CapsuleHoldingCreate,
+    *, commit: bool = True,
+) -> models.CapsuleHolding:
+    if get_capsule(db, client_id, capsule_id) is None:
+        raise HTTPException(status_code=404, detail="Capsule not found")
+    account = db.query(models.Account).filter(
+        models.Account.id == payload.account_id,
+        models.Account.client_id == client_id,
+    ).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    holding = db.query(models.CapsuleHolding).filter(
+        models.CapsuleHolding.capsule_id == capsule_id,
+        models.CapsuleHolding.account_id == payload.account_id,
+    ).first()
+    if holding:
+        holding.held_amount = payload.held_amount
+        holding.note = payload.note
+    else:
+        holding = models.CapsuleHolding(
+            capsule_id=capsule_id, account_id=payload.account_id,
+            held_amount=payload.held_amount, note=payload.note,
+        )
+        db.add(holding)
+    _finish_write(db, client_id, holding, commit=commit)
+    return holding
+
+
+def update_holding(
+    db: Session, client_id: int, capsule_id: int, holding_id: int, patch: schemas.CapsuleHoldingUpdate,
+    *, commit: bool = True,
+) -> models.CapsuleHolding | None:
+    if get_capsule(db, client_id, capsule_id) is None:
+        return None
+    holding = db.query(models.CapsuleHolding).filter(
+        models.CapsuleHolding.id == holding_id,
+        models.CapsuleHolding.capsule_id == capsule_id,
+    ).first()
+    if holding is None:
+        return None
+    for key, value in patch.model_dump(exclude_unset=True).items():
+        setattr(holding, key, value)
+    _finish_write(db, client_id, holding, commit=commit)
+    return holding
+
+
+def delete_holding(
+    db: Session, client_id: int, capsule_id: int, holding_id: int, *, commit: bool = True,
+) -> bool:
+    if get_capsule(db, client_id, capsule_id) is None:
+        return False
+    holding = db.query(models.CapsuleHolding).filter(
+        models.CapsuleHolding.id == holding_id,
+        models.CapsuleHolding.capsule_id == capsule_id,
+    ).first()
+    if holding is None:
+        return False
+    db.delete(holding)
+    _finish_write(db, client_id, commit=commit)
+    return True
+
+
+# Legacy contributions still write claims until capsule_design_review.md §7.6 (H6).
 def upsert_capsule_holding(
     db: Session,
     capsule: models.Capsule,

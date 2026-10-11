@@ -57,14 +57,7 @@ WHOLE_DATABASE = "routers/data_transfer"
 # if a new one appears. The reason says what would have to change to remove it.
 ALLOWED: dict[str, dict[str, str]] = {
     "capsules": {
-        "routers/capsules": "capsule CRUD lives in the router",
         "services/product_reserve_service": "a product reserve creates its own capsule",
-    },
-    "capsule_rules": {
-        "routers/capsules": "rule CRUD lives in the router",
-    },
-    "capsule_holdings": {
-        "routers/capsules": "holding CRUD lives in the router",
     },
     "clients": {
         "main": "development seeding of the default client at startup",
