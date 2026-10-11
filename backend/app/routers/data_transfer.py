@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import json
-import math
 from datetime import date, datetime
 from typing import Any
 
@@ -14,6 +11,18 @@ from sqlalchemy.orm import Session
 from .. import models
 from ..database import get_db
 from ..dependencies import get_current_client
+from ..domain.transfer import (
+    EXPORT_VERSION,
+    row_fields,
+    data_counts,
+    build_manifest,
+    parse_date,
+    parse_datetime,
+    validate_import_payload,
+    assert_imported_journal_invariant,
+    remap_nested_ids,
+    remap_action_target_id,
+)
 from ..services.ledger_service import calculate_account_journal_balance
 from ..services.budget_lines import assign_plan_line_identity
 from ..services.cache_service import invalidate_client
@@ -22,31 +31,6 @@ from ..services.data_health_service import check_data_health, repair_data_health
 from ..services.registry_service import account_entry_type, account_line_type
 
 router = APIRouter(prefix="/data", tags=["data"])
-
-EXPORT_VERSION = 8
-
-DATA_COLLECTIONS = [
-    "accounts",
-    "products",
-    "simulation_configs",
-    "recurring_transactions",
-    "registry_entries",
-    "quick_templates",
-    "transaction_batches",
-    "life_events",
-    "transactions",
-    "journal_entries",
-    "budget_plans",
-    "monthly_plan_lines",
-    "period_reviews",
-    "monthly_actions",
-    "milestones",
-    "capsules",
-    "capsule_rules",
-    "capsule_holdings",
-    "simulation_scenarios",
-    "exchange_rates",
-]
 
 
 class ImportPayload(BaseModel):
@@ -57,369 +41,11 @@ class ImportPayload(BaseModel):
     data: dict[str, list[dict[str, Any]]]
 
 
-def _iso(value: Any) -> Any:
-    if isinstance(value, (date, datetime)):
-        return value.isoformat()
-    return value
-
-
-def _row(obj: Any, fields: list[str]) -> dict[str, Any]:
-    return {field: _iso(getattr(obj, field)) for field in fields}
-
-
-def _normalize_for_checksum(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {key: _normalize_for_checksum(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_normalize_for_checksum(item) for item in value]
-    if isinstance(value, float) and value.is_integer():
-        return int(value)
-    return value
-
-
-def _canonical_json(value: Any) -> str:
-    normalized = _normalize_for_checksum(value)
-    return json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
-
-
-def _sha256(value: Any) -> str:
-    return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
-
-
-def _data_counts(data: dict[str, list[dict[str, Any]]]) -> dict[str, int]:
-    return {key: len(data.get(key, [])) for key in DATA_COLLECTIONS}
-
-
-def _table_checksums(data: dict[str, list[dict[str, Any]]]) -> dict[str, str]:
-    return {key: _sha256(data.get(key, [])) for key in DATA_COLLECTIONS}
-
-
 def _db_revision(db: Session) -> str | None:
     try:
         return db.execute(text("SELECT version_num FROM alembic_version")).scalar()
     except Exception:
         return None
-
-
-def _build_manifest(
-    db: Session,
-    current_client: models.Client,
-    data: dict[str, list[dict[str, Any]]],
-    exported_at: str,
-) -> dict[str, Any]:
-    checksums = _table_checksums(data)
-    return {
-        "export_version": EXPORT_VERSION,
-        "exported_at": exported_at,
-        "application": "AssetManagement",
-        "alembic_revision": _db_revision(db),
-        "client_id": current_client.id,
-        "counts": _data_counts(data),
-        "checksums": checksums,
-        "payload_checksum": _sha256({"data": data, "checksums": checksums}),
-    }
-
-
-def _parse_date(value: Any) -> date | None:
-    if not value:
-        return None
-    if isinstance(value, date) and not isinstance(value, datetime):
-        return value
-    return date.fromisoformat(str(value))
-
-
-def _parse_datetime(value: Any) -> datetime | None:
-    if not value:
-        return None
-    if isinstance(value, datetime):
-        return value
-    return datetime.fromisoformat(str(value))
-
-
-def _as_int(value: Any) -> int | None:
-    if value is None or value == "":
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _validate_import_payload(payload: ImportPayload) -> dict[str, Any]:
-    data = payload.data or {}
-    issues: list[dict[str, Any]] = []
-
-    def issue(
-        severity: str,
-        code: str,
-        detail: str,
-        collection: str | None = None,
-        item_id: Any = None,
-        field: str | None = None,
-    ) -> None:
-        row = {"severity": severity, "code": code, "detail": detail}
-        if collection:
-            row["collection"] = collection
-        if item_id is not None:
-            row["item_id"] = item_id
-        if field:
-            row["field"] = field
-        issues.append(row)
-
-    unknown_collections = sorted(set(data.keys()) - set(DATA_COLLECTIONS))
-    for collection in unknown_collections:
-        issue("warning", "unknown_collection", "This collection is not imported by this application version.", collection)
-
-    if payload.version and payload.version > EXPORT_VERSION:
-        issue(
-            "error",
-            "unsupported_version",
-            f"Export version {payload.version} is newer than supported version {EXPORT_VERSION}.",
-        )
-    elif payload.version and payload.version < EXPORT_VERSION:
-        issue(
-            "warning",
-            "older_version",
-            f"Export version {payload.version} will be imported with compatibility defaults.",
-        )
-
-    id_sets: dict[str, set[int]] = {}
-    for collection in DATA_COLLECTIONS:
-        seen: set[int] = set()
-        for index, item in enumerate(data.get(collection, [])):
-            item_id = _as_int(item.get("id"))
-            if item_id is None:
-                issue("error", "missing_id", f"Row {index} is missing a valid id.", collection, field="id")
-                continue
-            if item_id in seen:
-                issue("error", "duplicate_id", f"Duplicate id {item_id}.", collection, item_id, "id")
-            seen.add(item_id)
-        id_sets[collection] = seen
-
-    def check_ref(collection: str, field: str, target: str, required: bool = False) -> None:
-        target_ids = id_sets.get(target, set())
-        for item in data.get(collection, []):
-            value = item.get(field)
-            ref_id = _as_int(value)
-            if ref_id is None:
-                if required and value is not None:
-                    issue("error", "invalid_reference", f"{field} is not a valid integer id.", collection, item.get("id"), field)
-                elif required:
-                    issue("error", "missing_reference", f"{field} is required.", collection, item.get("id"), field)
-                continue
-            if ref_id not in target_ids:
-                issue(
-                    "error",
-                    "missing_reference",
-                    f"{field} points to missing {target} id {ref_id}.",
-                    collection,
-                    item.get("id"),
-                    field,
-                )
-
-    check_ref("accounts", "parent_id", "accounts")
-    check_ref("products", "budget_account_id", "accounts")
-    check_ref("products", "funding_capsule_id", "capsules")
-    check_ref("recurring_transactions", "from_account_id", "accounts")
-    check_ref("recurring_transactions", "to_account_id", "accounts")
-    # Definitions without a restorable registry owner are skipped during import.
-    check_ref("registry_entries", "budget_account_id", "accounts")
-    check_ref("registry_entries", "source_account_id", "accounts")
-    check_ref("registry_entries", "destination_account_id", "accounts")
-    check_ref("registry_entries", "funding_capsule_id", "capsules")
-    check_ref("registry_entries", "source_product_id", "products")
-    check_ref("registry_entries", "source_recurring_transaction_id", "recurring_transactions")
-    check_ref("quick_templates", "default_from_account_id", "accounts")
-    check_ref("quick_templates", "default_to_account_id", "accounts")
-    check_ref("transaction_batches", "quick_template_id", "quick_templates")
-    # Only present in a v6 or older payload, where the columns still existed.
-    check_ref("transactions", "from_account_id", "accounts")
-    check_ref("transactions", "to_account_id", "accounts")
-    check_ref("transactions", "batch_id", "transaction_batches")
-    check_ref("journal_entries", "transaction_id", "transactions", required=True)
-    check_ref("journal_entries", "account_id", "accounts", required=True)
-    check_ref("milestones", "life_event_id", "life_events")
-    check_ref("capsules", "account_id", "accounts")
-    check_ref("capsules", "life_event_id", "life_events")
-    check_ref("capsule_rules", "capsule_id", "capsules", required=True)
-    check_ref("capsule_rules", "source_account_id", "accounts")
-    check_ref("capsule_holdings", "capsule_id", "capsules", required=True)
-    check_ref("capsule_holdings", "account_id", "accounts", required=True)
-    check_ref("simulation_scenarios", "life_event_id", "life_events", required=True)
-    check_ref("monthly_plan_lines", "account_id", "accounts")
-    check_ref("monthly_plan_lines", "source_account_id", "accounts")
-    check_ref("monthly_plan_lines", "plan_id", "budget_plans")
-
-    journal_entries_by_transaction: dict[int, list[dict[str, Any]]] = {}
-    for entry in data.get("journal_entries", []):
-        transaction_id = _as_int(entry.get("transaction_id"))
-        if transaction_id is not None:
-            journal_entries_by_transaction.setdefault(transaction_id, []).append(entry)
-
-    for transaction in data.get("transactions", []):
-        transaction_id = _as_int(transaction.get("id"))
-        if transaction_id is None:
-            continue
-        entries = journal_entries_by_transaction.get(transaction_id, [])
-        if len(entries) < 2:
-            issue(
-                "error",
-                "journal_entries_missing",
-                "Each transaction must have at least two journal entries.",
-                "transactions",
-                transaction_id,
-            )
-            continue
-        try:
-            amount = float(transaction.get("amount") or 0.0)
-            total_debit = sum(float(entry.get("debit") or 0.0) for entry in entries)
-            total_credit = sum(float(entry.get("credit") or 0.0) for entry in entries)
-        except (TypeError, ValueError):
-            issue(
-                "error",
-                "journal_amount_invalid",
-                "Transaction and journal amounts must be numeric.",
-                "transactions",
-                transaction_id,
-            )
-            continue
-        if not (
-            math.isclose(total_debit, total_credit, abs_tol=0.01)
-            and math.isclose(total_debit, amount, abs_tol=0.01)
-        ):
-            issue(
-                "error",
-                "journal_unbalanced",
-                f"Journal totals must satisfy debit=credit=amount; got debit={total_debit}, credit={total_credit}, amount={amount}.",
-                "transactions",
-                transaction_id,
-            )
-
-    for item in data.get("monthly_plan_lines", []):
-        target_type = item.get("target_type")
-        target_id = _as_int(item.get("target_id"))
-        if target_id is None:
-            continue
-        target_collection = {
-            "account": "accounts",
-            "capsule": "capsules",
-            "life_event": "life_events",
-            "product": "products",
-        }.get(target_type)
-        if target_collection and target_id not in id_sets[target_collection]:
-            issue(
-                "error",
-                "missing_reference",
-                f"target_id points to missing {target_collection} id {target_id}.",
-                "monthly_plan_lines",
-                item.get("id"),
-                "target_id",
-            )
-
-    manifest = payload.manifest or {}
-    expected_counts = manifest.get("counts") or {}
-    actual_counts = _data_counts(data)
-    for collection, expected in expected_counts.items():
-        actual = actual_counts.get(collection)
-        if actual is not None and expected != actual:
-            issue(
-                "error",
-                "count_mismatch",
-                f"Manifest count {expected} does not match payload count {actual}.",
-                collection,
-            )
-
-    expected_checksums = manifest.get("checksums") or {}
-    actual_checksums = _table_checksums(data)
-    for collection, expected in expected_checksums.items():
-        actual = actual_checksums.get(collection)
-        if actual and expected != actual:
-            issue(
-                "warning",
-                "checksum_mismatch",
-                "Collection checksum does not match the export manifest. This can happen with older exports after JSON number normalization.",
-                collection,
-            )
-
-    expected_payload_checksum = manifest.get("payload_checksum")
-    if expected_payload_checksum:
-        actual_payload_checksum = _sha256({"data": data, "checksums": actual_checksums})
-        if expected_payload_checksum != actual_payload_checksum:
-            issue(
-                "warning",
-                "payload_checksum_mismatch",
-                "Payload checksum does not match the export manifest. This can happen with older exports after JSON number normalization.",
-            )
-
-    error_count = sum(1 for item in issues if item["severity"] == "error")
-    warning_count = sum(1 for item in issues if item["severity"] == "warning")
-    return {
-        "status": "valid" if error_count == 0 else "invalid",
-        "error_count": error_count,
-        "warning_count": warning_count,
-        "counts": _data_counts(data),
-        "issues": issues,
-    }
-
-
-def _assert_imported_journal_invariant(
-    db: Session,
-    transaction_ids: list[int],
-) -> None:
-    for transaction_id in transaction_ids:
-        transaction = db.query(models.Transaction).filter(
-            models.Transaction.id == transaction_id
-        ).one()
-        entries = db.query(models.JournalEntry).filter(
-            models.JournalEntry.transaction_id == transaction_id
-        ).all()
-        if len(entries) < 2:
-            raise ValueError(f"Transaction {transaction_id} has fewer than two journal entries")
-        total_debit = sum(float(entry.debit or 0.0) for entry in entries)
-        total_credit = sum(float(entry.credit or 0.0) for entry in entries)
-        amount = float(transaction.amount or 0.0)
-        if not (
-            math.isclose(total_debit, total_credit, abs_tol=0.01)
-            and math.isclose(total_debit, amount, abs_tol=0.01)
-        ):
-            raise ValueError(
-                f"Transaction {transaction_id} journal totals do not satisfy debit=credit=amount"
-            )
-
-
-def _remap_nested_ids(value: Any, key_maps: dict[str, dict[int, int]]) -> Any:
-    if isinstance(value, list):
-        return [_remap_nested_ids(item, key_maps) for item in value]
-    if not isinstance(value, dict):
-        return value
-
-    mapped: dict[str, Any] = {}
-    for key, item_value in value.items():
-        id_map = key_maps.get(key)
-        old_id = _as_int(item_value)
-        if id_map is not None and old_id is not None:
-            mapped[key] = id_map.get(old_id, item_value)
-        else:
-            mapped[key] = _remap_nested_ids(item_value, key_maps)
-    return mapped
-
-
-def _remap_action_target_id(item: dict[str, Any], key_maps: dict[str, dict[int, int]]) -> int | None:
-    target_id = _as_int(item.get("target_id"))
-    if target_id is None:
-        return None
-    kind = item.get("kind")
-    payload = item.get("payload") or {}
-    target_key = {
-        "set_budget": "account_id",
-        "pause_recurring": "recurring_id",
-        "change_capsule_contribution": "capsule_id",
-    }.get(kind)
-    if kind == "boost_allocation":
-        target_key = "account_id" if payload.get("account_id") else "life_event_id"
-    if not target_key:
-        return target_id
-    return key_maps.get(target_key, {}).get(target_id, target_id)
 
 
 @router.get("/export")
@@ -437,7 +63,7 @@ def export_client_data(
     exported_at = datetime.utcnow().isoformat()
     data = {
             "accounts": [
-                _row(
+                row_fields(
                     account,
                     [
                         "id",
@@ -465,7 +91,7 @@ def export_client_data(
                 .all()
             ],
             "products": [
-                _row(
+                row_fields(
                     product,
                     [
                         "id",
@@ -491,7 +117,7 @@ def export_client_data(
                 .all()
             ],
             "simulation_configs": [
-                _row(
+                row_fields(
                     config,
                     [
                         "id",
@@ -510,7 +136,7 @@ def export_client_data(
                 .all()
             ],
             "recurring_transactions": [
-                _row(
+                row_fields(
                     item,
                     [
                         "id",
@@ -537,7 +163,7 @@ def export_client_data(
                 .all()
             ],
             "registry_entries": [
-                _row(
+                row_fields(
                     item,
                     [
                         "id",
@@ -574,7 +200,7 @@ def export_client_data(
                 .all()
             ],
             "quick_templates": [
-                _row(
+                row_fields(
                     item,
                     [
                         "id",
@@ -599,7 +225,7 @@ def export_client_data(
                 .all()
             ],
             "transaction_batches": [
-                _row(
+                row_fields(
                     item,
                     [
                         "id",
@@ -616,7 +242,7 @@ def export_client_data(
                 .all()
             ],
             "life_events": [
-                _row(
+                row_fields(
                     event,
                     [
                         "id",
@@ -638,7 +264,7 @@ def export_client_data(
                 .all()
             ],
             "transactions": [
-                _row(
+                row_fields(
                     transaction,
                     [
                         "id",
@@ -657,14 +283,14 @@ def export_client_data(
                 .all()
             ],
             "journal_entries": [
-                _row(entry, ["id", "transaction_id", "account_id", "debit", "credit", "memo", "sort_order"])
+                row_fields(entry, ["id", "transaction_id", "account_id", "debit", "credit", "memo", "sort_order"])
                 for entry in db.query(models.JournalEntry)
                 .filter(models.JournalEntry.transaction_id.in_(tx_ids or [-1]))
                 .order_by(models.JournalEntry.id)
                 .all()
             ],
             "budget_plans": [
-                _row(
+                row_fields(
                     plan,
                     [
                         "id",
@@ -682,7 +308,7 @@ def export_client_data(
                 .all()
             ],
             "monthly_plan_lines": [
-                _row(
+                row_fields(
                     line,
                     [
                         "id",
@@ -711,7 +337,7 @@ def export_client_data(
                 .all()
             ],
             "period_reviews": [
-                _row(
+                row_fields(
                     review,
                     [
                         "id",
@@ -730,7 +356,7 @@ def export_client_data(
                 .all()
             ],
             "monthly_actions": [
-                _row(
+                row_fields(
                     action,
                     [
                         "id",
@@ -755,7 +381,7 @@ def export_client_data(
                 .all()
             ],
             "milestones": [
-                _row(
+                row_fields(
                     milestone,
                     [
                         "id",
@@ -775,7 +401,7 @@ def export_client_data(
                 .all()
             ],
             "capsules": [
-                _row(
+                row_fields(
                     capsule,
                     [
                         "id",
@@ -797,7 +423,7 @@ def export_client_data(
                 .all()
             ],
             "capsule_rules": [
-                _row(
+                row_fields(
                     rule,
                     [
                         "id",
@@ -819,7 +445,7 @@ def export_client_data(
                 .all()
             ],
             "capsule_holdings": [
-                _row(holding, ["id", "capsule_id", "account_id", "held_amount", "note", "updated_at"])
+                row_fields(holding, ["id", "capsule_id", "account_id", "held_amount", "note", "updated_at"])
                 for holding in db.query(models.CapsuleHolding)
                 .join(models.Capsule, models.Capsule.id == models.CapsuleHolding.capsule_id)
                 .filter(models.Capsule.client_id == current_client.id)
@@ -827,7 +453,7 @@ def export_client_data(
                 .all()
             ],
             "simulation_scenarios": [
-                _row(
+                row_fields(
                     scenario,
                     [
                         "id",
@@ -849,7 +475,7 @@ def export_client_data(
                 .all()
             ],
             "exchange_rates": [
-                _row(
+                row_fields(
                     rate,
                     [
                         "id",
@@ -872,7 +498,7 @@ def export_client_data(
     return {
         "version": EXPORT_VERSION,
         "exported_at": exported_at,
-        "manifest": _build_manifest(db, current_client, data, exported_at),
+        "manifest": build_manifest(current_client.id, data, exported_at, _db_revision(db)),
         "client": {
             "id": current_client.id,
             "name": current_client.name,
@@ -890,7 +516,7 @@ def validate_import_client_data(
     payload: ImportPayload,
     current_client: models.Client = Depends(get_current_client),
 ):
-    validation = _validate_import_payload(payload)
+    validation = validate_import_payload(payload.data, payload.version, payload.manifest)
     return {
         **validation,
         "client": {
@@ -908,7 +534,7 @@ def import_client_data(
     current_client: models.Client = Depends(get_current_client),
 ):
     data = payload.data or {}
-    validation = _validate_import_payload(payload)
+    validation = validate_import_payload(payload.data, payload.version, payload.manifest)
     if validation["error_count"]:
         raise HTTPException(
             status_code=400,
@@ -1015,8 +641,8 @@ def import_client_data(
                 description=item.get("description"),
                 is_default=item.get("is_default", False),
                 sort_order=item.get("sort_order") or 0,
-                created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
-                updated_at=_parse_datetime(item.get("updated_at")),
+                created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
+                updated_at=parse_datetime(item.get("updated_at")),
             )
             db.add(plan)
             db.flush()
@@ -1034,13 +660,13 @@ def import_client_data(
                 last_unit_price=item.get("last_unit_price") or 0,
                 units_per_purchase=item.get("units_per_purchase") or 1,
                 frequency_days=item.get("frequency_days") or 0,
-                last_purchase_date=_parse_date(item.get("last_purchase_date")),
+                last_purchase_date=parse_date(item.get("last_purchase_date")),
                 is_asset=item.get("is_asset", False),
                 lifespan_months=item.get("lifespan_months"),
                 budget_account_id=account_map.get(item.get("budget_account_id")),
                 budget_treatment=item.get("budget_treatment") or "auto",
                 purchase_price=item.get("purchase_price"),
-                purchase_date=_parse_date(item.get("purchase_date")),
+                purchase_date=parse_date(item.get("purchase_date")),
             )
             db.add(product)
             db.flush()
@@ -1090,8 +716,8 @@ def import_client_data(
                 note=item.get("note"),
                 start_period=item.get("start_period"),
                 end_period=item.get("end_period"),
-                created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
-                updated_at=_parse_datetime(item.get("updated_at")),
+                created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
+                updated_at=parse_datetime(item.get("updated_at")),
             )
             db.add(entry)
             db.flush()
@@ -1144,12 +770,12 @@ def import_client_data(
                 frequency=item["frequency"],
                 day_of_month=item.get("day_of_month") or 1,
                 month_of_year=item.get("month_of_year"),
-                next_due_date=_parse_date(item.get("next_due_date")),
+                next_due_date=parse_date(item.get("next_due_date")),
                 start_period=item.get("start_period"),
                 end_period=item.get("end_period"),
                 auto_post=item.get("auto_post", True),
                 is_active=item.get("is_active", True),
-                created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
+                created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
             )
             db.add(recurring)
             db.flush()
@@ -1185,8 +811,8 @@ def import_client_data(
                 config=item.get("config") or {},
                 sort_order=item.get("sort_order") or 0,
                 is_active=item.get("is_active", True),
-                created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
-                updated_at=_parse_datetime(item.get("updated_at")),
+                created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
+                updated_at=parse_datetime(item.get("updated_at")),
             )
             db.add(template)
             db.flush()
@@ -1200,7 +826,7 @@ def import_client_data(
                 label=item.get("label"),
                 source=item.get("source") or "quick",
                 input_payload=item.get("input_payload") or {},
-                created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
+                created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
             )
             db.add(batch)
             db.flush()
@@ -1211,15 +837,15 @@ def import_client_data(
             event = models.LifeEvent(
                 client_id=current_client.id,
                 name=item["name"],
-                start_date=_parse_date(item.get("start_date")),
-                target_date=_parse_date(item.get("target_date")),
+                start_date=parse_date(item.get("start_date")),
+                target_date=parse_date(item.get("target_date")),
                 target_amount=item.get("target_amount") or 0,
                 priority=item.get("priority") or 2,
                 note=item.get("note"),
                 active_plan_basis=item.get("active_plan_basis") or "milestone",
                 active_plan_label=item.get("active_plan_label"),
                 plan_status_override=item.get("plan_status_override"),
-                created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
+                created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
             )
             db.add(event)
             db.flush()
@@ -1229,7 +855,7 @@ def import_client_data(
             old_id = int(item["id"])
             transaction = models.Transaction(
                 client_id=current_client.id,
-                date=_parse_date(item.get("date")),
+                date=parse_date(item.get("date")),
                 description=item["description"],
                 amount=item.get("amount") or 0,
                 currency=item.get("currency") or "JPY",
@@ -1238,7 +864,7 @@ def import_client_data(
                 # were already required to balance.
                 batch_id=batch_map.get(item.get("batch_id")),
                 recurring_transaction_id=recurring_map.get(item.get("recurring_transaction_id")),
-                created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
+                created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
             )
             db.add(transaction)
             db.flush()
@@ -1260,7 +886,18 @@ def import_client_data(
                 )
 
         db.flush()
-        _assert_imported_journal_invariant(db, list(transaction_map.values()))
+        for transaction_id in transaction_map.values():
+            transaction = db.query(models.Transaction).filter(
+                models.Transaction.id == transaction_id
+            ).one()
+            entries = db.query(models.JournalEntry).filter(
+                models.JournalEntry.transaction_id == transaction_id
+            ).all()
+            assert_imported_journal_invariant(
+                transaction_id,
+                transaction.amount,
+                [{"debit": entry.debit, "credit": entry.credit} for entry in entries],
+            )
         for account in db.query(models.Account).filter(models.Account.client_id == current_client.id).all():
             account.balance = calculate_account_journal_balance(db, account)
 
@@ -1268,13 +905,13 @@ def import_client_data(
             db.add(
                 models.PeriodReview(
                     client_id=current_client.id,
-                    start_date=_parse_date(item.get("start_date")),
-                    end_date=_parse_date(item.get("end_date")),
+                    start_date=parse_date(item.get("start_date")),
+                    end_date=parse_date(item.get("end_date")),
                     label=item.get("label") or "",
                     reflection=item.get("reflection") or "",
                     next_actions=item.get("next_actions") or "",
-                    created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
-                    updated_at=_parse_datetime(item.get("updated_at")),
+                    created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
+                    updated_at=parse_datetime(item.get("updated_at")),
                 )
             )
 
@@ -1284,13 +921,13 @@ def import_client_data(
             milestone = models.Milestone(
                 client_id=current_client.id,
                 life_event_id=event_map.get(item.get("life_event_id")),
-                date=_parse_date(item.get("date")),
+                date=parse_date(item.get("date")),
                 target_amount=item.get("target_amount") or 0,
                 note=item.get("note"),
                 source=item.get("source") or "manual",
                 source_snapshot=item.get("source_snapshot"),
                 is_active_plan=item.get("is_active_plan", True),
-                created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
+                created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
             )
             db.add(milestone)
             db.flush()
@@ -1310,8 +947,8 @@ def import_client_data(
                         monthly_savings=item.get("monthly_savings"),
                         contribution_schedule=item.get("contribution_schedule") or [],
                         allocation_mode=item.get("allocation_mode") or "direct",
-                        created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
-                        updated_at=_parse_datetime(item.get("updated_at")),
+                        created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
+                        updated_at=parse_datetime(item.get("updated_at")),
                     )
                 )
 
@@ -1328,7 +965,7 @@ def import_client_data(
                 capsule_type=item.get("capsule_type") or ("life_event" if item.get("life_event_id") else "manual"),
                 target_amount_source=item.get("target_amount_source") or "manual",
                 monthly_contribution_source=item.get("monthly_contribution_source") or "manual",
-                created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
+                created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
             )
             db.add(capsule)
             db.flush()
@@ -1363,7 +1000,7 @@ def import_client_data(
                         amount_type=item.get("amount_type") or "fixed",
                         amount_value=item.get("amount_value") or 0,
                         is_active=item.get("is_active", True),
-                        created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
+                        created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
                     )
                 )
 
@@ -1377,7 +1014,7 @@ def import_client_data(
                         account_id=account_id,
                         held_amount=item.get("held_amount") or 0,
                         note=item.get("note"),
-                        updated_at=_parse_datetime(item.get("updated_at")) or datetime.utcnow(),
+                        updated_at=parse_datetime(item.get("updated_at")) or datetime.utcnow(),
                     )
                 )
 
@@ -1416,8 +1053,8 @@ def import_client_data(
                 cash_treatment=item.get("cash_treatment") or "auto",
                 plan_id=budget_plan_map.get(item.get("plan_id")),
                 is_active=item.get("is_active", True),
-                created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
-                updated_at=_parse_datetime(item.get("updated_at")),
+                created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
+                updated_at=parse_datetime(item.get("updated_at")),
             )
             assign_plan_line_identity(line)
             if line.is_active and line.identity_key:
@@ -1437,10 +1074,10 @@ def import_client_data(
                     base_currency=(item.get("base_currency") or "JPY").upper(),
                     quote_currency=(item.get("quote_currency") or "JPY").upper(),
                     rate=item.get("rate") or 1.0,
-                    as_of_date=_parse_date(item.get("as_of_date")) or date.today(),
+                    as_of_date=parse_date(item.get("as_of_date")) or date.today(),
                     source=item.get("source") or "manual",
-                    created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
-                    updated_at=_parse_datetime(item.get("updated_at")),
+                    created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
+                    updated_at=parse_datetime(item.get("updated_at")),
                 )
             )
 
@@ -1478,13 +1115,13 @@ def import_client_data(
                     kind=item["kind"],
                     description=item.get("description") or "",
                     amount=item.get("amount"),
-                    target_id=_remap_action_target_id(item, action_key_maps),
-                    payload=_remap_nested_ids(item.get("payload") or {}, action_key_maps),
-                    result=_remap_nested_ids(item.get("result") or {}, action_key_maps),
+                    target_id=remap_action_target_id(item, action_key_maps),
+                    payload=remap_nested_ids(item.get("payload") or {}, action_key_maps),
+                    result=remap_nested_ids(item.get("result") or {}, action_key_maps),
                     status=item.get("status") or "pending",
                     idempotency_key=item.get("idempotency_key") or f"import:{current_client.id}:{item['id']}",
-                    created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),
-                    applied_at=_parse_datetime(item.get("applied_at")),
+                    created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
+                    applied_at=parse_datetime(item.get("applied_at")),
                 )
             )
 
@@ -1497,7 +1134,7 @@ def import_client_data(
     return {
         "status": "ok",
         "message": "Data imported successfully",
-        "counts": _data_counts(data),
+        "counts": data_counts(data),
         "validation": validation,
         "health": check_data_health(db, current_client.id),
     }
