@@ -60,7 +60,6 @@ WORKFLOW_ALLOWED: dict[str, str] = {}
 # module at a time. Counts prevent a listed module from accumulating more debt.
 HTTP_EXCEPTION_ALLOWED: dict[str, int] = {
     "services/data_transfer_service": 2,
-    "services/ledger_service": 13,
     "workflows/ai_change_request_workflow": 10,
     "services/capsule_service": 6,
     "services/ai_context_service": 4,
@@ -68,9 +67,6 @@ HTTP_EXCEPTION_ALLOWED: dict[str, int] = {
     "services/ai_policy_service": 2,
     "services/goal_service": 2,
     "workflows/product_workflow": 2,
-    "services/fx_service": 1,
-    "services/quick_template_service": 1,
-    "services/registry_service": 1,
     "workflows/simulation_workflow": 1,
 }
 

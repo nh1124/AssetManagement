@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.app import models, schemas
 from backend.app.database import Base
+from backend.app.domain.errors import Invalid
 from backend.app.routers.exchange_rates import create_exchange_rate
 from backend.app.services import registry_service
 
@@ -99,10 +100,9 @@ def test_delete_entry_preserves_soft_delete_and_removes_all_linked_recurring_row
 @pytest.mark.parametrize("key", ["budget_account_id", "source_account_id", "destination_account_id"])
 def test_validate_account_refs_rejects_another_clients_account_with_existing_http_error(db, key):
     foreign_id = db.query(models.Account).filter_by(client_id=2).one().id
-    with pytest.raises(HTTPException) as error:
+    with pytest.raises(Invalid) as error:
         registry_service.validate_account_refs(db, 1, {key: foreign_id})
-    assert error.value.status_code == 400
-    assert error.value.detail == f"{key} must belong to this client"
+    assert str(error.value) == f"{key} must belong to this client"
     assert db.query(models.RegistryEntry).count() == 0
     assert db.query(models.RecurringTransaction).count() == 0
     assert not db.new and not db.dirty and not db.deleted

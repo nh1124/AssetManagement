@@ -99,9 +99,9 @@ def test_account_reference_preserves_each_not_found_error(posting, field, missin
         cash.is_active = False
         db.commit()
         account_id = cash.id
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(Invalid) as exc:
         service._validate_account_reference(db, client.id, account_id, field)
-    assert (exc.value.status_code, exc.value.detail) == (400, f"{field} account not found")
+    assert str(exc.value) == f"{field} account not found"
 
 
 def test_account_reference_accepts_none_and_an_active_owned_account(posting):
@@ -117,12 +117,12 @@ def test_template_writes_validate_both_account_references(posting, operation, fi
     other = ledger.create_account(db, 2, {"name": "foreign", "account_type": "asset"})
     template = service.create_template(db, client.id, _template_data(posting))
     before = (template.default_from_account_id, template.default_to_account_id)
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(Invalid) as exc:
         if operation == "create":
             service.create_template(db, client.id, _template_data(posting, **{field: other.id}))
         else:
             service.update_template(db, client.id, template.id, {field: other.id})
-    assert exc.value.detail == f"{field.removesuffix('_account_id')} account not found"
+    assert str(exc.value) == f"{field.removesuffix('_account_id')} account not found"
     assert db.query(models.QuickTemplate).count() == 1
     assert (template.default_from_account_id, template.default_to_account_id) == before
 

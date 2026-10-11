@@ -12,11 +12,11 @@ from dataclasses import asdict
 from datetime import date, datetime
 from typing import Any, Optional, Sequence
 
-from fastapi import HTTPException
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
 from .. import models
+from ..domain.errors import Invalid, NotFound
 from ..domain.journal import (
     BALANCE_TOLERANCE,
     DEBIT_NORMAL_TYPES,
@@ -84,7 +84,7 @@ def _validate_parent(
     if parent_id is None:
         return
     if account_id is not None and parent_id == account_id:
-        raise HTTPException(status_code=400, detail="Account cannot be its own parent")
+        raise Invalid("Account cannot be its own parent")
 
     parent = db.query(models.Account).filter(
         models.Account.id == parent_id,
@@ -92,17 +92,17 @@ def _validate_parent(
         models.Account.is_active == True,
     ).first()
     if not parent:
-        raise HTTPException(status_code=404, detail="Parent account not found")
+        raise NotFound("Parent account not found")
     if parent.account_type != account_type:
-        raise HTTPException(status_code=400, detail="Parent account must have the same account_type")
+        raise Invalid("Parent account must have the same account_type")
 
     seen = set()
     current = parent
     while current:
         if current.id in seen:
-            raise HTTPException(status_code=400, detail="Account hierarchy cycle detected")
+            raise Invalid("Account hierarchy cycle detected")
         if account_id is not None and current.id == account_id:
-            raise HTTPException(status_code=400, detail="Account hierarchy cycle detected")
+            raise Invalid("Account hierarchy cycle detected")
         seen.add(current.id)
         if current.parent_id is None:
             break
@@ -134,17 +134,17 @@ def _normalize_liability_settings(payload: dict, account_type: str) -> None:
     for key in ("liability_closing_day", "liability_payment_day"):
         value = payload.get(key)
         if value is not None and not 1 <= value <= 31:
-            raise HTTPException(status_code=400, detail=f"{key} must be between 1 and 31")
+            raise Invalid(f"{key} must be between 1 and 31")
     offset = payload.get("liability_payment_month_offset")
     if offset is not None and not 0 <= offset <= 24:
-        raise HTTPException(status_code=400, detail="liability_payment_month_offset must be between 0 and 24")
+        raise Invalid("liability_payment_month_offset must be between 0 and 24")
     installment_months = payload.get("liability_installment_months")
     if installment_months is not None and installment_months < 1:
-        raise HTTPException(status_code=400, detail="liability_installment_months must be positive")
+        raise Invalid("liability_installment_months must be positive")
     for key in ("liability_minimum_payment", "liability_fixed_payment_amount", "liability_revolving_rate"):
         value = payload.get(key)
         if value is not None and value < 0:
-            raise HTTPException(status_code=400, detail=f"{key} must not be negative")
+            raise Invalid(f"{key} must not be negative")
 
 
 def create_account(
@@ -152,9 +152,8 @@ def create_account(
 ) -> models.Account:
     payload = data.copy()
     if abs(payload.pop("balance", 0) or 0) > 0.01:
-        raise HTTPException(
-            status_code=400,
-            detail="Journal is the source of truth. Create an opening-balance transaction instead of setting account.balance.",
+        raise Invalid(
+            "Journal is the source of truth. Create an opening-balance transaction instead of setting account.balance.",
         )
     _normalize_liability_settings(payload, payload["account_type"])
     _validate_parent(db, client_id, payload["account_type"], payload.get("parent_id"))
@@ -179,9 +178,8 @@ def update_account(
         return None
     update_data = data.copy()
     if "balance" in update_data:
-        raise HTTPException(
-            status_code=400,
-            detail="Journal is the source of truth. Use transactions to change balances.",
+        raise Invalid(
+            "Journal is the source of truth. Use transactions to change balances.",
         )
     if "parent_id" in update_data:
         _validate_parent(
@@ -213,7 +211,7 @@ def delete_account(
         models.Account.is_active == True,
     ).count()
     if child_count:
-        raise HTTPException(status_code=400, detail="Account has child accounts")
+        raise Invalid("Account has child accounts")
 
     # The FK check protects active templates without mutating their feature.
     template_count = db.query(models.QuickTemplate).filter(
@@ -225,9 +223,8 @@ def delete_account(
         ),
     ).count()
     if template_count:
-        raise HTTPException(
-            status_code=400,
-            detail="Account is used by active quick templates. Delete or update those templates first.",
+        raise Invalid(
+            "Account is used by active quick templates. Delete or update those templates first.",
         )
     account.is_active = False
     if commit:

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from datetime import date
 
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..domain.errors import Invalid
 from .fx_service import convert_amount
 from .product_reserve_service import effective_budget_treatment
 from .periods import current_period_key
@@ -27,7 +27,7 @@ def validate_account_refs(db: Session, client_id: int, data: dict) -> None:
             models.Account.client_id == client_id,
         ).first()
         if not account:
-            raise HTTPException(status_code=400, detail=f"{key} must belong to this client")
+            raise Invalid(f"{key} must belong to this client")
 
 
 def get_recurring_transaction(

@@ -3,18 +3,19 @@ from __future__ import annotations
 from datetime import date
 
 import pytest
-from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 try:
     from backend.app import models, schemas
     from backend.app.database import Base
+    from backend.app.domain.errors import Invalid
     from backend.app.routers.accounts import delete_account
     from backend.app.routers.quick_templates import create_transaction_batch
 except ModuleNotFoundError:
     from app import models, schemas  # type: ignore[no-redef]
     from app.database import Base  # type: ignore[no-redef]
+    from app.domain.errors import Invalid  # type: ignore[no-redef]
     from app.routers.accounts import delete_account  # type: ignore[no-redef]
     from app.routers.quick_templates import create_transaction_batch  # type: ignore[no-redef]
 
@@ -93,11 +94,10 @@ def test_account_delete_is_locked_by_active_quick_template() -> None:
         )
         db.commit()
 
-        with pytest.raises(HTTPException) as exc:
+        with pytest.raises(Invalid) as exc:
             delete_account(cash.id, db=db, current_client=client)
 
-        assert exc.value.status_code == 400
-        assert "quick templates" in exc.value.detail
+        assert str(exc.value) == "Account is used by active quick templates. Delete or update those templates first."
         db.refresh(cash)
         assert cash.is_active is True
     finally:

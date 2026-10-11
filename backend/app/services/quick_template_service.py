@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..domain.errors import Invalid
 
 
 def _validate_account_reference(
@@ -21,7 +21,7 @@ def _validate_account_reference(
         models.Account.is_active == True,
     ).first()
     if not account:
-        raise HTTPException(status_code=400, detail=f"{field_name} account not found")
+        raise Invalid(f"{field_name} account not found")
 
 
 def _get_template(

@@ -3,11 +3,11 @@ from __future__ import annotations
 from datetime import date
 
 import httpx
-from fastapi import HTTPException
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
+from ..domain.errors import Invalid
 
 FRANKFURTER_URL = "https://api.frankfurter.dev/v1/latest"
 
@@ -170,7 +170,7 @@ def update_rate(
             value = normalize_currency(value)
         setattr(rate, field, value)
     if rate.base_currency == rate.quote_currency:
-        raise HTTPException(status_code=400, detail="Currencies must differ")
+        raise Invalid("Currencies must differ")
     if commit:
         db.commit()
         db.refresh(rate)

@@ -1,12 +1,12 @@
 from datetime import date
 
 import pytest
-from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from backend.app import models, schemas
 from backend.app.database import Base
+from backend.app.domain.errors import Invalid, NotFound
 from backend.app.routers import accounts as router
 from backend.app.services import ledger_service as ledger
 from backend.app.services.ledger_valuation import calculate_account_valued_balances
@@ -34,10 +34,10 @@ def _account(db, name="parent", account_type="asset", client_id=1, **data):
     return ledger.create_account(db, client_id, dict(name=name, account_type=account_type, **data))
 
 
-def _refusal(status, detail, operation):
-    with pytest.raises(HTTPException) as exc:
+def _refusal(category, detail, operation):
+    with pytest.raises(category) as exc:
         operation()
-    assert (exc.value.status_code, exc.value.detail) == (status, detail)
+    assert str(exc.value) == detail
 
 
 def test_parent_none_allows_a_root(db):
@@ -46,18 +46,18 @@ def test_parent_none_allows_a_root(db):
 
 def test_parent_cannot_be_the_account_itself(db):
     parent = _account(db)
-    _refusal(400, "Account cannot be its own parent", lambda:
+    _refusal(Invalid, "Account cannot be its own parent", lambda:
              ledger._validate_parent(db, 1, "asset", parent.id, account_id=parent.id))
 
 
 def test_parent_must_exist(db):
-    _refusal(404, "Parent account not found", lambda:
+    _refusal(NotFound, "Parent account not found", lambda:
              ledger._validate_parent(db, 1, "asset", 999999))
 
 
 def test_parent_must_belong_to_the_client(db):
     parent = _account(db, client_id=2)
-    _refusal(404, "Parent account not found", lambda:
+    _refusal(NotFound, "Parent account not found", lambda:
              ledger._validate_parent(db, 1, "asset", parent.id))
 
 
@@ -65,13 +65,13 @@ def test_parent_must_be_active(db):
     parent = _account(db)
     parent.is_active = False
     db.commit()
-    _refusal(404, "Parent account not found", lambda:
+    _refusal(NotFound, "Parent account not found", lambda:
              ledger._validate_parent(db, 1, "asset", parent.id))
 
 
 def test_parent_must_have_the_same_account_type(db):
     parent = _account(db)
-    _refusal(400, "Parent account must have the same account_type", lambda:
+    _refusal(Invalid, "Parent account must have the same account_type", lambda:
              ledger._validate_parent(db, 1, "expense", parent.id))
 
 
@@ -80,14 +80,14 @@ def test_parent_chain_must_not_already_contain_a_cycle(db):
     second = _account(db, name="second", parent_id=first.id)
     first.parent_id = second.id
     db.commit()
-    _refusal(400, "Account hierarchy cycle detected", lambda:
+    _refusal(Invalid, "Account hierarchy cycle detected", lambda:
              ledger._validate_parent(db, 1, "asset", first.id))
 
 
 def test_parent_chain_must_not_reach_the_account_being_updated(db):
     root = _account(db)
     child = _account(db, name="child", parent_id=root.id)
-    _refusal(400, "Account hierarchy cycle detected", lambda:
+    _refusal(Invalid, "Account hierarchy cycle detected", lambda:
              ledger.update_account(db, 1, root.id, {"parent_id": child.id}))
     assert root.parent_id is None
 
@@ -113,7 +113,7 @@ def test_parent_chain_checks_inactive_ancestors_for_cycles(db):
     root.is_active = False
     root.parent_id = child.id
     db.commit()
-    _refusal(400, "Account hierarchy cycle detected", lambda:
+    _refusal(Invalid, "Account hierarchy cycle detected", lambda:
              ledger._validate_parent(db, 1, "asset", child.id))
 
 
@@ -128,11 +128,11 @@ def test_parent_chain_does_not_revalidate_ancestor_types(db):
 def test_create_child_of_a_different_type_is_rejected_without_writing(db):
     parent = _account(db)
     before = db.query(models.Account).count()
-    _refusal(400, "Parent account must have the same account_type", lambda:
+    _refusal(Invalid, "Parent account must have the same account_type", lambda:
              _account(db, name="child", account_type="expense", parent_id=parent.id))
     assert db.query(models.Account).count() == before
     client = db.get(models.Client, 1)
-    _refusal(400, "Parent account must have the same account_type", lambda:
+    _refusal(Invalid, "Parent account must have the same account_type", lambda:
              router.create_account(router.AccountCreate(
                  name="child", account_type="expense", parent_id=parent.id,
              ), db=db, current_client=client))
@@ -162,7 +162,7 @@ def test_delete_deactivates_only_the_account_and_preserves_all_history(db):
 def test_delete_refuses_active_children(db):
     root = _account(db)
     _account(db, name="child", parent_id=root.id)
-    _refusal(400, "Account has child accounts", lambda: ledger.delete_account(db, 1, root.id))
+    _refusal(Invalid, "Account has child accounts", lambda: ledger.delete_account(db, 1, root.id))
     assert root.is_active is True
 
 
@@ -172,7 +172,7 @@ def test_delete_refuses_active_templates_in_either_direction(db, reference):
     db.add(models.QuickTemplate(client_id=1, tray="test", name="test", template_kind="test",
                                 **{reference: root.id}))
     db.commit()
-    _refusal(400, "Account is used by active quick templates. Delete or update those templates first.",
+    _refusal(Invalid, "Account is used by active quick templates. Delete or update those templates first.",
              lambda: ledger.delete_account(db, 1, root.id))
     assert root.is_active is True
 
@@ -249,7 +249,7 @@ def test_two_level_tree_preserves_endpoint_structure_and_rollup(db):
     ("liability_revolving_rate", -1, "liability_revolving_rate must not be negative"),
 ])
 def test_liability_settings_preserve_each_range_refusal(db, field, value, detail):
-    _refusal(400, detail, lambda: _account(db, account_type="liability", **{field: value}))
+    _refusal(Invalid, detail, lambda: _account(db, account_type="liability", **{field: value}))
 
 
 def test_liability_update_retains_default_reset_and_nonliability_strips_settings(db):
@@ -267,9 +267,9 @@ def test_liability_update_retains_default_reset_and_nonliability_strips_settings
 def test_opening_balance_tolerance_and_update_balance_refusal_are_preserved(db):
     account = _account(db, balance=0.01)
     assert account.balance == 0
-    _refusal(400, "Journal is the source of truth. Create an opening-balance transaction instead of setting account.balance.",
+    _refusal(Invalid, "Journal is the source of truth. Create an opening-balance transaction instead of setting account.balance.",
              lambda: _account(db, name="invalid", balance=0.02))
-    _refusal(400, "Journal is the source of truth. Use transactions to change balances.",
+    _refusal(Invalid, "Journal is the source of truth. Use transactions to change balances.",
              lambda: ledger.update_account(db, 1, account.id, {"balance": None}))
 
 
