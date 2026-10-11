@@ -10,13 +10,14 @@ import {
     getRecurringTransactions,
     createRecurringTransaction, deleteRecurringTransaction, updateRecurringTransaction,
     getAccounts, createTransaction, deleteTransaction, updateTransaction, getTransactionsPage,
+    getTransactionProposals, approveTransactionProposal, rejectTransactionProposal,
     analyzeWithBackend,
     getQuickTemplates, createQuickTemplate, updateQuickTemplate, deleteQuickTemplate, createTransactionBatch,
 } from '../api';
 import { useToast } from '../components/Toast';
 import { useClient } from '../context/ClientContext';
 import { formatCurrency as formatCurrencyWithSetting, getCurrencySymbol } from '../utils/currency';
-import type { QuickTemplate, RecurringTransaction, Transaction, TransactionLeg, TransactionLegRead } from '../types';
+import type { QuickTemplate, RecurringTransaction, Transaction, TransactionLeg, TransactionLegRead, TransactionProposal } from '../types';
 import { directionClass, directionSign, transactionDirection } from '../features/journal/direction';
 import {
     ENTRY_SHAPES,
@@ -54,6 +55,7 @@ import QuickTemplateTile from '../features/journal/QuickTemplateTile';
 const MAIN_TABS = [
     { id: 'quick', label: 'Quick' },
     { id: 'transaction', label: 'Transaction' },
+    { id: 'pending', label: 'Pending' },
     { id: 'recurring', label: 'Recurring' },
     { id: 'ai', label: 'AI' },
 ];
@@ -146,10 +148,15 @@ const loadStoredFilters = () => {
 
 export default function Journal() {
     const [activeTab, setActiveTab] = useState(() => {
-        const stored = localStorage.getItem('finance_journal_tab');
-        return stored === 'transaction' || stored === 'recurring' || stored === 'ai' ? stored : 'quick';
+        // Derived from MAIN_TABS so a new tab is remembered without a second list.
+        const stored = localStorage.getItem('finance_journal_tab') ?? '';
+        return MAIN_TABS.some((tab) => tab.id === stored) ? stored : 'quick';
     });
     const [transactions, setTransactions] = useState<Transaction[]>([]);
+    const [proposals, setProposals] = useState<TransactionProposal[]>([]);
+    const [proposalNotes, setProposalNotes] = useState<Record<number, string>>({});
+    const [decidingProposalIds, setDecidingProposalIds] = useState<number[]>([]);
+    const proposalRequestsRef = useRef(new Set<number>());
     const [transactionTotal, setTransactionTotal] = useState(0);
     const [filters, setFilters] = useState(loadStoredFilters);
     const [showFilters, setShowFilters] = useState(false);
@@ -442,6 +449,48 @@ export default function Journal() {
         } catch (error) {
             console.error('Failed to fetch journal data:', error);
             showToast('Failed to load data', 'error');
+        }
+    };
+
+    const fetchPendingProposals = async () => {
+        setIsProcessing(true);
+        try {
+            setProposals(await getTransactionProposals({ status: 'pending' }));
+        } catch (error) {
+            console.error('Failed to fetch transaction proposals:', error);
+            showToast('Failed to load pending proposals', 'error');
+        } finally {
+            setIsProcessing(false);
+        }
+    };
+
+    useEffect(() => {
+        if (activeTab === 'pending') {
+            fetchPendingProposals();
+        }
+    }, [activeTab]);
+
+    const handleProposalDecision = async (id: number, approve: boolean) => {
+        // Lock before React renders so repeated clicks cannot submit the same decision.
+        if (proposalRequestsRef.current.has(id)) return;
+        proposalRequestsRef.current.add(id);
+        setDecidingProposalIds((ids) => [...ids, id]);
+        setIsProcessing(true);
+        try {
+            if (approve) {
+                await approveTransactionProposal(id);
+                await fetchTransactionsOnly();
+            } else {
+                await rejectTransactionProposal(id, proposalNotes[id] || undefined);
+            }
+            await fetchPendingProposals();
+        } catch (error) {
+            console.error('Failed to decide transaction proposal:', error);
+            showToast('Failed to update pending proposal', 'error');
+        } finally {
+            proposalRequestsRef.current.delete(id);
+            setDecidingProposalIds((ids) => ids.filter((value) => value !== id));
+            setIsProcessing(false);
         }
     };
 
@@ -979,6 +1028,70 @@ export default function Journal() {
     const leftPane = (
         <TabPanel tabs={MAIN_TABS} activeTab={activeTab} onTabChange={setActiveTab} scrollContent={false}>
             <div className="py-2">
+                {activeTab === 'pending' && (
+                    <div className="space-y-3">
+                        {isProcessing && <Loader2 size={14} className="animate-spin" />}
+                        {proposals.length === 0 ? (
+                            <p className="text-xs text-slate-500">No pending proposals.</p>
+                        ) : (
+                            <div className="divide-y divide-slate-800/50">
+                                {proposals.map((proposal) => {
+                                    const deciding = decidingProposalIds.includes(proposal.id);
+                                    const accountsResolved = proposal.legs.every((leg) => accountById(leg.account_id)?.name);
+                                    return (
+                                        <div key={proposal.id} className="py-3 space-y-2 hover:bg-slate-800/50">
+                                            <div className="flex items-center justify-between gap-2">
+                                                <div>
+                                                    <p className="text-xs">{proposal.description}</p>
+                                                    <p className="text-[10px] text-slate-500">{proposal.date} / {proposal.origin}</p>
+                                                </div>
+                                                <span className="text-xs font-mono-nums">
+                                                    {formatCurrencyWithSetting(proposal.amount, proposal.currency || currentCurrency)}
+                                                </span>
+                                            </div>
+                                            <div className="text-[10px] text-slate-500">
+                                                {proposal.legs.map((leg, index) => (
+                                                    <p key={index}>
+                                                        {accountById(leg.account_id)?.name || 'Account unavailable'} / {' '}
+                                                        {(leg.debit ?? 0) > 0 ? 'Debit' : 'Credit'} {' '}
+                                                        {formatCurrencyWithSetting((leg.debit ?? 0) > 0 ? leg.debit : leg.credit, proposal.currency || currentCurrency)}
+                                                    </p>
+                                                ))}
+                                            </div>
+                                            <div className="flex flex-wrap items-center gap-2">
+                                                <button
+                                                    type="button"
+                                                    disabled={deciding || !accountsResolved}
+                                                    onClick={() => handleProposalDecision(proposal.id, true)}
+                                                    className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white text-[10px] font-bold disabled:opacity-50"
+                                                >
+                                                    Approve
+                                                </button>
+                                                <input
+                                                    type="text"
+                                                    value={proposalNotes[proposal.id] || ''}
+                                                    onChange={(e) => setProposalNotes((notes) => ({ ...notes, [proposal.id]: e.target.value }))}
+                                                    disabled={deciding}
+                                                    placeholder="Rejection note (optional)"
+                                                    aria-label="Rejection note (optional)"
+                                                    className="bg-slate-800 border border-slate-700 px-2 py-1.5 text-xs"
+                                                />
+                                                <button
+                                                    type="button"
+                                                    disabled={deciding}
+                                                    onClick={() => handleProposalDecision(proposal.id, false)}
+                                                    className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold disabled:opacity-50"
+                                                >
+                                                    Reject
+                                                </button>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+                )}
                 {activeTab === 'transaction' && (
                     <form onSubmit={handleRecordSubmit} className="space-y-4 pt-2">
                         <div className="grid grid-cols-2 gap-3">

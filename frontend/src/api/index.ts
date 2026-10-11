@@ -40,6 +40,7 @@ import type {
     SimulationScenarioCreatePayload,
     Transaction,
     TransactionBatch,
+    TransactionProposal,
 } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:18100';
@@ -410,6 +411,25 @@ export const getTransactionsPage = async (
     const params = new URLSearchParams({ paginated: 'true' });
     appendTransactionQuery(params, query);
     const response = await api.get(`/transactions/?${params.toString()}`);
+    return response.data;
+};
+
+export const getTransactionProposals = async (params?: { status?: string; origin?: string }): Promise<TransactionProposal[]> => {
+    const search = new URLSearchParams();
+    if (params?.status) search.set('status', params.status);
+    if (params?.origin) search.set('origin', params.origin);
+    const query = search.toString();
+    const response = await api.get(`/transactions/proposals${query ? `?${query}` : ''}`);
+    return response.data;
+};
+
+export const approveTransactionProposal = async (id: number): Promise<Transaction> => {
+    const response = await api.post(`/transactions/proposals/${id}/approve`);
+    return response.data;
+};
+
+export const rejectTransactionProposal = async (id: number, note?: string): Promise<TransactionProposal> => {
+    const response = await api.post(`/transactions/proposals/${id}/reject`, { note });
     return response.data;
 };
 

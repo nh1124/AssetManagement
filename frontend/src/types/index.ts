@@ -32,6 +32,26 @@ export interface Transaction {
     matched_credit?: number | null;
 }
 
+export interface TransactionProposal {
+    id: number;
+    client_id: number;
+    origin: string;
+    origin_ref: Record<string, unknown>;
+    date: string;
+    description: string;
+    amount: number;
+    currency: string;
+    legs: TransactionLeg[];
+    trigger_transaction_id?: number | null;
+    status: string;
+    posted_transaction_id?: number | null;
+    idempotency_key: string;
+    note?: string | null;
+    created_at?: string | null;
+    decided_at?: string | null;
+    decided_by_client_id?: number | null;
+}
+
 export interface QuickTemplate {
     id: number;
     tray: string;
