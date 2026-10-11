@@ -30,7 +30,7 @@ def test_fx_service_references_only_rate_and_client_models():
     )
 
 
-def test_debit_normal_types_is_defined_only_in_ledger_service():
+def test_debit_normal_types_is_defined_only_in_domain_journal():
     definitions = []
     for path in sorted(APP_DIR.rglob("*.py")):
         for node in ast.walk(_parse(path)):
@@ -46,8 +46,8 @@ def test_debit_normal_types_is_defined_only_in_ledger_service():
                     for name in ast.walk(target)
                 ):
                     definitions.append((path.relative_to(APP_DIR).as_posix(), node.lineno))
-    assert len(definitions) == 1 and definitions[0][0] == "services/ledger_service.py", (
-        f"DEBIT_NORMAL_TYPES must have one definition in ledger_service: {definitions}"
+    assert len(definitions) == 1 and definitions[0][0] == "domain/journal.py", (
+        f"DEBIT_NORMAL_TYPES must have one definition in domain/journal.py: {definitions}"
     )
 
 

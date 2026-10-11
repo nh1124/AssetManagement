@@ -1,14 +1,14 @@
 """Ledger Service - double-entry bookkeeping primitives.
 
 Layer 1. Owns transaction posting, journal entries and account balance
-mutation. Depends on nothing but the ORM models: never on planning,
+mutation. Depends on ORM models and pure journal rules: never on planning,
 registry or reporting.
 """
 from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict
 from datetime import date, datetime
 from typing import Any, Optional, Sequence
 
@@ -17,6 +17,15 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
 from .. import models
+from ..domain.journal import (
+    BALANCE_TOLERANCE,
+    DEBIT_NORMAL_TYPES,
+    Leg,
+    coerce_leg,
+    signed_delta,
+    simple_legs,
+    validate_legs,
+)
 
 
 def list_accounts(
@@ -304,9 +313,6 @@ def _get_account_by_id(
     ).first()
 
 
-DEBIT_NORMAL_TYPES = {"asset", "expense", "item"}
-
-
 def calculate_account_journal_balance(
     db: Session,
     account: models.Account,
@@ -335,106 +341,11 @@ def calculate_account_journal_balance(
 
 
 def _apply_debit(account: models.Account, amount: float) -> None:
-    if account.account_type in DEBIT_NORMAL_TYPES:
-        account.balance += amount
-    else:
-        account.balance -= amount
+    account.balance += signed_delta(account.account_type, debit=amount, credit=0.0)
 
 
 def _apply_credit(account: models.Account, amount: float) -> None:
-    if account.account_type in DEBIT_NORMAL_TYPES:
-        account.balance -= amount
-    else:
-        account.balance += amount
-
-
-BALANCE_TOLERANCE = 0.01
-
-
-@dataclass(frozen=True)
-class Leg:
-    """One side of an entry, as given to the posting code."""
-
-    account_id: int
-    debit: float = 0.0
-    credit: float = 0.0
-    memo: str | None = None
-
-
-def _coerce_leg(leg) -> Leg:
-    """Accept a Leg, a pydantic model or a plain mapping."""
-    if isinstance(leg, Leg):
-        return leg
-    if isinstance(leg, dict):
-        data = leg
-    else:
-        data = {
-            "account_id": getattr(leg, "account_id", None),
-            "debit": getattr(leg, "debit", 0.0),
-            "credit": getattr(leg, "credit", 0.0),
-            "memo": getattr(leg, "memo", None),
-        }
-    return Leg(
-        account_id=data.get("account_id"),
-        debit=float(data.get("debit") or 0.0),
-        credit=float(data.get("credit") or 0.0),
-        memo=data.get("memo"),
-    )
-
-
-def _validate_legs(legs: list[Leg], amount: float) -> None:
-    """The ledger invariant, in one place.
-
-    Two or more legs, each on exactly one side, and both sides summing to the
-    transaction amount. The amount is a denormalisation of the legs, so it
-    doubles as the checksum: a receipt total that disagrees with its breakdown
-    is a mistake, not a rounding difference.
-    """
-    if len(legs) < 2:
-        raise ValueError("A journal entry needs at least two legs")
-
-    for leg in legs:
-        if not leg.account_id:
-            raise ValueError("Every journal leg needs an account")
-        if leg.debit < 0 or leg.credit < 0:
-            raise ValueError("Journal legs cannot be negative")
-        if (leg.debit > 0) == (leg.credit > 0):
-            raise ValueError("A journal leg is either a debit or a credit, not both or neither")
-
-    total_debit = sum(leg.debit for leg in legs)
-    total_credit = sum(leg.credit for leg in legs)
-    if abs(total_debit - total_credit) > BALANCE_TOLERANCE:
-        raise ValueError(
-            f"Journal entry does not balance: debit {total_debit} vs credit {total_credit}"
-        )
-    if abs(total_debit - (amount or 0.0)) > BALANCE_TOLERANCE:
-        raise ValueError(
-            f"Journal entry total {total_debit} does not match the transaction amount {amount}"
-        )
-
-
-def simple_legs(
-    amount: float | None,
-    from_account_id: int | None,
-    to_account_id: int | None,
-) -> list[Leg]:
-    """The two legs a from/to pair describes.
-
-    from_account is the credit side and to_account the debit side, which is the
-    direction the API and the UI have always used. Both are required: there is
-    nothing left to infer a missing account from, and inferring one is how
-    transactions used to land on whichever account happened to come first.
-    The accounts themselves are checked where every leg is.
-    """
-    if from_account_id is None or to_account_id is None:
-        raise ValueError(
-            "A transaction needs both from_account_id and to_account_id, or explicit legs"
-        )
-    total = amount or 0.0
-    return [
-        Leg(account_id=to_account_id, debit=total),
-        Leg(account_id=from_account_id, credit=total),
-    ]
+    account.balance += signed_delta(account.account_type, debit=0.0, credit=amount)
 
 
 def _post_transaction_journal(
@@ -458,8 +369,8 @@ def _post_transaction_journal(
     if legs is None:
         posted = simple_legs(transaction.amount, from_account_id, to_account_id)
     else:
-        posted = [_coerce_leg(leg) for leg in legs]
-    _validate_legs(posted, transaction.amount or 0.0)
+        posted = [coerce_leg(leg) for leg in legs]
+    validate_legs(posted, transaction.amount or 0.0)
 
     accounts: dict[int, models.Account] = {}
     for leg in posted:
@@ -613,8 +524,8 @@ def propose_transaction(
     trigger_transaction_id: int | None = None,
     idempotency_key: str | None = None,
 ) -> models.TransactionProposal:
-    proposed = [_coerce_leg(leg) for leg in legs]
-    _validate_legs(proposed, amount)
+    proposed = [coerce_leg(leg) for leg in legs]
+    validate_legs(proposed, amount)
     for account_id in {leg.account_id for leg in proposed}:
         if _get_account_by_id(db, account_id, client_id) is None:
             raise ValueError(f"Account {account_id} not found for this client")
