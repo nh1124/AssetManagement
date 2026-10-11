@@ -22,6 +22,7 @@ APP_DIR = Path(__file__).resolve().parents[1] / "app"
 
 # A new directory needs an explicit role before its modules cross the boundary.
 ROLE_BY_DIRECTORY: dict[str, str] = {
+    "models": "model",
     "routers": "ui",
     "workflows": "workflow",
     "services": "service",
@@ -37,7 +38,6 @@ ROLE_BY_MODULE: dict[str, str] = {
     "dependencies": "infra",
     "config": "infra",
     "security": "infra",
-    "models": "model",
     "schemas": "schema",
 }
 
