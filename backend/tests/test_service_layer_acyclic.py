@@ -24,6 +24,7 @@ EXCLUDED = {"__init__.py", "accounting_service.py"}
 # acyclicity test already rejects the dangerous case.
 LAYERS: dict[str, int] = {
     # L0 - leaves: no dependency on any other service
+    "ai_change_request_store": 0,
     "ai_policy_service": 0,
     "cache_service": 0,
     "client_settings_service": 0,

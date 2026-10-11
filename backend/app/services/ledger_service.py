@@ -34,6 +34,14 @@ def list_accounts(
     return query.all()
 
 
+def find_account_ids(db: Session, client_id: int, account_ids: Sequence[int]) -> set[int]:
+    found = db.query(models.Account.id).filter(
+        models.Account.client_id == client_id,
+        models.Account.id.in_(account_ids),
+    ).all()
+    return {row[0] for row in found}
+
+
 def get_expense_account(db: Session, client_id: int, account_id: int) -> models.Account | None:
     # Product budgeting requires an expense account belonging to its client.
     return db.query(models.Account).filter(

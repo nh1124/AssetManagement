@@ -59,7 +59,6 @@ SESSION_METHODS = {
 # without closing", and it decides nothing about which rows exist.
 BOUNDARY_METHODS = {"commit", "rollback", "refresh", "flush", "expire", "expire_all"}
 WORKFLOW_ALLOWED: dict[str, str] = {
-    "workflows/ai_change_request_workflow": "L10b: owns ai_change_requests (AiChangeRequest), which has no service owner yet",
     "workflows/monthly_action_workflow": "L10c: owns monthly_actions (MonthlyAction), which has no service owner yet; also constructs MonthlyPlanLine",
 }
 

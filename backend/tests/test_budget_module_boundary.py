@@ -38,6 +38,7 @@ PUBLIC: dict[str, set[str]] = {
         "delete_plan",
         "delete_plan_line",
         "get_or_create_default_plan",
+        "get_plan_line",
         "list_plans",
         "replace_plan_lines_from_plan",
         "resolve_budget_plan_id",

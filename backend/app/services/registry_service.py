@@ -30,6 +30,15 @@ def validate_account_refs(db: Session, client_id: int, data: dict) -> None:
             raise HTTPException(status_code=400, detail=f"{key} must belong to this client")
 
 
+def get_recurring_transaction(
+    db: Session, client_id: int, recurring_id: int,
+) -> models.RecurringTransaction | None:
+    return db.query(models.RecurringTransaction).filter(
+        models.RecurringTransaction.id == recurring_id,
+        models.RecurringTransaction.client_id == client_id,
+    ).first()
+
+
 def list_entries(db: Session, client_id: int) -> list[models.RegistryEntry]:
     return db.query(models.RegistryEntry).filter(
         models.RegistryEntry.client_id == client_id,

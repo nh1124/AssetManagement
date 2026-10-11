@@ -10,16 +10,18 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
+from ..services import ai_change_request_store
 from ..services.ledger_service import (
     ensure_default_accounts,
     create_transaction,
+    find_account_ids,
     propose_transaction,
     simple_legs,
 )
-from ..services.budget_plan_store import update_plan_lines
+from ..services.budget_plan_store import get_plan_line, update_plan_lines
 from ..services.cache_service import invalidate_client
 from ..services.capsule_service import apply_capsule_rules_for_transaction
-from ..services.registry_service import upsert_registry_from_recurring_payload
+from ..services.registry_service import get_recurring_transaction, upsert_registry_from_recurring_payload
 from ..services.ai_policy_service import (
     AiOperationContext,
     evaluate_ai_operation,
@@ -110,11 +112,7 @@ def _validate_transaction_create(db: Session, client_id: int, payload: dict[str,
 
     account_ids = [value for value in [parsed.from_account_id, parsed.to_account_id] if value is not None]
     if account_ids:
-        found = db.query(models.Account.id).filter(
-            models.Account.client_id == client_id,
-            models.Account.id.in_(account_ids),
-        ).all()
-        found_ids = {row[0] for row in found}
+        found_ids = find_account_ids(db, client_id, account_ids)
         missing = [account_id for account_id in account_ids if account_id not in found_ids]
         if missing:
             raise ValueError(f"Account not found: {missing[0]}")
@@ -126,11 +124,7 @@ def _validate_account_refs(db: Session, client_id: int, payload: dict[str, Any])
     account_ids = [value for value in [payload.get("from_account_id"), payload.get("to_account_id")] if value is not None]
     if not account_ids:
         return
-    found = db.query(models.Account.id).filter(
-        models.Account.client_id == client_id,
-        models.Account.id.in_(account_ids),
-    ).all()
-    found_ids = {row[0] for row in found}
+    found_ids = find_account_ids(db, client_id, account_ids)
     missing = [account_id for account_id in account_ids if account_id not in found_ids]
     if missing:
         raise ValueError(f"Account not found: {missing[0]}")
@@ -155,10 +149,7 @@ def _preview_monthly_plan_lines_update(db: Session, client_id: int, target_ref: 
     line_id = int(target_ref.get("id") or payload.get("id") or 0)
     if not line_id:
         raise ValueError("Monthly plan line id is required")
-    line = db.query(models.MonthlyPlanLine).filter(
-        models.MonthlyPlanLine.id == line_id,
-        models.MonthlyPlanLine.client_id == client_id,
-    ).first()
+    line = get_plan_line(db, client_id, line_id)
     if not line:
         raise ValueError("Monthly plan line not found")
 
@@ -198,10 +189,7 @@ def _preview_recurring_update(db: Session, client_id: int, target_ref: dict[str,
     recurring_id = int(target_ref.get("id") or payload.get("id") or 0)
     if not recurring_id:
         raise ValueError("Recurring transaction id is required")
-    recurring = db.query(models.RecurringTransaction).filter(
-        models.RecurringTransaction.id == recurring_id,
-        models.RecurringTransaction.client_id == client_id,
-    ).first()
+    recurring = get_recurring_transaction(db, client_id, recurring_id)
     if not recurring:
         raise ValueError("Recurring transaction not found")
     data = schemas.RecurringTransactionCreate(**payload).model_dump(mode="json")
@@ -279,15 +267,11 @@ def create_change_request(
         "target_ref": preview["target_ref"],
         "input_payload": preview["input_payload"],
     })
-    existing = db.query(models.AiChangeRequest).filter(
-        models.AiChangeRequest.client_id == client_id,
-        models.AiChangeRequest.idempotency_key == idempotency_key,
-    ).first()
+    existing = ai_change_request_store.find_by_idempotency_key(db, client_id, idempotency_key)
     if existing:
         return existing
 
-    row = models.AiChangeRequest(
-        client_id=client_id,
+    fields = dict(
         created_by_client_id=actor_client_id,
         ai_client_id=payload.ai_client_id,
         mcp_client_id=payload.mcp_client_id,
@@ -309,8 +293,7 @@ def create_change_request(
         expires_at=payload.expires_at,
         result={},
     )
-    db.add(row)
-    db.flush()
+    row = ai_change_request_store.create(db, client_id, fields, commit=False)
 
     context = _operation_context(payload, preview["resource"], preview["action"], preview)
     decision = evaluate_ai_operation(db, client_id, context)
@@ -335,10 +318,9 @@ def list_change_requests(
     limit: int = 100,
     offset: int = 0,
 ) -> list[models.AiChangeRequest]:
-    query = db.query(models.AiChangeRequest).filter(models.AiChangeRequest.client_id == client_id)
-    if status_filter:
-        query = query.filter(models.AiChangeRequest.status == status_filter)
-    return query.order_by(models.AiChangeRequest.created_at.desc(), models.AiChangeRequest.id.desc()).offset(offset).limit(limit).all()
+    return ai_change_request_store.list_for_client(
+        db, client_id, status=status_filter, limit=limit, offset=offset,
+    )
 
 
 def approve_change_request(
@@ -550,10 +532,7 @@ def _apply_dispatch(db: Session, client_id: int, row: models.AiChangeRequest) ->
         recurring_id = int(row.target_ref.get("id") or row.input_payload.get("id") or 0)
         if not recurring_id:
             raise ValueError("Recurring transaction id is required")
-        recurring = db.query(models.RecurringTransaction).filter(
-            models.RecurringTransaction.id == recurring_id,
-            models.RecurringTransaction.client_id == client_id,
-        ).first()
+        recurring = get_recurring_transaction(db, client_id, recurring_id)
         if not recurring:
             raise ValueError("Recurring transaction not found")
         data = schemas.RecurringTransactionUpdate(**row.input_payload).model_dump(exclude_unset=True)
@@ -571,13 +550,7 @@ def _get_change_request(
     *,
     for_update: bool = False,
 ) -> models.AiChangeRequest:
-    query = db.query(models.AiChangeRequest).filter(
-        models.AiChangeRequest.id == change_request_id,
-        models.AiChangeRequest.client_id == client_id,
-    )
-    if for_update:
-        query = query.with_for_update()
-    row = query.first()
+    row = ai_change_request_store.get(db, client_id, change_request_id, for_update=for_update)
     if not row:
         raise HTTPException(status_code=404, detail="Change request not found")
     return row

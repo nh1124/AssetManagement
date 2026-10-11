@@ -20,6 +20,13 @@ from .budget_lines import (
 from .registry_service import registry_target_account_id
 
 
+def get_plan_line(db: Session, client_id: int, line_id: int) -> models.MonthlyPlanLine | None:
+    return db.query(models.MonthlyPlanLine).filter(
+        models.MonthlyPlanLine.id == line_id,
+        models.MonthlyPlanLine.client_id == client_id,
+    ).first()
+
+
 def list_plans(db: Session, client_id: int) -> list[models.BudgetPlan]:
     plans = (
         db.query(models.BudgetPlan)

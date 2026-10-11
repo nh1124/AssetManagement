@@ -38,9 +38,7 @@ OWNERS: dict[str, str] = {
     "simulation_scenarios": "services/simulation_scenario_service",
     "products": "services/product_service",
     "exchange_rates": "services/fx_service",
-    # Workflow owner for now; the layering plan moves ownership to a service
-    # because workflows should orchestrate, not write.
-    "ai_change_requests": "workflows/ai_change_request_workflow",
+    "ai_change_requests": "services/ai_change_request_store",
     "ai_audit_logs": "services/ai_policy_service",
     "ai_operation_policies": "services/ai_policy_service",
     "clients": "routers/auth",
