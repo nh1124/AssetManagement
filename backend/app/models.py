@@ -406,7 +406,6 @@ class MonthlyPlanLine(Base):
     amount = Column(Float, default=0.0, nullable=False)
     source = Column(String, default="manual", server_default="manual", nullable=False)
     source_kind = Column(String, default="manual", server_default="manual", nullable=False)
-    source_id = Column(Integer, nullable=True)
     identity_key = Column(String, default="", server_default="", nullable=False)
     manual_override = Column(Boolean, default=False, server_default="false", nullable=False)
     cash_treatment = Column(String, default="auto", server_default="auto", nullable=False)  # auto, cash, non_cash

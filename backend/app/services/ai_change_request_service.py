@@ -61,7 +61,6 @@ MONTHLY_PLAN_LINE_FIELDS = [
     "amount",
     "source",
     "source_kind",
-    "source_id",
     "identity_key",
     "manual_override",
     "cash_treatment",

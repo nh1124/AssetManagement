@@ -76,7 +76,6 @@ def _registry_plan_line(
         }] if entry.source_product_id else [],
         "source": "registry",
         "source_kind": "registry",
-        "source_id": entry.id,
         "identity_key": "",
         "manual_override": False,
         "cash_treatment": "auto",

@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from .budget_lines import (
-    _line_source_id,
     _line_source_kind,
     assign_plan_line_identity,
     line_identity_key,
@@ -104,7 +103,6 @@ def replace_plan_lines_from_plan(
             amount=src.amount,
             source=src.source,
             source_kind=src.source_kind,
-            source_id=src.source_id,
             manual_override=src.manual_override,
             cash_treatment=src.cash_treatment,
             is_active=True,
@@ -198,7 +196,6 @@ def _active_duplicate_for_line(
             "plan_id": line.plan_id,
             "target_period": line.target_period,
             "source_kind": _line_source_kind(line),
-            "source_id": _line_source_id(line),
             "line_type": line.line_type,
             "target_type": line.target_type,
             "target_id": line.target_id,
@@ -220,11 +217,8 @@ def _apply_plan_line_data(db: Session, client_id: int, line: models.MonthlyPlanL
         if key != "id":
             setattr(line, key, value)
     line.source_kind = _line_source_kind(line)
-    if line.source_id is None:
-        line.source_id = _line_source_id(line)
     if line.source == "manual":
         line.source_kind = "manual"
-        line.source_id = None
     # Normalize manual lines: if no account_id is set but the registry has one for
     # this line_type+name, promote target_type to "account" so future matching works.
     if (not line.account_id) and line.target_type in (None, "manual") and line.name and line.line_type:
@@ -257,7 +251,6 @@ def _apply_plan_line_data(db: Session, client_id: int, line: models.MonthlyPlanL
             capsule.monthly_contribution = line.amount or 0.0
             if line.source in {None, "manual", "capsule"}:
                 line.source_kind = "capsule"
-                line.source_id = capsule.id
     assign_plan_line_identity(line)
 
 

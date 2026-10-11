@@ -61,7 +61,6 @@ def ensure_runtime_schema_guards(db) -> None:
     dialect = db.bind.dialect.name if db.bind is not None else ""
     if dialect == "postgresql":
         db.execute(text("ALTER TABLE monthly_plan_lines ADD COLUMN IF NOT EXISTS source_kind VARCHAR NOT NULL DEFAULT 'manual'"))
-        db.execute(text("ALTER TABLE monthly_plan_lines ADD COLUMN IF NOT EXISTS source_id INTEGER"))
         db.execute(text("ALTER TABLE monthly_plan_lines ADD COLUMN IF NOT EXISTS identity_key VARCHAR NOT NULL DEFAULT ''"))
         db.execute(text("ALTER TABLE monthly_plan_lines ADD COLUMN IF NOT EXISTS manual_override BOOLEAN NOT NULL DEFAULT false"))
         db.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS liability_closing_day INTEGER"))
@@ -108,12 +107,6 @@ def ensure_runtime_schema_guards(db) -> None:
         ))
         db.execute(text("CREATE INDEX IF NOT EXISTS ix_ai_change_requests_client_id ON ai_change_requests (client_id)"))
         db.execute(text("CREATE INDEX IF NOT EXISTS ix_ai_change_requests_status ON ai_change_requests (status)"))
-        db.execute(text(
-            """
-            CREATE INDEX IF NOT EXISTS ix_monthly_plan_lines_source_identity
-            ON monthly_plan_lines (client_id, plan_id, target_period, source_kind, source_id)
-            """
-        ))
         db.execute(text(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS uq_monthly_plan_lines_active_identity

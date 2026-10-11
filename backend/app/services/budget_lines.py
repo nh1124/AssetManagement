@@ -58,19 +58,6 @@ def _line_source_kind(line: models.MonthlyPlanLine | dict) -> str:
     return "manual"
 
 
-def _line_source_id(line: models.MonthlyPlanLine | dict) -> int | None:
-    explicit = _line_attr(line, "source_id")
-    if explicit:
-        return explicit
-    target_type = _line_attr(line, "target_type")
-    target_id = _line_attr(line, "target_id")
-    if target_type in {"capsule", "product"} and target_id:
-        return target_id
-    if _line_source_kind(line) == "credit_settlement":
-        return _line_attr(line, "account_id")
-    return None
-
-
 def _plan_match_key(
     line_type: str | None,
     target_type: str | None,
@@ -96,12 +83,10 @@ def line_identity_key(line: models.MonthlyPlanLine | dict) -> tuple:
     target_id = getter("target_id")
     name = "" if account_id or target_id else (getter("name") or "").strip().lower()
     source_kind = _line_source_kind(line)
-    source_id = _line_source_id(line) or 0
     return (
         getter("plan_id") or 0,
         getter("target_period"),
         source_kind,
-        source_id,
         getter("line_type"),
         getter("target_type") or "manual",
         account_id or 0,
@@ -118,8 +103,6 @@ def plan_line_identity_key(line: models.MonthlyPlanLine | dict) -> str:
 
 def assign_plan_line_identity(line: models.MonthlyPlanLine) -> None:
     line.source_kind = _line_source_kind(line)
-    if line.source_id is None:
-        line.source_id = _line_source_id(line)
     line.identity_key = plan_line_identity_key(line)
 
 

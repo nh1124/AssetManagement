@@ -590,7 +590,6 @@ class MonthlyPlanLineBase(BaseModel):
     amount: float = 0.0
     source: str = "manual"
     source_kind: str = "manual"
-    source_id: Optional[int] = None
     identity_key: str = ""
     manual_override: bool = False
     cash_treatment: MonthlyPlanCashTreatmentLiteral = "auto"
@@ -619,7 +618,6 @@ class MonthlyPlanLineUpdate(BaseModel):
     amount: Optional[float] = None
     source: Optional[str] = None
     source_kind: Optional[str] = None
-    source_id: Optional[int] = None
     identity_key: Optional[str] = None
     manual_override: Optional[bool] = None
     cash_treatment: Optional[MonthlyPlanCashTreatmentLiteral] = None

@@ -409,7 +409,6 @@ export interface MonthlyPlanLine {
     is_active?: boolean;
     source?: string;
     source_kind?: string;
-    source_id?: number | null;
     manual_override?: boolean;
 }
 

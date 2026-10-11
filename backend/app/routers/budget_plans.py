@@ -173,7 +173,6 @@ def copy_period_full_replace(
             amount=src.amount,
             source=src.source,
             source_kind=src.source_kind,
-            source_id=src.source_id,
             manual_override=src.manual_override,
             cash_treatment=src.cash_treatment,
             is_active=True,

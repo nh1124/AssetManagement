@@ -78,7 +78,6 @@ def _credit_settlement_plan_line(
         "suggested_status": "missing",
         "source": "credit_settlement",
         "source_kind": "credit_settlement",
-        "source_id": account.id,
         "identity_key": "",
         "manual_override": False,
         "cash_treatment": "cash",
@@ -222,6 +221,5 @@ def _merge_credit_settlement_lines(plan_lines: list[dict], settlement_lines: lis
         )
         if matched.get("source") != "manual":
             matched["source_kind"] = matched.get("source_kind") or "credit_settlement"
-            matched["source_id"] = matched.get("source_id") or settlement.get("source_id")
         matched["sync_status"] = matched["suggested_status"]
     return plan_lines

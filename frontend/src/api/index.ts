@@ -560,7 +560,6 @@ export type MonthlyPlanLinePayload = {
     amount: number;
     source?: string;
     source_kind?: string;
-    source_id?: number | null;
     manual_override?: boolean;
     cash_treatment?: 'auto' | 'cash' | 'non_cash';
     is_active?: boolean;

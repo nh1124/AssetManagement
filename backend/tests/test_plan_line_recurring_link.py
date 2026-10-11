@@ -69,14 +69,13 @@ def test_registry_generated_plan_line_reports_recurring_definition(db):
         account_id=accounts["subscriptions"],
         source_account_id=accounts["bank"],
         source_kind="registry",
-        source_id=entry.id,
         amount=1200,
         name="subscription",
         is_active=True,
     ))
     db.commit()
     lines = get_budget_summary(db, 1, "2026-10")["plan_lines"]
-    line = next(line for line in lines if line.get("source_id") == entry.id)
+    line = next(line for line in lines if entry.id in line.get("registry_entry_ids", []))
     assert line["id"] is not None
     assert line["recurring_transaction_id"] == recurring.id
     assert schemas.MonthlyPlanLine.model_validate(line).recurring_transaction_id == recurring.id

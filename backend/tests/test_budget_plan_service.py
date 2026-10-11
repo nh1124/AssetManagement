@@ -307,9 +307,7 @@ def test_data_import_backfills_plan_line_source_identity_for_legacy_payload() ->
         legacy_line.pop("source_kind", None)
         legacy_line.pop("source_id", None)
         legacy_line.pop("identity_key", None)
-        # A payload from before the plan line's recurring link was dropped still
-        # carries it, and it is the only thing the import can rebuild source_id
-        # from. The export no longer writes the key, so the fixture supplies it.
+        # Legacy provenance must not prevent importing the surviving source kind.
         legacy_line["recurring_transaction_id"] = recurring.id
         snapshot["version"] = 3
         snapshot["manifest"]["export_version"] = 3
@@ -325,7 +323,7 @@ def test_data_import_backfills_plan_line_source_identity_for_legacy_payload() ->
 
         assert result["status"] == "ok"
         assert imported_line.source_kind == "recurring"
-        assert imported_line.source_id == imported_recurring.id
+        assert not hasattr(imported_line, "source_id")
         assert imported_line.identity_key
     finally:
         source_db.close()

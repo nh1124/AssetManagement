@@ -203,3 +203,11 @@ def test_recurring_update_preview_returns_before_snapshot():
             assert preview["after_snapshot"]["amount"] == 1500
     finally:
         engine.dispose()
+
+
+def test_plan_line_source_id_is_removed_but_source_account_remains():
+    columns = models.MonthlyPlanLine.__table__.columns
+    assert "source_id" not in columns
+    assert not hasattr(models.MonthlyPlanLine, "source_id")
+    assert "source_account_id" in columns
+    assert hasattr(models.MonthlyPlanLine, "source_account_id")
