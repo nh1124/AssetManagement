@@ -1,7 +1,6 @@
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from .. import models, schemas
@@ -9,14 +8,17 @@ from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.cache_service import invalidate_client
 from ..services.budget_context import BudgetContext
-from ..services.budget_lines import assign_plan_line_identity
 from ..services.budget_plan_service import get_budget_summary as build_budget_summary
 from ..services.budget_plan_store import (
+    create_plan,
     create_plan_lines,
-    get_or_create_default_plan,
+    delete_plan,
+    delete_plan_line as delete_stored_plan_line,
+    list_plans,
     replace_plan_lines_from_plan,
     resolve_budget_plan_id,
     set_default_budget_plan,
+    update_plan,
     update_plan_lines,
 )
 from ..services.budget_projection import get_cash_flow_projection, liquid_cash
@@ -31,16 +33,7 @@ def list_budget_plans(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    plans = (
-        db.query(models.BudgetPlan)
-        .filter(models.BudgetPlan.client_id == current_client.id)
-        .order_by(models.BudgetPlan.sort_order, models.BudgetPlan.id)
-        .all()
-    )
-    if not plans:
-        default = get_or_create_default_plan(db, current_client.id)
-        plans = [default]
-    return plans
+    return list_plans(db, current_client.id)
 
 
 @router.post("", response_model=schemas.BudgetPlan)
@@ -49,27 +42,10 @@ def create_budget_plan(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    existing = (
-        db.query(models.BudgetPlan)
-        .filter_by(client_id=current_client.id, name=payload.name)
-        .first()
-    )
-    if existing:
-        raise HTTPException(status_code=409, detail="A plan with this name already exists")
-    plan = models.BudgetPlan(
-        client_id=current_client.id,
-        name=payload.name,
-        description=payload.description,
-        is_default=False,
-        sort_order=payload.sort_order,
-    )
-    db.add(plan)
     try:
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise HTTPException(status_code=409, detail="A plan with this name already exists") from exc
-    db.refresh(plan)
+        plan = create_plan(db, current_client.id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     invalidate_client(current_client.id)
     return plan
 
@@ -133,56 +109,16 @@ def copy_period_full_replace(
 ):
     try:
         plan_id = resolve_budget_plan_id(db, current_client.id, payload.plan_id)
+        copied = replace_plan_lines_from_plan(
+            db, current_client.id, plan_id, plan_id,
+            source_period=payload.source_period,
+            target_period=payload.target_period,
+            commit=True,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=404, detail="Budget plan not found")
-
-    source_lines = (
-        db.query(models.MonthlyPlanLine)
-        .filter(
-            models.MonthlyPlanLine.client_id == current_client.id,
-            models.MonthlyPlanLine.plan_id == plan_id,
-            models.MonthlyPlanLine.target_period == payload.source_period,
-            models.MonthlyPlanLine.is_active.is_(True),
-        )
-        .all()
-    )
-
-    # Soft-delete all existing lines in target period
-    (
-        db.query(models.MonthlyPlanLine)
-        .filter(
-            models.MonthlyPlanLine.client_id == current_client.id,
-            models.MonthlyPlanLine.plan_id == plan_id,
-            models.MonthlyPlanLine.target_period == payload.target_period,
-        )
-        .update({"is_active": False})
-    )
-
-    # Insert verbatim copies of source lines into target period
-    for src in source_lines:
-        new_line = models.MonthlyPlanLine(
-            client_id=current_client.id,
-            plan_id=plan_id,
-            target_period=payload.target_period,
-            line_type=src.line_type,
-            target_type=src.target_type,
-            target_id=src.target_id,
-            account_id=src.account_id,
-            source_account_id=src.source_account_id,
-            name=src.name,
-            amount=src.amount,
-            source=src.source,
-            source_kind=src.source_kind,
-            manual_override=src.manual_override,
-            cash_treatment=src.cash_treatment,
-            is_active=True,
-        )
-        assign_plan_line_identity(new_line)
-        db.add(new_line)
-
-    db.commit()
     invalidate_client(current_client.id)
-    return {"status": "success", "copied": len(source_lines)}
+    return {"status": "success", "copied": copied}
 
 
 @router.get("/summary")
@@ -268,14 +204,8 @@ def delete_plan_line(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    line = db.query(models.MonthlyPlanLine).filter(
-        models.MonthlyPlanLine.id == line_id,
-        models.MonthlyPlanLine.client_id == current_client.id,
-    ).first()
-    if not line:
+    if not delete_stored_plan_line(db, current_client.id, line_id):
         raise HTTPException(status_code=404, detail="Monthly plan line not found")
-    line.is_active = False
-    db.commit()
     invalidate_client(current_client.id)
     return {"message": "Monthly plan line deleted"}
 
@@ -289,10 +219,9 @@ def copy_plan_from(
     if plan_id == source_plan_id:
         raise HTTPException(status_code=400, detail="Cannot copy a budget plan from itself")
     try:
-        copied = replace_plan_lines_from_plan(db, current_client.id, plan_id, source_plan_id)
+        copied = replace_plan_lines_from_plan(db, current_client.id, plan_id, source_plan_id, commit=True)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    db.commit()
     invalidate_client(current_client.id)
     return {"status": "success", "copied": copied}
 
@@ -318,28 +247,12 @@ def update_budget_plan(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    plan = db.query(models.BudgetPlan).filter_by(id=plan_id, client_id=current_client.id).first()
-    if not plan:
-        raise HTTPException(status_code=404, detail="Budget plan not found")
-    if payload.name is not None:
-        duplicate = db.query(models.BudgetPlan).filter(
-            models.BudgetPlan.client_id == current_client.id,
-            models.BudgetPlan.name == payload.name,
-            models.BudgetPlan.id != plan_id,
-        ).first()
-        if duplicate:
-            raise HTTPException(status_code=409, detail="A plan with this name already exists")
-        plan.name = payload.name
-    if payload.description is not None:
-        plan.description = payload.description
-    if payload.sort_order is not None:
-        plan.sort_order = payload.sort_order
     try:
-        db.commit()
-    except IntegrityError as exc:
-        db.rollback()
-        raise HTTPException(status_code=409, detail="A plan with this name already exists") from exc
-    db.refresh(plan)
+        plan = update_plan(db, current_client.id, plan_id, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Budget plan not found")
     invalidate_client(current_client.id)
     return plan
 
@@ -350,22 +263,11 @@ def delete_budget_plan(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    plan = db.query(models.BudgetPlan).filter_by(id=plan_id, client_id=current_client.id).first()
-    if not plan:
+    try:
+        deleted = delete_plan(db, current_client.id, plan_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not deleted:
         raise HTTPException(status_code=404, detail="Budget plan not found")
-    if plan.is_default:
-        raise HTTPException(status_code=400, detail="Cannot delete the default plan")
-
-    # Soft-delete all lines belonging to this plan
-    (
-        db.query(models.MonthlyPlanLine)
-        .filter(
-            models.MonthlyPlanLine.client_id == current_client.id,
-            models.MonthlyPlanLine.plan_id == plan_id,
-        )
-        .update({"is_active": False})
-    )
-    db.delete(plan)
-    db.commit()
     invalidate_client(current_client.id)
     return {"message": "Budget plan deleted"}

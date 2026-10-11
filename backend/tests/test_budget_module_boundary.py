@@ -33,11 +33,16 @@ PUBLIC: dict[str, set[str]] = {
     "budget_context": {"BudgetContext"},
     "budget_plan_service": {"get_budget_summary"},
     "budget_plan_store": {
+        "create_plan",
         "create_plan_lines",
+        "delete_plan",
+        "delete_plan_line",
         "get_or_create_default_plan",
+        "list_plans",
         "replace_plan_lines_from_plan",
         "resolve_budget_plan_id",
         "set_default_budget_plan",
+        "update_plan",
         "update_plan_lines",
     },
     "budget_projection": {

@@ -56,9 +56,6 @@ WHOLE_DATABASE = "routers/data_transfer"
 # each line is a boundary the redesign intends to close, and the test above fails
 # if a new one appears. The reason says what would have to change to remove it.
 ALLOWED: dict[str, dict[str, str]] = {
-    "budget_plans": {
-        "routers/budget_plans": "plan CRUD lives in the router, not in budget_plan_store",
-    },
     "capsules": {
         "routers/capsules": "capsule CRUD lives in the router",
         "services/product_reserve_service": "a product reserve creates its own capsule",
@@ -76,7 +73,6 @@ ALLOWED: dict[str, dict[str, str]] = {
         "services/report_service": "the monthly report proposes actions",
     },
     "monthly_plan_lines": {
-        "routers/budget_plans": "plan line CRUD and batch edit live in the router",
         "workflows/monthly_action_workflow": "applying a set_budget action writes a line",
     },
 }

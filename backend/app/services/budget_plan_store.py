@@ -7,6 +7,7 @@ Nothing here computes a summary, so it sits below everything that does.
 """
 from __future__ import annotations
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import models
@@ -17,6 +18,109 @@ from .budget_lines import (
     newest_line_key,
 )
 from .registry_service import registry_target_account_id
+
+
+def list_plans(db: Session, client_id: int) -> list[models.BudgetPlan]:
+    plans = (
+        db.query(models.BudgetPlan)
+        .filter(models.BudgetPlan.client_id == client_id)
+        .order_by(models.BudgetPlan.sort_order, models.BudgetPlan.id)
+        .all()
+    )
+    return plans or [get_or_create_default_plan(db, client_id)]
+
+
+def create_plan(
+    db: Session, client_id: int, payload, *, commit: bool = True,
+) -> models.BudgetPlan:
+    data = _payload_data(payload)
+    existing = db.query(models.BudgetPlan).filter_by(client_id=client_id, name=data["name"]).first()
+    if existing:
+        raise ValueError("A plan with this name already exists")
+    plan = models.BudgetPlan(
+        client_id=client_id,
+        name=data["name"],
+        description=data.get("description"),
+        is_default=False,
+        sort_order=data.get("sort_order", 0),
+    )
+    db.add(plan)
+    _save_plan(db, plan, commit=commit)
+    return plan
+
+
+def update_plan(
+    db: Session, client_id: int, plan_id: int, patch, *, commit: bool = True,
+) -> models.BudgetPlan | None:
+    plan = db.query(models.BudgetPlan).filter_by(id=plan_id, client_id=client_id).first()
+    if not plan:
+        return None
+    data = _payload_data(patch)
+    if data.get("name") is not None:
+        duplicate = db.query(models.BudgetPlan).filter(
+            models.BudgetPlan.client_id == client_id,
+            models.BudgetPlan.name == data["name"],
+            models.BudgetPlan.id != plan_id,
+        ).first()
+        if duplicate:
+            raise ValueError("A plan with this name already exists")
+        plan.name = data["name"]
+    for key in ("description", "sort_order"):
+        if data.get(key) is not None:
+            setattr(plan, key, data[key])
+    _save_plan(db, plan, commit=commit)
+    return plan
+
+
+def _save_plan(db: Session, plan: models.BudgetPlan, *, commit: bool) -> None:
+    try:
+        if commit:
+            db.commit()
+        else:
+            db.flush()
+    except IntegrityError as exc:
+        db.rollback()
+        raise ValueError("A plan with this name already exists") from exc
+    if commit:
+        db.refresh(plan)
+
+
+def delete_plan(
+    db: Session, client_id: int, plan_id: int, *, commit: bool = True,
+) -> bool:
+    plan = db.query(models.BudgetPlan).filter_by(id=plan_id, client_id=client_id).first()
+    if not plan:
+        return False
+    if plan.is_default:
+        raise ValueError("Cannot delete the default plan")
+    # Preserve the existing inactive orphans: deleting the plan nulls their FK.
+    db.query(models.MonthlyPlanLine).filter(
+        models.MonthlyPlanLine.client_id == client_id,
+        models.MonthlyPlanLine.plan_id == plan_id,
+    ).update({"is_active": False})
+    db.delete(plan)
+    if commit:
+        db.commit()
+    else:
+        db.flush()
+    return True
+
+
+def delete_plan_line(
+    db: Session, client_id: int, line_id: int, *, commit: bool = True,
+) -> bool:
+    line = db.query(models.MonthlyPlanLine).filter(
+        models.MonthlyPlanLine.id == line_id,
+        models.MonthlyPlanLine.client_id == client_id,
+    ).first()
+    if not line:
+        return False
+    line.is_active = False
+    if commit:
+        db.commit()
+    else:
+        db.flush()
+    return True
 
 
 def get_or_create_default_plan(db: Session, client_id: int) -> models.BudgetPlan:
@@ -59,8 +163,14 @@ def replace_plan_lines_from_plan(
     client_id: int,
     target_plan_id: int,
     source_plan_id: int,
+    *,
+    source_period: str | None = None,
+    target_period: str | None = None,
+    commit: bool = False,
 ) -> int:
-    if target_plan_id == source_plan_id:
+    if (source_period is None) != (target_period is None):
+        raise ValueError("Source and target periods must be supplied together")
+    if target_plan_id == source_plan_id and source_period is None:
         return 0
 
     target_plan = db.query(models.BudgetPlan).filter_by(id=target_plan_id, client_id=client_id).first()
@@ -70,30 +180,35 @@ def replace_plan_lines_from_plan(
     if not source_plan:
         raise ValueError("Source budget plan not found")
 
-    source_lines = (
+    source_query = (
         db.query(models.MonthlyPlanLine)
         .filter(
             models.MonthlyPlanLine.client_id == client_id,
             models.MonthlyPlanLine.plan_id == source_plan_id,
             models.MonthlyPlanLine.is_active.is_(True),
         )
-        .all()
     )
+    if source_period is not None:
+        source_query = source_query.filter(models.MonthlyPlanLine.target_period == source_period)
+    source_lines = source_query.all()
 
-    (
+    target_query = (
         db.query(models.MonthlyPlanLine)
         .filter(
             models.MonthlyPlanLine.client_id == client_id,
             models.MonthlyPlanLine.plan_id == target_plan_id,
         )
-        .update({"is_active": False}, synchronize_session=False)
     )
+    if target_period is not None:
+        target_query = target_query.filter(models.MonthlyPlanLine.target_period == target_period)
+    # Period copying historically synchronizes loaded rows, while plan copying does not.
+    target_query.update({"is_active": False}, synchronize_session="auto" if target_period is not None else False)
 
     for src in source_lines:
         new_line = models.MonthlyPlanLine(
             client_id=client_id,
             plan_id=target_plan_id,
-            target_period=src.target_period,
+            target_period=target_period if target_period is not None else src.target_period,
             line_type=src.line_type,
             target_type=src.target_type,
             target_id=src.target_id,
@@ -109,17 +224,24 @@ def replace_plan_lines_from_plan(
         )
         assign_plan_line_identity(new_line)
         db.add(new_line)
+    if commit:
+        db.commit()
     return len(source_lines)
 
 
-def set_default_budget_plan(db: Session, client_id: int, plan_id: int) -> models.BudgetPlan:
+def set_default_budget_plan(
+    db: Session, client_id: int, plan_id: int, *, commit: bool = True,
+) -> models.BudgetPlan:
     plan = db.query(models.BudgetPlan).filter_by(id=plan_id, client_id=client_id).first()
     if not plan:
         raise ValueError("Budget plan not found")
     for item in db.query(models.BudgetPlan).filter_by(client_id=client_id).all():
         item.is_default = item.id == plan.id
-    db.commit()
-    db.refresh(plan)
+    if commit:
+        db.commit()
+        db.refresh(plan)
+    else:
+        db.flush()
     return plan
 
 
