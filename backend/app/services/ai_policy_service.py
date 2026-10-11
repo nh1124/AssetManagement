@@ -170,6 +170,30 @@ def ledger_write_is_direct(
     return decision.mode == "allow_execute" and decision.allowed
 
 
+def assert_direct_ledger_write_allowed(
+    db: Session,
+    client_id: int,
+    *,
+    mcp_client_id: str | None,
+    risk: str = "medium",
+) -> None:
+    # Skipping policy evaluation keeps a human's own write out of the AI gate.
+    if not mcp_client_id:
+        return
+    if not ledger_write_is_direct(db, client_id, ai_client_id=None, risk=risk):
+        # 403 rather than 409: the request does not conflict with the ledger's
+        # state, the caller simply may not write it. Retrying changes nothing
+        # until a human opens the policy, so the message names it.
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Direct MCP ledger write refused: the ai_operation_policies row for "
+                f"transactions / create / {risk} must have mode allow_execute and "
+                "have no unmet MFA requirement; otherwise use the change-request path."
+            ),
+        )
+
+
 def write_ai_audit_log(
     db: Session,
     client_id: int,

@@ -1,12 +1,13 @@
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session, selectinload
 
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
+from ..services.ai_policy_service import assert_direct_ledger_write_allowed
 from ..services.ledger_service import (
     ensure_default_accounts,
     reject_proposal as reject_proposal_service,
@@ -121,8 +122,17 @@ def create_transaction(
     transaction: schemas.TransactionCreate,
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
+    # Defaulted because several tests call these endpoints as plain
+    # functions; FastAPI always injects the real request over HTTP.
+    request: Request = None,
 ):
     """Create a transaction for a specific client and process double-entry bookkeeping."""
+    assert_direct_ledger_write_allowed(
+        db,
+        current_client.id,
+        mcp_client_id=request.headers.get("x-mcp-client-id") if request else None,
+        risk="medium",
+    )
     ensure_default_accounts(db, client_id=current_client.id)
 
     data = transaction.model_dump()
@@ -223,8 +233,17 @@ def update_transaction(
     payload: schemas.TransactionUpdate,
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
+    # Defaulted because several tests call these endpoints as plain
+    # functions; FastAPI always injects the real request over HTTP.
+    request: Request = None,
 ):
     """Update a transaction and atomically rebuild its journal entries."""
+    assert_direct_ledger_write_allowed(
+        db,
+        current_client.id,
+        mcp_client_id=request.headers.get("x-mcp-client-id") if request else None,
+        risk="medium",
+    )
     ensure_default_accounts(db, client_id=current_client.id)
     try:
         tx = update_transaction_service(db, transaction_id, payload, current_client.id)
@@ -242,8 +261,17 @@ def delete_transaction(
     transaction_id: int,
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
+    # Defaulted because several tests call these endpoints as plain
+    # functions; FastAPI always injects the real request over HTTP.
+    request: Request = None,
 ):
     """Delete a transaction and its journal entries for a specific client."""
+    assert_direct_ledger_write_allowed(
+        db,
+        current_client.id,
+        mcp_client_id=request.headers.get("x-mcp-client-id") if request else None,
+        risk="medium",
+    )
     transaction = db.query(models.Transaction).filter(
         models.Transaction.id == transaction_id,
         models.Transaction.client_id == current_client.id,
