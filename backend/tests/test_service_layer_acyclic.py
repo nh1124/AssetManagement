@@ -26,12 +26,15 @@ LAYERS: dict[str, int] = {
     # L0 - leaves: no dependency on any other service
     "ai_policy_service": 0,
     "cache_service": 0,
+    "client_settings_service": 0,
     "fx_service": 0,
     "liability_schedule": 0,
     "mfa_service": 0,
+    "period_review_service": 0,
     "periods": 0,
     "product_reserve_service": 0,
     "schedule_rules": 0,
+    "simulation_config_service": 0,
     # L1 - the ledger itself, and reading it one journal leg at a time
     "journal_legs": 1,
     "ledger_service": 1,
@@ -69,6 +72,7 @@ LAYERS: dict[str, int] = {
     "monthly_action_workflow": 6,
     "ai_change_request_workflow": 6,
     "transaction_approval_workflow": 6,
+    "simulation_workflow": 6,
 }
 
 

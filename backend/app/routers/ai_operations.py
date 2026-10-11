@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
@@ -14,10 +13,12 @@ from ..services.ai_policy_service import (
     AiOperationDecision,
     AiOperationContext,
     evaluate_ai_operation,
+    list_audit_logs,
     list_client_policies,
     replace_client_policies,
     write_ai_audit_log,
 )
+from ..services.client_settings_service import merge_ai_execution_settings
 
 
 router = APIRouter(prefix="/ai", tags=["ai-operations"])
@@ -76,14 +77,7 @@ def put_ai_execution_settings(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    settings = dict(current_client.general_settings or {})
-    ai_operation = dict(settings.get("ai_operation") or {})
-    ai_operation["mcp_write_mode"] = payload.mcp_write_mode
-    settings["ai_operation"] = ai_operation
-    current_client.general_settings = settings
-    flag_modified(current_client, "general_settings")
-    db.commit()
-    db.refresh(current_client)
+    merge_ai_execution_settings(db, current_client, {"mcp_write_mode": payload.mcp_write_mode})
     return _execution_settings_payload(current_client)
 
 
@@ -94,9 +88,7 @@ def get_ai_audit_logs(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    return db.query(models.AiAuditLog).filter(
-        models.AiAuditLog.client_id == current_client.id,
-    ).order_by(models.AiAuditLog.created_at.desc(), models.AiAuditLog.id.desc()).offset(offset).limit(limit).all()
+    return list_audit_logs(db, current_client.id, limit=limit, offset=offset)
 
 
 @router.get("/context/resources", response_model=list[schemas.AiContextResourceDescriptor])

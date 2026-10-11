@@ -256,6 +256,14 @@ def replace_client_policies(
     return rows
 
 
+def list_audit_logs(
+    db: Session, client_id: int, *, limit: int, offset: int,
+) -> list[models.AiAuditLog]:
+    return db.query(models.AiAuditLog).filter(
+        models.AiAuditLog.client_id == client_id,
+    ).order_by(models.AiAuditLog.created_at.desc(), models.AiAuditLog.id.desc()).offset(offset).limit(limit).all()
+
+
 def list_client_policies(db: Session, client_id: int) -> list[models.AiOperationPolicy]:
     return db.query(models.AiOperationPolicy).filter(
         models.AiOperationPolicy.client_id == client_id,

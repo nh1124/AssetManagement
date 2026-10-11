@@ -1,12 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.orm import Session
 from typing import List
 from .. import models
 from ..database import get_db
 from ..dependencies import get_current_client
-from ..security import encrypt_key
 from ..services.cache_service import invalidate_client
+from ..services.client_settings_service import merge_general_settings, set_gemini_api_key
 from pydantic import BaseModel
 
 router = APIRouter(prefix="/clients", tags=["clients"])
@@ -75,16 +74,7 @@ def update_client_key(
     """Update (and encrypt) a client's Gemini API key in ai_config JSON. Matches VisionArk patch/ai."""
     if current_client.id != client_id:
         raise HTTPException(status_code=403, detail="Cannot edit another client key")
-    
-    # Update ai_config JSON blob
-    config = dict(current_client.ai_config) if current_client.ai_config else {}
-    config["gemini_api_key"] = encrypt_key(key_data.gemini_api_key)
-    current_client.ai_config = config
-    
-    # Required for SQLAlchemy to detect JSON changes
-    flag_modified(current_client, "ai_config")
-    
-    db.commit()
+    set_gemini_api_key(db, current_client, key_data.gemini_api_key)
     invalidate_client(current_client.id)
     return {"message": "API key updated and encrypted successfully in ai_config"}
 
@@ -98,10 +88,6 @@ def update_client_settings(
 ):
     if current_client.id != client_id:
         raise HTTPException(status_code=403, detail="Cannot edit another client settings")
-    settings = dict(current_client.general_settings or {})
-    settings.update(payload.general_settings or {})
-    current_client.general_settings = settings
-    flag_modified(current_client, "general_settings")
-    db.commit()
+    settings = merge_general_settings(db, current_client, payload.general_settings)
     invalidate_client(current_client.id)
-    return current_client.general_settings
+    return settings
