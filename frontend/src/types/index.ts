@@ -5,6 +5,16 @@ export interface TransactionLeg {
     memo?: string | null;
 }
 
+export interface CapsuleTransferPreview {
+    capsule_id: number;
+    rule_id: number;
+    capsule_name: string;
+    source_account_id: number;
+    destination_account_id: number;
+    amount: number;
+    auto_post: boolean;
+}
+
 export interface TransactionLegRead extends TransactionLeg {
     id: number;
     account_name?: string | null;

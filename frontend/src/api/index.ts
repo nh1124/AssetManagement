@@ -13,6 +13,7 @@ import type {
     AiOperationPolicyPayload,
     AnalysisSummary,
     ContributionScheduleItem,
+    CapsuleTransferPreview,
     DataHealthResult,
     DataRepairResult,
     ExchangeRate,
@@ -40,6 +41,7 @@ import type {
     SimulationScenarioCreatePayload,
     Transaction,
     TransactionBatch,
+    TransactionLeg,
     TransactionProposal,
 } from '../types';
 
@@ -839,6 +841,16 @@ export const compareSimulationScenarios = async (
 };
 
 // Capsules endpoints
+export const previewCapsuleTransfersForTransaction = async (draft: {
+    description: string;
+    amount: number;
+    date: string;
+    legs: TransactionLeg[];
+}): Promise<CapsuleTransferPreview[]> => {
+    const response = await api.post('/capsules/preview-for-transaction', draft);
+    return response.data;
+};
+
 export const getCapsules = async () => {
     const response = await api.get('/capsules/');
     return response.data;

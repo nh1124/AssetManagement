@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import {
     Trash2, Plus, Sparkles, Send, Loader2, ImagePlus, X,
     ArrowUpCircle, ArrowDownCircle, RefreshCw, Edit, SlidersHorizontal,
@@ -11,13 +11,13 @@ import {
     createRecurringTransaction, deleteRecurringTransaction, updateRecurringTransaction,
     getAccounts, createTransaction, deleteTransaction, updateTransaction, getTransactionsPage,
     getTransactionProposals, approveTransactionProposal, rejectTransactionProposal,
-    analyzeWithBackend,
+    analyzeWithBackend, previewCapsuleTransfersForTransaction,
     getQuickTemplates, createQuickTemplate, updateQuickTemplate, deleteQuickTemplate, createTransactionBatch,
 } from '../api';
 import { useToast } from '../components/Toast';
 import { useClient } from '../context/ClientContext';
 import { formatCurrency as formatCurrencyWithSetting, getCurrencySymbol } from '../utils/currency';
-import type { QuickTemplate, RecurringTransaction, Transaction, TransactionLeg, TransactionLegRead, TransactionProposal } from '../types';
+import type { CapsuleTransferPreview, QuickTemplate, RecurringTransaction, Transaction, TransactionLeg, TransactionLegRead, TransactionProposal } from '../types';
 import { directionClass, directionSign, transactionDirection } from '../features/journal/direction';
 import {
     ENTRY_SHAPES,
@@ -55,7 +55,7 @@ import QuickTemplateTile from '../features/journal/QuickTemplateTile';
 const MAIN_TABS = [
     { id: 'quick', label: 'Quick' },
     { id: 'transaction', label: 'Transaction' },
-    { id: 'pending', label: 'Pending' },
+    { id: 'suggested', label: 'Suggested' },
     { id: 'recurring', label: 'Recurring' },
     { id: 'ai', label: 'AI' },
 ];
@@ -154,9 +154,9 @@ export default function Journal() {
     });
     const [transactions, setTransactions] = useState<Transaction[]>([]);
     const [proposals, setProposals] = useState<TransactionProposal[]>([]);
-    const [proposalNotes, setProposalNotes] = useState<Record<number, string>>({});
-    const [decidingProposalIds, setDecidingProposalIds] = useState<number[]>([]);
-    const proposalRequestsRef = useRef(new Set<number>());
+    const [suggestedNotes, setSuggestedNotes] = useState<Record<number, string>>({});
+    const [decidingSuggestedIds, setDecidingSuggestedIds] = useState<number[]>([]);
+    const suggestedRequestsRef = useRef(new Set<number>());
     const [transactionTotal, setTransactionTotal] = useState(0);
     const [filters, setFilters] = useState(loadStoredFilters);
     const [showFilters, setShowFilters] = useState(false);
@@ -250,6 +250,61 @@ export default function Journal() {
     const splitTotal = splitRows.reduce((sum, row) => sum + (parseFloat(row.amount) || 0), 0);
     const splitRemainder = (parseFloat(formData.amount) || 0) - splitTotal;
     const splitBalanced = Math.abs(splitRemainder) < 0.01;
+
+    const plannedEntry = useMemo(() => {
+        const amount = parseFloat(formData.amount);
+        const fromAccountId = formData.fromAccountId ? parseInt(formData.fromAccountId, 10) : undefined;
+        const toAccountId = formData.toAccountId ? parseInt(formData.toAccountId, 10) : undefined;
+        const lines = splitRows.filter((row) => row.accountId && (parseFloat(row.amount) || 0) > 0);
+        const legs: TransactionLeg[] = [
+            { account_id: fromAccountId ?? 0, credit: amount },
+            ...(splitActive ? lines.map((row) => ({
+                account_id: Number(row.accountId),
+                debit: parseFloat(row.amount),
+                memo: row.memo.trim() || undefined,
+            })) : [{ account_id: toAccountId ?? 0, debit: amount }]),
+        ];
+        const debitTotal = legs.reduce((sum, leg) => sum + (leg.debit ?? 0), 0);
+        const creditTotal = legs.reduce((sum, leg) => sum + (leg.credit ?? 0), 0);
+        const remainder = creditTotal - debitTotal;
+        return {
+            amount, fromAccountId, toAccountId, lines, legs, debitTotal, remainder,
+            balanced: Math.abs(remainder) < 0.01,
+            complete: Number.isFinite(amount) && amount > 0 && legs.length >= 2 && legs.every((leg) => leg.account_id > 0),
+        };
+    }, [formData.amount, formData.fromAccountId, formData.toAccountId, splitActive, splitRows]);
+    const [capsulePreview, setCapsulePreview] = useState<CapsuleTransferPreview[]>([]);
+    const [capsulePreviewStatus, setCapsulePreviewStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+
+    useEffect(() => {
+        // Invalidate replies on draft or tab changes, including while the next request is debouncing.
+        let stale = false;
+        setCapsulePreview([]);
+        setCapsulePreviewStatus('loading');
+        if (activeTab !== 'transaction' || !plannedEntry.complete) return;
+        const timer = window.setTimeout(async () => {
+            try {
+                const preview = await previewCapsuleTransfersForTransaction({
+                    description: formData.description,
+                    amount: plannedEntry.amount,
+                    date: formData.date,
+                    legs: plannedEntry.legs,
+                });
+                if (stale) return;
+                setCapsulePreview(preview);
+                setCapsulePreviewStatus('ready');
+            } catch (error) {
+                console.error('Failed to preview capsule transfers:', error);
+                if (stale) return;
+                setCapsulePreview([]);
+                setCapsulePreviewStatus('error');
+            }
+        }, 400);
+        return () => {
+            stale = true;
+            window.clearTimeout(timer);
+        };
+    }, [activeTab, plannedEntry, formData.description, formData.date, formData.currency, clientId]);
 
     const addSplitRow = () => {
         const remainder = splitRows.length ? splitRemainder : parseFloat(formData.amount) || 0;
@@ -452,44 +507,44 @@ export default function Journal() {
         }
     };
 
-    const fetchPendingProposals = async () => {
+    const fetchSuggestedProposals = async () => {
         setIsProcessing(true);
         try {
             setProposals(await getTransactionProposals({ status: 'pending' }));
         } catch (error) {
             console.error('Failed to fetch transaction proposals:', error);
-            showToast('Failed to load pending proposals', 'error');
+            showToast('Failed to load suggested proposals', 'error');
         } finally {
             setIsProcessing(false);
         }
     };
 
     useEffect(() => {
-        if (activeTab === 'pending') {
-            fetchPendingProposals();
+        if (activeTab === 'suggested') {
+            fetchSuggestedProposals();
         }
     }, [activeTab]);
 
-    const handleProposalDecision = async (id: number, approve: boolean) => {
+    const handleSuggestedDecision = async (id: number, approve: boolean) => {
         // Lock before React renders so repeated clicks cannot submit the same decision.
-        if (proposalRequestsRef.current.has(id)) return;
-        proposalRequestsRef.current.add(id);
-        setDecidingProposalIds((ids) => [...ids, id]);
+        if (suggestedRequestsRef.current.has(id)) return;
+        suggestedRequestsRef.current.add(id);
+        setDecidingSuggestedIds((ids) => [...ids, id]);
         setIsProcessing(true);
         try {
             if (approve) {
                 await approveTransactionProposal(id);
                 await fetchTransactionsOnly();
             } else {
-                await rejectTransactionProposal(id, proposalNotes[id] || undefined);
+                await rejectTransactionProposal(id, suggestedNotes[id] || undefined);
             }
-            await fetchPendingProposals();
+            await fetchSuggestedProposals();
         } catch (error) {
             console.error('Failed to decide transaction proposal:', error);
-            showToast('Failed to update pending proposal', 'error');
+            showToast('Failed to update suggested proposal', 'error');
         } finally {
-            proposalRequestsRef.current.delete(id);
-            setDecidingProposalIds((ids) => ids.filter((value) => value !== id));
+            suggestedRequestsRef.current.delete(id);
+            setDecidingSuggestedIds((ids) => ids.filter((value) => value !== id));
             setIsProcessing(false);
         }
     };
@@ -767,13 +822,9 @@ export default function Journal() {
         if (!formData.amount) return;
         setIsProcessing(true);
         try {
-            const fromAccountId = formData.fromAccountId ? parseInt(formData.fromAccountId, 10) : undefined;
-            const toAccountId = formData.toAccountId ? parseInt(formData.toAccountId, 10) : undefined;
-
-            const amount = parseFloat(formData.amount);
+            const { fromAccountId, toAccountId, amount, lines } = plannedEntry;
             let legs: TransactionLeg[] | undefined;
             if (splitActive) {
-                const lines = splitRows.filter((row) => row.accountId && (parseFloat(row.amount) || 0) > 0);
                 if (!fromAccountId || !lines.length) {
                     showToast('A split needs a From account and at least one line', 'warning');
                     return;
@@ -782,14 +833,7 @@ export default function Journal() {
                     showToast('The lines must add up to the amount', 'warning');
                     return;
                 }
-                legs = [
-                    { account_id: fromAccountId, credit: amount },
-                    ...lines.map((row) => ({
-                        account_id: Number(row.accountId),
-                        debit: parseFloat(row.amount),
-                        memo: row.memo.trim() || undefined,
-                    })),
-                ];
+                legs = plannedEntry.legs;
             }
 
             const payload = {
@@ -1028,15 +1072,15 @@ export default function Journal() {
     const leftPane = (
         <TabPanel tabs={MAIN_TABS} activeTab={activeTab} onTabChange={setActiveTab} scrollContent={false}>
             <div className="py-2">
-                {activeTab === 'pending' && (
+                {activeTab === 'suggested' && (
                     <div className="space-y-3">
                         {isProcessing && <Loader2 size={14} className="animate-spin" />}
                         {proposals.length === 0 ? (
-                            <p className="text-xs text-slate-500">No pending proposals.</p>
+                            <p className="text-xs text-slate-500">No suggested proposals.</p>
                         ) : (
                             <div className="divide-y divide-slate-800/50">
                                 {proposals.map((proposal) => {
-                                    const deciding = decidingProposalIds.includes(proposal.id);
+                                    const deciding = decidingSuggestedIds.includes(proposal.id);
                                     const accountsResolved = proposal.legs.every((leg) => accountById(leg.account_id)?.name);
                                     return (
                                         <div key={proposal.id} className="py-3 space-y-2 hover:bg-slate-800/50">
@@ -1062,15 +1106,15 @@ export default function Journal() {
                                                 <button
                                                     type="button"
                                                     disabled={deciding || !accountsResolved}
-                                                    onClick={() => handleProposalDecision(proposal.id, true)}
+                                                    onClick={() => handleSuggestedDecision(proposal.id, true)}
                                                     className="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white text-[10px] font-bold disabled:opacity-50"
                                                 >
                                                     Approve
                                                 </button>
                                                 <input
                                                     type="text"
-                                                    value={proposalNotes[proposal.id] || ''}
-                                                    onChange={(e) => setProposalNotes((notes) => ({ ...notes, [proposal.id]: e.target.value }))}
+                                                    value={suggestedNotes[proposal.id] || ''}
+                                                    onChange={(e) => setSuggestedNotes((notes) => ({ ...notes, [proposal.id]: e.target.value }))}
                                                     disabled={deciding}
                                                     placeholder="Rejection note (optional)"
                                                     aria-label="Rejection note (optional)"
@@ -1079,7 +1123,7 @@ export default function Journal() {
                                                 <button
                                                     type="button"
                                                     disabled={deciding}
-                                                    onClick={() => handleProposalDecision(proposal.id, false)}
+                                                    onClick={() => handleSuggestedDecision(proposal.id, false)}
                                                     className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-bold disabled:opacity-50"
                                                 >
                                                     Reject
@@ -1260,6 +1304,48 @@ export default function Journal() {
                                         The To account above is ignored while lines are present.
                                     </p>
                                 </div>
+                            )}
+                        </div>
+
+                        <div className="border border-slate-800 bg-slate-900/40 p-2 space-y-2">
+                            <span className="text-[10px] text-slate-500 uppercase tracking-wider">Will be recorded / 記録される取引</span>
+                            {!plannedEntry.complete ? (
+                                <p className="text-[10px] text-slate-500">Preview incomplete: enter a positive amount and choose any unset From or destination account.</p>
+                            ) : (
+                                <>
+                                    <p className="text-xs">
+                                        {formData.date} / {formData.description} / {formatCurrencyWithSetting(plannedEntry.amount, formData.currency)} {formData.currency}
+                                    </p>
+                                    <div className="text-[10px] text-slate-400 space-y-1">
+                                        {plannedEntry.legs.map((leg, index) => (
+                                            <p key={index}>
+                                                {accountById(leg.account_id)?.name || 'Account unset'} / {' '}
+                                                {(leg.debit ?? 0) > 0 ? 'Debit' : 'Credit'} {' '}
+                                                {formatCurrencyWithSetting((leg.debit ?? 0) > 0 ? leg.debit : leg.credit, formData.currency)}
+                                            </p>
+                                        ))}
+                                    </div>
+                                    <p className={`text-[10px] font-mono-nums ${plannedEntry.balanced ? 'text-emerald-500' : 'text-amber-500'}`}>
+                                        {plannedEntry.balanced
+                                            ? `Balanced / ${formatCurrencyWithSetting(plannedEntry.debitTotal, formData.currency)}`
+                                            : `Remaining ${formatCurrencyWithSetting(plannedEntry.remainder, formData.currency)}`}
+                                    </p>
+                                    <div className="space-y-1">
+                                        <span className="text-[10px] text-slate-500 uppercase tracking-wider">Capsule companion entries</span>
+                                        {capsulePreviewStatus === 'loading' ? (
+                                            <p className="text-[10px] text-slate-500">Checking capsule rules…</p>
+                                        ) : capsulePreviewStatus === 'error' ? (
+                                            <p className="text-[10px] text-slate-500">Capsule preview unavailable; you can still save the transaction.</p>
+                                        ) : capsulePreview.length === 0 ? (
+                                            <p className="text-[10px] text-slate-500">No capsule companion entries.</p>
+                                        ) : capsulePreview.map((transfer, index) => (
+                                            <div key={`${transfer.rule_id}-${index}`} className="text-[10px] text-slate-400">
+                                                <p>{transfer.capsule_name} / {accountById(transfer.source_account_id)?.name || 'Account unset'} → {accountById(transfer.destination_account_id)?.name || 'Account unset'}</p>
+                                                <p>{formatCurrencyWithSetting(transfer.amount, formData.currency)} / {transfer.auto_post ? 'Posts automatically' : 'Waits for approval in Suggested'}</p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </>
                             )}
                         </div>
 
