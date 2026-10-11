@@ -58,9 +58,7 @@ SESSION_METHODS = {
 # `commit: bool = True` idiom, where it means "make the services' work visible
 # without closing", and it decides nothing about which rows exist.
 BOUNDARY_METHODS = {"commit", "rollback", "refresh", "flush", "expire", "expire_all"}
-WORKFLOW_ALLOWED: dict[str, str] = {
-    "workflows/monthly_action_workflow": "L10c: owns monthly_actions (MonthlyAction), which has no service owner yet; also constructs MonthlyPlanLine",
-}
+WORKFLOW_ALLOWED: dict[str, str] = {}
 
 
 def _role(module: str) -> str | None:

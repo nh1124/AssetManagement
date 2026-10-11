@@ -25,9 +25,7 @@ OWNERS: dict[str, str] = {
     "recurring_transactions": "services/registry_service",
     "budget_plans": "services/budget_plan_store",
     "monthly_plan_lines": "services/budget_plan_store",
-    # Workflow owner for now; the layering plan moves ownership to a service
-    # because workflows should orchestrate, not write.
-    "monthly_actions": "workflows/monthly_action_workflow",
+    "monthly_actions": "services/monthly_action_store",
     "period_reviews": "services/period_review_service",
     "capsules": "services/capsule_service",
     "capsule_rules": "services/capsule_service",
@@ -62,9 +60,6 @@ ALLOWED: dict[str, dict[str, str]] = {
     },
     "monthly_actions": {
         "services/report_service": "the monthly report proposes actions",
-    },
-    "monthly_plan_lines": {
-        "workflows/monthly_action_workflow": "applying a set_budget action writes a line",
     },
 }
 

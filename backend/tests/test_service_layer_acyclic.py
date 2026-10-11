@@ -31,6 +31,7 @@ LAYERS: dict[str, int] = {
     "fx_service": 0,
     "liability_schedule": 0,
     "mfa_service": 0,
+    "monthly_action_store": 0,
     "period_review_service": 0,
     "quick_template_service": 0,
     "periods": 0,

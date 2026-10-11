@@ -39,6 +39,13 @@ def get_recurring_transaction(
     ).first()
 
 
+def get_entry(db: Session, client_id: int, entry_id: int) -> models.RegistryEntry | None:
+    return db.query(models.RegistryEntry).filter(
+        models.RegistryEntry.id == entry_id,
+        models.RegistryEntry.client_id == client_id,
+    ).first()
+
+
 def list_entries(db: Session, client_id: int) -> list[models.RegistryEntry]:
     return db.query(models.RegistryEntry).filter(
         models.RegistryEntry.client_id == client_id,

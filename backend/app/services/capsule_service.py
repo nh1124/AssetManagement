@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Protocol, Sequence
 
 from fastapi import HTTPException
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
@@ -19,6 +20,13 @@ def capsule_balance(db: Session, capsule: models.Capsule) -> float:
 
 def remaining_target(db: Session, capsule: models.Capsule) -> float:
     return max(0.0, (capsule.target_amount or 0.0) - capsule_balance(db, capsule))
+
+
+def total_held_amount_for_account(db: Session, account_id: int) -> float:
+    # capsule_design_review.md §7.6 retires holdings, so this aggregate retires with them.
+    return db.query(func.coalesce(func.sum(models.CapsuleHolding.held_amount), 0.0)).filter(
+        models.CapsuleHolding.account_id == account_id,
+    ).scalar() or 0.0
 
 
 def get_capsule(db: Session, client_id: int, capsule_id: int) -> models.Capsule | None:

@@ -34,11 +34,13 @@ PUBLIC: dict[str, set[str]] = {
     "budget_plan_service": {"get_budget_summary"},
     "budget_plan_store": {
         "create_plan",
+        "create_plan_line",
         "create_plan_lines",
         "delete_plan",
         "delete_plan_line",
         "get_or_create_default_plan",
         "get_plan_line",
+        "find_expense_plan_line",
         "list_plans",
         "replace_plan_lines_from_plan",
         "resolve_budget_plan_id",

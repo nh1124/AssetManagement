@@ -3,14 +3,26 @@ from __future__ import annotations
 from datetime import date, datetime
 from uuid import uuid4
 
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..services import monthly_action_store
 from ..services.budget_lines import assign_plan_line_identity
-from ..services.budget_plan_store import resolve_budget_plan_id
-from ..services.capsule_service import create_capsule_for_goal, upsert_capsule_holding
-from ..services.registry_service import sync_recurring_from_registry, upsert_registry_from_recurring_payload
+from ..services.budget_plan_store import create_plan_line, find_expense_plan_line, resolve_budget_plan_id
+from ..services.capsule_service import (
+    create_capsule_for_goal,
+    get_capsule,
+    total_held_amount_for_account,
+    upsert_capsule_holding,
+)
+from ..services.goal_service import get_life_event
+from ..services.ledger_service import get_account
+from ..services.registry_service import (
+    get_entry,
+    get_recurring_transaction,
+    sync_recurring_from_registry,
+    upsert_registry_from_recurring_payload,
+)
 
 
 ACTION_KINDS = {
@@ -53,14 +65,11 @@ def list_actions(
     source_period: str | None = None,
     target_period: str | None = None,
 ) -> list[dict]:
-    query = db.query(models.MonthlyAction).filter(models.MonthlyAction.client_id == client_id)
-    if source_period:
-        query = query.filter(models.MonthlyAction.source_period == source_period)
-    if target_period:
-        query = query.filter(models.MonthlyAction.target_period == target_period)
     return [
         action_to_dict(action)
-        for action in query.order_by(models.MonthlyAction.created_at.desc(), models.MonthlyAction.id.desc()).all()
+        for action in monthly_action_store.list_for_client(
+            db, client_id, period=source_period, target_period=target_period,
+        )
     ]
 
 
@@ -75,8 +84,7 @@ def create_action(
 ) -> dict:
     if kind not in ACTION_KINDS:
         raise ValueError(f"Unsupported action kind: {kind}")
-    action = models.MonthlyAction(
-        client_id=client_id,
+    fields = dict(
         source_period=source_period,
         target_period=target_period or next_period(source_period),
         proposal_id=f"review_{kind}_{uuid4().hex[:10]}",
@@ -89,17 +97,14 @@ def create_action(
         status="pending",
         idempotency_key=f"review:{client_id}:{source_period}:{uuid4().hex}",
     )
-    db.add(action)
+    action = monthly_action_store.create(db, client_id, fields, commit=False)
     db.commit()
     db.refresh(action)
     return action_to_dict(action)
 
 
 def _require_account(db: Session, client_id: int, account_id: int) -> models.Account:
-    account = db.query(models.Account).filter(
-        models.Account.id == account_id,
-        models.Account.client_id == client_id,
-    ).first()
+    account = get_account(db, client_id, account_id)
     if not account:
         raise ValueError("Account not found")
     return account
@@ -112,20 +117,14 @@ def _apply_set_budget(db: Session, action: models.MonthlyAction) -> dict:
     plan_id = resolve_budget_plan_id(db, action.client_id, payload.get("plan_id"))
     target_period = action.target_period or next_period(action.source_period)
     account = _require_account(db, action.client_id, account_id)
-    plan_line = db.query(models.MonthlyPlanLine).filter(
-        models.MonthlyPlanLine.client_id == action.client_id,
-        models.MonthlyPlanLine.plan_id == plan_id,
-        models.MonthlyPlanLine.account_id == account_id,
-        models.MonthlyPlanLine.target_period == target_period,
-        models.MonthlyPlanLine.line_type == "expense",
-    ).first()
+    plan_line = find_expense_plan_line(db, action.client_id, plan_id, account_id, target_period)
     if plan_line:
         plan_line.amount = amount
         plan_line.name = account.name
         plan_line.is_active = True
+        assign_plan_line_identity(plan_line)
     else:
-        plan_line = models.MonthlyPlanLine(
-            client_id=action.client_id,
+        plan_line = create_plan_line(db, action.client_id, dict(
             plan_id=plan_id,
             target_period=target_period,
             line_type="expense",
@@ -133,9 +132,7 @@ def _apply_set_budget(db: Session, action: models.MonthlyAction) -> dict:
             account_id=account_id,
             name=account.name,
             amount=amount,
-        )
-        db.add(plan_line)
-    assign_plan_line_identity(plan_line)
+        ), commit=False)
     db.flush()
     return {"plan_line_id": plan_line.id, "target_period": target_period, "plan_id": plan_id}
 
@@ -159,16 +156,10 @@ def _apply_add_recurring(db: Session, action: models.MonthlyAction) -> dict:
 
 def _apply_pause_recurring(db: Session, action: models.MonthlyAction) -> dict:
     recurring_id = int((action.payload or {})["recurring_id"])
-    recurring = db.query(models.RecurringTransaction).filter(
-        models.RecurringTransaction.id == recurring_id,
-        models.RecurringTransaction.client_id == action.client_id,
-    ).first()
+    recurring = get_recurring_transaction(db, action.client_id, recurring_id)
     if not recurring:
         raise ValueError("Recurring transaction not found")
-    entry = db.query(models.RegistryEntry).filter(
-        models.RegistryEntry.id == recurring.source_registry_entry_id,
-        models.RegistryEntry.client_id == action.client_id,
-    ).first()
+    entry = get_entry(db, action.client_id, recurring.source_registry_entry_id)
     if entry is None:
         raise ValueError("Recurring transaction not found")
     # A paused definition moves no money, so its entry must stop forecasting it too.
@@ -190,10 +181,7 @@ def _apply_boost_allocation(db: Session, action: models.MonthlyAction) -> dict:
     account_id = int(payload["account_id"])
     delta_percent = float(payload.get("delta_percent") or payload.get("percent") or 0)
 
-    goal = db.query(models.LifeEvent).filter(
-        models.LifeEvent.id == life_event_id,
-        models.LifeEvent.client_id == action.client_id,
-    ).first()
+    goal = get_life_event(db, action.client_id, life_event_id)
     if not goal:
         raise ValueError("Life event not found")
     account = _require_account(db, action.client_id, account_id)
@@ -206,9 +194,7 @@ def _apply_boost_allocation(db: Session, action: models.MonthlyAction) -> dict:
 
     # An account cannot have more earmarked against it than it holds, counting
     # what other capsules already claim.
-    claimed = db.query(func.coalesce(func.sum(models.CapsuleHolding.held_amount), 0.0)).filter(
-        models.CapsuleHolding.account_id == account_id,
-    ).scalar() or 0.0
+    claimed = total_held_amount_for_account(db, account_id)
     headroom = max(0.0, balance - float(claimed))
     applied = min(requested, headroom) if requested > 0 else requested
 
@@ -235,10 +221,7 @@ def _apply_boost_allocation(db: Session, action: models.MonthlyAction) -> dict:
 
 def _apply_change_capsule_contribution(db: Session, action: models.MonthlyAction) -> dict:
     payload = action.payload or {}
-    capsule = db.query(models.Capsule).filter(
-        models.Capsule.id == int(payload["capsule_id"]),
-        models.Capsule.client_id == action.client_id,
-    ).first()
+    capsule = get_capsule(db, action.client_id, int(payload["capsule_id"]))
     if not capsule:
         raise ValueError("Capsule not found")
     capsule.monthly_contribution = float(payload["monthly_contribution"])
@@ -255,10 +238,7 @@ DISPATCH = {
 
 
 def apply_action(db: Session, client_id: int, action_id: int) -> dict:
-    action = db.query(models.MonthlyAction).filter(
-        models.MonthlyAction.id == action_id,
-        models.MonthlyAction.client_id == client_id,
-    ).first()
+    action = monthly_action_store.get(db, client_id, action_id)
     if not action:
         raise LookupError("Action not found")
     if action.status == "applied":
@@ -282,10 +262,7 @@ def apply_action(db: Session, client_id: int, action_id: int) -> dict:
 
 
 def skip_action(db: Session, client_id: int, action_id: int) -> dict:
-    action = db.query(models.MonthlyAction).filter(
-        models.MonthlyAction.id == action_id,
-        models.MonthlyAction.client_id == client_id,
-    ).first()
+    action = monthly_action_store.get(db, client_id, action_id)
     if not action:
         raise LookupError("Action not found")
     action.status = "skipped"
@@ -295,12 +272,7 @@ def skip_action(db: Session, client_id: int, action_id: int) -> dict:
 
 
 def process_due_actions(db: Session, client_id: int, today: date | None = None) -> list[dict]:
-    current_period = (today or date.today()).strftime("%Y-%m")
-    actions = db.query(models.MonthlyAction).filter(
-        models.MonthlyAction.client_id == client_id,
-        models.MonthlyAction.status.in_(["pending", "failed"]),
-        models.MonthlyAction.target_period <= current_period,
-    ).order_by(models.MonthlyAction.target_period, models.MonthlyAction.id).all()
+    actions = monthly_action_store.list_due(db, client_id, today or date.today())
     processed = []
     for action in actions:
         try:
