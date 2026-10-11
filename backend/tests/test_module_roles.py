@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -24,6 +25,8 @@ ROLE_BY_DIRECTORY: dict[str, str] = {
     "routers": "ui",
     "workflows": "workflow",
     "services": "service",
+    # Pure domain vocabulary owns no tables and accepts no database sessions.
+    "domain": "domain",
     "maintenance": "tool",
     "utils": "infra",
 }
@@ -59,6 +62,23 @@ SESSION_METHODS = {
 # without closing", and it decides nothing about which rows exist.
 BOUNDARY_METHODS = {"commit", "rollback", "refresh", "flush", "expire", "expire_all"}
 WORKFLOW_ALLOWED: dict[str, str] = {}
+
+# C1 preserves existing service/workflow responses; later waves convert one
+# module at a time. Counts prevent a listed module from accumulating more debt.
+HTTP_EXCEPTION_ALLOWED: dict[str, int] = {
+    "services/ledger_service": 13,
+    "workflows/ai_change_request_workflow": 10,
+    "services/capsule_service": 6,
+    "services/ai_context_service": 4,
+    "workflows/capsule_workflow": 4,
+    "services/ai_policy_service": 2,
+    "services/goal_service": 2,
+    "workflows/product_workflow": 2,
+    "services/fx_service": 1,
+    "services/quick_template_service": 1,
+    "services/registry_service": 1,
+    "workflows/simulation_workflow": 1,
+}
 
 
 def _role(module: str) -> str | None:
@@ -295,3 +315,76 @@ def test_workflow_transaction_boundary_methods_are_allowed(module_scan, workflow
     assert "flush" in methods
     assert not (methods - BOUNDARY_METHODS or model_names)
     assert "workflows/capsule_workflow" not in workflow_scan
+
+
+@pytest.fixture(scope="module")
+def http_exception_counts():
+    counts: dict[str, int] = {}
+    for path in sorted(APP_DIR.rglob("*.py")):
+        module = path.relative_to(APP_DIR).with_suffix("").as_posix()
+        if _role(module) not in {"service", "workflow", "domain"}:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+        bindings: dict[str, str] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                target = _import_target(node, module)
+                for alias in node.names:
+                    bindings[alias.asname or alias.name] = f"{target}.{alias.name}"
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    bindings[alias.asname or alias.name.split(".")[0]] = (
+                        alias.name if alias.asname else alias.name.split(".")[0]
+                    )
+        count = sum(
+            isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call)
+            and _reference(node.exc.func, bindings) in {
+                "fastapi.HTTPException", "fastapi.exceptions.HTTPException",
+                "starlette.exceptions.HTTPException",
+            }
+            for node in ast.walk(tree)
+        )
+        if count:
+            counts[module] = count
+    return counts
+
+
+def test_modules_below_http_do_not_raise_http_exception(http_exception_counts):
+    violations = [
+        f"{module}: raises={count}, allowed={HTTP_EXCEPTION_ALLOWED.get(module, 0)}"
+        for module, count in sorted(http_exception_counts.items())
+        if count > HTTP_EXCEPTION_ALLOWED.get(module, 0)
+    ]
+    assert not violations, "Unexpected HTTPException raises below HTTP:\n" + "\n".join(violations)
+
+
+def test_http_exception_allowed_counts_have_no_stale_entries(http_exception_counts):
+    # Each removed raise must shrink the exception in the same change, even
+    # when that module still has other HTTPException raises left to convert.
+    stale = [
+        f"{module}: raises={http_exception_counts.get(module, 0)}, allowed={allowed}"
+        for module, allowed in sorted(HTTP_EXCEPTION_ALLOWED.items())
+        if module not in http_exception_counts or http_exception_counts[module] < allowed
+    ]
+    assert not stale, "Stale HTTP_EXCEPTION_ALLOWED counts:\n" + "\n".join(stale)
+
+
+def test_domain_imports_only_standard_library_or_domain():
+    violations: list[str] = []
+    for path in sorted((APP_DIR / "domain").rglob("*.py")):
+        module = path.relative_to(APP_DIR).with_suffix("").as_posix()
+        tree = ast.parse(path.read_text(encoding="utf-8-sig"))
+        for node in ast.walk(tree):
+            targets: list[str] = []
+            if isinstance(node, ast.ImportFrom):
+                target = _import_target(node, module)
+                targets = [f"{target}.{alias.name}" for alias in node.names]
+            elif isinstance(node, ast.Import):
+                targets = [alias.name for alias in node.names]
+            for target in targets:
+                if (
+                    target.split(".", 1)[0] not in sys.stdlib_module_names
+                    and target != "app.domain" and not target.startswith("app.domain.")
+                ):
+                    violations.append(f"{module}:{node.lineno} imports {target}")
+    assert not violations, "Domain imports framework or outer application code:\n" + "\n".join(violations)

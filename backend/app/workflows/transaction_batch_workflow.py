@@ -3,12 +3,13 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
+from ..domain.errors import Invalid
 from ..services import quick_template_service
 from ..services.ledger_service import ensure_default_accounts
 from .ledger_entry_workflow import record_entry
 
 
-class BatchPostingError(ValueError):
+class BatchPostingError(Invalid):
     pass
 
 

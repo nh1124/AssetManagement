@@ -3,6 +3,7 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
+from ..domain.errors import Conflict, Invalid
 from .strategy_service import (
     calculate_goal_probability_monte_carlo,
     calculate_projection,
@@ -11,11 +12,11 @@ from .strategy_service import (
 )
 
 
-class ScenarioNameConflict(ValueError):
+class ScenarioNameConflict(Conflict):
     pass
 
 
-class ScenarioGoalMismatch(ValueError):
+class ScenarioGoalMismatch(Invalid):
     pass
 
 

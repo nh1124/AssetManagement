@@ -5,6 +5,7 @@ from datetime import date
 from sqlalchemy.orm import Session, joinedload
 
 from .. import models
+from ..domain.errors import Conflict
 from .cache_service import invalidate_client
 from .ledger_service import create_transaction
 from .capsule_service import apply_capsule_rules_for_transaction
@@ -44,7 +45,7 @@ def list_due(
     ).all()
 
 
-class RecurringNotPostable(ValueError):
+class RecurringNotPostable(Conflict):
     """This occurrence must not post, as opposed to a posting that failed.
 
     The caller answers the two differently - a refusal is the client's problem

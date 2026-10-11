@@ -7,6 +7,7 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.app import models, schemas
 from backend.app.database import Base
+from backend.app.domain.errors import Invalid
 from backend.app.routers import quick_templates as router
 from backend.app.services import ledger_service as ledger
 from backend.app.services import quick_template_service as service
@@ -270,7 +271,9 @@ def test_router_keeps_missing_resource_404s(posting, operation, detail):
 
 def test_router_keeps_empty_batch_400(posting):
     db, client, *_ = posting
-    with pytest.raises(HTTPException) as exc:
+    with pytest.raises(workflow.BatchPostingError) as exc:
         router.create_transaction_batch(_payload(posting, transactions=[]), db=db, current_client=client)
-    assert (exc.value.status_code, exc.value.detail) == (400, "At least one transaction is required")
+    # test_domain_errors.py pins Invalid to 400 over HTTP.
+    assert isinstance(exc.value, Invalid)
+    assert str(exc.value) == "At least one transaction is required"
     assert _counts(db) == (0, 0, 0, 0)

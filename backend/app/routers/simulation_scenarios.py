@@ -40,8 +40,6 @@ def create_scenario(
         return simulation_scenario_service.create_scenario(db, current_client.id, payload)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except simulation_scenario_service.ScenarioNameConflict as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.put("/{scenario_id}", response_model=schemas.SimulationScenario)
@@ -79,5 +77,3 @@ def compare_scenarios(
         return simulation_scenario_service.compare_scenarios(db, current_client.id, payload)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except simulation_scenario_service.ScenarioGoalMismatch as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc

@@ -9,6 +9,7 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.app import models, schemas
 from backend.app.database import Base
+from backend.app.domain.errors import Conflict, Invalid
 from backend.app.routers import roadmap, simulation_scenarios
 from backend.app.services import milestone_service, simulation_scenario_service as scenarios
 
@@ -62,9 +63,11 @@ def test_duplicate_scenario_name_for_same_client_and_goal_leaves_one_row_and_ret
     detail = "A scenario with that name already exists for this goal"
     with pytest.raises(scenarios.ScenarioNameConflict, match=f"^{detail}$"):
         scenarios.create_scenario(db, 1, payload)
-    with pytest.raises(HTTPException) as error:
+    with pytest.raises(scenarios.ScenarioNameConflict) as error:
         simulation_scenarios.create_scenario(payload, db, db.get(models.Client, 1))
-    assert (error.value.status_code, error.value.detail) == (409, detail)
+    # test_domain_errors.py pins Conflict to 409 over HTTP.
+    assert isinstance(error.value, Conflict)
+    assert str(error.value) == detail
     assert db.query(models.SimulationScenario).count() == 1
 
 
@@ -159,9 +162,15 @@ def test_compare_scenarios_preserves_scenario_404_and_goal_mismatch_400(db):
         (other_id, 400, f"Scenario {other_id} does not belong to life_event 1"),
     ):
         payload = schemas.SimulationScenarioCompareRequest(life_event_id=1, scenario_ids=[scenario_id, 999])
-        with pytest.raises(HTTPException) as error:
+        error_type = HTTPException if status == 404 else scenarios.ScenarioGoalMismatch
+        with pytest.raises(error_type) as error:
             simulation_scenarios.compare_scenarios(payload, db, client)
-        assert (error.value.status_code, error.value.detail) == (status, detail)
+        if status == 404:
+            assert (error.value.status_code, error.value.detail) == (status, detail)
+        else:
+            # test_domain_errors.py pins Invalid to 400 over HTTP.
+            assert isinstance(error.value, Invalid)
+            assert str(error.value) == detail
 
 
 def test_compare_scenarios_keeps_parameter_delegation_request_order_and_response_shape(db, monkeypatch):

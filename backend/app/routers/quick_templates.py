@@ -5,7 +5,7 @@ from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
 from ..services import quick_template_service
-from ..workflows.transaction_batch_workflow import BatchPostingError, post_transaction_batch
+from ..workflows.transaction_batch_workflow import post_transaction_batch
 from ..services.journal_legs import primary_accounts
 
 router = APIRouter(prefix="/quick-templates", tags=["quick-templates"])
@@ -127,10 +127,7 @@ def create_transaction_batch(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    try:
-        batch = post_transaction_batch(db, current_client.id, payload)
-    except BatchPostingError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    batch = post_transaction_batch(db, current_client.id, payload)
     if batch is None:
         raise HTTPException(status_code=404, detail="Quick template not found")
     return _serialize_batch(batch)

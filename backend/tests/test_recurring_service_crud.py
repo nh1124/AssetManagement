@@ -3,12 +3,12 @@ from __future__ import annotations
 from datetime import date
 
 import pytest
-from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from backend.app import models
 from backend.app.database import Base
+from backend.app.domain.errors import Conflict
 from backend.app.routers import recurring as recurring_router
 from backend.app.services import recurring_service, registry_service
 
@@ -69,11 +69,13 @@ def test_process_one_refusals_write_nothing_and_keep_http_409(db, refusal, messa
         recurring.end_period = "2026-01"
     db.commit()
     before = {column.name: getattr(recurring, column.name) for column in recurring.__table__.columns}
-    with pytest.raises(ValueError, match=f"^{message}$"):
+    with pytest.raises(recurring_service.RecurringNotPostable, match=f"^{message}$"):
         recurring_service.process_one(db, recurring)
-    with pytest.raises(HTTPException) as error:
+    with pytest.raises(recurring_service.RecurringNotPostable) as error:
         recurring_router.process_recurring_transaction(recurring.id, db, db.get(models.Client, 1))
-    assert (error.value.status_code, error.value.detail) == (409, message)
+    # test_domain_errors.py pins Conflict to 409 over HTTP.
+    assert isinstance(error.value, Conflict)
+    assert str(error.value) == message
     assert db.query(models.Transaction).count() == db.query(models.JournalEntry).count() == 0
     assert before == {column.name: getattr(recurring, column.name) for column in recurring.__table__.columns}
     assert not db.new and not db.dirty and not db.deleted

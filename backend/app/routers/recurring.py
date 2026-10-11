@@ -7,7 +7,6 @@ from ..dependencies import get_current_client
 from ..services.cache_service import invalidate_client
 from ..services.registry_service import delete_recurring, upsert_registry_from_recurring_payload
 from ..services.recurring_service import (
-    RecurringNotPostable,
     get_for_client,
     list_due,
     list_for_client,
@@ -125,10 +124,7 @@ def process_recurring_transaction(
     
     if not db_recurring:
         raise HTTPException(status_code=404, detail="Recurring transaction not found")
-    try:
-        db_transaction, next_due_date = process_one(db, db_recurring)
-    except RecurringNotPostable as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    db_transaction, next_due_date = process_one(db, db_recurring)
     invalidate_client(current_client.id)
 
     return {"message": "Transaction processed", "transaction_id": db_transaction.id, "next_due_date": next_due_date}
