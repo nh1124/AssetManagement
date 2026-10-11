@@ -49,18 +49,6 @@ def _model_dict(row: Any, fields: list[str]) -> dict[str, Any]:
     return {field: _jsonable(getattr(row, field)) for field in fields}
 
 
-TRANSACTION_FIELDS = [
-    "id",
-    "date",
-    "description",
-    "amount",
-    "type",
-    "currency",
-    "from_account_id",
-    "to_account_id",
-    "batch_id",
-]
-
 MONTHLY_PLAN_LINE_FIELDS = [
     "id",
     "target_period",
@@ -86,7 +74,6 @@ RECURRING_TRANSACTION_FIELDS = [
     "name",
     "amount",
     "currency",
-    "type",
     "from_account_id",
     "to_account_id",
     "frequency",

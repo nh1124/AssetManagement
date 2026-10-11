@@ -14,7 +14,8 @@ from __future__ import annotations
 import ast
 import pathlib
 
-from app import models
+from app import models, schemas
+from app.services import ai_change_request_service, registry_service
 
 APP_DIR = pathlib.Path(models.__file__).parent
 GONE = ("type", "category", "from_account_id", "to_account_id")
@@ -146,3 +147,59 @@ def test_no_model_is_constructed_with_a_field_it_does_not_have():
                 f"{path.relative_to(APP_DIR)}:{lineno} models.{class_name}({keyword}=...)"
             )
     assert not offenders, "model constructors pass unknown fields:\n" + "\n".join(offenders)
+
+
+def test_ai_field_allowlists_name_only_real_model_attributes():
+    # _model_dict uses getattr with no default, so stale names raise at runtime
+    # rather than omit a key; the attribute and constructor guards above miss these lists.
+    model_by_name = {
+        "".join("_" + char if char.isupper() else char for char in name).lstrip("_").upper():
+        getattr(models, name)
+        for name in _model_classes()
+    }
+    for name, fields in vars(ai_change_request_service).items():
+        if not name.endswith("_FIELDS") or not isinstance(fields, list):
+            continue
+        model = model_by_name.get(name.removesuffix("_FIELDS"))
+        assert model is not None, f"{name} cannot be mapped to a model"
+        for field in fields:
+            assert hasattr(model, field), (
+                f"{name} names {field!r}, which {model.__name__} does not have"
+            )
+
+
+def test_recurring_update_preview_returns_before_snapshot():
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import Session
+
+    engine = create_engine("sqlite:///:memory:")
+    models.Base.metadata.create_all(bind=engine)
+    try:
+        with Session(engine, autoflush=False) as db:
+            client = models.Client(name="Preview test", username="preview-test", password_hash="unused")
+            db.add(client)
+            db.flush()
+            payload = {"name": "Subscription", "amount": 1200, "frequency": "Monthly"}
+            recurring = registry_service.upsert_registry_from_recurring_payload(db, client.id, payload)
+            db.commit()
+            entry = db.get(models.RegistryEntry, recurring.source_registry_entry_id)
+            assert entry is not None
+            assert entry.client_id == client.id
+
+            preview = ai_change_request_service.preview_change_request(
+                db,
+                client.id,
+                schemas.AiChangeRequestPreviewRequest(
+                    resource="recurring_transactions",
+                    action="update",
+                    target_ref={"id": recurring.id},
+                    input_payload={**payload, "amount": 1500},
+                ),
+            )
+
+            assert preview["before_snapshot"]["id"] == recurring.id
+            assert preview["before_snapshot"]["amount"] == 1200
+            assert preview["before_snapshot"]["source_registry_entry_id"] == entry.id
+            assert preview["after_snapshot"]["amount"] == 1500
+    finally:
+        engine.dispose()
