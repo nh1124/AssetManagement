@@ -9,7 +9,7 @@ from ..database import get_db
 from ..utils.jwt import create_access_token, create_typed_token, decode_token, decode_mcp_access_token
 from ..utils.password import verify_password, hash_password
 from ..dependencies import get_current_client
-from ..services import mfa_service
+from ..services import client_service, mfa_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -85,16 +85,6 @@ class McpTokenExchangeResponse(BaseModel):
     mcp_client_id: str
 
 
-def _generate_unique_client_name(db: Session, base_name: str) -> str:
-    seed = (base_name or "user").strip() or "user"
-    candidate = seed
-    suffix = 2
-    while db.query(models.Client).filter(models.Client.name == candidate).first():
-        candidate = f"{seed}-{suffix}"
-        suffix += 1
-    return candidate
-
-
 def _auth_response(client: models.Client) -> dict:
     token = create_access_token(user_id=client.id, username=client.name)
     return {
@@ -111,10 +101,7 @@ def _client_from_typed_token(db: Session, token: str, expected_type: str) -> mod
     if not payload or payload.get("type") != expected_type:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
-    client = db.query(models.Client).filter(
-        models.Client.id == payload.get("sub"),
-        models.Client.is_active == True,
-    ).first()
+    client = client_service.get_active_by_id(db, payload.get("sub"))
     if not client:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
     return client
@@ -122,10 +109,7 @@ def _client_from_typed_token(db: Session, token: str, expected_type: str) -> mod
 @router.post("/login", response_model=AuthResponse)
 def login(req: LoginRequest, db: Session = Depends(get_db)):
     """Authenticate and return JWT token. Pattern from VisionArk."""
-    client = db.query(models.Client).filter(
-        models.Client.username == req.username.lower(),
-        models.Client.is_active == True
-    ).first()
+    client = client_service.get_by_username(db, req.username.lower(), active_only=True)
     
     if not client or not verify_password(req.password, client.password_hash):
         raise HTTPException(
@@ -170,15 +154,14 @@ def exchange_mcp_token(req: McpTokenExchangeRequest, db: Session = Depends(get_d
 
     backend_client_id = payload.get("backend_client_id")
     username = str(payload.get("username") or payload.get("sub") or "").lower()
-    query = db.query(models.Client).filter(models.Client.is_active == True)
     if backend_client_id is not None:
         try:
             client_id = int(backend_client_id)
         except (TypeError, ValueError):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="MCP subject is not a valid user")
-        client = query.filter(models.Client.id == client_id).first()
+        client = client_service.get_active_by_id(db, client_id)
     else:
-        client = query.filter(models.Client.username == username).first()
+        client = client_service.get_by_username(db, username, active_only=True)
 
     if not client or (username and (client.username or "").lower() != username):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="MCP subject is not a valid user")
@@ -206,32 +189,24 @@ def register(req: RegisterRequest, db: Session = Depends(get_db)):
     if len(req.password) < 8:
         raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
 
-    existing = db.query(models.Client).filter(models.Client.username == username).first()
+    existing = client_service.get_by_username(db, username)
     if existing:
         raise HTTPException(status_code=400, detail="Username already taken")
 
     email = req.email.lower() if req.email else None
     if email:
-        email_existing = db.query(models.Client).filter(models.Client.email == email).first()
+        email_existing = client_service.get_by_email(db, email)
         if email_existing:
             raise HTTPException(status_code=400, detail="Email already registered")
 
-    client_name = _generate_unique_client_name(db, req.name or username)
-
-    new_client = models.Client(
-        name=client_name,
-        username=username,
-        email=email,
-        password_hash=hash_password(req.password),
-        ai_config={},
-        general_settings={}
-    )
+    client_name = client_service.unique_display_name(db, req.name or username)
+    password_hash = hash_password(req.password)
     try:
-        db.add(new_client)
-        db.commit()
-        db.refresh(new_client)
+        new_client = client_service.register(
+            db, name=client_name, username=username, email=email,
+            password_hash=password_hash,
+        )
     except IntegrityError:
-        db.rollback()
         raise HTTPException(status_code=400, detail="Unable to register with provided credentials")
 
     return {"message": "User registered successfully", "client_id": new_client.id}
@@ -357,12 +332,13 @@ def update_profile(
     current_client: models.Client = Depends(get_current_client)
 ):
     """Update user profile information. Pattern from VisionArk Settings."""
+    fields = {}
     if req.name:
-        current_client.name = req.name
+        fields["name"] = req.name
     if req.email:
-        current_client.email = req.email
+        fields["email"] = req.email
     if req.password:
-        current_client.password_hash = hash_password(req.password)
-    
-    db.commit()
+        fields["password_hash"] = hash_password(req.password)
+
+    client_service.update_profile(db, current_client, fields)
     return {"message": "Profile updated successfully"}

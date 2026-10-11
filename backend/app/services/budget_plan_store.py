@@ -55,6 +55,13 @@ def create_plan_line(
     return line
 
 
+def get_plan(db: Session, client_id: int, plan_id: int) -> models.BudgetPlan | None:
+    return db.query(models.BudgetPlan).filter(
+        models.BudgetPlan.client_id == client_id,
+        models.BudgetPlan.id == plan_id,
+    ).first()
+
+
 def list_plans(db: Session, client_id: int) -> list[models.BudgetPlan]:
     plans = (
         db.query(models.BudgetPlan)

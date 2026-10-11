@@ -27,6 +27,7 @@ LAYERS: dict[str, int] = {
     "ai_change_request_store": 0,
     "ai_policy_service": 0,
     "cache_service": 0,
+    "client_service": 0,
     "client_settings_service": 0,
     "fx_service": 0,
     "liability_schedule": 0,

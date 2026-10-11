@@ -14,6 +14,7 @@ from ..services.budget_plan_store import (
     create_plan_lines,
     delete_plan,
     delete_plan_line as delete_stored_plan_line,
+    get_plan,
     list_plans,
     replace_plan_lines_from_plan,
     resolve_budget_plan_id,
@@ -65,16 +66,10 @@ def compare_budget_plans(
     if not id_list:
         raise HTTPException(status_code=400, detail="plan_ids must include at least one plan")
 
-    plans = (
-        db.query(models.BudgetPlan)
-        .filter(
-            models.BudgetPlan.client_id == current_client.id,
-            models.BudgetPlan.id.in_(id_list),
-        )
-        .all()
-    )
-    plans_by_id = {plan.id: plan for plan in plans}
-    missing = [plan_id for plan_id in id_list if plan_id not in plans_by_id]
+    plans_by_id = {
+        plan_id: get_plan(db, current_client.id, plan_id) for plan_id in id_list
+    }
+    missing = [plan_id for plan_id in id_list if plans_by_id[plan_id] is None]
     if missing:
         raise HTTPException(status_code=404, detail="Budget plan not found")
 

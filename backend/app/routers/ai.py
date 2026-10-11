@@ -6,6 +6,8 @@ import json
 from .. import models
 from ..database import get_db
 from ..dependencies import get_current_client
+from ..services.goal_service import list_goals
+from ..services.ledger_service import list_asset_accounts
 from ..services.journal_legs import legs_in_range
 from ..security import decrypt_key
 
@@ -179,16 +181,13 @@ async def optimize_allocations(
         raise HTTPException(status_code=400, detail="Gemini API Key not set")
 
     # 1. Fetch Goals
-    goals = db.query(models.LifeEvent).filter(models.LifeEvent.client_id == current_client.id).all()
+    goals = list_goals(db, current_client.id)
     goals_data = [{
         "id": g.id, "name": g.name, "target": g.target_amount, "date": str(g.target_date), "priority": g.priority
     } for g in goals]
     
     # 2. Fetch Assets
-    assets = db.query(models.Account).filter(
-        models.Account.client_id == current_client.id, 
-        models.Account.account_type == "asset"
-    ).all()
+    assets = list_asset_accounts(db, current_client.id)
     assets_data = [{
         "id": a.id, "name": a.name, "balance": a.balance, "return_rate": a.expected_return
     } for a in assets]

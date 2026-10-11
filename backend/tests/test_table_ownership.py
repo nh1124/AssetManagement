@@ -39,7 +39,7 @@ OWNERS: dict[str, str] = {
     "ai_change_requests": "services/ai_change_request_store",
     "ai_audit_logs": "services/ai_policy_service",
     "ai_operation_policies": "services/ai_policy_service",
-    "clients": "routers/auth",
+    "clients": "services/client_service",
     "client_mfa_settings": "services/mfa_service",
     "client_recovery_codes": "services/mfa_service",
 }

@@ -39,6 +39,8 @@ PUBLIC: dict[str, set[str]] = {
         "delete_plan",
         "delete_plan_line",
         "get_or_create_default_plan",
+        # Compare needs a scoped read without default-plan creation or summary.
+        "get_plan",
         "get_plan_line",
         "find_expense_plan_line",
         "list_plans",

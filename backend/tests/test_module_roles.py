@@ -41,13 +41,7 @@ ROLE_BY_MODULE: dict[str, str] = {
     "schemas": "schema",
 }
 
-# Each exception records work that must leave the HTTP adapter, using §3.6's
-# waves only where that section actually assigns the router a wave.
-ALLOWED: dict[str, str] = {
-    "routers/ai": "goal and asset reads for AI allocation; moves with the read-only composers in L7",
-    "routers/auth": "client registration and authentication lookup; L9, held back because identity is not a feature like the others",
-    "routers/budget_plans": "compare plan lookup remains with ledger-backed comparison; compare, summary (goal/registry/ledger), and enriched lines composition are deferred to L7",
-}
+ALLOWED: dict[str, str] = {}
 
 SESSION_METHODS = {
     "query", "add", "add_all", "delete", "commit", "flush", "refresh", "get",
@@ -277,6 +271,13 @@ def test_the_allowed_list_has_no_stale_entries(scan):
     # Removing a router's last database use must also remove its exception.
     stale = sorted(module for module in ALLOWED if module not in database_uses)
     assert not stale, "Stale ALLOWED entries:\n" + "\n".join(stale)
+
+
+def test_stale_entry_guard_rejects_an_exception_added_to_the_empty_list(scan, monkeypatch):
+    assert ALLOWED == {}
+    monkeypatch.setitem(ALLOWED, "routers/auth", "stale-entry probe")
+    with pytest.raises(AssertionError, match=r"Stale ALLOWED entries:\s+routers/auth"):
+        test_the_allowed_list_has_no_stale_entries(scan)
 
 
 def test_a_service_never_imports_a_workflow(scan):

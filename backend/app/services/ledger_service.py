@@ -43,6 +43,14 @@ def list_accounts(
     return query.all()
 
 
+def list_asset_accounts(db: Session, client_id: int) -> list[models.Account]:
+    # Allocation has always considered inactive assets as well as active ones.
+    return db.query(models.Account).filter(
+        models.Account.client_id == client_id,
+        models.Account.account_type == "asset",
+    ).all()
+
+
 def find_account_ids(db: Session, client_id: int, account_ids: Sequence[int]) -> set[int]:
     found = db.query(models.Account.id).filter(
         models.Account.client_id == client_id,
