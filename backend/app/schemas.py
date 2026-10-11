@@ -907,6 +907,8 @@ class SimulationScenarioCompareItem(BaseModel):
     deterministic_yearly: list[dict[str, Any]]
 
 class CapsuleBase(BaseModel):
+    account_id: Optional[int] = None
+    auto_post: bool = False
     name: str
     target_amount: float
     monthly_contribution: float
@@ -920,6 +922,8 @@ class CapsuleCreate(CapsuleBase):
     pass
 
 class CapsuleUpdate(BaseModel):
+    account_id: Optional[int] = None
+    auto_post: bool = False
     name: Optional[str] = None
     target_amount: Optional[float] = None
     monthly_contribution: Optional[float] = None
@@ -1033,3 +1037,20 @@ class MilestoneSimulationPreview(BaseModel):
     mode: str
     existing_count: int
     items: list[MilestoneCreate]
+
+
+class CapsuleTransactionPreviewRequest(BaseModel):
+    description: Optional[str] = ""
+    amount: float
+    date: date
+    legs: List[TransactionLeg]
+
+
+class CapsuleTransferPreview(BaseModel):
+    capsule_id: int
+    rule_id: int
+    capsule_name: str
+    source_account_id: int
+    destination_account_id: int
+    amount: float
+    auto_post: bool

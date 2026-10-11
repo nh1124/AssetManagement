@@ -596,7 +596,29 @@ def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
     advance_pairs = _advance_pair_items(db, client_id)
     unclaimed_legs = _unclaimed_budget_leg_items(db, client_id)
 
+    capsule_without_account = [
+        {"capsule_id": capsule.id, "name": capsule.name, "rule_count": rule_count}
+        for capsule, rule_count in db.query(models.Capsule, func.count(models.CapsuleRule.id))
+        .join(models.CapsuleRule, models.CapsuleRule.capsule_id == models.Capsule.id)
+        .filter(
+            models.Capsule.client_id == client_id,
+            models.Capsule.account_id.is_(None),
+            models.CapsuleRule.is_active.is_(True),
+        )
+        .group_by(models.Capsule.id)
+        .all()
+    ]
+
     issues = [
+        {
+            "code": "capsule_without_account",
+            "severity": "warning",
+            "title": "Capsule rules without a reservation account",
+            "detail": "An active rule cannot reserve money until its capsule is bound to an account.",
+            "count": len(capsule_without_account),
+            "repairable": False,
+            "items": capsule_without_account[:100],
+        },
         {
             "code": "recurring_without_registry",
             "severity": "error",

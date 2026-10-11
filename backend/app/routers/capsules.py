@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import asdict
 from datetime import date
 from typing import List, Optional
 
@@ -11,6 +12,7 @@ from .. import database, dependencies, models, schemas
 from ..services.cache_service import invalidate_client
 from ..services.capsule_service import (
     capsule_balance,
+    capsule_transfer_specs,
     capsule_to_dict,
     create_capsule_for_goal,
     remaining_target,
@@ -81,7 +83,8 @@ def create_capsule(
         target_amount=target_amount,
         monthly_contribution=max(0.0, capsule.monthly_contribution or 0.0),
         current_balance=0.0,
-        account_id=None,
+        account_id=capsule.account_id,
+        auto_post=capsule.auto_post,
         capsule_type=capsule.capsule_type or "manual",
         target_amount_source=capsule.target_amount_source or "manual",
         monthly_contribution_source=capsule.monthly_contribution_source or "manual",
@@ -91,6 +94,21 @@ def create_capsule(
     db.refresh(db_capsule)
     invalidate_client(current_client.id)
     return capsule_to_dict(db, db_capsule)
+
+
+@router.post("/preview-for-transaction", response_model=List[schemas.CapsuleTransferPreview])
+def preview_for_transaction(
+    draft: schemas.CapsuleTransactionPreviewRequest,
+    db: Session = Depends(database.get_db),
+    current_client: models.Client = Depends(dependencies.get_current_client),
+):
+    return [asdict(spec) for spec in capsule_transfer_specs(
+        db,
+        current_client.id,
+        entries=draft.legs,
+        description=draft.description,
+        amount=draft.amount,
+    )]
 
 
 @router.put("/{capsule_id}", response_model=schemas.Capsule)

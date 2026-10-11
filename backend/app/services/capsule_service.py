@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Protocol, Sequence
+
 from sqlalchemy.orm import Session
 
 from .. import models
+from . import ledger_service
 from .product_reserve_service import product_reserve_values
 
 
@@ -80,6 +84,7 @@ def capsule_to_dict(db: Session, capsule: models.Capsule) -> dict:
         "monthly_contribution": capsule.monthly_contribution,
         "current_balance": balance,
         "account_id": capsule.account_id,
+        "auto_post": capsule.auto_post,
         "capsule_type": capsule.capsule_type or "manual",
         "target_amount_source": capsule.target_amount_source or "manual",
         "monthly_contribution_source": capsule.monthly_contribution_source or "manual",
@@ -130,8 +135,78 @@ _TRIGGER_LEGS: dict[str, tuple[str, set[str], set[str] | None]] = {
 }
 
 
-def _side_amount(entry: models.JournalEntry, side: str) -> float:
+class CapsuleEntry(Protocol):
+    account_id: int
+    debit: float
+    credit: float
+
+
+def _side_amount(entry: CapsuleEntry, side: str) -> float:
     return (entry.debit or 0.0) if side == "debit" else (entry.credit or 0.0)
+
+
+@dataclass
+class CapsuleTransferSpec:
+    capsule_id: int
+    rule_id: int
+    capsule_name: str
+    source_account_id: int
+    destination_account_id: int
+    amount: float
+    auto_post: bool
+
+
+def capsule_transfer_specs(
+    db: Session,
+    client_id: int,
+    *,
+    entries: Sequence[CapsuleEntry],
+    description: str | None,
+    amount: float,
+) -> list[CapsuleTransferSpec]:
+    """Evaluate entries exposing account_id, debit and credit, whether posted journal entries or unsaved draft legs."""
+    # Preview must not flush unrelated pending changes or attach its draft legs.
+    with db.no_autoflush:
+        accounts = {
+            account.id: account
+            for account in db.query(models.Account).filter(
+                models.Account.id.in_({entry.account_id for entry in entries}),
+            ).all()
+        }
+        rules = db.query(models.CapsuleRule).filter(
+            models.CapsuleRule.client_id == client_id,
+            models.CapsuleRule.is_active.is_(True),
+        ).all()
+        specs = []
+        for rule in rules:
+            triggered = _triggered_legs(rule, description, entries, accounts)
+            if not triggered:
+                continue
+            capsule = rule.capsule
+            if not capsule or capsule.account_id is None:
+                continue
+            source_account_id = _resolve_rule_source_account_id(rule, entries, triggered[0])
+            if source_account_id is None or source_account_id == capsule.account_id:
+                continue
+            # Holdings-based remaining_target still serves legacy contribute until H6;
+            # the two definitions intentionally coexist for this wave.
+            balance = ledger_service.calculate_account_journal_balance(db, capsule.account)
+            reserved = min(
+                _resolve_rule_amount(rule, amount),
+                max(0.0, (capsule.target_amount or 0.0) - balance),
+            )
+            if reserved <= 0:
+                continue
+            specs.append(CapsuleTransferSpec(
+                capsule_id=capsule.id,
+                rule_id=rule.id,
+                capsule_name=capsule.name,
+                source_account_id=source_account_id,
+                destination_account_id=capsule.account_id,
+                amount=reserved,
+                auto_post=capsule.auto_post,
+            ))
+        return specs
 
 
 def apply_capsule_rules_for_transaction(
@@ -139,63 +214,61 @@ def apply_capsule_rules_for_transaction(
     transaction: models.Transaction,
     *,
     commit: bool = True,
-) -> list[models.CapsuleHolding]:
-    """Reserve part of an account's balance for a capsule, per the client's rules.
+) -> list[models.TransactionProposal | models.Transaction]:
+    """A reservation is now a ledger fact: post it or queue it, without a holding.
 
-    Called straight after the journal is posted and before the caller commits,
-    so the legs are in the session but not yet written. The flush is what makes
-    them readable; committing here would break the atomicity the posting path
-    depends on (P5-002), which is why every caller passes commit=False.
+    Return what this transaction's rules resolved to, including existing proposals,
+    rather than only newly written rows.
+
+    Flush makes the trigger's legs visible while commit=False keeps the caller's
+    posting and reservations in the same atomic transaction.
     """
     if transaction.client_id is None:
         return []
-
     db.flush()
-    entries = list(transaction.journal_entries)
-    if not entries:
-        return []
-    accounts = {
-        account.id: account
-        for account in db.query(models.Account).filter(
-            models.Account.id.in_({entry.account_id for entry in entries}),
-        ).all()
-    }
-
-    rules = db.query(models.CapsuleRule).filter(
-        models.CapsuleRule.client_id == transaction.client_id,
-        models.CapsuleRule.is_active.is_(True),
-    ).all()
-    updated: list[models.CapsuleHolding] = []
-
-    for rule in rules:
-        triggered = _triggered_legs(rule, transaction, entries, accounts)
-        if not triggered:
-            continue
-        capsule = rule.capsule
-        if not capsule:
-            continue
-        source_account_id = _resolve_rule_source_account_id(rule, entries, triggered[0])
-        if not source_account_id:
-            continue
-        amount = _resolve_rule_amount(rule, transaction)
-        amount = min(amount, remaining_target(db, capsule))
-        if amount <= 0:
-            continue
-
-        holding = upsert_capsule_holding(db, capsule, source_account_id, amount, note=f"Auto-allocated: {rule.trigger_type}")
-        updated.append(holding)
-
-    if updated and commit:
+    specs = capsule_transfer_specs(
+        db,
+        transaction.client_id,
+        entries=list(transaction.journal_entries),
+        description=transaction.description,
+        amount=transaction.amount,
+    )
+    resolved = []
+    for spec in specs:
+        legs = ledger_service.simple_legs(
+            spec.amount, spec.source_account_id, spec.destination_account_id,
+        )
+        columns = dict(
+            date=transaction.date,
+            description=f"Capsule reservation: {spec.capsule_name}",
+            amount=spec.amount,
+            currency=transaction.currency,
+            legs=legs,
+        )
+        if spec.auto_post:
+            resolved.append(ledger_service.create_transaction(
+                db, client_id=transaction.client_id, **columns,
+            ))
+        else:
+            resolved.append(ledger_service.propose_transaction(
+                db,
+                transaction.client_id,
+                origin="capsule",
+                origin_ref={"capsule_id": spec.capsule_id, "rule_id": spec.rule_id},
+                trigger_transaction_id=transaction.id,
+                **columns,
+            ))
+    if resolved and commit:
         db.commit()
-    return updated
+    return resolved
 
 
 def _triggered_legs(
     rule: models.CapsuleRule,
-    transaction: models.Transaction,
-    entries: list[models.JournalEntry],
+    description: str | None,
+    entries: Sequence[CapsuleEntry],
     accounts: dict[int, models.Account],
-) -> list[models.JournalEntry]:
+) -> list[CapsuleEntry]:
     """The legs of this transaction that the rule's trigger describes."""
     spec = _TRIGGER_LEGS.get(rule.trigger_type)
     if spec is None:
@@ -204,7 +277,7 @@ def _triggered_legs(
     other = "credit" if side == "debit" else "debit"
 
     if rule.trigger_description:
-        if rule.trigger_description.lower() not in (transaction.description or "").lower():
+        if rule.trigger_description.lower() not in (description or "").lower():
             return []
 
     if funding_types is not None:
@@ -218,7 +291,7 @@ def _triggered_legs(
             return []
 
     needle = (rule.trigger_category or "").strip().lower()
-    matched: list[models.JournalEntry] = []
+    matched: list[CapsuleEntry] = []
     for entry in entries:
         if _side_amount(entry, side) <= 0:
             continue
@@ -235,8 +308,8 @@ def _triggered_legs(
 
 def _resolve_rule_source_account_id(
     rule: models.CapsuleRule,
-    entries: list[models.JournalEntry],
-    triggered: models.JournalEntry,
+    entries: Sequence[CapsuleEntry],
+    triggered: CapsuleEntry,
 ) -> int | None:
     """Which account's balance the reservation is taken out of."""
     if rule.source_mode == "fixed_account":
@@ -255,7 +328,7 @@ def _resolve_rule_source_account_id(
     return candidates[0].account_id
 
 
-def _resolve_rule_amount(rule: models.CapsuleRule, transaction: models.Transaction) -> float:
+def _resolve_rule_amount(rule: models.CapsuleRule, amount: float) -> float:
     """A percentage applies to the whole payment, not to the triggering leg.
 
     "10% of my salary" means the gross, so a payroll entry split across a bank
@@ -263,5 +336,5 @@ def _resolve_rule_amount(rule: models.CapsuleRule, transaction: models.Transacti
     """
     value = max(0.0, rule.amount_value or 0.0)
     if rule.amount_type == "percentage":
-        return max(0.0, (transaction.amount or 0.0) * value / 100.0)
+        return max(0.0, (amount or 0.0) * value / 100.0)
     return value

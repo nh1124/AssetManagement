@@ -132,12 +132,21 @@ def test_process_due_applies_capsule_rule_once_in_same_commit():
     try:
         _, cash, expense = _client_and_accounts(db)
         recurring = _recurring(db, cash, expense, next_due_date=date(2026, 6, 15))
+        reserve = models.Account(
+            client_id=1,
+            name="Reserve",
+            account_type="asset",
+            balance=0,
+        )
+        db.add(reserve)
+        db.flush()
         capsule = models.Capsule(
             client_id=1,
             name="Expense reserve",
             target_amount=10_000,
             monthly_contribution=0,
             current_balance=0,
+            account_id=reserve.id,
         )
         db.add(capsule)
         db.flush()
@@ -154,14 +163,17 @@ def test_process_due_applies_capsule_rule_once_in_same_commit():
 
         process_due_for_client(db, 1, today=date(2026, 6, 15))
 
-        holding = db.query(models.CapsuleHolding).one()
-        assert holding.account_id == cash.id
-        assert holding.held_amount == 100
+        proposal = db.query(models.TransactionProposal).one()
+        assert proposal.legs[1]["account_id"] == cash.id
+        assert proposal.legs[0]["account_id"] == reserve.id
+        assert proposal.amount == 100
+        assert db.query(models.CapsuleHolding).count() == 0
         assert process_due_for_client(db, 1, today=date(2026, 6, 15)) == {
             "processed": [],
             "deactivated": [],
         }
-        assert db.query(models.CapsuleHolding).one().held_amount == 100
+        assert db.query(models.TransactionProposal).one().amount == 100
+        assert db.query(models.CapsuleHolding).count() == 0
         assert recurring.next_due_date == date(2026, 7, 15)
     finally:
         db.close()

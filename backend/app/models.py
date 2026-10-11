@@ -672,6 +672,9 @@ class Capsule(Base):
     monthly_contribution = Column(Float)
     current_balance = Column(Float, default=0.0)
     account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
+    # The capsule decides whether its reservations need a decision; the vocabulary
+    # deliberately matches RecurringTransaction.auto_post.
+    auto_post = Column(Boolean, default=False, server_default="false", nullable=False)
     capsule_type = Column(String, default="manual", server_default="manual", nullable=False)
     target_amount_source = Column(String, default="manual", server_default="manual", nullable=False)
     monthly_contribution_source = Column(String, default="manual", server_default="manual", nullable=False)

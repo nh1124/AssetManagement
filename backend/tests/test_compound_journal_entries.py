@@ -298,8 +298,21 @@ def _split_payroll(db):
 
 
 def _reserve_capsule(db, *, target=400000):
+    account = models.Account(
+        client_id=1,
+        name="reserve account",
+        account_type="asset",
+        balance=0,
+    )
+    db.add(account)
+    db.flush()
     capsule = models.Capsule(
-        client_id=1, name="asset reserve", target_amount=target, monthly_contribution=0, current_balance=0
+        client_id=1,
+        name="asset reserve",
+        target_amount=target,
+        monthly_contribution=0,
+        current_balance=0,
+        account_id=account.id,
     )
     db.add(capsule)
     db.flush()
@@ -328,8 +341,9 @@ def test_a_rule_triggers_on_the_income_account_not_the_category() -> None:
         updated = apply_capsule_rules_for_transaction(db, tx)
 
         assert len(updated) == 1
-        assert updated[0].account_id == bank.id
-        assert updated[0].held_amount == 8808
+        assert updated[0].legs[1]["account_id"] == bank.id
+        assert updated[0].amount == 8808
+        assert db.query(models.CapsuleHolding).count() == 0
     finally:
         db.close()
 
@@ -355,7 +369,7 @@ def test_fixed_account_mode_is_unambiguous_on_a_split() -> None:
         updated = apply_capsule_rules_for_transaction(db, tx)
 
         # Three debit legs, and the rule still knows which account it meant.
-        assert [(h.account_id, h.held_amount) for h in updated] == [(savings.id, 1000)]
+        assert [(p.legs[1]["account_id"], p.amount) for p in updated] == [(savings.id, 1000)]
     finally:
         db.close()
 
@@ -411,7 +425,7 @@ def test_transaction_account_mode_still_works_on_a_two_leg_entry() -> None:
 
         updated = apply_capsule_rules_for_transaction(db, tx)
 
-        assert [(h.account_id, h.held_amount) for h in updated] == [(bank.id, 8808)]
+        assert [(p.legs[1]["account_id"], p.amount) for p in updated] == [(bank.id, 8808)]
     finally:
         db.close()
 
@@ -437,6 +451,7 @@ def test_a_percentage_rule_measures_the_whole_payment() -> None:
         updated = apply_capsule_rules_for_transaction(db, tx)
 
         # 10% of the gross 258,272, not of the 202,757 that reached the bank.
-        assert updated[0].held_amount == 25827.2
+        assert updated[0].amount == 25827.2
+        assert db.query(models.CapsuleHolding).count() == 0
     finally:
         db.close()
