@@ -170,6 +170,32 @@ def test_percentage_uses_whole_compound_amount(posting):
     assert proposal.amount == 1000
 
 
+@pytest.mark.parametrize("auto_post", [False, True])
+@pytest.mark.parametrize("currency,expected", [("JPY", 13.0), ("USD", 12.63), ("EUR", 12.63)])
+def test_percentage_reservation_rounds_minor_units_and_balances_legs(posting, auto_post, currency, expected):
+    db, _, cash, expense, _, _ = posting
+    _, rule = _rule(posting, percentage=True, auto_post=auto_post)
+    rule.amount_value = 12.5
+    db.flush()
+    tx = ledger.create_transaction(
+        db, client_id=1, date=WHEN, description="Uneven percentage",
+        amount=101.0, currency=currency,
+        from_account_id=cash.id, to_account_id=expense.id,
+    )
+    reservation, = _apply(posting, tx)
+    assert repr(reservation.amount) == repr(expected)
+    assert reservation.currency == currency
+    if auto_post:
+        db.flush()
+        entries = db.query(models.JournalEntry).filter_by(transaction_id=reservation.id).all()
+        debits = sum(entry.debit for entry in entries)
+        credits = sum(entry.credit for entry in entries)
+    else:
+        debits = sum(leg["debit"] for leg in reservation.legs)
+        credits = sum(leg["credit"] for leg in reservation.legs)
+    assert debits == credits == reservation.amount
+
+
 def test_approval_moves_account_balances(posting):
     db, _, cash, _, reserve, _ = posting
     _rule(posting)

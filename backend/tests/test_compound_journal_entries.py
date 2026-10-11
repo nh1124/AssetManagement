@@ -450,8 +450,10 @@ def test_a_percentage_rule_measures_the_whole_payment() -> None:
 
         updated = apply_capsule_rules_for_transaction(db, tx)
 
-        # 10% of the gross 258,272, not of the 202,757 that reached the bank.
-        assert updated[0].amount == 25827.2
+        # 10% of the gross 258,272, not of the 202,757 that reached the bank,
+        # rounded to whole yen: JPY has no minor unit, so a reservation of
+        # 25,827.2 could never match a bank statement. See docs/specs/money_plan.md.
+        assert updated[0].amount == 25827.0
         assert db.query(models.CapsuleHolding).count() == 0
     finally:
         db.close()

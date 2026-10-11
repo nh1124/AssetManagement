@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import ROUND_HALF_UP
+from fractions import Fraction
 from typing import Protocol, Sequence
 
 from sqlalchemy import func
@@ -8,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..domain.errors import Invalid, NotFound
+from ..domain.money import Money
 from . import ledger_service
 from .cache_service import invalidate_client
 from .product_reserve_service import product_reserve_values
@@ -403,6 +406,7 @@ def capsule_transfer_specs(
     entries: Sequence[CapsuleEntry],
     description: str | None,
     amount: float,
+    currency: str = "JPY",
 ) -> list[CapsuleTransferSpec]:
     """Evaluate entries exposing account_id, debit and credit, whether posted journal entries or unsaved draft legs."""
     # Preview must not flush unrelated pending changes or attach its draft legs.
@@ -432,7 +436,7 @@ def capsule_transfer_specs(
             # the two definitions intentionally coexist for this wave.
             balance = ledger_service.calculate_account_journal_balance(db, capsule.account)
             reserved = min(
-                _resolve_rule_amount(rule, amount),
+                _resolve_rule_amount(rule, amount, currency=currency),
                 max(0.0, (capsule.target_amount or 0.0) - balance),
             )
             if reserved <= 0:
@@ -472,6 +476,7 @@ def apply_capsule_rules_for_transaction(
         entries=list(transaction.journal_entries),
         description=transaction.description,
         amount=transaction.amount,
+        currency=transaction.currency,
     )
     resolved = []
     for spec in specs:
@@ -568,7 +573,9 @@ def _resolve_rule_source_account_id(
     return candidates[0].account_id
 
 
-def _resolve_rule_amount(rule: models.CapsuleRule, amount: float) -> float:
+def _resolve_rule_amount(
+    rule: models.CapsuleRule, amount: float, *, currency: str = "JPY",
+) -> float:
     """A percentage applies to the whole payment, not to the triggering leg.
 
     "10% of my salary" means the gross, so a payroll entry split across a bank
@@ -576,5 +583,8 @@ def _resolve_rule_amount(rule: models.CapsuleRule, amount: float) -> float:
     """
     value = max(0.0, rule.amount_value or 0.0)
     if rule.amount_type == "percentage":
-        return max(0.0, (amount or 0.0) * value / 100.0)
+        base = Money.from_float(float(max(0.0, amount or 0.0)), currency, rounding=ROUND_HALF_UP)
+        # The decimal representation preserves fractional percentages without float division.
+        ratio = Fraction(Fraction(str(value)), 100)
+        return base.scale(ratio, rounding=ROUND_HALF_UP).to_float()
     return value
