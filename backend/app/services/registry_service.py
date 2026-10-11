@@ -184,6 +184,8 @@ def upsert_registry_from_recurring_payload(
     client_id: int,
     payload: dict,
     recurring: models.RecurringTransaction | None = None,
+    *,
+    commit: bool = False,
 ) -> models.RecurringTransaction:
     if recurring is not None and recurring.client_id != client_id:
         raise ValueError("Recurring transaction belongs to another client")
@@ -251,6 +253,9 @@ def upsert_registry_from_recurring_payload(
     if "next_due_date" in payload:
         linked.next_due_date = payload["next_due_date"]
     db.flush()
+    if commit:
+        db.commit()
+        db.refresh(linked)
     return linked
 
 
@@ -364,6 +369,18 @@ def detach_registry_from_recurring(db: Session, recurring: models.RecurringTrans
         entry.generate_recurring = False
         entry.source_recurring_transaction_id = None
     recurring.source_registry_entry_id = None
+
+
+def delete_recurring(
+    db: Session, recurring: models.RecurringTransaction, *, commit: bool = True,
+) -> None:
+    # The registry entry outlives this row and must not retain a dangling link.
+    detach_registry_from_recurring(db, recurring)
+    db.delete(recurring)
+    if commit:
+        db.commit()
+    else:
+        db.flush()
 
 
 def ensure_registry_entries(db: Session, client_id: int) -> None:

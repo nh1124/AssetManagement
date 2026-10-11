@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from .. import models
 from .cache_service import invalidate_client
@@ -16,6 +16,80 @@ from .schedule_rules import (
     ensure_next_due_date,
     is_past_end_period,
 )
+
+
+def list_for_client(db: Session, client_id: int) -> list[models.RecurringTransaction]:
+    return db.query(models.RecurringTransaction).options(
+        joinedload(models.RecurringTransaction.source_registry_entry),
+    ).filter(models.RecurringTransaction.client_id == client_id).all()
+
+
+def get_for_client(
+    db: Session, client_id: int, recurring_id: int,
+) -> models.RecurringTransaction | None:
+    return db.query(models.RecurringTransaction).filter(
+        models.RecurringTransaction.id == recurring_id,
+        models.RecurringTransaction.client_id == client_id,
+    ).first()
+
+
+def list_due(
+    db: Session, client_id: int, today: date | None = None,
+) -> list[models.RecurringTransaction]:
+    effective_today = today or date.today()
+    return db.query(models.RecurringTransaction).filter(
+        models.RecurringTransaction.client_id == client_id,
+        models.RecurringTransaction.is_active == True,
+        models.RecurringTransaction.next_due_date <= effective_today,
+    ).all()
+
+
+class RecurringNotPostable(ValueError):
+    """This occurrence must not post, as opposed to a posting that failed.
+
+    The caller answers the two differently - a refusal is the client's problem
+    and a failure is ours - and a type survives rewording where a message match
+    does not.
+    """
+
+
+def process_one(
+    db: Session, recurring: models.RecurringTransaction, *, commit: bool = True,
+) -> tuple[models.Transaction, date]:
+    if not recurring.is_active:
+        raise RecurringNotPostable("Recurring transaction is inactive")
+
+    posting_date = recurring.next_due_date or date.today()
+    if is_past_end_period(recurring, posting_date):
+        raise RecurringNotPostable("Recurring transaction is past its end period")
+
+    if recurring.next_due_date is None:
+        recurring.next_due_date = posting_date
+    try:
+        transaction = post_recurring_transaction(db, recurring, posting_date)
+        advance_next_due_date(recurring)
+        if commit:
+            db.commit()
+        else:
+            db.flush()
+    except Exception:
+        db.rollback()
+        raise
+    if commit:
+        db.refresh(recurring)
+    return transaction, recurring.next_due_date
+
+
+def skip_one(
+    db: Session, recurring: models.RecurringTransaction, *, commit: bool = True,
+) -> date:
+    advance_next_due_date(recurring)
+    if commit:
+        db.commit()
+        db.refresh(recurring)
+    else:
+        db.flush()
+    return recurring.next_due_date
 
 
 def post_recurring_transaction(

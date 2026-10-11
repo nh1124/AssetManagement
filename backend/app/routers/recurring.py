@@ -1,19 +1,19 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from datetime import date
 from typing import List
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.cache_service import invalidate_client
-from ..services.registry_service import detach_registry_from_recurring, upsert_registry_from_recurring_payload
+from ..services.registry_service import delete_recurring, upsert_registry_from_recurring_payload
 from ..services.recurring_service import (
-    post_recurring_transaction,
+    RecurringNotPostable,
+    get_for_client,
+    list_due,
+    list_for_client,
     process_due_for_client,
-)
-from ..services.schedule_rules import (
-    advance_next_due_date,
-    is_past_end_period,
+    process_one,
+    skip_one,
 )
 
 router = APIRouter(prefix="/recurring", tags=["recurring"])
@@ -24,9 +24,7 @@ def get_recurring_transactions(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
-    rows = db.query(models.RecurringTransaction).filter(
-        models.RecurringTransaction.client_id == current_client.id
-    ).all()
+    rows = list_for_client(db, current_client.id)
     return [
         {
             **{column.name: getattr(row, column.name) for column in models.RecurringTransaction.__table__.columns},
@@ -42,10 +40,8 @@ def create_recurring_transaction(
     current_client: models.Client = Depends(get_current_client)
 ):
     db_recurring = upsert_registry_from_recurring_payload(
-        db, current_client.id, recurring.model_dump()
+        db, current_client.id, recurring.model_dump(), commit=True
     )
-    db.commit()
-    db.refresh(db_recurring)
     invalidate_client(current_client.id)
     return db_recurring
 
@@ -56,19 +52,15 @@ def update_recurring_transaction(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
-    db_recurring = db.query(models.RecurringTransaction).filter(
-        models.RecurringTransaction.id == recurring_id,
-        models.RecurringTransaction.client_id == current_client.id
-    ).first()
+    db_recurring = get_for_client(db, current_client.id, recurring_id)
     
     if not db_recurring:
         raise HTTPException(status_code=404, detail="Recurring transaction not found")
 
     db_recurring = upsert_registry_from_recurring_payload(
-        db, current_client.id, recurring_update.model_dump(exclude_unset=True), db_recurring
+        db, current_client.id, recurring_update.model_dump(exclude_unset=True), db_recurring,
+        commit=True,
     )
-    db.commit()
-    db.refresh(db_recurring)
     invalidate_client(current_client.id)
     return db_recurring
 
@@ -80,19 +72,15 @@ def patch_recurring_transaction(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
-    db_recurring = db.query(models.RecurringTransaction).filter(
-        models.RecurringTransaction.id == recurring_id,
-        models.RecurringTransaction.client_id == current_client.id
-    ).first()
+    db_recurring = get_for_client(db, current_client.id, recurring_id)
 
     if not db_recurring:
         raise HTTPException(status_code=404, detail="Recurring transaction not found")
 
     db_recurring = upsert_registry_from_recurring_payload(
-        db, current_client.id, recurring_update.model_dump(exclude_unset=True), db_recurring
+        db, current_client.id, recurring_update.model_dump(exclude_unset=True), db_recurring,
+        commit=True,
     )
-    db.commit()
-    db.refresh(db_recurring)
     invalidate_client(current_client.id)
     return db_recurring
 
@@ -103,17 +91,12 @@ def delete_recurring_transaction(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
-    db_recurring = db.query(models.RecurringTransaction).filter(
-        models.RecurringTransaction.id == recurring_id,
-        models.RecurringTransaction.client_id == current_client.id
-    ).first()
+    db_recurring = get_for_client(db, current_client.id, recurring_id)
     
     if not db_recurring:
         raise HTTPException(status_code=404, detail="Recurring transaction not found")
 
-    detach_registry_from_recurring(db, db_recurring)
-    db.delete(db_recurring)
-    db.commit()
+    delete_recurring(db, db_recurring)
     invalidate_client(current_client.id)
     return {"message": "Recurring transaction deleted"}
 
@@ -122,12 +105,7 @@ def get_due_recurring_transactions(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
-    today = date.today()
-    return db.query(models.RecurringTransaction).filter(
-        models.RecurringTransaction.client_id == current_client.id,
-        models.RecurringTransaction.is_active == True,
-        models.RecurringTransaction.next_due_date <= today
-    ).all()
+    return list_due(db, current_client.id)
 
 
 @router.post("/process-due")
@@ -143,33 +121,17 @@ def process_recurring_transaction(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
-    db_recurring = db.query(models.RecurringTransaction).filter(
-        models.RecurringTransaction.id == recurring_id,
-        models.RecurringTransaction.client_id == current_client.id
-    ).first()
+    db_recurring = get_for_client(db, current_client.id, recurring_id)
     
     if not db_recurring:
         raise HTTPException(status_code=404, detail="Recurring transaction not found")
-    if not db_recurring.is_active:
-        raise HTTPException(status_code=409, detail="Recurring transaction is inactive")
-
-    posting_date = db_recurring.next_due_date or date.today()
-    if is_past_end_period(db_recurring, posting_date):
-        raise HTTPException(status_code=409, detail="Recurring transaction is past its end period")
-
-    if db_recurring.next_due_date is None:
-        db_recurring.next_due_date = posting_date
     try:
-        db_transaction = post_recurring_transaction(db, db_recurring, posting_date)
-        advance_next_due_date(db_recurring)
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
-    db.refresh(db_recurring)
+        db_transaction, next_due_date = process_one(db, db_recurring)
+    except RecurringNotPostable as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     invalidate_client(current_client.id)
 
-    return {"message": "Transaction processed", "transaction_id": db_transaction.id, "next_due_date": db_recurring.next_due_date}
+    return {"message": "Transaction processed", "transaction_id": db_transaction.id, "next_due_date": next_due_date}
 
 
 @router.post("/{recurring_id}/skip")
@@ -178,17 +140,12 @@ def skip_recurring_transaction(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
-    db_recurring = db.query(models.RecurringTransaction).filter(
-        models.RecurringTransaction.id == recurring_id,
-        models.RecurringTransaction.client_id == current_client.id
-    ).first()
+    db_recurring = get_for_client(db, current_client.id, recurring_id)
 
     if not db_recurring:
         raise HTTPException(status_code=404, detail="Recurring transaction not found")
 
-    advance_next_due_date(db_recurring)
-    db.commit()
-    db.refresh(db_recurring)
+    next_due_date = skip_one(db, db_recurring)
     invalidate_client(current_client.id)
 
-    return {"message": "Recurring transaction skipped", "next_due_date": db_recurring.next_due_date}
+    return {"message": "Recurring transaction skipped", "next_due_date": next_due_date}
