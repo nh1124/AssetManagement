@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 SERVICES_DIR = Path(__file__).resolve().parents[1] / "app" / "services"
+WORKFLOWS_DIR = SERVICES_DIR.parent / "workflows"
 
 # accounting_service is a backwards-compatible facade that re-exports both
 # halves of the module it was split from. Including it would report a false
@@ -54,8 +55,6 @@ LAYERS: dict[str, int] = {
     # L4 - statements and variance, which need the adopted plan
     "reporting_service": 4,
     # L5 - composition over everything below
-    "action_bridge_service": 5,
-    "ai_change_request_service": 5,
     "ai_context_service": 5,
     "analysis_service": 5,
     "data_health_service": 5,
@@ -65,26 +64,35 @@ LAYERS: dict[str, int] = {
     "report_service": 5,
     "simulation_service": 5,
     "strategy_service": 5,
+    # L6 - dependency runs UI -> workflow -> service; a workflow may use
+    # anything below it to compose a request across features.
+    "monthly_action_workflow": 6,
+    "ai_change_request_workflow": 6,
 }
 
 
 def _service_modules() -> list[str]:
     return sorted(
         path.stem
-        for path in SERVICES_DIR.glob("*.py")
+        for directory in (SERVICES_DIR, WORKFLOWS_DIR)
+        for path in directory.glob("*.py")
         if path.name not in EXCLUDED
     )
 
 
 def _imports_of(module: str, known: set[str]) -> set[str]:
-    """Sibling service modules imported by `module`, at any nesting depth.
+    """Service and workflow modules imported by `module`, at any nesting depth.
 
-    Handles both spellings used in this codebase:
+    Handles the relative spellings used in this codebase:
       from .registry_service import x          (level 1)
       from ..services.registry_service import x (level 2)
+      from ..workflows.monthly_action_workflow import x (level 2)
     """
     # utf-8-sig: at least one service module is stored with a BOM.
-    source = (SERVICES_DIR / f"{module}.py").read_text(encoding="utf-8-sig")
+    path = SERVICES_DIR / f"{module}.py"
+    if not path.is_file():
+        path = WORKFLOWS_DIR / f"{module}.py"
+    source = path.read_text(encoding="utf-8-sig")
     found: set[str] = set()
     for node in ast.walk(ast.parse(source)):
         if not isinstance(node, ast.ImportFrom) or not node.module:
@@ -92,7 +100,7 @@ def _imports_of(module: str, known: set[str]) -> set[str]:
         name = None
         if node.level == 1:
             name = node.module
-        elif node.level == 2 and node.module.startswith("services."):
+        elif node.level == 2 and node.module.startswith(("services.", "workflows.")):
             name = node.module.split(".", 1)[1]
         if name in known:
             found.add(name)

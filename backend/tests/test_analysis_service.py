@@ -22,7 +22,7 @@ try:
     from backend.app.services.reconcile_service import run_reconcile
     from backend.app.services.report_service import apply_monthly_report_proposal, generate_monthly_report
     from backend.app.services.accounting_service import update_transaction
-    from backend.app.services.action_bridge_service import apply_action, create_action
+    from backend.app.workflows.monthly_action_workflow import apply_action, create_action
     from backend.app.services.strategy_service import get_roadmap_projection
     from backend.app.services.milestone_service import apply_milestones_from_simulation, preview_milestones_from_simulation
     from backend.app.services.ledger_valuation import update_used_exchange_rates
@@ -43,7 +43,7 @@ except ModuleNotFoundError:
     from app.services.reconcile_service import run_reconcile  # type: ignore[no-redef]
     from app.services.report_service import apply_monthly_report_proposal, generate_monthly_report  # type: ignore[no-redef]
     from app.services.accounting_service import update_transaction  # type: ignore[no-redef]
-    from app.services.action_bridge_service import apply_action, create_action  # type: ignore[no-redef]
+    from app.workflows.monthly_action_workflow import apply_action, create_action  # type: ignore[no-redef]
     from app.services.strategy_service import get_roadmap_projection  # type: ignore[no-redef]
     from app.services.milestone_service import apply_milestones_from_simulation, preview_milestones_from_simulation  # type: ignore[no-redef]
     from app.services.ledger_valuation import update_used_exchange_rates  # type: ignore[no-redef]

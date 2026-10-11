@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
-from ..services.ai_change_request_service import (
+from ..workflows.ai_change_request_workflow import (
     apply_change_request,
     approve_change_request,
     create_change_request,

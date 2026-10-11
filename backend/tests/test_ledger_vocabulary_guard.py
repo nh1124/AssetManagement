@@ -15,7 +15,8 @@ import ast
 import pathlib
 
 from app import models, schemas
-from app.services import ai_change_request_service, registry_service
+from app.services import registry_service
+from app.workflows import ai_change_request_workflow
 
 APP_DIR = pathlib.Path(models.__file__).parent
 GONE = ("type", "category", "from_account_id", "to_account_id")
@@ -157,7 +158,7 @@ def test_ai_field_allowlists_name_only_real_model_attributes():
         getattr(models, name)
         for name in _model_classes()
     }
-    for name, fields in vars(ai_change_request_service).items():
+    for name, fields in vars(ai_change_request_workflow).items():
         if not name.endswith("_FIELDS") or not isinstance(fields, list):
             continue
         model = model_by_name.get(name.removesuffix("_FIELDS"))
@@ -186,7 +187,7 @@ def test_recurring_update_preview_returns_before_snapshot():
             assert entry is not None
             assert entry.client_id == client.id
 
-            preview = ai_change_request_service.preview_change_request(
+            preview = ai_change_request_workflow.preview_change_request(
                 db,
                 client.id,
                 schemas.AiChangeRequestPreviewRequest(

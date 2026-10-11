@@ -15,11 +15,11 @@ from sqlalchemy.orm import sessionmaker
 try:
     from backend.app import models
     from backend.app.database import Base
-    from backend.app.services.action_bridge_service import apply_action
+    from backend.app.workflows.monthly_action_workflow import apply_action
 except ModuleNotFoundError:  # pragma: no cover - import shim used by the container
     from app import models  # type: ignore[no-redef]
     from app.database import Base  # type: ignore[no-redef]
-    from app.services.action_bridge_service import apply_action  # type: ignore[no-redef]
+    from app.workflows.monthly_action_workflow import apply_action  # type: ignore[no-redef]
 
 
 def _session():

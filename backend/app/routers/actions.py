@@ -8,7 +8,7 @@ from .. import models
 from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.cache_service import invalidate_client
-from ..services.action_bridge_service import (
+from ..workflows.monthly_action_workflow import (
     apply_action,
     create_action,
     list_actions,

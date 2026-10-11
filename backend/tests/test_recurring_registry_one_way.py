@@ -11,14 +11,14 @@ try:
     from backend.app.database import Base
     from backend.app.routers.recurring import create_recurring_transaction, update_recurring_transaction, patch_recurring_transaction
     from backend.app.services import registry_service
-    from backend.app.services.action_bridge_service import apply_action
+    from backend.app.workflows.monthly_action_workflow import apply_action
     from backend.app.services.periods import add_months, current_period_key
 except ModuleNotFoundError:  # pragma: no cover - import shim used by the container
     from app import models, schemas  # type: ignore[no-redef]
     from app.database import Base  # type: ignore[no-redef]
     from app.routers.recurring import create_recurring_transaction, update_recurring_transaction, patch_recurring_transaction  # type: ignore[no-redef]
     from app.services import registry_service  # type: ignore[no-redef]
-    from app.services.action_bridge_service import apply_action  # type: ignore[no-redef]
+    from app.workflows.monthly_action_workflow import apply_action  # type: ignore[no-redef]
     from app.services.periods import add_months, current_period_key  # type: ignore[no-redef]
 
 

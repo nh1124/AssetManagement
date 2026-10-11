@@ -3,12 +3,12 @@ import pytest
 from test_recurring_requires_registry import db, models
 
 try:
-    from backend.app.services.action_bridge_service import _apply_pause_recurring
+    from backend.app.workflows.monthly_action_workflow import _apply_pause_recurring
     from backend.app.services.registry_service import reconcile_registry_recurring_links, registry_to_recurring_data, sync_recurring_from_registry, upsert_registry_from_recurring_payload
     from backend.app.services.budget_context import BudgetContext
     from backend.app.services.budget_registry_lines import registry_plan_lines
 except ModuleNotFoundError:
-    from app.services.action_bridge_service import _apply_pause_recurring
+    from app.workflows.monthly_action_workflow import _apply_pause_recurring
     from app.services.registry_service import reconcile_registry_recurring_links, registry_to_recurring_data, sync_recurring_from_registry, upsert_registry_from_recurring_payload
     from app.services.budget_context import BudgetContext
     from app.services.budget_registry_lines import registry_plan_lines

@@ -16,7 +16,7 @@ try:
     from backend.app.routers.data_transfer import ImportPayload, export_client_data, import_client_data, validate_import_client_data
     from backend.app.schemas import CopyPeriodRequest, MonthlyPlanLineBatchUpdate, MonthlyPlanLineCreate
     from backend.app.services.accounting_service import get_variance_analysis_for_range, process_transaction
-    from backend.app.services.action_bridge_service import apply_action, create_action
+    from backend.app.workflows.monthly_action_workflow import apply_action, create_action
     from backend.app.services.budget_lines import assign_plan_line_identity
     from backend.app.services.budget_plan_service import get_budget_summary
     from backend.app.services.budget_plan_store import create_plan_lines, set_default_budget_plan, update_plan_lines
@@ -30,7 +30,7 @@ except ModuleNotFoundError:
     from app.routers.data_transfer import ImportPayload, export_client_data, import_client_data, validate_import_client_data  # type: ignore[no-redef]
     from app.schemas import CopyPeriodRequest, MonthlyPlanLineBatchUpdate, MonthlyPlanLineCreate  # type: ignore[no-redef]
     from app.services.accounting_service import get_variance_analysis_for_range, process_transaction  # type: ignore[no-redef]
-    from app.services.action_bridge_service import apply_action, create_action  # type: ignore[no-redef]
+    from app.workflows.monthly_action_workflow import apply_action, create_action  # type: ignore[no-redef]
     from app.services.budget_lines import assign_plan_line_identity  # type: ignore[no-redef]
     from app.services.budget_plan_service import get_budget_summary  # type: ignore[no-redef]
     from app.services.budget_plan_store import create_plan_lines, set_default_budget_plan, update_plan_lines  # type: ignore[no-redef]

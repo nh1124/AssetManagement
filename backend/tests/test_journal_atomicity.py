@@ -10,8 +10,9 @@ from sqlalchemy.orm import sessionmaker
 from backend.app import models, schemas
 from backend.app.database import Base
 from backend.app.routers import data_transfer, transactions as transaction_router
-from backend.app.services import ai_change_request_service, ledger_service, report_service
-from backend.app.services.ai_change_request_service import (
+from backend.app.services import ledger_service, report_service
+from backend.app.workflows import ai_change_request_workflow
+from backend.app.workflows.ai_change_request_workflow import (
     apply_change_request,
     approve_change_request,
     create_change_request,

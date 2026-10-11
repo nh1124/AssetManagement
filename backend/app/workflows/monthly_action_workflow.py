@@ -7,10 +7,10 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .. import models
-from .budget_lines import assign_plan_line_identity
-from .budget_plan_store import resolve_budget_plan_id
-from .capsule_service import create_capsule_for_goal, upsert_capsule_holding
-from .registry_service import sync_recurring_from_registry, upsert_registry_from_recurring_payload
+from ..services.budget_lines import assign_plan_line_identity
+from ..services.budget_plan_store import resolve_budget_plan_id
+from ..services.capsule_service import create_capsule_for_goal, upsert_capsule_holding
+from ..services.registry_service import sync_recurring_from_registry, upsert_registry_from_recurring_payload
 
 
 ACTION_KINDS = {

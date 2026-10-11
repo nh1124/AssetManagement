@@ -25,7 +25,9 @@ OWNERS: dict[str, str] = {
     "recurring_transactions": "services/registry_service",
     "budget_plans": "services/budget_plan_store",
     "monthly_plan_lines": "services/budget_plan_store",
-    "monthly_actions": "services/action_bridge_service",
+    # Workflow owner for now; the layering plan moves ownership to a service
+    # because workflows should orchestrate, not write.
+    "monthly_actions": "workflows/monthly_action_workflow",
     "period_reviews": "routers/period_reviews",
     "capsules": "services/capsule_service",
     "capsule_rules": "services/capsule_service",
@@ -36,7 +38,9 @@ OWNERS: dict[str, str] = {
     "simulation_scenarios": "routers/simulation_scenarios",
     "products": "routers/products",
     "exchange_rates": "services/fx_service",
-    "ai_change_requests": "services/ai_change_request_service",
+    # Workflow owner for now; the layering plan moves ownership to a service
+    # because workflows should orchestrate, not write.
+    "ai_change_requests": "workflows/ai_change_request_workflow",
     "ai_audit_logs": "services/ai_policy_service",
     "ai_operation_policies": "services/ai_policy_service",
     "clients": "routers/auth",
@@ -82,7 +86,7 @@ ALLOWED: dict[str, dict[str, str]] = {
     },
     "monthly_plan_lines": {
         "routers/budget_plans": "plan line CRUD and batch edit live in the router",
-        "services/action_bridge_service": "applying a set_budget action writes a line",
+        "workflows/monthly_action_workflow": "applying a set_budget action writes a line",
     },
     "registry_entries": {
         "routers/registry_entries": "registry CRUD lives in the router",

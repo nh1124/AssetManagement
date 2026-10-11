@@ -6,7 +6,7 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.app import models, schemas
 from backend.app.database import Base
-from backend.app.services.ai_change_request_service import (
+from backend.app.workflows.ai_change_request_workflow import (
     apply_change_request,
     approve_change_request,
     create_change_request,
