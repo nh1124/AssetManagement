@@ -4,20 +4,16 @@ from sqlalchemy.orm import Session
 from fastapi import HTTPException
 
 from .. import models, schemas
-from ..services import product_service
+from ..services import capsule_service, ledger_service, product_service
 from ..services.cache_service import invalidate_client
 from ..services.product_reserve_service import ensure_default_product_reserve_pools
-from ..services.registry_service import detach_product
+from ..services.registry_service import detach_product, get_product_entry
 
 
 def validate_budget_account(db: Session, client_id: int, budget_account_id: int | None) -> None:
     if budget_account_id is None:
         return
-    account = db.query(models.Account).filter(
-        models.Account.id == budget_account_id,
-        models.Account.client_id == client_id,
-        models.Account.account_type == "expense",
-    ).first()
+    account = ledger_service.get_expense_account(db, client_id, budget_account_id)
     if not account:
         raise HTTPException(status_code=400, detail="Budget account must be an expense account for this client")
 
@@ -25,11 +21,7 @@ def validate_budget_account(db: Session, client_id: int, budget_account_id: int 
 def validate_funding_capsule(db: Session, client_id: int, funding_capsule_id: int | None) -> None:
     if funding_capsule_id is None:
         return
-    capsule = db.query(models.Capsule).filter(
-        models.Capsule.id == funding_capsule_id,
-        models.Capsule.client_id == client_id,
-        models.Capsule.life_event_id.is_(None),
-    ).first()
+    capsule = capsule_service.get_product_funding_capsule(db, client_id, funding_capsule_id)
     if not capsule:
         raise HTTPException(status_code=400, detail="Funding capsule must be a non-LifeEvent capsule for this client")
 
@@ -45,10 +37,7 @@ def normalize_product_data(db: Session, client_id: int, data: dict) -> dict:
     validate_funding_capsule(db, client_id, data.get("funding_capsule_id"))
 
     if data.get("budget_account_id"):
-        account = db.query(models.Account).filter(
-            models.Account.id == data["budget_account_id"],
-            models.Account.client_id == client_id,
-        ).first()
+        account = ledger_service.get_account(db, client_id, data["budget_account_id"])
         if account:
             data["category"] = account.name
     else:
@@ -123,10 +112,7 @@ def delete_product(
     product = product_service.get_product(db, client_id, product_id)
     if product is None:
         return False
-    registry = db.query(models.RegistryEntry).filter(
-        models.RegistryEntry.client_id == client_id,
-        models.RegistryEntry.source_product_id == product.id,
-    ).first()
+    registry = get_product_entry(db, client_id, product.id)
     if registry:
         detach_product(db, registry)
     product_service.delete_product(db, client_id, product_id, commit=False)

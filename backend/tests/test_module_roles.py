@@ -1,9 +1,12 @@
 """Enforce the UI -> workflow -> service boundary, rather than describe it.
 
 UI owns screens and HTTP adaptation; workflow receives a UI request and composes
-the feature; service owns primitive database operations. Known UI database uses
-are exceptions to remove as workflows arrive. A router can still hold business
-logic without touching its session; that judgement cannot be made by this test.
+the feature; service owns primitive database operations. UI and workflow may
+neither access data nor construct models. D8 keeps transaction boundaries in
+workflows because routers cannot close them: commit, rollback, refresh, flush,
+expire and expire_all remain allowed there. Known violations are wave-specific
+exceptions. A router can still hold business logic without touching its session;
+that judgement cannot be made by this test.
 """
 from __future__ import annotations
 
@@ -47,6 +50,17 @@ ALLOWED: dict[str, str] = {
 SESSION_METHODS = {
     "query", "add", "add_all", "delete", "commit", "flush", "refresh", "get",
     "execute", "merge", "rollback", "expire", "expire_all", "no_autoflush",
+}
+
+# commit, rollback, refresh and flush are the transaction boundary, which D8
+# leaves with the workflow because a router cannot close one. flush belongs
+# here rather than with data access: this codebase pairs it with commit in the
+# `commit: bool = True` idiom, where it means "make the services' work visible
+# without closing", and it decides nothing about which rows exist.
+BOUNDARY_METHODS = {"commit", "rollback", "refresh", "flush", "expire", "expire_all"}
+WORKFLOW_ALLOWED: dict[str, str] = {
+    "workflows/ai_change_request_workflow": "L10b: owns ai_change_requests (AiChangeRequest), which has no service owner yet",
+    "workflows/monthly_action_workflow": "L10c: owns monthly_actions (MonthlyAction), which has no service owner yet; also constructs MonthlyPlanLine",
 }
 
 
@@ -186,7 +200,7 @@ def _scan():
                 for alias in node.names:
                     targets.add(alias.name)
                     bindings[alias.asname or alias.name.split(".")[0]] = alias.name if alias.asname else alias.name.split(".")[0]
-        if _role(module) == "ui":
+        if _role(module) in {"ui", "workflow"}:
             uses = _DatabaseUses(bindings, model_names)
             uses.visit(tree)
             if uses.methods or uses.models:
@@ -202,9 +216,27 @@ def _scan():
 
 
 @pytest.fixture(scope="module")
-def scan():
-    # All four guards share one snapshot and one pass over the application tree.
+def module_scan():
+    # Both adapter rules share one snapshot and one pass over the application.
     return _scan()
+
+
+@pytest.fixture(scope="module")
+def scan(module_scan):
+    modules, database_uses, upward_imports = module_scan
+    return modules, {
+        module: uses for module, uses in database_uses.items() if _role(module) == "ui"
+    }, upward_imports
+
+
+@pytest.fixture(scope="module")
+def workflow_scan(module_scan):
+    _, database_uses, _ = module_scan
+    return {
+        module: (methods - BOUNDARY_METHODS, model_names)
+        for module, (methods, model_names) in database_uses.items()
+        if _role(module) == "workflow" and (methods - BOUNDARY_METHODS or model_names)
+    }
 
 
 def test_every_module_has_a_role(scan):
@@ -234,3 +266,35 @@ def test_a_service_never_imports_a_workflow(scan):
     _, _, upward_imports = scan
     violations = [f"{module} imports {target}" for module, target in sorted(upward_imports)]
     assert not violations, "Service imports workflow:\n" + "\n".join(violations)
+
+
+def test_workflow_modules_do_not_access_data_or_construct_models(workflow_scan):
+    violations = [
+        f"{module}: session methods={sorted(methods)}; models={sorted(model_names)}"
+        for module, (methods, model_names) in sorted(workflow_scan.items())
+        if module not in WORKFLOW_ALLOWED
+    ]
+    assert not violations, "Unexpected workflow database access:\n" + "\n".join(violations)
+
+
+def test_workflow_allowed_list_matches_observed_violations(workflow_scan):
+    # The progress board must name every remaining violation, and removing the
+    # last data access must remove that workflow's exception in the same wave.
+    stale = sorted(set(WORKFLOW_ALLOWED) - set(workflow_scan))
+    missing = sorted(set(workflow_scan) - set(WORKFLOW_ALLOWED))
+    assert not (stale or missing), (
+        "WORKFLOW_ALLOWED does not match observed violations:\n"
+        f"stale entries={stale}\nmissing entries={missing}"
+    )
+
+
+def test_workflow_transaction_boundary_methods_are_allowed(module_scan, workflow_scan):
+    _, database_uses, _ = module_scan
+    methods, model_names = database_uses["workflows/ledger_entry_workflow"]
+    assert "commit" in methods
+    assert not (methods - BOUNDARY_METHODS or model_names)
+    assert "workflows/ledger_entry_workflow" not in workflow_scan
+    methods, model_names = database_uses["workflows/capsule_workflow"]
+    assert "flush" in methods
+    assert not (methods - BOUNDARY_METHODS or model_names)
+    assert "workflows/capsule_workflow" not in workflow_scan

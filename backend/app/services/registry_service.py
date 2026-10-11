@@ -97,6 +97,14 @@ def delete_entry(
     return True
 
 
+def get_product_entry(db: Session, client_id: int, product_id: int) -> models.RegistryEntry | None:
+    # Product deletion detaches its client's linked definition even if inactive.
+    return db.query(models.RegistryEntry).filter(
+        models.RegistryEntry.client_id == client_id,
+        models.RegistryEntry.source_product_id == product_id,
+    ).first()
+
+
 def detach_product(
     db: Session, entry: models.RegistryEntry, *, commit: bool = False,
 ) -> None:

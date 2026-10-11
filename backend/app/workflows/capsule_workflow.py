@@ -4,7 +4,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from .. import models
-from ..services import capsule_service
+from ..services import capsule_service, ledger_service
 from ..services.cache_service import invalidate_client
 from ..services.goal_service import get_life_event
 from ..services.product_reserve_service import (
@@ -20,10 +20,7 @@ def contribute(
     capsule = capsule_service.get_capsule(db, client_id, capsule_id)
     if not capsule:
         raise HTTPException(status_code=404, detail="Capsule not found")
-    from_account = db.query(models.Account).filter(
-        models.Account.id == from_account_id,
-        models.Account.client_id == client_id,
-    ).first()
+    from_account = ledger_service.get_account(db, client_id, from_account_id)
     if not from_account:
         raise HTTPException(status_code=404, detail="Source account not found")
     if amount <= 0:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from sqlalchemy.orm import Session, selectinload
+from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..services import ledger_service
@@ -73,10 +73,7 @@ def remove_entry(
     *,
     commit: bool = True,
 ) -> bool:
-    transaction = db.query(models.Transaction).filter(
-        models.Transaction.id == transaction_id,
-        models.Transaction.client_id == client_id,
-    ).first()
+    transaction = ledger_service.get_transaction(db, client_id, transaction_id)
     if not transaction:
         return False
 
@@ -104,49 +101,17 @@ def list_entries(
     offset: int = 0,
     with_total: bool = False,
 ) -> tuple[list[models.Transaction], int | None]:
-    query = db.query(models.Transaction).filter(models.Transaction.client_id == client_id)
-
-    if start_date:
-        query = query.filter(models.Transaction.date >= start_date)
-    if end_date:
-        query = query.filter(models.Transaction.date <= end_date)
-    if amount_min is not None:
-        query = query.filter(models.Transaction.amount >= amount_min)
-    if amount_max is not None:
-        query = query.filter(models.Transaction.amount <= amount_max)
-    if account_id:
-        # A leg query, not from/to: a compound entry touches accounts that the
-        # denormalised columns cannot name.
-        query = query.filter(
-            models.Transaction.journal_entries.any(models.JournalEntry.account_id == account_id)
-        )
-    if q:
-        query = query.filter(models.Transaction.description.ilike(f"%{q}%"))
-
-    total = query.count() if with_total else None
-    transactions = (
-        query.options(
-            selectinload(models.Transaction.journal_entries).selectinload(models.JournalEntry.account)
-        )
-        .order_by(models.Transaction.date.desc(), models.Transaction.id.desc())
-        .offset(offset)
-        .limit(limit)
-        .all()
+    return ledger_service.list_transactions(
+        db, client_id, start_date=start_date, end_date=end_date,
+        amount_min=amount_min, amount_max=amount_max, account_id=account_id,
+        q=q, limit=limit, offset=offset, with_total=with_total,
     )
-    return transactions, total
-
-
-def _get_proposal(db: Session, client_id: int, proposal_id: int) -> models.TransactionProposal | None:
-    return db.query(models.TransactionProposal).filter(
-        models.TransactionProposal.id == proposal_id,
-        models.TransactionProposal.client_id == client_id,
-    ).first()
 
 
 def approve_entry_proposal(
     db: Session, client_id: int, proposal_id: int,
 ) -> models.Transaction | None:
-    proposal = _get_proposal(db, client_id, proposal_id)
+    proposal = ledger_service.get_proposal(db, client_id, proposal_id)
     if proposal is None:
         return None
     try:
@@ -162,7 +127,7 @@ def approve_entry_proposal(
 def reject_entry_proposal(
     db: Session, client_id: int, proposal_id: int, *, note: str | None = None,
 ) -> models.TransactionProposal | None:
-    proposal = _get_proposal(db, client_id, proposal_id)
+    proposal = ledger_service.get_proposal(db, client_id, proposal_id)
     if proposal is None:
         return None
     try:

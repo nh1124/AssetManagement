@@ -14,7 +14,7 @@ from typing import Any, Optional, Sequence
 
 from fastapi import HTTPException
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from .. import models
 
@@ -32,6 +32,21 @@ def list_accounts(
     if ordered:
         query = query.order_by(models.Account.account_type, models.Account.name)
     return query.all()
+
+
+def get_expense_account(db: Session, client_id: int, account_id: int) -> models.Account | None:
+    # Product budgeting requires an expense account belonging to its client.
+    return db.query(models.Account).filter(
+        models.Account.id == account_id,
+        models.Account.client_id == client_id,
+        models.Account.account_type == "expense",
+    ).first()
+
+
+def get_account(db: Session, client_id: int, account_id: int) -> models.Account | None:
+    # Product categories and capsule contributions need the client's account;
+    # each workflow decides what that account means for its request.
+    return _get_account_by_id(db, account_id, client_id)
 
 
 def _validate_parent(
@@ -493,6 +508,58 @@ def post_transaction_journal(
     )
 
 
+def get_transaction(db: Session, client_id: int, transaction_id: int) -> models.Transaction | None:
+    return db.query(models.Transaction).filter(
+        models.Transaction.id == transaction_id,
+        models.Transaction.client_id == client_id,
+    ).first()
+
+
+def list_transactions(
+    db: Session,
+    client_id: int,
+    *,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    amount_min: float | None = None,
+    amount_max: float | None = None,
+    account_id: int | None = None,
+    q: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    with_total: bool = False,
+) -> tuple[list[models.Transaction], int | None]:
+    query = db.query(models.Transaction).filter(models.Transaction.client_id == client_id)
+
+    if start_date:
+        query = query.filter(models.Transaction.date >= start_date)
+    if end_date:
+        query = query.filter(models.Transaction.date <= end_date)
+    if amount_min is not None:
+        query = query.filter(models.Transaction.amount >= amount_min)
+    if amount_max is not None:
+        query = query.filter(models.Transaction.amount <= amount_max)
+    if account_id:
+        # Compound entries can touch accounts that from/to columns cannot name.
+        query = query.filter(
+            models.Transaction.journal_entries.any(models.JournalEntry.account_id == account_id)
+        )
+    if q:
+        query = query.filter(models.Transaction.description.ilike(f"%{q}%"))
+
+    total = query.count() if with_total else None
+    transactions = (
+        query.options(
+            selectinload(models.Transaction.journal_entries).selectinload(models.JournalEntry.account)
+        )
+        .order_by(models.Transaction.date.desc(), models.Transaction.id.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    return transactions, total
+
+
 def create_transaction(
     db: Session,
     *,
@@ -621,6 +688,13 @@ def reject_proposal(
     proposal.note = note
     proposal.decided_at = datetime.utcnow()
     proposal.decided_by_client_id = actor_client_id
+
+
+def get_proposal(db: Session, client_id: int, proposal_id: int) -> models.TransactionProposal | None:
+    return db.query(models.TransactionProposal).filter(
+        models.TransactionProposal.id == proposal_id,
+        models.TransactionProposal.client_id == client_id,
+    ).first()
 
 
 def list_proposals(

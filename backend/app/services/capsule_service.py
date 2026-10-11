@@ -28,6 +28,15 @@ def get_capsule(db: Session, client_id: int, capsule_id: int) -> models.Capsule 
     ).first()
 
 
+def get_product_funding_capsule(db: Session, client_id: int, capsule_id: int) -> models.Capsule | None:
+    # Product reserves must belong to their client and cannot use a goal capsule.
+    return db.query(models.Capsule).filter(
+        models.Capsule.id == capsule_id,
+        models.Capsule.client_id == client_id,
+        models.Capsule.life_event_id.is_(None),
+    ).first()
+
+
 def list_capsules(db: Session, client_id: int, skip: int = 0, limit: int = 100) -> list[models.Capsule]:
     return db.query(models.Capsule).filter(
         models.Capsule.client_id == client_id,
