@@ -519,6 +519,8 @@ def update_transaction(
     transaction_id: int,
     payload,
     client_id: int,
+    *,
+    commit: bool = True,
 ) -> models.Transaction | None:
     tx = db.query(models.Transaction).filter(
         models.Transaction.id == transaction_id,
@@ -574,8 +576,9 @@ def update_transaction(
 
         db.flush()
         _post_transaction_journal(db, tx, legs)
-        db.commit()
-        db.refresh(tx)
+        if commit:
+            db.commit()
+            db.refresh(tx)
         return tx
     except Exception:
         db.rollback()

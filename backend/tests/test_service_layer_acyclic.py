@@ -73,6 +73,7 @@ LAYERS: dict[str, int] = {
     "monthly_action_workflow": 6,
     "ai_change_request_workflow": 6,
     "transaction_approval_workflow": 6,
+    "ledger_entry_workflow": 6,
     "simulation_workflow": 6,
 }
 
