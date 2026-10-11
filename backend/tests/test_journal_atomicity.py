@@ -11,6 +11,7 @@ from backend.app import models, schemas
 from backend.app.database import Base
 from backend.app.routers import data_transfer, transactions as transaction_router
 from backend.app.services import ledger_service, report_service
+from backend.app.services.ai_policy_service import replace_client_policies
 from backend.app.workflows import ai_change_request_workflow
 from backend.app.workflows.ai_change_request_workflow import (
     apply_change_request,
@@ -232,11 +233,28 @@ def _approved_transaction_change_request(db, client: models.Client) -> models.Ai
     return approve_change_request(db, client.id, client.id, request.id)
 
 
+def _open_ledger_gate(db, client: models.Client) -> None:
+    """Let an approved AI request post straight to the ledger.
+
+    Both tests below are about the posting itself - rollback on failure, and no
+    duplicate on a repeated apply. Since H7 the default is the proposal queue,
+    where there is no posting to test; the queued path is covered in
+    test_ai_write_path.py. See docs/specs/ai_write_path.md.
+    """
+    replace_client_policies(db, client.id, [{
+        "resource": "transactions",
+        "action": "create",
+        "risk": "medium",
+        "mode": "allow_execute",
+    }])
+
+
 def test_ai_apply_rolls_back_transaction_when_journal_posting_fails(monkeypatch) -> None:
     db = _session()
     try:
         client = _client(db)
         request = _approved_transaction_change_request(db, client)
+        _open_ledger_gate(db, client)
         monkeypatch.setattr(*_JOURNAL_SEAM, _raise_journal_failure)
 
         with pytest.raises(HTTPException) as exc_info:
@@ -256,6 +274,7 @@ def test_ai_apply_same_request_does_not_create_duplicate_transaction() -> None:
     try:
         client = _client(db)
         request = _approved_transaction_change_request(db, client)
+        _open_ledger_gate(db, client)
 
         first = apply_change_request(db, client.id, client.id, request.id)
         first_transaction_id = first.result["transaction_id"]

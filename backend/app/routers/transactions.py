@@ -9,7 +9,6 @@ from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.ledger_service import (
     ensure_default_accounts,
-    approve_proposal as approve_proposal_service,
     reject_proposal as reject_proposal_service,
     list_proposals as list_proposals_service,
     create_transaction as create_transaction_service,
@@ -19,6 +18,7 @@ from ..services.ledger_service import (
 from ..services.cache_service import invalidate_client
 from ..services.capsule_service import apply_capsule_rules_for_transaction
 from ..services.journal_legs import primary_accounts
+from ..workflows.transaction_approval_workflow import approve_transaction_proposal
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
 
@@ -172,7 +172,7 @@ def approve_proposal(
     if proposal is None:
         raise HTTPException(status_code=404, detail="Transaction proposal not found")
     try:
-        transaction = approve_proposal_service(db, proposal, actor_client_id=current_client.id)
+        transaction = approve_transaction_proposal(db, proposal, actor_client_id=current_client.id)
         db.commit()
         db.refresh(transaction)
     except ValueError as exc:

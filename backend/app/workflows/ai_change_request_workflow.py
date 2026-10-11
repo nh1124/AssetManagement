@@ -10,7 +10,12 @@ from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
-from ..services.ledger_service import ensure_default_accounts, create_transaction
+from ..services.ledger_service import (
+    ensure_default_accounts,
+    create_transaction,
+    propose_transaction,
+    simple_legs,
+)
 from ..services.budget_plan_store import update_plan_lines
 from ..services.cache_service import invalidate_client
 from ..services.capsule_service import apply_capsule_rules_for_transaction
@@ -18,6 +23,7 @@ from ..services.registry_service import upsert_registry_from_recurring_payload
 from ..services.ai_policy_service import (
     AiOperationContext,
     evaluate_ai_operation,
+    ledger_write_is_direct,
     write_ai_audit_log,
 )
 
@@ -491,17 +497,41 @@ def _apply_dispatch(db: Session, client_id: int, row: models.AiChangeRequest) ->
         legs = data.pop("legs", None)
         from_account_id = data.pop("from_account_id", None)
         to_account_id = data.pop("to_account_id", None)
+        if legs is None:
+            legs = simple_legs(data["amount"], from_account_id, to_account_id)
+        # mfa_verified stays False: nothing on the row proves a verification
+        # happened, and row.requires_mfa says the opposite - that one was
+        # demanded. A gate with no proof must stay shut, so a policy of
+        # allow_execute plus require_mfa queues rather than posts.
+        if not ledger_write_is_direct(
+            db,
+            client_id,
+            ai_client_id=row.ai_client_id,
+            risk=row.risk,
+        ):
+            proposal = propose_transaction(
+                db,
+                client_id,
+                origin="ai",
+                origin_ref={"change_request_id": row.id},
+                date=data["date"],
+                description=data["description"],
+                amount=data["amount"],
+                currency=data["currency"],
+                legs=legs,
+            )
+            # The AI's part is complete, so apply marks the request applied;
+            # ledger posting still waits for the proposal's own approval.
+            return {"proposal_id": proposal.id, "queued": True}
         tx = create_transaction(
             db,
             client_id=client_id,
             legs=legs,
-            from_account_id=from_account_id,
-            to_account_id=to_account_id,
             **data,
         )
         db.flush()
         apply_capsule_rules_for_transaction(db, tx, commit=False)
-        return {"transaction_id": tx.id}
+        return {"transaction_id": tx.id, "queued": False}
 
     if (row.resource, row.action) == ("monthly_plan_lines", "update"):
         line_id = int(row.target_ref.get("id") or row.input_payload.get("id") or 0)

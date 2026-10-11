@@ -146,6 +146,30 @@ def evaluate_ai_operation(
     )
 
 
+def ledger_write_is_direct(
+    db: Session,
+    client_id: int,
+    *,
+    ai_client_id: int | None,
+    risk: str,
+    mfa_verified: bool = False,
+) -> bool:
+    # Permission to bypass the ledger proposal queue differs from permission
+    # for the AI to act at all, even after its change request is approved.
+    decision = evaluate_ai_operation(
+        db,
+        client_id,
+        AiOperationContext(
+            resource="transactions",
+            action="create",
+            risk=normalize_risk(risk),
+            ai_client_id=ai_client_id,
+            mfa_verified=mfa_verified,
+        ),
+    )
+    return decision.mode == "allow_execute" and decision.allowed
+
+
 def write_ai_audit_log(
     db: Session,
     client_id: int,

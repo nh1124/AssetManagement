@@ -77,8 +77,8 @@ def test_transaction_change_request_preview_approve_apply() -> None:
         assert pending_status == "pending"
         assert approved_status == "approved"
         assert applied.status == "applied"
-        assert applied.result["transaction_id"]
-        assert db.query(models.Transaction).filter(models.Transaction.client_id == client.id).count() == 1
+        assert applied.result["proposal_id"]
+        assert db.query(models.Transaction).filter(models.Transaction.client_id == client.id).count() == 0
         assert db.query(models.AiAuditLog).filter(models.AiAuditLog.approval_request_id == request.id).count() >= 1
     finally:
         db.close()

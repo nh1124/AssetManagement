@@ -68,6 +68,7 @@ LAYERS: dict[str, int] = {
     # anything below it to compose a request across features.
     "monthly_action_workflow": 6,
     "ai_change_request_workflow": 6,
+    "transaction_approval_workflow": 6,
 }
 
 
