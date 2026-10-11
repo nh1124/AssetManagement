@@ -6,8 +6,10 @@ registry or reporting.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import date
+import hashlib
+import json
+from dataclasses import asdict, dataclass
+from datetime import date, datetime
 from typing import Any, Optional, Sequence
 
 from sqlalchemy import func
@@ -339,6 +341,127 @@ def create_transaction(
         to_account_id=to_account_id,
     )
     return transaction
+
+
+# Reservations and other proposed entries wait here for a decision. Keeping
+# them outside transactions means reports only ever see posted ledger entries.
+def propose_transaction(
+    db: Session,
+    client_id: int,
+    *,
+    origin: str,
+    date: date,
+    description: str,
+    amount: float,
+    legs: Sequence,
+    currency: str = "JPY",
+    origin_ref: dict | None = None,
+    trigger_transaction_id: int | None = None,
+    idempotency_key: str | None = None,
+) -> models.TransactionProposal:
+    proposed = [_coerce_leg(leg) for leg in legs]
+    _validate_legs(proposed, amount)
+    for account_id in {leg.account_id for leg in proposed}:
+        if _get_account_by_id(db, account_id, client_id) is None:
+            raise ValueError(f"Account {account_id} not found for this client")
+    stored_legs = [asdict(leg) for leg in proposed]
+    origin_ref = origin_ref if origin_ref is not None else {}
+    if idempotency_key is None:
+        # Same canonical JSON/SHA-256 as AI requests, kept local because L1
+        # cannot import the higher-layer AI service.
+        payload = json.dumps(
+            {
+                "origin": origin,
+                "origin_ref": origin_ref,
+                "date": date.isoformat(),
+                "amount": amount,
+                "legs": stored_legs,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=True,
+        )
+        idempotency_key = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    existing = db.query(models.TransactionProposal).filter(
+        models.TransactionProposal.client_id == client_id,
+        models.TransactionProposal.idempotency_key == idempotency_key,
+    ).first()
+    if existing is not None:
+        return existing
+    proposal = models.TransactionProposal(
+        client_id=client_id,
+        origin=origin,
+        origin_ref=origin_ref,
+        date=date,
+        description=description,
+        amount=amount,
+        currency=currency,
+        legs=stored_legs,
+        trigger_transaction_id=trigger_transaction_id,
+        idempotency_key=idempotency_key,
+    )
+    db.add(proposal)
+    db.flush()
+    return proposal
+
+
+def approve_proposal(
+    db: Session,
+    proposal: models.TransactionProposal,
+    *,
+    actor_client_id: int,
+) -> models.Transaction:
+    if proposal.status != "pending":
+        raise ValueError(f"Proposal {proposal.id} is not pending (status: {proposal.status})")
+    transaction = create_transaction(
+        db,
+        client_id=proposal.client_id,
+        date=proposal.date,
+        description=proposal.description,
+        amount=proposal.amount,
+        currency=proposal.currency,
+        legs=proposal.legs,
+    )
+    proposal.status = "posted"
+    proposal.posted_transaction_id = transaction.id
+    proposal.decided_at = datetime.utcnow()
+    proposal.decided_by_client_id = actor_client_id
+    return transaction
+
+
+def reject_proposal(
+    db: Session,
+    proposal: models.TransactionProposal,
+    *,
+    actor_client_id: int,
+    note: str | None = None,
+) -> None:
+    if proposal.status != "pending":
+        raise ValueError(f"Proposal {proposal.id} is not pending (status: {proposal.status})")
+    proposal.status = "rejected"
+    proposal.note = note
+    proposal.decided_at = datetime.utcnow()
+    proposal.decided_by_client_id = actor_client_id
+
+
+def list_proposals(
+    db: Session,
+    client_id: int,
+    *,
+    status: str | None = None,
+    origin: str | None = None,
+) -> list[models.TransactionProposal]:
+    query = db.query(models.TransactionProposal).filter(
+        models.TransactionProposal.client_id == client_id,
+    )
+    if status is not None:
+        query = query.filter(models.TransactionProposal.status == status)
+    if origin is not None:
+        query = query.filter(models.TransactionProposal.origin == origin)
+    return query.order_by(
+        models.TransactionProposal.created_at.desc(),
+        models.TransactionProposal.id.desc(),
+    ).all()
 
 
 def _rollback_transaction_effects(db: Session, transaction: models.Transaction) -> None:

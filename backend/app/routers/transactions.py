@@ -9,6 +9,9 @@ from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.ledger_service import (
     ensure_default_accounts,
+    approve_proposal as approve_proposal_service,
+    reject_proposal as reject_proposal_service,
+    list_proposals as list_proposals_service,
     create_transaction as create_transaction_service,
     delete_transaction as delete_transaction_service,
     update_transaction as update_transaction_service,
@@ -144,6 +147,74 @@ def create_transaction(
     invalidate_client(current_client.id)
 
     return _serialize_transaction(db_transaction)
+
+
+@router.get("/proposals", response_model=list[schemas.TransactionProposal])
+def get_proposals(
+    status: Optional[str] = Query(None),
+    origin: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    return list_proposals_service(db, current_client.id, status=status, origin=origin)
+
+
+@router.post("/proposals/{proposal_id}/approve", response_model=schemas.Transaction)
+def approve_proposal(
+    proposal_id: int,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    proposal = db.query(models.TransactionProposal).filter(
+        models.TransactionProposal.id == proposal_id,
+        models.TransactionProposal.client_id == current_client.id,
+    ).first()
+    if proposal is None:
+        raise HTTPException(status_code=404, detail="Transaction proposal not found")
+    try:
+        transaction = approve_proposal_service(db, proposal, actor_client_id=current_client.id)
+        db.commit()
+        db.refresh(transaction)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception:
+        db.rollback()
+        raise
+    invalidate_client(current_client.id)
+    return _serialize_transaction(transaction)
+
+
+@router.post("/proposals/{proposal_id}/reject", response_model=schemas.TransactionProposal)
+def reject_proposal(
+    proposal_id: int,
+    decision: schemas.TransactionProposalDecision,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    proposal = db.query(models.TransactionProposal).filter(
+        models.TransactionProposal.id == proposal_id,
+        models.TransactionProposal.client_id == current_client.id,
+    ).first()
+    if proposal is None:
+        raise HTTPException(status_code=404, detail="Transaction proposal not found")
+    try:
+        reject_proposal_service(
+            db,
+            proposal,
+            actor_client_id=current_client.id,
+            note=decision.note,
+        )
+        db.commit()
+        db.refresh(proposal)
+    except ValueError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception:
+        db.rollback()
+        raise
+    invalidate_client(current_client.id)
+    return proposal
 
 
 @router.put("/{transaction_id}", response_model=schemas.Transaction)

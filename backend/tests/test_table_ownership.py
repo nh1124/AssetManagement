@@ -18,6 +18,7 @@ OWNERS: dict[str, str] = {
     "accounts": "services/ledger_service",
     "journal_entries": "services/ledger_service",
     "transactions": "services/ledger_service",
+    "transaction_proposals": "services/ledger_service",
     "transaction_batches": "routers/quick_templates",
     "quick_templates": "routers/quick_templates",
     "registry_entries": "services/registry_service",

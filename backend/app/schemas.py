@@ -284,6 +284,32 @@ class Transaction(TransactionBase):
         from_attributes = True
 
 
+class TransactionProposal(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    client_id: int
+    origin: str
+    origin_ref: dict[str, Any]
+    date: DateType
+    description: str
+    amount: float
+    currency: str
+    legs: list[TransactionLeg]
+    trigger_transaction_id: Optional[int] = None
+    status: str
+    posted_transaction_id: Optional[int] = None
+    idempotency_key: str
+    note: Optional[str] = None
+    created_at: Optional[datetime] = None
+    decided_at: Optional[datetime] = None
+    decided_by_client_id: Optional[int] = None
+
+
+class TransactionProposalDecision(BaseModel):
+    note: Optional[str] = None
+
+
 class QuickTemplateBase(BaseModel):
     tray: str
     name: str

@@ -186,6 +186,42 @@ class Transaction(Base):
     journal_entries = relationship("JournalEntry", back_populates="transaction")
 
 
+class TransactionProposal(Base):
+    __tablename__ = "transaction_proposals"
+    __table_args__ = (
+        UniqueConstraint("client_id", "idempotency_key", name="_client_transaction_proposal_idempotency_uc"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    origin = Column(String, nullable=False)
+    origin_ref = Column(JSON, nullable=False, default=dict)
+    date = Column(Date, nullable=False)
+    description = Column(String, nullable=False)
+    amount = Column(Float, nullable=False)
+    currency = Column(String, nullable=False, default="JPY")
+    legs = Column(JSON, nullable=False)
+    # The cause may be deleted; SET NULL preserves the record of the proposal.
+    trigger_transaction_id = Column(
+        Integer,
+        ForeignKey("transactions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    status = Column(String, nullable=False, default="pending", index=True)
+    # The result may be deleted; SET NULL preserves the record of the proposal.
+    posted_transaction_id = Column(
+        Integer,
+        ForeignKey("transactions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    idempotency_key = Column(String, nullable=False)
+    note = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    decided_at = Column(DateTime, nullable=True)
+    decided_by_client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
+
+
 class QuickTemplate(Base):
     __tablename__ = "quick_templates"
 
