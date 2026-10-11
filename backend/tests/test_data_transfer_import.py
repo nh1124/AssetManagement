@@ -6,12 +6,12 @@ import json
 from datetime import date, datetime
 
 import pytest
-from fastapi import HTTPException
 from sqlalchemy import create_engine, event, func, select
 from sqlalchemy.orm import sessionmaker
 
 from app import models
 from app.database import Base
+from app.domain.errors import Invalid
 from app.domain.transfer import DATA_COLLECTIONS, validate_import_payload
 from app.services.data_transfer_service import export_client, import_client
 
@@ -247,11 +247,10 @@ def test_journal_failure_after_deletion_preserves_every_table_byte_for_byte(db):
     assert validate_import_payload(document["data"], document["version"], document["manifest"])["error_count"] == 0
     before = _table_bytes(db)
     assert all(json.loads(value) for value in before.values())
-    with pytest.raises(HTTPException) as caught:
+    with pytest.raises(Invalid) as caught:
         _restore(db, client, document)
-    assert caught.value.status_code == 400
-    assert caught.value.detail.startswith("Import failed: Transaction ")
-    assert caught.value.detail.endswith(" has fewer than two journal entries")
+    assert str(caught.value).startswith("Import failed: Transaction ")
+    assert str(caught.value).endswith(" has fewer than two journal entries")
     assert _table_bytes(db) == before
 
 
@@ -270,12 +269,12 @@ def test_validation_gate_keeps_exact_400_detail_and_writes_nothing(db):
 
     event.listen(db.bind, "before_cursor_execute", capture)
     try:
-        with pytest.raises(HTTPException) as caught:
+        with pytest.raises(Invalid) as caught:
             _restore(db, client, document)
     finally:
         event.remove(db.bind, "before_cursor_execute", capture)
-    assert caught.value.status_code == 400
-    assert caught.value.detail == {"message": "Import payload validation failed", "validation": validation}
+    assert str(caught.value) == "Import payload validation failed"
+    assert caught.value.payload == {"message": "Import payload validation failed", "validation": validation}
     assert writes == []
     assert _table_bytes(db) == before
 
@@ -322,11 +321,10 @@ def test_commit_failure_rolls_back_the_complete_rebuild(db):
 
     event.listen(db, "before_commit", fail_commit)
     try:
-        with pytest.raises(HTTPException) as caught:
+        with pytest.raises(Invalid) as caught:
             _restore(db, client, document)
     finally:
         event.remove(db, "before_commit", fail_commit)
     assert commits == [db]
-    assert caught.value.status_code == 400
-    assert caught.value.detail == "Import failed: commit refused"
+    assert str(caught.value) == "Import failed: commit refused"
     assert _table_bytes(db) == before

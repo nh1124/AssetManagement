@@ -4,10 +4,10 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from typing import Any, Literal
 
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..domain.errors import NotFound, Refused
 from .ai_policy_service import SENSITIVE_KEY_PARTS
 from .journal_legs import primary_accounts
 from .analysis_service import get_summary
@@ -185,9 +185,9 @@ def get_context_resource(
 ) -> dict[str, Any]:
     descriptor = _get_descriptor(resource)
     if not descriptor.available:
-        raise HTTPException(
-            status_code=403,
-            detail={
+        raise Refused(
+            descriptor.description,
+            payload={
                 "error": "ai_context_resource_unavailable",
                 "resource": descriptor.resource,
                 "risk": descriptor.risk,
@@ -212,7 +212,7 @@ def get_context_resource(
     try:
         data = loaders[descriptor.resource]()
     except KeyError as exc:
-        raise HTTPException(status_code=404, detail=f"Unknown AI context resource: {resource}") from exc
+        raise NotFound(f"Unknown AI context resource: {resource}") from exc
     return _context_response(
         descriptor.resource,
         data,
@@ -248,13 +248,13 @@ def _get_descriptor(resource: str) -> AiContextResourceDescriptor:
     for descriptor in AI_CONTEXT_CATALOG:
         if descriptor.resource == normalized:
             return descriptor
-    raise HTTPException(status_code=404, detail=f"Unknown AI context resource: {resource}")
+    raise NotFound(f"Unknown AI context resource: {resource}")
 
 
 def _get_client(db: Session, client_id: int) -> models.Client:
     client = db.get(models.Client, client_id)
     if client is None:
-        raise HTTPException(status_code=404, detail="Client not found")
+        raise NotFound("Client not found")
     return client
 
 

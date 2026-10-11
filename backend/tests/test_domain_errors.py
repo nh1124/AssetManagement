@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -39,6 +40,17 @@ def http():
     def http_failure(status_code: int, message: str):
         raise HTTPException(status_code=status_code, detail=message)
 
+    @http_app.post("/payload/domain")
+    def domain_payload_failure(payload: dict | None = None):
+        raise Invalid("Import payload validation failed", payload=payload)
+
+    @http_app.post("/payload/http")
+    def http_payload_failure(payload: dict | None = None):
+        raise HTTPException(
+            status_code=400,
+            detail=payload if payload is not None else "Import payload validation failed",
+        )
+
     http_app.include_router(recurring.router)
     http_app.include_router(simulation_scenarios.router)
     http_app.include_router(quick_templates.batch_router)
@@ -75,6 +87,21 @@ def test_domain_errors_bypass_value_error_catches(error_type):
         except ValueError:
             pytest.fail("A ValueError adapter would replace the domain status with 400")
     assert caught.value is error
+
+
+@pytest.mark.parametrize("payload", [
+    {"message": "Import payload validation failed", "validation": {"error_count": 1}},
+    {},
+    None,
+])
+def test_invalid_payload_response_is_byte_identical_to_http_exception(http, payload):
+    body = {"content": json.dumps(payload), "headers": {"Content-Type": "application/json"}}
+    domain = http.post("/payload/domain", **body)
+    equivalent = http.post("/payload/http", **body)
+    assert domain.status_code == equivalent.status_code == 400
+    assert domain.content == equivalent.content
+    assert domain.headers == equivalent.headers
+    assert domain.json() == {"detail": payload if payload is not None else "Import payload validation failed"}
 
 
 @pytest.mark.parametrize("error_type", [DomainError, Invalid])

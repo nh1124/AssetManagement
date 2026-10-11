@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-from fastapi import HTTPException
+from ..domain.errors import NotFound
 from ..utils.contribution_schedule import parse_contribution_schedule
 from sqlalchemy.orm import Session
 
@@ -27,7 +27,7 @@ def monte_carlo_for_goal(
     # These raises are ordered deliberately: a malformed schedule on a missing
     # event has always returned 404, and callers may rely on that precedence.
     if not event:
-        raise HTTPException(status_code=404, detail="Life event not found")
+        raise NotFound("Life event not found")
 
     config = get_config(db, client_id)
     volatility = config.volatility if config else 15.0

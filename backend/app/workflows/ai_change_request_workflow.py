@@ -6,10 +6,10 @@ from datetime import date, datetime
 from typing import Any
 from uuid import uuid4
 
-from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
+from ..domain.errors import Conflict, Invalid, NotFound, Refused
 from ..services import ai_change_request_store
 from ..services.ledger_service import (
     ensure_default_accounts,
@@ -217,7 +217,7 @@ def preview_change_request(
     resource = payload.resource.strip().lower()
     action = payload.action.strip().lower()
     if (resource, action) not in SUPPORTED_OPERATIONS:
-        raise HTTPException(status_code=400, detail=f"Unsupported change request operation: {resource}:{action}")
+        raise Invalid(f"Unsupported change request operation: {resource}:{action}")
 
     try:
         if (resource, action) == ("transactions", "create"):
@@ -229,14 +229,14 @@ def preview_change_request(
         else:
             preview = _preview_recurring_update(db, client_id, payload.target_ref, payload.input_payload)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise Invalid(str(exc)) from exc
 
     context = _operation_context(payload, resource, action, preview)
     decision = evaluate_ai_operation(db, client_id, context)
     if decision.decision == "denied":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail={
+        raise Refused(
+            decision.reason,
+            payload={
                 "error": "ai_operation_denied",
                 "resource": decision.resource,
                 "action": decision.action,
@@ -332,10 +332,10 @@ def approve_change_request(
 ) -> models.AiChangeRequest:
     row = _get_change_request(db, client_id, change_request_id, for_update=True)
     if row.status not in {"draft", "pending"}:
-        raise HTTPException(status_code=400, detail=f"Change request cannot be approved from status {row.status}")
+        raise Invalid(f"Change request cannot be approved from status {row.status}")
     if row.requires_mfa:
         if not step_up_token_payload or step_up_token_payload.get("type") != "step_up" or str(step_up_token_payload.get("sub")) != str(actor_client_id):
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Step-up authentication required")
+            raise Refused("Step-up authentication required", status_code=401)
     row.status = "approved"
     row.approved_by_client_id = actor_client_id
     row.approved_at = datetime.utcnow()
@@ -352,7 +352,7 @@ def reject_change_request(
 ) -> models.AiChangeRequest:
     row = _get_change_request(db, client_id, change_request_id)
     if row.status in {"applied", "rejected"}:
-        raise HTTPException(status_code=400, detail=f"Change request cannot be rejected from status {row.status}")
+        raise Invalid(f"Change request cannot be rejected from status {row.status}")
     row.status = "rejected"
     row.updated_at = datetime.utcnow()
     db.commit()
@@ -400,7 +400,7 @@ def apply_change_request(
     if row.status == "applied":
         return row
     if row.status != "approved":
-        raise HTTPException(status_code=400, detail=f"Change request must be approved before apply; current status is {row.status}")
+        raise Invalid(f"Change request must be approved before apply; current status is {row.status}")
 
     current_preview = preview_change_request(
         db,
@@ -422,7 +422,7 @@ def apply_change_request(
         row.result = {"error": "precondition_conflict", "message": "Target changed after preview; refresh preview before applying"}
         row.updated_at = datetime.utcnow()
         db.commit()
-        raise HTTPException(status_code=409, detail=row.result)
+        raise Conflict(row.result["message"], payload=row.result)
 
     try:
         result = _apply_dispatch(db, client_id, row)
@@ -462,7 +462,7 @@ def apply_change_request(
             failed_row.result = {"error": "apply_failed", "message": str(exc)}
             failed_row.updated_at = datetime.utcnow()
             db.commit()
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise Invalid(str(exc)) from exc
     except Exception:
         db.rollback()
         raise
@@ -552,7 +552,7 @@ def _get_change_request(
 ) -> models.AiChangeRequest:
     row = ai_change_request_store.get(db, client_id, change_request_id, for_update=for_update)
     if not row:
-        raise HTTPException(status_code=404, detail="Change request not found")
+        raise NotFound("Change request not found")
     return row
 
 

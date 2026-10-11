@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from . import models
 from .config import settings
-from .domain.errors import Conflict, DomainError, Invalid, NotFound, Refused
+from .domain.errors import DomainError, detail_for, status_for
 from .routers import (
     accounts,
     actions,
@@ -53,17 +53,10 @@ app = FastAPI(
 
 @app.exception_handler(DomainError)
 async def domain_error_handler(request: Request, exc: DomainError):
-    status_code = exc.status_code
-    if status_code is None:
-        status_code = next(
-            (code for error_type, code in (
-                (NotFound, 404), (Invalid, 400), (Conflict, 409), (Refused, 403),
-            ) if isinstance(exc, error_type)),
-            400,
-        )
     # Reuse FastAPI's serializer so bytes, headers and bodyless codes agree.
     return await http_exception_handler(
-        request, HTTPException(status_code=status_code, detail=str(exc)),
+        request,
+        HTTPException(status_code=status_for(exc), detail=detail_for(exc)),
     )
 
 

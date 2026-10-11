@@ -4,10 +4,10 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from typing import Any, Literal
 
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..domain.errors import Refused
 
 AiRisk = Literal["low", "medium", "high", "critical"]
 AiMode = Literal["deny", "allow_read", "require_approval", "allow_execute"]
@@ -184,9 +184,8 @@ def assert_direct_ledger_write_allowed(
         # 403 rather than 409: the request does not conflict with the ledger's
         # state, the caller simply may not write it. Retrying changes nothing
         # until a human opens the policy, so the message names it.
-        raise HTTPException(
-            status_code=403,
-            detail=(
+        raise Refused(
+            (
                 "Direct MCP ledger write refused: the ai_operation_policies row for "
                 f"transactions / create / {risk} must have mode allow_execute and "
                 "have no unmet MFA requirement; otherwise use the change-request path."
@@ -238,9 +237,9 @@ def ensure_ai_operation_allowed(
     decision = evaluate_ai_operation(db, client_id, context)
     if decision.decision != "allowed":
         write_ai_audit_log(db, client_id, context, decision)
-        raise HTTPException(
-            status_code=403,
-            detail={
+        raise Refused(
+            decision.reason,
+            payload={
                 "error": "ai_operation_not_allowed",
                 "decision": decision.decision,
                 "resource": decision.resource,

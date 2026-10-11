@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from backend.app import models, schemas
 from backend.app.database import Base
+from backend.app.domain.errors import Conflict, Refused
 from backend.app.workflows.ai_change_request_workflow import (
     apply_change_request,
     approve_change_request,
@@ -140,8 +140,12 @@ def test_denied_policy_blocks_change_request_preview() -> None:
                     },
                 ),
             )
-        except HTTPException as exc:
-            assert exc.status_code == 403
+        except Refused as exc:
+            assert str(exc) == "Matched policy 1"
+            assert exc.payload == {
+                "error": "ai_operation_denied", "resource": "transactions",
+                "action": "create", "risk": "medium", "reason": "Matched policy 1",
+            }
         else:
             raise AssertionError("Expected denied operation to be blocked")
     finally:
@@ -219,8 +223,12 @@ def test_monthly_plan_line_update_conflicts_after_target_change() -> None:
 
         try:
             apply_change_request(db, client.id, client.id, request.id)
-        except HTTPException as exc:
-            assert exc.status_code == 409
+        except Conflict as exc:
+            assert str(exc) == "Target changed after preview; refresh preview before applying"
+            assert exc.payload == {
+                "error": "precondition_conflict",
+                "message": "Target changed after preview; refresh preview before applying",
+            }
         else:
             raise AssertionError("Expected conflict")
 

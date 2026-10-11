@@ -4,13 +4,13 @@ import json
 from datetime import date
 
 import pytest
-from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from starlette.requests import Request
 
 from backend.app import models
 from backend.app.database import Base
+from backend.app.domain.errors import Refused
 from backend.app.routers import ai_operations
 from backend.app.services.ai_context_service import (
     get_context_resource,
@@ -136,11 +136,15 @@ def test_context_data_export_is_not_available() -> None:
     try:
         client = _client_with_data(db)
 
-        with pytest.raises(HTTPException) as excinfo:
+        with pytest.raises(Refused) as excinfo:
             get_context_resource(db, client.id, "data_export")
 
-        assert excinfo.value.status_code == 403
-        assert excinfo.value.detail["risk"] == "critical"
+        message = "Full export is a critical operation and is not available through normal AI context APIs."
+        assert str(excinfo.value) == message
+        assert excinfo.value.payload == {
+            "error": "ai_context_resource_unavailable", "resource": "data_export",
+            "risk": "critical", "reason": message,
+        }
     finally:
         db.close()
 

@@ -3,11 +3,11 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Any
 
-from fastapi import HTTPException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..domain.errors import Invalid
 from ..domain.transfer import (
     EXPORT_VERSION,
     build_manifest,
@@ -507,9 +507,9 @@ def import_client(
     data = data or {}
     validation = validate_import_payload(data, version, manifest)
     if validation["error_count"]:
-        raise HTTPException(
-            status_code=400,
-            detail={
+        raise Invalid(
+            "Import payload validation failed",
+            payload={
                 "message": "Import payload validation failed",
                 "validation": validation,
             },
@@ -1100,7 +1100,7 @@ def import_client(
         invalidate_client(client.id)
     except Exception as exc:
         db.rollback()
-        raise HTTPException(status_code=400, detail=f"Import failed: {exc}") from exc
+        raise Invalid(f"Import failed: {exc}") from exc
 
     return {
         "status": "ok",

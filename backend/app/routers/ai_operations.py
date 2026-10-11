@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
+from ..domain.errors import NotFound, Refused, detail_for, status_for
 from ..services.ai_context_service import (
     get_context_resource,
     get_context_summary,
@@ -134,13 +135,13 @@ def get_ai_context_resource(
     )
     try:
         data = get_context_resource(db, current_client.id, resource, limit=limit, period=period)
-    except HTTPException as exc:
+    except (NotFound, Refused) as exc:
         _write_context_read_audit(
             db,
             current_client,
             context,
             decision,
-            {"error": exc.detail, "status_code": exc.status_code},
+            {"error": detail_for(exc), "status_code": status_for(exc)},
         )
         raise
     _write_context_read_audit(

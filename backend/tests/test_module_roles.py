@@ -58,13 +58,7 @@ WORKFLOW_ALLOWED: dict[str, str] = {}
 
 # C1 preserves existing service/workflow responses; later waves convert one
 # module at a time. Counts prevent a listed module from accumulating more debt.
-HTTP_EXCEPTION_ALLOWED: dict[str, int] = {
-    "services/data_transfer_service": 2,
-    "workflows/ai_change_request_workflow": 10,
-    "services/ai_context_service": 4,
-    "services/ai_policy_service": 2,
-    "workflows/simulation_workflow": 1,
-}
+HTTP_EXCEPTION_ALLOWED: dict[str, int] = {}
 
 
 def _role(module: str) -> str | None:
@@ -360,6 +354,18 @@ def test_http_exception_allowed_counts_have_no_stale_entries(http_exception_coun
         if module not in http_exception_counts or http_exception_counts[module] < allowed
     ]
     assert not stale, "Stale HTTP_EXCEPTION_ALLOWED counts:\n" + "\n".join(stale)
+
+
+def test_http_stale_entry_guard_rejects_an_exception_added_to_the_empty_list(
+    http_exception_counts, monkeypatch,
+):
+    assert HTTP_EXCEPTION_ALLOWED == {}
+    monkeypatch.setitem(HTTP_EXCEPTION_ALLOWED, "services/ai_policy_service", 1)
+    with pytest.raises(
+        AssertionError,
+        match=r"Stale HTTP_EXCEPTION_ALLOWED counts:\s+services/ai_policy_service: raises=0, allowed=1",
+    ):
+        test_http_exception_allowed_counts_have_no_stale_entries(http_exception_counts)
 
 
 def test_domain_imports_only_standard_library_or_domain():

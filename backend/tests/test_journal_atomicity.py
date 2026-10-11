@@ -3,12 +3,12 @@ from __future__ import annotations
 from datetime import date
 
 import pytest
-from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from backend.app import models, schemas
 from backend.app.database import Base
+from backend.app.domain.errors import Invalid
 from backend.app.routers import data_transfer, transactions as transaction_router
 from backend.app.services import ledger_service, report_service
 from backend.app.services.ai_policy_service import replace_client_policies
@@ -257,10 +257,10 @@ def test_ai_apply_rolls_back_transaction_when_journal_posting_fails(monkeypatch)
         _open_ledger_gate(db, client)
         monkeypatch.setattr(*_JOURNAL_SEAM, _raise_journal_failure)
 
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(Invalid) as exc_info:
             apply_change_request(db, client.id, client.id, request.id)
 
-        assert exc_info.value.status_code == 400
+        assert str(exc_info.value) == "forced journal failure"
         assert db.query(models.Transaction).count() == 0
         assert db.query(models.JournalEntry).count() == 0
         db.refresh(request)
@@ -319,10 +319,14 @@ def test_import_validation_and_import_reject_missing_journal_entries() -> None:
         assert validation["status"] == "invalid"
         assert any(issue["code"] == "journal_entries_missing" for issue in validation["issues"])
 
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(Invalid) as exc_info:
             data_transfer.import_client_data(payload, db=db, current_client=client)
 
-        assert exc_info.value.status_code == 400
+        assert str(exc_info.value) == "Import payload validation failed"
+        assert exc_info.value.payload == {
+            "message": "Import payload validation failed",
+            "validation": {key: value for key, value in validation.items() if key != "client"},
+        }
         assert db.query(models.Account).filter_by(id=existing.id).one().name == "existing"
         assert db.query(models.Transaction).count() == 0
     finally:
