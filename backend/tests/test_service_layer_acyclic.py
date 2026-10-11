@@ -34,6 +34,7 @@ LAYERS: dict[str, int] = {
     "quick_template_service": 0,
     "periods": 0,
     "product_reserve_service": 0,
+    "product_service": 0,
     "schedule_rules": 0,
     "simulation_config_service": 0,
     # L1 - the ledger itself, and reading it one journal leg at a time
@@ -76,6 +77,8 @@ LAYERS: dict[str, int] = {
     "transaction_approval_workflow": 6,
     "ledger_entry_workflow": 6,
     "transaction_batch_workflow": 6,
+    "product_workflow": 6,
+    "goal_workflow": 6,
     "simulation_workflow": 6,
 }
 

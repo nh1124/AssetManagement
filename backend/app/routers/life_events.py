@@ -7,13 +7,15 @@ from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.goal_service import (
     get_life_events_with_progress,
+    list_goals,
+    update_goal,
+    delete_goal,
+    list_goal_capsules,
     calculate_overall_goal_probability,
     generate_budget_from_goals,
     get_strategy_dashboard,
 )
-from ..services.capsule_service import apply_capsule_rules_for_transaction, create_capsule_for_goal, capsule_balance
-from ..services.ledger_service import create_transaction
-from ..services.cache_service import invalidate_client
+from ..workflows.goal_workflow import create_goal
 
 router = APIRouter(prefix="/life-events", tags=["life_events"])
 
@@ -25,7 +27,7 @@ def get_life_events(
     current_client: models.Client = Depends(get_current_client)
 ):
     """Get all life events for current client."""
-    return db.query(models.LifeEvent).filter(models.LifeEvent.client_id == current_client.id).all()
+    return list_goals(db, current_client.id)
 
 @router.get("/with-progress")
 def get_life_events_progress(
@@ -73,18 +75,7 @@ def create_life_event(
     current_client: models.Client = Depends(get_current_client)
 ):
     """Create a new life event for current client."""
-    db_event = models.LifeEvent(**life_event.model_dump(), client_id=current_client.id)
-    db.add(db_event)
-    db.commit()
-    db.refresh(db_event)
-    from ..services.milestone_service import reset_milestones_from_annual_plan
-
-    reset_milestones_from_annual_plan(db, current_client.id, db_event.id)
-    create_capsule_for_goal(db, current_client.id, db_event)
-    db.commit()
-    db.refresh(db_event)
-    invalidate_client(current_client.id)
-    return db_event
+    return create_goal(db, current_client.id, life_event)
 
 @router.put("/{event_id}")
 def update_life_event(
@@ -93,21 +84,10 @@ def update_life_event(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
-    """Update a life event belonging to current client."""
-    db_event = db.query(models.LifeEvent).filter(
-        models.LifeEvent.id == event_id,
-        models.LifeEvent.client_id == current_client.id
-    ).first()
-    
-    if not db_event:
+    updated = update_goal(db, current_client.id, event_id, life_event)
+    if updated is None:
         raise HTTPException(status_code=404, detail="Life event not found")
-        
-    for key, value in life_event.model_dump(exclude_unset=True).items():
-        setattr(db_event, key, value)
-    db.commit()
-    db.refresh(db_event)
-    invalidate_client(current_client.id)
-    return db_event
+    return updated
 
 @router.get("/{event_id}/capsules")
 def get_capsules_for_goal(
@@ -115,25 +95,10 @@ def get_capsules_for_goal(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
-    """Return capsules linked to this goal with their current balances."""
-    db_event = db.query(models.LifeEvent).filter(
-        models.LifeEvent.id == event_id,
-        models.LifeEvent.client_id == current_client.id
-    ).first()
-    if not db_event:
+    result = list_goal_capsules(db, current_client.id, event_id)
+    if result is None:
         raise HTTPException(status_code=404, detail="Life event not found")
-
-    result = []
-    for cap in db_event.capsules:
-        bal = capsule_balance(db, cap)
-        result.append({
-            "id": cap.id,
-            "name": cap.name,
-            "current_balance": bal,
-            "account_id": cap.account_id,
-        })
     return result
-
 
 @router.delete("/{event_id}")
 def delete_life_event(
@@ -142,83 +107,8 @@ def delete_life_event(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
-    """Delete a life event belonging to current client.
-
-    If any linked Capsule has a non-zero balance, transfer_account_id is required.
-    Each Capsule's balance is moved to transfer_account_id via a Transfer transaction
-    before the Goal (and all its Capsules, CapsuleRules, Allocations, Milestones) is deleted.
-    The earmarked Account created for each Capsule is also deleted.
-    """
-    db_event = db.query(models.LifeEvent).filter(
-        models.LifeEvent.id == event_id,
-        models.LifeEvent.client_id == current_client.id
-    ).first()
-
-    if not db_event:
+    if not delete_goal(db, current_client.id, event_id, transfer_account_id=transfer_account_id):
         raise HTTPException(status_code=404, detail="Life event not found")
-
-    # Validate transfer_account_id when capsules have a positive balance
-    capsules_with_balance = [
-        c for c in db_event.capsules
-        if c.account_id is not None and capsule_balance(db, c) > 0
-    ]
-    if capsules_with_balance and transfer_account_id is None:
-        raise HTTPException(
-            status_code=422,
-            detail="transfer_account_id is required because one or more capsules have a non-zero balance."
-        )
-
-    if transfer_account_id is not None:
-        dest_account = db.get(models.Account, transfer_account_id)
-        if not dest_account or dest_account.client_id != current_client.id:
-            raise HTTPException(status_code=404, detail="Transfer destination account not found")
-
-    # Transfer each capsule's balance to the destination account
-    from datetime import date as _date
-    for cap in capsules_with_balance:
-        bal = capsule_balance(db, cap)
-        tx = create_transaction(
-            db,
-            client_id=current_client.id,
-            date=_date.today(),
-            description=f"Goal deleted – funds returned from Capsule: {cap.name}",
-            amount=bal,
-            currency="JPY",
-            from_account_id=cap.account_id,
-            to_account_id=transfer_account_id,
-        )
-        apply_capsule_rules_for_transaction(db, tx, commit=False)
-
-    # Collect capsule account IDs before cascade deletion
-    account_ids_to_delete = [
-        c.account_id for c in db_event.capsules if c.account_id is not None
-    ]
-
-    # Nullify account_id on capsules so accounts can be deleted without FK violation
-    for cap in db_event.capsules:
-        cap.account_id = None
-    db.flush()
-
-    # Delete the life event (cascades: capsules, capsule_rules, goal_allocations, milestones)
-    db.delete(db_event)
-    db.flush()
-
-    # Removing journal history would leave each transaction's counterparty unbalanced.
-    # Keep accounts with history inactive even when capsule holdings are empty.
-    for account_id in account_ids_to_delete:
-        account = db.get(models.Account, account_id)
-        if not account:
-            continue
-        has_history = db.query(models.JournalEntry).filter(
-            models.JournalEntry.account_id == account_id
-        ).first() is not None
-        if has_history:
-            account.is_active = False
-            continue
-        db.delete(account)
-
-    db.commit()
-    invalidate_client(current_client.id)
     return {"message": "Deleted"}
 
 @router.get("/generate-budget/{month}")

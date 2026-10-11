@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from datetime import timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -9,112 +8,10 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
-from ..services.cache_service import invalidate_client
-from ..services.product_reserve_service import (
-    effective_budget_treatment,
-    ensure_default_product_reserve_pools,
-    product_reserve_values,
-    should_use_reserve,
-)
+from ..services import product_service
+from ..workflows import product_workflow
 
 router = APIRouter(prefix="/products", tags=["products"])
-
-
-def validate_budget_account(db: Session, client_id: int, budget_account_id: int | None) -> None:
-    if budget_account_id is None:
-        return
-    account = db.query(models.Account).filter(
-        models.Account.id == budget_account_id,
-        models.Account.client_id == client_id,
-        models.Account.account_type == "expense",
-    ).first()
-    if not account:
-        raise HTTPException(status_code=400, detail="Budget account must be an expense account for this client")
-
-
-def validate_funding_capsule(db: Session, client_id: int, funding_capsule_id: int | None) -> None:
-    if funding_capsule_id is None:
-        return
-    capsule = db.query(models.Capsule).filter(
-        models.Capsule.id == funding_capsule_id,
-        models.Capsule.client_id == client_id,
-        models.Capsule.life_event_id.is_(None),
-    ).first()
-    if not capsule:
-        raise HTTPException(status_code=400, detail="Funding capsule must be a non-LifeEvent capsule for this client")
-
-
-def default_funding_capsule_id(db: Session, client_id: int, is_asset: bool) -> int:
-    pools = ensure_default_product_reserve_pools(db, client_id)
-    target_name = "Fixed Asset Reserve" if is_asset else "Item Reserve"
-    return next(pool.id for pool in pools if pool.name == target_name)
-
-
-def normalize_product_data(db: Session, client_id: int, data: dict) -> dict:
-    validate_budget_account(db, client_id, data.get("budget_account_id"))
-    validate_funding_capsule(db, client_id, data.get("funding_capsule_id"))
-
-    if data.get("budget_account_id"):
-        account = db.query(models.Account).filter(
-            models.Account.id == data["budget_account_id"],
-            models.Account.client_id == client_id,
-        ).first()
-        if account:
-            data["category"] = account.name
-    else:
-        data["category"] = data.get("category") or "Uncategorized"
-
-    probe = models.Product(**{key: value for key, value in data.items() if hasattr(models.Product, key)})
-    if should_use_reserve(probe):
-        if data.get("funding_capsule_id") is None:
-            data["funding_capsule_id"] = default_funding_capsule_id(db, client_id, data.get("is_asset", False))
-    else:
-        data["funding_capsule_id"] = None
-    return data
-
-
-def enrich_product(product: models.Product) -> dict:
-    """Return product with unit economics fields."""
-    units = product.units_per_purchase or 1
-    unit_cost = product.last_unit_price / units
-
-    if not product.is_asset and product.frequency_days and product.frequency_days > 0:
-        monthly_cost = unit_cost * (30 / product.frequency_days)
-    else:
-        monthly_cost = 0.0
-
-    next_purchase_date = None
-    if product.last_purchase_date and product.frequency_days:
-        next_purchase_date = (
-            product.last_purchase_date + timedelta(days=product.frequency_days)
-        ).isoformat()
-
-    reserve_values = product_reserve_values(product)
-    effective_treatment = effective_budget_treatment(product)
-    return {
-        "id": product.id,
-        "name": product.name,
-        "category": product.category,
-        "location": product.location,
-        "last_unit_price": product.last_unit_price,
-        "units_per_purchase": units,
-        "unit_cost": round(unit_cost, 2),
-        "frequency_days": product.frequency_days,
-        "last_purchase_date": product.last_purchase_date,
-        "is_asset": product.is_asset,
-        "lifespan_months": product.lifespan_months,
-        "budget_account_id": product.budget_account_id,
-        "budget_account_name": product.budget_account.name if product.budget_account else None,
-        "funding_capsule_id": product.funding_capsule_id,
-        "funding_capsule_name": product.funding_capsule.name if product.funding_capsule else None,
-        "budget_treatment": product.budget_treatment or "auto",
-        "effective_budget_treatment": effective_treatment,
-        **reserve_values,
-        "purchase_price": product.purchase_price,
-        "purchase_date": product.purchase_date,
-        "monthly_cost": round(monthly_cost, 2),
-        "next_purchase_date": next_purchase_date,
-    }
 
 
 @router.get("/", response_model=List[schemas.Product])
@@ -124,15 +21,8 @@ def get_products(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    query = db.query(models.Product).filter(models.Product.client_id == current_client.id)
-
-    if category:
-        query = query.filter(models.Product.category == category)
-    if is_asset is not None:
-        query = query.filter(models.Product.is_asset == is_asset)
-
-    products = query.all()
-    return [enrich_product(p) for p in products]
+    products = product_service.list_products(db, current_client.id, category=category, is_asset=is_asset)
+    return [product_service.enrich_product(product) for product in products]
 
 
 @router.post("/", response_model=schemas.Product)
@@ -141,14 +31,7 @@ def create_product(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    data = product.model_dump()
-    data = normalize_product_data(db, current_client.id, data)
-    db_product = models.Product(**data, client_id=current_client.id)
-    db.add(db_product)
-    db.commit()
-    db.refresh(db_product)
-    invalidate_client(current_client.id)
-    return enrich_product(db_product)
+    return product_service.enrich_product(product_workflow.create_product(db, current_client.id, product))
 
 
 @router.put("/{product_id}", response_model=schemas.Product)
@@ -158,21 +41,10 @@ def update_product(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    db_product = db.query(models.Product).filter(
-        models.Product.id == product_id,
-        models.Product.client_id == current_client.id,
-    ).first()
-
-    if not db_product:
+    updated = product_workflow.update_product(db, current_client.id, product_id, product)
+    if updated is None:
         raise HTTPException(status_code=404, detail="Product not found")
-
-    data = normalize_product_data(db, current_client.id, product.model_dump())
-    for key, value in data.items():
-        setattr(db_product, key, value)
-    db.commit()
-    db.refresh(db_product)
-    invalidate_client(current_client.id)
-    return enrich_product(db_product)
+    return product_service.enrich_product(updated)
 
 
 @router.patch("/{product_id}", response_model=schemas.Product)
@@ -182,32 +54,10 @@ def patch_product(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    db_product = db.query(models.Product).filter(
-        models.Product.id == product_id,
-        models.Product.client_id == current_client.id,
-    ).first()
-
-    if not db_product:
+    updated = product_workflow.patch_product(db, current_client.id, product_id, product)
+    if updated is None:
         raise HTTPException(status_code=404, detail="Product not found")
-
-    data = product.model_dump(exclude_unset=True)
-    merged = {
-        column.name: getattr(db_product, column.name)
-        for column in models.Product.__table__.columns
-        if column.name not in {"id", "client_id", "created_at"}
-    }
-    merged.update(data)
-    merged = normalize_product_data(db, current_client.id, merged)
-    for key, value in data.items():
-        setattr(db_product, key, merged.get(key))
-    if "budget_account_id" in data and "category" not in data:
-        db_product.category = merged.get("category")
-    if "funding_capsule_id" in data or "budget_treatment" in data or "is_asset" in data:
-        db_product.funding_capsule_id = merged.get("funding_capsule_id")
-    db.commit()
-    db.refresh(db_product)
-    invalidate_client(current_client.id)
-    return enrich_product(db_product)
+    return product_service.enrich_product(updated)
 
 
 @router.delete("/{product_id}", status_code=204)
@@ -216,25 +66,8 @@ def delete_product(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    db_product = db.query(models.Product).filter(
-        models.Product.id == product_id,
-        models.Product.client_id == current_client.id,
-    ).first()
-
-    if not db_product:
+    if not product_workflow.delete_product(db, current_client.id, product_id):
         raise HTTPException(status_code=404, detail="Product not found")
-
-    registry = db.query(models.RegistryEntry).filter(
-        models.RegistryEntry.client_id == current_client.id,
-        models.RegistryEntry.source_product_id == db_product.id,
-    ).first()
-    if registry:
-        registry.budget_active = False
-        registry.is_active = False
-        registry.source_product_id = None
-    db.delete(db_product)
-    db.commit()
-    invalidate_client(current_client.id)
 
 
 @router.get("/unit-economics-summary")
@@ -243,41 +76,4 @@ def get_unit_economics_summary(
     current_client: models.Client = Depends(get_current_client),
 ):
     """Category breakdown and total monthly cost for consumables."""
-    consumables = db.query(models.Product).filter(
-        models.Product.client_id == current_client.id,
-        models.Product.is_asset.is_(False),
-        models.Product.frequency_days > 0,
-    ).all()
-
-    items = []
-    total_monthly_cost = 0.0
-
-    for product in consumables:
-        units = product.units_per_purchase or 1
-        unit_cost = product.last_unit_price / units
-        monthly_cost = unit_cost * (30 / product.frequency_days)
-        total_monthly_cost += monthly_cost
-        items.append(
-            {
-                "name": product.name,
-                "category": product.budget_account.name if product.budget_account else product.category,
-                "unit_cost": round(unit_cost, 2),
-                "monthly_cost": round(monthly_cost, 2),
-            }
-        )
-
-    items.sort(key=lambda x: x["monthly_cost"], reverse=True)
-
-    category_totals: dict[str, float] = {}
-    for item in items:
-        category = item["category"]
-        category_totals[category] = category_totals.get(category, 0.0) + item["monthly_cost"]
-
-    return {
-        "items": items,
-        "category_breakdown": [
-            {"category": k, "monthly_cost": round(v, 2)}
-            for k, v in sorted(category_totals.items(), key=lambda x: -x[1])
-        ],
-        "total_monthly_cost": round(total_monthly_cost, 2),
-    }
+    return product_service.get_unit_economics_summary(db, current_client.id)

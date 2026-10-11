@@ -43,8 +43,6 @@ ALLOWED: dict[str, str] = {
     "routers/budget_plans": "compare plan lookup remains with ledger-backed comparison; compare, summary (goal/registry/ledger), and enriched lines composition are deferred to L7",
     "routers/capsules": "capsule, rule and holding CRUD; the largest single violation, L5e with the rest of H6",
     "routers/data_transfer": "client-wide dump and restore; 21 tables across 7 features, L6 and split further there",
-    "routers/life_events": "goal CRUD and account cleanup; moves to goal_service in L5d",
-    "routers/products": "product CRUD and reserve updates; moves to a product service in L5d",
 }
 
 SESSION_METHODS = {

@@ -97,6 +97,18 @@ def delete_entry(
     return True
 
 
+def detach_product(
+    db: Session, entry: models.RegistryEntry, *, commit: bool = False,
+) -> None:
+    # Generic registry updates also synchronize recurring rows. Product deletion
+    # has never done that; sharing that path would change its behavior.
+    entry.budget_active = False
+    entry.is_active = False
+    entry.source_product_id = None
+    if commit:
+        db.commit()
+
+
 def account_line_type(
     source: models.Account | None,
     destination: models.Account | None,
