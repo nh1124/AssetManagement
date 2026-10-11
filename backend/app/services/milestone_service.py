@@ -7,7 +7,7 @@ from typing import Any
 from dateutil.relativedelta import relativedelta
 from sqlalchemy.orm import Session
 
-from .. import models
+from .. import models, schemas
 from .goal_service import get_life_events_with_progress
 from .strategy_service import (
     _period_contribution_from_schedule,
@@ -78,6 +78,68 @@ def _get_event(db: Session, client_id: int, life_event_id: int) -> models.LifeEv
     if not event:
         raise LookupError("Life event not found")
     return event
+
+
+def list_milestones(
+    db: Session, client_id: int, skip: int = 0, limit: int = 100,
+    life_event_id: int | None = None,
+) -> list[models.Milestone]:
+    query = db.query(models.Milestone).filter(models.Milestone.client_id == client_id)
+    if life_event_id is not None:
+        query = query.filter(models.Milestone.life_event_id == life_event_id)
+    return query.order_by(models.Milestone.date, models.Milestone.id).offset(skip).limit(limit).all()
+
+
+def create_milestone(
+    db: Session, client_id: int, payload: schemas.MilestoneCreate, *, commit: bool = True,
+) -> models.Milestone:
+    if payload.life_event_id is not None:
+        _get_event(db, client_id, payload.life_event_id)
+    milestone = models.Milestone(**payload.model_dump(), client_id=client_id)
+    db.add(milestone)
+    if commit:
+        db.commit()
+        db.refresh(milestone)
+    else:
+        db.flush()
+    return milestone
+
+
+def update_milestone(
+    db: Session, client_id: int, milestone_id: int, patch: schemas.MilestoneUpdate,
+    *, commit: bool = True,
+) -> models.Milestone | None:
+    milestone = db.query(models.Milestone).filter(
+        models.Milestone.id == milestone_id,
+        models.Milestone.client_id == client_id,
+    ).first()
+    if milestone is None:
+        return None
+    for field, value in patch.model_dump(exclude_none=True).items():
+        setattr(milestone, field, value)
+    if commit:
+        db.commit()
+        db.refresh(milestone)
+    else:
+        db.flush()
+    return milestone
+
+
+def delete_milestone(
+    db: Session, client_id: int, milestone_id: int, *, commit: bool = True,
+) -> models.Milestone | None:
+    milestone = db.query(models.Milestone).filter(
+        models.Milestone.id == milestone_id,
+        models.Milestone.client_id == client_id,
+    ).first()
+    if milestone is None:
+        return None
+    db.delete(milestone)
+    if commit:
+        db.commit()
+    else:
+        db.flush()
+    return milestone
 
 
 def _simulation_value_at(
@@ -191,6 +253,7 @@ def reset_milestones_from_annual_plan(
     life_event_id: int,
 ) -> list[models.Milestone]:
     """Replace a goal's milestones with defaults derived from Annual Roadmap."""
+    _get_event(db, client_id, life_event_id)
     db.query(models.Milestone).filter(
         models.Milestone.client_id == client_id,
         models.Milestone.life_event_id == life_event_id,

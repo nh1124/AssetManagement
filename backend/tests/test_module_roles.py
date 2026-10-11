@@ -47,8 +47,6 @@ ALLOWED: dict[str, str] = {
     "routers/life_events": "goal CRUD and account cleanup; moves to goal_service in L5d",
     "routers/products": "product CRUD and reserve updates; moves to a product service in L5d",
     "routers/quick_templates": "template CRUD and transaction-batch persistence; L5b",
-    "routers/roadmap": "milestone CRUD and goal lookup; moves to milestone_service in L4d",
-    "routers/simulation_scenarios": "simulation-scenario CRUD; L4d",
     "routers/transactions": "transaction and proposal reads and posting commits; L5a, where the capsule chain and the proposal queue meet",
 }
 

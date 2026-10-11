@@ -66,6 +66,7 @@ LAYERS: dict[str, int] = {
     "reconcile_service": 5,
     "report_service": 5,
     "simulation_service": 5,
+    "simulation_scenario_service": 5,
     "strategy_service": 5,
     # L6 - dependency runs UI -> workflow -> service; a workflow may use
     # anything below it to compose a request across features.

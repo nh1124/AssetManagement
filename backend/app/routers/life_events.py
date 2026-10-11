@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-import json
+from ..utils.contribution_schedule import parse_contribution_schedule
 from sqlalchemy.orm import Session
 from typing import Optional
 from .. import models, schemas
@@ -18,16 +18,6 @@ from ..services.cache_service import invalidate_client
 router = APIRouter(prefix="/life-events", tags=["life_events"])
 
 
-def _parse_contribution_schedule(raw: Optional[str]) -> list[dict]:
-    if not raw:
-        return []
-    try:
-        value = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=400, detail="Invalid contribution_schedule JSON") from exc
-    if not isinstance(value, list):
-        raise HTTPException(status_code=400, detail="contribution_schedule must be a list")
-    return [item for item in value if isinstance(item, dict)]
 
 @router.get("/")
 def get_life_events(
@@ -71,7 +61,7 @@ def get_dashboard(
         annual_return=annual_return,
         inflation=inflation,
         monthly_savings=monthly_savings,
-        contribution_schedule=_parse_contribution_schedule(contribution_schedule),
+        contribution_schedule=parse_contribution_schedule(contribution_schedule),
         allocation_mode=allocation_mode,
         roadmap_interval=roadmap_interval,
     )

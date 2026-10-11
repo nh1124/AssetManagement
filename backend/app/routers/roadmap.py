@@ -1,26 +1,21 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
+from ..utils.contribution_schedule import parse_contribution_schedule
 from sqlalchemy.orm import Session
 from typing import List
 import json
 from .. import models, schemas, database, dependencies
 from ..services.milestone_service import (
     apply_milestones_from_simulation,
+    create_milestone as create_milestone_row,
+    delete_milestone as delete_milestone_row,
+    list_milestones,
     preview_milestones_from_simulation,
     reset_milestones_from_annual_plan,
+    update_milestone as update_milestone_row,
 )
 from ..services.cache_service import get_or_set, invalidate_client
 
 
-def _parse_contribution_schedule(raw: str | None) -> list[dict]:
-    if not raw:
-        return []
-    try:
-        value = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise HTTPException(status_code=400, detail="Invalid contribution_schedule JSON") from exc
-    if not isinstance(value, list):
-        raise HTTPException(status_code=400, detail="contribution_schedule must be a list")
-    return [item for item in value if isinstance(item, dict)]
 from ..services.strategy_service import get_roadmap_projection
 
 router = APIRouter(
@@ -41,7 +36,7 @@ def read_roadmap_projection(
     db: Session = Depends(database.get_db),
     current_client: models.Client = Depends(dependencies.get_current_client),
 ):
-    parsed_schedule = _parse_contribution_schedule(contribution_schedule)
+    parsed_schedule = parse_contribution_schedule(contribution_schedule)
     key = (
         f"client:{current_client.id}:roadmap_projection:{years}:{annual_return}:"
         f"{inflation}:{monthly_savings}:{allocation_mode}:{json.dumps(parsed_schedule, sort_keys=True)}"
@@ -69,11 +64,7 @@ def read_milestones(
     db: Session = Depends(database.get_db),
     current_client: models.Client = Depends(dependencies.get_current_client)
 ):
-    query = db.query(models.Milestone).filter(models.Milestone.client_id == current_client.id)
-    if life_event_id is not None:
-        query = query.filter(models.Milestone.life_event_id == life_event_id)
-    milestones = query.order_by(models.Milestone.date, models.Milestone.id).offset(skip).limit(limit).all()
-    return milestones
+    return list_milestones(db, current_client.id, skip, limit, life_event_id)
 
 @router.post("/milestones", response_model=schemas.Milestone)
 def create_milestone(
@@ -81,18 +72,10 @@ def create_milestone(
     db: Session = Depends(database.get_db),
     current_client: models.Client = Depends(dependencies.get_current_client)
 ):
-    if milestone.life_event_id is not None:
-        event = db.query(models.LifeEvent).filter(
-            models.LifeEvent.id == milestone.life_event_id,
-            models.LifeEvent.client_id == current_client.id,
-        ).first()
-        if not event:
-            raise HTTPException(status_code=404, detail="Life event not found")
-
-    db_milestone = models.Milestone(**milestone.model_dump(), client_id=current_client.id)
-    db.add(db_milestone)
-    db.commit()
-    db.refresh(db_milestone)
+    try:
+        db_milestone = create_milestone_row(db, current_client.id, milestone)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     invalidate_client(current_client.id)
     return db_milestone
 
@@ -102,13 +85,10 @@ def reset_life_event_milestones_from_annual(
     db: Session = Depends(database.get_db),
     current_client: models.Client = Depends(dependencies.get_current_client)
 ):
-    event = db.query(models.LifeEvent).filter(
-        models.LifeEvent.id == life_event_id,
-        models.LifeEvent.client_id == current_client.id,
-    ).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Life event not found")
-    result = reset_milestones_from_annual_plan(db, current_client.id, life_event_id)
+    try:
+        result = reset_milestones_from_annual_plan(db, current_client.id, life_event_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     invalidate_client(current_client.id)
     return result
 
@@ -173,16 +153,9 @@ def update_milestone(
     db: Session = Depends(database.get_db),
     current_client: models.Client = Depends(dependencies.get_current_client),
 ):
-    milestone = db.query(models.Milestone).filter(
-        models.Milestone.id == milestone_id,
-        models.Milestone.client_id == current_client.id,
-    ).first()
-    if not milestone:
+    milestone = update_milestone_row(db, current_client.id, milestone_id, update)
+    if milestone is None:
         raise HTTPException(status_code=404, detail="Milestone not found")
-    for field, value in update.model_dump(exclude_none=True).items():
-        setattr(milestone, field, value)
-    db.commit()
-    db.refresh(milestone)
     invalidate_client(current_client.id)
     return milestone
 
@@ -193,10 +166,8 @@ def delete_milestone(
     db: Session = Depends(database.get_db),
     current_client: models.Client = Depends(dependencies.get_current_client)
 ):
-    db_milestone = db.query(models.Milestone).filter(models.Milestone.id == milestone_id, models.Milestone.client_id == current_client.id).first()
+    db_milestone = delete_milestone_row(db, current_client.id, milestone_id)
     if db_milestone is None:
         raise HTTPException(status_code=404, detail="Milestone not found")
-    db.delete(db_milestone)
-    db.commit()
     invalidate_client(current_client.id)
     return db_milestone

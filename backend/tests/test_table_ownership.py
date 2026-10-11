@@ -35,7 +35,7 @@ OWNERS: dict[str, str] = {
     "life_events": "routers/life_events",
     "milestones": "services/milestone_service",
     "simulation_configs": "services/simulation_config_service",
-    "simulation_scenarios": "routers/simulation_scenarios",
+    "simulation_scenarios": "services/simulation_scenario_service",
     "products": "routers/products",
     "exchange_rates": "services/fx_service",
     # Workflow owner for now; the layering plan moves ownership to a service
@@ -74,9 +74,6 @@ ALLOWED: dict[str, dict[str, str]] = {
     },
     "clients": {
         "main": "development seeding of the default client at startup",
-    },
-    "milestones": {
-        "routers/roadmap": "milestone CRUD lives in the router",
     },
     "monthly_actions": {
         "services/report_service": "the monthly report proposes actions",
