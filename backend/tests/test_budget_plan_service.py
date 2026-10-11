@@ -297,7 +297,6 @@ def test_data_import_backfills_plan_line_source_identity_for_legacy_payload() ->
             name="food",
             amount=10000,
             source="recurrence",
-            recurring_transaction_id=recurring.id,
         )
         assign_plan_line_identity(line)
         source_db.add(line)
@@ -308,6 +307,10 @@ def test_data_import_backfills_plan_line_source_identity_for_legacy_payload() ->
         legacy_line.pop("source_kind", None)
         legacy_line.pop("source_id", None)
         legacy_line.pop("identity_key", None)
+        # A payload from before the plan line's recurring link was dropped still
+        # carries it, and it is the only thing the import can rebuild source_id
+        # from. The export no longer writes the key, so the fixture supplies it.
+        legacy_line["recurring_transaction_id"] = recurring.id
         snapshot["version"] = 3
         snapshot["manifest"]["export_version"] = 3
         snapshot["manifest"]["checksums"]["monthly_plan_lines"] = "legacy"
@@ -1294,7 +1297,6 @@ def test_auto_cash_treatment_excludes_credit_expense_and_projects_card_payment()
             name="subscription",
             amount=10000,
             source="recurrence",
-            recurring_transaction_id=recurring.id,
             cash_treatment="auto",
         ))
         db.commit()

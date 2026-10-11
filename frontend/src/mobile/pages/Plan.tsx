@@ -437,7 +437,6 @@ function BudgetPanel({
             name: row.name,
             amount,
             source: 'manual',
-            recurring_transaction_id: null,
             is_active: true,
         };
     };

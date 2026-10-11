@@ -563,7 +563,6 @@ export type MonthlyPlanLinePayload = {
     source_id?: number | null;
     manual_override?: boolean;
     cash_treatment?: 'auto' | 'cash' | 'non_cash';
-    recurring_transaction_id?: number | null;
     is_active?: boolean;
     plan_id?: number | null;
 };

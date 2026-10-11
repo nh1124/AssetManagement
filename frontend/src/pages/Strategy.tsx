@@ -559,7 +559,6 @@ export default function Strategy() {
             source_kind: 'manual',
             source_id: null,
             manual_override: true,
-            recurring_transaction_id: null,
             cash_treatment: account.cash_treatment ?? 'auto',
             is_active: true,
         };
@@ -780,7 +779,6 @@ export default function Strategy() {
                 source_id: null,
                 manual_override: true,
                 cash_treatment: line.cash_treatment ?? 'auto',
-                recurring_transaction_id: null,
                 is_active: true,
             }]);
             await fetchBudgetSummary();
@@ -807,7 +805,6 @@ export default function Strategy() {
                 source_id: null,
                 manual_override: true,
                 cash_treatment: cashTreatment,
-                recurring_transaction_id: null,
                 is_active: true,
             }]);
         } catch (error) {
@@ -834,7 +831,6 @@ export default function Strategy() {
                 source_id: null,
                 manual_override: true,
                 cash_treatment: line.cash_treatment ?? 'auto',
-                recurring_transaction_id: null,
                 is_active: true,
             }]);
         } catch (error) {
@@ -914,7 +910,6 @@ export default function Strategy() {
                     amount,
                     source: 'manual',
                     cash_treatment: planLineForm.cash_treatment,
-                    recurring_transaction_id: null,
                     is_active: true,
                 }]);
                 setPlanLineForm({
@@ -960,7 +955,6 @@ export default function Strategy() {
                 variance: amount,
                 source: 'manual',
                 cash_treatment: planLineForm.cash_treatment,
-                recurring_transaction_id: recurringContext?.recurring_transaction_id ?? null,
                 recurring_amount: recurringContext?.recurring_amount ?? 0,
                 sync_status: recurringContext ? 'diff' : null,
                 is_active: true,

@@ -410,7 +410,6 @@ class MonthlyPlanLine(Base):
     identity_key = Column(String, default="", server_default="", nullable=False)
     manual_override = Column(Boolean, default=False, server_default="false", nullable=False)
     cash_treatment = Column(String, default="auto", server_default="auto", nullable=False)  # auto, cash, non_cash
-    recurring_transaction_id = Column(Integer, ForeignKey("recurring_transactions.id", ondelete="SET NULL"), nullable=True)
     is_active = Column(Boolean, default=True, server_default="true", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -431,7 +430,6 @@ class MonthlyPlanLine(Base):
     client = relationship("Client", back_populates="monthly_plan_lines")
     account = relationship("Account", foreign_keys=[account_id])
     source_account = relationship("Account", foreign_keys=[source_account_id])
-    recurring_transaction = relationship("RecurringTransaction", foreign_keys=[recurring_transaction_id])
     budget_plan = relationship("BudgetPlan", back_populates="plan_lines")
 
 class BudgetPlan(Base):

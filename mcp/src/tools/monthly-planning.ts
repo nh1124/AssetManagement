@@ -36,7 +36,6 @@ const monthlyPlanLinePayloadKeys = [
   "identity_key",
   "manual_override",
   "cash_treatment",
-  "recurring_transaction_id",
   "is_active",
 ] as const;
 
@@ -57,7 +56,6 @@ const monthlyPlanLineApiSchema = z
     identity_key: z.string().optional().describe("Stable source identity key"),
     manual_override: z.boolean().optional().describe("Whether this line manually overrides generated suggestions"),
     cash_treatment: cashTreatmentSchema.optional().describe("Cash-flow treatment"),
-    recurring_transaction_id: z.number().int().min(1).optional().describe("Linked recurring transaction ID"),
     is_active: z.boolean().optional().describe("Whether the line is active"),
   })
   .strict();

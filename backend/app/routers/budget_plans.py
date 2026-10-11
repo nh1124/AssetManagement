@@ -176,7 +176,6 @@ def copy_period_full_replace(
             source_id=src.source_id,
             manual_override=src.manual_override,
             cash_treatment=src.cash_treatment,
-            recurring_transaction_id=src.recurring_transaction_id,
             is_active=True,
         )
         assign_plan_line_identity(new_line)

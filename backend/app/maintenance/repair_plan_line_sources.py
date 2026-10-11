@@ -100,27 +100,6 @@ def infer_from_transactions(db: Session, line: models.MonthlyPlanLine) -> Source
     )
 
 
-def infer_from_recurring(db: Session, line: models.MonthlyPlanLine) -> SourceCandidate | None:
-    if not line.recurring_transaction_id:
-        return None
-    recurring = (
-        db.query(models.RecurringTransaction)
-        .filter(
-            models.RecurringTransaction.id == line.recurring_transaction_id,
-            models.RecurringTransaction.client_id == line.client_id,
-        )
-        .first()
-    )
-    if not recurring or not recurring.from_account_id:
-        return None
-    return SourceCandidate(
-        source_account_id=recurring.from_account_id,
-        amount=float(recurring.amount or 0.0),
-        reason="recurring",
-        evidence=f"recurring_id={recurring.id}",
-    )
-
-
 def infer_from_registry(db: Session, line: models.MonthlyPlanLine) -> SourceCandidate | None:
     if not line.account_id:
         return None
@@ -162,8 +141,7 @@ def infer_from_registry(db: Session, line: models.MonthlyPlanLine) -> SourceCand
 
 def candidate_for_line(db: Session, line: models.MonthlyPlanLine) -> SourceCandidate | None:
     return (
-        infer_from_recurring(db, line)
-        or infer_from_registry(db, line)
+        infer_from_registry(db, line)
         or infer_from_transactions(db, line)
     )
 

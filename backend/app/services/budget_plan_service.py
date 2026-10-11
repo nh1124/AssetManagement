@@ -68,7 +68,7 @@ def _serialize_plan_line(
         "identity_key": line.identity_key or plan_line_identity_key(line),
         "manual_override": bool(line.manual_override),
         "cash_treatment": line.cash_treatment or "auto",
-        "recurring_transaction_id": line.recurring_transaction_id,
+        "recurring_transaction_id": None,
         "sync_status": None,
     }
 

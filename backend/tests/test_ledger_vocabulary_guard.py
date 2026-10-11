@@ -6,6 +6,7 @@ pair. Each one was a second place where an entry said what it touched, and
 each could disagree with the legs. These tests fail if one comes back as a
 column, which is how it would come back: a model attribute is enough for
 reads and writes to spread again before anyone notices.
+This file guards names removed from models in the ledger and now the budget too.
 """
 
 from __future__ import annotations
@@ -35,6 +36,12 @@ def test_recurring_and_registry_do_not_name_a_ledger_type():
     # The budget keeps its own axis: line_type disagreed with the ledger type
     # on 53 of 68 entries, which is why it is a separate field.
     assert "line_type" in models.RegistryEntry.__table__.columns
+
+
+def test_plan_line_does_not_store_its_own_recurring_link():
+    assert "recurring_transaction_id" not in models.MonthlyPlanLine.__table__.columns
+    assert not hasattr(models.MonthlyPlanLine, "recurring_transaction_id")
+    assert "recurring_transaction_id" in models.Transaction.__table__.columns
 
 
 def _transaction_attribute_reads(path: pathlib.Path) -> list[str]:

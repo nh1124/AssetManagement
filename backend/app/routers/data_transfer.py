@@ -248,7 +248,6 @@ def _validate_import_payload(payload: ImportPayload) -> dict[str, Any]:
     check_ref("simulation_scenarios", "life_event_id", "life_events", required=True)
     check_ref("monthly_plan_lines", "account_id", "accounts")
     check_ref("monthly_plan_lines", "source_account_id", "accounts")
-    check_ref("monthly_plan_lines", "recurring_transaction_id", "recurring_transactions")
     check_ref("monthly_plan_lines", "plan_id", "budget_plans")
 
     journal_entries_by_transaction: dict[int, list[dict[str, Any]]] = {}
@@ -701,7 +700,6 @@ def export_client_data(
                         "identity_key",
                         "manual_override",
                         "cash_treatment",
-                        "recurring_transaction_id",
                         "plan_id",
                         "is_active",
                         "created_at",
@@ -1400,6 +1398,7 @@ def import_client_data(
                 target_id = account_map.get(target_id)
             account_id = account_map.get(item.get("account_id"))
             source_account_id = account_map.get(item.get("source_account_id"))
+            # Legacy payloads use this key only to preserve source_id; it is no longer stored.
             recurring_id = recurring_map.get(item.get("recurring_transaction_id"))
             source_kind = item.get("source_kind") or item.get("source") or "manual"
             if source_kind == "recurrence":
@@ -1444,7 +1443,6 @@ def import_client_data(
                 source_id=source_id,
                 manual_override=item.get("manual_override", False),
                 cash_treatment=item.get("cash_treatment") or "auto",
-                recurring_transaction_id=recurring_id,
                 plan_id=budget_plan_map.get(item.get("plan_id")),
                 is_active=item.get("is_active", True),
                 created_at=_parse_datetime(item.get("created_at")) or datetime.utcnow(),

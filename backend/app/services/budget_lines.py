@@ -48,9 +48,6 @@ def _line_source_kind(line: models.MonthlyPlanLine | dict) -> str:
             return "recurring"
         return explicit
     source = _line_attr(line, "source")
-    recurring_id = _line_attr(line, "recurring_transaction_id")
-    if recurring_id:
-        return "recurring"
     if source and source != "manual":
         if source == "recurrence":
             return "recurring"
@@ -65,9 +62,6 @@ def _line_source_id(line: models.MonthlyPlanLine | dict) -> int | None:
     explicit = _line_attr(line, "source_id")
     if explicit:
         return explicit
-    recurring_id = _line_attr(line, "recurring_transaction_id")
-    if recurring_id:
-        return recurring_id
     target_type = _line_attr(line, "target_type")
     target_id = _line_attr(line, "target_id")
     if target_type in {"capsule", "product"} and target_id:

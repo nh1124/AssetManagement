@@ -406,7 +406,6 @@ export interface MonthlyPlanLine {
         source?: string;
         entry_type?: string;
     }>;
-    recurring_transaction_id?: number | null;
     is_active?: boolean;
     source?: string;
     source_kind?: string;

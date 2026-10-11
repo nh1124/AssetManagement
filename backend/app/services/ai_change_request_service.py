@@ -77,7 +77,6 @@ MONTHLY_PLAN_LINE_FIELDS = [
     "identity_key",
     "manual_override",
     "cash_treatment",
-    "recurring_transaction_id",
     "is_active",
     "plan_id",
 ]

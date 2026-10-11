@@ -594,7 +594,6 @@ class MonthlyPlanLineBase(BaseModel):
     identity_key: str = ""
     manual_override: bool = False
     cash_treatment: MonthlyPlanCashTreatmentLiteral = "auto"
-    recurring_transaction_id: Optional[int] = None
     is_active: bool = True
     plan_id: Optional[int] = None
 
@@ -624,12 +623,13 @@ class MonthlyPlanLineUpdate(BaseModel):
     identity_key: Optional[str] = None
     manual_override: Optional[bool] = None
     cash_treatment: Optional[MonthlyPlanCashTreatmentLiteral] = None
-    recurring_transaction_id: Optional[int] = None
     is_active: Optional[bool] = None
     plan_id: Optional[int] = None
 
 
 class MonthlyPlanLine(MonthlyPlanLineBase):
+    # The registry entry supplies this link rather than a plan-line column.
+    recurring_transaction_id: Optional[int] = None
     id: int
     target_name: Optional[str] = None
     account_name: Optional[str] = None
