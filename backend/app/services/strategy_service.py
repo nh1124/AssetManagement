@@ -15,6 +15,11 @@ from .. import models
 from .ledger_valuation import calculate_account_valued_balance
 from .reporting_service import get_balance_sheet, get_net_worth_history
 
+# Every projection draws from this one seed, so a figure does not move when
+# nothing about the plan moved, and two scenarios can be read as differing by
+# the assumption that differs between them rather than by sampling noise.
+PROJECTION_SEED = 42
+
 
 def calculate_current_funded_and_weighted_return(event: models.LifeEvent, db: Optional[Session] = None) -> Tuple[float, float]:
     """Funded amount and weighted return from client-currency journal claims."""
@@ -306,6 +311,11 @@ def run_monte_carlo(
 ) -> dict:
     """
     Monte Carlo simulation for goal projection.
+
+    Draws from PROJECTION_SEED, so the same assumptions give the same answer and
+    two scenarios differ only by the assumption that differs between them. An
+    unseeded run made every comparison carry sampling noise of its own, and the
+    same goal reported a different probability each time the page was opened.
     """
     if years_remaining <= 0:
         return {
@@ -323,9 +333,10 @@ def run_monte_carlo(
     all_year_balances = np.zeros((n_simulations, n_years + 1))
     all_year_balances[:, 0] = current_funded
 
+    rng = np.random.default_rng(PROJECTION_SEED)
     annual_contribution = monthly_savings * 12
     for t in range(1, n_years + 1):
-        returns = np.random.normal(r_mean, r_std, n_simulations)
+        returns = rng.normal(r_mean, r_std, n_simulations)
         year_contribution = annual_contribution
         year_return_scale = 1.0
         if t == n_years and partial_year > 0:
@@ -811,7 +822,7 @@ def simulate_net_worth_forward(
     current_year = today.year
 
     n_simulations = 1200
-    rng = np.random.default_rng(42)
+    rng = np.random.default_rng(PROJECTION_SEED)
     balances = np.full(n_simulations, starting_net_worth, dtype=float)
     projection = [
         {
