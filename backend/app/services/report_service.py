@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from .. import models
 from ..domain.money import Money
 from .ledger_service import get_or_create_account, create_transaction
+from .fx_service import get_client_currency
 from .reporting_service import (
     get_balance_sheet,
     get_profit_loss,
@@ -333,14 +334,15 @@ def _apply_allocate_to_goal(
 
     cash_account = get_or_create_account(db, "cash", client_id, "asset", commit=False)
     savings_account = get_or_create_account(db, "savings", client_id, "asset", commit=False)
+    currency = get_client_currency(db, client_id)
 
     transaction = create_transaction(
         db,
         client_id=client_id,
         date=date.today(),
         description=f"Monthly action allocation {period}: {goal.name}",
-        amount_minor=Money.from_major(str(amount), "JPY").minor,
-        currency="JPY",
+        amount_minor=Money.from_major(str(amount), currency).minor,
+        currency=currency,
         from_account_id=cash_account.id,
         to_account_id=savings_account.id,
     )

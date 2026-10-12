@@ -12,6 +12,7 @@ from types import SimpleNamespace
 from .. import models
 from .budget_context import BudgetContext
 from .budget_lines import _plan_match_key
+from .fx_service import get_client_currency
 from .periods import period_to_range
 from .registry_service import (
     product_budget_active,
@@ -103,7 +104,7 @@ def _virtual_registry_entries(ctx: BudgetContext) -> list[SimpleNamespace]:
             name=product.name,
             entry_type="asset" if product.is_asset else "item",
             amount=product_unit_amount(product),
-            currency="JPY",
+            currency=get_client_currency(ctx.db, ctx.client_id),
             frequency="EveryNDays" if product.frequency_days and product.frequency_days > 0 else "Irregular",
             frequency_days=product.frequency_days or None,
             day_of_month=None,

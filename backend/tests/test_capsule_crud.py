@@ -12,6 +12,7 @@ from app.domain.errors import NotFound
 from app.routers import capsules as capsule_router
 from app.services import capsule_service, ledger_service
 from app.services.capsule_service import delete_capsule
+from app.services.fx_service import get_client_currency
 from app.workflows import capsule_workflow
 
 
@@ -66,10 +67,12 @@ def _transaction_rows(db):
 def test_delete_capsule_preserves_every_journal_entry_and_transaction_and_balances_books(db):
     capsule, cash, reserve = _capsule(db)
     capsule_id, account_id = capsule.id, reserve.id
+    currency = get_client_currency(db, 1)
     for amount, source, destination in [(500, cash.id, reserve.id), (75, reserve.id, cash.id)]:
         ledger_service.create_transaction(
             db, client_id=1, date=date(2026, 10, 11), description="Reserve transfer",
-            amount_minor=Money.from_major(str(amount), "JPY").minor, from_account_id=source, to_account_id=destination,
+            amount_minor=Money.from_major(str(amount), currency).minor, currency=currency,
+            from_account_id=source, to_account_id=destination,
         )
     db.commit()
     before_entries, before_transactions = _journal_rows(db), _transaction_rows(db)

@@ -235,7 +235,7 @@ class TransactionBase(BaseModel):
     date: date
     description: Optional[str] = ''
     amount: float
-    currency: str = 'JPY'
+    currency: str | None = None
     from_account_id: Optional[int] = None
     to_account_id: Optional[int] = None
     batch_id: Optional[int] = None
@@ -331,7 +331,7 @@ class QuickTemplateBase(BaseModel):
     template_kind: str
     description: Optional[str] = None
     category: Optional[str] = None
-    default_currency: str = "JPY"
+    default_currency: str | None = None
     default_from_account_id: Optional[int] = None
     default_to_account_id: Optional[int] = None
     config: dict[str, Any] = Field(default_factory=dict)
@@ -476,7 +476,7 @@ class RegistryEntryBase(BaseModel):
     entry_type: RegistryEntryTypeLiteral = "service"
     category: Optional[str] = None
     amount: float = 0.0
-    currency: str = "JPY"
+    currency: str | None = None
     frequency: RegistryFrequencyLiteral = "Monthly"
     frequency_days: Optional[int] = None
     day_of_month: int = 1
@@ -558,7 +558,7 @@ class AnalysisSummary(BaseModel):
 class RecurringTransactionBase(BaseModel):
     name: str
     amount: float
-    currency: str = "JPY"
+    currency: str | None = None
     from_account_id: Optional[int] = None
     to_account_id: Optional[int] = None
     frequency: Literal['Monthly', 'Yearly']

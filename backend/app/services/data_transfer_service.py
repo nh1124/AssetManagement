@@ -670,6 +670,7 @@ def import_client(
                 entry_type=item.get("entry_type") or "service",
                 category=item.get("category"),
                 amount=item.get("amount") or 0,
+                # Restore the backup's denomination; today's settings would rewrite history.
                 currency=item.get("currency") or "JPY",
                 frequency=item.get("frequency") or "Monthly",
                 frequency_days=item.get("frequency_days"),

@@ -10,12 +10,14 @@ try:
     from backend.app.database import Base
     from backend.app.services import capsule_service as capsule, ledger_service as ledger
     from backend.app.services.data_health_service import check_data_health
+    from backend.app.services.fx_service import get_client_currency
     from backend.app.routers.capsules import preview_for_transaction
 except ModuleNotFoundError:
     from app import models, schemas
     from app.database import Base
     from app.services import capsule_service as capsule, ledger_service as ledger
     from app.services.data_health_service import check_data_health
+    from app.services.fx_service import get_client_currency
     from app.routers.capsules import preview_for_transaction
 
 WHEN = date(2026, 10, 11)
@@ -147,13 +149,15 @@ def test_unbound_capsule_does_not_block_trigger(posting):
 def test_target_clamps_to_journal_balance(posting):
     db, _, cash, _, reserve, _ = posting
     _rule(posting)
+    currency = get_client_currency(db, 1)
     for amount in [4000, 1000]:
         ledger.create_transaction(
             db,
             client_id=1,
             date=WHEN,
             description="Existing savings",
-            amount_minor=Money.from_major(str(amount), "JPY").minor,
+            amount_minor=Money.from_major(str(amount), currency).minor,
+            currency=currency,
             from_account_id=cash.id,
             to_account_id=reserve.id,
         )

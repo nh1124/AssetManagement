@@ -12,6 +12,7 @@ from .. import models, schemas
 from ..domain.errors import Conflict, Invalid, NotFound, Refused
 from ..domain.money import Money
 from ..services import ai_change_request_store
+from ..services.fx_service import get_client_currency
 from ..services.ledger_service import (
     ensure_default_accounts,
     create_transaction,
@@ -108,6 +109,8 @@ def _diff(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
 
 def _validate_transaction_create(db: Session, client_id: int, payload: dict[str, Any]) -> dict[str, Any]:
     parsed = schemas.TransactionCreate(**payload)
+    if parsed.currency is None:
+        parsed.currency = get_client_currency(db, client_id)
     if parsed.amount <= 0:
         raise ValueError("Transaction amount must be positive")
 
@@ -170,6 +173,8 @@ def _preview_monthly_plan_lines_update(db: Session, client_id: int, target_ref: 
 
 def _preview_recurring_create(db: Session, client_id: int, payload: dict[str, Any]) -> dict[str, Any]:
     data = schemas.RecurringTransactionUpdate(**payload).model_dump(exclude_unset=True, mode="json")
+    if data.get("currency") is None:
+        data["currency"] = get_client_currency(db, client_id)
     if "amount" in data and data["amount"] is not None and data["amount"] <= 0:
         raise ValueError("Recurring transaction amount must be positive")
     _validate_account_refs(db, client_id, data)
@@ -194,6 +199,8 @@ def _preview_recurring_update(db: Session, client_id: int, target_ref: dict[str,
     if not recurring:
         raise ValueError("Recurring transaction not found")
     data = schemas.RecurringTransactionCreate(**payload).model_dump(mode="json")
+    if data["currency"] is None:
+        data["currency"] = recurring.currency
     if data["amount"] <= 0:
         raise ValueError("Recurring transaction amount must be positive")
     _validate_account_refs(db, client_id, data)
@@ -477,6 +484,8 @@ def _apply_dispatch(db: Session, client_id: int, row: models.AiChangeRequest) ->
     if (row.resource, row.action) == ("transactions", "create"):
         ensure_default_accounts(db, client_id=client_id, commit=False)
         data = schemas.TransactionCreate(**row.input_payload).model_dump()
+        if data["currency"] is None:
+            data["currency"] = get_client_currency(db, client_id)
         data["amount_minor"] = Money.from_major(str(data.pop("amount")), data["currency"]).minor
         legs = data.pop("legs", None)
         from_account_id = data.pop("from_account_id", None)

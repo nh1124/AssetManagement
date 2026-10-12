@@ -9,6 +9,7 @@ from app import models, schemas
 from app.database import Base
 from app.domain.errors import Invalid
 from app.services import capsule_service, ledger_service, registry_service
+from app.services.fx_service import get_client_currency
 from app.workflows import ledger_entry_workflow, product_workflow
 
 
@@ -100,8 +101,10 @@ def test_product_registry_read_finds_inactive_definition_and_scopes_detachment(d
 def test_transaction_read_prevents_removing_another_clients_entry(db):
     cash = ledger_service.create_account(db, 1, {"name": "Cash", "account_type": "asset"})
     expense = ledger_service.create_account(db, 1, {"name": "Supplies", "account_type": "expense"})
+    currency = get_client_currency(db, 1)
     transaction = ledger_service.create_transaction(
-        db, client_id=1, date=date(2026, 10, 11), description="Supplies", amount_minor=Money.from_major(str(100), "JPY").minor,
+        db, client_id=1, date=date(2026, 10, 11), description="Supplies",
+        amount_minor=Money.from_major(str(100), currency).minor, currency=currency,
         from_account_id=cash.id, to_account_id=expense.id,
     )
     db.commit()

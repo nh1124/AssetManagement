@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from ..domain.errors import Invalid
+from .fx_service import get_client_currency
 
 
 def _validate_account_reference(
@@ -51,6 +52,8 @@ def list_templates(
 def create_template(
     db: Session, client_id: int, data: dict, *, commit: bool = True,
 ) -> models.QuickTemplate:
+    if data.get("default_currency") is None:
+        data = {**data, "default_currency": get_client_currency(db, client_id)}
     _validate_account_reference(db, client_id, data.get("default_from_account_id"), "default_from")
     _validate_account_reference(db, client_id, data.get("default_to_account_id"), "default_to")
     template = models.QuickTemplate(**data, client_id=client_id)
@@ -69,6 +72,8 @@ def update_template(
     template = _get_template(db, client_id, template_id)
     if template is None:
         return None
+    if "default_currency" in data and data["default_currency"] is None:
+        data = {**data, "default_currency": template.default_currency}
     if "default_from_account_id" in data:
         _validate_account_reference(db, client_id, data["default_from_account_id"], "default_from")
     if "default_to_account_id" in data:

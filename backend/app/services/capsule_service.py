@@ -13,6 +13,7 @@ from ..domain.errors import Invalid, NotFound
 from ..domain.money import Money
 from . import ledger_service
 from .cache_service import invalidate_client
+from .fx_service import get_client_currency
 from .product_reserve_service import product_reserve_values
 
 
@@ -406,11 +407,13 @@ def capsule_transfer_specs(
     entries: Sequence[CapsuleEntry],
     description: str | None,
     amount: float,
-    currency: str = "JPY",
+    currency: str | None = None,
 ) -> list[CapsuleTransferSpec]:
     """Evaluate entries exposing account_id, debit and credit, whether posted journal entries or unsaved draft legs."""
     # Preview must not flush unrelated pending changes or attach its draft legs.
     with db.no_autoflush:
+        if currency is None:
+            currency = get_client_currency(db, client_id)
         accounts = {
             account.id: account
             for account in db.query(models.Account).filter(
@@ -575,7 +578,7 @@ def _resolve_rule_source_account_id(
 
 
 def _resolve_rule_amount(
-    rule: models.CapsuleRule, amount: float, *, currency: str = "JPY",
+    rule: models.CapsuleRule, amount: float, *, currency: str,
 ) -> float:
     """A percentage applies to the whole payment, not to the triggering leg.
 

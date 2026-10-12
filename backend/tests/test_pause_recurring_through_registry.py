@@ -57,7 +57,7 @@ def test_registry_sync_defaults_new_definition_to_auto_post_and_preserves_manual
     )
     db.add(entry)
     db.flush()
-    assert "auto_post" not in registry_to_recurring_data(entry)
+    assert "auto_post" not in registry_to_recurring_data(entry, currency=entry.currency)
     sync_recurring_from_registry(db, entry)
     recurring = db.get(models.RecurringTransaction, entry.source_recurring_transaction_id)
     assert recurring.auto_post is True

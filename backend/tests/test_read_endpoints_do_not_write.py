@@ -24,6 +24,7 @@ from app import models
 from app.database import Base, get_db
 from app.main import app
 from app.services.cache_service import invalidate_client
+from app.services.fx_service import get_client_currency
 from app.services.ledger_service import ensure_default_accounts, create_transaction
 from app.utils.jwt import create_access_token
 
@@ -126,9 +127,10 @@ def _seed(db, scenario, today):
     income = models.Account(client_id=1, name="Guard salary", account_type="revenue")
     db.add_all([cash, expense, income])
     db.flush()
-    create_transaction(db, client_id=1, date=today, amount_minor=Money.from_major(str(100000), "JPY").minor,
+    currency = get_client_currency(db, 1)
+    create_transaction(db, client_id=1, date=today, amount_minor=Money.from_major(str(100000), currency).minor, currency=currency,
                        description="Salary", from_account_id=income.id, to_account_id=cash.id)
-    lunch = create_transaction(db, client_id=1, date=today, amount_minor=Money.from_major(str(1200), "JPY").minor,
+    lunch = create_transaction(db, client_id=1, date=today, amount_minor=Money.from_major(str(1200), currency).minor, currency=currency,
                                description="Lunch", from_account_id=cash.id, to_account_id=expense.id)
     batch = models.TransactionBatch(client_id=1, label="Guard batch")
     db.add(batch)

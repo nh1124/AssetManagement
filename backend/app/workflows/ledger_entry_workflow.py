@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..domain.money import Money
 from ..services import ledger_service
+from ..services.fx_service import get_client_currency
 from ..services.capsule_service import apply_capsule_rules_for_transaction
 from .transaction_approval_workflow import approve_transaction_proposal
 
@@ -21,6 +22,8 @@ def record_entry(
     ledger_service.ensure_default_accounts(db, client_id=client_id, commit=commit)
 
     data = payload.model_dump()
+    if data["currency"] is None:
+        data["currency"] = get_client_currency(db, client_id)
     data["amount_minor"] = Money.from_major(str(data.pop("amount")), data["currency"]).minor
     legs = data.pop("legs", None)
     from_account_id = data.pop("from_account_id", None)

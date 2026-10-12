@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from ..domain.errors import Invalid
-from .fx_service import convert_amount
+from .fx_service import convert_amount, get_client_currency
 from .product_reserve_service import effective_budget_treatment
 from .periods import current_period_key
 from .schedule_rules import ensure_next_due_date
@@ -55,6 +55,8 @@ def list_entries(db: Session, client_id: int) -> list[models.RegistryEntry]:
 def create_entry(
     db: Session, client_id: int, data: dict, *, commit: bool = True,
 ) -> models.RegistryEntry:
+    if data.get("currency") is None:
+        data = {**data, "currency": get_client_currency(db, client_id)}
     validate_account_refs(db, client_id, data)
     entry = models.RegistryEntry(**data, client_id=client_id)
     db.add(entry)
@@ -78,6 +80,8 @@ def update_entry(
     ).first()
     if not entry:
         return None
+    if "currency" in data and data["currency"] is None:
+        data = {**data, "currency": entry.currency}
     validate_account_refs(db, client_id, data)
     for key, value in data.items():
         setattr(entry, key, value)
@@ -202,7 +206,8 @@ def sync_registry_from_product(db: Session, product: models.Product) -> models.R
     entry.entry_type = "asset" if product.is_asset else "item"
     entry.category = product.budget_account.name if product.budget_account else product.category
     entry.amount = product_unit_amount(product)
-    entry.currency = "JPY"
+    if entry.currency is None:
+        entry.currency = get_client_currency(db, product.client_id)
     entry.frequency = "EveryNDays" if product.frequency_days and product.frequency_days > 0 else "Irregular"
     entry.frequency_days = product.frequency_days or None
     entry.line_type = product_line_type(product)
@@ -226,7 +231,7 @@ def upsert_registry_from_recurring_payload(
     if recurring is not None and recurring.client_id != client_id:
         raise ValueError("Recurring transaction belongs to another client")
     defaults = {
-        "name": None, "amount": 0.0, "currency": "JPY",
+        "name": None, "amount": 0.0, "currency": None,
         "from_account_id": None, "to_account_id": None,
         "frequency": "Monthly", "day_of_month": 1, "month_of_year": None,
         "start_period": None, "end_period": None,
@@ -236,6 +241,8 @@ def upsert_registry_from_recurring_payload(
         key: payload.get(key, getattr(recurring, key) if recurring is not None else default)
         for key, default in defaults.items()
     }
+    if data["currency"] is None:
+        data["currency"] = recurring.currency if recurring is not None else get_client_currency(db, client_id)
     auto_post = payload.get("auto_post", recurring.auto_post if recurring is not None else True)
     entry = None
     if recurring is not None:
@@ -312,11 +319,11 @@ def linked_recurring_transactions(db: Session, entry: models.RegistryEntry) -> l
     return rows
 
 
-def registry_to_recurring_data(entry: models.RegistryEntry) -> dict:
+def registry_to_recurring_data(entry: models.RegistryEntry, *, currency: str) -> dict:
     return {
         "name": entry.name,
         "amount": entry.amount or 0.0,
-        "currency": entry.currency or "JPY",
+        "currency": currency,
         "from_account_id": entry.source_account_id,
         "to_account_id": entry.destination_account_id or entry.budget_account_id,
         "frequency": entry.frequency if entry.frequency in {"Monthly", "Yearly"} else "Monthly",
@@ -363,7 +370,8 @@ def sync_recurring_from_registry(db: Session, entry: models.RegistryEntry) -> No
         db.add(recurring)
         db.flush()
     entry.source_recurring_transaction_id = recurring.id
-    data = registry_to_recurring_data(entry)
+    currency = entry.currency if entry.currency is not None else get_client_currency(db, entry.client_id)
+    data = registry_to_recurring_data(entry, currency=currency)
     schedule_fields = {"frequency", "day_of_month", "month_of_year", "start_period"}
     schedule_changed = any(getattr(recurring, key, None) != data[key] for key in schedule_fields)
     for key, value in data.items():

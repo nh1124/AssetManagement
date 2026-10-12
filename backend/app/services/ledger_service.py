@@ -504,7 +504,9 @@ def create_transaction(
     for name in columns:
         if name not in models.Transaction.__table__.columns:
             raise TypeError(f"Unknown keyword {name!r} for table transactions")
-    Money(columns["amount_minor"], columns.get("currency", "JPY"))
+    if columns.get("currency") is None:
+        raise TypeError("Caller must state the denomination with a non-None 'currency'.")
+    Money(columns["amount_minor"], columns["currency"])
     transaction = models.Transaction(client_id=client_id, **columns)
     db.add(transaction)
     db.flush()
@@ -529,11 +531,13 @@ def propose_transaction(
     description: str,
     amount_minor: int,
     legs: Sequence,
-    currency: str = "JPY",
+    currency: str,
     origin_ref: dict | None = None,
     trigger_transaction_id: int | None = None,
     idempotency_key: str | None = None,
 ) -> models.TransactionProposal:
+    if currency is None:
+        raise TypeError("Caller must state the denomination with a non-None 'currency'.")
     Money(amount_minor, currency)
     proposed = [coerce_leg(leg, currency) for leg in legs]
     validate_legs(proposed, amount_minor)

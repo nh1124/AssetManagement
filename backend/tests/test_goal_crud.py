@@ -8,6 +8,7 @@ from sqlalchemy.orm import sessionmaker
 from app import models, schemas
 from app.database import Base
 from app.services import goal_service, ledger_service
+from app.services.fx_service import get_client_currency
 from app.workflows.goal_workflow import create_goal
 
 
@@ -62,9 +63,11 @@ def _journal_rows(db):
 
 def test_delete_goal_preserves_every_ledger_leg_and_transaction_and_balances_books(db):
     goal_id, capsule_id, account_id, income_id = _goal_with_capsule_account(db)
+    currency = get_client_currency(db, 1)
     ledger_service.create_transaction(
         db, client_id=1, date=date(2026, 10, 11), description="Fund goal",
-        amount_minor=Money.from_major(str(500), "JPY").minor, from_account_id=income_id, to_account_id=account_id,
+        amount_minor=Money.from_major(str(500), currency).minor, currency=currency,
+        from_account_id=income_id, to_account_id=account_id,
     )
     db.commit()
     # Zero holdings must not be mistaken for an account without journal history.

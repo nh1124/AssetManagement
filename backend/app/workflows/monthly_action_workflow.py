@@ -142,7 +142,7 @@ def _apply_add_recurring(db: Session, action: models.MonthlyAction) -> dict:
     recurring_payload = {
         "name": payload["name"],
         "amount": float(payload["amount"]),
-        "currency": payload.get("currency") or "JPY",
+        "currency": payload.get("currency"),
         "from_account_id": payload.get("from_account_id"),
         "to_account_id": payload.get("to_account_id"),
         "frequency": payload.get("frequency", "Monthly"),

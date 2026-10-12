@@ -11,12 +11,14 @@ from sqlalchemy.orm import sessionmaker
 try:
     from backend.app import models
     from backend.app.database import Base
+    from backend.app.services.fx_service import get_client_currency
     from backend.app.services.ledger_service import (
         Leg, approve_proposal, list_proposals, propose_transaction, reject_proposal,
     )
 except ModuleNotFoundError:
     from app import models  # type: ignore[no-redef]
     from app.database import Base  # type: ignore[no-redef]
+    from app.services.fx_service import get_client_currency
     from app.services.ledger_service import (  # type: ignore[no-redef]
         Leg, approve_proposal, list_proposals, propose_transaction, reject_proposal,
     )
@@ -89,7 +91,10 @@ def _propose(db, cash, capsule, **kwargs):
         ],
     }
     data.update(kwargs)
-    currency = data.get("currency", "JPY")
+    currency = data.get("currency")
+    if currency is None:
+        currency = get_client_currency(db, 1)
+    data["currency"] = currency
     data["amount_minor"] = Money.from_major(str(data.pop("amount")), currency).minor
     data["legs"] = [Leg(leg.account_id,
         Money.from_major(str(leg.debit), currency).minor,
@@ -239,13 +244,15 @@ def test_list_proposals_filters_status_origin_and_client_newest_first(posting):
     first = _propose(db, cash, capsule, idempotency_key="first")
     second = _propose(db, cash, capsule, origin="mcp", idempotency_key="second")
     third = _propose(db, cash, capsule, idempotency_key="third")
+    currency = get_client_currency(db, 2)
     propose_transaction(
         db,
         2,
         origin="capsule",
         date=date(2026, 10, 11),
         description="Other client's proposal",
-        amount_minor=Money.from_major(str(1000), "JPY").minor,
+        amount_minor=Money.from_major(str(1000), currency).minor,
+        currency=currency,
         legs=[
             Leg(
                 account_id=other_account.id,

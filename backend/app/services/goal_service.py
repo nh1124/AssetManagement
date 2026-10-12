@@ -15,6 +15,7 @@ from ..domain.errors import NotFound, Refused
 from .cache_service import invalidate_client
 from .capsule_service import apply_capsule_rules_for_transaction, capsule_balance
 from .ledger_service import create_transaction
+from .fx_service import get_client_currency
 from .strategy_service import (
     calculate_overall_goal_probability,
     generate_budget_from_goals,
@@ -120,13 +121,14 @@ def delete_goal(
 
     for cap in capsules_with_balance:
         bal = capsule_balance(db, cap)
+        currency = get_client_currency(db, client_id)
         tx = create_transaction(
             db,
             client_id=client_id,
             date=date.today(),
             description=f"Goal deleted – funds returned from Capsule: {cap.name}",
-            amount_minor=Money.from_major(str(bal), "JPY").minor,
-            currency="JPY",
+            amount_minor=Money.from_major(str(bal), currency).minor,
+            currency=currency,
             from_account_id=cap.account_id,
             to_account_id=transfer_account_id,
         )
