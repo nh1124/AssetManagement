@@ -855,6 +855,14 @@ export const getCapsules = async () => {
     return response.data;
 };
 
+export const contributeToCapsule = async (id: number, payload: {
+    amount: number;
+    from_account_id: number;
+}): Promise<unknown> => {
+    const response = await api.post(`/capsules/${id}/contribute`, payload);
+    return response.data;
+};
+
 export const createCapsule = async (capsule: any) => {
     const response = await api.post('/capsules/', capsule);
     return response.data;

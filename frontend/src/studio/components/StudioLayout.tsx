@@ -101,6 +101,12 @@ export default function StudioLayout() {
                         <h1 className="truncate text-sm font-semibold">{screen?.label ?? '設定'}</h1>
                     </div>
                     <div className="flex-1" />
+                    <NavLink
+                        to="/record"
+                        className="rounded-md bg-[var(--studio-accent)] px-3 py-2 text-xs font-medium text-[var(--studio-accent-text)] transition-opacity hover:opacity-90"
+                    >
+                        取引を記録
+                    </NavLink>
                     <button
                         onClick={logout}
                         className="rounded p-2 text-[var(--studio-text-muted)] transition-colors hover:bg-[var(--studio-accent-soft)] hover:text-[var(--studio-text)]"

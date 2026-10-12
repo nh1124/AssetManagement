@@ -2,6 +2,7 @@ import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-route
 import StudioLayout from './components/StudioLayout';
 import ScreenTabs from './components/ScreenTabs';
 import Pending from './components/Pending';
+import Record from './pages/Record';
 import { SETTINGS_PATH, STUDIO_HOME, STUDIO_SCREENS, type StudioScreen } from './navigation';
 import './theme.css';
 
@@ -47,6 +48,7 @@ export default function StudioApp() {
             <Routes>
                 <Route element={<StudioLayout />}>
                     <Route index element={<Navigate to={STUDIO_HOME} replace />} />
+                    <Route path="record" element={<Record />} />
                     {STUDIO_SCREENS.map((screen) => (
                         <Route key={screen.path} path={screen.path}>
                             <Route index element={<ScreenShell screen={screen} />} />
