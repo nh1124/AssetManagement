@@ -13,6 +13,11 @@ import Ai from './pages/automation/Ai';
 import Approvals from './pages/automation/Approvals';
 import Audit from './pages/automation/Audit';
 import DataHealth from './pages/debug/DataHealth';
+import DatabaseAccounts from './pages/db/Accounts';
+import Fx from './pages/db/Fx';
+import Definitions from './pages/db/Definitions';
+import Products from './pages/db/Products';
+import Settings from './pages/Settings';
 import { SETTINGS_PATH, STUDIO_HOME, STUDIO_SCREENS, type StudioScreen } from './navigation';
 import './theme.css';
 
@@ -35,6 +40,15 @@ const BUILT: Record<string, { index: ReactElement; tabs?: Record<string, ReactEl
     'automation/approvals': { index: <Approvals /> },
     'automation/audit': { index: <Audit /> },
     'debug/data-health': { index: <DataHealth /> },
+    'db/accounts': { index: <DatabaseAccounts /> },
+    'db/fx': { index: <Fx /> },
+    'db/definitions': {
+        index: <Definitions />,
+        tabs: { income: <Definitions tab="income" />, repayment: <Definitions tab="repayment" />, allocation: <Definitions tab="allocation" /> },
+    },
+    'db/fixed-assets': { index: <Products assets /> },
+    'db/consumables': { index: <Products assets={false} /> },
+    [SETTINGS_PATH]: { index: <Settings /> },
 };
 
 /** What each unbuilt screen will hold, and which wave fills it. */
@@ -43,11 +57,6 @@ const PENDING_NOTES: Record<string, { wave: string; note: string }> = {
     flows: { wave: 'W2', note: '対象月の収入と支出を分類ごとに。' },
     budget: { wave: 'W4', note: '月末計画と照合済み実績の差、行動の記録。' },
     goals: { wave: 'W5', note: '資産推移、ゴール案の比較と切り替え。' },
-    'db/accounts': { wave: 'W6', note: '口座と勘定科目の一覧・編集。' },
-    'db/fx': { wave: 'W6', note: '為替レートの登録と自動更新。' },
-    'db/definitions': { wave: 'W6', note: '継続支出・収入・返済・配分の定義（registry）。' },
-    'db/fixed-assets': { wave: 'W6', note: '固定資産と更新費の積立。' },
-    'db/consumables': { wave: 'W6', note: '消耗品の単価と購入周期。' },
 };
 
 function PendingScreen({ screen }: { screen: StudioScreen }) {
@@ -100,11 +109,7 @@ export default function StudioApp() {
                     })}
                     <Route
                         path={SETTINGS_PATH}
-                        element={
-                            <Pending wave="W6">
-                                設定。クライアント、通貨、MFA、データの入出力。
-                            </Pending>
-                        }
+                        element={BUILT[SETTINGS_PATH].index}
                     />
                     <Route path="*" element={<Navigate to={STUDIO_HOME} replace />} />
                 </Route>
