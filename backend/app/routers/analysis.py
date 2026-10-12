@@ -181,3 +181,32 @@ def get_net_worth_history(
         300,
         lambda: reporting_get_net_worth_history(db, client_id=current_client.id, months=months),
     )
+
+
+@router.get("/reconcile")
+def check_reconcile(
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    # Retain the HTTP contract for existing clients after removing the cache.
+    discrepancies = []
+    return {
+        "status": "ok" if not discrepancies else "discrepancies_found",
+        "discrepancy_count": len(discrepancies),
+        "discrepancies": discrepancies,
+    }
+
+
+@router.post("/reconcile/fix")
+def fix_reconcile(
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    # There is no stored balance left to repair.
+    fixed = []
+    return {
+        "status": "fixed",
+        "fixed_count": len(fixed),
+        "fixed_accounts": fixed,
+    }
+
