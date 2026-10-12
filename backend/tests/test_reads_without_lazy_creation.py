@@ -11,6 +11,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app import models
+from app.domain.journal import Leg
 from app.database import Base, get_db
 from app.main import app
 from app.services.budget_context import BudgetContext
@@ -260,11 +261,15 @@ def test_credit_settlement_without_plan_keeps_posted_activity(database):
 def test_capsule_list_computes_balance_without_updating_cache(database):
     with database() as db:
         cash = models.Account(client_id=1, name="Custom cash", account_type="asset")
+        source = models.Account(client_id=1, name="Source", account_type="asset")
         capsule = models.Capsule(client_id=1, name="Reserve", current_balance_minor=999,
                                  target_amount_minor=1000, monthly_contribution_minor=0)
-        db.add_all([cash, capsule])
+        db.add_all([cash, source, capsule])
         db.flush()
         db.add(models.CapsuleHolding(capsule_id=capsule.id, account_id=cash.id, held_amount_minor=250))
+        create_transaction(db, client_id=1, date=date(2026, 10, 12), description="Attributed reserve",
+                           amount_minor=250, currency="JPY",
+                           legs=[Leg(cash.id, debit=250, capsule_id=capsule.id), Leg(source.id, credit=250)])
         db.commit()
         capsule_id = capsule.id
     response = request("GET", "/capsules/")

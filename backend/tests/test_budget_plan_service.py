@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from app.services.money_storage import to_minor
+from app.domain.journal import Leg
+from app.services.ledger_service import create_transaction
 
 
 from backend.app.domain.money import Money
@@ -821,7 +823,7 @@ def test_db_rejects_duplicate_active_plan_line_identity() -> None:
         db.close()
 
 
-def test_capsule_allocation_actual_uses_current_holding_balance() -> None:
+def test_capsule_allocation_actual_uses_current_journal_claim() -> None:
     db = _session()
     try:
         client = models.Client(id=1, name="test", general_settings={}, ai_config={})
@@ -837,7 +839,12 @@ def test_capsule_allocation_actual_uses_current_holding_balance() -> None:
         )
         db.add(capsule)
         db.flush()
-        db.add(models.CapsuleHolding(capsule_id=capsule.id, account_id=account.id, held_amount_minor=to_minor(120000, "JPY")))
+        source = models.Account(client_id=1, name="source", account_type="asset")
+        db.add(source)
+        db.flush()
+        create_transaction(db, client_id=1, date=date(2026, 5, 1), description="Reserve",
+                           amount_minor=120000, currency="JPY",
+                           legs=[Leg(account.id, debit=120000, capsule_id=capsule.id), Leg(source.id, credit=120000)])
         db.add(models.MonthlyPlanLine(
             client_id=1,
             target_period="2026-05",

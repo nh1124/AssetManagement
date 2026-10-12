@@ -129,28 +129,25 @@ def test_delete_capsule_cascades_rules_and_holdings_but_keeps_account_without_hi
     assert db.query(models.Transaction).count() == db.query(models.JournalEntry).count() == 0
 
 
-def test_contribute_writes_only_holdings_neither_posted_transaction_nor_proposal_and_no_legs(db):
-    capsule, cash, _ = _capsule(db)
+def test_contribute_posts_attributed_transfers_clamps_and_keeps_cache_untouched(db):
+    capsule, cash, reserve = _capsule(db)
     capsule_id, cash_id = capsule.id, cash.id
     result = capsule_workflow.contribute(db, 1, capsule_id, amount=300, from_account_id=cash_id)
     assert result == {"status": "ok", "amount": 300, "new_balance": 300}
-    holding = db.query(models.CapsuleHolding).one()
-    assert (holding.capsule_id, holding.account_id, holding.held_amount, holding.note) == (
-        capsule_id, cash_id, 300, "Manual contribution",
-    )
-    # The loaded empty relationship keeps the first contribution's cache at zero.
-    assert db.get(models.Capsule, capsule_id).current_balance == 0
+    assert db.get(models.Capsule, capsule_id).current_balance_minor == 123
     result = capsule_workflow.contribute(db, 1, capsule_id, amount=300, from_account_id=cash_id)
     assert result == {"status": "ok", "amount": 200, "new_balance": 500}
-    assert db.get(models.Capsule, capsule_id).current_balance == 500
-    result = capsule_workflow.contribute(db, 1, capsule_id, amount=10, from_account_id=cash_id)
-    assert result == {
+    assert db.get(models.Capsule, capsule_id).current_balance_minor == 123
+    assert capsule_workflow.contribute(db, 1, capsule_id, amount=10, from_account_id=cash_id) == {
         "status": "skipped", "message": "Capsule target already reached", "amount": 0.0, "new_balance": 500,
     }
-    assert db.query(models.CapsuleHolding).one().held_amount == 500
-    for model in (models.Transaction, models.TransactionProposal, models.JournalEntry):
-        assert db.query(model).count() == 0
-    assert [calculate_account_valued_balance(db, a) for a in db.query(models.Account)] == [0, 0]
+    assert db.query(models.CapsuleHolding).count() == db.query(models.TransactionProposal).count() == 0
+    assert db.query(models.Transaction).count() == 2
+    assert db.query(models.JournalEntry).count() == 4
+    for leg in db.query(models.JournalEntry):
+        assert leg.capsule_id == (capsule_id if leg.account_id == reserve.id else None)
+    assert calculate_account_valued_balance(db, cash) == -500
+    assert calculate_account_valued_balance(db, reserve) == 500
 
 
 def test_rule_crud_rejects_other_clients_capsule_and_keeps_attachment_on_partial_update(db):
@@ -206,7 +203,7 @@ def test_holding_crud_replaces_existing_claim_and_leaves_current_balance_untouch
         assert db.query(model).count() == 0
 
 
-def test_capsule_crud_clamps_inputs_ignores_balance_patch_and_read_preserves_holdings_cache(db):
+def test_capsule_crud_clamps_inputs_ignores_balance_patch_and_holdings(db):
     payload = schemas.CapsuleCreate(name="Manual", target_amount=-10, monthly_contribution=-5, current_balance=999)
     capsule = capsule_service.create_capsule(db, 1, payload)
     capsule_id = capsule.id
@@ -219,12 +216,12 @@ def test_capsule_crud_clamps_inputs_ignores_balance_patch_and_read_preserves_hol
         target_amount=-1, monthly_contribution=None, current_balance=999,
         capsule_type=None, target_amount_source=None, monthly_contribution_source=None,
     ))
-    assert (updated.target_amount, updated.monthly_contribution, updated.current_balance) == (0, 0, 75)
+    assert (updated.target_amount, updated.monthly_contribution, updated.current_balance_minor) == (0, 0, 0)
     assert (updated.capsule_type, updated.target_amount_source, updated.monthly_contribution_source) == ("manual", "manual", "manual")
     updated.current_balance_minor = 1
     db.commit()
     details = capsule_service.list_capsule_details(db, 1)
-    assert details[0]["current_balance"] == 75
+    assert details[0]["current_balance"] == 0
     assert not db.new and not db.dirty and not db.deleted
     db.rollback()
     assert db.get(models.Capsule, capsule_id).current_balance == 1
@@ -325,7 +322,7 @@ def test_list_capsule_details_neither_flushes_nor_commits(db, monkeypatch):
 
     monkeypatch.setattr(db, "commit", unexpected_write)
     monkeypatch.setattr(db, "flush", unexpected_write)
-    assert capsule_service.list_capsule_details(db, 1)[0]["current_balance"] == 20
+    assert capsule_service.list_capsule_details(db, 1)[0]["current_balance"] == 0
     assert not db.new and not db.dirty and not db.deleted
     assert _snapshot(db) == before
 

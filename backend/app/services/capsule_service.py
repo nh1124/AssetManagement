@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import ROUND_HALF_UP
 from fractions import Fraction
 from typing import Protocol, Sequence
@@ -19,9 +19,9 @@ from .fx_service import get_client_currency
 from .product_reserve_service import product_reserve_values
 
 
-# Holdings-based balances and their cache are retired by capsule_design_review.md §7.6 (H6).
 def capsule_balance(db: Session, capsule: models.Capsule) -> float:
-    return sum(h.held_amount for h in capsule.holdings)
+    currency = money_client_currency(db, capsule.client_id)
+    return Money(claimed_minor(db, capsule.client_id, capsule.id).get(currency, 0), currency).to_float()
 
 
 def remaining_target(db: Session, capsule: models.Capsule) -> float:
@@ -82,8 +82,6 @@ def create_capsule(
         name=payload.name,
         target_amount_minor=to_minor(max(0.0, payload.target_amount or 0.0), money_client_currency(db, client_id)),
         monthly_contribution_minor=to_minor(max(0.0, payload.monthly_contribution or 0.0), money_client_currency(db, client_id)),
-        # This cache column is slated for removal in capsule_design_review.md §7.6.
-        current_balance_minor=to_minor(0.0, money_client_currency(db, client_id)),
         account_id=payload.account_id,
         auto_post=payload.auto_post,
         capsule_type=payload.capsule_type or "manual",
@@ -113,8 +111,6 @@ def update_capsule(
             setattr(capsule, key, value or "manual")
         else:
             setattr(capsule, key, value)
-    # Holdings-based cache refresh is retired by capsule_design_review.md §7.6 (H6).
-    capsule.current_balance_minor = to_minor(capsule_balance(db, capsule), money_client_currency(db, capsule.client_id))
     _finish_write(db, client_id, capsule, commit=commit)
     return capsule
 
@@ -411,7 +407,7 @@ def delete_holding(
     return True
 
 
-# Legacy contributions still write claims until capsule_design_review.md §7.6 (H6).
+# Legacy holdings remain writable until F2b; they do not create journal claims.
 def upsert_capsule_holding(
     db: Session,
     capsule: models.Capsule,
@@ -436,7 +432,6 @@ def upsert_capsule_holding(
         )
         db.add(holding)
     db.flush()
-    capsule.current_balance_minor = to_minor(capsule_balance(db, capsule), money_client_currency(db, capsule.client_id))
     return holding
 
 
@@ -509,7 +504,6 @@ def create_capsule_for_goal(db: Session, client_id: int, goal: models.LifeEvent)
         name=goal.name,
         target_amount_minor=to_minor(max(0.0, goal.target_amount or 0.0), money_client_currency(db, client_id)),
         monthly_contribution_minor=to_minor(0.0, money_client_currency(db, client_id)),
-        current_balance_minor=to_minor(0.0, money_client_currency(db, client_id)),
         account_id=None,
         capsule_type="life_event",
         target_amount_source="life_event",
@@ -570,44 +564,34 @@ def _capsule_proposals(db: Session, client_id: int, capsule_id: int, status: str
 def claimed_minor(
     db: Session, client_id: int, capsule_id: int, account_id: int | None = None,
 ) -> dict[str, int]:
-    """Posted attributed movement, from the journal, per currency in minor units.
+    """Net attributed journal movements, per currency in integer minor units.
 
-    A transfer's operating source is not also a capsule claim. With no account
-    filter, sum the accounts reservations have funded (their recorded debit
-    destinations), independently of today's editable plan. F2 adds the missing
-    release attribution; this wave only has attributed reservation movements.
+    Credits release the earmark by subtracting from debits. Neither proposals
+    nor the current funding plan determine which recorded movements belong:
+    only the leg itself says so, which is why an account's balance is not a
+    claim and two capsules can share one account.
 
-    Per currency, and never totalled: a reservation triggered by a dollar
+    Per currency, and never totalled. A reservation triggered by a dollar
     payment is counted in cents, and adding those to yen is exactly the
     operation B5 removed from the account balance. Callers decide what to do
     with a currency they did not expect.
     """
     with db.no_autoflush:
-        proposals = _capsule_proposals(db, client_id, capsule_id, "posted").filter(
-            models.TransactionProposal.posted_transaction_id.is_not(None),
-        ).all()
-        if not proposals:
-            return {}
-        account_ids = {account_id} if account_id is not None else {
-            leg["account_id"] for proposal in proposals for leg in proposal.legs
-            if leg["debit"] > 0
-        }
-        if not account_ids:
-            return {}
-        rows = db.query(
+        query = db.query(
             models.Transaction.currency,
-            func.coalesce(func.sum(
-                models.JournalEntry.debit_minor - models.JournalEntry.credit_minor,
-            ), 0),
+            func.sum(models.JournalEntry.debit_minor - models.JournalEntry.credit_minor),
         ).join(
             models.Transaction, models.Transaction.id == models.JournalEntry.transaction_id,
+        ).join(
+            models.Capsule, models.Capsule.id == models.JournalEntry.capsule_id,
         ).filter(
             models.Transaction.client_id == client_id,
-            models.JournalEntry.transaction_id.in_(
-                {p.posted_transaction_id for p in proposals},
-            ),
-            models.JournalEntry.account_id.in_(account_ids),
-        ).group_by(models.Transaction.currency).all()
+            models.Capsule.client_id == client_id,
+            models.JournalEntry.capsule_id == capsule_id,
+        )
+        if account_id is not None:
+            query = query.filter(models.JournalEntry.account_id == account_id)
+        rows = query.group_by(models.Transaction.currency).all()
         return {currency: int(total) for currency, total in rows if total}
 
 
@@ -770,6 +754,8 @@ def apply_capsule_rules_for_transaction(
         legs = ledger_service.simple_legs(
             amount_minor, spec.source_account_id, spec.destination_account_id,
         )
+        # Both automatic posting and later approval use these stored proposal legs.
+        legs[0] = replace(legs[0], capsule_id=spec.capsule_id)
         columns = dict(
             date=transaction.date,
             description=f"Capsule reservation: {spec.capsule_name}",

@@ -1,6 +1,8 @@
 """Settlement forecasts use the selected plan's remaining card spending."""
 
 from app.services.money_storage import to_minor
+from app.domain.journal import Leg
+from app.services.ledger_service import create_transaction
 from backend.app.domain.money import Money
 
 from datetime import date
@@ -139,7 +141,12 @@ def test_capsule_allocation_subtracts_month_movement_not_balance(card_plan, monk
     capsule = models.Capsule(client_id=1, name="reserve", account_id=investment.id, current_balance_minor=to_minor(20000, "JPY"))
     db.add(capsule)
     db.flush()
-    db.add(models.CapsuleHolding(capsule_id=capsule.id, account_id=investment.id, held_amount_minor=to_minor(20000, "JPY")))
+    source = models.Account(client_id=1, name="cash", account_type="asset")
+    db.add(source)
+    db.flush()
+    create_transaction(db, client_id=1, date=date(2026, 9, 1), description="Previous reservation",
+                       amount_minor=20000, currency="JPY",
+                       legs=[Leg(investment.id, debit=20000, capsule_id=capsule.id), Leg(source.id, credit=20000)])
     plan = models.MonthlyPlanLine(
         client_id=1, plan_id=resolve_budget_plan_id(db, 1), target_period="2026-10", line_type="allocation",
         target_type="capsule", target_id=capsule.id, account_id=None,
@@ -148,7 +155,7 @@ def test_capsule_allocation_subtracts_month_movement_not_balance(card_plan, monk
     tx = models.Transaction(client_id=1, date=date(2026, 10, 11), description="investment", amount_minor=Money.from_major(str(4000), "JPY").minor, currency="JPY")
     db.add_all([plan, tx])
     db.flush()
-    process_transaction(db, tx, from_account_id=card.id, to_account_id=investment.id)
+    process_transaction(db, tx, legs=[Leg(investment.id, debit=4000, capsule_id=capsule.id), Leg(card.id, credit=4000)])
     db.commit()
     ctx = BudgetContext(db, 1)
     assert budget_actuals.actual_for_plan_line(ctx, plan, "2026-10") > 4000

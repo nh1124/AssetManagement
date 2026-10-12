@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from app.services.money_storage import to_minor
+from app.services.ledger_service import create_transaction
+from app.domain.journal import Leg
 
 
 from backend.app.domain.money import Money
@@ -94,15 +96,15 @@ def test_logical_balance_follows_the_plan_and_ignores_the_recurring_definition()
         )
         db.flush()
         _post_opening_balances(db, [(cash, 700000), (bank, 300000), (credit, 100000)])
-        db.add(
-            models.Capsule(
-                client_id=1,
-                name="Emergency",
-                target_amount_minor=to_minor(100000, "JPY"),
-                monthly_contribution_minor=to_minor(10000, "JPY"),
-                current_balance_minor=to_minor(25000, "JPY"),
-            )
+        emergency = models.Capsule(
+            client_id=1, name="Emergency", target_amount_minor=100000,
+            monthly_contribution_minor=10000, current_balance_minor=25000,
         )
+        db.add(emergency)
+        db.flush()
+        create_transaction(db, client_id=1, date=date.today(), description="Emergency reserve",
+                           amount_minor=25000, currency="JPY",
+                           legs=[Leg(savings.id, debit=25000, capsule_id=emergency.id), Leg(cash.id, credit=25000)])
         rent = models.Account(client_id=1, name="rent", account_type="expense")
         db.add(rent)
         db.flush()

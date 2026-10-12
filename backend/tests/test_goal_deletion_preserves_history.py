@@ -14,12 +14,14 @@ from sqlalchemy.orm import sessionmaker
 try:
     from backend.app import models
     from backend.app.database import Base
+    from backend.app.domain.journal import Leg
     from backend.app.domain.errors import Refused
     from backend.app.routers.life_events import delete_life_event
     from backend.app.services import ledger_service
 except ModuleNotFoundError:
     from app import models  # type: ignore[no-redef]
     from app.database import Base  # type: ignore[no-redef]
+    from app.domain.journal import Leg
     from app.domain.errors import Refused  # type: ignore[no-redef]
     from app.routers.life_events import delete_life_event  # type: ignore[no-redef]
     from app.services import ledger_service  # type: ignore[no-redef]
@@ -35,7 +37,7 @@ def _session():
     )()
 
 
-def _setup(db, *, held_amount=0):
+def _setup(db, *, claimed_amount=0):
     client = models.Client(
         id=1,
         name="goal-deletion-test",
@@ -81,12 +83,12 @@ def _setup(db, *, held_amount=0):
     )
     db.add(capsule)
     db.flush()
-    if held_amount:
-        db.add(models.CapsuleHolding(
-            capsule_id=capsule.id,
-            account_id=earmarked.id,
-            held_amount_minor=to_minor(held_amount, "JPY"),
-        ))
+    if claimed_amount:
+        ledger_service.create_transaction(
+            db, client_id=client.id, date=date(2026, 10, 11), description="Reserve for goal",
+            amount_minor=claimed_amount, currency="JPY",
+            legs=[Leg(earmarked.id, debit=claimed_amount, capsule_id=capsule.id), Leg(income.id, credit=claimed_amount)],
+        )
     db.commit()
     return client, goal, earmarked, income, destination
 
@@ -159,10 +161,10 @@ def test_goal_deletion_removes_empty_earmarked_account():
         db.close()
 
 
-def test_goal_deletion_requires_destination_for_capsule_holdings():
+def test_goal_deletion_requires_destination_for_capsule_claim():
     db = _session()
     try:
-        client, goal, _, _, _ = _setup(db, held_amount=500)
+        client, goal, _, _, _ = _setup(db, claimed_amount=500)
 
         with pytest.raises(Refused) as exc_info:
             delete_life_event(
@@ -175,16 +177,16 @@ def test_goal_deletion_requires_destination_for_capsule_holdings():
         assert exc_info.value.status_code == 422
         assert str(exc_info.value) == "transfer_account_id is required because one or more capsules have a non-zero balance."
         assert db.get(models.LifeEvent, goal.id) is not None
-        assert db.query(models.CapsuleHolding).one().held_amount == 500
-        assert db.query(models.JournalEntry).count() == 0
+        assert db.query(models.JournalEntry).filter(models.JournalEntry.capsule_id.is_not(None)).one().debit_minor == 500
+        assert db.query(models.JournalEntry).count() == 2
     finally:
         db.close()
 
 
-def test_goal_deletion_transfers_capsule_holdings():
+def test_goal_deletion_transfers_capsule_claim():
     db = _session()
     try:
-        client, goal, _, _, destination = _setup(db, held_amount=500)
+        client, goal, _, _, destination = _setup(db, claimed_amount=500)
         destination_id = destination.id
 
         delete_life_event(
@@ -195,13 +197,13 @@ def test_goal_deletion_transfers_capsule_holdings():
         )
         db.expire_all()
 
-        transaction = db.query(models.Transaction).one()
+        transaction = db.query(models.Transaction).filter(models.Transaction.description.like("Goal deleted%")).one()
         assert transaction.description == "Goal deleted – funds returned from Capsule: Emergency fund"
         _assert_transactions_balance(db)
         entries = db.query(models.JournalEntry).filter_by(
             account_id=destination_id,
         ).all()
         assert sum(entry.debit for entry in entries) - sum(entry.credit for entry in entries) == 500
-        assert db.query(models.JournalEntry).count() == 2
+        assert db.query(models.JournalEntry).count() == 4
     finally:
         db.close()

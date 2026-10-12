@@ -9,9 +9,9 @@ from app import models
 from app.database import Base
 
 
-# F1b moves the share declaration onto the plan and adds a rule destination.
-# Keep the complete schema pinned, including both new intent columns.
-EXPECTED_METADATA_SHA256 = "5377ce8e598c6efdf409dfa09baeb4b12613c15cab64cac041a6f93bd0e88a3c"
+# F2a adds the nullable, indexed capsule attribution FK on journal legs.
+# Keep the complete schema pinned, including its ON DELETE SET NULL behavior.
+EXPECTED_METADATA_SHA256 = "c1207a50b36e911b743b28325eaa29f519af3408edb014bac96f5fcccf8ef7a5"
 
 MODEL_NAMES = (
     "Client", "ClientMfaSetting", "ClientRecoveryCode",
@@ -90,7 +90,7 @@ def _metadata_snapshot():
 def test_metadata_matches_the_minor_unit_schema():
     snapshot = _metadata_snapshot()
     assert len(snapshot["table_names"]) == 28
-    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 359
+    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 360
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == EXPECTED_METADATA_SHA256
 

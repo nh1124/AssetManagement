@@ -26,7 +26,7 @@ from ..domain.transfer import (
 from .data_health_service import check_data_health
 from .budget_lines import assign_plan_line_identity
 from .cache_service import invalidate_client
-from .capsule_service import create_capsule_for_goal
+from .capsule_service import capsule_balance, create_capsule_for_goal
 from .registry_service import account_entry_type, account_line_type
 
 
@@ -269,7 +269,7 @@ def export_client(db: Session, client: models.Client) -> dict:
                 .all()
             ],
             "journal_entries": [
-                row_fields(entry, ["id", "transaction_id", "account_id", "debit", "credit", "memo", "sort_order"])
+                row_fields(entry, ["id", "transaction_id", "account_id", "capsule_id", "debit", "credit", "memo", "sort_order"])
                 for entry in db.query(models.JournalEntry)
                 .filter(models.JournalEntry.transaction_id.in_(tx_ids or [-1]))
                 .order_by(models.JournalEntry.id)
@@ -387,22 +387,14 @@ def export_client(db: Session, client: models.Client) -> dict:
                 .all()
             ],
             "capsules": [
-                row_fields(
-                    capsule,
-                    [
-                        "id",
-                        "name",
-                        "target_amount",
-                        "monthly_contribution",
-                        "current_balance",
-                        "account_id",
-                        "life_event_id",
-                        "capsule_type",
-                        "target_amount_source",
-                        "monthly_contribution_source",
-                        "created_at",
-                    ],
-                )
+                {
+                    **row_fields(capsule, ["id", "name", "target_amount", "monthly_contribution"]),
+                    "current_balance": capsule_balance(db, capsule),
+                    **row_fields(capsule, [
+                        "account_id", "life_event_id", "capsule_type", "target_amount_source",
+                        "monthly_contribution_source", "created_at",
+                    ]),
+                }
                 for capsule in db.query(models.Capsule)
                 .filter(models.Capsule.client_id == client.id)
                 .order_by(models.Capsule.id)
@@ -851,40 +843,6 @@ def import_client(
             db.flush()
             transaction_map[old_id] = transaction.id
 
-        for item in data.get("journal_entries", []):
-            transaction_id = transaction_map.get(item.get("transaction_id"))
-            account_id = account_map.get(item.get("account_id"))
-            if transaction_id and account_id:
-                transaction = db.get(models.Transaction, transaction_id)
-                leg = coerce_leg({**item, "account_id": account_id}, transaction.currency)
-                db.add(
-                    models.JournalEntry(
-                        transaction_id=transaction_id,
-                        account_id=account_id,
-                        debit_minor=leg.debit,
-                        credit_minor=leg.credit,
-                        memo=item.get("memo"),
-                        sort_order=item.get("sort_order"),
-                    )
-                )
-
-        db.flush()
-        for transaction_id in transaction_map.values():
-            transaction = db.query(models.Transaction).filter(
-                models.Transaction.id == transaction_id
-            ).one()
-            entries = db.query(models.JournalEntry).filter(
-                models.JournalEntry.transaction_id == transaction_id
-            ).all()
-            if len(entries) < 2:
-                raise ValueError(f"Transaction {transaction_id} has fewer than two journal entries")
-            try:
-                validate_legs([
-                    Leg(entry.account_id, entry.debit_minor, entry.credit_minor) for entry in entries
-                ], transaction.amount_minor)
-            except ValueError as exc:
-                raise ValueError(f"Transaction {transaction_id}: {exc}") from exc
-
         for item in data.get("period_reviews", []):
             db.add(
                 models.PeriodReview(
@@ -943,7 +901,6 @@ def import_client(
                 name=item["name"],
                 target_amount_minor=to_minor(item.get("target_amount") or 0, money_client_currency(db, client.id)),
                 monthly_contribution_minor=to_minor(item.get("monthly_contribution") or 0, money_client_currency(db, client.id)),
-                current_balance_minor=to_minor(item.get("current_balance") or 0, money_client_currency(db, client.id)),
                 account_id=account_map.get(item.get("account_id")),
                 life_event_id=event_map.get(item.get("life_event_id")),
                 capsule_type=item.get("capsule_type") or ("life_event" if item.get("life_event_id") else "manual"),
@@ -954,6 +911,41 @@ def import_client(
             db.add(capsule)
             db.flush()
             capsule_map[old_id] = capsule.id
+
+        for item in data.get("journal_entries", []):
+            transaction_id = transaction_map.get(item.get("transaction_id"))
+            account_id = account_map.get(item.get("account_id"))
+            if transaction_id and account_id:
+                transaction = db.get(models.Transaction, transaction_id)
+                leg = coerce_leg({**item, "account_id": account_id}, transaction.currency)
+                db.add(
+                    models.JournalEntry(
+                        transaction_id=transaction_id,
+                        account_id=account_id,
+                        capsule_id=capsule_map.get(item.get("capsule_id")),
+                        debit_minor=leg.debit,
+                        credit_minor=leg.credit,
+                        memo=item.get("memo"),
+                        sort_order=item.get("sort_order"),
+                    )
+                )
+
+        db.flush()
+        for transaction_id in transaction_map.values():
+            transaction = db.query(models.Transaction).filter(
+                models.Transaction.id == transaction_id
+            ).one()
+            entries = db.query(models.JournalEntry).filter(
+                models.JournalEntry.transaction_id == transaction_id
+            ).all()
+            if len(entries) < 2:
+                raise ValueError(f"Transaction {transaction_id} has fewer than two journal entries")
+            try:
+                validate_legs([
+                    Leg(entry.account_id, entry.debit_minor, entry.credit_minor) for entry in entries
+                ], transaction.amount_minor)
+            except ValueError as exc:
+                raise ValueError(f"Transaction {transaction_id}: {exc}") from exc
 
         for product, old_capsule_id in product_funding_updates:
             product.funding_capsule_id = capsule_map.get(old_capsule_id)

@@ -25,7 +25,7 @@ FORMAT_FIELDS = {
     "transaction_batches": ["id","quick_template_id","label","source","input_payload","created_at"],
     "life_events": ["id","name","start_date","target_date","target_amount","priority","note","active_plan_basis","active_plan_label","plan_status_override","created_at"],
     "transactions": ["id","date","description","amount","currency","batch_id","recurring_transaction_id","created_at"],
-    "journal_entries": ["id","transaction_id","account_id","debit","credit","memo","sort_order"],
+    "journal_entries": ["id","transaction_id","account_id","capsule_id","debit","credit","memo","sort_order"],
     "budget_plans": ["id","name","description","is_default","sort_order","created_at","updated_at"],
     "monthly_plan_lines": ["id","target_period","line_type","target_type","target_id","account_id","source_account_id","name","amount","source","source_kind","identity_key","manual_override","cash_treatment","plan_id","is_active","created_at","updated_at"],
     "period_reviews": ["id","start_date","end_date","label","reflection","next_actions","created_at","updated_at"],

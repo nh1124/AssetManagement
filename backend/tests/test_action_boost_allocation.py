@@ -78,7 +78,9 @@ def test_boost_allocation_creates_capsule_holding_for_the_goal():
             capsule_id=capsule.id, account_id=savings.id
         ).one()
         assert holding.held_amount == pytest.approx(100_000.0)
-        assert capsule.current_balance == pytest.approx(100_000.0)
+        # Legacy holdings cannot manufacture a journal claim or refresh its cache.
+        assert capsule.current_balance_minor == 0
+        assert result["capsule_balance"] == 0
     finally:
         db.close()
 

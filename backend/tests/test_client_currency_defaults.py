@@ -1,4 +1,5 @@
 from app.services.money_storage import to_minor, rule_amount_fields
+from backend.app.domain.journal import Leg
 
 from datetime import date
 
@@ -233,10 +234,12 @@ def test_goal_return_transfer_uses_client_minor_units(posting):
                              account_id=reserve.id, target_amount_minor=to_minor(100, "USD"))
     db.add(capsule)
     db.flush()
-    db.add(models.CapsuleHolding(capsule_id=capsule.id, account_id=reserve.id, held_amount_minor=to_minor(12.34, "USD")))
+    ledger_service.create_transaction(db, client_id=client.id, date=date(2026, 10, 12), description="Reserve",
+                                      amount_minor=1234, currency="USD",
+                                      legs=[Leg(reserve.id, debit=1234, capsule_id=capsule.id), Leg(cash.id, credit=1234)])
     db.commit()
     assert goal_service.delete_goal(db, client.id, goal.id, transfer_account_id=cash.id)
-    tx = db.query(models.Transaction).one()
+    tx = db.query(models.Transaction).filter(models.Transaction.description.like("Goal deleted%")).one()
     assert (tx.currency, tx.amount_minor, tx.amount) == ("USD", 1234, 12.34)
 
 

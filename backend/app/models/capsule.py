@@ -18,6 +18,7 @@ class Capsule(Base):
     name = Column(String, index=True)
     target_amount_minor = Column(MinorUnits)
     monthly_contribution_minor = Column(MinorUnits)
+    # Unread legacy cache. Claims come from journal legs; F2b removes this column.
     current_balance_minor = Column(MinorUnits, default=0)
     account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     # The capsule decides whether its reservations need a decision; the vocabulary

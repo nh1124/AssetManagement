@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import date, datetime
 from typing import Any, Optional, Sequence
 
@@ -330,6 +330,19 @@ def _get_account_by_id(
     ).first()
 
 
+def _validate_leg_references(db: Session, client_id: int, legs: Sequence[Leg]) -> None:
+    for account_id in {leg.account_id for leg in legs}:
+        if _get_account_by_id(db, account_id, client_id) is None:
+            raise ValueError(f"Account {account_id} not found for this client")
+    for capsule_id in {leg.capsule_id for leg in legs if leg.capsule_id is not None}:
+        capsule = db.query(models.Capsule).filter(
+            models.Capsule.id == capsule_id,
+            models.Capsule.client_id == client_id,
+        ).first()
+        if capsule is None:
+            raise ValueError(f"Capsule {capsule_id} not found for this client")
+
+
 def _post_transaction_journal(
     db: Session,
     transaction: models.Transaction,
@@ -354,13 +367,7 @@ def _post_transaction_journal(
         posted = [coerce_leg(leg, transaction.currency) for leg in legs]
     validate_legs(posted, transaction.amount_minor)
 
-    accounts: dict[int, models.Account] = {}
-    for leg in posted:
-        if leg.account_id not in accounts:
-            account = _get_account_by_id(db, leg.account_id, client_id)
-            if account is None:
-                raise ValueError(f"Account {leg.account_id} not found for this client")
-            accounts[leg.account_id] = account
+    _validate_leg_references(db, client_id, posted)
 
     for order, leg in enumerate(posted):
         db.add(models.JournalEntry(
@@ -369,6 +376,7 @@ def _post_transaction_journal(
             debit_minor=leg.debit,
             credit_minor=leg.credit,
             memo=leg.memo,
+            capsule_id=leg.capsule_id,
             sort_order=order,
         ))
 
@@ -473,6 +481,11 @@ def create_transaction(
     if columns.get("currency") is None:
         raise TypeError("Caller must state the denomination with a non-None 'currency'.")
     Money(columns["amount_minor"], columns["currency"])
+    # Refuse a foreign reference before adding even the transaction header.
+    if legs is not None:
+        legs = [coerce_leg(leg, columns["currency"]) for leg in legs]
+        validate_legs(legs, columns["amount_minor"])
+        _validate_leg_references(db, client_id, legs)
     transaction = models.Transaction(client_id=client_id, **columns)
     db.add(transaction)
     db.flush()
@@ -507,10 +520,13 @@ def propose_transaction(
     Money(amount_minor, currency)
     proposed = [coerce_leg(leg, currency) for leg in legs]
     validate_legs(proposed, amount_minor)
-    for account_id in {leg.account_id for leg in proposed}:
-        if _get_account_by_id(db, account_id, client_id) is None:
-            raise ValueError(f"Account {account_id} not found for this client")
-    stored_legs = [asdict(leg) for leg in proposed]
+    _validate_leg_references(db, client_id, proposed)
+    # An absent reference must keep existing proposal identities stable.
+    stored_legs = [
+        {key: value for key, value in asdict(leg).items()
+         if key != "capsule_id" or value is not None}
+        for leg in proposed
+    ]
     origin_ref = origin_ref if origin_ref is not None else {}
     if idempotency_key is None:
         # Same canonical JSON/SHA-256 as AI requests, kept local because L1
@@ -660,6 +676,7 @@ def update_transaction(
                 debit=entry.debit_minor,
                 credit=entry.credit_minor,
                 memo=entry.memo,
+                capsule_id=entry.capsule_id,
             )
             for entry in db.query(models.JournalEntry)
             .filter(models.JournalEntry.transaction_id == transaction_id)
@@ -686,6 +703,7 @@ def update_transaction(
                 "debit": Money(leg.debit, tx.currency).to_major(),
                 "credit": Money(leg.credit, tx.currency).to_major(),
                 "memo": leg.memo,
+                "capsule_id": leg.capsule_id,
             }, currency) for leg in prior]
         for field, value in update_data.items():
             setattr(tx, field, value)
@@ -706,6 +724,13 @@ def update_transaction(
             )
             if resolved_from is not None and resolved_to is not None:
                 legs = simple_legs(tx.amount_minor, resolved_from, resolved_to)
+                # Retain each side's references when rebuilding an ordinary entry.
+                if len(prior_debits) == 1:
+                    legs[0] = replace(legs[0], memo=prior_debits[0].memo,
+                                      capsule_id=prior_debits[0].capsule_id)
+                if len(prior_credits) == 1:
+                    legs[1] = replace(legs[1], memo=prior_credits[0].memo,
+                                      capsule_id=prior_credits[0].capsule_id)
             else:
                 legs = prior
 

@@ -18,6 +18,7 @@ class Leg:
     debit: int = 0
     credit: int = 0
     memo: str | None = None
+    capsule_id: int | None = None
 
     def __post_init__(self) -> None:
         if type(self.debit) is not int or type(self.credit) is not int:
@@ -37,12 +38,14 @@ def coerce_leg(leg, currency: str) -> Leg:
             "debit": getattr(leg, "debit", 0.0),
             "credit": getattr(leg, "credit", 0.0),
             "memo": getattr(leg, "memo", None),
+            "capsule_id": getattr(leg, "capsule_id", None),
         }
     return Leg(
         account_id=data.get("account_id"),
         debit=Money.from_major(str(data.get("debit") or 0), currency).minor,
         credit=Money.from_major(str(data.get("credit") or 0), currency).minor,
         memo=data.get("memo"),
+        capsule_id=data.get("capsule_id"),
     )
 
 

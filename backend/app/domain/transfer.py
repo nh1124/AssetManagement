@@ -212,6 +212,7 @@ def validate_import_payload(
     check_ref("transactions", "batch_id", "transaction_batches")
     check_ref("journal_entries", "transaction_id", "transactions", required=True)
     check_ref("journal_entries", "account_id", "accounts", required=True)
+    check_ref("journal_entries", "capsule_id", "capsules")
     check_ref("milestones", "life_event_id", "life_events")
     check_ref("capsules", "account_id", "accounts")
     check_ref("capsules", "life_event_id", "life_events")

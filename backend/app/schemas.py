@@ -247,6 +247,7 @@ class TransactionLeg(BaseModel):
     debit: float = 0.0
     credit: float = 0.0
     memo: Optional[str] = None
+    capsule_id: Optional[int] = None
 
 
 class TransactionCreate(TransactionBase):

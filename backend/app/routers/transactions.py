@@ -35,6 +35,7 @@ def _serialize_leg(entry: models.JournalEntry) -> dict:
         "debit": entry.debit or 0.0,
         "credit": entry.credit or 0.0,
         "memo": entry.memo,
+        "capsule_id": entry.capsule_id,
     }
 
 

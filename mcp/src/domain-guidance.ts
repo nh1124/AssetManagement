@@ -6,6 +6,7 @@ export const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 export const transactionLegSchema = z
   .object({
     account_id: z.number().int().min(1).describe("Account this leg touches"),
+    capsule_id: z.number().int().min(1).nullable().optional().describe("Capsule whose earmark this leg increases (debit) or releases (credit)"),
     debit: z.number().min(0).optional().default(0).describe("Debit amount; exactly one of debit or credit is above zero"),
     credit: z.number().min(0).optional().default(0).describe("Credit amount"),
     memo: z.string().optional().describe("Note for this leg alone, e.g. \"own share\" or \"advance for A\""),
@@ -180,6 +181,7 @@ export function previewTransactionPayload(input: z.infer<typeof transactionPaylo
             : { id: leg.account_id },
           amount: debit > 0 ? debit : leg.credit ?? 0,
           memo: leg.memo ?? null,
+          capsule_id: leg.capsule_id ?? null,
         };
       }),
       validation,

@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+from datetime import date
+
 from sqlalchemy.orm import Session
 
 from .. import models
 from ..domain.errors import Invalid, NotFound
+from ..domain.journal import Leg
+from ..domain.money import Money
 from ..services import capsule_service, ledger_service
 from ..services.cache_service import invalidate_client
 from ..services.goal_service import get_life_event
+from ..services.fx_service import get_client_currency
 from ..services.product_reserve_service import (
     ensure_default_product_reserve_pools,
     sync_product_reserve_capsules,
@@ -26,7 +31,9 @@ def contribute(
     if amount <= 0:
         raise Invalid("Contribution amount must be positive")
 
-    # This holding-only path is retired by capsule_design_review.md §7.6 (H6).
+    destination = ledger_service.get_account(db, client_id, capsule.account_id)
+    if not destination:
+        raise NotFound("Reservation account not found")
     remaining = capsule_service.remaining_target(db, capsule)
     if remaining <= 0:
         return {
@@ -36,7 +43,16 @@ def contribute(
             "new_balance": capsule_service.capsule_balance(db, capsule),
         }
     amount = min(amount, remaining)
-    capsule_service.upsert_capsule_holding(db, capsule, from_account.id, amount, note="Manual contribution")
+    currency = get_client_currency(db, client_id)
+    money = Money.from_major(str(amount), currency)
+    ledger_service.create_transaction(
+        db, client_id=client_id, date=date.today(),
+        description=f"Manual contribution: {capsule.name}",
+        amount_minor=money.minor, currency=currency,
+        legs=[Leg(destination.id, debit=money.minor, capsule_id=capsule.id),
+              Leg(from_account.id, credit=money.minor)],
+    )
+    db.flush()
     if commit:
         db.commit()
         invalidate_client(client_id)

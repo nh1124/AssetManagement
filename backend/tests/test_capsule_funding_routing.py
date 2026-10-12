@@ -135,6 +135,10 @@ def test_one_nisa_two_capsules_each_reserves_and_claims_its_own_amount(db, auto_
         for p in proposals:
             ledger.approve_proposal(db, p, actor_client_id=1)
         db.commit()
+    for p in proposals:
+        legs = db.query(models.JournalEntry).filter_by(transaction_id=p.posted_transaction_id).all()
+        assert [(leg.account_id, leg.capsule_id) for leg in legs if leg.debit_minor] == [(2, p.origin_ref["capsule_id"])]
+        assert all(leg.capsule_id is None for leg in legs if leg.credit_minor)
     assert _jpy_claim(db, 1, pc.id, 2) == _jpy_claim(db, 1, pc.id) == 5000
     assert _jpy_claim(db, 1, retirement.id, 2) == _jpy_claim(db, 1, retirement.id) == 10000
     assert calculate_account_valued_balance(db, db.get(models.Account, 2)) == 515000
@@ -315,7 +319,7 @@ def test_claim_reads_posted_journal_signed_legs_and_is_client_scoped(db):
     ledger.approve_proposal(db, proposal, actor_client_id=1)
     db.commit()
     assert _jpy_claim(db, 1, owner.id, 2) == 10000
-    assert _jpy_claim(db, 1, owner.id, 1) == -10000
+    assert _jpy_claim(db, 1, owner.id, 1) == 0
     assert _jpy_claim(db, 2, owner.id) == 0
     assert _jpy_claim(db, 1, owner.id + 999) == 0
     assert not db.new and not db.dirty and not db.deleted

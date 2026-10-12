@@ -12,6 +12,7 @@ from ..services import monthly_action_store
 from ..services.budget_lines import assign_plan_line_identity
 from ..services.budget_plan_store import create_plan_line, find_expense_plan_line, resolve_budget_plan_id
 from ..services.capsule_service import (
+    capsule_balance,
     create_capsule_for_goal,
     get_capsule,
     total_held_amount_for_account,
@@ -218,7 +219,7 @@ def _apply_boost_allocation(db: Session, action: models.MonthlyAction) -> dict:
         "applied_amount": round(applied, 2),
         "clamped": applied < requested,
         "held_amount": round(holding.held_amount, 2),
-        "capsule_balance": round(capsule.current_balance or 0.0, 2),
+        "capsule_balance": round(capsule_balance(db, capsule), 2),
     }
 
 

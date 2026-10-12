@@ -240,7 +240,7 @@ def test_capsule_allocation_does_not_reserve_unfunded_plan() -> None:
         )
         db.add(capsule)
         db.commit()
-        assert calculate_logical_balance(db, 1) == 19000
+        assert calculate_logical_balance(db, 1) == 20000
         _plan_line(
             db,
             4000,
@@ -250,7 +250,7 @@ def test_capsule_allocation_does_not_reserve_unfunded_plan() -> None:
             source_account_id=cash.id,
         )
 
-        assert calculate_logical_balance(db, 1) == 19000
+        assert calculate_logical_balance(db, 1) == 20000
     finally:
         db.close()
 

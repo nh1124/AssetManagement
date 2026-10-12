@@ -94,6 +94,8 @@ class JournalEntry(Base):
     id = Column(Integer, primary_key=True, index=True)
     transaction_id = Column(Integer, ForeignKey("transactions.id"), index=True)
     account_id = Column(Integer, ForeignKey("accounts.id"), index=True)
+    # This leg belongs to the capsule's earmark; deleting it keeps the movement.
+    capsule_id = Column(Integer, ForeignKey("capsules.id", ondelete="SET NULL"), nullable=True, index=True)
     debit_minor = Column(MinorUnits, nullable=False, default=0)
     credit_minor = Column(MinorUnits, nullable=False, default=0)
     memo = Column(String, nullable=True)  # per-leg note, e.g. "own share" / "advance for A"

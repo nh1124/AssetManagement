@@ -90,7 +90,6 @@ def ensure_default_product_reserve_pools(db: Session, client_id: int) -> list[mo
                 name=name,
                 target_amount_minor=to_minor(0.0, money_client_currency(db, client_id)),
                 monthly_contribution_minor=to_minor(0.0, money_client_currency(db, client_id)),
-                current_balance_minor=to_minor(0.0, money_client_currency(db, client_id)),
                 capsule_type="product_pool",
                 target_amount_source="linked_products",
                 monthly_contribution_source="linked_products",

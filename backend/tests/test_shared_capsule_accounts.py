@@ -1,16 +1,4 @@
-"""F0: an account two capsules reserve into is counted once, and reported.
-
-A capsule's reservation is the balance of the account it reserves into, so the
-earmarked total used to add that balance once per capsule: three capsules on an
-account holding 100,000 reported 300,000 earmarked and logical_balance was
-200,000 too low. Nothing prevents the arrangement -- capsules.account_id has no
-unique constraint and no service refuses it -- so this was reachable.
-
-capsule_funding_design.md replaces the whole-balance reading with the sum of
-the claims on each account. These tests hold the two halves of the interim
-state: the figure is no longer multiplied, and data_health says the
-arrangement is wrong rather than leaving it to be inferred from a total.
-"""
+"""Shared accounts are supported; only attributed movements are earmarked."""
 from __future__ import annotations
 
 from datetime import date
@@ -24,7 +12,6 @@ from app.database import Base
 from app.domain.money import Money
 from app.services import capsule_service, ledger_service
 from app.services.analysis_service import _sum_capsule_balance
-from app.services.data_health_service import check_data_health
 
 WHEN = date(2026, 10, 12)
 HELD = 100000
@@ -69,14 +56,13 @@ def _capsules(db, pooled, names, *, target=50000):
 
 
 @pytest.mark.parametrize("count", [1, 2, 3])
-def test_a_shared_account_is_counted_once_however_many_capsules_hold_it(db, count):
+def test_unattributed_shared_balance_is_never_a_capsule_claim(db, count):
     session, _, pooled_account = db
     _capsules(session, pooled_account, [f"Capsule {i}" for i in range(count)])
-    # Not count * HELD, which is what this returned before F0.
-    assert _sum_capsule_balance(session, 1) == HELD
+    assert _sum_capsule_balance(session, 1) == 0
 
 
-def test_two_accounts_are_both_counted(db):
+def test_unattributed_balance_on_two_accounts_is_not_earmarked(db):
     session, cash, pooled_account = db
     second = models.Account(client_id=1, name="Second pool", account_type="asset", role="earmarked")
     session.add(second)
@@ -92,47 +78,16 @@ def test_two_accounts_are_both_counted(db):
         name="Own", target_amount=50000, monthly_contribution=0, account_id=second.id,
     ))
     session.commit()
-    assert _sum_capsule_balance(session, 1) == HELD + 7000
-
-
-def test_an_unbound_capsule_still_reports_its_legacy_cache(db):
-    session, _, _ = db
-    capsule = models.Capsule(client_id=1, name="Unbound", target_amount_minor=0,
-                             monthly_contribution_minor=0, current_balance_minor=0)
-    session.add(capsule)
-    session.commit()
     assert _sum_capsule_balance(session, 1) == 0
 
 
-def test_data_health_reports_the_shared_account_and_names_its_capsules(db):
-    session, _, pooled_account = db
-    _capsules(session, pooled_account, ["Wedding", "Car"])
-    issue = next(item for item in check_data_health(session, 1)["issues"]
-                 if item["code"] == "capsules_sharing_an_account")
-    assert issue["severity"] == "error"
-    assert issue["repairable"] is False
-    assert issue["count"] == 1
-    assert issue["items"] == [{
-        "account_id": pooled_account.id,
-        "account_name": "Pooled",
-        "capsule_count": 2,
-        "capsules": ["Car", "Wedding"],
-    }]
-
-
-def test_data_health_is_silent_when_every_capsule_has_its_own_account(db):
-    session, cash, pooled_account = db
-    own = models.Account(client_id=1, name="Own pool", account_type="asset", role="earmarked")
-    session.add(own)
+def test_an_unbound_capsule_ignores_its_legacy_cache(db):
+    session, _, _ = db
+    capsule = models.Capsule(client_id=1, name="Unbound", target_amount_minor=0,
+                             monthly_contribution_minor=0, current_balance_minor=98765)
+    session.add(capsule)
     session.commit()
-    _capsules(session, pooled_account, ["Wedding"])
-    capsule_service.create_capsule(session, 1, schemas.CapsuleCreate(
-        name="Car", target_amount=50000, monthly_contribution=0, account_id=own.id,
-    ))
-    session.commit()
-    issue = next(item for item in check_data_health(session, 1)["issues"]
-                 if item["code"] == "capsules_sharing_an_account")
-    assert (issue["count"], issue["items"]) == (0, [])
+    assert _sum_capsule_balance(session, 1) == 0
 
 
 def test_sharing_an_account_no_longer_stops_the_rules_firing(db):
