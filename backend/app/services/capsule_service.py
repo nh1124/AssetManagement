@@ -120,10 +120,37 @@ def update_capsule(
     return capsule
 
 
-def delete_capsule(db: Session, client_id: int, capsule_id: int, *, commit: bool = True) -> bool:
+@dataclass(frozen=True)
+class CapsuleDeletion:
+    """What deleting a capsule removed, and what it deliberately left behind."""
+
+    capsule_id: int
+    capsule_name: str | None
+    rules_deleted: int
+    retained_account_id: int | None
+    retained_account_name: str | None
+
+
+def delete_capsule(
+    db: Session, client_id: int, capsule_id: int, *, commit: bool = True,
+) -> CapsuleDeletion | None:
+    """Remove the reservation and its rules. The money is not the capsule's to move.
+
+    X7: this used to accept a transfer_account_id and ignore it, so the same
+    argument meant "where to return the balance" on goal deletion and nothing
+    at all here. The two are not the same operation. Deleting a goal deletes
+    its capsules' accounts, which is why the balance has to go somewhere
+    first; deleting a capsule leaves the account standing, so there is nothing
+    to return and nowhere it would come from.
+
+    What a capsule owns is the reservation: a target, a monthly figure and the
+    rules that move money toward it. The account is a separate thing with its
+    own journal history, and it outlives the capsule, so the caller is told
+    which account it still has rather than asked where to empty it.
+    """
     capsule = get_capsule(db, client_id, capsule_id)
     if capsule is None:
-        return False
+        return None
     if capsule.life_event_id:
         raise Invalid("LifeEvent capsules are managed by their LifeEvent and cannot be deleted directly")
     linked_products = db.query(models.Product.id).filter(
@@ -132,9 +159,22 @@ def delete_capsule(db: Session, client_id: int, capsule_id: int, *, commit: bool
     ).first()
     if linked_products:
         raise Invalid("Capsules linked to Product/Item reserves cannot be deleted while products use them")
+    account = capsule.account
+    outcome = CapsuleDeletion(
+        capsule_id=capsule.id,
+        capsule_name=capsule.name,
+        # The rules go with the capsule: the foreign key cascades, and a rule
+        # without a destination has nothing to say.
+        rules_deleted=db.query(models.CapsuleRule).filter(
+            models.CapsuleRule.client_id == client_id,
+            models.CapsuleRule.capsule_id == capsule.id,
+        ).count(),
+        retained_account_id=account.id if account is not None else None,
+        retained_account_name=account.name if account is not None else None,
+    )
     db.delete(capsule)
     _finish_write(db, client_id, commit=commit)
-    return True
+    return outcome
 
 
 def list_rules(db: Session, client_id: int) -> list[models.CapsuleRule]:

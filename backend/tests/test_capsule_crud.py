@@ -115,9 +115,12 @@ def test_delete_capsule_cascades_rules_and_holdings_but_keeps_account_without_hi
     other_rule_id = capsule_service.create_rule(db, 2, _rule_payload(other_id)).id
     other_holding_id = capsule_service.create_holding(db, 2, other_id, schemas.CapsuleHoldingCreate(account_id=other_cash.id, held_amount=20)).id
 
-    assert delete_capsule(db, 1, capsule_id)
+    deleted = delete_capsule(db, 1, capsule_id)
     db.expire_all()
 
+    # X7: the account the capsule reserved into is reported, not emptied.
+    assert (deleted.capsule_id, deleted.rules_deleted) == (capsule_id, 1)
+    assert (deleted.retained_account_id, deleted.retained_account_name) == (account_id, reserve.name)
     assert db.query(models.CapsuleRule).filter_by(capsule_id=capsule_id).count() == 0
     assert db.query(models.CapsuleHolding).filter_by(capsule_id=capsule_id).count() == 0
     assert db.get(models.CapsuleRule, other_rule_id) is not None
@@ -245,7 +248,7 @@ def test_unknown_foreign_and_mismatched_ids_return_none_or_false_and_write_nothi
     monkeypatch.setattr(db, "commit", unexpected_write)
     for client_id, missing_capsule_id, missing_rule_id in [(1, 99999, 99999), (2, capsule_id, rule_id)]:
         assert capsule_service.update_capsule(db, client_id, missing_capsule_id, schemas.CapsuleUpdate(name="Changed")) is None
-        assert capsule_service.delete_capsule(db, client_id, missing_capsule_id) is False
+        assert capsule_service.delete_capsule(db, client_id, missing_capsule_id) is None
         assert capsule_service.update_rule(db, client_id, missing_rule_id, schemas.CapsuleRuleUpdate(amount_value=25)) is None
         assert capsule_service.delete_rule(db, client_id, missing_rule_id) is False
         assert capsule_service.update_holding(db, client_id, missing_capsule_id, holding_id, schemas.CapsuleHoldingUpdate(held_amount=25)) is None
@@ -348,3 +351,45 @@ def test_holding_http_errors_keep_capsule_and_holding_not_found_distinct(db, met
         with pytest.raises(HTTPException) as error:
             calls[method](capsule.id)
         assert (error.value.status_code, error.value.detail) == (404, "Holding not found")
+
+
+def test_deleting_a_capsule_leaves_its_account_and_balance_alone(db):
+    """X7: a capsule owns the reservation, not the money.
+
+    DELETE used to accept a transfer_account_id and ignore it, so the same
+    argument meant "where to return the balance" on goal deletion and nothing
+    here. Deleting a goal deletes its capsules' accounts, which is why the
+    balance has to move first. Deleting a capsule leaves the account standing,
+    so there is nothing to return.
+    """
+    capsule, cash, reserve = _capsule(db)
+    capsule_id, account_id = capsule.id, reserve.id
+    currency = get_client_currency(db, 1)
+    ledger_service.create_transaction(
+        db, client_id=1, date=date.today(), description="Reserved",
+        amount_minor=Money.from_major("5000", currency).minor, currency=currency,
+        from_account_id=cash.id, to_account_id=reserve.id,
+    )
+    db.commit()
+    assert calculate_account_valued_balance(db, reserve) == 5000
+
+    deleted = delete_capsule(db, 1, capsule_id)
+    db.expire_all()
+
+    assert db.get(models.Capsule, capsule_id) is None
+    account = db.get(models.Account, account_id)
+    assert account is not None and account.is_active is True
+    assert calculate_account_valued_balance(db, account) == 5000
+    assert (deleted.retained_account_id, deleted.retained_account_name) == (account_id, account.name)
+    # No transfer was invented to move the money anywhere.
+    assert db.query(models.Transaction).count() == 1
+
+
+def test_deleting_a_capsule_with_no_account_reports_none(db):
+    capsule = models.Capsule(client_id=1, name="Unbound", target_amount_minor=to_minor(100, "JPY"),
+                             monthly_contribution_minor=0, current_balance_minor=0)
+    db.add(capsule)
+    db.commit()
+    deleted = delete_capsule(db, 1, capsule.id)
+    assert (deleted.retained_account_id, deleted.retained_account_name) == (None, None)
+    assert deleted.rules_deleted == 0

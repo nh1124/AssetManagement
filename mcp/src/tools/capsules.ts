@@ -139,19 +139,17 @@ Use when: カプセルの目標額・月額・残高を変更したいとき`,
     "capsules_delete",
     {
       title: "Delete capsule",
-      description: "Deletes a manual capsule. LifeEvent and product reserve capsules may be protected by the backend.",
+      description: "Deletes a manual capsule and its allocation rules. The account it reserves into keeps its balance and history, and is named in the reply. LifeEvent and product reserve capsules may be protected by the backend.",
       inputSchema: z
         .object({
           id: z.number().int().min(1).describe("Capsule ID"),
-          transfer_account_id: z.number().int().min(1).optional().describe("Destination account for balances when required"),
         })
         .strict(),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
-    async ({ id, transfer_account_id }) => {
+    async ({ id }) => {
       try {
-        const query = transfer_account_id !== undefined ? `?transfer_account_id=${transfer_account_id}` : "";
-        const data = await api.delete<unknown>(`/capsules/${id}${query}`);
+        const data = await api.delete<unknown>(`/capsules/${id}`);
         return {
           content: [{ type: "text", text: `Deleted capsule ${id}:\n${JSON.stringify(data, null, 2)}` }],
           structuredContent: toStructured(data ?? { id }),

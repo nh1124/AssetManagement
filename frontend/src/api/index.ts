@@ -871,9 +871,17 @@ export const updateCapsule = async (id: number, capsule: any) => {
     return response.data;
 };
 
-export const deleteCapsule = async (id: number, transferAccountId?: number) => {
-    const params = transferAccountId != null ? `?transfer_account_id=${transferAccountId}` : '';
-    const response = await api.delete(`/capsules/${id}${params}`);
+// Deleting a capsule removes the reservation and its rules. The account it
+// was reserving into keeps its balance and history, and is named in the reply.
+export const deleteCapsule = async (id: number): Promise<{
+    message: string;
+    capsule_id: number;
+    capsule_name: string | null;
+    rules_deleted: number;
+    retained_account_id: number | null;
+    retained_account_name: string | null;
+}> => {
+    const response = await api.delete(`/capsules/${id}`);
     return response.data;
 };
 

@@ -262,8 +262,7 @@ export default function Strategy() {
     const [capsuleDeleteModal, setCapsuleDeleteModal] = useState<{
         capsuleId: number;
         capsuleName: string;
-        currentBalance: number;
-        transferAccountId: string;
+        accountId: number | null;
         confirming: boolean;
     } | null>(null);
     const [showCapsuleForm, setShowCapsuleForm] = useState(false);
@@ -1031,26 +1030,22 @@ export default function Strategy() {
         setCapsuleDeleteModal({
             capsuleId: capsule.id,
             capsuleName: capsule.name,
-            currentBalance: capsule.current_balance ?? 0,
-            transferAccountId: '',
+            accountId: capsule.account_id ?? null,
             confirming: false,
         });
     };
 
     const confirmCapsuleDelete = async () => {
         if (!capsuleDeleteModal) return;
-        const hasBalance = capsuleDeleteModal.currentBalance > 0;
-        if (hasBalance && !capsuleDeleteModal.transferAccountId) {
-            showToast('Please select a transfer account', 'warning');
-            return;
-        }
         setCapsuleDeleteModal({ ...capsuleDeleteModal, confirming: true });
         try {
-            const transferId = capsuleDeleteModal.transferAccountId
-                ? Number(capsuleDeleteModal.transferAccountId)
-                : undefined;
-            await deleteCapsule(capsuleDeleteModal.capsuleId, transferId);
-            showToast('Capsule deleted', 'info');
+            const deleted = await deleteCapsule(capsuleDeleteModal.capsuleId);
+            showToast(
+                deleted.retained_account_name
+                    ? `Capsule deleted. ${deleted.retained_account_name} and its balance are unchanged.`
+                    : 'Capsule deleted',
+                'info',
+            );
             setCapsuleDeleteModal(null);
             await fetchCapsules();
         } catch (error) {
@@ -2617,40 +2612,33 @@ export default function Strategy() {
                             All linked Auto Allocation Rules will also be permanently deleted.
                         </p>
 
-                        <div className="flex justify-between items-center bg-slate-800/50 border border-slate-700 px-3 py-2 text-xs mb-4">
-                            <span className="text-slate-400">Current balance</span>
-                            <span className={`font-mono-nums ${capsuleDeleteModal.currentBalance > 0 ? 'text-amber-400' : 'text-slate-500'}`}>
-                                {formatCurrency(capsuleDeleteModal.currentBalance)}
-                            </span>
-                        </div>
-
-                        {capsuleDeleteModal.currentBalance > 0 && (
-                            <div className="mb-5">
-                                <p className="text-[10px] text-amber-400 uppercase tracking-wider mb-2">
-                                    ? Balance detected ? select transfer destination
-                                </p>
-                                <p className="text-[10px] text-slate-500 mb-2">
-                                    The accumulated balance will be transferred to the selected account before deletion.
-                                </p>
-                                <select
-                                    value={capsuleDeleteModal.transferAccountId}
-                                    onChange={(e) =>
-                                        setCapsuleDeleteModal({ ...capsuleDeleteModal, transferAccountId: e.target.value })
-                                    }
-                                    className="w-full bg-slate-800 border border-slate-600 px-3 py-2 text-xs text-slate-200"
-                                    disabled={capsuleDeleteModal.confirming}
-                                >
-                                    <option value="">Select account...</option>
-                                    {accounts
-                                        .filter((a) => a.account_type === 'asset' && a.role !== 'earmarked' && a.is_active)
-                                        .map((a) => (
-                                            <option key={a.id} value={a.id}>
-                                                {a.name} ({formatCurrency(a.balance)})
-                                            </option>
-                                        ))}
-                                </select>
-                            </div>
-                        )}
+                        {/* A capsule owns the reservation, not the money. The account it
+                            reserved into keeps its balance and its journal history. */}
+                        {(() => {
+                            const account = accounts.find((a) => a.id === capsuleDeleteModal.accountId);
+                            return (
+                                <div className="bg-slate-800/50 border border-slate-700 px-3 py-2 text-xs mb-5">
+                                    {account ? (
+                                        <>
+                                            <div className="flex justify-between items-center">
+                                                <span className="text-slate-400">Reserving into</span>
+                                                <span className="font-mono-nums text-slate-300">
+                                                    {account.name} ({formatCurrency(account.balance)})
+                                                </span>
+                                            </div>
+                                            <p className="text-[10px] text-slate-500 mt-2">
+                                                This account and its balance are not affected. Deleting the capsule
+                                                removes the reservation and its rules, not the money.
+                                            </p>
+                                        </>
+                                    ) : (
+                                        <span className="text-slate-500">
+                                            This capsule is not reserving into an account.
+                                        </span>
+                                    )}
+                                </div>
+                            );
+                        })()}
 
                         <div className="flex gap-2 justify-end">
                             <button
@@ -2662,10 +2650,7 @@ export default function Strategy() {
                             </button>
                             <button
                                 onClick={confirmCapsuleDelete}
-                                disabled={
-                                    capsuleDeleteModal.confirming ||
-                                    (capsuleDeleteModal.currentBalance > 0 && !capsuleDeleteModal.transferAccountId)
-                                }
+                                disabled={capsuleDeleteModal.confirming}
                                 className="px-4 py-2 text-xs bg-rose-800 hover:bg-rose-700 text-rose-100 disabled:opacity-40 flex items-center gap-2"
                             >
                                 <Trash2 size={12} />

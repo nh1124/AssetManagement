@@ -4,7 +4,7 @@ from dataclasses import asdict
 from datetime import date
 from typing import List, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -95,13 +95,19 @@ def update_capsule(
 @router.delete("/{capsule_id}")
 def delete_capsule(
     capsule_id: int,
-    transfer_account_id: Optional[int] = Query(None, description="Ignored — kept for backwards compatibility"),
     db: Session = Depends(database.get_db),
     current_client: models.Client = Depends(dependencies.get_current_client),
 ):
-    if not capsule_service.delete_capsule(db, current_client.id, capsule_id):
+    """Delete a capsule and its rules. Its account and balance are untouched.
+
+    X7 removed the transfer_account_id this used to accept and ignore. The
+    response names the account the capsule was reserving into, because that
+    account is what the caller still has.
+    """
+    deleted = capsule_service.delete_capsule(db, current_client.id, capsule_id)
+    if deleted is None:
         raise HTTPException(status_code=404, detail="Capsule not found")
-    return {"message": "Capsule deleted successfully"}
+    return {"message": "Capsule deleted successfully", **asdict(deleted)}
 
 
 @router.post("/{capsule_id}/contribute")
