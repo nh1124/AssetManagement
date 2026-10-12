@@ -60,11 +60,11 @@ def _split_meal(db):
     """5,000 on the card: 3,000 our own food, 2,000 fronted for a friend."""
     client = models.Client(id=1, name="test", general_settings={}, ai_config={})
     card = models.Account(
-        client_id=1, name="card", account_type="liability", liability_kind="card", balance=0
+        client_id=1, name="card", account_type="liability", liability_kind="card"
     )
-    food = models.Account(client_id=1, name="food", account_type="expense", balance=0)
+    food = models.Account(client_id=1, name="food", account_type="expense")
     advance = models.Account(
-        client_id=1, name="advance / friend", account_type="asset", role="unassigned", balance=0
+        client_id=1, name="advance / friend", account_type="asset", role="unassigned"
     )
     db.add_all([client, card, food, advance])
     db.flush()
@@ -92,10 +92,6 @@ def _split_meal(db):
             sort_order=2,
         ),
     ])
-    # The cached balances follow the legs, as the posting code does per leg.
-    card.balance = 5000
-    food.balance = 3000
-    advance.balance = 2000
     db.commit()
     return client, card, food, advance, tx
 
@@ -229,9 +225,9 @@ def test_a_cash_funded_line_still_reports_its_own_leg_as_cash() -> None:
     db = _session()
     try:
         client = models.Client(id=1, name="test", general_settings={}, ai_config={})
-        cash = models.Account(client_id=1, name="cash", account_type="asset", role="operating", balance=0)
-        food = models.Account(client_id=1, name="food", account_type="expense", balance=0)
-        advance = models.Account(client_id=1, name="advance", account_type="asset", balance=0)
+        cash = models.Account(client_id=1, name="cash", account_type="asset", role="operating")
+        food = models.Account(client_id=1, name="food", account_type="expense")
+        advance = models.Account(client_id=1, name="advance", account_type="asset")
         db.add_all([client, cash, food, advance])
         db.flush()
         tx = models.Transaction(
@@ -245,9 +241,6 @@ def test_a_cash_funded_line_still_reports_its_own_leg_as_cash() -> None:
             models.JournalEntry(transaction_id=tx.id, account_id=food.id, debit_minor=Money.from_major(str(3000), tx.currency).minor, credit_minor=Money.from_major(str(0), tx.currency).minor),
             models.JournalEntry(transaction_id=tx.id, account_id=advance.id, debit_minor=Money.from_major(str(2000), tx.currency).minor, credit_minor=Money.from_major(str(0), tx.currency).minor),
         ])
-        cash.balance = -5000
-        food.balance = 3000
-        advance.balance = 2000
         db.commit()
 
         line = _plan_line(
@@ -272,10 +265,10 @@ def test_a_cash_funded_line_still_reports_its_own_leg_as_cash() -> None:
 
 def _split_payroll(db):
     client = models.Client(id=1, name="test", general_settings={}, ai_config={})
-    salary = models.Account(client_id=1, name="salary", account_type="income", balance=0)
-    bank = models.Account(client_id=1, name="bank", account_type="asset", role="operating", balance=0)
-    savings = models.Account(client_id=1, name="savings plan", account_type="asset", balance=0)
-    stock = models.Account(client_id=1, name="stock plan", account_type="asset", role="growth", balance=0)
+    salary = models.Account(client_id=1, name="salary", account_type="income")
+    bank = models.Account(client_id=1, name="bank", account_type="asset", role="operating")
+    savings = models.Account(client_id=1, name="savings plan", account_type="asset")
+    stock = models.Account(client_id=1, name="stock plan", account_type="asset", role="growth")
     db.add_all([client, salary, bank, savings, stock])
     db.flush()
 
@@ -294,10 +287,6 @@ def _split_payroll(db):
         models.JournalEntry(transaction_id=tx.id, account_id=savings.id, debit_minor=Money.from_major(str(1000), tx.currency).minor, credit_minor=Money.from_major(str(0), tx.currency).minor),
         models.JournalEntry(transaction_id=tx.id, account_id=stock.id, debit_minor=Money.from_major(str(54515), tx.currency).minor, credit_minor=Money.from_major(str(0), tx.currency).minor),
     ])
-    salary.balance = 258272
-    bank.balance = 202757
-    savings.balance = 1000
-    stock.balance = 54515
     db.commit()
     return client, salary, bank, savings, stock, tx
 
@@ -307,7 +296,6 @@ def _reserve_capsule(db, *, target=400000):
         client_id=1,
         name="reserve account",
         account_type="asset",
-        balance=0,
     )
     db.add(account)
     db.flush()
@@ -405,8 +393,8 @@ def test_transaction_account_mode_still_works_on_a_two_leg_entry() -> None:
     db = _session()
     try:
         client = models.Client(id=1, name="test", general_settings={}, ai_config={})
-        salary = models.Account(client_id=1, name="salary", account_type="income", balance=0)
-        bank = models.Account(client_id=1, name="bank", account_type="asset", role="operating", balance=0)
+        salary = models.Account(client_id=1, name="salary", account_type="income")
+        bank = models.Account(client_id=1, name="bank", account_type="asset", role="operating")
         db.add_all([client, salary, bank])
         db.flush()
         tx = models.Transaction(
@@ -419,8 +407,6 @@ def test_transaction_account_mode_still_works_on_a_two_leg_entry() -> None:
             models.JournalEntry(transaction_id=tx.id, account_id=salary.id, debit_minor=Money.from_major(str(0), tx.currency).minor, credit_minor=Money.from_major(str(200000), tx.currency).minor),
             models.JournalEntry(transaction_id=tx.id, account_id=bank.id, debit_minor=Money.from_major(str(200000), tx.currency).minor, credit_minor=Money.from_major(str(0), tx.currency).minor),
         ])
-        salary.balance = 200000
-        bank.balance = 200000
         capsule = _reserve_capsule(db)
         db.add(models.CapsuleRule(
             client_id=1, capsule_id=capsule.id, trigger_type="Income", trigger_category="salary",

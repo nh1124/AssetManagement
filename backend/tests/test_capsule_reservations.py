@@ -1,3 +1,4 @@
+from app.services.ledger_valuation import calculate_account_valued_balance
 from app.services.money_storage import to_minor, rule_amount_fields
 
 from backend.app.domain.money import Money
@@ -40,7 +41,6 @@ def posting():
         client_id=1,
         name=name,
         account_type=kind,
-        balance=0,
     ) for name, kind in [("Cash", "asset"), ("Food", "expense"), ("Reserve", "asset"), ("Advance", "asset")]]
     db.add_all([client, *accounts])
     db.commit()
@@ -207,11 +207,11 @@ def test_approval_moves_account_balances(posting):
     db, _, cash, _, reserve, _ = posting
     _rule(posting)
     proposal, = _apply(posting, _trigger(posting))
-    before = [ledger.calculate_account_journal_balance(db, a) for a in [cash, reserve]]
+    before = [calculate_account_valued_balance(db, a) for a in [cash, reserve]]
     transfer = ledger.approve_proposal(db, proposal, actor_client_id=1)
     db.flush()
-    assert ledger.calculate_account_journal_balance(db, cash) == before[0] - 3000
-    assert ledger.calculate_account_journal_balance(db, reserve) == before[1] + 3000
+    assert calculate_account_valued_balance(db, cash) == before[0] - 3000
+    assert calculate_account_valued_balance(db, reserve) == before[1] + 3000
     assert db.query(models.Transaction).count() == 2
     assert db.query(models.JournalEntry).filter_by(transaction_id=transfer.id).count() == 2
 

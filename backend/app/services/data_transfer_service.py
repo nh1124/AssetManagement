@@ -24,7 +24,6 @@ from ..domain.transfer import (
     remap_action_target_id,
 )
 from .data_health_service import check_data_health
-from .ledger_service import calculate_account_journal_balance
 from .budget_lines import assign_plan_line_identity
 from .cache_service import invalidate_client
 from .capsule_service import create_capsule_for_goal
@@ -57,7 +56,6 @@ def export_client(db: Session, client: models.Client) -> dict:
                         "id",
                         "name",
                         "account_type",
-                        "balance",
                         "parent_id",
                         "expected_return",
                         "role",
@@ -577,6 +575,7 @@ def import_client(
 
         db.flush()
 
+        # Legacy backups may contain balance; only their journal is authoritative.
         account_parent_updates: list[tuple[models.Account, int]] = []
         for item in data.get("accounts", []):
             old_id = int(item["id"])
@@ -584,16 +583,15 @@ def import_client(
                 client_id=client.id,
                 name=item["name"],
                 account_type=item["account_type"],
-                balance=0,
                 expected_return=item.get("expected_return") or 0.0,
                 role=item.get("role", "unassigned"),
-                role_target_amount=item.get("role_target_amount"),
+                role_target_amount_minor=to_minor(item.get("role_target_amount"), money_client_currency(db, client.id)),
                 liability_closing_day=item.get("liability_closing_day"),
                 liability_payment_day=item.get("liability_payment_day"),
                 liability_payment_month_offset=item.get("liability_payment_month_offset") or 0,
                 liability_payment_policy=item.get("liability_payment_policy") or "full",
-                liability_minimum_payment=item.get("liability_minimum_payment"),
-                liability_fixed_payment_amount=item.get("liability_fixed_payment_amount"),
+                liability_minimum_payment_minor=to_minor(item.get("liability_minimum_payment"), money_client_currency(db, client.id)),
+                liability_fixed_payment_amount_minor=to_minor(item.get("liability_fixed_payment_amount"), money_client_currency(db, client.id)),
                 liability_installment_months=item.get("liability_installment_months"),
                 liability_revolving_rate=item.get("liability_revolving_rate"),
                 is_active=item.get("is_active", True),
@@ -878,8 +876,6 @@ def import_client(
                 ], transaction.amount_minor)
             except ValueError as exc:
                 raise ValueError(f"Transaction {transaction_id}: {exc}") from exc
-        for account in db.query(models.Account).filter(models.Account.client_id == client.id).all():
-            account.balance = calculate_account_journal_balance(db, account)
 
         for item in data.get("period_reviews", []):
             db.add(

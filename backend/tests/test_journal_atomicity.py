@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.services.ledger_valuation import calculate_account_valued_balance
+
 from app.services.money_storage import to_minor, rule_amount_fields
 
 
@@ -212,8 +214,8 @@ def test_report_goal_allocation_commits_journal_and_capsule(monkeypatch) -> None
 
 
 def _approved_transaction_change_request(db, client: models.Client) -> models.AiChangeRequest:
-    cash = models.Account(client_id=client.id, name="cash", account_type="asset", balance=0)
-    food = models.Account(client_id=client.id, name="food", account_type="expense", balance=0)
+    cash = models.Account(client_id=client.id, name="cash", account_type="asset")
+    food = models.Account(client_id=client.id, name="food", account_type="expense")
     db.add_all([cash, food])
     db.commit()
     request = create_change_request(
@@ -342,8 +344,8 @@ def test_delete_transaction_rolls_back_reversal_and_rows_when_commit_fails(monke
     db = _session()
     try:
         client = _client(db)
-        cash = models.Account(client_id=client.id, name="cash", account_type="asset", balance=-1000)
-        food = models.Account(client_id=client.id, name="food", account_type="expense", balance=1000)
+        cash = models.Account(client_id=client.id, name="cash", account_type="asset")
+        food = models.Account(client_id=client.id, name="food", account_type="expense")
         db.add_all([cash, food])
         db.flush()
         transaction = models.Transaction(
@@ -371,7 +373,7 @@ def test_delete_transaction_rolls_back_reversal_and_rows_when_commit_fails(monke
         assert db.query(models.JournalEntry).filter_by(transaction_id=transaction_id).count() == 2
         db.refresh(cash)
         db.refresh(food)
-        assert cash.balance == -1000
-        assert food.balance == 1000
+        assert calculate_account_valued_balance(db, cash) == -1000
+        assert calculate_account_valued_balance(db, food) == 1000
     finally:
         db.close()

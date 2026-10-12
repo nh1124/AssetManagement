@@ -405,3 +405,44 @@ def test_migration_preserves_nullable_amounts():
                 assert all(row[f"{column}_minor"] is None for row in after[name])
     _run_migration(engine, "downgrade")
     assert _snapshot(engine) == before
+
+
+def test_migration_unset_currency_all_null_succeeds_but_value_rolls_back():
+    engine = _old_database()
+    nullable_tables = {"products": ("last_unit_price", "purchase_price"),
+                       "ai_operation_policies": ("threshold_amount",)}
+    with engine.begin() as connection:
+        metadata = sa.MetaData()
+        metadata.reflect(bind=connection)
+        connection.execute(metadata.tables["clients"].insert().values(id=3, general_settings={}))
+        for name, columns in nullable_tables.items():
+            connection.execute(metadata.tables[name].insert().values(
+                id=3, client_id=3, **dict.fromkeys(columns, None),
+            ))
+    before = _snapshot(engine)
+    _run_migration(engine, "upgrade")
+    after = _snapshot(engine)
+    for name, columns in nullable_tables.items():
+        assert all(after[name][-1][f"{column}_minor"] is None for column in columns)
+    _run_migration(engine, "downgrade")
+    assert _snapshot(engine) == before
+
+    for direction, suffix in (("upgrade", ""), ("downgrade", "_minor")):
+        if direction == "downgrade":
+            _run_migration(engine, "upgrade")
+        for name, columns in nullable_tables.items():
+            for column in columns:
+                field = f"{column}{suffix}"
+                with engine.begin() as connection:
+                    connection.execute(sa.text(f"UPDATE {name} SET {field} = 0 WHERE id = 3"))
+                before = _snapshot(engine)
+                schema_before = {table: sa.inspect(engine).get_columns(table) for table in nullable_tables}
+                with pytest.raises(ValueError, match=f"^Cannot resolve supported currency in {name}, row 3: None$"):
+                    _run_migration(engine, direction)
+                assert _snapshot(engine) == before
+                for table, schema in schema_before.items():
+                    assert [col["name"] for col in sa.inspect(engine).get_columns(table)] == [col["name"] for col in schema]
+                with engine.begin() as connection:
+                    connection.execute(sa.text(f"UPDATE {name} SET {field} = NULL WHERE id = 3"))
+    _run_migration(engine, "downgrade")
+    engine.dispose()

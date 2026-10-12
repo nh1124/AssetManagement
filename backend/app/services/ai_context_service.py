@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from sqlalchemy.orm import Session
 
+from .ledger_valuation import calculate_account_valued_balances
 from .. import models
 from ..domain.errors import NotFound, Refused
 from .ai_policy_service import SENSITIVE_KEY_PARTS
@@ -290,6 +291,7 @@ def _accounts(db: Session, client_id: int, limit: int) -> dict[str, Any]:
     rows = db.query(models.Account).filter(
         models.Account.client_id == client_id,
     ).order_by(models.Account.account_type, models.Account.name).limit(limit).all()
+    balances = calculate_account_valued_balances(db, rows)
     return {
         "count": len(rows),
         "accounts": [
@@ -297,7 +299,7 @@ def _accounts(db: Session, client_id: int, limit: int) -> dict[str, Any]:
                 "id": account.id,
                 "name": account.name,
                 "account_type": account.account_type,
-                "balance": account.balance,
+                "balance": balances[account.id],
                 "currency": None,
                 "parent_id": account.parent_id,
                 "expected_return": account.expected_return,

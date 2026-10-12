@@ -74,9 +74,9 @@ def _seed(db, client_id=101, base=10000):
         rows.setdefault(model.__tablename__, []).append(row)
         return row
 
-    parent = add(models.Account, 1, name="assets", account_type="asset", balance=0)
-    cash = add(models.Account, 2, name="cash", account_type="asset", balance=-100, parent_id=parent.id)
-    expense = add(models.Account, 3, name="food", account_type="expense", balance=100)
+    parent = add(models.Account, 1, name="assets", account_type="asset")
+    cash = add(models.Account, 2, name="cash", account_type="asset",  parent_id=parent.id)
+    expense = add(models.Account, 3, name="food", account_type="expense")
     goal = add(models.LifeEvent, 4, name="goal", start_date=date(2026, 10, 1),
                target_date=date(2027, 1, 1), target_amount=1000, note="goal note")
     capsule = add(models.Capsule, 5, name="goal", account_id=cash.id, life_event_id=goal.id,

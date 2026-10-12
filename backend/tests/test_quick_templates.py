@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.services.ledger_valuation import calculate_account_valued_balance
+
 from datetime import date
 
 import pytest
@@ -31,9 +33,9 @@ def test_transaction_batch_posts_grouped_transactions() -> None:
     db = _session()
     try:
         client = models.Client(id=1, name="test", general_settings={}, ai_config={})
-        cash = models.Account(client_id=1, name="cash", account_type="asset", balance=10_000)
-        food = models.Account(client_id=1, name="food", account_type="expense", balance=0)
-        receivable = models.Account(client_id=1, name="receivable", account_type="asset", balance=0)
+        cash = models.Account(client_id=1, name="cash", account_type="asset")
+        food = models.Account(client_id=1, name="food", account_type="expense")
+        receivable = models.Account(client_id=1, name="receivable", account_type="asset")
         db.add_all([client, cash, food, receivable])
         db.commit()
 
@@ -67,9 +69,9 @@ def test_transaction_batch_posts_grouped_transactions() -> None:
         db.refresh(cash)
         db.refresh(food)
         db.refresh(receivable)
-        assert cash.balance == 0
-        assert food.balance == 4000
-        assert receivable.balance == 6000
+        assert calculate_account_valued_balance(db, cash) == -10000
+        assert calculate_account_valued_balance(db, food) == 4000
+        assert calculate_account_valued_balance(db, receivable) == 6000
     finally:
         db.close()
 
@@ -78,8 +80,8 @@ def test_account_delete_is_locked_by_active_quick_template() -> None:
     db = _session()
     try:
         client = models.Client(id=1, name="test", general_settings={}, ai_config={})
-        cash = models.Account(client_id=1, name="cash", account_type="asset", balance=0)
-        food = models.Account(client_id=1, name="food", account_type="expense", balance=0)
+        cash = models.Account(client_id=1, name="cash", account_type="asset")
+        food = models.Account(client_id=1, name="food", account_type="expense")
         db.add_all([client, cash, food])
         db.flush()
         db.add(

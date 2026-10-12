@@ -64,11 +64,23 @@ def _factor(currency):
     return sa.case({code: 10 ** places for code, places in CURRENCY_EXPONENTS.items()}, value=currency)
 
 
-def _verify_currencies(connection, tables):
+def _has_money(table, minor=False):
+    if table.name == "capsule_rules":
+        columns = ("amount_minor", "percentage_bp") if minor else ("amount_value",)
+    else:
+        suffix = "_minor" if minor else ""
+        columns = tuple(f"{name}{suffix}" for name in MONEY_COLUMNS[table.name])
+    return sa.or_(*(table.c[name].is_not(None) for name in columns))
+
+
+def _verify_currencies(connection, tables, minor=False):
     for name in (*MONEY_COLUMNS, "capsule_rules"):
         table = tables[name]
         currency = _currency(table, tables)
+        # A row with no money has no denomination to get wrong; requiring one
+        # would block migration over data that does not exist.
         invalid = connection.execute(sa.select(table.c.id, currency).where(
+            _has_money(table, minor),
             sa.or_(currency.is_(None), currency.not_in(CURRENCY_EXPONENTS)),
         )).first()
         if invalid:
@@ -93,12 +105,12 @@ def _populate(connection, table, old, new, factor):
     ))).first()
     if invalid:
         raise ValueError(f"Minor-unit overflow in {table.name}.{old.name}, row {invalid[0]}")
-    connection.execute(table.update().values({new.name: sa.cast(sa.func.round(old * factor), new.type)}))
+    connection.execute(table.update().where(old.is_not(None)).values({new.name: sa.cast(sa.func.round(old * factor), new.type)}))
     _verify_roundtrip(connection, table, old, new, factor)
 
 
 def _populate_projected_monthly(connection, table, old, new, currency):
-    for row in connection.execute(sa.select(table.c.id, old, currency)):
+    for row in connection.execute(sa.select(table.c.id, old, currency).where(old.is_not(None))):
         money = None if row[1] is None else Money.from_major(str(row[1]), row[2], rounding=ROUND_HALF_UP)
         minor = None if money is None else money.minor
         if minor is not None and not -(2 ** 63) <= minor < 2 ** 63:
@@ -150,7 +162,7 @@ def upgrade():
     rules = tables["capsule_rules"]
     factor = sa.case((rules.c.amount_type == "percentage", 100), else_=_factor(_currency(rules, tables)))
     integer = sa.cast(sa.func.round(rules.c.amount_value * factor), sa.BigInteger)
-    connection.execute(rules.update().values(
+    connection.execute(rules.update().where(_has_money(rules)).values(
         amount_minor=sa.case((rules.c.amount_type == "fixed", integer)),
         percentage_bp=sa.case((rules.c.amount_type == "percentage", sa.cast(integer, sa.Integer))),
     ))
@@ -177,7 +189,7 @@ def upgrade():
 def downgrade():
     connection = op.get_bind()
     tables = _tables()
-    _verify_currencies(connection, tables)
+    _verify_currencies(connection, tables, minor=True)
     nullable = {(name, column): tables[name].c[f"{column}_minor"].nullable
                 for name, columns in MONEY_COLUMNS.items() for column in columns}
     defaults = {(name, column): tables[name].c[f"{column}_minor"].server_default is not None
@@ -193,7 +205,9 @@ def downgrade():
         currency = _currency(table, tables)
         factor = _factor(currency)
         for column in columns:
-            connection.execute(table.update().values({column: sa.cast(table.c[f"{column}_minor"], sa.Float) / factor}))
+            connection.execute(table.update().where(table.c[f"{column}_minor"].is_not(None)).values({
+                column: sa.cast(table.c[f"{column}_minor"], sa.Float) / factor,
+            }))
             for row in connection.execute(sa.select(table.c.id, table.c[column], table.c[f"{column}_minor"], currency)):
                 if row[2] is not None and Decimal(str(row[1])) * 10 ** CURRENCY_EXPONENTS[row[3]] != row[2]:
                     raise ValueError(f"Lossy downgrade in {name}.{column}, row {row[0]}")
@@ -201,7 +215,7 @@ def downgrade():
     rules = tables["capsule_rules"]
     factor = sa.case((rules.c.amount_type == "percentage", 100), else_=_factor(_currency(rules, tables)))
     value = sa.case((rules.c.amount_type == "fixed", rules.c.amount_minor), else_=rules.c.percentage_bp)
-    connection.execute(rules.update().values(amount_value=sa.cast(value, sa.Float) / factor))
+    connection.execute(rules.update().where(_has_money(rules, minor=True)).values(amount_value=sa.cast(value, sa.Float) / factor))
     for row in connection.execute(sa.select(rules.c.id, rules.c.amount_value, value, factor)):
         if Decimal(str(row[1])) * int(row[3]) != row[2]:
             raise ValueError(f"Lossy capsule rule downgrade, row {row[0]}")

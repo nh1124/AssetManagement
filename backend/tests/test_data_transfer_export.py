@@ -16,7 +16,7 @@ from app.services.data_transfer_service import export_client
 
 # Freeze the file format independently of both ORM metadata and the exporter.
 FORMAT_FIELDS = {
-    "accounts": ["id","name","account_type","balance","parent_id","expected_return","role","role_target_amount","liability_closing_day","liability_payment_day","liability_payment_month_offset","liability_payment_policy","liability_minimum_payment","liability_fixed_payment_amount","liability_installment_months","liability_revolving_rate","is_active"],
+    "accounts": ["id","name","account_type","parent_id","expected_return","role","role_target_amount","liability_closing_day","liability_payment_day","liability_payment_month_offset","liability_payment_policy","liability_minimum_payment","liability_fixed_payment_amount","liability_installment_months","liability_revolving_rate","is_active"],
     "products": ["id","name","category","location","last_unit_price","units_per_purchase","frequency_days","last_purchase_date","is_asset","lifespan_months","budget_account_id","funding_capsule_id","budget_treatment","purchase_price","purchase_date"],
     "simulation_configs": ["id","user_id","annual_return","tax_rate","is_nisa","monthly_savings","volatility","inflation_rate"],
     "recurring_transactions": ["id","name","amount","currency","from_account_id","to_account_id","frequency","day_of_month","month_of_year","next_due_date","start_period","end_period","auto_post","is_active","source_registry_entry_id","created_at"],
@@ -75,8 +75,8 @@ def _seed_client(db, client_id, base, marker):
         created_at=STAMP, updated_at=STAMP,
     )
     db.add(client)
-    cash = add(models.Account, 1, name=f"{marker}-cash", account_type="asset", balance=-100)
-    expense = add(models.Account, 2, name=f"{marker}-expense", account_type="expense", balance=100)
+    cash = add(models.Account, 1, name=f"{marker}-cash", account_type="asset")
+    expense = add(models.Account, 2, name=f"{marker}-expense", account_type="expense")
     goal = add(models.LifeEvent, 3, name=marker, target_date=date(2027, 1, 1), target_amount=1000)
     capsule = add(
         models.Capsule, 4, name=marker, account_id=cash.id, life_event_id=goal.id,

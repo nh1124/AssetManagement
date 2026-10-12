@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.services.ledger_valuation import calculate_account_valued_balance
+
 from app.services.money_storage import to_minor, rule_amount_fields
 
 
@@ -86,8 +88,8 @@ def test_default_approved_ai_create_queues_pending_proposal_and_marks_request_ap
     assert proposal.origin_ref == {"change_request_id": request.id}
     assert applied.result == {"proposal_id": proposal.id, "queued": True}
     assert applied.status == "applied"
-    assert cash.balance == 10000
-    assert destination.balance == 0
+    assert calculate_account_valued_balance(db, cash) == 0
+    assert calculate_account_valued_balance(db, destination) == 0
 
 
 @pytest.mark.parametrize("explicit_legs", [False, True], ids=["from-to-shorthand", "explicit-legs"])

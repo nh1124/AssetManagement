@@ -46,11 +46,11 @@ def _session():
 
 def _accounts(db):
     db.add(models.Client(id=1, name="test", general_settings={}, ai_config={}))
-    bank = models.Account(client_id=1, name="bank", account_type="asset", balance=500000)
+    bank = models.Account(client_id=1, name="bank", account_type="asset")
     card = models.Account(
-        client_id=1, name="card", account_type="liability", liability_kind="card", balance=0
+        client_id=1, name="card", account_type="liability", liability_kind="card"
     )
-    subs = models.Account(client_id=1, name="subscriptions", account_type="expense", balance=0)
+    subs = models.Account(client_id=1, name="subscriptions", account_type="expense")
     db.add_all([bank, card, subs])
     db.flush()
     return bank, card, subs

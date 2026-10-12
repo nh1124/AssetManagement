@@ -37,8 +37,8 @@ def _session():
 
 def _accounts(db):
     db.add(models.Client(id=1, name="test", general_settings={}, ai_config={}))
-    cash = models.Account(client_id=1, name="cash", account_type="asset", balance=100000)
-    food = models.Account(client_id=1, name="food", account_type="expense", balance=0)
+    cash = models.Account(client_id=1, name="cash", account_type="asset")
+    food = models.Account(client_id=1, name="food", account_type="expense")
     db.add_all([cash, food])
     db.flush()
     return cash, food

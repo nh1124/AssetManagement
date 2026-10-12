@@ -21,8 +21,8 @@ def db():
     session.add_all([
         models.Client(id=1, name="test", general_settings={}, ai_config={}),
         models.Client(id=2, name="other", general_settings={}, ai_config={}),
-        models.Account(client_id=1, name="bank", account_type="asset", balance=10000),
-        models.Account(client_id=1, name="rent", account_type="expense", balance=0),
+        models.Account(client_id=1, name="bank", account_type="asset"),
+        models.Account(client_id=1, name="rent", account_type="expense"),
     ])
     session.commit()
     try:

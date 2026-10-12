@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.services.ledger_valuation import calculate_account_valued_balance
+
 from backend.app.domain.money import Money
 
 from datetime import date
@@ -49,19 +51,16 @@ def posting():
         client_id=1,
         name="Cash",
         account_type="asset",
-        balance=10000,
     )
     capsule = models.Account(
         client_id=1,
         name="Capsule",
         account_type="asset",
-        balance=0,
     )
     other_account = models.Account(
         client_id=2,
         name="Other cash",
         account_type="asset",
-        balance=0,
     )
     db.add_all([client, other_client, cash, capsule, other_account])
     db.commit()
@@ -119,8 +118,8 @@ def test_proposal_queues_without_posting_and_round_trips_legs(posting):
         {"account_id": capsule.id, "debit": 1000.0, "credit": 0.0, "memo": "Reservation"},
         {"account_id": cash.id, "debit": 0.0, "credit": 1000.0, "memo": None},
     ]
-    assert cash.balance == 10000
-    assert capsule.balance == 0
+    assert calculate_account_valued_balance(db, cash) == 0
+    assert calculate_account_valued_balance(db, capsule) == 0
     _assert_empty_ledger(db)
     db.rollback()
     assert db.query(models.TransactionProposal).count() == 0
@@ -144,8 +143,8 @@ def test_approval_posts_described_transaction_and_legs(posting):
     assert proposal.posted_transaction_id == tx.id
     assert proposal.decided_at is not None
     assert proposal.decided_by_client_id == 1
-    assert cash.balance == 9000
-    assert capsule.balance == 1000
+    assert calculate_account_valued_balance(db, cash, target_currency="USD") == -1000
+    assert calculate_account_valued_balance(db, capsule, target_currency="USD") == 1000
     db.rollback()
     _assert_empty_ledger(db)
 

@@ -33,7 +33,7 @@ def posting():
         client = models.Client(id=1, name="USD client", general_settings={"currency": "USD"}, ai_config={})
         other = models.Client(id=2, name="EUR client", general_settings={"currency": "EUR"}, ai_config={})
         cash, food, reserve, income = [
-            models.Account(client_id=1, name=name, account_type=kind, balance=0)
+            models.Account(client_id=1, name=name, account_type=kind)
             for name, kind in (("cash", "asset"), ("food", "expense"),
                                ("reserve", "asset"), ("income", "income"))
         ]

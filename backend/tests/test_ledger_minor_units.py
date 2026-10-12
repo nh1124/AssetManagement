@@ -1,3 +1,4 @@
+from app.services.ledger_valuation import calculate_account_valued_balance
 from datetime import date
 import hashlib
 import importlib.util
@@ -30,7 +31,7 @@ def posting():
     Base.metadata.create_all(engine)
     with Session(engine) as db:
         client = models.Client(id=1, name="B4 SQLite", general_settings={}, ai_config={})
-        accounts = [models.Account(client_id=1, name=name, account_type=kind, balance=0)
+        accounts = [models.Account(client_id=1, name=name, account_type=kind)
                     for name, kind in (("cash", "asset"), ("food", "expense"), ("advance", "asset"))]
         db.add_all([client, *accounts])
         db.commit()
@@ -71,9 +72,8 @@ def test_http_round_trip_and_sql_reads(posting, currency, amount, first):
     assert type(tx.amount_minor) is int
     assert tx.amount_minor == Money.from_major(str(amount), currency).minor
     assert sum(leg.debit_minor for leg in tx.journal_entries) == tx.amount_minor
-    assert accounts[0].balance == -amount
-    assert ledger.calculate_account_journal_balance(db, accounts[0]) == -amount
-    assert ledger.calculate_account_journal_balance(db, accounts[0], date(2026, 10, 12)) == -amount
+    assert calculate_account_valued_balance(db, accounts[0], target_currency=currency) == -amount
+    assert calculate_account_valued_balance(db, accounts[0], date(2026, 10, 12), target_currency=currency) == -amount
     assert not _unbalanced_journal_items(db, 1)
     for joined in (False, True):
         query = db.query(sa.func.sum(models.JournalEntry.debit), sa.func.sum(models.JournalEntry.credit))
@@ -104,10 +104,10 @@ def test_proposal_response_and_approval_scale_once(posting, currency):
     assert approved.status_code == 200, approved.text
     assert approved.json()["amount"] == payload["amount"]
     assert approved.json()["legs"][1]["debit"] == payload["legs"][1]["debit"]
-    assert ledger.calculate_account_journal_balance(db, accounts[0]) == -payload["amount"]
+    assert calculate_account_valued_balance(db, accounts[0], target_currency=currency) == -payload["amount"]
     ledger.delete_transaction(db, db.get(models.Transaction, approved.json()["id"]))
     db.flush()
-    assert accounts[0].balance == 0
+    assert calculate_account_valued_balance(db, accounts[0], target_currency=currency) == 0
 
 
 @pytest.mark.parametrize("currency", ["JPY", "USD"])
@@ -147,7 +147,7 @@ def test_major_hybrids_have_no_setter(model, name):
 
 
 @pytest.mark.parametrize("currency", ["JPY", "USD"])
-def test_update_keeps_currency_and_reverses_major_cache(posting, currency):
+def test_update_keeps_currency_and_journal_balance(posting, currency):
     db, _, accounts, http = posting
     payload = _payload(accounts, currency, 120 if currency == "JPY" else 12.63, 100 if currency == "JPY" else 10.01)
     tx_id = http.post("/transactions/", json=payload).json()["id"]
@@ -155,7 +155,7 @@ def test_update_keeps_currency_and_reverses_major_cache(posting, currency):
     assert response.status_code == 200, response.text
     assert response.json()["amount"] == payload["amount"]
     assert response.json()["legs"][1]["debit"] == payload["legs"][1]["debit"]
-    assert accounts[0].balance == -payload["amount"]
+    assert calculate_account_valued_balance(db, accounts[0], target_currency=currency) == -payload["amount"]
 
 
 @pytest.mark.parametrize("currency,amount,first", [("JPY", 1051, 700), ("USD", 46.48, 30.12), ("EUR", 1050.95, 700.15)])
@@ -175,7 +175,8 @@ def test_export_import_keeps_major_wire_and_integer_storage(posting, currency, a
         (leg.debit_minor, leg.credit_minor) for leg in db.query(models.Transaction).filter_by(client_id=1).one().journal_entries)
 
 
-def test_currency_change_rescales_retained_compound_legs_and_cache(posting):
+def test_currency_change_rescales_retained_compound_legs_and_balance(posting):
+    currency = "USD"
     db, _, accounts, http = posting
     tx_id = http.post("/transactions/", json=_payload(accounts, "JPY", 120, 100)).json()["id"]
     response = http.put(f"/transactions/{tx_id}", json={"currency": "USD"})
@@ -184,7 +185,7 @@ def test_currency_change_rescales_retained_compound_legs_and_cache(posting):
     tx = db.get(models.Transaction, tx_id)
     assert tx.amount_minor == 12000
     assert sorted(leg.debit_minor for leg in tx.journal_entries) == [0, 2000, 10000]
-    assert accounts[0].balance == -120
+    assert calculate_account_valued_balance(db, accounts[0], target_currency=currency) == -120
 
 
 def test_proposal_key_keeps_major_float_encoding(posting):

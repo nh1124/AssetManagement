@@ -41,8 +41,8 @@ def _client(db):
 
 def _accounts(db):
     """A payment account and an expense account, which every entry now needs."""
-    cash = models.Account(client_id=1, name="cash", account_type="asset", balance=0)
-    food = models.Account(client_id=1, name="food", account_type="expense", balance=0)
+    cash = models.Account(client_id=1, name="cash", account_type="asset")
+    food = models.Account(client_id=1, name="food", account_type="expense")
     db.add_all([cash, food])
     db.commit()
     return cash, food

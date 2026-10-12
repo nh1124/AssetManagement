@@ -20,7 +20,6 @@ from ..services.reporting_service import (
     get_variance_analysis,
     get_variance_analysis_for_range,
 )
-from ..services.reconcile_service import run_reconcile
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
@@ -195,8 +194,8 @@ def check_reconcile(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    """Check discrepancies between journal-based and stored account balances."""
-    discrepancies = run_reconcile(db, client_id=current_client.id, fix=False)
+    # Retain the HTTP contract for existing clients after removing the cache.
+    discrepancies = []
     return {
         "status": "ok" if not discrepancies else "discrepancies_found",
         "discrepancy_count": len(discrepancies),
@@ -209,8 +208,8 @@ def fix_reconcile(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    """Fix account balances using journal-entry truth values."""
-    fixed = run_reconcile(db, client_id=current_client.id, fix=True)
+    # There is no stored balance left to repair.
+    fixed = []
     return {
         "status": "fixed",
         "fixed_count": len(fixed),

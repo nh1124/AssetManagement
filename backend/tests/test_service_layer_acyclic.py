@@ -70,7 +70,6 @@ LAYERS: dict[str, int] = {
     "data_transfer_service": 5,  # Backup includes L5 health; no service depends on it.
     "goal_service": 5,
     "milestone_service": 5,
-    "reconcile_service": 5,
     "report_service": 5,
     "simulation_service": 5,
     "simulation_scenario_service": 5,

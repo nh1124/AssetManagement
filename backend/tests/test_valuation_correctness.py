@@ -41,8 +41,8 @@ def _client(db) -> models.Client:
 
 
 def _post_opening_cash(db, client_id: int, amount: float) -> models.Account:
-    cash = models.Account(client_id=client_id, name="cash", account_type="asset", balance=amount)
-    equity = models.Account(client_id=client_id, name="opening", account_type="income", balance=amount)
+    cash = models.Account(client_id=client_id, name="cash", account_type="asset")
+    equity = models.Account(client_id=client_id, name="opening", account_type="income")
     db.add_all([cash, equity])
     db.flush()
     transaction = models.Transaction(

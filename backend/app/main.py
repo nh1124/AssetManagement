@@ -78,8 +78,8 @@ def ensure_runtime_schema_guards(db) -> None:
         db.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS liability_payment_day INTEGER"))
         db.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS liability_payment_month_offset INTEGER NOT NULL DEFAULT 0"))
         db.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS liability_payment_policy VARCHAR NOT NULL DEFAULT 'full'"))
-        db.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS liability_minimum_payment DOUBLE PRECISION"))
-        db.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS liability_fixed_payment_amount DOUBLE PRECISION"))
+        db.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS liability_minimum_payment_minor BIGINT"))
+        db.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS liability_fixed_payment_amount_minor BIGINT"))
         db.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS liability_installment_months INTEGER"))
         db.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS liability_revolving_rate DOUBLE PRECISION"))
         db.execute(text(

@@ -1,8 +1,7 @@
 """Ledger Service - double-entry bookkeeping primitives.
 
-Layer 1. Owns transaction posting, journal entries and account balance
-mutation. Depends on ORM models and pure journal rules: never on planning,
-registry or reporting.
+Layer 1. Owns transaction posting and journal entries. Depends on ORM models
+and pure journal rules: never on planning, registry or reporting.
 """
 from __future__ import annotations
 
@@ -12,18 +11,17 @@ from dataclasses import asdict
 from datetime import date, datetime
 from typing import Any, Optional, Sequence
 
-from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
 from .. import models
 from ..domain.errors import Invalid, NotFound
 from ..domain.money import Money
+from ..models.money import settings_currency
 from ..domain.journal import (
     BALANCE_TOLERANCE,
     DEBIT_NORMAL_TYPES,
     Leg,
     coerce_leg,
-    signed_delta,
     simple_legs,
     validate_legs,
 )
@@ -148,6 +146,17 @@ def _normalize_liability_settings(payload: dict, account_type: str) -> None:
             raise Invalid(f"{key} must not be negative")
 
 
+def _convert_account_money(db: Session, client_id: int, payload: dict) -> None:
+    client = db.get(models.Client, client_id)
+    if client is None:
+        raise ValueError(f"Cannot resolve client currency for client {client_id}")
+    currency = settings_currency(client.general_settings)
+    for name in ("role_target_amount", "liability_minimum_payment", "liability_fixed_payment_amount"):
+        if name in payload:
+            value = payload.pop(name)
+            payload[f"{name}_minor"] = None if value is None else Money.from_major(str(value), currency).minor
+
+
 def create_account(
     db: Session, client_id: int, data: dict, *, commit: bool = True,
 ) -> models.Account:
@@ -158,6 +167,7 @@ def create_account(
         )
     _normalize_liability_settings(payload, payload["account_type"])
     _validate_parent(db, client_id, payload["account_type"], payload.get("parent_id"))
+    _convert_account_money(db, client_id, payload)
     account = models.Account(**payload, client_id=client_id)
     db.add(account)
     if commit:
@@ -187,6 +197,7 @@ def update_account(
             db, client_id, account.account_type, update_data["parent_id"], account_id=account.id,
         )
     _normalize_liability_settings(update_data, account.account_type)
+    _convert_account_money(db, client_id, update_data)
     for key, value in update_data.items():
         setattr(account, key, value)
     if commit:
@@ -319,44 +330,6 @@ def _get_account_by_id(
     ).first()
 
 
-def calculate_account_journal_balance(
-    db: Session,
-    account: models.Account,
-    as_of_date: date | None = None,
-) -> float:
-    """
-    Calculate an account balance from journal entries only.
-    Account.balance is treated as a denormalized cache, not source-of-truth.
-    """
-    query = db.query(
-        func.sum(models.JournalEntry.debit).label("total_debit"),
-        func.sum(models.JournalEntry.credit).label("total_credit"),
-    ).filter(models.JournalEntry.account_id == account.id)
-
-    if as_of_date is not None:
-        query = query.join(models.Transaction).filter(models.Transaction.date <= as_of_date)
-
-    result = query.first()
-
-    total_debit = result.total_debit or 0.0
-    total_credit = result.total_credit or 0.0
-
-    if account.account_type in DEBIT_NORMAL_TYPES:
-        return total_debit - total_credit
-    return total_credit - total_debit
-
-
-def _apply_debit(account: models.Account, amount: int, currency: str) -> None:
-    # B5 will replace this cache; until then its unit remains major currency.
-    major = Money(amount, currency).to_float()
-    account.balance += signed_delta(account.account_type, debit=major, credit=0.0)
-
-
-def _apply_credit(account: models.Account, amount: int, currency: str) -> None:
-    major = Money(amount, currency).to_float()
-    account.balance += signed_delta(account.account_type, debit=0.0, credit=major)
-
-
 def _post_transaction_journal(
     db: Session,
     transaction: models.Transaction,
@@ -365,7 +338,7 @@ def _post_transaction_journal(
     from_account_id: int | None = None,
     to_account_id: int | None = None,
 ) -> None:
-    """Write a transaction's journal legs and move the cached balances.
+    """Write a transaction's validated journal legs.
 
     Either `legs`, for any number of them, or a from/to pair, which describes
     the two legs of an ordinary entry. The two sides must balance and come to
@@ -388,13 +361,6 @@ def _post_transaction_journal(
             if account is None:
                 raise ValueError(f"Account {leg.account_id} not found for this client")
             accounts[leg.account_id] = account
-
-    for leg in posted:
-        account = accounts[leg.account_id]
-        if leg.debit:
-            _apply_debit(account, leg.debit, transaction.currency)
-        else:
-            _apply_credit(account, leg.credit, transaction.currency)
 
     for order, leg in enumerate(posted):
         db.add(models.JournalEntry(
@@ -656,50 +622,8 @@ def list_proposals(
     ).all()
 
 
-def _rollback_transaction_effects(db: Session, transaction: models.Transaction) -> None:
-    """Revert a transaction's impact on the cached balances, without committing.
-
-    Each leg is reversed on its own account. Reading the legs rather than the
-    header's two accounts is what makes this correct for a compound entry,
-    where there are more than two of them and the header amount belongs to
-    none of them individually.
-    """
-    client_id = transaction.client_id
-    if client_id is None:
-        return
-
-    entries = db.query(models.JournalEntry).filter(
-        models.JournalEntry.transaction_id == transaction.id,
-    ).all()
-    for entry in entries:
-        account = _get_account_by_id(db, entry.account_id, client_id)
-        if not account:
-            continue
-        if entry.debit_minor:
-            _apply_credit(account, entry.debit_minor, transaction.currency)
-        if entry.credit_minor:
-            _apply_debit(account, entry.credit_minor, transaction.currency)
-
-
-def revert_transaction(
-    db: Session,
-    transaction: models.Transaction,
-    *,
-    commit: bool = True,
-) -> None:
-    """Revert the impact of a transaction on account balances before deletion."""
-    _rollback_transaction_effects(db, transaction)
-    if commit:
-        db.commit()
-
-
 def delete_transaction(db: Session, transaction: models.Transaction) -> None:
-    """Reverse balances before removing the legs that describe their effects.
-
-    Balance reversal, leg deletion, and row deletion belong together to preserve
-    ledger consistency. The caller owns the transaction boundary; this does not commit.
-    """
-    _rollback_transaction_effects(db, transaction)
+    # Legs and their header must disappear together to preserve journal truth.
     db.query(models.JournalEntry).filter(
         models.JournalEntry.transaction_id == transaction.id
     ).delete()
@@ -735,7 +659,6 @@ def update_transaction(
             .all()
         ]
 
-        _rollback_transaction_effects(db, tx)
         db.query(models.JournalEntry).filter(
             models.JournalEntry.transaction_id == transaction_id
         ).delete(synchronize_session=False)

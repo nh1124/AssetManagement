@@ -1,3 +1,4 @@
+from app.services.ledger_valuation import calculate_account_valued_balance
 from app.services.money_storage import to_minor, rule_amount_fields
 
 from datetime import date
@@ -137,7 +138,7 @@ def test_record_entry_rolls_back_posting_legs_and_proposals_when_capsule_posting
     assert _counts(db) == (0, 0, 0)
     for account in (cash, food, reserve):
         db.refresh(account)
-        assert account.balance == 0
+        assert calculate_account_valued_balance(db, account) == 0
 
 
 def test_record_entry_explicit_legs_and_from_to_shorthand_produce_the_same_legs(posting):
@@ -259,16 +260,17 @@ def test_amend_and_remove_commit_false_leave_reversal_and_posting_for_the_caller
             db, client.id, transaction_id, schemas.TransactionUpdate(amount=2000), commit=False,
         )
         assert result.amount == 2000
-        assert (cash.balance, food.balance) == (-2000, 2000)
+        db.flush()
+        assert (calculate_account_valued_balance(db, cash), calculate_account_valued_balance(db, food)) == (-2000, 2000)
     else:
         assert workflow.remove_entry(db, client.id, transaction_id, commit=False) is True
-        assert (cash.balance, food.balance) == (0, 0)
+        assert (calculate_account_valued_balance(db, cash), calculate_account_valued_balance(db, food)) == (0, 0)
     db.flush()
     assert snapshots == []
     db.rollback()
     assert db.query(models.Transaction).one().amount == 1000
     assert _counts(db) == (1, 2, 0)
-    assert (cash.balance, food.balance) == (-1000, 1000)
+    assert (calculate_account_valued_balance(db, cash), calculate_account_valued_balance(db, food)) == (-1000, 1000)
 
 
 def test_router_list_preserves_plain_and_paginated_response_shapes(posting, entries):
@@ -332,7 +334,7 @@ def test_proposal_handlers_return_404_without_changing_missing_or_other_client_p
         db.add(client)
         db.commit()
     before = _counts(db)
-    balances = (cash.balance, food.balance, reserve.balance)
+    balances = (calculate_account_valued_balance(db, cash), calculate_account_valued_balance(db, food), calculate_account_valued_balance(db, reserve))
     with pytest.raises(HTTPException) as exc:
         if decision == "approve":
             router.approve_proposal(proposal_id, db=db, current_client=client)
@@ -345,7 +347,7 @@ def test_proposal_handlers_return_404_without_changing_missing_or_other_client_p
     assert exc.value.detail == "Transaction proposal not found"
     assert _counts(db) == before
     assert proposal.status == "pending"
-    assert (cash.balance, food.balance, reserve.balance) == balances
+    assert (calculate_account_valued_balance(db, cash), calculate_account_valued_balance(db, food), calculate_account_valued_balance(db, reserve)) == balances
 
 
 def test_proposal_approval_rolls_back_posting_and_decision_when_journal_posting_fails(posting, monkeypatch):

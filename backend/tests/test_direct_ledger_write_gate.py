@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.services.ledger_valuation import calculate_account_valued_balance
+
 import json
 
 import pytest
@@ -29,8 +31,8 @@ def http_ledger():
     sessions = sessionmaker(autocommit=False, autoflush=False, bind=engine)
     db = sessions()
     client = _client(db)
-    cash = models.Account(client_id=client.id, name="Cash", account_type="asset", balance=10000)
-    food = models.Account(client_id=client.id, name="Food", account_type="expense", balance=0)
+    cash = models.Account(client_id=client.id, name="Cash", account_type="asset")
+    food = models.Account(client_id=client.id, name="Food", account_type="expense")
     db.add_all([cash, food])
     db.commit()
     payload = {
@@ -92,8 +94,8 @@ def _assert_posted(db, response, payload):
         (payload["from_account_id"], 0, payload["amount"]),
         (payload["to_account_id"], payload["amount"], 0),
     ])
-    assert db.get(models.Account, payload["from_account_id"]).balance == 10000 - payload["amount"]
-    assert db.get(models.Account, payload["to_account_id"]).balance == payload["amount"]
+    assert calculate_account_valued_balance(db, db.get(models.Account, payload["from_account_id"])) == -payload["amount"]
+    assert calculate_account_valued_balance(db, db.get(models.Account, payload["to_account_id"])) == payload["amount"]
     assert db.query(models.TransactionProposal).count() == 0
 
 
@@ -201,8 +203,8 @@ def test_mcp_update_delete_refused_then_allowed_with_ledger_policy(http_ledger, 
         db.expire_all()
         assert db.query(models.Transaction).count() == 0
         assert db.query(models.JournalEntry).count() == 0
-        assert db.get(models.Account, payload["from_account_id"]).balance == 10000
-        assert db.get(models.Account, payload["to_account_id"]).balance == 0
+        assert calculate_account_valued_balance(db, db.get(models.Account, payload["from_account_id"])) == 0
+        assert calculate_account_valued_balance(db, db.get(models.Account, payload["to_account_id"])) == 0
     assert db.query(models.TransactionProposal).count() == 0
 
 

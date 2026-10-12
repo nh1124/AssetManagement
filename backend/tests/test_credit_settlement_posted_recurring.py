@@ -47,9 +47,8 @@ def _card_and_subscription(db):
         liability_payment_day=27,
         liability_payment_month_offset=1,
         liability_payment_policy="full",
-        balance=0,
     )
-    subs = models.Account(client_id=1, name="subscriptions", account_type="expense", balance=0)
+    subs = models.Account(client_id=1, name="subscriptions", account_type="expense")
     db.add_all([card, subs])
     db.flush()
     return card, subs

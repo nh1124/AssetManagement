@@ -1,3 +1,4 @@
+from app.services.ledger_valuation import calculate_account_valued_balance
 from app.services.money_storage import to_minor, rule_amount_fields
 
 from datetime import date
@@ -210,7 +211,7 @@ def test_batch_posts_every_entry_and_capsule_effect_in_one_commit(posting, auto_
     assert sorted((leg.account_id, leg.debit, leg.credit) for leg in batch.transactions[2].journal_entries) == sorted([
         (cash.id, 0, 300), (food.id, 250, 0), (reserve.id, 50, 0),
     ])
-    assert (cash.balance, food.balance, reserve.balance) == ((-630, 550, 80) if auto_post else (-600, 550, 50))
+    assert (calculate_account_valued_balance(db, cash), calculate_account_valued_balance(db, food), calculate_account_valued_balance(db, reserve)) == ((-630, 550, 80) if auto_post else (-600, 550, 50))
     assert all(tx.batch_id == 999999 for tx in payload.transactions)
     assert service.get_batch(db, client.id, batch.id) is batch
     assert service.list_batches(db, client.id) == [batch]
@@ -238,7 +239,7 @@ def test_third_entry_failure_rolls_back_all_entries_legs_capsule_effects_and_bat
     assert _counts(db) == (0, 0, 0, 0)
     for account in (cash, food, reserve):
         db.refresh(account)
-        assert account.balance == 0
+        assert calculate_account_valued_balance(db, account) == 0
 
 
 def test_batch_reads_are_client_scoped_and_paginated(posting):
@@ -292,7 +293,7 @@ def test_batch_unbalanced_legs_remain_400_and_roll_back_all_writes(posting):
     assert str(error.value) == "Journal entry does not balance: debit 290 vs credit 300"
     assert _counts(db) == (0, 0, 0, 0)
     assert db.query(models.CapsuleHolding).count() == 0
-    assert all(account.balance == 0 for account in (cash, food, reserve))
+    assert all(calculate_account_valued_balance(db, account) == 0 for account in (cash, food, reserve))
 
 
 @pytest.mark.parametrize("failure", [
@@ -321,4 +322,4 @@ def test_batch_non_value_errors_propagate_unchanged_and_roll_back_all_writes(pos
     assert error.value is failure
     assert _counts(db) == (0, 0, 0, 0)
     assert db.query(models.CapsuleHolding).count() == 0
-    assert all(account.balance == 0 for account in (cash, food, reserve))
+    assert all(calculate_account_valued_balance(db, account) == 0 for account in (cash, food, reserve))

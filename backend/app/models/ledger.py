@@ -7,7 +7,7 @@ from sqlalchemy.orm import relationship
 
 from ..database import Base
 from ..domain.money import Money
-from .money import MinorUnits, major_expression
+from .money import MinorUnits, major_expression, client_currency, client_currency_expression
 
 class AccountType(str, enum.Enum):
     ASSET = "asset"
@@ -25,7 +25,6 @@ class AccountRole(str, enum.Enum):
 
 
 class Account(Base):
-    """Double-entry accounting: Each account has a type and balance."""
     __tablename__ = "accounts"
     __table_args__ = (UniqueConstraint('client_id', 'name', name='_client_account_uc'),)
 
@@ -33,24 +32,53 @@ class Account(Base):
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
     name = Column(String, index=True)
     account_type = Column(String)  # asset, liability, income, expense
-    balance = Column(Float, default=0)
     parent_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     expected_return = Column(Float, default=0.0)  # Annual return rate % for asset accounts
     role = Column(String, default=AccountRole.UNASSIGNED.value, server_default=AccountRole.UNASSIGNED.value, nullable=False)
-    role_target_amount = Column(Float, nullable=True)
+    role_target_amount_minor = Column(MinorUnits, nullable=True)
     liability_kind = Column(String, nullable=True)  # card | loan | other; only a card settles monthly
     liability_closing_day = Column(Integer, nullable=True)
     liability_payment_day = Column(Integer, nullable=True)
     liability_payment_month_offset = Column(Integer, default=0, server_default="0", nullable=False)
     liability_payment_policy = Column(String, default="full", server_default="full", nullable=False)
-    liability_minimum_payment = Column(Float, nullable=True)
-    liability_fixed_payment_amount = Column(Float, nullable=True)
+    liability_minimum_payment_minor = Column(MinorUnits, nullable=True)
+    liability_fixed_payment_amount_minor = Column(MinorUnits, nullable=True)
     liability_installment_months = Column(Integer, nullable=True)
     liability_revolving_rate = Column(Float, nullable=True)
     is_active = Column(Boolean, default=True)
     
     client = relationship("Client", back_populates="accounts")
     entries = relationship("JournalEntry", back_populates="account")
+
+    @hybrid_property
+    def role_target_amount(self) -> float | None:
+        if self.role_target_amount_minor is None:
+            return None
+        return Money(self.role_target_amount_minor, client_currency(self)).to_float()
+
+    @role_target_amount.expression
+    def role_target_amount(cls):
+        return major_expression(cls.role_target_amount_minor, client_currency_expression(cls))
+
+    @hybrid_property
+    def liability_minimum_payment(self) -> float | None:
+        if self.liability_minimum_payment_minor is None:
+            return None
+        return Money(self.liability_minimum_payment_minor, client_currency(self)).to_float()
+
+    @liability_minimum_payment.expression
+    def liability_minimum_payment(cls):
+        return major_expression(cls.liability_minimum_payment_minor, client_currency_expression(cls))
+
+    @hybrid_property
+    def liability_fixed_payment_amount(self) -> float | None:
+        if self.liability_fixed_payment_amount_minor is None:
+            return None
+        return Money(self.liability_fixed_payment_amount_minor, client_currency(self)).to_float()
+
+    @liability_fixed_payment_amount.expression
+    def liability_fixed_payment_amount(cls):
+        return major_expression(cls.liability_fixed_payment_amount_minor, client_currency_expression(cls))
 
 
 class JournalEntry(Base):

@@ -31,8 +31,8 @@ def db():
     session = sessionmaker(autocommit=False, autoflush=False, bind=engine)()
     session.add(models.Client(id=1, name="test", general_settings={}, ai_config={}))
     session.add_all([
-        models.Account(client_id=1, name="bank", account_type="asset", balance=100000),
-        models.Account(client_id=1, name="subscriptions", account_type="expense", balance=0),
+        models.Account(client_id=1, name="bank", account_type="asset"),
+        models.Account(client_id=1, name="subscriptions", account_type="expense"),
     ])
     session.flush()
     try:

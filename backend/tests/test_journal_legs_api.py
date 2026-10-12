@@ -6,6 +6,8 @@ so it serves as the checksum.
 """
 from __future__ import annotations
 
+from app.services.ledger_valuation import calculate_account_valued_balance
+
 from backend.app.domain.money import Money
 
 from datetime import date
@@ -44,10 +46,10 @@ def _client(db) -> models.Client:
 
 def _accounts(db):
     card = models.Account(
-        client_id=1, name="card", account_type="liability", liability_kind="card", balance=0
+        client_id=1, name="card", account_type="liability", liability_kind="card"
     )
-    food = models.Account(client_id=1, name="food", account_type="expense", balance=0)
-    advance = models.Account(client_id=1, name="advance", account_type="asset", balance=0)
+    food = models.Account(client_id=1, name="food", account_type="expense")
+    advance = models.Account(client_id=1, name="advance", account_type="asset")
     db.add_all([card, food, advance])
     db.commit()
     return card, food, advance
@@ -99,9 +101,9 @@ def test_posting_three_legs_writes_three_entries_and_moves_each_balance() -> Non
             (advance.id, 2000.0, 0.0),
         ]
         db.refresh(card), db.refresh(food), db.refresh(advance)
-        assert card.balance == 5000       # a liability grows on the credit side
-        assert food.balance == 3000
-        assert advance.balance == 2000
+        assert calculate_account_valued_balance(db, card) == 5000       # a liability grows on the credit side
+        assert calculate_account_valued_balance(db, food) == 3000
+        assert calculate_account_valued_balance(db, advance) == 2000
     finally:
         db.close()
 
@@ -164,7 +166,7 @@ def test_an_account_from_another_client_is_refused() -> None:
     try:
         client = _client(db)
         card, food, _advance = _accounts(db)
-        other = models.Account(client_id=2, name="their account", account_type="expense", balance=0)
+        other = models.Account(client_id=2, name="their account", account_type="expense")
         db.add(other)
         db.commit()
         payload = schemas.TransactionCreate(
@@ -226,7 +228,7 @@ def test_editing_the_legs_rebuilds_them_and_the_balances() -> None:
             [(card.id, 0.0), (food.id, 3500.0), (advance.id, 1500.0)]
         )
         db.refresh(card), db.refresh(food), db.refresh(advance)
-        assert (card.balance, food.balance, advance.balance) == (5000, 3500, 1500)
+        assert (calculate_account_valued_balance(db, card), calculate_account_valued_balance(db, food), calculate_account_valued_balance(db, advance)) == (5000, 3500, 1500)
         assert db.query(models.JournalEntry).count() == 3
     finally:
         db.close()
@@ -265,7 +267,7 @@ def test_two_legs_on_one_account_are_kept_as_two_rows() -> None:
         assert [leg["memo"] for leg in food_legs] == ["dinner", "breakfast"]
 
         db.refresh(food)
-        assert food.balance == 4000
+        assert calculate_account_valued_balance(db, food) == 4000
 
         # Two debit legs, so no single destination to name.
         assert created["from_account_id"] == card.id
@@ -291,7 +293,7 @@ def test_deleting_a_compound_entry_puts_every_balance_back() -> None:
         transaction_router.delete_transaction(created["id"], db=db, current_client=client)
 
         db.refresh(card), db.refresh(food), db.refresh(advance)
-        assert (card.balance, food.balance, advance.balance) == (0, 0, 0)
+        assert (calculate_account_valued_balance(db, card), calculate_account_valued_balance(db, food), calculate_account_valued_balance(db, advance)) == (0, 0, 0)
         assert db.query(models.JournalEntry).count() == 0
     finally:
         db.close()
@@ -379,7 +381,7 @@ def test_a_batch_can_carry_a_compound_entry() -> None:
     try:
         client = _client(db)
         card, food, advance = _accounts(db)
-        cash = models.Account(client_id=1, name="cash", account_type="asset", role="operating", balance=0)
+        cash = models.Account(client_id=1, name="cash", account_type="asset", role="operating")
         db.add(cash)
         db.commit()
 
@@ -413,8 +415,8 @@ def test_a_batch_can_carry_a_compound_entry() -> None:
         entries = db.query(models.JournalEntry).count()
         assert entries == 5          # three legs plus the settlement's two
         db.refresh(advance)
-        assert advance.balance == 0  # fronted 2,000 and got it back
+        assert calculate_account_valued_balance(db, advance) == 0  # fronted 2,000 and got it back
         db.refresh(food)
-        assert food.balance == 3000
+        assert calculate_account_valued_balance(db, food) == 3000
     finally:
         db.close()

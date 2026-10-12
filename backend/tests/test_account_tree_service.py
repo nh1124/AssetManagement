@@ -1,3 +1,4 @@
+from app.services.ledger_valuation import calculate_account_valued_balance
 from datetime import date
 
 import pytest
@@ -9,7 +10,7 @@ from backend.app.database import Base
 from backend.app.domain.errors import Invalid, NotFound
 from backend.app.routers import accounts as router
 from backend.app.services import ledger_service as ledger
-from backend.app.services.ledger_valuation import calculate_account_valued_balances
+from backend.app.services.ledger_valuation import calculate_account_balances
 from backend.app.workflows.ledger_entry_workflow import record_entry
 
 
@@ -147,11 +148,11 @@ def test_delete_deactivates_only_the_account_and_preserves_all_history(db):
     ))
     before = [(leg.id, leg.transaction_id, leg.account_id, leg.debit, leg.credit)
               for leg in db.query(models.JournalEntry).order_by(models.JournalEntry.id)]
-    balance = cash.balance
+    balance = calculate_account_valued_balance(db, cash)
     assert ledger.delete_account(db, 1, cash.id) is True
     db.refresh(cash)
     assert cash.is_active is False
-    assert cash.balance == balance == -300
+    assert calculate_account_valued_balance(db, cash) == balance == -300
     assert db.query(models.Transaction).one().id == transaction.id
     assert [(leg.id, leg.transaction_id, leg.account_id, leg.debit, leg.credit)
             for leg in db.query(models.JournalEntry).order_by(models.JournalEntry.id)] == before
@@ -217,12 +218,12 @@ def test_two_level_tree_preserves_endpoint_structure_and_rollup(db):
         account.is_active = False
     db.commit()
     rows = ledger.list_accounts(db, 1, ordered=False)
-    tree = router._build_tree(rows, calculate_account_valued_balances(db, rows))
+    tree = router._build_tree(rows, calculate_account_balances(db, rows))
 
     def expected(account, balance, rollup, children):
         return dict(
             id=account.id, name=account.name, account_type=account.account_type,
-            balance=balance, rollup_balance=rollup, parent_id=account.parent_id,
+            balance=balance, balances_minor={"JPY": balance}, rollup_balance=rollup, parent_id=account.parent_id,
             expected_return=0.0, role="unassigned", role_target_amount=None,
             liability_closing_day=None, liability_payment_day=None,
             liability_payment_month_offset=0, liability_payment_policy="full",
@@ -266,7 +267,7 @@ def test_liability_update_retains_default_reset_and_nonliability_strips_settings
 
 def test_opening_balance_tolerance_and_update_balance_refusal_are_preserved(db):
     account = _account(db, balance=0.01)
-    assert account.balance == 0
+    assert calculate_account_valued_balance(db, account) == 0
     _refusal(Invalid, "Journal is the source of truth. Create an opening-balance transaction instead of setting account.balance.",
              lambda: _account(db, name="invalid", balance=0.02))
     _refusal(Invalid, "Journal is the source of truth. Use transactions to change balances.",

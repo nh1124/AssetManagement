@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.services.ledger_valuation import calculate_account_valued_balance
+
 from backend.app.domain.money import Money
 
 from datetime import date
@@ -37,19 +39,16 @@ def posting():
         client_id=1,
         name="Cash",
         account_type="asset",
-        balance=10000,
     )
     expense = models.Account(
         client_id=1,
         name="Food",
         account_type="expense",
-        balance=0,
     )
     advance = models.Account(
         client_id=1,
         name="Advance",
         account_type="asset",
-        balance=0,
     )
     db.add_all([client, cash, expense, advance])
     db.commit()
@@ -99,23 +98,23 @@ def test_deletes_row_and_both_legs_without_affecting_other_transaction(posting):
     assert sorted((leg.id, leg.account_id, leg.debit, leg.credit) for leg in remaining) == expected
 
 
-def test_delete_restores_cached_balances(posting):
+def test_delete_restores_journal_balances(posting):
     db, cash, expense, _ = posting
-    before = cash.balance, expense.balance
+    before = calculate_account_valued_balance(db, cash), calculate_account_valued_balance(db, expense)
     tx = _create(
         db,
         from_account_id=cash.id,
         to_account_id=expense.id,
     )
     db.commit()
-    assert (cash.balance, expense.balance) != before
+    assert (calculate_account_valued_balance(db, cash), calculate_account_valued_balance(db, expense)) != before
 
     delete_transaction(db, tx)
     db.commit()
     db.refresh(cash)
     db.refresh(expense)
 
-    assert (cash.balance, expense.balance) == before
+    assert (calculate_account_valued_balance(db, cash), calculate_account_valued_balance(db, expense)) == before
 
 
 def test_caller_can_rollback_deletion(posting):
@@ -130,7 +129,7 @@ def test_caller_can_rollback_deletion(posting):
     entries = db.query(models.JournalEntry).filter_by(transaction_id=tx_id).all()
     expected = sorted((leg.id, leg.account_id, leg.debit, leg.credit) for leg in entries)
     assert len(expected) == 2
-    balances = cash.balance, expense.balance
+    balances = calculate_account_valued_balance(db, cash), calculate_account_valued_balance(db, expense)
 
     delete_transaction(db, tx)
     db.rollback()
@@ -138,7 +137,7 @@ def test_caller_can_rollback_deletion(posting):
     assert db.get(models.Transaction, tx_id) is not None
     restored = db.query(models.JournalEntry).filter_by(transaction_id=tx_id).all()
     assert sorted((leg.id, leg.account_id, leg.debit, leg.credit) for leg in restored) == expected
-    assert (cash.balance, expense.balance) == balances
+    assert (calculate_account_valued_balance(db, cash), calculate_account_valued_balance(db, expense)) == balances
 
 
 def test_deletes_all_three_compound_legs(posting):

@@ -1,3 +1,4 @@
+from app.services.ledger_valuation import calculate_account_valued_balance
 from backend.app.domain.money import Money
 from datetime import date
 
@@ -114,4 +115,4 @@ def test_transaction_read_prevents_removing_another_clients_entry(db):
     assert ledger_entry_workflow.remove_entry(db, 2, transaction.id) is False
     assert ledger_service.get_transaction(db, 1, transaction.id) is transaction
     assert len(transaction.journal_entries) == 2
-    assert (cash.balance, expense.balance) == (-100, 100)
+    assert (calculate_account_valued_balance(db, cash), calculate_account_valued_balance(db, expense)) == (-100, 100)

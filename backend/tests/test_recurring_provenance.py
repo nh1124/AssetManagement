@@ -39,13 +39,11 @@ def _setup(db):
         client_id=1,
         name="Cash",
         account_type="asset",
-        balance=10000,
     )
     expense = models.Account(
         client_id=1,
         name="Rent expense",
         account_type="expense",
-        balance=0,
     )
     db.add_all([client, cash, expense])
     db.flush()

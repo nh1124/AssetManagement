@@ -59,7 +59,6 @@ def _client_with_data(db):
         client_id=client.id,
         name="Cash",
         account_type="asset",
-        balance=10000,
         role="operating",
     )
     food = models.Account(
@@ -67,7 +66,6 @@ def _client_with_data(db):
         client_id=client.id,
         name="Food",
         account_type="expense",
-        balance=0,
         role="unassigned",
     )
     db.add_all([cash, food])

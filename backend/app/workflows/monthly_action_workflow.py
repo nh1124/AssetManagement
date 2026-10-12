@@ -19,6 +19,7 @@ from ..services.capsule_service import (
 )
 from ..services.goal_service import get_life_event
 from ..services.ledger_service import get_account
+from ..services.ledger_valuation import calculate_account_valued_balance
 from ..services.registry_service import (
     get_entry,
     get_recurring_transaction,
@@ -191,7 +192,7 @@ def _apply_boost_allocation(db: Session, action: models.MonthlyAction) -> dict:
     capsule = create_capsule_for_goal(db, action.client_id, goal)
     db.flush()
 
-    balance = account.balance or 0.0
+    balance = calculate_account_valued_balance(db, account)
     requested = balance * delta_percent / 100.0
 
     # An account cannot have more earmarked against it than it holds, counting

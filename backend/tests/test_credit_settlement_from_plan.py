@@ -48,7 +48,7 @@ def test_posted_charge_without_plan_still_settles(card_plan):
 
 def test_bank_funded_plan_is_ignored(card_plan):
     db, card, subs = card_plan
-    bank = models.Account(client_id=1, name="bank", account_type="asset", balance=0)
+    bank = models.Account(client_id=1, name="bank", account_type="asset")
     db.add(bank)
     db.flush()
     _plan(db, bank, subs)
@@ -128,7 +128,7 @@ def test_past_statement_partial_posting_leaves_only_remaining(card_plan, monkeyp
 def test_capsule_allocation_subtracts_month_movement_not_balance(card_plan, monkeypatch):
     db, card, _ = card_plan
     monkeypatch.setattr(budget_actuals, "current_period_key", lambda: "2026-12")
-    investment = models.Account(client_id=1, name="investment", account_type="asset", balance=20000)
+    investment = models.Account(client_id=1, name="investment", account_type="asset")
     db.add(investment)
     db.flush()
     capsule = models.Capsule(client_id=1, name="reserve", account_id=investment.id, current_balance_minor=to_minor(20000, "JPY"))
@@ -197,7 +197,6 @@ def test_settlement_queries_plan_lines_once_for_shared_statement_month(card_plan
         liability_kind="card",
         liability_payment_month_offset=1,
         liability_payment_policy="full",
-        balance=0,
     )
     db.add(other)
     db.flush()

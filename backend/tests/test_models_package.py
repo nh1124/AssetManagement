@@ -9,8 +9,8 @@ from app import models
 from app.database import Base
 
 
-# B6 replaces nonledger money columns and separates the mixed capsule rule value.
-EXPECTED_METADATA_SHA256 = "58121d644bb61a52ce768f80c27c61efdf834bed963741cf8db2ed7eb0180864"
+# B5 retires the account cache and converts its three money settings.
+EXPECTED_METADATA_SHA256 = "4c5f42e98ca116d57a7f8c1f071037153355c2d83f7adc61d7ebc71afc51da06"
 
 MODEL_NAMES = (
     "Client", "ClientMfaSetting", "ClientRecoveryCode",
@@ -89,7 +89,7 @@ def _metadata_snapshot():
 def test_metadata_matches_the_minor_unit_schema():
     snapshot = _metadata_snapshot()
     assert len(snapshot["table_names"]) == 27
-    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 350
+    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 349
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == EXPECTED_METADATA_SHA256
 

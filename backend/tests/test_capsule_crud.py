@@ -1,3 +1,4 @@
+from app.services.ledger_valuation import calculate_account_valued_balance
 from app.services.money_storage import to_minor
 
 from backend.app.domain.money import Money
@@ -39,8 +40,8 @@ def db():
 
 def _capsule(db, *, client_id=1):
     suffix = db.query(models.Capsule).filter_by(client_id=client_id).count()
-    cash = models.Account(client_id=client_id, name=f"Cash {suffix}", account_type="asset", balance=0)
-    reserve = models.Account(client_id=client_id, name=f"Reserve {suffix}", account_type="asset", role="earmarked", balance=0)
+    cash = models.Account(client_id=client_id, name=f"Cash {suffix}", account_type="asset")
+    reserve = models.Account(client_id=client_id, name=f"Reserve {suffix}", account_type="asset", role="earmarked")
     db.add_all([cash, reserve])
     db.flush()
     capsule = models.Capsule(
@@ -146,7 +147,7 @@ def test_contribute_writes_only_holdings_neither_posted_transaction_nor_proposal
     assert db.query(models.CapsuleHolding).one().held_amount == 500
     for model in (models.Transaction, models.TransactionProposal, models.JournalEntry):
         assert db.query(model).count() == 0
-    assert [a.balance for a in db.query(models.Account)] == [0, 0]
+    assert [calculate_account_valued_balance(db, a) for a in db.query(models.Account)] == [0, 0]
 
 
 def test_rule_crud_rejects_other_clients_capsule_and_keeps_attachment_on_partial_update(db):

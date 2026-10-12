@@ -11,7 +11,7 @@ from .. import models
 from .budget_actuals import LINE_SIDE, claimed_leg_ids
 from .budget_context import BudgetContext
 from .journal_legs import primary_accounts
-from .ledger_service import BALANCE_TOLERANCE, calculate_account_journal_balance
+from .ledger_service import BALANCE_TOLERANCE
 from ..domain.money import Money
 from .budget_lines import assign_plan_line_identity, line_identity_key, newest_line_key
 from .budget_plan_store import get_or_create_default_plan
@@ -184,33 +184,6 @@ def _missing_source_items(db: Session, client_id: int) -> list[dict[str, Any]]:
                 "evidence": candidate.evidence if candidate else None,
             }
         )
-    return items
-
-
-def _balance_drift_items(db: Session, client_id: int) -> list[dict[str, Any]]:
-    items: list[dict[str, Any]] = []
-    accounts = (
-        db.query(models.Account)
-        .filter(models.Account.client_id == client_id)
-        .order_by(models.Account.account_type, models.Account.name)
-        .all()
-    )
-    for account in accounts:
-        journal_balance = round(calculate_account_journal_balance(db, account), 2)
-        stored_balance = round(float(account.balance or 0.0), 2)
-        diff = round(journal_balance - stored_balance, 2)
-        if abs(diff) >= 1:
-            items.append(
-                {
-                    "account_id": account.id,
-                    "account": account.name,
-                    "account_type": account.account_type,
-                    "stored_balance": stored_balance,
-                    "journal_balance": journal_balance,
-                    "diff": diff,
-                    "repairable": True,
-                }
-            )
     return items
 
 
@@ -589,7 +562,6 @@ def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
         .count()
     )
     missing_source = _missing_source_items(db, client_id)
-    balance_drift = _balance_drift_items(db, client_id)
     registry_recurring = _registry_recurring_items(db, client_id)
     duplicate_recurring = _duplicate_recurring_items(db, client_id)
     recurring_without_registry = _recurring_without_registry_items(db, client_id)
@@ -665,14 +637,15 @@ def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
             "repairable": any(item["repairable"] for item in missing_source),
             "items": missing_source[:100],
         },
+        # Existing clients index this code; without a cache it cannot disagree.
         {
             "code": "account_balances",
             "severity": "error",
             "title": "Account balance drift",
             "detail": "Stored account balances should match posted journal entries.",
-            "count": len(balance_drift),
-            "repairable": bool(balance_drift),
-            "items": balance_drift[:100],
+            "count": 0,
+            "repairable": False,
+            "items": [],
         },
         {
             "code": "registry_recurring_links",
@@ -812,14 +785,8 @@ def repair_data_health(db: Session, client_id: int) -> dict[str, Any]:
     actions.append({"code": "plan_line_sources", "updated": source_updates})
     actions.append({"code": "plan_line_identities", "updated": identity_updates})
 
-    balance_updates = 0
-    for account in db.query(models.Account).filter(models.Account.client_id == client_id).all():
-        journal_balance = round(calculate_account_journal_balance(db, account), 2)
-        stored_balance = round(float(account.balance or 0.0), 2)
-        if abs(journal_balance - stored_balance) >= 1:
-            account.balance = journal_balance
-            balance_updates += 1
-    actions.append({"code": "account_balances", "updated": balance_updates})
+    # Preserve the legacy response slot; journal-derived balances have no cache to repair.
+    actions.append({"code": "account_balances", "updated": 0})
 
     registry_updates = 0
     entries = (

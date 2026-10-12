@@ -46,20 +46,17 @@ def _setup(db, *, held_amount=0):
         client_id=client.id,
         name="Goal funds",
         account_type="asset",
-        balance=0,
         is_active=True,
     )
     income = models.Account(
         client_id=client.id,
         name="Income",
         account_type="income",
-        balance=0,
     )
     destination = models.Account(
         client_id=client.id,
         name="Cash",
         account_type="asset",
-        balance=0,
     )
     goal = models.LifeEvent(
         client_id=client.id,

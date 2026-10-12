@@ -161,7 +161,7 @@ def test_data_export_manifest_and_validate_include_monthly_actions() -> None:
         payload = ImportPayload(**snapshot)
         validation = validate_import_client_data(payload=payload, current_client=client)
 
-        assert snapshot["version"] == 8
+        assert snapshot["version"] == 9
         assert snapshot["manifest"]["counts"]["monthly_actions"] == 1
         assert snapshot["data"]["monthly_actions"][0]["kind"] == "set_budget"
         assert validation["status"] == "valid"
@@ -238,7 +238,7 @@ def test_data_import_allows_legacy_checksum_mismatch_when_structure_is_valid() -
     target_db = _session()
     try:
         source_client = models.Client(id=1, name="source", username="source", general_settings={}, ai_config={})
-        cash = models.Account(client_id=1, name="cash", account_type="asset", balance=1000.0)
+        cash = models.Account(client_id=1, name="cash", account_type="asset")
         source_db.add_all([source_client, cash])
         source_db.commit()
 
@@ -1702,7 +1702,7 @@ def test_credit_settlement_applies_fixed_payment_policy() -> None:
             account_type="liability",
             liability_kind="card",
             liability_payment_policy="fixed",
-            liability_fixed_payment_amount=5000,
+            liability_fixed_payment_amount_minor=to_minor(5000, "JPY"),
         )
         food = models.Account(client_id=1, name="food", account_type="expense")
         db.add_all([client, card, food])

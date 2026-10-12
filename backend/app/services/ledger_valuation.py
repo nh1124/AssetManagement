@@ -4,10 +4,12 @@ rates it needs. Separating those responsibilities lets fx_service remain a leaf.
 from __future__ import annotations
 
 from datetime import date
+from dataclasses import dataclass, field
 
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..domain.money import Money
 from .fx_service import (
     normalize_currency,
     get_client_currency,
@@ -127,18 +129,26 @@ def convert_transaction_amount(
     )
 
 
-def calculate_account_valued_balances(
+@dataclass
+class AccountBalances:
+    # Holdings retain their denominations exactly; valuation answers what those
+    # holdings are worth for display and cannot replace them when FX rates move.
+    balances_minor: dict[str, int] = field(default_factory=dict)
+    balance: float = 0.0
+
+
+def calculate_account_balances(
     db: Session,
     accounts: list[models.Account],
     as_of_date: date | None = None,
     target_currency: str | None = None,
-) -> dict[int, float]:
+) -> dict[int, AccountBalances]:
     """Calculate balances for many accounts with one journal query."""
     if not accounts:
         return {}
 
     account_by_id = {account.id: account for account in accounts}
-    balances = {account.id: 0.0 for account in accounts}
+    balances = {account.id: AccountBalances() for account in accounts}
     client_id = accounts[0].client_id
     lookup = build_rate_lookup(db, client_id, target_currency)
 
@@ -155,17 +165,30 @@ def calculate_account_valued_balances(
         if not account:
             continue
         if account.account_type in DEBIT_NORMAL_TYPES:
-            signed_amount = (entry.debit or 0.0) - (entry.credit or 0.0)
+            signed_minor = entry.debit_minor - entry.credit_minor
         else:
-            signed_amount = (entry.credit or 0.0) - (entry.debit or 0.0)
-        balances[account.id] += convert_amount_with_lookup(
+            signed_minor = entry.credit_minor - entry.debit_minor
+        currency = normalize_currency(transaction.currency)
+        result = balances[account.id]
+        result.balances_minor[currency] = result.balances_minor.get(currency, 0) + signed_minor
+        result.balance += convert_amount_with_lookup(
             lookup,
-            signed_amount,
-            transaction.currency,
+            Money(signed_minor, currency).to_float(),
+            currency,
             transaction.date,
         )
 
     return balances
+
+
+def calculate_account_valued_balances(
+    db: Session,
+    accounts: list[models.Account],
+    as_of_date: date | None = None,
+    target_currency: str | None = None,
+) -> dict[int, float]:
+    return {account_id: result.balance for account_id, result in
+            calculate_account_balances(db, accounts, as_of_date, target_currency).items()}
 
 
 def calculate_account_valued_balance(

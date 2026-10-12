@@ -64,10 +64,10 @@ def _client(db) -> models.Client:
 
 def _split_entry(db, client):
     card = models.Account(
-        client_id=client.id, name="card", account_type="liability", liability_kind="card", balance=0
+        client_id=client.id, name="card", account_type="liability", liability_kind="card"
     )
-    food = models.Account(client_id=client.id, name="food", account_type="expense", balance=0)
-    advance = models.Account(client_id=client.id, name="advance", account_type="asset", balance=0)
+    food = models.Account(client_id=client.id, name="food", account_type="expense")
+    advance = models.Account(client_id=client.id, name="advance", account_type="asset")
     db.add_all([card, food, advance])
     db.commit()
 

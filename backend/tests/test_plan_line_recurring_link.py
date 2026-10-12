@@ -29,13 +29,11 @@ def db():
             client_id=1,
             name="bank",
             account_type="asset",
-            balance=100000,
         ),
         models.Account(
             client_id=1,
             name="subscriptions",
             account_type="expense",
-            balance=0,
         ),
     ])
     session.flush()

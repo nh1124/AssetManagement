@@ -40,8 +40,8 @@ def _session():
 
 def _client_and_accounts(db):
     client = models.Client(id=1, name="recurring-test", general_settings={}, ai_config={})
-    cash = models.Account(client_id=1, name="Cash", account_type="asset", balance=10000)
-    expense = models.Account(client_id=1, name="Rent expense", account_type="expense", balance=0)
+    cash = models.Account(client_id=1, name="Cash", account_type="asset")
+    expense = models.Account(client_id=1, name="Rent expense", account_type="expense")
     db.add_all([client, cash, expense])
     db.flush()
     return client, cash, expense
@@ -139,7 +139,6 @@ def test_process_due_applies_capsule_rule_once_in_same_commit():
             client_id=1,
             name="Reserve",
             account_type="asset",
-            balance=0,
         )
         db.add(reserve)
         db.flush()

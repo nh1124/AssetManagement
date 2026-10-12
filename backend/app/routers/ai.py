@@ -7,6 +7,7 @@ from .. import models
 from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.goal_service import list_goals
+from ..services.ledger_valuation import calculate_account_valued_balances
 from ..services.ledger_service import list_asset_accounts
 from ..services.journal_legs import legs_in_range
 from ..security import decrypt_key
@@ -188,8 +189,9 @@ async def optimize_allocations(
     
     # 2. Fetch Assets
     assets = list_asset_accounts(db, current_client.id)
+    balances = calculate_account_valued_balances(db, assets)
     assets_data = [{
-        "id": a.id, "name": a.name, "balance": a.balance, "return_rate": a.expected_return
+        "id": a.id, "name": a.name, "balance": balances[a.id], "return_rate": a.expected_return
     } for a in assets]
     
     prompt = f"""

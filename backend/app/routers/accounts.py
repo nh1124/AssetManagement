@@ -6,8 +6,8 @@ from ..database import get_db
 from ..dependencies import get_current_client
 from ..services import ledger_service
 from ..services.cache_service import invalidate_client
-from ..services.ledger_valuation import calculate_account_valued_balance, calculate_account_valued_balances
-from pydantic import BaseModel
+from ..services.ledger_valuation import AccountBalances, calculate_account_balances
+from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
 
@@ -51,6 +51,7 @@ class AccountResponse(BaseModel):
     name: str
     account_type: str
     balance: float
+    balances_minor: dict[str, int] = Field(default_factory=dict)
     parent_id: Optional[int] = None
     expected_return: float = 0.0
     role: str = "unassigned"
@@ -71,15 +72,16 @@ class AccountResponse(BaseModel):
 
 def _serialize_account(
     account: models.Account,
-    balance: float | None = None,
+    balances: AccountBalances,
     rollup_balance: float | None = None,
 ) -> dict:
-    account_balance = (account.balance or 0.0) if balance is None else balance
+    account_balance = balances.balance
     return {
         "id": account.id,
         "name": account.name,
         "account_type": account.account_type,
         "balance": account_balance,
+        "balances_minor": balances.balances_minor,
         "rollup_balance": rollup_balance if rollup_balance is not None else account_balance,
         "parent_id": account.parent_id,
         "expected_return": account.expected_return or 0.0,
@@ -97,7 +99,7 @@ def _serialize_account(
     }
 
 
-def _build_tree(accounts: list[models.Account], balances: dict[int, float]) -> dict:
+def _build_tree(accounts: list[models.Account], balances: dict[int, AccountBalances]) -> dict:
     by_id = {account.id: account for account in accounts}
     children_by_parent: dict[int | None, list[models.Account]] = {}
     for account in accounts:
@@ -105,11 +107,11 @@ def _build_tree(accounts: list[models.Account], balances: dict[int, float]) -> d
         children_by_parent.setdefault(parent_id, []).append(account)
 
     def rollup(account: models.Account) -> float:
-        return balances.get(account.id, 0.0) + sum(rollup(child) for child in children_by_parent.get(account.id, []))
+        return balances[account.id].balance + sum(rollup(child) for child in children_by_parent.get(account.id, []))
 
     def node(account: models.Account) -> dict:
         return {
-            **_serialize_account(account, balance=balances.get(account.id, 0.0), rollup_balance=rollup(account)),
+            **_serialize_account(account, balances=balances[account.id], rollup_balance=rollup(account)),
             "children": [node(child) for child in sorted(children_by_parent.get(account.id, []), key=lambda item: item.name)],
         }
 
@@ -130,9 +132,9 @@ def get_accounts(
     accounts = ledger_service.list_accounts(
         db, current_client.id, account_type=account_type, is_active=is_active,
     )
-    balances = calculate_account_valued_balances(db, accounts)
+    balances = calculate_account_balances(db, accounts)
     return [
-        _serialize_account(account, balance=balances.get(account.id, 0.0))
+        _serialize_account(account, balances=balances[account.id])
         for account in accounts
     ]
 
@@ -143,7 +145,7 @@ def get_account_tree(
     current_client: models.Client = Depends(get_current_client),
 ):
     accounts = ledger_service.list_accounts(db, current_client.id, ordered=False)
-    balances = calculate_account_valued_balances(db, accounts)
+    balances = calculate_account_balances(db, accounts)
     return _build_tree(accounts, balances)
 
 @router.get("/by-type")
@@ -153,7 +155,7 @@ def get_accounts_grouped_by_type(
 ):
     """Get accounts for current client grouped by type."""
     accounts = ledger_service.list_accounts(db, current_client.id, ordered=False)
-    balances = calculate_account_valued_balances(db, accounts)
+    balances = calculate_account_balances(db, accounts)
     
     grouped = {
         "asset": [],
@@ -167,7 +169,8 @@ def get_accounts_grouped_by_type(
             grouped[acc.account_type].append({
                 "id": acc.id,
                 "name": acc.name,
-                "balance": balances.get(acc.id, 0.0),
+                "balance": balances[acc.id].balance,
+                "balances_minor": balances[acc.id].balances_minor,
                 "role": acc.role,
                 "role_target_amount": acc.role_target_amount,
                 "liability_closing_day": acc.liability_closing_day,
@@ -191,7 +194,7 @@ def create_account(
     """Create a new account for current client."""
     db_account = ledger_service.create_account(db, current_client.id, account.model_dump())
     invalidate_client(current_client.id)
-    return _serialize_account(db_account, balance=calculate_account_valued_balance(db, db_account))
+    return _serialize_account(db_account, balances=calculate_account_balances(db, [db_account])[db_account.id])
 
 @router.put("/{account_id}", response_model=AccountResponse)
 def update_account(
@@ -207,7 +210,7 @@ def update_account(
     if db_account is None:
         raise HTTPException(status_code=404, detail="Account not found")
     invalidate_client(current_client.id)
-    return _serialize_account(db_account, balance=calculate_account_valued_balance(db, db_account))
+    return _serialize_account(db_account, balances=calculate_account_balances(db, [db_account])[db_account.id])
 
 @router.delete("/{account_id}")
 def delete_account(

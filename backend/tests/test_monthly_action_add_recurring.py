@@ -35,8 +35,8 @@ def test_applying_add_recurring_creates_the_definition_and_its_registry_entry() 
     db = _session()
     try:
         db.add(models.Client(id=1, name="test", general_settings={}, ai_config={}))
-        bank = models.Account(client_id=1, name="bank", account_type="asset", balance=100000)
-        subs = models.Account(client_id=1, name="subscriptions", account_type="expense", balance=0)
+        bank = models.Account(client_id=1, name="bank", account_type="asset")
+        subs = models.Account(client_id=1, name="subscriptions", account_type="expense")
         db.add_all([bank, subs])
         db.flush()
         action = models.MonthlyAction(

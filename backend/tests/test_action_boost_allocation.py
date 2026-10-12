@@ -7,6 +7,7 @@ action was applied. These tests pin the capsule-based replacement.
 from __future__ import annotations
 
 from app.services.money_storage import to_minor
+from app.services.ledger_service import create_transaction
 
 
 from datetime import date, timedelta
@@ -33,7 +34,7 @@ def _session():
 
 def _seed(db, *, balance: float = 1_000_000.0):
     client = models.Client(id=1, name="test", general_settings={}, ai_config={})
-    savings = models.Account(client_id=1, name="savings", account_type="asset", balance=balance)
+    savings = models.Account(client_id=1, name="savings", account_type="asset")
     goal = models.LifeEvent(
         client_id=1,
         name="house",
@@ -42,6 +43,13 @@ def _seed(db, *, balance: float = 1_000_000.0):
         priority=1,
     )
     db.add_all([client, savings, goal])
+    db.commit()
+    opening = models.Account(client_id=1, name="opening equity", account_type="income")
+    db.add(opening)
+    db.flush()
+    create_transaction(db, client_id=1, date=date(2026, 1, 1), description="Opening holdings",
+                       amount_minor=to_minor(balance, "JPY"), currency="JPY",
+                       from_account_id=opening.id, to_account_id=savings.id)
     db.commit()
     return savings, goal
 

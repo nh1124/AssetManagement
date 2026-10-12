@@ -16,6 +16,7 @@ from ..domain.money import Money
 from . import ledger_service
 from .cache_service import invalidate_client
 from .fx_service import get_client_currency
+from .ledger_valuation import calculate_account_valued_balance
 from .product_reserve_service import product_reserve_values
 
 
@@ -443,7 +444,7 @@ def capsule_transfer_specs(
                 continue
             # Holdings-based remaining_target still serves legacy contribute until H6;
             # the two definitions intentionally coexist for this wave.
-            balance = ledger_service.calculate_account_journal_balance(db, capsule.account)
+            balance = calculate_account_valued_balance(db, capsule.account)
             reserved = min(
                 _resolve_rule_amount(rule, amount, currency=currency),
                 max(0.0, (capsule.target_amount or 0.0) - balance),
