@@ -4,8 +4,11 @@ from datetime import date
 
 from sqlalchemy.orm import Session
 
+from .money_storage import to_minor, minor_fields, money_client_currency
+
 from .. import models
 from ..domain.errors import Invalid
+from ..domain.money import Money
 from .fx_service import convert_amount, get_client_currency
 from .product_reserve_service import effective_budget_treatment
 from .periods import current_period_key
@@ -58,7 +61,7 @@ def create_entry(
     if data.get("currency") is None:
         data = {**data, "currency": get_client_currency(db, client_id)}
     validate_account_refs(db, client_id, data)
-    entry = models.RegistryEntry(**data, client_id=client_id)
+    entry = models.RegistryEntry(**minor_fields(data, data["currency"], 'amount'), client_id=client_id)
     db.add(entry)
     db.flush()
     normalise_registry_flags(entry)
@@ -83,7 +86,10 @@ def update_entry(
     if "currency" in data and data["currency"] is None:
         data = {**data, "currency": entry.currency}
     validate_account_refs(db, client_id, data)
-    for key, value in data.items():
+    currency = data.get("currency", entry.currency)
+    if currency != entry.currency and "amount" not in data:
+        data = {**data, "amount": entry.amount}
+    for key, value in minor_fields(data, currency, "amount").items():
         setattr(entry, key, value)
     normalise_registry_flags(entry)
     sync_recurring_from_registry(db, entry)
@@ -205,9 +211,9 @@ def sync_registry_from_product(db: Session, product: models.Product) -> models.R
     entry.name = product.name
     entry.entry_type = "asset" if product.is_asset else "item"
     entry.category = product.budget_account.name if product.budget_account else product.category
-    entry.amount = product_unit_amount(product)
     if entry.currency is None:
-        entry.currency = get_client_currency(db, product.client_id)
+        entry.currency = money_client_currency(db, product.client_id)
+    entry.amount_minor = to_minor(product_unit_amount(product), entry.currency)
     entry.frequency = "EveryNDays" if product.frequency_days and product.frequency_days > 0 else "Irregular"
     entry.frequency_days = product.frequency_days or None
     entry.line_type = product_line_type(product)
@@ -267,7 +273,8 @@ def upsert_registry_from_recurring_payload(
     accounts_by_id = {account.id: account for account in accounts}
     source = accounts_by_id.get(data["from_account_id"])
     destination = accounts_by_id.get(data["to_account_id"])
-    for key in ("name", "amount", "currency", "frequency", "day_of_month",
+    entry.amount_minor = to_minor(data["amount"], data["currency"])
+    for key in ("name", "currency", "frequency", "day_of_month",
                 "month_of_year", "start_period", "end_period"):
         setattr(entry, key, data[key])
     entry.day_of_month = data["day_of_month"] or 1
@@ -322,7 +329,7 @@ def linked_recurring_transactions(db: Session, entry: models.RegistryEntry) -> l
 def registry_to_recurring_data(entry: models.RegistryEntry, *, currency: str) -> dict:
     return {
         "name": entry.name,
-        "amount": entry.amount or 0.0,
+        "amount": Money(entry.amount_minor or 0, currency).to_float(),
         "currency": currency,
         "from_account_id": entry.source_account_id,
         "to_account_id": entry.destination_account_id or entry.budget_account_id,
@@ -374,7 +381,7 @@ def sync_recurring_from_registry(db: Session, entry: models.RegistryEntry) -> No
     data = registry_to_recurring_data(entry, currency=currency)
     schedule_fields = {"frequency", "day_of_month", "month_of_year", "start_period"}
     schedule_changed = any(getattr(recurring, key, None) != data[key] for key in schedule_fields)
-    for key, value in data.items():
+    for key, value in minor_fields(data, currency, "amount").items():
         setattr(recurring, key, value)
     if schedule_changed:
         recurring.next_due_date = None

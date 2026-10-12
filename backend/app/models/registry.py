@@ -1,8 +1,12 @@
 from datetime import datetime
 
-from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, Boolean, DateTime, Text
+from sqlalchemy import Column, Integer, String, Date, ForeignKey, Boolean, DateTime, Text
 from sqlalchemy.orm import relationship
 
+from sqlalchemy.ext.hybrid import hybrid_property
+
+from ..domain.money import Money
+from .money import MinorUnits, major_expression
 from ..database import Base
 
 class RecurringTransaction(Base):
@@ -11,7 +15,7 @@ class RecurringTransaction(Base):
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
     name = Column(String, index=True)
-    amount = Column(Float)
+    amount_minor = Column(MinorUnits)
     currency = Column(String, default="JPY", server_default="JPY", nullable=False)
     from_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     to_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
@@ -37,6 +41,16 @@ class RecurringTransaction(Base):
     to_account = relationship("Account", foreign_keys=[to_account_id])
     source_registry_entry = relationship("RegistryEntry", foreign_keys=[source_registry_entry_id])
 
+    @hybrid_property
+    def amount(self) -> float | None:
+        if self.amount_minor is None:
+            return None
+        return Money(self.amount_minor, self.currency).to_float()
+
+    @amount.expression
+    def amount(cls):
+        return major_expression(cls.amount_minor, cls.currency)
+
 
 class RegistryEntry(Base):
     """Primary registry for recurring cash-flow assumptions."""
@@ -47,7 +61,7 @@ class RegistryEntry(Base):
     name = Column(String, index=True, nullable=False)
     entry_type = Column(String, nullable=False, default="service")
     category = Column(String, nullable=True)
-    amount = Column(Float, nullable=False, default=0.0)
+    amount_minor = Column(MinorUnits, nullable=False, default=0)
     currency = Column(String, default="JPY", server_default="JPY", nullable=False)
     frequency = Column(String, default="Monthly", server_default="Monthly", nullable=False)
     frequency_days = Column(Integer, nullable=True)
@@ -76,3 +90,13 @@ class RegistryEntry(Base):
     destination_account = relationship("Account", foreign_keys=[destination_account_id])
     funding_capsule = relationship("Capsule", foreign_keys=[funding_capsule_id])
     source_product = relationship("Product", foreign_keys=[source_product_id])
+
+    @hybrid_property
+    def amount(self) -> float | None:
+        if self.amount_minor is None:
+            return None
+        return Money(self.amount_minor, self.currency).to_float()
+
+    @amount.expression
+    def amount(cls):
+        return major_expression(cls.amount_minor, cls.currency)

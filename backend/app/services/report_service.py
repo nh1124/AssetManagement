@@ -6,6 +6,8 @@ from datetime import date, datetime
 from dateutil.relativedelta import relativedelta
 from sqlalchemy.orm import Session
 
+from .money_storage import to_minor, money_client_currency
+
 from .. import models
 from ..domain.money import Money
 from .ledger_service import get_or_create_account, create_transaction
@@ -406,7 +408,7 @@ def apply_monthly_report_proposal(
             proposal_id=proposal_id,
             kind=proposal["kind"],
             description=proposal["description"],
-            amount=proposal.get("amount"),
+            amount_minor=to_minor(proposal.get("amount"), money_client_currency(db, client_id)),
             target_id=proposal.get("target_id"),
             payload=proposal,
             status="pending",
@@ -469,7 +471,7 @@ def apply_period_report_proposal(
             proposal_id=proposal_id,
             kind=proposal["kind"],
             description=proposal["description"],
-            amount=proposal.get("amount"),
+            amount_minor=to_minor(proposal.get("amount"), money_client_currency(db, client_id)),
             target_id=proposal.get("target_id"),
             payload=proposal,
             status="pending",

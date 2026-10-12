@@ -1,8 +1,12 @@
 from datetime import datetime
 
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, Boolean, DateTime, JSON, UniqueConstraint
+from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, DateTime, JSON, UniqueConstraint
 from sqlalchemy.orm import relationship
 
+from sqlalchemy.ext.hybrid import hybrid_property
+
+from ..domain.money import Money
+from .money import MinorUnits, major_expression, client_currency, client_currency_expression
 from ..database import Base
 
 class AiOperationPolicy(Base):
@@ -25,13 +29,23 @@ class AiOperationPolicy(Base):
     action = Column(String, nullable=False)
     risk = Column(String, nullable=False)
     mode = Column(String, nullable=False)
-    threshold_amount = Column(Float, nullable=True)
+    threshold_amount_minor = Column(MinorUnits, nullable=True)
     threshold_count = Column(Integer, nullable=True)
     require_mfa = Column(Boolean, default=False, server_default="false", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     client = relationship("Client", back_populates="ai_operation_policies", foreign_keys=[client_id])
+
+    @hybrid_property
+    def threshold_amount(self) -> float | None:
+        if self.threshold_amount_minor is None:
+            return None
+        return Money(self.threshold_amount_minor, client_currency(self)).to_float()
+
+    @threshold_amount.expression
+    def threshold_amount(cls):
+        return major_expression(cls.threshold_amount_minor, client_currency_expression(cls))
 
 
 class AiAuditLog(Base):

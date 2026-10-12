@@ -9,6 +9,9 @@ route no line names belongs to nothing, so data_health reports it.
 
 from __future__ import annotations
 
+from app.services.money_storage import to_minor, minor_fields
+
+
 from backend.app.domain.money import Money
 
 from datetime import date
@@ -59,8 +62,8 @@ def _plan_line(db, **kwargs):
         target_period=PERIOD,
         line_type="expense",
         target_type="account",
-        amount=0.0,
-        **kwargs,
+        amount_minor=to_minor(0.0, "JPY"),
+        **minor_fields(kwargs, "JPY", 'amount'),
     )
     db.add(line)
     db.flush()

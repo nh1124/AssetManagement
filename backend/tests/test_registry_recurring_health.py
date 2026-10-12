@@ -1,3 +1,5 @@
+from app.services.money_storage import minor_fields
+
 from datetime import date
 
 import pytest
@@ -65,7 +67,7 @@ def test_recurring_with_dangling_registry_is_reported(db, foreign_client):
     if foreign_client:
         db.add(models.Client(id=2, name="other", general_settings={}, ai_config={}))
         db.add(models.RegistryEntry(id=999, client_id=2, name="other entry"))
-    recurring = models.RecurringTransaction(client_id=1, **_payload(db), source_registry_entry_id=999)
+    recurring = models.RecurringTransaction(client_id=1, **minor_fields(_payload(db), _payload(db).get("currency") or "JPY", 'amount'), source_registry_entry_id=999)
     db.add(recurring)
     issue = _issues(db)["recurring_without_registry"]
     assert issue["count"] == 1
@@ -159,7 +161,7 @@ def test_registry_plan_lines_do_not_project_a_definition_of_an_inactive_entry(db
     db.flush()
     db.add(models.RecurringTransaction(
         client_id=1,
-        **_payload(db),
+        **minor_fields(_payload(db), _payload(db).get("currency") or "JPY", 'amount'),
         source_registry_entry_id=entry.id,
     ))
     db.commit()

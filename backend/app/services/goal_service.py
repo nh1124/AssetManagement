@@ -1,4 +1,4 @@
-﻿"""Goal service boundary.
+"""Goal service boundary.
 
 The public API still exposes legacy /life-events routes, but UI responsibility now treats
 these records as the Goal domain. This module keeps routers and reports from depending on
@@ -8,6 +8,8 @@ strategy execution services directly.
 from datetime import date
 
 from sqlalchemy.orm import Session
+
+from .money_storage import minor_fields, money_client_currency
 
 from .. import models, schemas
 from ..domain.money import Money
@@ -53,7 +55,7 @@ def list_goals(db: Session, client_id: int) -> list[models.LifeEvent]:
 def create_goal_record(
     db: Session, client_id: int, payload: schemas.LifeEventCreate, *, commit: bool = True,
 ) -> models.LifeEvent:
-    db_event = models.LifeEvent(**payload.model_dump(), client_id=client_id)
+    db_event = models.LifeEvent(**minor_fields(payload.model_dump(), money_client_currency(db, client_id), 'target_amount'), client_id=client_id)
     db.add(db_event)
     if commit:
         db.commit()
@@ -70,7 +72,7 @@ def update_goal(
     db_event = get_life_event(db, client_id, life_event_id)
     if db_event is None:
         return None
-    for key, value in patch.model_dump(exclude_unset=True).items():
+    for key, value in minor_fields(patch.model_dump(exclude_unset=True), money_client_currency(db, client_id), "target_amount").items():
         setattr(db_event, key, value)
     if commit:
         db.commit()

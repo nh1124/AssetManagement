@@ -7,6 +7,9 @@ request are not observed; startup jobs are deliberately not run against this DB.
 """
 from __future__ import annotations
 
+from app.services.money_storage import to_minor, rule_amount_fields
+
+
 from backend.app.domain.money import Money
 
 from dataclasses import dataclass
@@ -137,20 +140,20 @@ def _seed(db, scenario, today):
     db.flush()
     lunch.batch_id = batch.id
     goal = models.LifeEvent(client_id=1, name="Guard goal", start_date=today,
-                            target_date=today + timedelta(days=365), target_amount=200000,
+                            target_date=today + timedelta(days=365), target_amount_minor=to_minor(200000, "JPY"),
                             priority=1)
     db.add(goal)
     db.flush()
     capsule = models.Capsule(client_id=1, life_event_id=goal.id, name="Guard capsule",
-                             target_amount=200000, monthly_contribution=10000,
-                             current_balance=0, account_id=cash.id)
+                             target_amount_minor=to_minor(200000, "JPY"), monthly_contribution_minor=to_minor(10000, "JPY"),
+                             current_balance_minor=to_minor(0, "JPY"), account_id=cash.id)
     db.add(capsule)
     db.flush()
     product = models.Product(client_id=1, name="Guard supplies", category="Guard food",
-                             last_unit_price=1000, frequency_days=30, units_per_purchase=1,
+                             last_unit_price_minor=to_minor(1000, "JPY"), frequency_days=30, units_per_purchase=1,
                              last_purchase_date=today, budget_account_id=expense.id,
                              budget_treatment="expense_only")
-    registry = models.RegistryEntry(client_id=1, name="Guard subscription", amount=1000,
+    registry = models.RegistryEntry(client_id=1, name="Guard subscription", amount_minor=to_minor(1000, "JPY"),
                                     budget_account_id=expense.id, source_account_id=cash.id,
                                     generate_recurring=True)
     db.add_all([product, registry])
@@ -164,27 +167,27 @@ def _seed(db, scenario, today):
     end = (start.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
     db.add_all([
         models.Product(client_id=1, name="Guard equipment", category="Equipment",
-                       last_unit_price=12000, purchase_price=12000,
+                       last_unit_price_minor=to_minor(12000, "JPY"), purchase_price_minor=to_minor(12000, "JPY"),
                        purchase_date=today - timedelta(days=30), is_asset=True,
                        lifespan_months=12, budget_treatment="asset_replacement"),
         # A stale capsule cache and an orphan plan line expose writes that a
         # fully normalised fixture would conceal.
-        models.CapsuleHolding(capsule_id=capsule.id, account_id=cash.id, held_amount=5000),
+        models.CapsuleHolding(capsule_id=capsule.id, account_id=cash.id, held_amount_minor=to_minor(5000, "JPY")),
         models.MonthlyPlanLine(client_id=1, plan_id=plan.id if plan else None,
                                target_period=today.strftime("%Y-%m"), line_type="expense",
-                               name="Guard food", amount=3000, account_id=expense.id,
+                               name="Guard food", amount_minor=to_minor(3000, "JPY"), account_id=expense.id,
                                source_account_id=cash.id),
-        models.RecurringTransaction(client_id=1, name=registry.name, amount=1000,
+        models.RecurringTransaction(client_id=1, name=registry.name, amount_minor=to_minor(1000, "JPY"),
                                     frequency="Monthly", day_of_month=today.day,
                                     from_account_id=cash.id, to_account_id=expense.id,
                                     next_due_date=today, source_registry_entry_id=registry.id),
         models.CapsuleRule(client_id=1, capsule_id=capsule.id, trigger_type="Income",
-                           amount_type="fixed", amount_value=100),
+                           amount_type="fixed", **rule_amount_fields(100, "fixed", "JPY")),
         models.Milestone(client_id=1, life_event_id=goal.id, date=goal.target_date,
-                         target_amount=200000),
+                         target_amount_minor=to_minor(200000, "JPY")),
         models.SimulationConfig(client_id=1),
         models.SimulationScenario(client_id=1, life_event_id=goal.id, name="Guard scenario",
-                                  annual_return=5, inflation=2, monthly_savings=10000),
+                                  annual_return=5, inflation=2, monthly_savings_minor=to_minor(10000, "JPY")),
         models.QuickTemplate(client_id=1, tray="expense", name="Guard lunch",
                              template_kind="transaction", default_from_account_id=cash.id,
                              default_to_account_id=expense.id),

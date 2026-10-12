@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from app.services.money_storage import to_minor, rule_amount_fields
+
+
 from backend.app.domain.money import Money
 
 from datetime import date
@@ -88,7 +91,7 @@ def test_report_goal_allocation_rolls_back_when_journal_posting_fails(monkeypatc
             client_id=client.id,
             name="Emergency fund",
             target_date=date(2027, 12, 31),
-            target_amount=500000,
+            target_amount_minor=to_minor(500000, "JPY"),
             priority=1,
         )
         db.add(goal)
@@ -150,7 +153,7 @@ def test_report_goal_allocation_commits_journal_and_capsule(monkeypatch) -> None
             client_id=client.id,
             name="Emergency fund",
             target_date=date(2027, 12, 31),
-            target_amount=500000,
+            target_amount_minor=to_minor(500000, "JPY"),
             priority=1,
         )
         db.add(goal)
@@ -159,9 +162,9 @@ def test_report_goal_allocation_commits_journal_and_capsule(monkeypatch) -> None
             client_id=client.id,
             life_event_id=goal.id,
             name=goal.name,
-            target_amount=goal.target_amount,
-            monthly_contribution=0,
-            current_balance=0,
+            target_amount_minor=to_minor(goal.target_amount, "JPY"),
+            monthly_contribution_minor=to_minor(0, "JPY"),
+            current_balance_minor=to_minor(0, "JPY"),
             capsule_type="life_event",
             target_amount_source="life_event",
             monthly_contribution_source="manual",
@@ -174,7 +177,7 @@ def test_report_goal_allocation_commits_journal_and_capsule(monkeypatch) -> None
             trigger_type="Transfer",
             source_mode="transaction_account",
             amount_type="fixed",
-            amount_value=1000,
+            **rule_amount_fields(1000, "fixed", "JPY"),
             is_active=True,
         ))
         db.commit()

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from app.services.money_storage import minor_fields
+
+
 try:
     from backend.app import models
     from backend.app.services.budget_lines import assign_plan_line_identity, line_identity_key, plan_line_identity_key
@@ -25,7 +28,7 @@ def _line(**overrides):
         cash_treatment="auto",
     )
     fields.update(overrides)
-    return models.MonthlyPlanLine(**fields)
+    return models.MonthlyPlanLine(**minor_fields(fields, "JPY", 'amount'))
 
 
 def test_identity_has_ten_elements_and_source_kind():

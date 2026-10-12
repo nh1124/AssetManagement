@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from app.services.money_storage import to_minor
+
+
 from backend.app.domain.money import Money
 
 from datetime import date
@@ -62,7 +65,7 @@ def _setup(db, *, held_amount=0):
         client_id=client.id,
         name="Emergency fund",
         target_date=date(2027, 12, 31),
-        target_amount=500,
+        target_amount_minor=to_minor(500, "JPY"),
         priority=1,
     )
     db.add_all([client, earmarked, income, destination, goal])
@@ -72,9 +75,9 @@ def _setup(db, *, held_amount=0):
         life_event_id=goal.id,
         account_id=earmarked.id,
         name=goal.name,
-        target_amount=500,
-        monthly_contribution=0,
-        current_balance=0,
+        target_amount_minor=to_minor(500, "JPY"),
+        monthly_contribution_minor=to_minor(0, "JPY"),
+        current_balance_minor=to_minor(0, "JPY"),
         capsule_type="life_event",
         target_amount_source="life_event",
         monthly_contribution_source="manual",
@@ -85,7 +88,7 @@ def _setup(db, *, held_amount=0):
         db.add(models.CapsuleHolding(
             capsule_id=capsule.id,
             account_id=earmarked.id,
-            held_amount=held_amount,
+            held_amount_minor=to_minor(held_amount, "JPY"),
         ))
     db.commit()
     return client, goal, earmarked, income, destination

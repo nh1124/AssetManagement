@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from app.services.money_storage import to_minor
+
+
 from backend.app.domain.money import Money
 
 from datetime import date, timedelta
@@ -97,9 +100,9 @@ def test_logical_balance_follows_the_plan_and_ignores_the_recurring_definition()
             models.Capsule(
                 client_id=1,
                 name="Emergency",
-                target_amount=100000,
-                monthly_contribution=10000,
-                current_balance=25000,
+                target_amount_minor=to_minor(100000, "JPY"),
+                monthly_contribution_minor=to_minor(10000, "JPY"),
+                current_balance_minor=to_minor(25000, "JPY"),
             )
         )
         rent = models.Account(client_id=1, name="rent", account_type="expense")
@@ -116,7 +119,7 @@ def test_logical_balance_follows_the_plan_and_ignores_the_recurring_definition()
                 client_id=1,
                 source_registry_entry_id=registry_entry.id,
                 name="Rent",
-                amount=50000,
+                amount_minor=to_minor(50000, "JPY"),
                 frequency="Monthly",
                 next_due_date=date.today() + timedelta(days=10),
                 is_active=True,
@@ -133,7 +136,7 @@ def test_logical_balance_follows_the_plan_and_ignores_the_recurring_definition()
                 line_type="expense",
                 account_id=rent.id,
                 name="Rent plan",
-                amount=50000,
+                amount_minor=to_minor(50000, "JPY"),
                 is_active=True,
             )
         )
@@ -146,7 +149,6 @@ def test_logical_balance_follows_the_plan_and_ignores_the_recurring_definition()
         assert summary["logical_balance"] == 825000
     finally:
         db.close()
-
 
 
 def test_update_transaction_rebuilds_journal_and_keeps_reconcile_clean() -> None:
@@ -276,7 +278,7 @@ def test_roadmap_projection_returns_projection_and_liability_demand() -> None:
             [
                 cash,
                 credit,
-                models.SimulationConfig(client_id=1, monthly_savings=50000, annual_return=5, inflation_rate=2),
+                models.SimulationConfig(client_id=1, monthly_savings_minor=to_minor(50000, "JPY"), annual_return=5, inflation_rate=2),
             ]
         )
         db.flush()
@@ -298,7 +300,7 @@ def test_roadmap_projection_returns_projection_and_liability_demand() -> None:
             client_id=1,
             name="House",
             target_date=date(today.year + 2, 12, 31),
-            target_amount=1000000,
+            target_amount_minor=to_minor(1000000, "JPY"),
             priority=1,
         )
         db.add(goal)
@@ -309,7 +311,7 @@ def test_roadmap_projection_returns_projection_and_liability_demand() -> None:
                 client_id=1,
                 life_event_id=goal.id,
                 date=date(today.year + 1, 12, 31),
-                target_amount=400000,
+                target_amount_minor=to_minor(400000, "JPY"),
                 note="Halfway",
             )
         )
@@ -572,7 +574,7 @@ def test_simulation_milestones_preview_and_apply_persist_source_snapshot() -> No
                 cash,
                 models.SimulationConfig(
                     client_id=1,
-                    monthly_savings=120000,
+                    monthly_savings_minor=to_minor(120000, "JPY"),
                     annual_return=5,
                     volatility=10,
                     inflation_rate=2,
@@ -585,7 +587,7 @@ def test_simulation_milestones_preview_and_apply_persist_source_snapshot() -> No
             client_id=1,
             name="House",
             target_date=date(today.year + 2, today.month, min(today.day, 28)),
-            target_amount=1000000,
+            target_amount_minor=to_minor(1000000, "JPY"),
             priority=1,
         )
         db.add(goal)

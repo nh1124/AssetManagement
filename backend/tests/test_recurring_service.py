@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from app.services.money_storage import to_minor, minor_fields, rule_amount_fields
+
+
 from datetime import date
 
 from sqlalchemy import create_engine
@@ -65,7 +68,7 @@ def _recurring(db, cash, expense, **overrides):
         "is_active": True,
     }
     values.update(overrides)
-    recurring = models.RecurringTransaction(**values)
+    recurring = models.RecurringTransaction(**minor_fields(values, values.get("currency") or "JPY", 'amount'))
     db.add(recurring)
     db.flush()
     return recurring
@@ -143,9 +146,9 @@ def test_process_due_applies_capsule_rule_once_in_same_commit():
         capsule = models.Capsule(
             client_id=1,
             name="Expense reserve",
-            target_amount=10_000,
-            monthly_contribution=0,
-            current_balance=0,
+            target_amount_minor=to_minor(10_000, "JPY"),
+            monthly_contribution_minor=to_minor(0, "JPY"),
+            current_balance_minor=to_minor(0, "JPY"),
             account_id=reserve.id,
         )
         db.add(capsule)
@@ -156,7 +159,7 @@ def test_process_due_applies_capsule_rule_once_in_same_commit():
             trigger_type="Expense",
             source_mode="transaction_account",
             amount_type="percentage",
-            amount_value=10,
+            **rule_amount_fields(10, "percentage", "JPY"),
             is_active=True,
         ))
         db.commit()
@@ -223,7 +226,7 @@ def test_process_due_deactivates_past_end_period_and_leaves_the_registry_alone()
         entry = models.RegistryEntry(
             client_id=1,
             name="Ended rent",
-            amount=1000,
+            amount_minor=to_minor(1000, "JPY"),
             currency="JPY",
             frequency="Monthly",
             day_of_month=15,
@@ -284,7 +287,7 @@ def test_registry_sync_initializes_due_date_and_preserves_progress():
         entry = models.RegistryEntry(
             client_id=1,
             name="Registry rent",
-            amount=1000,
+            amount_minor=to_minor(1000, "JPY"),
             currency="JPY",
             frequency="Monthly",
             day_of_month=10,

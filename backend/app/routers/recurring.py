@@ -26,7 +26,9 @@ def get_recurring_transactions(
     rows = list_for_client(db, current_client.id)
     return [
         {
-            **{column.name: getattr(row, column.name) for column in models.RecurringTransaction.__table__.columns},
+            **{column.name: getattr(row, column.name) for column in models.RecurringTransaction.__table__.columns
+               if column.name != "amount_minor"},
+            "amount": row.amount,
             "source_registry_entry_name": row.source_registry_entry.name if row.source_registry_entry else None,
         }
         for row in rows

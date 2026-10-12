@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 from uuid import uuid4
 
@@ -11,6 +12,8 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..domain.errors import Conflict, Invalid, NotFound, Refused
 from ..domain.money import Money
+from ..services.money_storage import money_client_currency
+from ..services.fx_service import get_exchange_rate
 from ..services import ai_change_request_store
 from ..services.fx_service import get_client_currency
 from ..services.ledger_service import (
@@ -27,6 +30,7 @@ from ..services.registry_service import get_recurring_transaction, upsert_regist
 from ..services.ai_policy_service import (
     AiOperationContext,
     evaluate_ai_operation,
+    has_amount_threshold,
     ledger_write_is_direct,
     write_ai_audit_log,
 )
@@ -239,7 +243,7 @@ def preview_change_request(
     except ValueError as exc:
         raise Invalid(str(exc)) from exc
 
-    context = _operation_context(payload, resource, action, preview)
+    context = _operation_context(db, client_id, payload, resource, action, preview)
     decision = evaluate_ai_operation(db, client_id, context)
     if decision.decision == "denied":
         raise Refused(
@@ -303,7 +307,7 @@ def create_change_request(
     )
     row = ai_change_request_store.create(db, client_id, fields, commit=False)
 
-    context = _operation_context(payload, preview["resource"], preview["action"], preview)
+    context = _operation_context(db, client_id, payload, preview["resource"], preview["action"], preview)
     decision = evaluate_ai_operation(db, client_id, context)
     log = write_ai_audit_log(
         db,
@@ -568,6 +572,8 @@ def _get_change_request(
 
 
 def _operation_context(
+    db: Session,
+    client_id: int,
     payload: schemas.AiChangeRequestPreviewRequest | schemas.AiChangeRequestCreate,
     resource: str,
     action: str,
@@ -584,14 +590,32 @@ def _operation_context(
         request_summary=preview.get("input_payload", {}),
         diff_summary=preview.get("diff", {}),
         mfa_verified=payload.mfa_verified,
-        amount=_amount_from_payload(preview.get("input_payload", {})),
+        amount=_amount_from_payload(db, client_id, preview.get("input_payload", {}),
+                                   resource=resource, action=action, risk=payload.risk, ai_client_id=payload.ai_client_id),
         count=_count_from_payload(preview.get("input_payload", {})),
     )
 
 
-def _amount_from_payload(payload: dict[str, Any]) -> float | None:
+def _amount_from_payload(
+    db: Session, client_id: int, payload: dict[str, Any], *,
+    resource: str, action: str, risk: str, ai_client_id: int | None,
+) -> int | None:
     amount = payload.get("amount")
-    return float(amount) if isinstance(amount, (int, float)) else None
+    if type(amount) not in (int, float):
+        return None
+    currency = money_client_currency(db, client_id)
+    source = payload.get("currency") or currency
+    if source != currency:
+        # A policy without an amount threshold needs no foreign-currency valuation.
+        if not has_amount_threshold(db, client_id, resource=resource, action=action, risk=risk, ai_client_id=ai_client_id):
+            return None
+        as_of = date.fromisoformat(str(payload["date"])) if payload.get("date") else None
+        rate = get_exchange_rate(db, client_id, source, currency, as_of)
+        if rate is None:
+            raise Invalid(f"Cannot compare AI threshold without an exchange rate for {source}/{currency}")
+        # A policy is denominated in the client currency even for a foreign request.
+        amount = Decimal(str(amount)) * Decimal(str(rate))
+    return Money.from_major(str(amount), currency).minor
 
 
 def _count_from_payload(payload: dict[str, Any]) -> int | None:

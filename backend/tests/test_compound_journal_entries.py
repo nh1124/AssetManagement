@@ -11,6 +11,9 @@ leg belongs to no plan line at all.
 """
 from __future__ import annotations
 
+from app.services.money_storage import to_minor, rule_amount_fields
+
+
 from backend.app.domain.money import Money
 
 from datetime import date
@@ -106,7 +109,7 @@ def _plan_line(db, *, line_type, account_id, source_account_id, name, amount):
         account_id=account_id,
         source_account_id=source_account_id,
         name=name,
-        amount=amount,
+        amount_minor=to_minor(amount, "JPY"),
     )
     db.add(line)
     db.commit()
@@ -311,9 +314,9 @@ def _reserve_capsule(db, *, target=400000):
     capsule = models.Capsule(
         client_id=1,
         name="asset reserve",
-        target_amount=target,
-        monthly_contribution=0,
-        current_balance=0,
+        target_amount_minor=to_minor(target, "JPY"),
+        monthly_contribution_minor=to_minor(0, "JPY"),
+        current_balance_minor=to_minor(0, "JPY"),
         account_id=account.id,
     )
     db.add(capsule)
@@ -335,7 +338,7 @@ def test_a_rule_triggers_on_the_income_account_not_the_category() -> None:
             source_mode="fixed_account",
             source_account_id=bank.id,
             amount_type="fixed",
-            amount_value=8808,
+            **rule_amount_fields(8808, "fixed", "JPY"),
             is_active=True,
         ))
         db.commit()
@@ -363,7 +366,7 @@ def test_fixed_account_mode_is_unambiguous_on_a_split() -> None:
             source_mode="fixed_account",
             source_account_id=savings.id,
             amount_type="fixed",
-            amount_value=1000,
+            **rule_amount_fields(1000, "fixed", "JPY"),
             is_active=True,
         ))
         db.commit()
@@ -388,7 +391,7 @@ def test_transaction_account_mode_skips_a_compound_entry_rather_than_guessing() 
             trigger_category="salary",
             source_mode="transaction_account",
             amount_type="fixed",
-            amount_value=8808,
+            **rule_amount_fields(8808, "fixed", "JPY"),
             is_active=True,
         ))
         db.commit()
@@ -421,7 +424,7 @@ def test_transaction_account_mode_still_works_on_a_two_leg_entry() -> None:
         capsule = _reserve_capsule(db)
         db.add(models.CapsuleRule(
             client_id=1, capsule_id=capsule.id, trigger_type="Income", trigger_category="salary",
-            source_mode="transaction_account", amount_type="fixed", amount_value=8808, is_active=True,
+            source_mode="transaction_account", amount_type="fixed", **rule_amount_fields(8808, "fixed", "JPY"), is_active=True,
         ))
         db.commit()
 
@@ -445,7 +448,7 @@ def test_a_percentage_rule_measures_the_whole_payment() -> None:
             source_mode="fixed_account",
             source_account_id=bank.id,
             amount_type="percentage",
-            amount_value=10,
+            **rule_amount_fields(10, "percentage", "JPY"),
             is_active=True,
         ))
         db.commit()

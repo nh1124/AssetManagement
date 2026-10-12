@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from app.services.money_storage import to_minor
+
+
 from datetime import date, datetime
 from typing import get_args
 from unittest.mock import Mock
@@ -24,9 +27,9 @@ def db():
     session.add_all([
         models.Client(id=1, name="first", ai_config={}, general_settings={}),
         models.Client(id=2, name="second", ai_config={}, general_settings={}),
-        models.LifeEvent(id=1, client_id=1, name="first goal", target_date=date(2030, 1, 1), target_amount=1000),
-        models.LifeEvent(id=2, client_id=2, name="foreign goal", target_date=date(2030, 1, 1), target_amount=1000),
-        models.LifeEvent(id=3, client_id=1, name="other goal", target_date=date(2030, 1, 1), target_amount=1000),
+        models.LifeEvent(id=1, client_id=1, name="first goal", target_date=date(2030, 1, 1), target_amount_minor=to_minor(1000, "JPY")),
+        models.LifeEvent(id=2, client_id=2, name="foreign goal", target_date=date(2030, 1, 1), target_amount_minor=to_minor(1000, "JPY")),
+        models.LifeEvent(id=3, client_id=1, name="other goal", target_date=date(2030, 1, 1), target_amount_minor=to_minor(1000, "JPY")),
     ])
     session.commit()
     try:

@@ -6,6 +6,9 @@ action was applied. These tests pin the capsule-based replacement.
 """
 from __future__ import annotations
 
+from app.services.money_storage import to_minor
+
+
 from datetime import date, timedelta
 
 import pytest
@@ -35,7 +38,7 @@ def _seed(db, *, balance: float = 1_000_000.0):
         client_id=1,
         name="house",
         target_date=date.today() + timedelta(days=365 * 5),
-        target_amount=6_000_000,
+        target_amount_minor=to_minor(6_000_000, "JPY"),
         priority=1,
     )
     db.add_all([client, savings, goal])
@@ -104,19 +107,19 @@ def test_boost_allocation_cannot_earmark_more_than_the_account_holds():
             client_id=1,
             name="car",
             target_date=date.today() + timedelta(days=365),
-            target_amount=500_000,
+            target_amount_minor=to_minor(500_000, "JPY"),
             priority=2,
         )
         db.add(other)
         db.flush()
         other_capsule = models.Capsule(
             client_id=1, life_event_id=other.id, name="car",
-            target_amount=500_000, monthly_contribution=0, current_balance=0,
+            target_amount_minor=to_minor(500_000, "JPY"), monthly_contribution_minor=to_minor(0, "JPY"), current_balance_minor=to_minor(0, "JPY"),
         )
         db.add(other_capsule)
         db.flush()
         db.add(models.CapsuleHolding(
-            capsule_id=other_capsule.id, account_id=savings.id, held_amount=90_000.0
+            capsule_id=other_capsule.id, account_id=savings.id, held_amount_minor=to_minor(90_000.0, "JPY")
         ))
         db.commit()
 

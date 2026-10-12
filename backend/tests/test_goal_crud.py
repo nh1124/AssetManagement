@@ -1,3 +1,5 @@
+from app.services.money_storage import to_minor, rule_amount_fields
+
 from backend.app.domain.money import Money
 from datetime import date
 
@@ -31,7 +33,7 @@ def db():
 def _goal_with_capsule_account(db):
     goal = models.LifeEvent(
         client_id=1, name="Emergency fund", target_date=date(2027, 12, 31),
-        target_amount=500, priority=1,
+        target_amount_minor=to_minor(500, "JPY"), priority=1,
     )
     earmarked = models.Account(client_id=1, name="Goal funds", account_type="asset")
     income = models.Account(client_id=1, name="Income", account_type="income")
@@ -39,16 +41,16 @@ def _goal_with_capsule_account(db):
     db.flush()
     capsule = models.Capsule(
         client_id=1, life_event_id=goal.id, account_id=earmarked.id,
-        name=goal.name, target_amount=500, monthly_contribution=0,
+        name=goal.name, target_amount_minor=to_minor(500, "JPY"), monthly_contribution_minor=to_minor(0, "JPY"),
     )
     db.add(capsule)
     db.flush()
     db.add_all([
         models.CapsuleRule(
             client_id=1, capsule_id=capsule.id, trigger_type="Transfer",
-            amount_type="fixed", amount_value=10,
+            amount_type="fixed", **rule_amount_fields(10, "fixed", "JPY"),
         ),
-        models.Milestone(client_id=1, life_event_id=goal.id, date=goal.target_date, target_amount=500),
+        models.Milestone(client_id=1, life_event_id=goal.id, date=goal.target_date, target_amount_minor=to_minor(500, "JPY")),
     ])
     db.commit()
     return goal.id, capsule.id, earmarked.id, income.id
@@ -160,7 +162,7 @@ def test_create_goal_writes_one_goal_annual_milestones_and_one_capsule_without_a
     milestones = db.query(models.Milestone).order_by(models.Milestone.date).all()
     assert len(milestones) == len(expected_rows) > 0
     assert [(m.date, m.target_amount, m.note, m.source, m.source_snapshot) for m in milestones] == [
-        (row["date"], row["target_amount"], row["note"], row["source"], row["source_snapshot"])
+        (row["date"], Money.from_major(str(row["target_amount"]), get_client_currency(db, 1)).to_float(), row["note"], row["source"], row["source_snapshot"])
         for row in sorted(expected_rows, key=lambda row: row["date"])
     ]
     for model in (models.Account, models.Transaction, models.JournalEntry, models.CapsuleHolding, models.CapsuleRule):

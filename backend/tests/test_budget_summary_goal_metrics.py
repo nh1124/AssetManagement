@@ -7,6 +7,9 @@ Strategy.tsx and mobile/pages/Plan.tsx read these keys.
 """
 from __future__ import annotations
 
+from app.services.money_storage import to_minor
+
+
 from datetime import date, timedelta
 
 from sqlalchemy import create_engine
@@ -47,7 +50,7 @@ def _seed(db, client_id: int):
             client_id=client_id,
             name="house",
             target_date=date.today() + timedelta(days=365 * 5),
-            target_amount=6_000_000,
+            target_amount_minor=to_minor(6_000_000, "JPY"),
             priority=1,
         )
     )

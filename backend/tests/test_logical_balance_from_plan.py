@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from app.services.money_storage import to_minor, minor_fields
+
+
 from backend.app.domain.money import Money
 
 from datetime import date
@@ -84,9 +87,9 @@ def _plan_line(db, amount, *, line_type="expense", period=None, plan_id=None, **
         target_period=period or current_period_key(),
         line_type=line_type,
         name="Planned " + line_type,
-        amount=amount,
+        amount_minor=to_minor(amount, "JPY"),
         is_active=True,
-        **kwargs,
+        **minor_fields(kwargs, "JPY", 'amount'),
     )
     db.add(line)
     db.commit()
@@ -235,7 +238,7 @@ def test_capsule_allocation_does_not_reserve_unfunded_plan() -> None:
         capsule = models.Capsule(
             client_id=1,
             name="Reserve",
-            current_balance=1000,
+            current_balance_minor=to_minor(1000, "JPY"),
         )
         db.add(capsule)
         db.commit()

@@ -1,4 +1,6 @@
 """Settlement forecasts use the selected plan's remaining card spending."""
+
+from app.services.money_storage import to_minor
 from backend.app.domain.money import Money
 
 from datetime import date
@@ -129,14 +131,14 @@ def test_capsule_allocation_subtracts_month_movement_not_balance(card_plan, monk
     investment = models.Account(client_id=1, name="investment", account_type="asset", balance=20000)
     db.add(investment)
     db.flush()
-    capsule = models.Capsule(client_id=1, name="reserve", account_id=investment.id, current_balance=20000)
+    capsule = models.Capsule(client_id=1, name="reserve", account_id=investment.id, current_balance_minor=to_minor(20000, "JPY"))
     db.add(capsule)
     db.flush()
-    db.add(models.CapsuleHolding(capsule_id=capsule.id, account_id=investment.id, held_amount=20000))
+    db.add(models.CapsuleHolding(capsule_id=capsule.id, account_id=investment.id, held_amount_minor=to_minor(20000, "JPY")))
     plan = models.MonthlyPlanLine(
         client_id=1, target_period="2026-10", line_type="allocation",
         target_type="capsule", target_id=capsule.id, account_id=None,
-        source_account_id=card.id, name="reserve", amount=4000, is_active=True,
+        source_account_id=card.id, name="reserve", amount_minor=to_minor(4000, "JPY"), is_active=True,
     )
     tx = models.Transaction(client_id=1, date=date(2026, 10, 11), description="investment", amount_minor=Money.from_major(str(4000), "JPY").minor, currency="JPY")
     db.add_all([plan, tx])
@@ -160,7 +162,7 @@ def test_inferred_card_source_settles_only_remaining_plan(card_plan, posted):
     db.add(models.RegistryEntry(
         client_id=1,
         name="subscriptions",
-        amount=5000,
+        amount_minor=to_minor(5000, "JPY"),
         frequency="Monthly",
         line_type="expense",
         source_account_id=card.id,

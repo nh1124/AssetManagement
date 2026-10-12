@@ -7,6 +7,9 @@ the kind, so nothing failed in the open.
 
 from __future__ import annotations
 
+from app.services.money_storage import to_minor
+
+
 from datetime import date
 
 from sqlalchemy import create_engine
@@ -89,7 +92,7 @@ def test_pausing_deactivates_the_definition() -> None:
             client_id=1,
             source_registry_entry_id=registry_entry.id,
             name="a subscription",
-            amount=1200,
+            amount_minor=to_minor(1200, "JPY"),
             currency="JPY",
             frequency="Monthly",
             day_of_month=14,

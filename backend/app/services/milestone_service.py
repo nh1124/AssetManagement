@@ -1,4 +1,4 @@
-﻿"""Milestone helpers for goal roadmaps."""
+"""Milestone helpers for goal roadmaps."""
 from __future__ import annotations
 
 from datetime import date, datetime
@@ -6,6 +6,8 @@ from typing import Any
 
 from dateutil.relativedelta import relativedelta
 from sqlalchemy.orm import Session
+
+from .money_storage import minor_fields, money_client_currency
 
 from .. import models, schemas
 from .goal_service import get_life_events_with_progress
@@ -95,7 +97,7 @@ def create_milestone(
 ) -> models.Milestone:
     if payload.life_event_id is not None:
         _get_event(db, client_id, payload.life_event_id)
-    milestone = models.Milestone(**payload.model_dump(), client_id=client_id)
+    milestone = models.Milestone(**minor_fields(payload.model_dump(), money_client_currency(db, client_id), 'target_amount'), client_id=client_id)
     db.add(milestone)
     if commit:
         db.commit()
@@ -115,7 +117,7 @@ def update_milestone(
     ).first()
     if milestone is None:
         return None
-    for field, value in patch.model_dump(exclude_none=True).items():
+    for field, value in minor_fields(patch.model_dump(exclude_none=True), money_client_currency(db, client_id), "target_amount").items():
         setattr(milestone, field, value)
     if commit:
         db.commit()
@@ -134,6 +136,8 @@ def delete_milestone(
     ).first()
     if milestone is None:
         return None
+    # Deleted rows still form HTTP responses after the session and owner expire.
+    milestone._deleted_money_currency = money_client_currency(db, client_id)
     db.delete(milestone)
     if commit:
         db.commit()
@@ -261,7 +265,7 @@ def reset_milestones_from_annual_plan(
 
     created: list[models.Milestone] = []
     for row in build_default_milestone_rows(db, client_id, life_event_id):
-        milestone = models.Milestone(client_id=client_id, **row)
+        milestone = models.Milestone(client_id=client_id, **minor_fields(row, money_client_currency(db, client_id), 'target_amount'))
         db.add(milestone)
         created.append(milestone)
 
@@ -483,7 +487,7 @@ def apply_milestones_from_simulation(
     for row in preview["items"]:
         if row["date"] in existing_dates:
             continue
-        milestone = models.Milestone(client_id=client_id, **row)
+        milestone = models.Milestone(client_id=client_id, **minor_fields(row, money_client_currency(db, client_id), 'target_amount'))
         db.add(milestone)
         created.append(milestone)
 

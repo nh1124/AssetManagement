@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from app.services.money_storage import to_minor
+
+
 from backend.app.domain.money import Money
 
 from datetime import date
@@ -56,7 +59,7 @@ def _setup(db):
         client_id=1,
         source_registry_entry_id=registry_entry.id,
         name="Rent",
-        amount=1000,
+        amount_minor=to_minor(1000, "JPY"),
         currency="JPY",
         from_account_id=cash.id,
         to_account_id=expense.id,

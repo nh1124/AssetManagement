@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from app.services.money_storage import to_minor
+
+
 from backend.app.domain.money import Money
 
 from datetime import date
@@ -56,7 +59,7 @@ def _plan(db, card, subs, amount=5000, plan_id=None):
     row = models.MonthlyPlanLine(
         client_id=1, plan_id=plan_id, target_period="2026-10", line_type="expense",
         target_type="account", account_id=subs.id, source_account_id=card.id,
-        name="subscriptions", amount=amount, is_active=True,
+        name="subscriptions", amount_minor=to_minor(amount, "JPY"), is_active=True,
     )
     db.add(row)
     db.flush()
@@ -90,7 +93,7 @@ def test_a_posted_occurrence_is_counted_once(card_plan):
     db.add(registry_entry)
     db.flush()
     db.add(models.RecurringTransaction(
-        client_id=1, name="subscription", amount=3000, currency="JPY",
+        client_id=1, name="subscription", amount_minor=to_minor(3000, "JPY"), currency="JPY",
         source_registry_entry_id=registry_entry.id,
         from_account_id=card.id, to_account_id=subs.id, frequency="Monthly",
         day_of_month=11, next_due_date=date(2026, 10, 11), is_active=True,

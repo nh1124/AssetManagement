@@ -4,6 +4,8 @@ from datetime import date
 
 from sqlalchemy.orm import Session
 
+from .money_storage import to_minor, money_client_currency
+
 from .. import models
 
 
@@ -86,9 +88,9 @@ def ensure_default_product_reserve_pools(db: Session, client_id: int) -> list[mo
             capsule = models.Capsule(
                 client_id=client_id,
                 name=name,
-                target_amount=0.0,
-                monthly_contribution=0.0,
-                current_balance=0.0,
+                target_amount_minor=to_minor(0.0, money_client_currency(db, client_id)),
+                monthly_contribution_minor=to_minor(0.0, money_client_currency(db, client_id)),
+                current_balance_minor=to_minor(0.0, money_client_currency(db, client_id)),
                 capsule_type="product_pool",
                 target_amount_source="linked_products",
                 monthly_contribution_source="linked_products",
@@ -134,8 +136,8 @@ def sync_product_reserve_capsules(db: Session, client_id: int) -> dict:
         capsule.capsule_type = "product_pool"
         capsule.target_amount_source = "linked_products"
         capsule.monthly_contribution_source = "linked_products"
-        capsule.target_amount = round(values["target_amount"], 0)
-        capsule.monthly_contribution = round(values["monthly_contribution"], 0)
+        capsule.target_amount_minor = to_minor(round(values["target_amount"], 0), money_client_currency(db, client_id))
+        capsule.monthly_contribution_minor = to_minor(round(values["monthly_contribution"], 0), money_client_currency(db, client_id))
         updated.append({
             "capsule_id": capsule.id,
             "capsule_name": capsule.name,

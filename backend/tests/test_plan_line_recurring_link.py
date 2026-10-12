@@ -1,5 +1,7 @@
 """Plan-line recurring context comes from the registry, never stored input."""
 
+from app.services.money_storage import to_minor
+
 import pytest
 from pydantic import ValidationError
 from sqlalchemy import create_engine
@@ -69,7 +71,7 @@ def test_registry_generated_plan_line_reports_recurring_definition(db):
         account_id=accounts["subscriptions"],
         source_account_id=accounts["bank"],
         source_kind="registry",
-        amount=1200,
+        amount_minor=to_minor(1200, "JPY"),
         name="subscription",
         is_active=True,
     ))
@@ -88,7 +90,7 @@ def test_plan_line_without_registry_reports_no_recurring_definition(db):
         line_type="expense",
         target_type="manual",
         name="manual expense",
-        amount=500,
+        amount_minor=to_minor(500, "JPY"),
         is_active=True,
     ))
     db.commit()

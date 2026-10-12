@@ -1,8 +1,12 @@
 from datetime import datetime
 
-from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, DateTime, JSON, Text, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Date, ForeignKey, DateTime, JSON, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 
+from sqlalchemy.ext.hybrid import hybrid_property
+
+from ..domain.money import Money
+from .money import MinorUnits, major_expression, client_currency, client_currency_expression
 from ..database import Base
 
 class PeriodReview(Base):
@@ -38,7 +42,7 @@ class MonthlyAction(Base):
     proposal_id = Column(String, nullable=False)
     kind = Column(String, nullable=False)
     description = Column(Text, default="")
-    amount = Column(Float, nullable=True)
+    amount_minor = Column(MinorUnits, nullable=True)
     target_id = Column(Integer, nullable=True)
     payload = Column(JSON, default=dict)
     result = Column(JSON, default=dict)
@@ -48,3 +52,13 @@ class MonthlyAction(Base):
     applied_at = Column(DateTime, nullable=True)
 
     client = relationship("Client", back_populates="monthly_actions")
+
+    @hybrid_property
+    def amount(self) -> float | None:
+        if self.amount_minor is None:
+            return None
+        return Money(self.amount_minor, client_currency(self)).to_float()
+
+    @amount.expression
+    def amount(cls):
+        return major_expression(cls.amount_minor, client_currency_expression(cls))

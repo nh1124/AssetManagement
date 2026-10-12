@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from app.services.money_storage import to_minor
+
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -195,7 +198,7 @@ def test_monthly_plan_line_update_conflicts_after_target_change() -> None:
             line_type="expense",
             target_type="manual",
             name="Food",
-            amount=30000,
+            amount_minor=to_minor(30000, "JPY"),
             source="manual",
             source_kind="manual",
             identity_key="",
@@ -218,7 +221,7 @@ def test_monthly_plan_line_update_conflicts_after_target_change() -> None:
         )
         approve_change_request(db, client.id, client.id, request.id)
 
-        line.amount = 32000
+        line.amount_minor = 32000
         db.commit()
 
         try:

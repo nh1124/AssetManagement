@@ -10,6 +10,8 @@ from __future__ import annotations
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from .money_storage import minor_fields, money_client_currency
+
 from .. import models
 from .budget_lines import (
     _line_source_kind,
@@ -44,7 +46,7 @@ def create_plan_line(
 ) -> models.MonthlyPlanLine:
     # Review actions already resolve their target; batch normalization and
     # duplicate validation would change their existing write behavior.
-    line = models.MonthlyPlanLine(**fields, client_id=client_id)
+    line = models.MonthlyPlanLine(**minor_fields(fields, money_client_currency(db, client_id), 'amount'), client_id=client_id)
     db.add(line)
     assign_plan_line_identity(line)
     if commit:
@@ -257,7 +259,7 @@ def replace_plan_lines_from_plan(
             account_id=src.account_id,
             source_account_id=src.source_account_id,
             name=src.name,
-            amount=src.amount,
+            amount_minor=src.amount_minor,
             source=src.source,
             source_kind=src.source_kind,
             manual_override=src.manual_override,
@@ -377,7 +379,7 @@ def _payload_data(payload) -> dict:
 
 
 def _apply_plan_line_data(db: Session, client_id: int, line: models.MonthlyPlanLine, data: dict) -> None:
-    for key, value in data.items():
+    for key, value in minor_fields(data, money_client_currency(db, client_id), "amount").items():
         if key != "id":
             setattr(line, key, value)
     line.source_kind = _line_source_kind(line)
@@ -412,7 +414,7 @@ def _apply_plan_line_data(db: Session, client_id: int, line: models.MonthlyPlanL
         if capsule:
             line.name = capsule.name
             line.account_id = capsule.account_id
-            capsule.monthly_contribution = line.amount or 0.0
+            capsule.monthly_contribution_minor = line.amount_minor or 0
             if line.source in {None, "manual", "capsule"}:
                 line.source_kind = "capsule"
     assign_plan_line_identity(line)

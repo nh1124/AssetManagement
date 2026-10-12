@@ -1,3 +1,5 @@
+from app.services.money_storage import to_minor, rule_amount_fields
+
 from backend.app.domain.money import Money
 from datetime import date
 
@@ -54,8 +56,8 @@ def _rule(posting, *, auto_post=False, bound=True, percentage=False):
     owner = models.Capsule(
         client_id=1,
         name="Savings",
-        target_amount=5000,
-        monthly_contribution=0,
+        target_amount_minor=to_minor(5000, "JPY"),
+        monthly_contribution_minor=to_minor(0, "JPY"),
         account_id=reserve.id if bound else None,
         auto_post=auto_post,
     )
@@ -68,7 +70,7 @@ def _rule(posting, *, auto_post=False, bound=True, percentage=False):
         source_mode="fixed_account",
         source_account_id=cash.id,
         amount_type="percentage" if percentage else "fixed",
-        amount_value=10 if percentage else 3000,
+        **rule_amount_fields(10 if percentage else 3000, "percentage" if percentage else "fixed", "JPY"),
         is_active=True,
     )
     db.add(rule)
@@ -180,7 +182,7 @@ def test_percentage_uses_whole_compound_amount(posting):
 def test_percentage_reservation_rounds_minor_units_and_balances_legs(posting, auto_post, currency, expected):
     db, _, cash, expense, _, _ = posting
     _, rule = _rule(posting, percentage=True, auto_post=auto_post)
-    rule.amount_value = 12.5
+    rule.percentage_bp = 1250
     db.flush()
     tx = ledger.create_transaction(
         db, client_id=1, date=WHEN, description="Uneven percentage",

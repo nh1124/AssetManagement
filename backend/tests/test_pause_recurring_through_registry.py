@@ -26,7 +26,7 @@ def test_pause_deactivates_registry_and_survives_edit_and_reconcile(db):
     assert entry.is_active is False
     assert recurring.is_active is False
     assert registry_plan_lines(BudgetContext(db, 1), "2026-10") == []
-    entry.amount = 1300
+    entry.amount_minor = 1300
     sync_recurring_from_registry(db, entry)
     reconcile_registry_recurring_links(db, 1)
     assert recurring.is_active is False
@@ -62,7 +62,7 @@ def test_registry_sync_defaults_new_definition_to_auto_post_and_preserves_manual
     recurring = db.get(models.RecurringTransaction, entry.source_recurring_transaction_id)
     assert recurring.auto_post is True
     recurring = upsert_registry_from_recurring_payload(db, 1, {"auto_post": False}, recurring)
-    entry.amount = 1300
+    entry.amount_minor = 1300
     sync_recurring_from_registry(db, entry)
     reconcile_registry_recurring_links(db, 1)
     db.flush()

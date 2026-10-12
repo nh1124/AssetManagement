@@ -1,8 +1,12 @@
 from datetime import datetime
 
-from sqlalchemy import Column, Integer, String, Float, ForeignKey, Boolean, DateTime, UniqueConstraint, Index, and_
+from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, DateTime, UniqueConstraint, Index, and_
 from sqlalchemy.orm import relationship
 
+from sqlalchemy.ext.hybrid import hybrid_property
+
+from ..domain.money import Money
+from .money import MinorUnits, major_expression, client_currency, client_currency_expression
 from ..database import Base
 
 class BudgetPlan(Base):
@@ -40,7 +44,7 @@ class MonthlyPlanLine(Base):
     account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     source_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     name = Column(String, nullable=True)
-    amount = Column(Float, default=0.0, nullable=False)
+    amount_minor = Column(MinorUnits, default=0, nullable=False)
     source = Column(String, default="manual", server_default="manual", nullable=False)
     source_kind = Column(String, default="manual", server_default="manual", nullable=False)
     identity_key = Column(String, default="", server_default="", nullable=False)
@@ -49,7 +53,6 @@ class MonthlyPlanLine(Base):
     is_active = Column(Boolean, default=True, server_default="true", nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
     plan_id = Column(Integer, ForeignKey("budget_plans.id", ondelete="SET NULL"), nullable=True)
 
     __table_args__ = (
@@ -67,3 +70,13 @@ class MonthlyPlanLine(Base):
     account = relationship("Account", foreign_keys=[account_id])
     source_account = relationship("Account", foreign_keys=[source_account_id])
     budget_plan = relationship("BudgetPlan", back_populates="plan_lines")
+
+    @hybrid_property
+    def amount(self) -> float | None:
+        if self.amount_minor is None:
+            return None
+        return Money(self.amount_minor, client_currency(self)).to_float()
+
+    @amount.expression
+    def amount(cls):
+        return major_expression(cls.amount_minor, client_currency_expression(cls))

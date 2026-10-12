@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from app.services.money_storage import to_minor
+
+
 from backend.app.domain.money import Money
 
 from datetime import date, timedelta
@@ -103,7 +106,7 @@ def test_summary_budget_deduction_uses_only_default_plan() -> None:
                     line_type="expense",
                     target_type="manual",
                     name="Baseline expense",
-                    amount=10000,
+                    amount_minor=to_minor(10000, "JPY"),
                     source="manual",
                     source_kind="manual",
                     identity_key="baseline-expense",
@@ -116,7 +119,7 @@ def test_summary_budget_deduction_uses_only_default_plan() -> None:
                     line_type="expense",
                     target_type="manual",
                     name="Comparison expense",
-                    amount=30000,
+                    amount_minor=to_minor(30000, "JPY"),
                     source="manual",
                     source_kind="manual",
                     identity_key="comparison-expense",
@@ -160,7 +163,7 @@ def test_logical_balance_subtracts_the_plan_remainder_not_the_recurring_definiti
                     client_id=1,
                     source_registry_entry_id=registry_entry.id,
                     name="USD subscription",
-                    amount=10,
+                    amount_minor=to_minor(10, "USD"),
                     currency="USD",
                     frequency="Monthly",
                     next_due_date=due_date,
@@ -178,7 +181,7 @@ def test_logical_balance_subtracts_the_plan_remainder_not_the_recurring_definiti
             line_type="expense",
             account_id=subscription_account.id,
             name="Subscription plan",
-            amount=1500,
+            amount_minor=to_minor(1500, "JPY"),
             is_active=True,
         ))
         db.commit()
@@ -191,10 +194,11 @@ def test_logical_balance_subtracts_the_plan_remainder_not_the_recurring_definiti
 
 def test_future_purchase_date_has_zero_depreciation() -> None:
     product = models.Product(
+        client=models.Client(id=1, general_settings={"currency": "JPY"}),
         client_id=1,
         name="Future laptop",
         is_asset=True,
-        purchase_price=60000,
+        purchase_price_minor=to_minor(60000, "JPY"),
         purchase_date=date.today() + timedelta(days=10),
         lifespan_months=24,
     )

@@ -1,3 +1,5 @@
+from app.services.money_storage import to_minor, minor_fields
+
 from unittest.mock import patch
 
 import pytest
@@ -43,7 +45,7 @@ def _plan(db, *, client_id=1, name="Plan", **values):
 def _line(db, plan, *, name="Food", period="2026-10", **values):
     line = models.MonthlyPlanLine(
         client_id=plan.client_id, plan_id=plan.id, name=name,
-        target_period=period, line_type="expense", amount=100, **values,
+        target_period=period, line_type="expense", amount_minor=to_minor(100, "JPY"), **minor_fields(values, "JPY", 'amount'),
     )
     db.add(line)
     db.commit()

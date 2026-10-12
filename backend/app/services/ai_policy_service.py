@@ -5,6 +5,9 @@ from datetime import date, datetime
 from typing import Any, Literal
 
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
+
+from .money_storage import to_minor, money_client_currency
 
 from .. import models
 from ..domain.errors import Refused
@@ -66,7 +69,7 @@ class AiOperationContext:
     mfa_verified: bool = False
     ip_address: str | None = None
     user_agent: str | None = None
-    amount: float | None = None
+    amount: int | None = None
     count: int | None = None
 
 
@@ -267,7 +270,7 @@ def replace_client_policies(
             action=normalize_action(item["action"]),
             risk=normalize_risk(item["risk"]),
             mode=item["mode"],
-            threshold_amount=item.get("threshold_amount"),
+            threshold_amount_minor=to_minor(item.get("threshold_amount"), money_client_currency(db, client_id)),
             threshold_count=item.get("threshold_count"),
             require_mfa=bool(item.get("require_mfa", False)),
         )
@@ -323,11 +326,22 @@ def _find_policy(
 
 
 def _threshold_applies(policy: models.AiOperationPolicy, context: AiOperationContext) -> bool:
-    if policy.threshold_amount is not None and context.amount is not None and context.amount < policy.threshold_amount:
+    if policy.threshold_amount_minor is not None and context.amount is not None and context.amount < policy.threshold_amount_minor:
         return False
     if policy.threshold_count is not None and context.count is not None and context.count < policy.threshold_count:
         return False
     return True
+
+
+def has_amount_threshold(db, client_id, *, resource, action, risk, ai_client_id):
+    return db.query(models.AiOperationPolicy.id).filter(
+        models.AiOperationPolicy.client_id == client_id,
+        models.AiOperationPolicy.resource == resource,
+        models.AiOperationPolicy.action == action,
+        models.AiOperationPolicy.risk == risk,
+        or_(models.AiOperationPolicy.ai_client_id.is_(None), models.AiOperationPolicy.ai_client_id == ai_client_id),
+        models.AiOperationPolicy.threshold_amount_minor.is_not(None),
+    ).first() is not None
 
 
 def _decision_from_mode(mode: str, action: str, require_mfa: bool, mfa_verified: bool) -> AiDecision:

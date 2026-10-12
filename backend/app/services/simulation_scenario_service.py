@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
+from .money_storage import minor_fields, money_client_currency
+
 from .. import models, schemas
 from ..domain.errors import Conflict, Invalid
 from .strategy_service import (
@@ -65,7 +67,7 @@ def create_scenario(
     ).first()
     if duplicate:
         raise ScenarioNameConflict("A scenario with that name already exists for this goal")
-    scenario = models.SimulationScenario(**payload.model_dump(), client_id=client_id)
+    scenario = models.SimulationScenario(**minor_fields(payload.model_dump(), money_client_currency(db, client_id), 'monthly_savings'), client_id=client_id)
     db.add(scenario)
     if commit:
         db.commit()
@@ -82,7 +84,7 @@ def update_scenario(
     scenario = get_scenario(db, client_id, scenario_id)
     if scenario is None:
         return None
-    for field, value in patch.model_dump(exclude_none=True).items():
+    for field, value in minor_fields(patch.model_dump(exclude_none=True), money_client_currency(db, client_id), "monthly_savings").items():
         setattr(scenario, field, value)
     if commit:
         db.commit()
@@ -98,6 +100,8 @@ def delete_scenario(
     scenario = get_scenario(db, client_id, scenario_id)
     if scenario is None:
         return None
+    # Deleted rows still form HTTP responses after the session and owner expire.
+    scenario._deleted_money_currency = money_client_currency(db, client_id)
     db.delete(scenario)
     if commit:
         db.commit()

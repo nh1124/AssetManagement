@@ -9,6 +9,9 @@ Covers:
 """
 from __future__ import annotations
 
+from app.services.money_storage import to_minor
+
+
 from datetime import date
 
 from sqlalchemy import create_engine
@@ -52,7 +55,7 @@ def _client_and_goal(db, target_date: date, target_amount: float = 1_500_000, pr
         client_id=1,
         name="Test Goal",
         target_date=target_date,
-        target_amount=target_amount,
+        target_amount_minor=to_minor(target_amount, "JPY"),
         priority=priority,
     )
     db.add(goal)
@@ -70,7 +73,7 @@ def test_milestone_plan_progress_interpolates_expected_amount():
                 client_id=1,
                 life_event_id=goal.id,
                 date=date(2026, 7, 1),
-                target_amount=300_000,
+                target_amount_minor=to_minor(300_000, "JPY"),
                 is_active_plan=True,
             )
         )
@@ -96,7 +99,7 @@ def test_inactive_milestones_do_not_drive_plan_progress():
                 client_id=1,
                 life_event_id=goal.id,
                 date=date(2026, 7, 1),
-                target_amount=300_000,
+                target_amount_minor=to_minor(300_000, "JPY"),
                 is_active_plan=False,
             )
         )

@@ -6,6 +6,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from .money_storage import to_minor, money_client_currency, rule_amount_fields
+
 from .. import models
 from ..domain.errors import Invalid
 from ..domain.money import Money
@@ -629,7 +631,7 @@ def import_client(
                 name=item["name"],
                 category=item["category"],
                 location=item.get("location"),
-                last_unit_price=item.get("last_unit_price") or 0,
+                last_unit_price_minor=to_minor(item.get("last_unit_price") or 0, money_client_currency(db, client.id)),
                 units_per_purchase=item.get("units_per_purchase") or 1,
                 frequency_days=item.get("frequency_days") or 0,
                 last_purchase_date=parse_date(item.get("last_purchase_date")),
@@ -637,7 +639,7 @@ def import_client(
                 lifespan_months=item.get("lifespan_months"),
                 budget_account_id=account_map.get(item.get("budget_account_id")),
                 budget_treatment=item.get("budget_treatment") or "auto",
-                purchase_price=item.get("purchase_price"),
+                purchase_price_minor=to_minor(item.get("purchase_price"), money_client_currency(db, client.id)),
                 purchase_date=parse_date(item.get("purchase_date")),
             )
             db.add(product)
@@ -654,7 +656,7 @@ def import_client(
                     annual_return=item.get("annual_return", 5.0),
                     tax_rate=item.get("tax_rate", 20.0),
                     is_nisa=item.get("is_nisa", True),
-                    monthly_savings=item.get("monthly_savings", 100000),
+                    monthly_savings_minor=to_minor(item.get("monthly_savings", 100000), money_client_currency(db, client.id)),
                     volatility=item.get("volatility", 15.0),
                     inflation_rate=item.get("inflation_rate", 2.0),
                 )
@@ -669,7 +671,7 @@ def import_client(
                 name=item["name"],
                 entry_type=item.get("entry_type") or "service",
                 category=item.get("category"),
-                amount=item.get("amount") or 0,
+                amount_minor=to_minor(item.get("amount") or 0, item.get("currency") or "JPY"),
                 # Restore the backup's denomination; today's settings would rewrite history.
                 currency=item.get("currency") or "JPY",
                 frequency=item.get("frequency") or "Monthly",
@@ -712,7 +714,7 @@ def import_client(
                 backfilled_entry = models.RegistryEntry(
                     client_id=client.id,
                     name=item["name"],
-                    amount=item.get("amount") or 0,
+                    amount_minor=to_minor(item.get("amount") or 0, item.get("currency") or "JPY"),
                     currency=item.get("currency") or "JPY",
                     frequency=item["frequency"],
                     day_of_month=item.get("day_of_month") or 1,
@@ -736,7 +738,7 @@ def import_client(
                 client_id=client.id,
                 source_registry_entry_id=source_registry_id,
                 name=item["name"],
-                amount=item.get("amount") or 0,
+                amount_minor=to_minor(item.get("amount") or 0, item.get("currency") or "JPY"),
                 currency=item.get("currency") or "JPY",
                 from_account_id=account_map.get(item.get("from_account_id")),
                 to_account_id=account_map.get(item.get("to_account_id")),
@@ -812,7 +814,7 @@ def import_client(
                 name=item["name"],
                 start_date=parse_date(item.get("start_date")),
                 target_date=parse_date(item.get("target_date")),
-                target_amount=item.get("target_amount") or 0,
+                target_amount_minor=to_minor(item.get("target_amount") or 0, money_client_currency(db, client.id)),
                 priority=item.get("priority") or 2,
                 note=item.get("note"),
                 active_plan_basis=item.get("active_plan_basis") or "milestone",
@@ -900,7 +902,7 @@ def import_client(
                 client_id=client.id,
                 life_event_id=event_map.get(item.get("life_event_id")),
                 date=parse_date(item.get("date")),
-                target_amount=item.get("target_amount") or 0,
+                target_amount_minor=to_minor(item.get("target_amount") or 0, money_client_currency(db, client.id)),
                 note=item.get("note"),
                 source=item.get("source") or "manual",
                 source_snapshot=item.get("source_snapshot"),
@@ -922,7 +924,7 @@ def import_client(
                         description=item.get("description"),
                         annual_return=item.get("annual_return") or 5.0,
                         inflation=item.get("inflation") or 2.0,
-                        monthly_savings=item.get("monthly_savings"),
+                        monthly_savings_minor=to_minor(item.get("monthly_savings"), money_client_currency(db, client.id)),
                         contribution_schedule=item.get("contribution_schedule") or [],
                         allocation_mode=item.get("allocation_mode") or "direct",
                         created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
@@ -935,9 +937,9 @@ def import_client(
             capsule = models.Capsule(
                 client_id=client.id,
                 name=item["name"],
-                target_amount=item.get("target_amount") or 0,
-                monthly_contribution=item.get("monthly_contribution") or 0,
-                current_balance=item.get("current_balance") or 0,
+                target_amount_minor=to_minor(item.get("target_amount") or 0, money_client_currency(db, client.id)),
+                monthly_contribution_minor=to_minor(item.get("monthly_contribution") or 0, money_client_currency(db, client.id)),
+                current_balance_minor=to_minor(item.get("current_balance") or 0, money_client_currency(db, client.id)),
                 account_id=account_map.get(item.get("account_id")),
                 life_event_id=event_map.get(item.get("life_event_id")),
                 capsule_type=item.get("capsule_type") or ("life_event" if item.get("life_event_id") else "manual"),
@@ -976,7 +978,7 @@ def import_client(
                         source_mode=item.get("source_mode") or "transaction_account",
                         source_account_id=account_map.get(item.get("source_account_id")),
                         amount_type=item.get("amount_type") or "fixed",
-                        amount_value=item.get("amount_value") or 0,
+                        **rule_amount_fields(item.get("amount_value") or 0, item.get("amount_type") or "fixed", money_client_currency(db, client.id)),
                         is_active=item.get("is_active", True),
                         created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
                     )
@@ -990,7 +992,7 @@ def import_client(
                     models.CapsuleHolding(
                         capsule_id=capsule_id,
                         account_id=account_id,
-                        held_amount=item.get("held_amount") or 0,
+                        held_amount_minor=to_minor(item.get("held_amount") or 0, money_client_currency(db, client.id)),
                         note=item.get("note"),
                         updated_at=parse_datetime(item.get("updated_at")) or datetime.utcnow(),
                     )
@@ -1024,7 +1026,7 @@ def import_client(
                 account_id=account_id,
                 source_account_id=source_account_id,
                 name=item.get("name"),
-                amount=item.get("amount") or 0,
+                amount_minor=to_minor(item.get("amount") or 0, money_client_currency(db, client.id)),
                 source=item.get("source") or "manual",
                 source_kind=source_kind,
                 manual_override=item.get("manual_override", False),
@@ -1092,7 +1094,7 @@ def import_client(
                     proposal_id=item["proposal_id"],
                     kind=item["kind"],
                     description=item.get("description") or "",
-                    amount=item.get("amount"),
+                    amount_minor=to_minor(item.get("amount"), money_client_currency(db, client.id)),
                     target_id=remap_action_target_id(item, action_key_maps),
                     payload=remap_nested_ids(item.get("payload") or {}, action_key_maps),
                     result=remap_nested_ids(item.get("result") or {}, action_key_maps),

@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import create_engine, event, func, select
 from sqlalchemy.orm import sessionmaker
 
+from app.services.money_storage import minor_fields, rule_data
 from app import models
 from app.database import Base
 from app.domain.errors import Invalid
@@ -55,6 +56,18 @@ def _seed(db, client_id=101, base=10000):
         for field in ("created_at", "updated_at"):
             if hasattr(model, field):
                 values[field] = STAMP
+        money_names = {
+            "monthly_plan_lines": ("amount",), "life_events": ("target_amount",),
+            "milestones": ("target_amount",), "capsules": ("target_amount", "monthly_contribution", "current_balance"),
+            "capsule_holdings": ("held_amount",), "monthly_actions": ("amount",),
+            "products": ("last_unit_price", "purchase_price"), "simulation_configs": ("monthly_savings",),
+            "simulation_scenarios": ("monthly_savings",), "registry_entries": ("amount",),
+            "recurring_transactions": ("amount",),
+        }
+        if model.__tablename__ == "capsule_rules":
+            values = rule_data(values, "JPY")
+        elif model.__tablename__ in money_names:
+            values = minor_fields(values, values.get("currency") or "JPY", *money_names[model.__tablename__])
         row = model(**values)
         db.add(row)
         db.flush()

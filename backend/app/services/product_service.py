@@ -4,6 +4,8 @@ from datetime import timedelta
 
 from sqlalchemy.orm import Session
 
+from .money_storage import minor_fields, money_client_currency
+
 from .. import models
 from .cache_service import invalidate_client
 from .product_reserve_service import effective_budget_treatment, product_reserve_values, should_use_reserve
@@ -28,14 +30,15 @@ def list_products(
 
 
 def product_uses_reserve(data: dict) -> bool:
-    probe = models.Product(**{key: value for key, value in data.items() if hasattr(models.Product, key)})
+    probe = models.Product(**{key: value for key, value in data.items()
+                             if key not in {"last_unit_price", "purchase_price"} and hasattr(models.Product, key)})
     return should_use_reserve(probe)
 
 
 def create_product(
     db: Session, client_id: int, data: dict, *, commit: bool = True,
 ) -> models.Product:
-    product = models.Product(**data, client_id=client_id)
+    product = models.Product(**minor_fields(data, money_client_currency(db, client_id), 'last_unit_price', 'purchase_price'), client_id=client_id)
     db.add(product)
     if commit:
         db.commit()
@@ -52,7 +55,7 @@ def update_product(
     product = get_product(db, client_id, product_id)
     if product is None:
         return None
-    for key, value in data.items():
+    for key, value in minor_fields(data, money_client_currency(db, client_id), "last_unit_price", "purchase_price").items():
         setattr(product, key, value)
     if commit:
         db.commit()

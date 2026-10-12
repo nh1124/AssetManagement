@@ -1,3 +1,5 @@
+from app.services.money_storage import to_minor, rule_amount_fields
+
 from datetime import date
 
 import pytest
@@ -162,12 +164,12 @@ def _payload(posting, **overrides):
 def _rule(posting, auto_post):
     db, client, cash, _, reserve = posting
     capsule = models.Capsule(client_id=client.id, name="reserve", account_id=reserve.id,
-                             target_amount=5000, monthly_contribution=0, auto_post=auto_post)
+                             target_amount_minor=to_minor(5000, "JPY"), monthly_contribution_minor=to_minor(0, "JPY"), auto_post=auto_post)
     db.add(capsule)
     db.flush()
     db.add(models.CapsuleRule(client_id=client.id, capsule_id=capsule.id, trigger_type="Expense",
                               source_mode="fixed_account", source_account_id=cash.id,
-                              amount_type="fixed", amount_value=10, is_active=True))
+                              amount_type="fixed", **rule_amount_fields(10, "fixed", "JPY"), is_active=True))
     db.commit()
 
 

@@ -7,6 +7,9 @@ Covers:
 """
 from __future__ import annotations
 
+from app.services.money_storage import to_minor
+
+
 from datetime import date
 
 from sqlalchemy import create_engine
@@ -51,7 +54,7 @@ def _setup(db, target_date: date, target_amount: float = 2_000_000):
         client_id=1,
         name="Test Goal",
         target_date=target_date,
-        target_amount=target_amount,
+        target_amount_minor=to_minor(target_amount, "JPY"),
         priority=2,
     )
     db.add(goal)

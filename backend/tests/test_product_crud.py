@@ -1,3 +1,5 @@
+from app.services.money_storage import to_minor
+
 from datetime import date
 
 import pytest
@@ -77,7 +79,7 @@ def test_delete_product_deactivates_and_detaches_registry_but_keeps_capsules_and
         entry = registry_service.sync_registry_from_product(db, product)
         db.flush()
         recurring = models.RecurringTransaction(
-            client_id=1, name="Existing recurrence", amount=123, frequency="Monthly",
+            client_id=1, name="Existing recurrence", amount_minor=to_minor(123, "JPY"), frequency="Monthly",
             source_registry_entry_id=entry.id, next_due_date=date(2026, 11, 1),
         )
         db.add(recurring)

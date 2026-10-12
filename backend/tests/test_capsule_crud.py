@@ -1,3 +1,5 @@
+from app.services.money_storage import to_minor
+
 from backend.app.domain.money import Money
 from datetime import date
 
@@ -43,7 +45,7 @@ def _capsule(db, *, client_id=1):
     db.flush()
     capsule = models.Capsule(
         client_id=client_id, name="Savings", account_id=reserve.id,
-        target_amount=500, monthly_contribution=10, current_balance=123,
+        target_amount_minor=to_minor(500, "JPY"), monthly_contribution_minor=to_minor(10, "JPY"), current_balance_minor=to_minor(123, "JPY"),
     )
     db.add(capsule)
     db.commit()
@@ -215,7 +217,7 @@ def test_capsule_crud_clamps_inputs_ignores_balance_patch_and_read_commits_holdi
     ))
     assert (updated.target_amount, updated.monthly_contribution, updated.current_balance) == (0, 0, 75)
     assert (updated.capsule_type, updated.target_amount_source, updated.monthly_contribution_source) == ("manual", "manual", "manual")
-    updated.current_balance = 1
+    updated.current_balance_minor = 1
     db.commit()
     details = capsule_service.list_capsule_details(db, 1)
     assert details[0]["current_balance"] == 75
@@ -264,11 +266,11 @@ def test_commit_false_leaves_every_new_writing_function_rollbackable(db, monkeyp
     capsule_id, cash_id = capsule.id, cash.id
     rule_id = capsule_service.create_rule(db, 1, _rule_payload(capsule_id)).id
     holding_id = capsule_service.create_holding(db, 1, capsule_id, schemas.CapsuleHoldingCreate(account_id=cash_id, held_amount=20)).id
-    goal = models.LifeEvent(client_id=1, name="Goal", target_date=date(2027, 12, 31), target_amount=200)
+    goal = models.LifeEvent(client_id=1, name="Goal", target_date=date(2027, 12, 31), target_amount_minor=to_minor(200, "JPY"))
     product = models.Product(
         client_id=1, name="Item", funding_capsule_id=capsule_id,
         budget_treatment="reserve_allocation", is_asset=False,
-        last_unit_price=100, frequency_days=60,
+        last_unit_price_minor=to_minor(100, "JPY"), frequency_days=60,
     )
     db.add_all([goal, product])
     db.commit()

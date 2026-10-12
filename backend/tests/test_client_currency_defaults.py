@@ -1,3 +1,5 @@
+from app.services.money_storage import to_minor, rule_amount_fields
+
 from datetime import date
 
 from fastapi import FastAPI
@@ -164,7 +166,7 @@ def test_monthly_recurring_action_uses_client_currency(posting):
 
 def test_product_registry_defaults_and_preserves_existing_currency(posting):
     db, client, (cash, food, *_), _ = posting
-    product = models.Product(client_id=client.id, name="Coffee", last_unit_price=12.34,
+    product = models.Product(client_id=client.id, name="Coffee", last_unit_price_minor=to_minor(12.34, "USD"),
                              frequency_days=30, budget_account_id=food.id)
     db.add(product)
     db.flush()
@@ -177,7 +179,7 @@ def test_product_registry_defaults_and_preserves_existing_currency(posting):
 
 def test_virtual_product_budget_entry_uses_client_currency(posting):
     db, client, (_, food, *_), _ = posting
-    db.add(models.Product(client_id=client.id, name="Coffee", last_unit_price=12.34,
+    db.add(models.Product(client_id=client.id, name="Coffee", last_unit_price_minor=to_minor(12.34, "USD"),
                           frequency_days=30, budget_account_id=food.id))
     db.flush()
     ctx = BudgetContext(db, client.id)
@@ -202,12 +204,12 @@ def test_registry_sync_caller_supplies_currency_when_entry_has_none(posting):
 def test_capsule_preview_uses_currency_precision_and_required_helper_argument(posting):
     db, client, (cash, food, reserve, _), _ = posting
     capsule = models.Capsule(client_id=client.id, name="Savings", account_id=reserve.id,
-                             target_amount=100, auto_post=False)
+                             target_amount_minor=to_minor(100, "USD"), auto_post=False)
     db.add(capsule)
     db.flush()
     rule = models.CapsuleRule(client_id=client.id, capsule_id=capsule.id, trigger_type="Expense",
                               source_mode="fixed_account", source_account_id=cash.id,
-                              amount_type="percentage", amount_value=10, is_active=True)
+                              amount_type="percentage", **rule_amount_fields(10, "percentage", "USD"), is_active=True)
     db.add(rule)
     db.commit()
     specs = capsule_service.capsule_transfer_specs(
@@ -223,14 +225,14 @@ def test_capsule_preview_uses_currency_precision_and_required_helper_argument(po
 
 def test_goal_return_transfer_uses_client_minor_units(posting):
     db, client, (cash, _, reserve, _), _ = posting
-    goal = models.LifeEvent(client_id=client.id, name="Savings", target_amount=100)
+    goal = models.LifeEvent(client_id=client.id, name="Savings", target_amount_minor=to_minor(100, "USD"))
     db.add(goal)
     db.flush()
     capsule = models.Capsule(client_id=client.id, name="Savings", life_event_id=goal.id,
-                             account_id=reserve.id, target_amount=100)
+                             account_id=reserve.id, target_amount_minor=to_minor(100, "USD"))
     db.add(capsule)
     db.flush()
-    db.add(models.CapsuleHolding(capsule_id=capsule.id, account_id=reserve.id, held_amount=12.34))
+    db.add(models.CapsuleHolding(capsule_id=capsule.id, account_id=reserve.id, held_amount_minor=to_minor(12.34, "USD")))
     db.commit()
     assert goal_service.delete_goal(db, client.id, goal.id, transfer_account_id=cash.id)
     tx = db.query(models.Transaction).one()
@@ -239,7 +241,7 @@ def test_goal_return_transfer_uses_client_minor_units(posting):
 
 def test_report_allocation_uses_client_minor_units(posting):
     db, client, _, _ = posting
-    goal = models.LifeEvent(client_id=client.id, name="Savings", target_amount=100)
+    goal = models.LifeEvent(client_id=client.id, name="Savings", target_amount_minor=to_minor(100, "USD"))
     db.add(goal)
     db.flush()
     result = report_service._apply_allocate_to_goal(
@@ -270,13 +272,13 @@ def test_currency_is_client_scoped_and_not_cached(posting, kind):
 
 
 @pytest.mark.parametrize("kind", KINDS)
-def test_unsupported_setting_keeps_current_normalization_behavior(posting, kind):
+def test_unsupported_setting_normalizes_but_money_storage_refuses_it(posting, kind):
     db, client, accounts, http = posting
     client.general_settings = {"currency": " gbp "}
     db.commit()
     assert fx_service.normalize_currency(" gbp ") == "GBP"
     assert fx_service.get_client_currency(db, client.id) == "GBP"
-    if kind == "transaction":
+    if kind in {"transaction", "recurring", "registry"}:
         with pytest.raises(ValueError, match="Unsupported currency 'GBP'"):
             http.post(PATHS[kind], json=_payload(kind, accounts))
         assert db.query(models.Transaction).count() == 0

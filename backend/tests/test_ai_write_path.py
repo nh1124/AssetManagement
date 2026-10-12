@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from app.services.money_storage import to_minor, rule_amount_fields
+
+
 from datetime import date
 
 import pytest
@@ -47,8 +50,8 @@ def _capsule_rule(db, cash, destination):
     capsule = models.Capsule(
         client_id=1,
         name="Savings",
-        target_amount=5000,
-        monthly_contribution=0,
+        target_amount_minor=to_minor(5000, "JPY"),
+        monthly_contribution_minor=to_minor(0, "JPY"),
         account_id=destination.id,
         auto_post=False,
     )
@@ -61,7 +64,7 @@ def _capsule_rule(db, cash, destination):
         source_mode="fixed_account",
         source_account_id=cash.id,
         amount_type="fixed",
-        amount_value=300,
+        **rule_amount_fields(300, "fixed", "JPY"),
         is_active=True,
     )
     db.add(rule)

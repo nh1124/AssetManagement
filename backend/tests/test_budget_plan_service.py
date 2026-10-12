@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from app.services.money_storage import to_minor
+
+
 from backend.app.domain.money import Money
 
 from datetime import date
@@ -61,7 +64,7 @@ def test_data_health_repairs_plan_line_source_from_posted_transaction() -> None:
             target_type="account",
             account_id=beauty.id,
             name="beauty",
-            amount=120000,
+            amount_minor=to_minor(120000, "JPY"),
             source_account_id=None,
         )
         tx = models.Transaction(
@@ -108,7 +111,7 @@ def test_data_export_includes_budget_plan_line_fields_without_legacy_columns() -
             account_id=food.id,
             source_account_id=cash.id,
             name="food",
-            amount=1000,
+            amount_minor=to_minor(1000, "JPY"),
             source_kind="manual",
             manual_override=True,
         )
@@ -144,7 +147,7 @@ def test_data_export_manifest_and_validate_include_monthly_actions() -> None:
                 proposal_id="proposal-1",
                 kind="set_budget",
                 description="Adjust food budget",
-                amount=12000,
+                amount_minor=to_minor(12000, "JPY"),
                 target_id=10,
                 payload={"account_id": 10, "amount": 12000},
                 result={},
@@ -188,7 +191,7 @@ def test_data_import_round_trip_remaps_account_targets_and_monthly_actions() -> 
                 account_id=food.id,
                 source_account_id=cash.id,
                 name="food",
-                amount=15000,
+                amount_minor=to_minor(15000, "JPY"),
             )
         )
         source_db.add(
@@ -199,7 +202,7 @@ def test_data_import_round_trip_remaps_account_targets_and_monthly_actions() -> 
                 proposal_id="proposal-1",
                 kind="set_budget",
                 description="Adjust food budget",
-                amount=15000,
+                amount_minor=to_minor(15000, "JPY"),
                 target_id=food.id,
                 payload={"account_id": food.id, "amount": 15000},
                 result={"plan_line_id": 1},
@@ -281,7 +284,7 @@ def test_data_import_backfills_plan_line_source_identity_for_legacy_payload() ->
             client_id=1,
             source_registry_entry_id=registry_entry.id,
             name="food",
-            amount=10000,
+            amount_minor=to_minor(10000, "JPY"),
             from_account_id=cash.id,
             to_account_id=food.id,
             frequency="Monthly",
@@ -297,7 +300,7 @@ def test_data_import_backfills_plan_line_source_identity_for_legacy_payload() ->
             account_id=food.id,
             source_account_id=cash.id,
             name="food",
-            amount=10000,
+            amount_minor=to_minor(10000, "JPY"),
             source="recurrence",
         )
         assign_plan_line_identity(line)
@@ -366,7 +369,7 @@ def test_budget_summary_combines_income_spending_allocations_and_debt() -> None:
                 line_type="income",
                 target_type="manual",
                 name="bonus reserve",
-                amount=100000,
+                amount_minor=to_minor(100000, "JPY"),
             ),
             models.MonthlyPlanLine(
                 client_id=1,
@@ -375,7 +378,7 @@ def test_budget_summary_combines_income_spending_allocations_and_debt() -> None:
                 target_type="account",
                 account_id=food.id,
                 name="food",
-                amount=30000,
+                amount_minor=to_minor(30000, "JPY"),
             ),
             models.MonthlyPlanLine(
                 client_id=1,
@@ -384,7 +387,7 @@ def test_budget_summary_combines_income_spending_allocations_and_debt() -> None:
                 target_type="account",
                 account_id=nisa.id,
                 name="NISA",
-                amount=50000,
+                amount_minor=to_minor(50000, "JPY"),
             ),
             models.MonthlyPlanLine(
                 client_id=1,
@@ -393,7 +396,7 @@ def test_budget_summary_combines_income_spending_allocations_and_debt() -> None:
                 target_type="account",
                 account_id=loan.id,
                 name="loan",
-                amount=20000,
+                amount_minor=to_minor(20000, "JPY"),
             ),
         ])
         tx = models.Transaction(
@@ -442,7 +445,7 @@ def test_set_default_budget_plan_switches_default_without_copying_lines() -> Non
             target_type="account",
             account_id=food.id,
             name="food",
-            amount=10000,
+            amount_minor=to_minor(10000, "JPY"),
         )
         lean_line = models.MonthlyPlanLine(
             client_id=1,
@@ -452,7 +455,7 @@ def test_set_default_budget_plan_switches_default_without_copying_lines() -> Non
             target_type="account",
             account_id=food.id,
             name="food",
-            amount=25000,
+            amount_minor=to_minor(25000, "JPY"),
         )
         assign_plan_line_identity(baseline_line)
         assign_plan_line_identity(lean_line)
@@ -502,7 +505,7 @@ def test_set_budget_action_updates_specified_plan_only() -> None:
                 target_type="account",
                 account_id=food.id,
                 name="food",
-                amount=amount,
+                amount_minor=to_minor(amount, "JPY"),
             )
             assign_plan_line_identity(line)
             db.add(line)
@@ -557,7 +560,7 @@ def test_variance_analysis_uses_specified_plan_budget() -> None:
                 target_type="account",
                 account_id=food.id,
                 name="food",
-                amount=amount,
+                amount_minor=to_minor(amount, "JPY"),
             )
             assign_plan_line_identity(line)
             db.add(line)
@@ -586,8 +589,8 @@ def test_create_plan_lines_updates_capsule_contribution_and_monthly_plan_line() 
         capsule = models.Capsule(
             client_id=1,
             name="House",
-            target_amount=1000000,
-            monthly_contribution=10000,
+            target_amount_minor=to_minor(1000000, "JPY"),
+            monthly_contribution_minor=to_minor(10000, "JPY"),
             account_id=cap_account.id,
         )
         db.add(capsule)
@@ -688,7 +691,7 @@ def test_budget_summary_deduplicates_expense_lines_without_writing() -> None:
             target_type="account",
             account_id=food.id,
             name=food.name,
-            amount=10000,
+            amount_minor=to_minor(10000, "JPY"),
         )
         newer = models.MonthlyPlanLine(
             client_id=1,
@@ -697,7 +700,7 @@ def test_budget_summary_deduplicates_expense_lines_without_writing() -> None:
             target_type="account",
             account_id=food.id,
             name=food.name,
-            amount=15000,
+            amount_minor=to_minor(15000, "JPY"),
         )
         db.add_all([older, newer])
         db.commit()
@@ -730,7 +733,7 @@ def test_data_health_reports_and_repairs_duplicate_plan_lines() -> None:
             target_type="account",
             account_id=food.id,
             name=food.name,
-            amount=10000,
+            amount_minor=to_minor(10000, "JPY"),
         )
         newer = models.MonthlyPlanLine(
             client_id=1,
@@ -739,7 +742,7 @@ def test_data_health_reports_and_repairs_duplicate_plan_lines() -> None:
             target_type="account",
             account_id=food.id,
             name=food.name,
-            amount=15000,
+            amount_minor=to_minor(15000, "JPY"),
         )
         db.add_all([older, newer])
         db.commit()
@@ -775,7 +778,7 @@ def test_db_rejects_duplicate_active_plan_line_identity() -> None:
             target_type="account",
             account_id=food.id,
             name=food.name,
-            amount=10000,
+            amount_minor=to_minor(10000, "JPY"),
         )
         duplicate = models.MonthlyPlanLine(
             client_id=1,
@@ -785,7 +788,7 @@ def test_db_rejects_duplicate_active_plan_line_identity() -> None:
             target_type="account",
             account_id=food.id,
             name=food.name,
-            amount=15000,
+            amount_minor=to_minor(15000, "JPY"),
         )
         assign_plan_line_identity(first)
         assign_plan_line_identity(duplicate)
@@ -807,13 +810,13 @@ def test_capsule_allocation_actual_uses_current_holding_balance() -> None:
         capsule = models.Capsule(
             client_id=1,
             name="Emergency Fund",
-            target_amount=300000,
-            monthly_contribution=0,
+            target_amount_minor=to_minor(300000, "JPY"),
+            monthly_contribution_minor=to_minor(0, "JPY"),
             account_id=account.id,
         )
         db.add(capsule)
         db.flush()
-        db.add(models.CapsuleHolding(capsule_id=capsule.id, account_id=account.id, held_amount=120000))
+        db.add(models.CapsuleHolding(capsule_id=capsule.id, account_id=account.id, held_amount_minor=to_minor(120000, "JPY")))
         db.add(models.MonthlyPlanLine(
             client_id=1,
             target_period="2026-05",
@@ -822,7 +825,7 @@ def test_capsule_allocation_actual_uses_current_holding_balance() -> None:
             target_id=capsule.id,
             account_id=account.id,
             name=capsule.name,
-            amount=50000,
+            amount_minor=to_minor(50000, "JPY"),
         ))
         db.commit()
 
@@ -841,8 +844,8 @@ def test_product_reserve_capsule_allocation_exposes_suggested_amount() -> None:
         capsule = models.Capsule(
             client_id=1,
             name="Item Reserve",
-            target_amount=12000,
-            monthly_contribution=3000,
+            target_amount_minor=to_minor(12000, "JPY"),
+            monthly_contribution_minor=to_minor(3000, "JPY"),
             capsule_type="product_pool",
             target_amount_source="linked_products",
             monthly_contribution_source="linked_products",
@@ -853,7 +856,7 @@ def test_product_reserve_capsule_allocation_exposes_suggested_amount() -> None:
             client_id=1,
             name="Quarterly filter",
             category="home",
-            last_unit_price=9000,
+            last_unit_price_minor=to_minor(9000, "JPY"),
             units_per_purchase=1,
             frequency_days=90,
             is_asset=False,
@@ -867,7 +870,7 @@ def test_product_reserve_capsule_allocation_exposes_suggested_amount() -> None:
             target_type="capsule",
             target_id=capsule.id,
             name=capsule.name,
-            amount=1000,
+            amount_minor=to_minor(1000, "JPY"),
         ))
         db.commit()
 
@@ -899,7 +902,7 @@ def test_expense_only_products_are_variable_budget_suggestions() -> None:
             client_id=1,
             name="Meal replacement",
             category="food",
-            last_unit_price=30000,
+            last_unit_price_minor=to_minor(30000, "JPY"),
             units_per_purchase=1,
             frequency_days=30,
             is_asset=False,
@@ -936,7 +939,7 @@ def test_life_event_allocation_is_presented_as_capsule() -> None:
             client_id=1,
             name="Move",
             target_date=date(2027, 4, 1),
-            target_amount=500000,
+            target_amount_minor=to_minor(500000, "JPY"),
             priority=2,
         )
         db.add(event)
@@ -944,8 +947,8 @@ def test_life_event_allocation_is_presented_as_capsule() -> None:
         capsule = models.Capsule(
             client_id=1,
             name="Move Capsule",
-            target_amount=500000,
-            monthly_contribution=0,
+            target_amount_minor=to_minor(500000, "JPY"),
+            monthly_contribution_minor=to_minor(0, "JPY"),
             life_event_id=event.id,
             account_id=account.id,
         )
@@ -957,7 +960,7 @@ def test_life_event_allocation_is_presented_as_capsule() -> None:
             target_type="life_event",
             target_id=event.id,
             name=event.name,
-            amount=30000,
+            amount_minor=to_minor(30000, "JPY"),
         ))
         db.commit()
 
@@ -1023,7 +1026,7 @@ def test_cash_flow_projection_uses_remaining_current_month_plan_after_actuals() 
                 target_type="account",
                 account_id=salary.id,
                 name="salary",
-                amount=100000,
+                amount_minor=to_minor(100000, "JPY"),
             ),
             models.MonthlyPlanLine(
                 client_id=1,
@@ -1032,7 +1035,7 @@ def test_cash_flow_projection_uses_remaining_current_month_plan_after_actuals() 
                 target_type="account",
                 account_id=food.id,
                 name="food",
-                amount=50000,
+                amount_minor=to_minor(50000, "JPY"),
             ),
             models.MonthlyPlanLine(
                 client_id=1,
@@ -1041,7 +1044,7 @@ def test_cash_flow_projection_uses_remaining_current_month_plan_after_actuals() 
                 target_type="account",
                 account_id=salary.id,
                 name="salary",
-                amount=100000,
+                amount_minor=to_minor(100000, "JPY"),
             ),
             models.MonthlyPlanLine(
                 client_id=1,
@@ -1050,7 +1053,7 @@ def test_cash_flow_projection_uses_remaining_current_month_plan_after_actuals() 
                 target_type="account",
                 account_id=food.id,
                 name="food",
-                amount=50000,
+                amount_minor=to_minor(50000, "JPY"),
             ),
         ])
         income_tx = models.Transaction(
@@ -1117,7 +1120,7 @@ def test_cash_flow_projection_does_not_double_count_current_month_over_actuals()
             target_type="account",
             account_id=food.id,
             name="food",
-            amount=50000,
+            amount_minor=to_minor(50000, "JPY"),
         ))
         opening_tx = models.Transaction(
             client_id=1,
@@ -1173,7 +1176,7 @@ def test_financed_expense_counts_as_budget_usage_without_cash_flow_expense() -> 
                 account_id=beauty.id,
                 source_account_id=loan.id,
                 name="beauty",
-                amount=600000,
+                amount_minor=to_minor(600000, "JPY"),
                 cash_treatment="non_cash",
             ),
             models.MonthlyPlanLine(
@@ -1183,7 +1186,7 @@ def test_financed_expense_counts_as_budget_usage_without_cash_flow_expense() -> 
                 target_type="account",
                 account_id=loan.id,
                 name="medical loan",
-                amount=30000,
+                amount_minor=to_minor(30000, "JPY"),
             ),
             models.MonthlyPlanLine(
                 client_id=1,
@@ -1193,7 +1196,7 @@ def test_financed_expense_counts_as_budget_usage_without_cash_flow_expense() -> 
                 account_id=beauty.id,
                 source_account_id=loan.id,
                 name="beauty",
-                amount=600000,
+                amount_minor=to_minor(600000, "JPY"),
                 cash_treatment="non_cash",
             ),
             models.MonthlyPlanLine(
@@ -1203,7 +1206,7 @@ def test_financed_expense_counts_as_budget_usage_without_cash_flow_expense() -> 
                 target_type="account",
                 account_id=loan.id,
                 name="medical loan",
-                amount=30000,
+                amount_minor=to_minor(30000, "JPY"),
             ),
         ])
         opening_tx = models.Transaction(
@@ -1279,7 +1282,7 @@ def test_auto_cash_treatment_excludes_credit_expense_and_projects_card_payment()
             client_id=1,
             source_registry_entry_id=registry_entry.id,
             name="subscription",
-            amount=10000,
+            amount_minor=to_minor(10000, "JPY"),
             from_account_id=credit.id,
             to_account_id=subscription.id,
             frequency="Monthly",
@@ -1295,7 +1298,7 @@ def test_auto_cash_treatment_excludes_credit_expense_and_projects_card_payment()
             account_id=subscription.id,
             source_account_id=credit.id,
             name="subscription",
-            amount=10000,
+            amount_minor=to_minor(10000, "JPY"),
             source="recurrence",
             cash_treatment="auto",
         ))
@@ -1339,7 +1342,7 @@ def test_cash_flow_splits_same_expense_account_by_source_account_bucket() -> Non
                 account_id=beauty.id,
                 source_account_id=cash.id,
                 name="beauty cash",
-                amount=100000,
+                amount_minor=to_minor(100000, "JPY"),
             ),
             models.MonthlyPlanLine(
                 client_id=1,
@@ -1349,7 +1352,7 @@ def test_cash_flow_splits_same_expense_account_by_source_account_bucket() -> Non
                 account_id=beauty.id,
                 source_account_id=loan.id,
                 name="beauty loan",
-                amount=500000,
+                amount_minor=to_minor(500000, "JPY"),
             ),
         ])
         db.commit()
@@ -1391,7 +1394,7 @@ def test_balance_projection_tracks_future_liability_financed_expense() -> None:
             account_id=beauty.id,
             source_account_id=loan.id,
             name="beauty",
-            amount=500000,
+            amount_minor=to_minor(500000, "JPY"),
         ))
         db.commit()
 
@@ -1432,7 +1435,7 @@ def test_income_direct_to_asset_counts_as_allocation_actual_without_remaining_ca
             account_id=stock.id,
             source_account_id=bank.id,
             name="employee stock",
-            amount=50000,
+            amount_minor=to_minor(50000, "JPY"),
         )
         tx = models.Transaction(
             client_id=1,
@@ -1493,7 +1496,7 @@ def test_balance_projection_tracks_debt_payment_and_liability_asset_purchase() -
                 account_id=loan.id,
                 source_account_id=cash.id,
                 name="loan repayment",
-                amount=30000,
+                amount_minor=to_minor(30000, "JPY"),
             ),
             models.MonthlyPlanLine(
                 client_id=1,
@@ -1503,7 +1506,7 @@ def test_balance_projection_tracks_debt_payment_and_liability_asset_purchase() -
                 account_id=nisa.id,
                 source_account_id=loan.id,
                 name="levered NISA",
-                amount=50000,
+                amount_minor=to_minor(50000, "JPY"),
             ),
         ])
         db.commit()
@@ -1542,7 +1545,7 @@ def test_cash_flow_uses_registry_source_when_saved_budget_line_lacks_source_acco
             client_id=1,
             name="beauty",
             entry_type="service",
-            amount=500000,
+            amount_minor=to_minor(500000, "JPY"),
             currency="JPY",
             frequency="Monthly",
             line_type="expense",
@@ -1559,7 +1562,7 @@ def test_cash_flow_uses_registry_source_when_saved_budget_line_lacks_source_acco
             target_type="account",
             account_id=beauty.id,
             name="beauty",
-            amount=500000,
+            amount_minor=to_minor(500000, "JPY"),
             source="registry",
             cash_treatment="auto",
         ))
@@ -1610,7 +1613,7 @@ def test_credit_expense_creates_credit_settlement_projection() -> None:
             account_id=food.id,
             source_account_id=card.id,
             name="food",
-            amount=50000,
+            amount_minor=to_minor(50000, "JPY"),
         ))
         db.commit()
         process_transaction(db, tx, from_account_id=card.id, to_account_id=food.id)
@@ -1782,7 +1785,7 @@ def test_cash_flow_reports_asset_role_movements() -> None:
                 account_id=account.id,
                 source_account_id=cash.id,
                 name=account.name,
-                amount=amount,
+                amount_minor=to_minor(amount, "JPY"),
             ))
         db.commit()
 
@@ -1812,8 +1815,8 @@ def test_cash_flow_projection_warns_about_unsynced_product_reserve_capsule() -> 
         capsule = models.Capsule(
             client_id=1,
             name="Item Reserve",
-            target_amount=12000,
-            monthly_contribution=3000,
+            target_amount_minor=to_minor(12000, "JPY"),
+            monthly_contribution_minor=to_minor(3000, "JPY"),
             capsule_type="product_pool",
             target_amount_source="linked_products",
             monthly_contribution_source="linked_products",
@@ -1839,8 +1842,8 @@ def test_cash_flow_projection_warns_about_product_reserve_amount_diff() -> None:
         capsule = models.Capsule(
             client_id=1,
             name="Item Reserve",
-            target_amount=12000,
-            monthly_contribution=3000,
+            target_amount_minor=to_minor(12000, "JPY"),
+            monthly_contribution_minor=to_minor(3000, "JPY"),
             capsule_type="product_pool",
             target_amount_source="linked_products",
             monthly_contribution_source="linked_products",
@@ -1854,7 +1857,7 @@ def test_cash_flow_projection_warns_about_product_reserve_amount_diff() -> None:
             target_type="capsule",
             target_id=capsule.id,
             name=capsule.name,
-            amount=1000,
+            amount_minor=to_minor(1000, "JPY"),
         ))
         db.commit()
 
@@ -1962,7 +1965,7 @@ def test_legacy_null_plan_lines_are_backfilled_to_default_plan() -> None:
             target_type="account",
             account_id=food.id,
             name="food",
-            amount=12000,
+            amount_minor=to_minor(12000, "JPY"),
         )
         db.add(line)
         db.commit()
@@ -2101,7 +2104,7 @@ def test_copy_period_full_replace_only_affects_selected_plan() -> None:
                 target_type="account",
                 account_id=food.id,
                 name="baseline target",
-                amount=5000,
+                amount_minor=to_minor(5000, "JPY"),
             ),
             models.MonthlyPlanLine(
                 client_id=1,
@@ -2111,7 +2114,7 @@ def test_copy_period_full_replace_only_affects_selected_plan() -> None:
                 target_type="account",
                 account_id=food.id,
                 name="house source",
-                amount=15000,
+                amount_minor=to_minor(15000, "JPY"),
             ),
             models.MonthlyPlanLine(
                 client_id=1,
@@ -2121,7 +2124,7 @@ def test_copy_period_full_replace_only_affects_selected_plan() -> None:
                 target_type="account",
                 account_id=food.id,
                 name="house old target",
-                amount=7000,
+                amount_minor=to_minor(7000, "JPY"),
             ),
         ])
         db.commit()

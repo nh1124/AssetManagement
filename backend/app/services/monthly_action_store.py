@@ -4,6 +4,8 @@ from datetime import date
 
 from sqlalchemy.orm import Session
 
+from .money_storage import minor_fields, money_client_currency
+
 from .. import models
 
 
@@ -39,7 +41,7 @@ def list_due(db: Session, client_id: int, today: date) -> list[models.MonthlyAct
 def create(
     db: Session, client_id: int, fields: dict, *, commit: bool = False,
 ) -> models.MonthlyAction:
-    row = models.MonthlyAction(**fields, client_id=client_id)
+    row = models.MonthlyAction(**minor_fields(fields, money_client_currency(db, client_id), 'amount'), client_id=client_id)
     db.add(row)
     if commit:
         db.commit()

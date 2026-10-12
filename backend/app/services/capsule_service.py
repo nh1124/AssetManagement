@@ -8,6 +8,8 @@ from typing import Protocol, Sequence
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from .money_storage import to_minor, minor_fields, money_client_currency, rule_amount_fields, rule_data
+
 from .. import models, schemas
 from ..domain.errors import Invalid, NotFound
 from ..domain.money import Money
@@ -84,10 +86,10 @@ def create_capsule(
         client_id=client_id,
         life_event_id=payload.life_event_id,
         name=payload.name,
-        target_amount=max(0.0, payload.target_amount or 0.0),
-        monthly_contribution=max(0.0, payload.monthly_contribution or 0.0),
+        target_amount_minor=to_minor(max(0.0, payload.target_amount or 0.0), money_client_currency(db, client_id)),
+        monthly_contribution_minor=to_minor(max(0.0, payload.monthly_contribution or 0.0), money_client_currency(db, client_id)),
         # This cache column is slated for removal in capsule_design_review.md §7.6.
-        current_balance=0.0,
+        current_balance_minor=to_minor(0.0, money_client_currency(db, client_id)),
         account_id=payload.account_id,
         auto_post=payload.auto_post,
         capsule_type=payload.capsule_type or "manual",
@@ -110,15 +112,15 @@ def update_capsule(
         if key == "current_balance":
             continue
         elif key == "target_amount":
-            capsule.target_amount = max(0.0, value or 0.0)
+            capsule.target_amount_minor = to_minor(max(0.0, value or 0.0), money_client_currency(db, client_id))
         elif key == "monthly_contribution":
-            capsule.monthly_contribution = max(0.0, value or 0.0)
+            capsule.monthly_contribution_minor = to_minor(max(0.0, value or 0.0), money_client_currency(db, client_id))
         elif key in {"capsule_type", "target_amount_source", "monthly_contribution_source"}:
             setattr(capsule, key, value or "manual")
         else:
             setattr(capsule, key, value)
     # Holdings-based cache refresh is retired by capsule_design_review.md §7.6 (H6).
-    capsule.current_balance = capsule_balance(db, capsule)
+    capsule.current_balance_minor = to_minor(capsule_balance(db, capsule), money_client_currency(db, capsule.client_id))
     _finish_write(db, client_id, capsule, commit=commit)
     return capsule
 
@@ -158,7 +160,7 @@ def create_rule(
         ).first()
         if not account:
             raise NotFound("Source account not found")
-    rule = models.CapsuleRule(**payload.model_dump(), client_id=client_id)
+    rule = models.CapsuleRule(**rule_data(payload.model_dump(), money_client_currency(db, client_id)), client_id=client_id)
     db.add(rule)
     _finish_write(db, client_id, rule, commit=commit)
     return rule
@@ -174,7 +176,11 @@ def update_rule(
     ).first()
     if rule is None:
         return None
-    for key, value in patch.model_dump(exclude_unset=True).items():
+    data = patch.model_dump(exclude_unset=True)
+    if "amount_type" in data or "amount_value" in data:
+        value = data.pop("amount_value", rule.amount_value)
+        data.update(rule_amount_fields(value, data.get("amount_type", rule.amount_type), money_client_currency(db, client_id)))
+    for key, value in data.items():
         setattr(rule, key, value)
     _finish_write(db, client_id, rule, commit=commit)
     return rule
@@ -215,12 +221,12 @@ def create_holding(
         models.CapsuleHolding.account_id == payload.account_id,
     ).first()
     if holding:
-        holding.held_amount = payload.held_amount
+        holding.held_amount_minor = to_minor(payload.held_amount, money_client_currency(db, client_id))
         holding.note = payload.note
     else:
         holding = models.CapsuleHolding(
             capsule_id=capsule_id, account_id=payload.account_id,
-            held_amount=payload.held_amount, note=payload.note,
+            held_amount_minor=to_minor(payload.held_amount, money_client_currency(db, client_id)), note=payload.note,
         )
         db.add(holding)
     _finish_write(db, client_id, holding, commit=commit)
@@ -239,7 +245,7 @@ def update_holding(
     ).first()
     if holding is None:
         return None
-    for key, value in patch.model_dump(exclude_unset=True).items():
+    for key, value in minor_fields(patch.model_dump(exclude_unset=True), money_client_currency(db, client_id), "held_amount").items():
         setattr(holding, key, value)
     _finish_write(db, client_id, holding, commit=commit)
     return holding
@@ -274,25 +280,25 @@ def upsert_capsule_holding(
         models.CapsuleHolding.account_id == account_id,
     ).first()
     if holding:
-        holding.held_amount = max(0.0, holding.held_amount + amount_delta)
+        holding.held_amount_minor = max(0, holding.held_amount_minor + to_minor(amount_delta, money_client_currency(db, capsule.client_id)))
         if note is not None:
             holding.note = note
     else:
         holding = models.CapsuleHolding(
             capsule_id=capsule.id,
             account_id=account_id,
-            held_amount=max(0.0, amount_delta),
+            held_amount_minor=to_minor(max(0.0, amount_delta), money_client_currency(db, capsule.client_id)),
             note=note,
         )
         db.add(holding)
     db.flush()
-    capsule.current_balance = capsule_balance(db, capsule)
+    capsule.current_balance_minor = to_minor(capsule_balance(db, capsule), money_client_currency(db, capsule.client_id))
     return holding
 
 
 def capsule_to_dict(db: Session, capsule: models.Capsule) -> dict:
     balance = capsule_balance(db, capsule)
-    capsule.current_balance = balance
+    capsule.current_balance_minor = to_minor(balance, money_client_currency(db, capsule.client_id))
     progress_pct = (balance / capsule.target_amount * 100) if capsule.target_amount else 0
     progress_pct = min(100, progress_pct)
     holdings = [
@@ -355,9 +361,9 @@ def create_capsule_for_goal(db: Session, client_id: int, goal: models.LifeEvent)
         client_id=client_id,
         life_event_id=goal.id,
         name=goal.name,
-        target_amount=max(0.0, goal.target_amount or 0.0),
-        monthly_contribution=0.0,
-        current_balance=0.0,
+        target_amount_minor=to_minor(max(0.0, goal.target_amount or 0.0), money_client_currency(db, client_id)),
+        monthly_contribution_minor=to_minor(0.0, money_client_currency(db, client_id)),
+        current_balance_minor=to_minor(0.0, money_client_currency(db, client_id)),
         account_id=None,
         capsule_type="life_event",
         target_amount_source="life_event",
@@ -585,10 +591,10 @@ def _resolve_rule_amount(
     "10% of my salary" means the gross, so a payroll entry split across a bank
     account, a savings plan and a stock plan is measured on its total.
     """
-    value = max(0.0, rule.amount_value or 0.0)
+    value = max(0, rule.percentage_bp or 0) if rule.amount_type == "percentage" else max(0.0, rule.amount_value or 0.0)
     if rule.amount_type == "percentage":
         base = Money.from_float(float(max(0.0, amount or 0.0)), currency, rounding=ROUND_HALF_UP)
         # The decimal representation preserves fractional percentages without float division.
-        ratio = Fraction(Fraction(str(value)), 100)
+        ratio = Fraction(value, 10000)
         return base.scale(ratio, rounding=ROUND_HALF_UP).to_float()
     return value

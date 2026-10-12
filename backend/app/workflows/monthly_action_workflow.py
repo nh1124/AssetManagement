@@ -5,6 +5,8 @@ from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
+from ..services.money_storage import to_minor, money_client_currency
+
 from .. import models
 from ..services import monthly_action_store
 from ..services.budget_lines import assign_plan_line_identity
@@ -119,7 +121,7 @@ def _apply_set_budget(db: Session, action: models.MonthlyAction) -> dict:
     account = _require_account(db, action.client_id, account_id)
     plan_line = find_expense_plan_line(db, action.client_id, plan_id, account_id, target_period)
     if plan_line:
-        plan_line.amount = amount
+        plan_line.amount_minor = to_minor(amount, money_client_currency(db, action.client_id))
         plan_line.name = account.name
         plan_line.is_active = True
         assign_plan_line_identity(plan_line)
@@ -224,7 +226,7 @@ def _apply_change_capsule_contribution(db: Session, action: models.MonthlyAction
     capsule = get_capsule(db, action.client_id, int(payload["capsule_id"]))
     if not capsule:
         raise ValueError("Capsule not found")
-    capsule.monthly_contribution = float(payload["monthly_contribution"])
+    capsule.monthly_contribution_minor = to_minor(payload["monthly_contribution"], money_client_currency(db, action.client_id))
     return {"capsule_id": capsule.id, "monthly_contribution": capsule.monthly_contribution}
 
 

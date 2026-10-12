@@ -150,7 +150,12 @@ def test_reads_scope_by_client_and_list_serializes_registry_name_without_session
     monkeypatch.setattr(recurring_router, "list_for_client", lambda db, client_id: rows)
     response = recurring_router.get_recurring_transactions(db, client)
     assert response == [{
-        **{column.name: getattr(rows[0], column.name) for column in rows[0].__table__.columns},
+        **{field: getattr(rows[0], field) for field in (
+            "id", "client_id", "name", "currency", "from_account_id", "to_account_id",
+            "frequency", "day_of_month", "month_of_year", "next_due_date", "start_period",
+            "end_period", "auto_post", "is_active", "source_registry_entry_id", "created_at",
+        )},
+        "amount": 1000.0,
         "source_registry_entry_name": "Rent",
     }]
 

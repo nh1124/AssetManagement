@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from app.services.money_storage import to_minor
+
+
 from datetime import date
 
 from sqlalchemy import create_engine
@@ -30,30 +33,34 @@ def _session():
 
 
 def test_product_reserve_values_for_asset_and_item() -> None:
+    client = models.Client(id=1, general_settings={"currency": "JPY"})
     asset = models.Product(
+        client=client,
         client_id=1,
         name="Laptop",
         category="Electronics",
-        last_unit_price=120000,
+        last_unit_price_minor=to_minor(120000, "JPY"),
         is_asset=True,
-        purchase_price=120000,
+        purchase_price_minor=to_minor(120000, "JPY"),
         purchase_date=date(2026, 1, 1),
         lifespan_months=24,
     )
     item = models.Product(
+        client=client,
         client_id=1,
         name="Coffee beans",
         category="Grocery",
-        last_unit_price=3000,
+        last_unit_price_minor=to_minor(3000, "JPY"),
         units_per_purchase=1,
         frequency_days=30,
         is_asset=False,
     )
     reserve_item = models.Product(
+        client=client,
         client_id=1,
         name="Water filter",
         category="Kitchen",
-        last_unit_price=6000,
+        last_unit_price_minor=to_minor(6000, "JPY"),
         units_per_purchase=1,
         frequency_days=180,
         is_asset=False,
@@ -85,9 +92,9 @@ def test_sync_product_reserve_capsules_rolls_up_linked_products() -> None:
                 client_id=1,
                 name="Laptop",
                 category="Electronics",
-                last_unit_price=120000,
+                last_unit_price_minor=to_minor(120000, "JPY"),
                 is_asset=True,
-                purchase_price=120000,
+                purchase_price_minor=to_minor(120000, "JPY"),
                 purchase_date=date(2026, 1, 1),
                 lifespan_months=24,
                 funding_capsule_id=fixed_pool.id,
@@ -96,7 +103,7 @@ def test_sync_product_reserve_capsules_rolls_up_linked_products() -> None:
                 client_id=1,
                 name="Coffee beans",
                 category="Grocery",
-                last_unit_price=3000,
+                last_unit_price_minor=to_minor(3000, "JPY"),
                 units_per_purchase=1,
                 frequency_days=180,
                 is_asset=False,
