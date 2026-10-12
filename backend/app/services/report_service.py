@@ -19,7 +19,8 @@ from .reporting_service import (
     get_variance_analysis,
     get_variance_analysis_for_range,
 )
-from .capsule_service import create_capsule_for_goal, upsert_capsule_holding
+from .capsule_service import create_capsule_for_goal, upsert_capsule_holding, set_funding_sources
+from ..schemas import CapsuleFundingSourceInput
 from .goal_service import get_life_events_with_progress
 
 ANOMALY_THRESHOLD_PCT = 150
@@ -351,8 +352,11 @@ def _apply_allocate_to_goal(
     db.flush()
 
     capsule = create_capsule_for_goal(db, client_id, goal)
-    if capsule.account_id is None:
-        capsule.account_id = savings_account.id
+    if not capsule.funding_sources and capsule.account_id is None:
+        # The legacy account_id column is being retired; declare intent in the plan.
+        set_funding_sources(db, client_id, capsule.id, [CapsuleFundingSourceInput(
+            account_id=savings_account.id, target_amount=capsule.target_amount or 0.0,
+        )], commit=False)
     holding = upsert_capsule_holding(
         db,
         capsule,

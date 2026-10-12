@@ -26,7 +26,10 @@ from functools import cached_property
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..domain.money import Money
 from .capsule_service import capsule_balance as _capsule_balance
+from .capsule_service import claimed_minor
+from .money_storage import money_client_currency
 from .journal_legs import Leg, legs_in_period
 from .periods import period_to_range
 
@@ -40,6 +43,7 @@ class BudgetContext:
         self._period_transactions: dict[str, list[models.Transaction]] = {}
         self._period_legs: dict[str, list[Leg]] = {}
         self._capsule_balances: dict[int, float] = {}
+        self._capsule_account_balances: dict[tuple[int, int], float] = {}
         self._registry_lines: dict[str, list[dict]] = {}
         self._credit_settlement_lines: dict[str, list[dict]] = {}
 
@@ -131,6 +135,14 @@ class BudgetContext:
             balance = _capsule_balance(self.db, capsule)
             self._capsule_balances[capsule.id] = balance
         return balance
+
+    def capsule_account_balance(self, capsule: models.Capsule, account_id: int) -> float:
+        key = (capsule.id, account_id)
+        if key not in self._capsule_account_balances:
+            currency = money_client_currency(self.db, self.client_id)
+            minor = claimed_minor(self.db, self.client_id, capsule.id, account_id).get(currency, 0)
+            self._capsule_account_balances[key] = Money(minor, currency).to_float()
+        return self._capsule_account_balances[key]
 
     # ------------------------------------------------------------------
     # display names

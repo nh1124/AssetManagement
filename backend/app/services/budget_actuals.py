@@ -156,7 +156,7 @@ def actual_for_plan_line(
 ) -> float:
     """What has been posted against this plan line, for budget variance.
 
-    A capsule line reports the capsule's balance rather than the month's
+    A capsule line reports its account's claim rather than the month's
     movement, which is what makes this differ from the cash-flow actual.
 
     The line's own source account narrows the match, exactly as it does for
@@ -171,6 +171,9 @@ def actual_for_plan_line(
     if target_type == "capsule" and target_id:
         capsule = ctx.capsule(target_id)
         if capsule:
+            if account_id is not None:
+                return ctx.capsule_account_balance(capsule, account_id)
+            # Only legacy stored rows omit the account and need the whole claim.
             return ctx.capsule_balance(capsule)
         account_id = ctx.capsule_account_ids.get(target_id)
 
@@ -283,6 +286,7 @@ def _cash_flow_line_account_id(
     if account_id:
         return account_id
 
+    # Account-less legacy rows alone need the capsule's retiring account field.
     target_type = _line_attr(line, "target_type")
     target_id = _line_attr(line, "target_id")
     if target_type == "capsule" and target_id:

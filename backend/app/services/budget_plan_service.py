@@ -16,6 +16,7 @@ from .budget_context import BudgetContext
 from .budget_credit_settlement import _merge_credit_settlement_lines, credit_settlement_plan_lines
 from .budget_lines import (
     INFLOW_LINE_TYPES,
+    _capsule_allocation_amounts,
     _line_display_name,
     _line_source_kind,
     _sum_actual,
@@ -32,6 +33,7 @@ from .budget_projection import (
 )
 from .budget_registry_lines import _merge_registry_lines, registry_plan_lines, registry_totals
 from .product_reserve_service import effective_budget_treatment, product_reserve_values
+from .money_storage import money_client_currency
 
 
 def _serialize_plan_line(
@@ -75,38 +77,46 @@ def _virtual_capsule_line(
     ctx: BudgetContext,
     capsule: models.Capsule,
     period: str,
-) -> dict:
-    line = {
-        "id": None,
-        "target_period": period,
-        "line_type": "allocation",
-        "target_type": "capsule",
-        "target_id": capsule.id,
-        "account_id": capsule.account_id,
-        "source_account_id": None,
-        "name": capsule.name,
-        "target_name": capsule.name,
-        "account_name": capsule.account.name if capsule.account else None,
-        "amount": round(capsule.monthly_contribution or 0.0, 0),
-        "recurring_amount": 0.0,
-        "suggested_amount": round(capsule.monthly_contribution or 0.0, 0)
-        if capsule.capsule_type == "product_pool" else 0.0,
-        "suggested_source": "product_reserve" if capsule.capsule_type == "product_pool" else None,
-        "suggested_items": product_reserve_source_items(ctx.db, capsule) if capsule.capsule_type == "product_pool" else [],
-        "suggested_status": "synced" if capsule.capsule_type == "product_pool" else None,
-        "is_active": True,
-        "source": "capsule",
-        "source_kind": "capsule",
-        "identity_key": "",
-        "manual_override": False,
-        "cash_treatment": "cash",
-        "recurring_transaction_id": None,
-        "sync_status": None,
-    }
-    actual = actual_for_plan_line(ctx, line, period)
-    line["actual"] = round(actual, 0)
-    line["variance"] = round((capsule.monthly_contribution or 0.0) - actual, 0)
-    return line
+) -> list[dict]:
+    lines = []
+    items = product_reserve_source_items(ctx.db, capsule) if capsule.capsule_type == "product_pool" else []
+    for account_id, amount in _capsule_allocation_amounts(capsule, money_client_currency(ctx.db, ctx.client_id)):
+        if account_id is None:
+            continue
+        account = ctx.account(account_id)
+        line = {
+            "id": None,
+            "target_period": period,
+            "line_type": "allocation",
+            "target_type": "capsule",
+            "target_id": capsule.id,
+            "account_id": account_id,
+            "source_account_id": None,
+            "name": capsule.name,
+            "target_name": capsule.name,
+            "account_name": account.name if account else None,
+            "amount": amount.to_float(),
+            "recurring_amount": 0.0,
+            "suggested_amount": amount.to_float()
+            if capsule.capsule_type == "product_pool" else 0.0,
+            "suggested_source": "product_reserve" if capsule.capsule_type == "product_pool" else None,
+            # Items describe the capsule's products, not an account's share; repeat unchanged.
+            "suggested_items": items,
+            "suggested_status": "synced" if capsule.capsule_type == "product_pool" else None,
+            "is_active": True,
+            "source": "capsule",
+            "source_kind": "capsule",
+            "identity_key": "",
+            "manual_override": False,
+            "cash_treatment": "cash",
+            "recurring_transaction_id": None,
+            "sync_status": None,
+        }
+        actual = actual_for_plan_line(ctx, line, period)
+        line["actual"] = round(actual, 0)
+        line["variance"] = round(amount.to_float() - actual, 0)
+        lines.append(line)
+    return lines
 
 
 def product_reserve_source_items(db: Session, capsule: models.Capsule) -> list[dict]:
@@ -135,9 +145,18 @@ def _attach_capsule_suggestions(ctx: BudgetContext, plan_lines: list[dict]) -> N
         capsule = ctx.capsule(line.get("target_id"))
         if not capsule or capsule.capsule_type != "product_pool":
             continue
-        suggested = round(capsule.monthly_contribution or 0.0, 0)
+        shares = dict(_capsule_allocation_amounts(capsule, money_client_currency(ctx.db, ctx.client_id)))
+        part = shares.get(line.get("account_id"))
+        # Legacy account-less stored rows still describe the entire capsule.
+        if part is not None:
+            suggested = part.to_float()
+        elif line.get("account_id") is None:
+            suggested = capsule.monthly_contribution or 0.0
+        else:
+            suggested = 0.0
         line["suggested_amount"] = suggested
         line["suggested_source"] = "product_reserve"
+        # Products are capsule-wide; do not split their descriptive items.
         line["suggested_items"] = product_reserve_source_items(ctx.db, capsule)
         line["suggested_status"] = (
             "synced"
@@ -187,24 +206,67 @@ def get_budget_summary(
             if capsule:
                 line["target_type"] = "capsule"
                 line["target_id"] = capsule.id
-                line["account_id"] = capsule.account_id
+                if line.get("account_id") is None:
+                    sources = capsule.funding_sources
+                    if len(sources) == 1:
+                        line["account_id"] = sources[0].account_id
+                    elif not sources:
+                        line["account_id"] = capsule.account_id
                 line["name"] = capsule.name
                 line["target_name"] = capsule.name
-                line["account_name"] = capsule.account.name if capsule.account else None
+                line["account_name"] = ctx.target_name_maps["account"].get(line["account_id"])
                 actual = actual_for_plan_line(ctx, line, period)
                 line["actual"] = round(actual, 0)
                 line["variance"] = round((line.get("amount") or 0.0) - actual, 0)
 
+    # A stored capsule row predating the funding plan names no account, and the
+    # virtual rows are now keyed by one, so without this it would be joined by a
+    # duplicate instead of standing for its capsule. 250 such rows exist in this
+    # database; the loop above only reaches the ones still typed as life_event.
+    for line in plan_lines:
+        if (line.get("line_type") != "allocation"
+                or line.get("target_type") != "capsule"
+                or line.get("account_id") is not None):
+            continue
+        capsule = ctx.capsule(line.get("target_id"))
+        if capsule is None:
+            continue
+        sources = capsule.funding_sources
+        if len(sources) == 1:
+            line["account_id"] = sources[0].account_id
+        elif not sources:
+            line["account_id"] = capsule.account_id
+        # Several funding accounts and no account named: the row cannot be
+        # assigned to one of them, so it keeps standing for the whole capsule
+        # and its virtual rows are suppressed below by target id alone.
+        if line["account_id"] is None:
+            continue
+        line["account_name"] = ctx.target_name_maps["account"].get(line["account_id"])
+        actual = actual_for_plan_line(ctx, line, period)
+        line["actual"] = round(actual, 0)
+        line["variance"] = round((line.get("amount") or 0.0) - actual, 0)
+
     _attach_capsule_suggestions(ctx, plan_lines)
-    existing_capsule_ids = {
+    # An account-less capsule row still covers every account of its capsule.
+    covered_capsules = {
         line.get("target_id")
+        for line in plan_lines
+        if line.get("line_type") == "allocation"
+        and line.get("target_type") == "capsule"
+        and line.get("account_id") is None
+    }
+    existing_capsule_ids = {
+        (line.get("target_id"), line.get("account_id"))
         for line in plan_lines
         if line.get("line_type") == "allocation" and line.get("target_type") == "capsule"
     }
     if plan_id is not None:
         for capsule in ctx.capsules:
-            if capsule.id not in existing_capsule_ids:
-                plan_lines.append(_virtual_capsule_line(ctx, capsule, period))
+            plan_lines.extend(
+                line for line in _virtual_capsule_line(ctx, capsule, period)
+                if capsule.id not in covered_capsules
+                and (capsule.id, line["account_id"]) not in existing_capsule_ids
+            )
         plan_lines = _merge_registry_lines(plan_lines, registry_plan_lines(ctx, period))
         plan_lines = _merge_credit_settlement_lines(plan_lines, credit_settlement_plan_lines(ctx, period, plan_id))
 

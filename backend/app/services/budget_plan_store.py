@@ -7,12 +7,16 @@ Nothing here computes a summary, so it sits below everything that does.
 """
 from __future__ import annotations
 
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+
+from typing import Sequence
 
 from .money_storage import minor_fields, money_client_currency
 
 from .. import models
+from ..domain.errors import Invalid
 from .budget_lines import (
     _line_source_kind,
     assign_plan_line_identity,
@@ -170,7 +174,9 @@ def delete_plan_line(
     # replacement both use it to mark a line superseded -- so the flag still
     # means something; it is just no longer what deleting does behind the
     # caller's back.
+    removed = line
     db.delete(line)
+    sync_capsule_monthly_contributions(db, client_id, [removed])
     if commit:
         db.commit()
     else:
@@ -446,11 +452,57 @@ def _apply_plan_line_data(db: Session, client_id: int, line: models.MonthlyPlanL
         ).first()
         if capsule:
             line.name = capsule.name
-            line.account_id = capsule.account_id
-            capsule.monthly_contribution_minor = line.amount_minor or 0
+            funding_accounts = {source.account_id for source in capsule.funding_sources}
+            if line.account_id is not None:
+                allowed = funding_accounts or ({capsule.account_id} if capsule.account_id is not None else set())
+                if line.account_id not in allowed:
+                    raise Invalid(f"Account {line.account_id} is not a funding account of capsule {capsule.id} ({capsule.name})")
+            elif len(funding_accounts) > 1:
+                raise Invalid(f"Capsule {capsule.id} ({capsule.name}) has several funding accounts; account_id is required")
+            elif funding_accounts:
+                line.account_id = next(iter(funding_accounts))
+            else:
+                line.account_id = capsule.account_id
             if line.source in {None, "manual", "capsule"}:
                 line.source_kind = "capsule"
     assign_plan_line_identity(line)
+
+
+def sync_capsule_monthly_contributions(
+    db: Session, client_id: int, lines: Sequence[models.MonthlyPlanLine],
+) -> None:
+    """A capsule's monthly contribution is the sum of its allocation rows.
+
+    One row per funding account (D2), so the figure can no longer be the row
+    that happened to be saved last. Scoped to one plan and period, because an
+    alternative scenario's rows are a different intent and must not add to it.
+
+    Called after the batch is flushed so one query sees every row, rather than
+    reconstructing the batch from the session's pending sets while it is still
+    being built.
+    """
+    touched = {
+        (line.target_id, line.plan_id, line.target_period)
+        for line in lines
+        if line.target_type == "capsule" and line.target_id
+        and line.line_type == "allocation"
+    }
+    if not touched:
+        return
+    db.flush()
+    for capsule_id, plan_id, period in sorted(touched):
+        capsule = db.query(models.Capsule).filter_by(
+            id=capsule_id, client_id=client_id,
+        ).first()
+        if capsule is None:
+            continue
+        capsule.monthly_contribution_minor = int(db.query(
+            func.coalesce(func.sum(models.MonthlyPlanLine.amount_minor), 0),
+        ).filter_by(
+            client_id=client_id, plan_id=plan_id, target_period=period,
+            target_type="capsule", target_id=capsule_id,
+            line_type="allocation", is_active=True,
+        ).scalar())
 
 
 def create_plan_lines(db: Session, client_id: int, payloads: list) -> list[models.MonthlyPlanLine]:
@@ -469,6 +521,7 @@ def create_plan_lines(db: Session, client_id: int, payloads: list) -> list[model
             db.rollback()
             raise ValueError("Monthly plan line already exists for this period and source")
         created.append(line)
+    sync_capsule_monthly_contributions(db, client_id, created)
     db.commit()
     for line in created:
         db.refresh(line)
@@ -504,6 +557,7 @@ def update_plan_lines(
             db.rollback()
             raise ValueError("Monthly plan line already exists for this period and source")
         saved.append(line)
+    sync_capsule_monthly_contributions(db, client_id, saved)
     if commit:
         db.commit()
         for line in saved:

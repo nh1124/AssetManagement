@@ -12,6 +12,7 @@ import json
 from typing import Iterable
 
 from .. import models
+from ..domain.money import Money
 
 
 LIQUID_ACCOUNT_NAMES = {"cash", "bank", "savings"}
@@ -19,6 +20,19 @@ INFLOW_LINE_TYPES = {"income", "borrowing", "drawdown"}
 OUTFLOW_LINE_TYPES = {"expense", "allocation", "debt_payment"}
 NON_CASH_TRANSACTION_TYPES = {"CreditExpense", "CreditAssetPurchase"}
 ASSET_FLOW_BUCKETS = ("operating", "defense", "earmarked", "growth", "unassigned")
+
+
+def _capsule_allocation_amounts(capsule: models.Capsule, currency: str) -> list[tuple[int | None, Money]]:
+    """The monthly contribution shares in the funding plan's stable order."""
+    whole = Money(capsule.monthly_contribution_minor or 0, currency)
+    sources = sorted(capsule.funding_sources, key=lambda source: (source.sort_order, source.id))
+    if not sources:
+        return [(capsule.account_id, whole)]
+    weights = [source.target_amount_minor for source in sources]
+    # A zero-target plan has no relative weights; retain its rows and the whole
+    # contribution with equal shares, including the one-source legacy shape.
+    parts = whole.allocate(weights if any(weights) else [1] * len(sources))
+    return [(source.account_id, part) for source, part in zip(sources, parts)]
 
 
 def _line_display_name(line: models.MonthlyPlanLine, name_maps: dict[str, dict[int, str]]) -> str:

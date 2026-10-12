@@ -10,7 +10,8 @@ from __future__ import annotations
 from .. import models
 from .budget_context import BudgetContext
 from .budget_credit_settlement import credit_settlement_plan_lines
-from .budget_lines import _plan_match_key
+from .budget_lines import _plan_match_key, _capsule_allocation_amounts
+from .money_storage import money_client_currency
 from .budget_registry_lines import registry_plan_lines
 
 
@@ -86,8 +87,8 @@ def product_reserve_setup_warnings(
         models.Capsule.capsule_type == "product_pool",
         models.Capsule.monthly_contribution > 0,
     ).all()
-    plan_by_capsule_id = {
-        line.target_id: line
+    plan_by_capsule_account = {
+        (line.target_id, line.account_id): line
         for line in plan_models
         if line.line_type == "allocation"
         and line.target_type == "capsule"
@@ -95,30 +96,31 @@ def product_reserve_setup_warnings(
     }
     warnings = []
     for capsule in capsules:
-        expected = round(capsule.monthly_contribution or 0.0, 0)
-        matched = plan_by_capsule_id.get(capsule.id)
-        if not matched:
-            warnings.append({
-                "type": "missing_product_reserve",
-                "source": "product_reserve",
-                "capsule_id": capsule.id,
-                "account_id": capsule.account_id,
-                "name": capsule.name,
-                "amount": expected,
-            })
-            continue
-        budget_amount = round(matched.amount or 0.0, 0)
-        if budget_amount != expected:
-            warnings.append({
-                "type": "product_reserve_diff",
-                "source": "product_reserve",
-                "capsule_id": capsule.id,
-                "account_id": capsule.account_id,
-                "plan_line_id": matched.id,
-                "name": capsule.name,
-                "amount": expected,
-                "budget_amount": budget_amount,
-            })
+        for account_id, amount in _capsule_allocation_amounts(capsule, money_client_currency(ctx.db, ctx.client_id)):
+            expected = amount.to_float()
+            matched = plan_by_capsule_account.get((capsule.id, account_id))
+            if not matched:
+                warnings.append({
+                    "type": "missing_product_reserve",
+                    "source": "product_reserve",
+                    "capsule_id": capsule.id,
+                    "account_id": account_id,
+                    "name": capsule.name,
+                    "amount": expected,
+                })
+                continue
+            budget_amount = round(matched.amount or 0.0, 0)
+            if budget_amount != expected:
+                warnings.append({
+                    "type": "product_reserve_diff",
+                    "source": "product_reserve",
+                    "capsule_id": capsule.id,
+                    "account_id": account_id,
+                    "plan_line_id": matched.id,
+                    "name": capsule.name,
+                    "amount": expected,
+                    "budget_amount": budget_amount,
+                })
     return warnings
 
 

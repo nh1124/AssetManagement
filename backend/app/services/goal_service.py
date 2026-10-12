@@ -12,10 +12,9 @@ from sqlalchemy.orm import Session
 from .money_storage import minor_fields, money_client_currency
 
 from .. import models, schemas
-from ..domain.money import Money
 from ..domain.errors import NotFound, Refused
 from .cache_service import invalidate_client
-from .capsule_service import apply_capsule_rules_for_transaction, capsule_balance
+from .capsule_service import apply_capsule_rules_for_transaction, capsule_balance, claimed_minor
 from .ledger_service import create_transaction
 from .fx_service import get_client_currency
 from .strategy_service import (
@@ -108,7 +107,7 @@ def delete_goal(
 
     capsules_with_balance = [
         c for c in db_event.capsules
-        if c.account_id is not None and capsule_balance(db, c) > 0
+        if capsule_balance(db, c) > 0
     ]
     if capsules_with_balance and transfer_account_id is None:
         raise Refused(
@@ -121,24 +120,30 @@ def delete_goal(
         if not dest_account or dest_account.client_id != client_id:
             raise NotFound("Transfer destination account not found")
 
+    accounts_by_capsule = {
+        cap.id: [source.account_id for source in cap.funding_sources]
+        if cap.funding_sources else ([cap.account_id] if cap.account_id is not None else [])
+        for cap in db_event.capsules
+    }
+    currency = get_client_currency(db, client_id)
     for cap in capsules_with_balance:
-        bal = capsule_balance(db, cap)
-        currency = get_client_currency(db, client_id)
-        tx = create_transaction(
-            db,
-            client_id=client_id,
-            date=date.today(),
-            description=f"Goal deleted – funds returned from Capsule: {cap.name}",
-            amount_minor=Money.from_major(str(bal), currency).minor,
-            currency=currency,
-            from_account_id=cap.account_id,
-            to_account_id=transfer_account_id,
-        )
-        apply_capsule_rules_for_transaction(db, tx, commit=False)
+        for account_id in accounts_by_capsule[cap.id]:
+            minor = claimed_minor(db, client_id, cap.id, account_id).get(currency, 0)
+            if minor <= 0:
+                continue
+            tx = create_transaction(
+                db,
+                client_id=client_id,
+                date=date.today(),
+                description=f"Goal deleted – funds returned from Capsule: {cap.name}",
+                amount_minor=minor,
+                currency=currency,
+                from_account_id=account_id,
+                to_account_id=transfer_account_id,
+            )
+            apply_capsule_rules_for_transaction(db, tx, commit=False)
 
-    account_ids_to_delete = [
-        c.account_id for c in db_event.capsules if c.account_id is not None
-    ]
+    account_ids_to_delete = {account_id for ids in accounts_by_capsule.values() for account_id in ids}
 
     # Nullify account_id on capsules so accounts can be deleted without FK violation
     for cap in db_event.capsules:
