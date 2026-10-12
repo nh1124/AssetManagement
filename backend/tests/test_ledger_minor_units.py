@@ -188,17 +188,38 @@ def test_currency_change_rescales_retained_compound_legs_and_balance(posting):
     assert calculate_account_valued_balance(db, accounts[0], target_currency=currency) == -120
 
 
-def test_proposal_key_keeps_major_float_encoding(posting):
-    db, _, accounts, _ = posting
+def test_proposal_key_keeps_major_float_encoding_and_names_its_trigger(posting):
+    """The amount is still encoded as a major-unit float, and the cause is in the key.
+
+    B4 pinned the float encoding so converting storage units could not change
+    an existing proposal's key. X3 added trigger_transaction_id, because two
+    identical reservations caused by two different entries are two
+    reservations: without it they collided into one row, which both triggers
+    then appeared to own. The encoding of everything else is unchanged.
+    """
+    db, _, accounts, http = posting
     payload = _payload(accounts, "USD", 46.48, 30.12)
-    prior = {
-        "origin": "test", "origin_ref": {}, "date": "2026-10-12", "amount": 46.48,
-        "legs": [{**leg, "debit": float(leg.get("debit", 0)), "credit": float(leg.get("credit", 0)), "memo": None} for leg in payload["legs"]],
-    }
-    prior_key = hashlib.sha256(json.dumps(prior, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
-    proposal = ledger.propose_transaction(db, 1, origin="test", date=date(2026, 10, 12),
-        description="Keep key", amount_minor=4648, currency="USD", legs=payload["legs"])
-    assert proposal.idempotency_key == prior_key
+    legs = [{**leg, "debit": float(leg.get("debit", 0)), "credit": float(leg.get("credit", 0)), "memo": None}
+            for leg in payload["legs"]]
+
+    def key(trigger_transaction_id):
+        return hashlib.sha256(json.dumps({
+            "origin": "test", "origin_ref": {}, "date": "2026-10-12", "amount": 46.48,
+            "trigger_transaction_id": trigger_transaction_id, "legs": legs,
+        }, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
+
+    def propose(trigger_transaction_id):
+        return ledger.propose_transaction(
+            db, 1, origin="test", date=date(2026, 10, 12), description="Keep key",
+            amount_minor=4648, currency="USD", legs=payload["legs"],
+            trigger_transaction_id=trigger_transaction_id,
+        )
+
+    assert propose(None).idempotency_key == key(None)
+    trigger_id = http.post("/transactions/", json=_payload(accounts, "JPY", 120, 100)).json()["id"]
+    assert propose(trigger_id).idempotency_key == key(trigger_id)
+    # Same reservation, different cause, so two rows rather than one.
+    assert db.query(models.TransactionProposal).count() == 2
 
 
 def _migration():

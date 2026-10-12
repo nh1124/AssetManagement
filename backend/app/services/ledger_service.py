@@ -519,6 +519,12 @@ def propose_transaction(
             {
                 "origin": origin,
                 "origin_ref": origin_ref,
+                # X3: the cause is part of the identity. Without it, two
+                # identical reservations triggered by two different entries
+                # collapsed into one row -- which under-reserved, and left the
+                # surviving row owned by both, so retracting one trigger's
+                # reservation would have taken the other's with it.
+                "trigger_transaction_id": trigger_transaction_id,
                 "date": date.isoformat(),
                 # Existing proposals must keep matching after their storage units change.
                 "amount": Money(amount_minor, currency).to_float(),
@@ -560,8 +566,10 @@ def approve_proposal(
     db: Session,
     proposal: models.TransactionProposal,
     *,
-    actor_client_id: int,
+    actor_client_id: int | None,
 ) -> models.Transaction:
+    # None means no person decided at this moment: an auto-posting capsule rule
+    # settled it when it was configured. decided_at still records when.
     if proposal.status != "pending":
         raise ValueError(f"Proposal {proposal.id} is not pending (status: {proposal.status})")
     transaction = create_transaction(

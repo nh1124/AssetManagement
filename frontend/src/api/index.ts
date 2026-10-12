@@ -904,6 +904,23 @@ export const getCapsuleRules = async () => {
     return response.data;
 };
 
+export interface CapsuleReservation {
+    proposal_id: number;
+    capsule_id: number | null;
+    capsule_name: string | null;
+    amount: number;
+    currency: string;
+    status: string;
+    posted_transaction_id: number | null;
+}
+
+// What amending or deleting an entry would withdraw. A posted reservation
+// takes its transfer with it, so the caller asks before it changes the entry.
+export const getCapsuleReservations = async (transactionId: number): Promise<CapsuleReservation[]> => {
+    const response = await api.get(`/transactions/${transactionId}/capsule-reservations`);
+    return response.data;
+};
+
 export const createCapsuleRule = async (rule: any) => {
     const response = await api.post('/capsules/rules', rule);
     return response.data;

@@ -93,7 +93,9 @@ def test_record_entry_commits_posting_legs_and_capsule_reservation_together(post
 
     tx = workflow.record_entry(db, client.id, _payload(posting))
 
-    expected = (2, 4, 0) if auto_post else (1, 2, 1)
+    # X3: an auto-posted reservation records a proposal as well as the
+    # transfer, because the proposal is what says which entry caused it.
+    expected = (2, 4, 1) if auto_post else (1, 2, 1)
     # Default-account bootstrap still commits first; no commit may expose only
     # part of the posting and the reservation that it triggered.
     assert snapshots == [(0, 0, 0), expected]
@@ -123,7 +125,9 @@ def test_record_entry_rolls_back_posting_legs_and_proposals_when_capsule_posting
         nonlocal calls
         calls += 1
         if calls == 2:
-            assert _counts(db) == (2, 2, 1)
+            # Two proposals: the queued rule's, and the auto-posting
+            # rule's, whose legs are the ones about to fail.
+            assert _counts(db) == (2, 2, 2)
             raise ValueError("forced journal failure")
         return original(*args, **kwargs)
 

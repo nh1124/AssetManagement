@@ -200,7 +200,12 @@ def test_batch_posts_every_entry_and_capsule_effect_in_one_commit(posting, auto_
     snapshots = _snapshots(db)
     payload = _payload(posting, quick_template_id=template.id)
     batch = workflow.post_transaction_batch(db, client.id, payload)
-    expected = (1, 6, 13, 0) if auto_post else (1, 3, 7, 1)
+    # Three entries, three reservations. X3 put the trigger in the
+    # proposal's idempotency key, so identical reservations from
+    # different entries are no longer one row -- which had been
+    # reserving a third of what the rule asked for. The auto-posting
+    # case keeps its three transfers and now records them too.
+    expected = (1, 6, 13, 3) if auto_post else (1, 3, 7, 3)
     assert snapshots == [(0, 0, 0, 0), expected]
     assert _counts(db) == expected
     assert (batch.quick_template_id, batch.label, batch.source, batch.input_payload) == (
@@ -234,7 +239,8 @@ def test_third_entry_failure_rolls_back_all_entries_legs_capsule_effects_and_bat
     monkeypatch.setattr(ledger, "_post_transaction_journal", fail_third)
     with pytest.raises(workflow.BatchPostingError, match="third entry journal failure"):
         workflow.post_transaction_batch(db, client.id, _payload(posting))
-    assert failed == [(1, 5, 8, 0) if auto_post else (1, 3, 4, 1)]
+    # Two entries posted before the third failed, so two reservations.
+    assert failed == [(1, 5, 8, 2) if auto_post else (1, 3, 4, 2)]
     assert snapshots == [(0, 0, 0, 0)]
     assert _counts(db) == (0, 0, 0, 0)
     for account in (cash, food, reserve):

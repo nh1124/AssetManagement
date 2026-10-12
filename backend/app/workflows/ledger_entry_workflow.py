@@ -8,7 +8,12 @@ from .. import models, schemas
 from ..domain.money import Money
 from ..services import ledger_service
 from ..services.fx_service import get_client_currency
-from ..services.capsule_service import apply_capsule_rules_for_transaction
+from ..services.capsule_service import (
+    CapsuleReservation,
+    apply_capsule_rules_for_transaction,
+    capsule_reservations_for_transaction,
+    retract_capsule_reservations,
+)
 from .transaction_approval_workflow import approve_transaction_proposal
 
 
@@ -55,20 +60,37 @@ def amend_entry(
     *,
     commit: bool = True,
 ) -> models.Transaction | None:
-    """Rebuild an entry's journal legs at its new amount.
+    """Rebuild an entry's journal legs at its new amount, and its reservations.
 
     The rebuild itself belongs to the module that owns the legs, including the
     decision about what an amount-only change means for a compound entry, so
     this adds only the default accounts the payload may name.
 
-    Note what it does not do: the capsule rules are not re-evaluated here, so an
-    amended amount leaves any reservation it triggered at the old figure. That
-    predates this wave and is recorded as X3 in docs/specs/layering.md.
+    X3: the capsule rules are re-evaluated here. They used to run only at
+    posting time, so an amended amount left the reservation it triggered at the
+    old figure. Withdrawing the old reservations and evaluating the amended
+    entry is one operation -- partway through, the entry and its reservations
+    disagree -- so update_transaction is asked not to close the transaction and
+    this function closes it once.
     """
     ledger_service.ensure_default_accounts(db, client_id=client_id, commit=commit)
-    return ledger_service.update_transaction(
-        db, transaction_id, payload, client_id, commit=commit,
+    retract_capsule_reservations(db, client_id, transaction_id, commit=False)
+    transaction = ledger_service.update_transaction(
+        db, transaction_id, payload, client_id, commit=False,
     )
+    if transaction is None:
+        # Nothing was amended, so nothing should have been withdrawn either.
+        db.rollback()
+        return None
+    try:
+        apply_capsule_rules_for_transaction(db, transaction, commit=False)
+        if commit:
+            db.commit()
+            db.refresh(transaction)
+        return transaction
+    except Exception:
+        db.rollback()
+        raise
 
 
 def remove_entry(
@@ -83,6 +105,10 @@ def remove_entry(
         return False
 
     try:
+        # X3: the reservations this entry caused go with it. A posted one takes
+        # its transfer too, so money leaves the earmarked account -- the UI
+        # confirms that before calling this.
+        retract_capsule_reservations(db, client_id, transaction_id, commit=False)
         ledger_service.delete_transaction(db, transaction)
         if commit:
             db.commit()
@@ -90,6 +116,17 @@ def remove_entry(
     except Exception:
         db.rollback()
         raise
+
+
+def entry_capsule_reservations(
+    db: Session, client_id: int, transaction_id: int,
+) -> list[CapsuleReservation]:
+    """What amending or deleting this entry would withdraw.
+
+    The UI asks before it changes an entry, because a posted reservation takes
+    its transfer with it when the entry that caused it is amended or deleted.
+    """
+    return capsule_reservations_for_transaction(db, client_id, transaction_id)
 
 
 def list_entries(

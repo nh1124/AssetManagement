@@ -13,6 +13,7 @@ import {
     getTransactionProposals, approveTransactionProposal, rejectTransactionProposal,
     analyzeWithBackend, previewCapsuleTransfersForTransaction,
     getQuickTemplates, createQuickTemplate, updateQuickTemplate, deleteQuickTemplate, createTransactionBatch,
+    getCapsuleReservations,
 } from '../api';
 import { useToast } from '../components/Toast';
 import { useClient } from '../context/ClientContext';
@@ -846,6 +847,7 @@ export default function Journal() {
                 ...(legs ? { legs } : {}),
             };
             if (editingTransactionId) {
+                if (!(await confirmCapsuleChange(editingTransactionId, 'update'))) return;
                 await updateTransaction(editingTransactionId, payload);
                 showToast('Transaction updated', 'success');
             } else {
@@ -944,7 +946,39 @@ export default function Journal() {
         }
     };
 
+    // Changing an entry re-evaluates the capsule rules it triggered: the
+    // reservations it caused are withdrawn and, for an amendment, recalculated.
+    // A posted reservation takes its transfer with it, so money leaves the
+    // earmarked account. Say so before it happens.
+    const confirmCapsuleChange = async (id: number, action: 'delete' | 'update'): Promise<boolean> => {
+        let reservations: Awaited<ReturnType<typeof getCapsuleReservations>>;
+        try {
+            reservations = await getCapsuleReservations(id);
+        } catch (error) {
+            // The warning is not worth blocking the edit over, and the backend
+            // withdraws the reservations either way.
+            console.error('Failed to read capsule reservations:', error);
+            return true;
+        }
+        const affected = reservations.filter((item) => item.status !== 'rejected');
+        if (!affected.length) return true;
+        const lines = affected.map((item) => {
+            const name = item.capsule_name ?? `Capsule ${item.capsule_id ?? '?'}`;
+            const amount = `${item.amount.toLocaleString()} ${item.currency}`;
+            return item.status === 'posted'
+                ? `  • ${name}: ${amount} — already transferred, will be reversed`
+                : `  • ${name}: ${amount} — queued, will be withdrawn`;
+        });
+        const tail = action === 'delete'
+            ? 'Deleting this entry removes them.'
+            : 'Updating this entry removes them and re-applies the rules to the new amount.';
+        return window.confirm(
+            `This entry triggered ${affected.length} capsule reservation(s):\n\n${lines.join('\n')}\n\n${tail}`,
+        );
+    };
+
     const handleDeleteTransaction = async (id: number) => {
+        if (!(await confirmCapsuleChange(id, 'delete'))) return;
         try {
             await deleteTransaction(id);
             showToast('Transaction deleted', 'info');

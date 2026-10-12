@@ -163,7 +163,9 @@ def _seed(db, scenario, today):
     ])
     db.commit()
     return {"batch_id": batch.id, "account_id": cash.id, "event_id": goal.id, "life_event_id": goal.id,
-            "capsule_id": capsule.id, "month": today.strftime("%Y-%m"),
+            # lunch is the trigger a capsule rule would fire on, so the
+            # reservation read is driven against an entry that has legs.
+            "capsule_id": capsule.id, "transaction_id": lunch.id, "month": today.strftime("%Y-%m"),
             "plan_ids": str(plan.id) if plan else None,
             "start_date": start.isoformat(), "end_date": end.isoformat(),
             "start_period": today.strftime("%Y-%m")}

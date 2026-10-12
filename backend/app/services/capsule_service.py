@@ -494,22 +494,119 @@ def apply_capsule_rules_for_transaction(
             currency=transaction.currency,
             legs=legs,
         )
-        if spec.auto_post:
-            resolved.append(ledger_service.create_transaction(
-                db, client_id=transaction.client_id, **columns,
+        # X3: an auto-posted reservation records a proposal too. The proposal is
+        # the only thing that says which entry caused the transfer, and without
+        # it an amended or deleted trigger could not find what it produced. The
+        # auto-posting decision was made when the capsule was configured, so no
+        # person decided at this moment and decided_by_client_id stays empty.
+        proposal = ledger_service.propose_transaction(
+            db,
+            transaction.client_id,
+            origin="capsule",
+            origin_ref={"capsule_id": spec.capsule_id, "rule_id": spec.rule_id},
+            trigger_transaction_id=transaction.id,
+            **columns,
+        )
+        if not spec.auto_post:
+            resolved.append(proposal)
+        elif proposal.status == "pending":
+            resolved.append(ledger_service.approve_proposal(
+                db, proposal, actor_client_id=None,
             ))
+        elif proposal.posted_transaction_id is not None:
+            # An identical reservation was already posted, so propose_transaction
+            # returned that record instead of writing a second one.
+            resolved.append(db.get(models.Transaction, proposal.posted_transaction_id))
         else:
-            resolved.append(ledger_service.propose_transaction(
-                db,
-                transaction.client_id,
-                origin="capsule",
-                origin_ref={"capsule_id": spec.capsule_id, "rule_id": spec.rule_id},
-                trigger_transaction_id=transaction.id,
-                **columns,
-            ))
+            resolved.append(proposal)
     if resolved and commit:
         db.commit()
     return resolved
+
+
+@dataclass(frozen=True)
+class CapsuleReservation:
+    """One thing a transaction's capsule rules produced, queued or posted."""
+
+    proposal_id: int
+    capsule_id: int | None
+    capsule_name: str | None
+    amount: float
+    currency: str
+    status: str
+    posted_transaction_id: int | None
+
+
+def _reservation_query(db: Session, client_id: int, transaction_id: int):
+    return db.query(models.TransactionProposal).filter(
+        models.TransactionProposal.client_id == client_id,
+        models.TransactionProposal.origin == "capsule",
+        models.TransactionProposal.trigger_transaction_id == transaction_id,
+    ).order_by(models.TransactionProposal.id)
+
+
+def _as_reservation(db: Session, proposal: models.TransactionProposal) -> CapsuleReservation:
+    capsule_id = (proposal.origin_ref or {}).get("capsule_id")
+    capsule = db.get(models.Capsule, capsule_id) if capsule_id is not None else None
+    return CapsuleReservation(
+        proposal_id=proposal.id,
+        capsule_id=capsule_id,
+        capsule_name=capsule.name if capsule is not None else None,
+        amount=proposal.amount,
+        currency=proposal.currency,
+        status=proposal.status,
+        posted_transaction_id=proposal.posted_transaction_id,
+    )
+
+
+def capsule_reservations_for_transaction(
+    db: Session, client_id: int, transaction_id: int,
+) -> list[CapsuleReservation]:
+    """What this transaction's capsule rules produced. A read; it writes nothing.
+
+    Both kinds appear. A queued reservation is a pending proposal waiting for a
+    decision; a posted one is a proposal carrying the transaction it became.
+    """
+    return [_as_reservation(db, proposal)
+            for proposal in _reservation_query(db, client_id, transaction_id).all()]
+
+
+def retract_capsule_reservations(
+    db: Session, client_id: int, transaction_id: int, *, commit: bool = False,
+) -> list[CapsuleReservation]:
+    """Undo what a transaction's capsule rules produced, because its cause changed.
+
+    X3: amending or deleting a trigger used to leave its reservations standing
+    at the old figure, because only the posting path ever evaluated the rules.
+    A reservation exists because of one entry, so when that entry stops saying
+    what it said, the reservation has lost its basis and is removed.
+
+    A pending proposal is withdrawn. A posted one takes its transaction with it,
+    which moves money back out of the earmarked account -- the caller is the one
+    that has to have told the user. A rejected proposal is left where it is:
+    that was a person's decision about something that already happened, and the
+    foreign key clears its trigger without destroying the record of it.
+    """
+    retracted = []
+    for proposal in _reservation_query(db, client_id, transaction_id).all():
+        if proposal.status == "rejected":
+            continue
+        retracted.append(_as_reservation(db, proposal))
+        posted = (db.get(models.Transaction, proposal.posted_transaction_id)
+                  if proposal.posted_transaction_id is not None else None)
+        db.delete(proposal)
+        if posted is not None:
+            ledger_service.delete_transaction(db, posted)
+    if retracted:
+        invalidate_client(client_id)
+    # The flush matters even when the caller commits: re-applying the rules
+    # right after this would otherwise collide with the withdrawn proposal's
+    # idempotency key, which does not depend on the fields an amend changes.
+    if commit:
+        db.commit()
+    else:
+        db.flush()
+    return retracted
 
 
 def _triggered_legs(

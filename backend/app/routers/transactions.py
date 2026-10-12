@@ -1,3 +1,4 @@
+from dataclasses import asdict
 from datetime import date
 from typing import Optional
 
@@ -16,6 +17,7 @@ from ..workflows.ledger_entry_workflow import (
     amend_entry,
     remove_entry,
     list_entries,
+    entry_capsule_reservations,
     approve_entry_proposal,
     reject_entry_proposal,
 )
@@ -120,6 +122,22 @@ def create_transaction(
     invalidate_client(current_client.id)
 
     return _serialize_transaction(db_transaction)
+
+
+@router.get("/{transaction_id}/capsule-reservations")
+def get_capsule_reservations(
+    transaction_id: int,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    """What this entry's capsule rules produced, so a caller can warn before changing it.
+
+    Amending or deleting an entry withdraws these (X3), and a posted one takes
+    its transfer with it, so the client asks first and says what will go.
+    """
+    return [asdict(reservation) for reservation in entry_capsule_reservations(
+        db, current_client.id, transaction_id,
+    )]
 
 
 @router.get("/proposals", response_model=list[schemas.TransactionProposal])
