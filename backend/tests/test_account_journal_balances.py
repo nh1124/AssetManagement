@@ -160,13 +160,15 @@ def test_post_update_and_delete_never_write_any_account_column(db):
     print(f"All {len(before[0])} columns in all accounts unchanged after posting, editing and deleting; no account DML")
 
 
-def test_export_v9_omits_balance_and_v8_cache_still_imports(db):
+def test_export_omits_balance_and_a_v8_cache_still_imports(db):
     wallet, income = _account(db, "wallet"), _account(db, "income", "income")
     ledger.update_account(db, 1, wallet.id, {"role_target_amount": 1200})
     _post(db, income, wallet, 112419, "EUR")
     _post(db, income, wallet, 23248, "USD")
     document = export_client(db, db.get(models.Client, 1))
-    assert document["version"] == 9
+    # F1a took the format to 10; what this test is about is that the balance
+    # column is absent and that a v8 document carrying one is ignored.
+    assert document["version"] == 10
     assert all("balance" not in row for row in document["data"]["accounts"])
     data = document["data"]
     for row in data["accounts"]:
@@ -182,7 +184,7 @@ def test_export_v9_omits_balance_and_v8_cache_still_imports(db):
     result = calculate_account_balances(db, [imported])[imported.id]
     assert result.balances_minor == {"EUR": 112419, "USD": 23248}
     assert result.balance == 0.0  # Missing rates cannot change exact holdings.
-    print("v9 export omits balance; v8 with stale balance imports journal holdings and ignores cache")
+    print("export omits balance; v8 with stale balance imports journal holdings and ignores cache")
 
 
 @pytest.mark.parametrize("currency", ["JPY", "USD"])

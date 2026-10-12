@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, DateTime, CheckConstraint, case, cast, Float
+from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, DateTime, CheckConstraint, UniqueConstraint, case, cast, Float
 from sqlalchemy.orm import relationship
 
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -32,6 +32,10 @@ class Capsule(Base):
     account = relationship("Account", foreign_keys=[account_id])
     life_event = relationship("LifeEvent", back_populates="capsules")
     holdings = relationship("CapsuleHolding", back_populates="capsule", cascade="all, delete-orphan")
+    funding_sources = relationship(
+        "CapsuleFundingSource", back_populates="capsule", cascade="all, delete-orphan",
+        order_by="(CapsuleFundingSource.sort_order, CapsuleFundingSource.id)",
+    )
 
     @hybrid_property
     def target_amount(self) -> float | None:
@@ -62,6 +66,38 @@ class Capsule(Base):
     @current_balance.expression
     def current_balance(cls):
         return major_expression(cls.current_balance_minor, client_currency_expression(cls))
+
+
+class CapsuleFundingSource(Base):
+    """Fixed per-account target amounts: intent, never balances or holdings."""
+
+    __tablename__ = "capsule_funding_sources"
+    __table_args__ = (
+        UniqueConstraint("capsule_id", "account_id", name="uq_capsule_funding_sources_account"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
+    capsule_id = Column(Integer, ForeignKey("capsules.id", ondelete="CASCADE"), nullable=False, index=True)
+    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
+    target_amount_minor = Column(MinorUnits, nullable=False, default=0, server_default="0")
+    sort_order = Column(Integer, nullable=False, default=0, server_default="0")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    client = relationship("Client")
+    capsule = relationship("Capsule", back_populates="funding_sources")
+    account = relationship("Account")
+
+    @hybrid_property
+    def target_amount(self) -> float | None:
+        if self.target_amount_minor is None:
+            return None
+        return Money(self.target_amount_minor, client_currency(self)).to_float()
+
+    @target_amount.expression
+    def target_amount(cls):
+        return major_expression(cls.target_amount_minor, client_currency_expression(cls))
 
 
 class CapsuleRule(Base):

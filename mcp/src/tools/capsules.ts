@@ -245,6 +245,55 @@ Use when: カプセルの目標額・月額・残高を変更したいとき`,
   );
 
   server.registerTool(
+    "capsule_funding_sources_list",
+    {
+      title: "List capsule funding plan",
+      description: "Lists fixed per-account target amounts for a capsule. These amounts are a plan, not balances.",
+      inputSchema: z.object({ capsule_id: z.number().int().min(1).describe("Capsule ID") }).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ capsule_id }) => {
+      try {
+        const data = await api.get<unknown>(`/capsules/${capsule_id}/funding-sources`);
+        return {
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+          structuredContent: toStructured({ funding_sources: data }),
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
+      }
+    },
+  );
+
+  server.registerTool(
+    "capsule_funding_sources_set",
+    {
+      title: "Replace capsule funding plan",
+      description: "Replaces the entire capsule funding plan with fixed per-account target amounts. Amounts use the client's currency in major units and are a plan, not balances. An empty list clears the plan.",
+      inputSchema: z.object({
+        capsule_id: z.number().int().min(1).describe("Capsule ID"),
+        funding_sources: z.array(z.object({
+          account_id: z.number().int().min(1).describe("Account ID belonging to the client"),
+          target_amount: z.number().finite().min(0).optional().describe("Fixed target amount in major units; defaults to 0"),
+          sort_order: z.number().int().optional().describe("Plan display order; defaults to 0"),
+        }).strict()),
+      }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async ({ capsule_id, funding_sources }) => {
+      try {
+        const data = await api.put<unknown>(`/capsules/${capsule_id}/funding-sources`, funding_sources);
+        return {
+          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+          structuredContent: toStructured({ funding_sources: data }),
+        };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
+      }
+    },
+  );
+
+  server.registerTool(
     "capsule_holdings_list",
     {
       title: "List capsule holdings",

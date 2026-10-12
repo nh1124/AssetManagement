@@ -9,8 +9,9 @@ from app import models
 from app.database import Base
 
 
-# B5 retires the account cache and converts its three money settings.
-EXPECTED_METADATA_SHA256 = "4c5f42e98ca116d57a7f8c1f071037153355c2d83f7adc61d7ebc71afc51da06"
+# F1a adds eight funding-plan columns and the account's nullable policy column.
+# All pre-existing metadata is unchanged; keep the complete schema pinned.
+EXPECTED_METADATA_SHA256 = "879c3b461797e53f75f0854a9d6faf9086dc7a8657d8bd11289be57f881c947c"
 
 MODEL_NAMES = (
     "Client", "ClientMfaSetting", "ClientRecoveryCode",
@@ -20,7 +21,7 @@ MODEL_NAMES = (
     "BudgetPlan", "MonthlyPlanLine", "PeriodReview", "MonthlyAction",
     "AiOperationPolicy", "AiAuditLog", "AiChangeRequest",
     "SimulationConfig", "SimulationScenario",
-    "Capsule", "CapsuleRule", "CapsuleHolding",
+    "Capsule", "CapsuleFundingSource", "CapsuleRule", "CapsuleHolding",
 )
 ENUM_NAMES = ("AccountType", "AccountRole")
 
@@ -88,8 +89,8 @@ def _metadata_snapshot():
 
 def test_metadata_matches_the_minor_unit_schema():
     snapshot = _metadata_snapshot()
-    assert len(snapshot["table_names"]) == 27
-    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 349
+    assert len(snapshot["table_names"]) == 28
+    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 358
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == EXPECTED_METADATA_SHA256
 

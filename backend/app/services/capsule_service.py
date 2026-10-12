@@ -120,6 +120,67 @@ def update_capsule(
     return capsule
 
 
+def funding_source_to_dict(source: models.CapsuleFundingSource) -> dict:
+    return {
+        "id": source.id,
+        "client_id": source.client_id,
+        "capsule_id": source.capsule_id,
+        "account_id": source.account_id,
+        "account_name": source.account.name if source.account else None,
+        "target_amount": source.target_amount,
+        "sort_order": source.sort_order,
+        "created_at": source.created_at,
+        "updated_at": source.updated_at,
+    }
+
+
+def list_funding_sources(
+    db: Session, client_id: int, capsule_id: int,
+) -> list[models.CapsuleFundingSource] | None:
+    capsule = get_capsule(db, client_id, capsule_id)
+    if capsule is None:
+        return None
+    return sorted(capsule.funding_sources, key=lambda source: (source.sort_order, source.id))
+
+
+def set_funding_sources(
+    db: Session, client_id: int, capsule_id: int,
+    payloads: Sequence[schemas.CapsuleFundingSourceInput], *, commit: bool = True,
+) -> list[models.CapsuleFundingSource]:
+    """Replace a capsule's intent atomically; this does not reserve or move money."""
+    capsule = get_capsule(db, client_id, capsule_id)
+    if capsule is None:
+        raise NotFound("Capsule not found")
+    account_ids = [payload.account_id for payload in payloads]
+    if len(set(account_ids)) != len(account_ids):
+        raise Invalid("Duplicate funding source account")
+    owned_ids = {row.id for row in db.query(models.Account.id).filter(
+        models.Account.client_id == client_id,
+        models.Account.id.in_(account_ids),
+    ).all()}
+    if owned_ids != set(account_ids):
+        raise NotFound("Account not found")
+    currency = money_client_currency(db, client_id)
+    # Complete validation/conversion before touching the saved plan.
+    amounts = [to_minor(payload.target_amount, currency) for payload in payloads]
+    existing = {source.account_id: source for source in capsule.funding_sources}
+    sources = []
+    for payload, amount in zip(payloads, amounts):
+        source = existing.get(payload.account_id)
+        if source is None:
+            source = models.CapsuleFundingSource(
+                client_id=client_id, account_id=payload.account_id,
+            )
+        source.target_amount_minor = amount
+        source.sort_order = payload.sort_order
+        sources.append(source)
+    # Retain matching rows so INSERT cannot collide with a not-yet-deleted row.
+    # delete-orphan removes the lines omitted from this replacement.
+    capsule.funding_sources = sources
+    _finish_write(db, client_id, commit=commit)
+    return list_funding_sources(db, client_id, capsule_id)
+
+
 @dataclass(frozen=True)
 class CapsuleDeletion:
     """What deleting a capsule removed, and what it deliberately left behind."""
@@ -377,6 +438,9 @@ def capsule_to_dict(db: Session, capsule: models.Capsule) -> dict:
         "created_at": capsule.created_at,
         "progress_pct": round(progress_pct, 1),
         "holdings": holdings,
+        "funding_sources": [
+            funding_source_to_dict(source) for source in capsule.funding_sources
+        ],
     }
 
 

@@ -948,6 +948,29 @@ class CapsuleUpdate(BaseModel):
     target_amount_source: Optional[str] = None
     monthly_contribution_source: Optional[str] = None
 
+class CapsuleFundingSourceInput(BaseModel):
+    account_id: int = Field(gt=0)
+    target_amount: float = Field(default=0.0, ge=0, allow_inf_nan=False)
+    sort_order: int = 0
+
+    class Config:
+        extra = "forbid"
+
+
+class CapsuleFundingSource(CapsuleFundingSourceInput):
+    id: int
+    client_id: int
+    capsule_id: int
+    # Supplied by capsule_to_dict so the plan can be shown without a second
+    # request; absent when the row is serialized straight from the ORM.
+    account_name: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class Capsule(CapsuleBase):
     id: int
     account_id: Optional[int] = None
@@ -955,6 +978,7 @@ class Capsule(CapsuleBase):
     linked_products: list[dict[str, Any]] = []
     created_at: datetime
     holdings: list["CapsuleHolding"] = []
+    funding_sources: list[CapsuleFundingSource] = Field(default_factory=list)
 
     class Config:
         from_attributes = True

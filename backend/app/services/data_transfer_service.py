@@ -408,6 +408,13 @@ def export_client(db: Session, client: models.Client) -> dict:
                 .order_by(models.Capsule.id)
                 .all()
             ],
+            "capsule_funding_sources": [
+                row_fields(source, ["id", "capsule_id", "account_id", "target_amount", "sort_order", "created_at", "updated_at"])
+                for source in db.query(models.CapsuleFundingSource)
+                .filter(models.CapsuleFundingSource.client_id == client.id)
+                .order_by(models.CapsuleFundingSource.id)
+                .all()
+            ],
             "capsule_rules": [
                 row_fields(
                     rule,
@@ -977,6 +984,24 @@ def import_client(
                         **rule_amount_fields(item.get("amount_value") or 0, item.get("amount_type") or "fixed", money_client_currency(db, client.id)),
                         is_active=item.get("is_active", True),
                         created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
+                    )
+                )
+
+        for item in data.get("capsule_funding_sources", []):
+            capsule_id = capsule_map.get(item.get("capsule_id"))
+            account_id = account_map.get(item.get("account_id"))
+            if capsule_id and account_id:
+                db.add(
+                    models.CapsuleFundingSource(
+                        client_id=client.id,
+                        capsule_id=capsule_id,
+                        account_id=account_id,
+                        target_amount_minor=to_minor(
+                            item.get("target_amount") or 0, money_client_currency(db, client.id),
+                        ),
+                        sort_order=item.get("sort_order") or 0,
+                        created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
+                        updated_at=parse_datetime(item.get("updated_at")) or datetime.utcnow(),
                     )
                 )
 

@@ -60,6 +60,7 @@ def _seed(db, client_id=101, base=10000):
             "monthly_plan_lines": ("amount",), "life_events": ("target_amount",),
             "milestones": ("target_amount",), "capsules": ("target_amount", "monthly_contribution", "current_balance"),
             "capsule_holdings": ("held_amount",), "monthly_actions": ("amount",),
+            "capsule_funding_sources": ("target_amount",),
             "products": ("last_unit_price", "purchase_price"), "simulation_configs": ("monthly_savings",),
             "simulation_scenarios": ("monthly_savings",), "registry_entries": ("amount",),
             "recurring_transactions": ("amount",),
@@ -120,6 +121,8 @@ def _seed(db, client_id=101, base=10000):
         source_account_id=cash.id, amount_value=10)
     add(models.CapsuleHolding, 20, capsule_id=capsule.id, account_id=cash.id,
         held_amount=0, note="holding")
+    add(models.CapsuleFundingSource, 24, client_id=client.id, capsule_id=capsule.id,
+        account_id=cash.id, target_amount=250, sort_order=3)
     add(models.SimulationScenario, 21, life_event_id=goal.id, name="scenario",
         annual_return=5, inflation=2, monthly_savings=10,
         contribution_schedule=[{"period": "2026-10", "amount": 10, "account_id": cash.id}])
@@ -255,6 +258,10 @@ def test_round_trip_preserves_every_collection_and_document(db):
 
 def test_journal_failure_after_deletion_preserves_every_table_byte_for_byte(db):
     client, _ = _seed(db)
+    # A second client, so this still proves rollback preserves every table,
+    # including an unrelated client's rows. The plan is in the transfer format
+    # now, and the fixture seeds one for each client.
+    _seed(db, client_id=102, base=20000)
     document = export_client(db, client)
     document["data"]["journal_entries"][0]["account_id"] = str(document["data"]["journal_entries"][0]["account_id"])
     assert validate_import_payload(document["data"], document["version"], document["manifest"])["error_count"] == 0

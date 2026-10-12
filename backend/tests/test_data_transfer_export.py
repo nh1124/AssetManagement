@@ -32,6 +32,7 @@ FORMAT_FIELDS = {
     "monthly_actions": ["id","source_period","target_period","proposal_id","kind","description","amount","target_id","payload","result","status","idempotency_key","created_at","applied_at"],
     "milestones": ["id","life_event_id","date","target_amount","note","source","source_snapshot","is_active_plan","created_at"],
     "capsules": ["id","name","target_amount","monthly_contribution","current_balance","account_id","life_event_id","capsule_type","target_amount_source","monthly_contribution_source","created_at"],
+    "capsule_funding_sources": ["id","capsule_id","account_id","target_amount","sort_order","created_at","updated_at"],
     "capsule_rules": ["id","capsule_id","trigger_type","trigger_category","trigger_description","source_mode","source_account_id","amount_type","amount_value","is_active","created_at"],
     "capsule_holdings": ["id","capsule_id","account_id","held_amount","note","updated_at"],
     "simulation_scenarios": ["id","life_event_id","name","description","annual_return","inflation","monthly_savings","contribution_schedule","allocation_mode","created_at","updated_at"],
@@ -56,6 +57,7 @@ def _seed_client(db, client_id, base, marker):
             "monthly_plan_lines": ("amount",), "life_events": ("target_amount",),
             "milestones": ("target_amount",), "capsules": ("target_amount", "monthly_contribution", "current_balance"),
             "capsule_holdings": ("held_amount",), "monthly_actions": ("amount",),
+            "capsule_funding_sources": ("target_amount",),
             "products": ("last_unit_price", "purchase_price"), "simulation_configs": ("monthly_savings",),
             "simulation_scenarios": ("monthly_savings",), "registry_entries": ("amount",),
             "recurring_transactions": ("amount",),
@@ -143,6 +145,10 @@ def _seed_client(db, client_id, base, marker):
         source_account_id=cash.id, amount_value=10,
     )
     add(models.CapsuleHolding, 20, capsule_id=capsule.id, account_id=cash.id, held_amount=0, note=marker)
+    add(
+        models.CapsuleFundingSource, 24, client_id=client.id, capsule_id=capsule.id,
+        account_id=cash.id, target_amount=250, sort_order=3,
+    )
     add(
         models.SimulationScenario, 21, life_event_id=goal.id, name=marker,
         annual_return=5, inflation=2, monthly_savings=10,

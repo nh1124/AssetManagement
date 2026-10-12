@@ -10,7 +10,11 @@ from sqlalchemy.orm import Session
 
 from .. import database, dependencies, models, schemas
 from ..services import capsule_service
-from ..services.capsule_service import capsule_transfer_specs, capsule_to_dict
+from ..services.capsule_service import (
+    capsule_transfer_specs,
+    capsule_to_dict,
+    funding_source_to_dict,
+)
 from ..workflows import capsule_workflow
 
 router = APIRouter(
@@ -62,6 +66,35 @@ def create_capsule(
 ):
     db_capsule = capsule_service.create_capsule(db, current_client.id, capsule)
     return capsule_to_dict(db, db_capsule)
+
+
+@router.get("/{capsule_id}/funding-sources", response_model=List[schemas.CapsuleFundingSource])
+def read_capsule_funding_sources(
+    capsule_id: int,
+    db: Session = Depends(database.get_db),
+    current_client: models.Client = Depends(dependencies.get_current_client),
+):
+    sources = capsule_service.list_funding_sources(db, current_client.id, capsule_id)
+    if sources is None:
+        raise HTTPException(status_code=404, detail="Capsule not found")
+    # The same serializer capsule_to_dict uses, so the plan reads identically
+    # whether it arrives from here or on the capsule itself.
+    return [funding_source_to_dict(source) for source in sources]
+
+
+@router.put("/{capsule_id}/funding-sources", response_model=List[schemas.CapsuleFundingSource])
+def set_capsule_funding_sources(
+    capsule_id: int,
+    payloads: List[schemas.CapsuleFundingSourceInput],
+    db: Session = Depends(database.get_db),
+    current_client: models.Client = Depends(dependencies.get_current_client),
+):
+    return [
+        funding_source_to_dict(source)
+        for source in capsule_service.set_funding_sources(
+            db, current_client.id, capsule_id, payloads,
+        )
+    ]
 
 
 @router.post("/preview-for-transaction", response_model=List[schemas.CapsuleTransferPreview])

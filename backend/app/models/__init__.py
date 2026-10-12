@@ -16,7 +16,7 @@ from .budget import BudgetPlan, MonthlyPlanLine
 from .planning import PeriodReview, MonthlyAction
 from .ai import AiOperationPolicy, AiAuditLog, AiChangeRequest
 from .simulation import SimulationConfig, SimulationScenario
-from .capsule import Capsule, CapsuleRule, CapsuleHolding
+from .capsule import Capsule, CapsuleFundingSource, CapsuleRule, CapsuleHolding
 
 __all__ = [
     "Base",
@@ -47,6 +47,7 @@ __all__ = [
     "SimulationConfig",
     "SimulationScenario",
     "Capsule",
+    "CapsuleFundingSource",
     "CapsuleRule",
     "CapsuleHolding",
 ]
