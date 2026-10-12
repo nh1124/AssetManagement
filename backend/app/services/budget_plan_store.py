@@ -71,7 +71,7 @@ def list_plans(db: Session, client_id: int) -> list[models.BudgetPlan]:
         .order_by(models.BudgetPlan.sort_order, models.BudgetPlan.id)
         .all()
     )
-    return plans or [get_or_create_default_plan(db, client_id)]
+    return plans
 
 
 def create_plan(
@@ -168,6 +168,7 @@ def delete_plan_line(
 
 
 def get_or_create_default_plan(db: Session, client_id: int) -> models.BudgetPlan:
+    # Write path only: creates/repairs the default and adopts active orphan lines.
     defaults = (
         db.query(models.BudgetPlan)
         .filter_by(client_id=client_id, is_default=True)
@@ -289,15 +290,41 @@ def set_default_budget_plan(
     return plan
 
 
+def find_budget_plan_id(db: Session, client_id: int, plan_id: int | None = None) -> int | None:
+    """Read-path resolver: the plan a read should use, or None if there is none.
+
+    Its write-path twin below creates the default plan when a client has none,
+    which is why a read cannot call it: X9 was eight read endpoints inserting a
+    budget_plans row. "This client has no plan" is a shape the callers render
+    -- no planned figures, actuals untouched -- not an error.
+
+    An explicitly requested plan that does not belong to this client is still
+    an error, and it is the same error the write path raises.
+    """
+    if plan_id is not None:
+        if get_plan(db, client_id, plan_id) is None:
+            raise ValueError("Budget plan not found")
+        return plan_id
+    plan = (
+        db.query(models.BudgetPlan)
+        .filter(models.BudgetPlan.client_id == client_id)
+        .order_by(
+            # The same preference get_or_create_default_plan applies: the
+            # default first, then the client's own ordering.
+            models.BudgetPlan.is_default.desc(),
+            models.BudgetPlan.sort_order,
+            models.BudgetPlan.id,
+        )
+        .first()
+    )
+    return plan.id if plan is not None else None
+
+
 def resolve_budget_plan_id(db: Session, client_id: int, plan_id: int | None = None) -> int:
+    """Write-path resolver: may create the default plan the caller will write into."""
     if plan_id is None:
         return get_or_create_default_plan(db, client_id).id
-    exists = db.query(models.BudgetPlan.id).filter(
-        models.BudgetPlan.id == plan_id,
-        models.BudgetPlan.client_id == client_id,
-    ).first()
-    if not exists:
-        raise ValueError("Budget plan not found")
+    find_budget_plan_id(db, client_id, plan_id)
     return plan_id
 
 

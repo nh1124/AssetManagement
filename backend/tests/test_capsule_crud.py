@@ -203,7 +203,7 @@ def test_holding_crud_replaces_existing_claim_and_leaves_current_balance_untouch
         assert db.query(model).count() == 0
 
 
-def test_capsule_crud_clamps_inputs_ignores_balance_patch_and_read_commits_holdings_cache(db):
+def test_capsule_crud_clamps_inputs_ignores_balance_patch_and_read_preserves_holdings_cache(db):
     payload = schemas.CapsuleCreate(name="Manual", target_amount=-10, monthly_contribution=-5, current_balance=999)
     capsule = capsule_service.create_capsule(db, 1, payload)
     capsule_id = capsule.id
@@ -222,8 +222,9 @@ def test_capsule_crud_clamps_inputs_ignores_balance_patch_and_read_commits_holdi
     db.commit()
     details = capsule_service.list_capsule_details(db, 1)
     assert details[0]["current_balance"] == 75
+    assert not db.new and not db.dirty and not db.deleted
     db.rollback()
-    assert db.get(models.Capsule, capsule_id).current_balance == 75
+    assert db.get(models.Capsule, capsule_id).current_balance == 1
     assert capsule_service.list_capsules(db, 1, skip=1) == []
     assert capsule_service.list_capsules(db, 2) == []
 
@@ -259,7 +260,7 @@ def test_unknown_foreign_and_mismatched_ids_return_none_or_false_and_write_nothi
     "create_capsule", "update_capsule", "delete_capsule",
     "create_rule", "update_rule", "delete_rule",
     "create_holding", "replace_holding", "update_holding", "delete_holding",
-    "list_capsule_details", "contribute", "create_product_reserve_pools",
+    "contribute", "create_product_reserve_pools",
     "sync_product_reserves", "create_goal_capsule",
 ])
 def test_commit_false_leaves_every_new_writing_function_rollbackable(db, monkeypatch, operation):
@@ -295,7 +296,6 @@ def test_commit_false_leaves_every_new_writing_function_rollbackable(db, monkeyp
         "replace_holding": lambda: capsule_service.create_holding(db, 1, capsule_id, schemas.CapsuleHoldingCreate(account_id=cash_id, held_amount=25), commit=False),
         "update_holding": lambda: capsule_service.update_holding(db, 1, capsule_id, holding_id, schemas.CapsuleHoldingUpdate(held_amount=25), commit=False),
         "delete_holding": lambda: capsule_service.delete_holding(db, 1, capsule_id, holding_id, commit=False),
-        "list_capsule_details": lambda: capsule_service.list_capsule_details(db, 1, commit=False),
         "contribute": lambda: capsule_workflow.contribute(db, 1, capsule_id, amount=25, from_account_id=cash_id, commit=False),
         "create_product_reserve_pools": lambda: capsule_workflow.create_product_reserve_pools(db, 1, commit=False),
         "sync_product_reserves": lambda: capsule_workflow.sync_product_reserves(db, 1, commit=False),
@@ -308,6 +308,22 @@ def test_commit_false_leaves_every_new_writing_function_rollbackable(db, monkeyp
     db.flush()
     assert _snapshot(db) != before
     db.rollback()
+    assert _snapshot(db) == before
+
+
+def test_list_capsule_details_neither_flushes_nor_commits(db, monkeypatch):
+    capsule, cash, _ = _capsule(db)
+    capsule_service.create_holding(db, 1, capsule.id, schemas.CapsuleHoldingCreate(
+        account_id=cash.id, held_amount=20))
+    before = _snapshot(db)
+
+    def unexpected_write(*_args, **_kwargs):
+        pytest.fail("Serializing capsules must not persist anything")
+
+    monkeypatch.setattr(db, "commit", unexpected_write)
+    monkeypatch.setattr(db, "flush", unexpected_write)
+    assert capsule_service.list_capsule_details(db, 1)[0]["current_balance"] == 20
+    assert not db.new and not db.dirty and not db.deleted
     assert _snapshot(db) == before
 
 

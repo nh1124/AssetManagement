@@ -22,7 +22,7 @@ from .budget_lines import (
     _sum_lines,
     plan_line_identity_key,
 )
-from .budget_plan_store import _deduplicate_active_plan_models, resolve_budget_plan_id
+from .budget_plan_store import _deduplicate_active_plan_models, find_budget_plan_id
 from .budget_projection import (
     _balance_projection,
     _cash_flow_projection,
@@ -163,7 +163,7 @@ def get_budget_summary(
     depends on the goal domain.
     """
     ctx = BudgetContext(db, client_id)
-    plan_id = resolve_budget_plan_id(db, client_id, plan_id)
+    plan_id = find_budget_plan_id(db, client_id, plan_id)
 
     goal_metrics = goal_metrics or {}
     goals_count = int(goal_metrics.get("goals_count") or 0)
@@ -178,7 +178,7 @@ def get_budget_summary(
         models.MonthlyPlanLine.target_period == period,
         models.MonthlyPlanLine.is_active.is_(True),
         models.MonthlyPlanLine.plan_id == plan_id,
-    ).order_by(models.MonthlyPlanLine.line_type, models.MonthlyPlanLine.id).all()
+    ).order_by(models.MonthlyPlanLine.line_type, models.MonthlyPlanLine.id).all() if plan_id is not None else []
     plan_models = _deduplicate_active_plan_models(db, plan_models)
     plan_lines = [_serialize_plan_line(ctx, line) for line in plan_models]
     for line in plan_lines:
@@ -201,11 +201,12 @@ def get_budget_summary(
         for line in plan_lines
         if line.get("line_type") == "allocation" and line.get("target_type") == "capsule"
     }
-    for capsule in ctx.capsules:
-        if capsule.id not in existing_capsule_ids:
-            plan_lines.append(_virtual_capsule_line(ctx, capsule, period))
-    plan_lines = _merge_registry_lines(plan_lines, registry_plan_lines(ctx, period))
-    plan_lines = _merge_credit_settlement_lines(plan_lines, credit_settlement_plan_lines(ctx, period, plan_id))
+    if plan_id is not None:
+        for capsule in ctx.capsules:
+            if capsule.id not in existing_capsule_ids:
+                plan_lines.append(_virtual_capsule_line(ctx, capsule, period))
+        plan_lines = _merge_registry_lines(plan_lines, registry_plan_lines(ctx, period))
+        plan_lines = _merge_credit_settlement_lines(plan_lines, credit_settlement_plan_lines(ctx, period, plan_id))
 
     expense_lines = [line for line in plan_lines if line["line_type"] == "expense"]
     allocation_lines = [line for line in plan_lines if line["line_type"] == "allocation"]

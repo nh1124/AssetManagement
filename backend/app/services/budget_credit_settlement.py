@@ -26,7 +26,7 @@ from .budget_actuals import (
     posted_amount_for_plan_line,
 )
 from .budget_context import BudgetContext
-from .budget_plan_store import resolve_budget_plan_id
+from .budget_plan_store import find_budget_plan_id
 from .ledger_valuation import calculate_account_valued_balance
 from .journal_legs import legs_in_range
 from .liability_schedule import (
@@ -94,7 +94,7 @@ def _credit_settlement_plan_line(
 def credit_settlement_plan_lines(
     ctx: BudgetContext, period: str, plan_id: int | None = None,
 ) -> list[dict]:
-    plan_id = resolve_budget_plan_id(ctx.db, ctx.client_id, plan_id)
+    plan_id = find_budget_plan_id(ctx.db, ctx.client_id, plan_id)
     return ctx.credit_settlement_lines(
         f"{period}:{plan_id}",
         lambda: _build_credit_settlement_plan_lines(ctx, period, plan_id),
@@ -115,7 +115,7 @@ def _settling_accounts(ctx: BudgetContext) -> dict[int, models.Account]:
 def _build_credit_settlement_plan_lines(
     ctx: BudgetContext, period: str, plan_id: int | None = None,
 ) -> list[dict]:
-    plan_id = resolve_budget_plan_id(ctx.db, ctx.client_id, plan_id)
+    plan_id = find_budget_plan_id(ctx.db, ctx.client_id, plan_id)
     accounts_by_id = _settling_accounts(ctx)
     if not accounts_by_id:
         return []
@@ -155,7 +155,7 @@ def _build_credit_settlement_plan_lines(
                 models.MonthlyPlanLine.target_period == statement_period,
                 models.MonthlyPlanLine.plan_id == plan_id,
                 models.MonthlyPlanLine.is_active.is_(True),
-            ).all()
+            ).all() if plan_id is not None else []
             resolved_by_period[statement_period] = [
                 (line, _cash_flow_line_source_account_id(ctx, line))
                 for line in plan_rows

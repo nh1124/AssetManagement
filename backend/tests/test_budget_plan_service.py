@@ -24,7 +24,7 @@ try:
     from backend.app.workflows.monthly_action_workflow import apply_action, create_action
     from backend.app.services.budget_lines import assign_plan_line_identity
     from backend.app.services.budget_plan_service import get_budget_summary
-    from backend.app.services.budget_plan_store import create_plan_lines, set_default_budget_plan, update_plan_lines
+    from backend.app.services.budget_plan_store import create_plan_lines, resolve_budget_plan_id, set_default_budget_plan, update_plan_lines
     from backend.app.services.periods import add_months, current_period_key, period_to_range
     from backend.app.services.data_health_service import check_data_health, repair_data_health
 except ModuleNotFoundError:
@@ -38,9 +38,20 @@ except ModuleNotFoundError:
     from app.workflows.monthly_action_workflow import apply_action, create_action  # type: ignore[no-redef]
     from app.services.budget_lines import assign_plan_line_identity  # type: ignore[no-redef]
     from app.services.budget_plan_service import get_budget_summary  # type: ignore[no-redef]
-    from app.services.budget_plan_store import create_plan_lines, set_default_budget_plan, update_plan_lines  # type: ignore[no-redef]
+    from app.services.budget_plan_store import create_plan_lines, resolve_budget_plan_id, set_default_budget_plan, update_plan_lines  # type: ignore[no-redef]
     from app.services.periods import add_months, current_period_key, period_to_range  # type: ignore[no-redef]
     from app.services.data_health_service import check_data_health, repair_data_health  # type: ignore[no-redef]
+
+
+def _give_fixture_lines_a_plan(db, client_id: int = 1) -> int:
+    """Put the fixture's plan lines on a plan, the way a write path would.
+
+    These fixtures build MonthlyPlanLine rows without a plan_id, as the legacy
+    data did. The read used to supply one for them -- that was X9 -- so the
+    plan now has to exist before the summary is read, and the write-path
+    resolver is what creates it and adopts the orphan lines.
+    """
+    return resolve_budget_plan_id(db, client_id)
 
 
 def _session():
@@ -410,6 +421,7 @@ def test_budget_summary_combines_income_spending_allocations_and_debt() -> None:
         db.commit()
         process_transaction(db, tx, from_account_id=cash.id, to_account_id=nisa.id)
 
+        _give_fixture_lines_a_plan(db)
         summary = get_budget_summary(db, client_id=1, period="2026-05")
 
         assert summary["total_expected_inflow"] == 100000
@@ -705,6 +717,7 @@ def test_budget_summary_deduplicates_expense_lines_without_writing() -> None:
         db.add_all([older, newer])
         db.commit()
 
+        _give_fixture_lines_a_plan(db)
         summary = get_budget_summary(db, client_id=1, period="2026-05")
         accounts = [account for account in summary["expense_accounts"] if account["account_id"] == food.id]
         db.refresh(older)
@@ -829,6 +842,7 @@ def test_capsule_allocation_actual_uses_current_holding_balance() -> None:
         ))
         db.commit()
 
+        _give_fixture_lines_a_plan(db)
         summary = get_budget_summary(db, client_id=1, period="2026-05")
         line = next(item for item in summary["plan_lines"] if item["target_type"] == "capsule")
 
@@ -874,6 +888,7 @@ def test_product_reserve_capsule_allocation_exposes_suggested_amount() -> None:
         ))
         db.commit()
 
+        _give_fixture_lines_a_plan(db)
         summary = get_budget_summary(db, client_id=1, period="2026-05")
         line = next(item for item in summary["plan_lines"] if item["target_type"] == "capsule")
 
@@ -911,6 +926,7 @@ def test_expense_only_products_are_variable_budget_suggestions() -> None:
         ))
         db.commit()
 
+        _give_fixture_lines_a_plan(db)
         summary = get_budget_summary(db, client_id=1, period="2026-05")
         account = next(item for item in summary["expense_accounts"] if item["account_id"] == food.id)
 
@@ -964,6 +980,7 @@ def test_life_event_allocation_is_presented_as_capsule() -> None:
         ))
         db.commit()
 
+        _give_fixture_lines_a_plan(db)
         summary = get_budget_summary(db, client_id=1, period="2026-05")
         line = next(item for item in summary["plan_lines"] if item["line_type"] == "allocation")
 
@@ -1075,6 +1092,7 @@ def test_cash_flow_projection_uses_remaining_current_month_plan_after_actuals() 
         process_transaction(db, income_tx, from_account_id=salary.id, to_account_id=cash.id)
         process_transaction(db, expense_tx, from_account_id=cash.id, to_account_id=food.id)
 
+        _give_fixture_lines_a_plan(db)
         summary = get_budget_summary(db, client_id=1, period=current_period, cash_flow_months=2)
         current_row = summary["cash_flow_projection"][0]
         next_row = summary["cash_flow_projection"][1]
@@ -1141,6 +1159,7 @@ def test_cash_flow_projection_does_not_double_count_current_month_over_actuals()
         process_transaction(db, opening_tx, from_account_id=salary.id, to_account_id=cash.id)
         process_transaction(db, expense_tx, from_account_id=cash.id, to_account_id=food.id)
 
+        _give_fixture_lines_a_plan(db)
         summary = get_budget_summary(db, client_id=1, period=current_period, cash_flow_months=1)
         current_row = summary["cash_flow_projection"][0]
 
@@ -1236,6 +1255,7 @@ def test_financed_expense_counts_as_budget_usage_without_cash_flow_expense() -> 
         process_transaction(db, financed_expense, from_account_id=loan.id, to_account_id=beauty.id)
         process_transaction(db, repayment, from_account_id=cash.id, to_account_id=loan.id)
 
+        _give_fixture_lines_a_plan(db)
         summary = get_budget_summary(db, client_id=1, period=current_period, cash_flow_months=2)
         current_row = summary["cash_flow_projection"][0]
         next_row = summary["cash_flow_projection"][1]
@@ -1304,6 +1324,7 @@ def test_auto_cash_treatment_excludes_credit_expense_and_projects_card_payment()
         ))
         db.commit()
 
+        _give_fixture_lines_a_plan(db)
         summary = get_budget_summary(
             db,
             client_id=1,
@@ -1357,6 +1378,7 @@ def test_cash_flow_splits_same_expense_account_by_source_account_bucket() -> Non
         ])
         db.commit()
 
+        _give_fixture_lines_a_plan(db)
         summary = get_budget_summary(
             db,
             client_id=1,
@@ -1398,6 +1420,7 @@ def test_balance_projection_tracks_future_liability_financed_expense() -> None:
         ))
         db.commit()
 
+        _give_fixture_lines_a_plan(db)
         summary = get_budget_summary(
             db,
             client_id=1,
@@ -1448,6 +1471,7 @@ def test_income_direct_to_asset_counts_as_allocation_actual_without_remaining_ca
         db.commit()
         process_transaction(db, tx, from_account_id=salary.id, to_account_id=stock.id)
 
+        _give_fixture_lines_a_plan(db)
         summary = get_budget_summary(db, client_id=1, period=current_period, cash_flow_months=1)
         plan_line = next(item for item in summary["plan_lines"] if item["line_type"] == "allocation")
         row = summary["cash_flow_projection"][0]
@@ -1511,6 +1535,7 @@ def test_balance_projection_tracks_debt_payment_and_liability_asset_purchase() -
         ])
         db.commit()
 
+        _give_fixture_lines_a_plan(db)
         summary = get_budget_summary(
             db,
             client_id=1,
@@ -1568,6 +1593,7 @@ def test_cash_flow_uses_registry_source_when_saved_budget_line_lacks_source_acco
         ))
         db.commit()
 
+        _give_fixture_lines_a_plan(db)
         summary = get_budget_summary(
             db,
             client_id=1,
@@ -1618,6 +1644,7 @@ def test_credit_expense_creates_credit_settlement_projection() -> None:
         db.commit()
         process_transaction(db, tx, from_account_id=card.id, to_account_id=food.id)
 
+        _give_fixture_lines_a_plan(db)
         summary = get_budget_summary(
             db,
             client_id=1,
@@ -1679,6 +1706,7 @@ def test_credit_settlement_uses_liability_closing_day_and_payment_offset() -> No
         for charge in charges:
             process_transaction(db, charge, from_account_id=card.id, to_account_id=food.id)
 
+        _give_fixture_lines_a_plan(db)
         june = get_budget_summary(db, client_id=1, period="2026-06", cash_flow_start_period="2026-06", cash_flow_months=1)
         july = get_budget_summary(db, client_id=1, period="2026-07", cash_flow_start_period="2026-07", cash_flow_months=1)
 
@@ -1718,6 +1746,7 @@ def test_credit_settlement_applies_fixed_payment_policy() -> None:
         db.commit()
         process_transaction(db, charge, from_account_id=card.id, to_account_id=food.id)
 
+        _give_fixture_lines_a_plan(db)
         summary = get_budget_summary(db, client_id=1, period=period, cash_flow_start_period=period, cash_flow_months=1)
         settlement = next(line for line in summary["plan_lines"] if line.get("source_kind") == "credit_settlement")
 
@@ -1756,6 +1785,7 @@ def test_credit_settlement_spreads_installment_policy_across_future_months() -> 
 
         amounts = []
         for period in ("2026-06", "2026-07", "2026-08"):
+            _give_fixture_lines_a_plan(db)
             summary = get_budget_summary(db, client_id=1, period=period, cash_flow_start_period=period, cash_flow_months=1)
             settlement = next(line for line in summary["plan_lines"] if line.get("source_kind") == "credit_settlement")
             amounts.append(settlement["suggested_amount"])
@@ -1789,6 +1819,7 @@ def test_cash_flow_reports_asset_role_movements() -> None:
             ))
         db.commit()
 
+        _give_fixture_lines_a_plan(db)
         summary = get_budget_summary(
             db,
             client_id=1,
@@ -1861,6 +1892,7 @@ def test_cash_flow_projection_warns_about_product_reserve_amount_diff() -> None:
         ))
         db.commit()
 
+        _give_fixture_lines_a_plan(db)
         summary = get_budget_summary(db, client_id=1, period="2026-05")
         warning = summary["cash_flow_projection"][0]["setup_warnings"][0]
 
@@ -1939,6 +1971,7 @@ def test_recurring_budget_context_converts_currency_to_client_currency() -> None
         })
         db.commit()
 
+        _give_fixture_lines_a_plan(db)
         summary = get_budget_summary(db, client_id=1, period="2026-05")
         subscription_accounts = [item for item in summary["expense_accounts"] if item["name"] == "subscription"]
         account = subscription_accounts[0]
@@ -1951,7 +1984,7 @@ def test_recurring_budget_context_converts_currency_to_client_currency() -> None
         db.close()
 
 
-def test_legacy_null_plan_lines_are_backfilled_to_default_plan() -> None:
+def test_write_resolver_backfills_legacy_null_plan_lines_to_default_plan() -> None:
     db = _session()
     try:
         client = models.Client(id=1, name="test", general_settings={}, ai_config={})
@@ -1970,6 +2003,14 @@ def test_legacy_null_plan_lines_are_backfilled_to_default_plan() -> None:
         db.add(line)
         db.commit()
 
+        empty_summary = get_budget_summary(db, client_id=1, period="2026-05")
+        db.refresh(line)
+        assert empty_summary["plan_id"] is None
+        assert empty_summary["plan_lines"] == []
+        assert line.plan_id is None
+        assert db.query(models.BudgetPlan).count() == 0
+
+        resolve_budget_plan_id(db, 1)
         summary = get_budget_summary(db, client_id=1, period="2026-05")
         db.refresh(line)
 

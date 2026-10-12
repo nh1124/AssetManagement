@@ -10,6 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from app import models, schemas
 from app.database import Base
 from app.services.budget_plan_service import get_budget_summary
+from app.services.budget_plan_store import resolve_budget_plan_id
 from app.services.registry_service import upsert_registry_from_recurring_payload
 
 
@@ -62,6 +63,7 @@ def test_registry_generated_plan_line_reports_recurring_definition(db):
     # Exercise the stored-line merge as well as the registry's virtual projection.
     db.add(models.MonthlyPlanLine(
         client_id=1,
+        plan_id=resolve_budget_plan_id(db, 1),
         target_period="2026-10",
         line_type="expense",
         target_type="account",
@@ -84,6 +86,7 @@ def test_registry_generated_plan_line_reports_recurring_definition(db):
 def test_plan_line_without_registry_reports_no_recurring_definition(db):
     db.add(models.MonthlyPlanLine(
         client_id=1,
+        plan_id=resolve_budget_plan_id(db, 1),
         target_period="2026-10",
         line_type="expense",
         target_type="manual",

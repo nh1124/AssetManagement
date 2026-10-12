@@ -14,7 +14,7 @@ from dateutil.relativedelta import relativedelta
 from sqlalchemy.orm import Session
 
 from .. import models
-from .budget_plan_store import resolve_budget_plan_id
+from .budget_plan_store import find_budget_plan_id
 from .fx_service import (
     build_rate_lookup,
     convert_amount_with_lookup,
@@ -194,7 +194,9 @@ def get_variance_analysis_for_range(
 ) -> dict:
     """Compare actual spending vs summed monthly budgets over an inclusive range."""
     month_keys = _period_months(start_date, end_date)
-    resolved_plan_id = resolve_budget_plan_id(db, client_id, plan_id) if client_id is not None else plan_id
+    resolved_plan_id = (
+        find_budget_plan_id(db, client_id, plan_id) if client_id is not None else plan_id
+    )
 
     accounts = db.query(models.Account).filter(
         models.Account.client_id == client_id,
@@ -208,7 +210,7 @@ def get_variance_analysis_for_range(
         models.MonthlyPlanLine.target_period.in_(month_keys),
         models.MonthlyPlanLine.line_type == "expense",
         models.MonthlyPlanLine.is_active.is_(True),
-    ).all()
+    ).all() if resolved_plan_id is not None else []
     budget_map: dict[int, float] = {}
     for line in monthly_plan_lines:
         if line.account_id:

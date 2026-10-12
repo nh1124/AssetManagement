@@ -5,6 +5,8 @@ from backend.app.domain.money import Money
 
 from datetime import date
 
+from app.services.budget_plan_store import resolve_budget_plan_id
+
 import pytest
 
 from test_credit_settlement_posted_recurring import (
@@ -44,6 +46,9 @@ def test_posted_charge_without_plan_still_settles(card_plan):
     assert line["suggested_amount"] == 2000
     item = line["suggested_items"][0]
     assert item["posted_amount"] + item["planned_remaining"] == line["suggested_amount"]
+
+    assert db.query(models.BudgetPlan).count() == 0
+    assert not db.new and not db.dirty and not db.deleted
 
 
 def test_bank_funded_plan_is_ignored(card_plan):
@@ -136,7 +141,7 @@ def test_capsule_allocation_subtracts_month_movement_not_balance(card_plan, monk
     db.flush()
     db.add(models.CapsuleHolding(capsule_id=capsule.id, account_id=investment.id, held_amount_minor=to_minor(20000, "JPY")))
     plan = models.MonthlyPlanLine(
-        client_id=1, target_period="2026-10", line_type="allocation",
+        client_id=1, plan_id=resolve_budget_plan_id(db, 1), target_period="2026-10", line_type="allocation",
         target_type="capsule", target_id=capsule.id, account_id=None,
         source_account_id=card.id, name="reserve", amount_minor=to_minor(4000, "JPY"), is_active=True,
     )

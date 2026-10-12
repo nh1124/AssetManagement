@@ -10,6 +10,7 @@ from ..utils.jwt import create_access_token, create_typed_token, decode_token, d
 from ..utils.password import verify_password, hash_password
 from ..dependencies import get_current_client
 from ..services import client_service, mfa_service
+from ..services.ledger_service import ensure_default_accounts
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -209,6 +210,7 @@ def register(req: RegisterRequest, db: Session = Depends(get_db)):
     except IntegrityError:
         raise HTTPException(status_code=400, detail="Unable to register with provided credentials")
 
+    ensure_default_accounts(db, client_id=new_client.id)
     return {"message": "User registered successfully", "client_id": new_client.id}
 
 

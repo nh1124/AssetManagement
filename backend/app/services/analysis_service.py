@@ -14,7 +14,7 @@ from .ledger_valuation import (
     calculate_account_valued_balances,
 )
 from .budget_context import BudgetContext
-from .budget_plan_store import resolve_budget_plan_id
+from .budget_plan_store import find_budget_plan_id
 from .budget_projection import planned_cash_outflow_remaining
 from .periods import current_period_key
 from .journal_legs import legs_in_range
@@ -182,14 +182,14 @@ def get_summary(db: Session, client_id: int) -> dict:
     cc_unpaid = _sum_unpaid_liabilities(db, client_id)
 
     month_str = f"{today.year}-{today.month:02d}"
-    plan_id = resolve_budget_plan_id(db, client_id)
+    plan_id = find_budget_plan_id(db, client_id)
     monthly_plan_lines = db.query(models.MonthlyPlanLine).filter(
         models.MonthlyPlanLine.client_id == client_id,
         models.MonthlyPlanLine.plan_id == plan_id,
         models.MonthlyPlanLine.target_period == month_str,
         models.MonthlyPlanLine.line_type == "expense",
         models.MonthlyPlanLine.is_active.is_(True),
-    ).all()
+    ).all() if plan_id is not None else []
 
     next_month_budget = sum(line.amount for line in monthly_plan_lines)
 

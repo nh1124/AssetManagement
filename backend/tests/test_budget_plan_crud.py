@@ -128,13 +128,13 @@ def test_list_plans_orders_by_sort_order_then_id_and_scopes_to_client(planning):
     assert store.list_plans(db, client.id) == [first, second, last]
 
 
-def test_list_plans_creates_baseline_only_when_client_has_no_plans(planning):
+def test_list_plans_returns_empty_without_creating_baseline(planning):
     db, client = planning
     plans = store.list_plans(db, client.id)
-    assert len(plans) == 1
-    assert (plans[0].name, plans[0].is_default, plans[0].sort_order) == ("Baseline", True, 0)
+    assert plans == []
     assert store.list_plans(db, client.id) == plans
-    assert db.query(models.BudgetPlan).count() == 1
+    assert db.query(models.BudgetPlan).count() == 0
+    assert not db.new and not db.dirty and not db.deleted
 
 
 def test_update_plan_changes_supplied_fields_but_preserves_explicit_null_behavior(planning):

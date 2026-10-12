@@ -59,15 +59,9 @@ def list_capsules(db: Session, client_id: int, skip: int = 0, limit: int = 100) 
 
 
 def list_capsule_details(
-    db: Session, client_id: int, skip: int = 0, limit: int = 100, *, commit: bool = True,
+    db: Session, client_id: int, skip: int = 0, limit: int = 100,
 ) -> list[dict]:
-    result = [capsule_to_dict(db, capsule) for capsule in list_capsules(db, client_id, skip, limit)]
-    # Serialization updates the legacy cache; keep the original GET commit boundary.
-    if commit:
-        db.commit()
-    else:
-        db.flush()
-    return result
+    return [capsule_to_dict(db, capsule) for capsule in list_capsules(db, client_id, skip, limit)]
 
 
 def _finish_write(db: Session, client_id: int, record=None, *, commit: bool) -> None:
@@ -299,7 +293,6 @@ def upsert_capsule_holding(
 
 def capsule_to_dict(db: Session, capsule: models.Capsule) -> dict:
     balance = capsule_balance(db, capsule)
-    capsule.current_balance_minor = to_minor(balance, money_client_currency(db, capsule.client_id))
     progress_pct = (balance / capsule.target_amount * 100) if capsule.target_amount else 0
     progress_pct = min(100, progress_pct)
     holdings = [

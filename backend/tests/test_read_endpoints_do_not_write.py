@@ -32,66 +32,23 @@ from app.services.ledger_service import ensure_default_accounts, create_transact
 from app.utils.jwt import create_access_token
 
 
-ALLOWED: dict[str, str] = {
-    "GET /ai/context/resource/{resource}": (
-        "X9: summary creates budget_plans and assigns orphan monthly_plan_lines; "
-        "all resources insert ai_audit_logs, so retrieving context persists state."
-    ),
-    "GET /ai/context/summary": (
-        "X9: creates budget_plans and assigns orphan monthly_plan_lines; "
-        "also inserts ai_audit_logs while retrieving a summary."
-    ),
-    "GET /analysis/account-flows": (
-        "Creates missing default accounts while retrieving journal flows; a read seeds the ledger."
-    ),
-    "GET /analysis/balance-sheet": (
-        "Creates missing default accounts while retrieving a balance sheet; a read seeds the ledger."
-    ),
-    "GET /analysis/net-position": (
-        "Creates missing default accounts while retrieving net position; a read seeds the ledger."
-    ),
-    "GET /analysis/profit-loss": (
-        "Creates missing default accounts while retrieving profit/loss; a read seeds the ledger."
-    ),
-    "GET /analysis/summary": (
-        "X9: creates budget_plans and assigns orphan monthly_plan_lines; "
-        "also creates missing default accounts while retrieving a summary."
-    ),
-    "GET /analysis/variance": (
-        "X9: default-plan resolution creates budget_plans and assigns orphan monthly_plan_lines "
-        "while retrieving variance."
-    ),
-    "GET /budget-plans": (
-        "X9: listing plans creates budget_plans and assigns orphan monthly_plan_lines "
-        "for a client without a plan."
-    ),
-    "GET /budget-plans/lines": (
-        "X9: default-plan resolution creates budget_plans and assigns orphan monthly_plan_lines "
-        "while retrieving lines."
-    ),
-    "GET /budget-plans/summary": (
-        "X9: default-plan resolution creates budget_plans and assigns orphan monthly_plan_lines "
-        "while retrieving a budget summary."
-    ),
-    "GET /capsules/": (
-        "X6: capsule list serialization commits capsules.current_balance from holdings; "
-        "reading the list refreshes a persisted cache. The named holdings GET is clean at this commit."
-    ),
-    "GET /reports/monthly": (
-        "X9: report composition creates budget_plans and assigns orphan monthly_plan_lines "
-        "while retrieving a monthly report."
-    ),
-    "GET /reports/period": (
-        "X9: report composition creates budget_plans and assigns orphan monthly_plan_lines "
-        "while retrieving a period report."
-    ),
-}
+ALLOWED: dict[str, str] = {}
 
 
 # Writes a read is supposed to make. These are not a backlog: the stale-entry
 # test still requires each to write, so one that stops writing has to be moved
 # or removed deliberately, but no wave is expected to empty this list.
 BY_DESIGN: dict[str, str] = {
+    "GET /ai/context/summary": (
+        "Writes ai_audit_logs. Recording what an AI read is the purpose of the "
+        "endpoint, not a side effect of it; docs/specs/ai_data_access_catalog.md. "
+        "The former budget-plan write is gone."
+    ),
+    "GET /ai/context/resource/{resource}": (
+        "Writes ai_audit_logs. Recording what an AI read is the purpose of the "
+        "endpoint, not a side effect of it; docs/specs/ai_data_access_catalog.md. "
+        "The former budget-plan write is gone."
+    ),
     "GET /ai/context/resources": (
         "Writes ai_audit_logs. Recording what an AI read is the purpose of the "
         "endpoint, not a side effect of it; docs/specs/ai_data_access_catalog.md."

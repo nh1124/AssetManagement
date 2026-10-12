@@ -7,7 +7,6 @@ from ..dependencies import get_current_client
 from .. import models
 from ..services import analysis_service
 from ..services.cache_service import get_or_set
-from ..services.ledger_service import ensure_default_accounts
 from ..services.reporting_service import (
     get_net_worth_history as reporting_get_net_worth_history,
     get_account_flows_for_range,
@@ -29,7 +28,6 @@ def get_analysis_summary(
     current_client: models.Client = Depends(get_current_client)
 ):
     """Get financial summary for current client."""
-    ensure_default_accounts(db, client_id=current_client.id)
     return get_or_set(
         f"client:{current_client.id}:analysis_summary",
         60,
@@ -45,7 +43,6 @@ def get_bs(
     current_client: models.Client = Depends(get_current_client)
 ):
     """Get Balance Sheet snapshot for current client."""
-    ensure_default_accounts(db, client_id=current_client.id)
     if as_of is None:
         if year and month:
             # Get B/S as of end of month.
@@ -69,7 +66,6 @@ def get_pl(
     current_client: models.Client = Depends(get_current_client)
 ):
     """Get Profit & Loss for current client."""
-    ensure_default_accounts(db, client_id=current_client.id)
     if start_date and end_date:
         if rollup:
             return get_profit_loss_rollup_for_range(db, start_date, end_date, client_id=current_client.id)
@@ -117,7 +113,6 @@ def get_account_flows(
     current_client: models.Client = Depends(get_current_client),
 ):
     """Get debit/credit movement by account for the Review period flow view."""
-    ensure_default_accounts(db, client_id=current_client.id)
     type_filter = [item.strip() for item in account_types.split(",") if item.strip()] if account_types else None
     try:
         return get_account_flows_for_range(
@@ -171,7 +166,6 @@ def get_net_position(
     current_client: models.Client = Depends(get_current_client)
 ):
     """Get net position for current client."""
-    ensure_default_accounts(db, client_id=current_client.id)
     return analysis_service.get_net_position(db, client_id=current_client.id)
 
 

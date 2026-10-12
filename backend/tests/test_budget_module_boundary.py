@@ -38,6 +38,11 @@ PUBLIC: dict[str, set[str]] = {
         "create_plan_lines",
         "delete_plan",
         "delete_plan_line",
+        # X9 split plan resolution in two. A read outside the family has to
+        # be able to ask which plan to use without creating one, so the
+        # read-path resolver is part of the surface and its creating twin
+        # stays beside it for the write paths.
+        "find_budget_plan_id",
         "get_or_create_default_plan",
         # Compare needs a scoped read without default-plan creation or summary.
         "get_plan",

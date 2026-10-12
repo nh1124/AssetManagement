@@ -9,6 +9,8 @@ from backend.app.domain.money import Money
 
 from datetime import date
 
+from app.services.budget_plan_store import resolve_budget_plan_id
+
 import pytest
 
 from sqlalchemy import create_engine
@@ -55,6 +57,7 @@ def _card_and_subscription(db):
 
 
 def _plan(db, card, subs, amount=5000, plan_id=None):
+    plan_id = resolve_budget_plan_id(db, 1, plan_id)
     row = models.MonthlyPlanLine(
         client_id=1, plan_id=plan_id, target_period="2026-10", line_type="expense",
         target_type="account", account_id=subs.id, source_account_id=card.id,

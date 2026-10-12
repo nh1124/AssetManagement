@@ -25,7 +25,7 @@ from .budget_lines import (
     _empty_flow,
     account_flow_bucket,
 )
-from .budget_plan_store import _deduplicate_active_plan_models, resolve_budget_plan_id
+from .budget_plan_store import _deduplicate_active_plan_models, find_budget_plan_id
 from .budget_warnings import budget_setup_warnings
 from .ledger_valuation import calculate_account_valued_balance
 from .periods import add_months
@@ -75,7 +75,9 @@ def _balance_projection_row(period: str, state: dict[str, float]) -> dict:
     }
 
 
-def _period_plan_lines(ctx: BudgetContext, period: str, plan_id: int) -> list[models.MonthlyPlanLine]:
+def _period_plan_lines(ctx: BudgetContext, period: str, plan_id: int | None) -> list[models.MonthlyPlanLine]:
+    if plan_id is None:
+        return []
     lines = ctx.db.query(models.MonthlyPlanLine).filter(
         models.MonthlyPlanLine.client_id == ctx.client_id,
         models.MonthlyPlanLine.target_period == period,
@@ -91,7 +93,7 @@ def planned_cash_outflow_remaining(
     plan_id: int | None = None,
 ) -> float:
     """Remaining planned spending to reserve when calculating logical balance."""
-    plan_id = resolve_budget_plan_id(ctx.db, ctx.client_id, plan_id)
+    plan_id = find_budget_plan_id(ctx.db, ctx.client_id, plan_id)
     flow = _empty_flow()
     for line in _period_plan_lines(ctx, period, plan_id):
         _, _, remaining = _projection_amounts_for_period(ctx, line, period)
@@ -124,7 +126,7 @@ def _cash_flow_projection(
     starting_cash: float | None = None,
     plan_id: int | None = None,
 ) -> list[dict]:
-    plan_id = resolve_budget_plan_id(ctx.db, ctx.client_id, plan_id)
+    plan_id = find_budget_plan_id(ctx.db, ctx.client_id, plan_id)
     cash = liquid_cash(ctx) if starting_cash is None else starting_cash
     rows = []
     for idx in range(months):
@@ -199,7 +201,7 @@ def _balance_projection(
     months: int = 12,
     plan_id: int | None = None,
 ) -> list[dict]:
-    plan_id = resolve_budget_plan_id(ctx.db, ctx.client_id, plan_id)
+    plan_id = find_budget_plan_id(ctx.db, ctx.client_id, plan_id)
     state = _starting_balance_state(ctx)
     rows = []
     for idx in range(months):
