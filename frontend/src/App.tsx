@@ -5,7 +5,14 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import LoginPage from './pages/Login';
 import DesktopApp from './desktop/DesktopApp';
 import MobileApp from './mobile/MobileApp';
+import StudioApp from './studio/StudioApp';
 import { useShellMode } from './shared/useShellMode';
+
+/* The rebuilt desktop UI runs alongside the old one under /studio until its
+ * core screens are done. Nothing else changes until the default moves, so the
+ * stack keeps working through the rebuild. The mobile shell is out of scope and
+ * keeps its own path. */
+const isStudio = () => window.location.pathname.startsWith('/studio');
 
 function AppContent() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -21,6 +28,16 @@ function AppContent() {
 
   if (!isAuthenticated) {
     return <LoginPage />;
+  }
+
+  if (isStudio()) {
+    return (
+      <ClientProvider>
+        <ToastProvider>
+          <StudioApp />
+        </ToastProvider>
+      </ClientProvider>
+    );
   }
 
   return (

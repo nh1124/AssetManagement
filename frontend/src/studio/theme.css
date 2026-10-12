@@ -1,0 +1,30 @@
+/* Studio palette.
+ *
+ * The prototype is a light workspace with a deep green rail, which is the
+ * opposite of the old slate-950 shell. Colours live here as variables so the
+ * later waves can refine the look in one place rather than in fourteen screens.
+ */
+.studio-root {
+    --studio-rail: #0e2a20;
+    --studio-rail-text: #cfdbd4;
+    --studio-rail-text-strong: #ffffff;
+    --studio-rail-active: #1b4535;
+    --studio-rail-group: #7b9488;
+
+    --studio-bg: #f6f5f0;
+    --studio-surface: #ffffff;
+    --studio-border: #e4e1d8;
+    --studio-border-strong: #cfcabb;
+
+    --studio-text: #15211c;
+    --studio-text-muted: #6b7a72;
+    --studio-text-faint: #97a39c;
+
+    --studio-accent: #14402f;
+    --studio-accent-text: #ffffff;
+    --studio-accent-soft: #e7efe9;
+
+    --studio-positive: #2f7d5c;
+    --studio-warning: #9a6b1f;
+    --studio-danger: #a33a2f;
+}
