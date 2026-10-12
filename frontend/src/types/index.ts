@@ -489,24 +489,6 @@ export interface AnalysisSummary {
     budget_usage_rate?: number;
 }
 
-export interface ReconcileDiscrepancy {
-    account_id: number;
-    account_name: string;
-    account_type: string;
-    stored_balance: number;
-    calculated_balance: number;
-    difference: number;
-    fixed: boolean;
-}
-
-export interface ReconcileResponse {
-    status: 'ok' | 'discrepancies_found' | 'fixed';
-    discrepancy_count?: number;
-    fixed_count?: number;
-    discrepancies?: ReconcileDiscrepancy[];
-    fixed_accounts?: ReconcileDiscrepancy[];
-}
-
 export interface ActionProposal {
     id: string;
     kind: 'allocate_to_goal' | 'transfer_to_capsule' | 'increase_savings' | 'review_budget' | 'extend_target_date';

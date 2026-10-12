@@ -205,10 +205,19 @@ def test_settings_hybrids_crud_and_binder(db, currency):
     assert all(getattr(account, f"{name}_minor") is None for name in SETTINGS)
 
 
-def test_legacy_reconcile_routes_keep_their_responses(db):
-    client = db.get(models.Client, 1)
-    assert analysis.check_reconcile(db, client) == {"status": "ok", "discrepancy_count": 0, "discrepancies": []}
-    assert analysis.fix_reconcile(db, client) == {"status": "fixed", "fixed_count": 0, "fixed_accounts": []}
+def test_the_reconcile_routes_are_gone(db):
+    """X12: B5 left these as empty stubs; nothing is left for them to answer.
+
+    They existed to compare a stored account balance against the journal. B5
+    removed the stored balance, so the check could only ever return "ok" and
+    the fix could only ever repair nothing, while the UI went on offering to
+    "auto-fix account balances from journal entries". Keeping a route that
+    cannot be wrong is worse than not having one.
+    """
+    assert not hasattr(analysis, "check_reconcile")
+    assert not hasattr(analysis, "fix_reconcile")
+    paths = {route.path for route in analysis.router.routes}
+    assert not {path for path in paths if "reconcile" in path}
 
 
 def _migration():
