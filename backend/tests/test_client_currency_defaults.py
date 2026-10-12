@@ -205,7 +205,7 @@ def test_registry_sync_caller_supplies_currency_when_entry_has_none(posting):
 
 def test_capsule_preview_uses_currency_precision_and_required_helper_argument(posting):
     db, client, (cash, food, reserve, _), _ = posting
-    capsule = models.Capsule(client_id=client.id, name="Savings", account_id=reserve.id,
+    capsule = models.Capsule(client_id=client.id, name="Savings", funding_sources=[models.CapsuleFundingSource(client_id=client.id, account_id=reserve.id, target_amount_minor=to_minor(100, "USD") or 0)],
                              target_amount_minor=to_minor(100, "USD"), auto_post=False)
     db.add(capsule)
     db.flush()
@@ -231,7 +231,7 @@ def test_goal_return_transfer_uses_client_minor_units(posting):
     db.add(goal)
     db.flush()
     capsule = models.Capsule(client_id=client.id, name="Savings", life_event_id=goal.id,
-                             account_id=reserve.id, target_amount_minor=to_minor(100, "USD"))
+                             funding_sources=[models.CapsuleFundingSource(client_id=client.id, account_id=reserve.id, target_amount_minor=to_minor(100, "USD") or 0)], target_amount_minor=to_minor(100, "USD"))
     db.add(capsule)
     db.flush()
     ledger_service.create_transaction(db, client_id=client.id, date=date(2026, 10, 12), description="Reserve",

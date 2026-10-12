@@ -182,7 +182,7 @@ def test_data_export_manifest_and_validate_include_monthly_actions() -> None:
         payload = ImportPayload(**snapshot)
         validation = validate_import_client_data(payload=payload, current_client=client)
 
-        assert snapshot["version"] == 10
+        assert snapshot["version"] == 11
         assert snapshot["manifest"]["counts"]["monthly_actions"] == 1
         assert snapshot["data"]["monthly_actions"][0]["kind"] == "set_budget"
         assert validation["status"] == "valid"
@@ -613,7 +613,7 @@ def test_create_plan_lines_updates_capsule_contribution_and_monthly_plan_line() 
             name="House",
             target_amount_minor=to_minor(1000000, "JPY"),
             monthly_contribution_minor=to_minor(10000, "JPY"),
-            account_id=cap_account.id,
+            funding_sources=[models.CapsuleFundingSource(client_id=1, account_id=cap_account.id, target_amount_minor=to_minor(1000000, "JPY") or 0)],
         )
         db.add(capsule)
         db.commit()
@@ -835,7 +835,7 @@ def test_capsule_allocation_actual_uses_current_journal_claim() -> None:
             name="Emergency Fund",
             target_amount_minor=to_minor(300000, "JPY"),
             monthly_contribution_minor=to_minor(0, "JPY"),
-            account_id=account.id,
+            funding_sources=[models.CapsuleFundingSource(client_id=1, account_id=account.id, target_amount_minor=to_minor(300000, "JPY") or 0)],
         )
         db.add(capsule)
         db.flush()
@@ -981,7 +981,7 @@ def test_life_event_allocation_is_presented_as_capsule() -> None:
             target_amount_minor=to_minor(500000, "JPY"),
             monthly_contribution_minor=to_minor(0, "JPY"),
             life_event_id=event.id,
-            account_id=account.id,
+            funding_sources=[models.CapsuleFundingSource(client_id=1, account_id=account.id, target_amount_minor=to_minor(500000, "JPY") or 0)],
         )
         db.add(capsule)
         db.add(models.MonthlyPlanLine(

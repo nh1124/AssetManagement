@@ -55,7 +55,6 @@ def posting():
     db.commit()
     try:
         yield db, client, *accounts
-        assert db.query(models.CapsuleHolding).count() == 0
     finally:
         db.close()
 
@@ -67,7 +66,7 @@ def _rule(posting, *, auto_post=False, bound=True, percentage=False):
         name="Savings",
         target_amount_minor=to_minor(5000, "JPY"),
         monthly_contribution_minor=to_minor(0, "JPY"),
-        account_id=reserve.id if bound else None,
+        funding_sources=[models.CapsuleFundingSource(client_id=1, account_id=reserve.id, target_amount_minor=to_minor(5000, "JPY"))] if bound else [],
         auto_post=auto_post,
     )
     db.add(owner)

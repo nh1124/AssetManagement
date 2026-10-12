@@ -8,7 +8,7 @@ from typing import Protocol, Sequence
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from .money_storage import to_minor, minor_fields, money_client_currency, rule_amount_fields, rule_data
+from .money_storage import to_minor, money_client_currency, rule_amount_fields, rule_data
 
 from .. import models, schemas
 from ..domain.errors import Invalid, NotFound
@@ -26,13 +26,6 @@ def capsule_balance(db: Session, capsule: models.Capsule) -> float:
 
 def remaining_target(db: Session, capsule: models.Capsule) -> float:
     return max(0.0, (capsule.target_amount or 0.0) - capsule_balance(db, capsule))
-
-
-def total_held_amount_for_account(db: Session, account_id: int) -> float:
-    # capsule_design_review.md §7.6 retires holdings, so this aggregate retires with them.
-    return db.query(func.coalesce(func.sum(models.CapsuleHolding.held_amount), 0.0)).filter(
-        models.CapsuleHolding.account_id == account_id,
-    ).scalar() or 0.0
 
 
 def get_capsule(db: Session, client_id: int, capsule_id: int) -> models.Capsule | None:
@@ -76,19 +69,25 @@ def _finish_write(db: Session, client_id: int, record=None, *, commit: bool) -> 
 def create_capsule(
     db: Session, client_id: int, payload: schemas.CapsuleCreate, *, commit: bool = True,
 ) -> models.Capsule:
+    if payload.account_id is not None and ledger_service.get_account(db, client_id, payload.account_id) is None:
+        raise NotFound("Account not found")
     capsule = models.Capsule(
         client_id=client_id,
         life_event_id=payload.life_event_id,
         name=payload.name,
         target_amount_minor=to_minor(max(0.0, payload.target_amount or 0.0), money_client_currency(db, client_id)),
         monthly_contribution_minor=to_minor(max(0.0, payload.monthly_contribution or 0.0), money_client_currency(db, client_id)),
-        account_id=payload.account_id,
         auto_post=payload.auto_post,
         capsule_type=payload.capsule_type or "manual",
         target_amount_source=payload.target_amount_source or "manual",
         monthly_contribution_source=payload.monthly_contribution_source or "manual",
     )
     db.add(capsule)
+    db.flush()
+    if payload.account_id is not None:
+        set_funding_sources(db, client_id, capsule.id, [schemas.CapsuleFundingSourceInput(
+            account_id=payload.account_id, target_amount=capsule.target_amount or 0.0,
+        )], commit=False)
     _finish_write(db, client_id, capsule, commit=commit)
     return capsule
 
@@ -101,9 +100,7 @@ def update_capsule(
     if capsule is None:
         return None
     for key, value in patch.model_dump(exclude_unset=True).items():
-        if key == "current_balance":
-            continue
-        elif key == "target_amount":
+        if key == "target_amount":
             capsule.target_amount_minor = to_minor(max(0.0, value or 0.0), money_client_currency(db, client_id))
         elif key == "monthly_contribution":
             capsule.monthly_contribution_minor = to_minor(max(0.0, value or 0.0), money_client_currency(db, client_id))
@@ -241,7 +238,10 @@ def delete_capsule(
     ).first()
     if linked_products:
         raise Invalid("Capsules linked to Product/Item reserves cannot be deleted while products use them")
-    account = capsule.account
+    sources = list_funding_sources(db, client_id, capsule_id)
+    # Preserve the single-account deletion summary using the first planned
+    # account; every funding account stays untouched.
+    account = sources[0].account if sources else None
     outcome = CapsuleDeletion(
         capsule_id=capsule.id,
         capsule_name=capsule.name,
@@ -338,119 +338,10 @@ def delete_rule(db: Session, client_id: int, rule_id: int, *, commit: bool = Tru
     return True
 
 
-# Holding CRUD preserves the claims slated for removal in capsule_design_review.md §7.6 (H6).
-def list_holdings(db: Session, client_id: int, capsule_id: int) -> list[models.CapsuleHolding] | None:
-    capsule = get_capsule(db, client_id, capsule_id)
-    return list(capsule.holdings) if capsule is not None else None
-
-
-def create_holding(
-    db: Session, client_id: int, capsule_id: int, payload: schemas.CapsuleHoldingCreate,
-    *, commit: bool = True,
-) -> models.CapsuleHolding:
-    if get_capsule(db, client_id, capsule_id) is None:
-        raise NotFound("Capsule not found")
-    account = db.query(models.Account).filter(
-        models.Account.id == payload.account_id,
-        models.Account.client_id == client_id,
-    ).first()
-    if not account:
-        raise NotFound("Account not found")
-    holding = db.query(models.CapsuleHolding).filter(
-        models.CapsuleHolding.capsule_id == capsule_id,
-        models.CapsuleHolding.account_id == payload.account_id,
-    ).first()
-    if holding:
-        holding.held_amount_minor = to_minor(payload.held_amount, money_client_currency(db, client_id))
-        holding.note = payload.note
-    else:
-        holding = models.CapsuleHolding(
-            capsule_id=capsule_id, account_id=payload.account_id,
-            held_amount_minor=to_minor(payload.held_amount, money_client_currency(db, client_id)), note=payload.note,
-        )
-        db.add(holding)
-    _finish_write(db, client_id, holding, commit=commit)
-    return holding
-
-
-def update_holding(
-    db: Session, client_id: int, capsule_id: int, holding_id: int, patch: schemas.CapsuleHoldingUpdate,
-    *, commit: bool = True,
-) -> models.CapsuleHolding | None:
-    if get_capsule(db, client_id, capsule_id) is None:
-        return None
-    holding = db.query(models.CapsuleHolding).filter(
-        models.CapsuleHolding.id == holding_id,
-        models.CapsuleHolding.capsule_id == capsule_id,
-    ).first()
-    if holding is None:
-        return None
-    for key, value in minor_fields(patch.model_dump(exclude_unset=True), money_client_currency(db, client_id), "held_amount").items():
-        setattr(holding, key, value)
-    _finish_write(db, client_id, holding, commit=commit)
-    return holding
-
-
-def delete_holding(
-    db: Session, client_id: int, capsule_id: int, holding_id: int, *, commit: bool = True,
-) -> bool:
-    if get_capsule(db, client_id, capsule_id) is None:
-        return False
-    holding = db.query(models.CapsuleHolding).filter(
-        models.CapsuleHolding.id == holding_id,
-        models.CapsuleHolding.capsule_id == capsule_id,
-    ).first()
-    if holding is None:
-        return False
-    db.delete(holding)
-    _finish_write(db, client_id, commit=commit)
-    return True
-
-
-# Legacy holdings remain writable until F2b; they do not create journal claims.
-def upsert_capsule_holding(
-    db: Session,
-    capsule: models.Capsule,
-    account_id: int,
-    amount_delta: float,
-    note: str | None = None,
-) -> models.CapsuleHolding:
-    holding = db.query(models.CapsuleHolding).filter(
-        models.CapsuleHolding.capsule_id == capsule.id,
-        models.CapsuleHolding.account_id == account_id,
-    ).first()
-    if holding:
-        holding.held_amount_minor = max(0, holding.held_amount_minor + to_minor(amount_delta, money_client_currency(db, capsule.client_id)))
-        if note is not None:
-            holding.note = note
-    else:
-        holding = models.CapsuleHolding(
-            capsule_id=capsule.id,
-            account_id=account_id,
-            held_amount_minor=to_minor(max(0.0, amount_delta), money_client_currency(db, capsule.client_id)),
-            note=note,
-        )
-        db.add(holding)
-    db.flush()
-    return holding
-
-
 def capsule_to_dict(db: Session, capsule: models.Capsule) -> dict:
     balance = capsule_balance(db, capsule)
     progress_pct = (balance / capsule.target_amount * 100) if capsule.target_amount else 0
     progress_pct = min(100, progress_pct)
-    holdings = [
-        {
-            "id": h.id,
-            "capsule_id": h.capsule_id,
-            "account_id": h.account_id,
-            "account_name": h.account.name if h.account else None,
-            "held_amount": h.held_amount,
-            "note": h.note,
-            "updated_at": h.updated_at,
-        }
-        for h in capsule.holdings
-    ]
     linked_products = [
         {
             "id": product.id,
@@ -471,7 +362,6 @@ def capsule_to_dict(db: Session, capsule: models.Capsule) -> dict:
         "target_amount": capsule.target_amount,
         "monthly_contribution": capsule.monthly_contribution,
         "current_balance": balance,
-        "account_id": capsule.account_id,
         "auto_post": capsule.auto_post,
         "capsule_type": capsule.capsule_type or "manual",
         "target_amount_source": capsule.target_amount_source or "manual",
@@ -480,7 +370,6 @@ def capsule_to_dict(db: Session, capsule: models.Capsule) -> dict:
         "linked_products": linked_products,
         "created_at": capsule.created_at,
         "progress_pct": round(progress_pct, 1),
-        "holdings": holdings,
         "funding_sources": [
             funding_source_to_dict(source) for source in capsule.funding_sources
         ],
@@ -504,7 +393,6 @@ def create_capsule_for_goal(db: Session, client_id: int, goal: models.LifeEvent)
         name=goal.name,
         target_amount_minor=to_minor(max(0.0, goal.target_amount or 0.0), money_client_currency(db, client_id)),
         monthly_contribution_minor=to_minor(0.0, money_client_currency(db, client_id)),
-        account_id=None,
         capsule_type="life_event",
         target_amount_source="life_event",
         monthly_contribution_source="manual",
@@ -595,6 +483,18 @@ def claimed_minor(
         return {currency: int(total) for currency, total in rows if total}
 
 
+def account_claimed_minor(db: Session, client_id: int, account_id: int) -> dict[str, int]:
+    """All capsules' net journal claims at an account, separately per currency."""
+    rows = db.query(
+        models.Transaction.currency,
+        func.sum(models.JournalEntry.debit_minor - models.JournalEntry.credit_minor),
+    ).join(models.Transaction, models.Transaction.id == models.JournalEntry.transaction_id).join(
+        models.Capsule, models.Capsule.id == models.JournalEntry.capsule_id,
+    ).filter(models.Transaction.client_id == client_id, models.Capsule.client_id == client_id,
+             models.JournalEntry.account_id == account_id).group_by(models.Transaction.currency).all()
+    return {currency: int(total) for currency, total in rows if total}
+
+
 def _pending_claimed_minor(db: Session, client_id: int, capsule_id: int) -> dict[str, int]:
     # Pending is a decision outstanding, not a journal fact. Rejected proposals
     # enter neither query. The proposal already stores the exact reserved
@@ -682,13 +582,10 @@ def capsule_transfer_specs(
                 weights = [source.target_amount_minor for source in sources]
                 if not any(weights):
                     continue
-                # Plan weights approximate remaining need until F2: remaining
-                # need = plan amount - claim, whose outflow side does not exist yet.
+                # Fixed plan weights determine the routing shares.
                 destinations = [(source.account_id, part) for source, part in zip(
                     sources, Money(reserved, currency).allocate(weights),
                 )]
-            elif capsule.account_id is not None:
-                destinations = [(capsule.account_id, Money(reserved, currency))]
             else:
                 continue
             for destination_account_id, part in destinations:

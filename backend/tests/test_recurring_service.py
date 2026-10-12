@@ -147,8 +147,7 @@ def test_process_due_applies_capsule_rule_once_in_same_commit():
             name="Expense reserve",
             target_amount_minor=to_minor(10_000, "JPY"),
             monthly_contribution_minor=to_minor(0, "JPY"),
-            current_balance_minor=to_minor(0, "JPY"),
-            account_id=reserve.id,
+            funding_sources=[models.CapsuleFundingSource(client_id=1, account_id=reserve.id, target_amount_minor=to_minor(10_000, "JPY") or 0)],
         )
         db.add(capsule)
         db.flush()
@@ -169,13 +168,11 @@ def test_process_due_applies_capsule_rule_once_in_same_commit():
         assert proposal.legs[1]["account_id"] == cash.id
         assert proposal.legs[0]["account_id"] == reserve.id
         assert proposal.amount == 100
-        assert db.query(models.CapsuleHolding).count() == 0
         assert process_due_for_client(db, 1, today=date(2026, 6, 15)) == {
             "processed": [],
             "deactivated": [],
         }
         assert db.query(models.TransactionProposal).one().amount == 100
-        assert db.query(models.CapsuleHolding).count() == 0
         assert recurring.next_due_date == date(2026, 7, 15)
     finally:
         db.close()

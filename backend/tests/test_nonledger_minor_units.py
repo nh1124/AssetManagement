@@ -49,8 +49,7 @@ def test_threshold_through_request_context(currency):
 MONEY_FIELDS = [
     (models.MonthlyPlanLine, "amount"), (models.LifeEvent, "target_amount"),
     (models.Milestone, "target_amount"), (models.Capsule, "target_amount"),
-    (models.Capsule, "monthly_contribution"), (models.Capsule, "current_balance"),
-    (models.CapsuleHolding, "held_amount"), (models.MonthlyAction, "amount"),
+    (models.Capsule, "monthly_contribution"), (models.MonthlyAction, "amount"),
     (models.Product, "last_unit_price"), (models.Product, "purchase_price"),
     (models.SimulationConfig, "monthly_savings"), (models.SimulationScenario, "monthly_savings"),
     (models.AiOperationPolicy, "threshold_amount"), (models.RecurringTransaction, "amount"),
@@ -112,18 +111,25 @@ def _migration():
     return module
 
 
+def _legacy_nullable(name, column):
+    if name == "capsule_holdings":
+        return False
+    if (name, column) == ("capsules", "current_balance"):
+        return True
+    return Base.metadata.tables[name].c[f"{column}_minor"].nullable
+
+
 def _old_database(currency="JPY"):
     migration = _migration()
     metadata = sa.MetaData()
     sa.Table("clients", metadata, sa.Column("id", sa.Integer, primary_key=True),
              sa.Column("general_settings", sa.JSON))
     for name, columns in migration.MONEY_COLUMNS.items():
-        old_model = Base.metadata.tables[name]
         foreign = "capsule_id" if name == "capsule_holdings" else "client_id"
         fields = [sa.Column("id", sa.Integer, primary_key=True), sa.Column(foreign, sa.Integer)]
         if name in ("registry_entries", "recurring_transactions"):
             fields.append(sa.Column("currency", sa.String, nullable=False))
-        fields.extend(sa.Column(column, sa.Float, nullable=old_model.c[f"{column}_minor"].nullable,
+        fields.extend(sa.Column(column, sa.Float, nullable=_legacy_nullable(name, column),
                                 server_default="0" if (name, column) in migration.ZERO_DEFAULTS else None)
                       for column in columns)
         sa.Table(name, metadata, *fields)
@@ -182,7 +188,7 @@ def test_migration_applies_and_reverses_all_listed_columns(currency):
             metadata = {col["name"]: col for col in sa.inspect(engine).get_columns(name)}
             assert column not in metadata
             assert isinstance(metadata[f"{column}_minor"]["type"], sa.BigInteger)
-            assert metadata[f"{column}_minor"]["nullable"] == Base.metadata.tables[name].c[f"{column}_minor"].nullable
+            assert metadata[f"{column}_minor"]["nullable"] == _legacy_nullable(name, column)
             if (name, column) in _migration().ZERO_DEFAULTS:
                 assert metadata[f"{column}_minor"]["default"] == "0"
             for old, new in zip(before[name], after[name]):
@@ -262,8 +268,7 @@ def _money_rows(db):
         models.LifeEvent(id=1, client_id=1, target_amount_minor=1234),
         models.Milestone(id=1, client_id=1, life_event_id=1, target_amount_minor=1234),
         models.Capsule(id=1, client_id=1, target_amount_minor=1234,
-                       monthly_contribution_minor=1234, current_balance_minor=1234),
-        models.CapsuleHolding(id=1, capsule_id=1, account_id=1, held_amount_minor=1234),
+                       monthly_contribution_minor=1234),
         models.MonthlyPlanLine(id=1, client_id=1, target_period="2026-10", line_type="expense", amount_minor=1234),
         models.MonthlyAction(id=1, client_id=1, source_period="2026-10", proposal_id="read",
                              kind="set_budget", idempotency_key="read", amount_minor=1234),
@@ -295,10 +300,7 @@ def test_major_reads_and_sql_expressions_keep_currency(model, field):
         alias = aliased(model)
         assert db.query(sa.func.sum(getattr(alias, field))).scalar() == expected
         assert db.query(model).filter(getattr(model, field) == expected).one().id == row.id
-        if model is models.CapsuleHolding:
-            query = db.query(getattr(model, field)).join(models.Capsule).join(models.Client)
-        else:
-            query = db.query(getattr(model, field)).join(models.Client, model.client_id == models.Client.id)
+        query = db.query(getattr(model, field)).join(models.Client, model.client_id == models.Client.id)
         assert query.scalar() == expected
 
 
@@ -336,8 +338,6 @@ def test_missing_owner_is_refused_for_runtime_reads_and_writes():
             create_goal_record(db, 999, schemas.LifeEventCreate(name="orphan", target_amount=100, target_date="2027-01-01"))
         with pytest.raises(ValueError, match="Cannot resolve client currency"):
             _ = models.Capsule(client_id=None, target_amount_minor=100).target_amount
-        with pytest.raises(ValueError, match="Cannot resolve client currency"):
-            _ = models.CapsuleHolding(capsule_id=999, held_amount_minor=100).held_amount
 
 
 def test_downgrade_refuses_lossy_float():
@@ -394,14 +394,14 @@ def test_migration_preserves_nullable_amounts():
     with engine.begin() as connection:
         for name, columns in _migration().MONEY_COLUMNS.items():
             for column in columns:
-                if Base.metadata.tables[name].c[f"{column}_minor"].nullable:
+                if _legacy_nullable(name, column):
                     connection.execute(sa.text(f"UPDATE {name} SET {column} = NULL"))
     before = _snapshot(engine)
     _run_migration(engine, "upgrade")
     after = _snapshot(engine)
     for name, columns in _migration().MONEY_COLUMNS.items():
         for column in columns:
-            if Base.metadata.tables[name].c[f"{column}_minor"].nullable:
+            if _legacy_nullable(name, column):
                 assert all(row[f"{column}_minor"] is None for row in after[name])
     _run_migration(engine, "downgrade")
     assert _snapshot(engine) == before

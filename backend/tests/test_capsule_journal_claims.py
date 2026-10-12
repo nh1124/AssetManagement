@@ -44,8 +44,8 @@ def db():
         ])
         session.add_all([
             models.Capsule(id=i, client_id=1 if i < 3 else 2, name=f"Capsule {i}",
-                           account_id=2 if i < 3 else 4, target_amount_minor=1000,
-                           monthly_contribution_minor=0, current_balance_minor=987)
+                           funding_sources=[models.CapsuleFundingSource(client_id=1 if i < 3 else 2, account_id=2 if i < 3 else 4, target_amount_minor=1000)], target_amount_minor=1000,
+                           monthly_contribution_minor=0)
             for i in [1, 2, 3]
         ])
         session.commit()
@@ -108,9 +108,8 @@ def test_claims_are_per_currency_per_account_and_client_scoped(db):
     assert capsule.claimed_minor(db, 2, 3) == {"JPY": 77}
 
 
-def test_balances_and_response_read_claim_and_never_refresh_cache(db):
+def test_balances_and_response_read_claim(db):
     owner = db.get(models.Capsule, 1)
-    capsule.create_holding(db, 1, 1, schemas.CapsuleHoldingCreate(account_id=2, held_amount=900))
     post(db, 300, [Leg(2, debit=300, capsule_id=1), Leg(1, credit=300)])
     post(db, 12000, [Leg(3, debit=12000, capsule_id=1), Leg(1, credit=12000)], currency="USD")
     db.commit()
@@ -118,10 +117,8 @@ def test_balances_and_response_read_claim_and_never_refresh_cache(db):
     assert capsule.remaining_target(db, owner) == 700
     assert capsule.capsule_to_dict(db, owner)["current_balance"] == 300
     capsule.update_capsule(db, 1, 1, schemas.CapsuleUpdate(name="PC", current_balance=9999))
-    capsule.upsert_capsule_holding(db, owner, 2, 5)
     db.commit()
     db.expire_all()
-    assert owner.current_balance_minor == 987
     assert capsule.capsule_to_dict(db, owner)["current_balance"] == 300
 
 
@@ -170,7 +167,8 @@ def test_backup_round_trip_remaps_attributed_legs_and_ignores_legacy_cache(db):
     db.commit()
     document = json.loads(json.dumps(export_client(db, db.get(models.Client, 1))))
     assert document["data"]["journal_entries"][0]["capsule_id"] == 1
-    assert document["data"]["capsules"][0]["current_balance"] == 100
+    assert "current_balance" not in document["data"]["capsules"][0]
+    document["data"]["capsules"][0]["current_balance"] = 999999
     assert validate_import_payload(document["data"])["error_count"] == 0
     target = db.get(models.Client, 2)
     import_client(db, target, data=document["data"], version=document["version"], manifest=document["manifest"])
@@ -179,7 +177,6 @@ def test_backup_round_trip_remaps_attributed_legs_and_ignores_legacy_cache(db):
     assert first.id != 1 and second.id != 2
     assert capsule.claimed_minor(db, 2, first.id) == {"JPY": 100, "USD": 12345}
     assert capsule.claimed_minor(db, 2, second.id) == {"JPY": 300}
-    assert first.current_balance_minor == second.current_balance_minor == 0
     assert capsule.claimed_minor(db, 1, 1) == {"JPY": 100, "USD": 12345}
 
 
@@ -193,9 +190,9 @@ def test_backup_validation_refuses_unknown_capsule_reference(db):
                and issue["code"] == "missing_reference" for issue in result["issues"])
 
 
-def test_health_keeps_missing_destination_check_and_accepts_funding_plan(db):
+def test_health_checks_missing_funding_plan(db):
     owner = db.get(models.Capsule, 1)
-    owner.account_id = None
+    owner.funding_sources = []
     db.add(models.CapsuleRule(client_id=1, capsule_id=1, trigger_type="Income", amount_type="fixed", amount_minor=100, is_active=True))
     db.commit()
     issue = next(issue for issue in check_data_health(db, 1)["issues"] if issue["code"] == "capsule_without_account")

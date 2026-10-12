@@ -103,7 +103,7 @@ def _seed(db, scenario, today):
     db.flush()
     capsule = models.Capsule(client_id=1, life_event_id=goal.id, name="Guard capsule",
                              target_amount_minor=to_minor(200000, "JPY"), monthly_contribution_minor=to_minor(10000, "JPY"),
-                             current_balance_minor=to_minor(0, "JPY"), account_id=cash.id)
+                             funding_sources=[models.CapsuleFundingSource(client_id=1, account_id=cash.id, target_amount_minor=to_minor(200000, "JPY"))])
     db.add(capsule)
     db.flush()
     product = models.Product(client_id=1, name="Guard supplies", category="Guard food",
@@ -127,9 +127,7 @@ def _seed(db, scenario, today):
                        last_unit_price_minor=to_minor(12000, "JPY"), purchase_price_minor=to_minor(12000, "JPY"),
                        purchase_date=today - timedelta(days=30), is_asset=True,
                        lifespan_months=12, budget_treatment="asset_replacement"),
-        # A stale capsule cache and an orphan plan line expose writes that a
-        # fully normalised fixture would conceal.
-        models.CapsuleHolding(capsule_id=capsule.id, account_id=cash.id, held_amount_minor=to_minor(5000, "JPY")),
+        # An orphan plan line exposes writes that a normalised fixture would conceal.
         models.MonthlyPlanLine(client_id=1, plan_id=plan.id if plan else None,
                                target_period=today.strftime("%Y-%m"), line_type="expense",
                                name="Guard food", amount_minor=to_minor(3000, "JPY"), account_id=expense.id,

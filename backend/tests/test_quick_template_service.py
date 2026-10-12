@@ -164,7 +164,7 @@ def _payload(posting, **overrides):
 
 def _rule(posting, auto_post):
     db, client, cash, _, reserve = posting
-    capsule = models.Capsule(client_id=client.id, name="reserve", account_id=reserve.id,
+    capsule = models.Capsule(client_id=client.id, name="reserve", funding_sources=[models.CapsuleFundingSource(client_id=client.id, account_id=reserve.id, target_amount_minor=to_minor(5000, "JPY") or 0)],
                              target_amount_minor=to_minor(5000, "JPY"), monthly_contribution_minor=to_minor(0, "JPY"), auto_post=auto_post)
     db.add(capsule)
     db.flush()
@@ -298,7 +298,6 @@ def test_batch_unbalanced_legs_remain_400_and_roll_back_all_writes(posting):
     assert status_for(error.value) == 400
     assert str(error.value) == "Journal entry does not balance: debit 290 vs credit 300"
     assert _counts(db) == (0, 0, 0, 0)
-    assert db.query(models.CapsuleHolding).count() == 0
     assert all(calculate_account_valued_balance(db, account) == 0 for account in (cash, food, reserve))
 
 
@@ -327,5 +326,4 @@ def test_batch_non_value_errors_propagate_unchanged_and_roll_back_all_writes(pos
         workflow.post_transaction_batch(db, client.id, _payload(posting))
     assert error.value is failure
     assert _counts(db) == (0, 0, 0, 0)
-    assert db.query(models.CapsuleHolding).count() == 0
     assert all(calculate_account_valued_balance(db, account) == 0 for account in (cash, food, reserve))

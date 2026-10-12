@@ -17,29 +17,33 @@ from .reporting_service import get_balance_sheet, get_net_worth_history
 
 
 def calculate_current_funded_and_weighted_return(event: models.LifeEvent, db: Optional[Session] = None) -> Tuple[float, float]:
-    """Calculate current funded amount and weighted average return from CapsuleHoldings."""
-    capsule = next((c for c in (event.capsules or [])), None)
-    if not capsule or not capsule.holdings:
+    """Funded amount and weighted return from client-currency journal claims."""
+    from sqlalchemy.orm import object_session
+    from .capsule_service import claimed_minor
+    from .fx_service import get_client_currency
+    from ..domain.money import Money
+    db = db or object_session(event)
+    if db is None:
         return 0.0, 5.0
-
+    currency = get_client_currency(db, event.client_id)
     total_funded = 0.0
     weighted_return_sum = 0.0
+    for capsule in event.capsules or []:
+        account_ids = {row[0] for row in db.query(models.JournalEntry.account_id).filter(
+            models.JournalEntry.capsule_id == capsule.id,
+        ).distinct()}
+        for account_id in account_ids:
+            held = Money(claimed_minor(db, event.client_id, capsule.id, account_id).get(currency, 0), currency).to_float()
+            if held > 0:
+                account = db.get(models.Account, account_id)
+                total_funded += held
+                weighted_return_sum += held * (account.expected_return or 0.0)
+    return total_funded, weighted_return_sum / total_funded if total_funded > 0 else 5.0
 
-    for h in capsule.holdings:
-        held = h.held_amount or 0.0
-        if held > 0:
-            total_funded += held
-            account_return = (h.account.expected_return or 0.0) if h.account else 0.0
-            weighted_return_sum += held * account_return
 
-    weighted_return = weighted_return_sum / total_funded if total_funded > 0 else 5.0
-    return total_funded, weighted_return
-
-
-def calculate_current_funded(event: models.LifeEvent) -> float:
-    total, _ = calculate_current_funded_and_weighted_return(event)
+def calculate_current_funded(event: models.LifeEvent, db: Optional[Session] = None) -> float:
+    total, _ = calculate_current_funded_and_weighted_return(event, db)
     return total
-
 
 
 def calculate_projection(
@@ -271,8 +275,7 @@ def get_goal_simulation_context(
     allocation_ratio = weight / total_weight if allocation_mode != "direct" else 1.0
 
     current_funded, weighted_return = calculate_current_funded_and_weighted_return(event, db)
-    has_holdings = any(c.holdings for c in event.capsules)
-    effective_return = weighted_return if has_holdings else base_annual_return
+    effective_return = weighted_return if current_funded > 0 else base_annual_return
     years_remaining = max(0.0, (event.target_date - evaluation_date).days / 365.25)
 
     return {

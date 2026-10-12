@@ -286,16 +286,18 @@ def _cash_flow_line_account_id(
     if account_id:
         return account_id
 
-    # Account-less legacy rows alone need the capsule's retiring account field.
+    # An account-less row can infer its destination only from a single-source plan.
     target_type = _line_attr(line, "target_type")
     target_id = _line_attr(line, "target_id")
     if target_type == "capsule" and target_id:
         capsule = ctx.capsule(target_id)
-        return capsule.account_id if capsule else None
+        return (capsule.funding_sources[0].account_id
+                if capsule and len(capsule.funding_sources) == 1 else None)
 
     if target_type == "life_event" and target_id:
         capsule = ctx.capsule_for_life_event(target_id)
-        return capsule.account_id if capsule else None
+        return (capsule.funding_sources[0].account_id
+                if capsule and len(capsule.funding_sources) == 1 else None)
 
     return None
 

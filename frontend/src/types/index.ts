@@ -782,16 +782,6 @@ export interface RoadmapProjection {
     };
 }
 
-export interface CapsuleHolding {
-    id: number;
-    capsule_id: number;
-    account_id: number;
-    account_name?: string | null;
-    held_amount: number;
-    note?: string | null;
-    updated_at?: string | null;
-}
-
 export interface Capsule {
     id: number;
     life_event_id?: number | null;
@@ -799,7 +789,6 @@ export interface Capsule {
     target_amount: number;
     monthly_contribution: number;
     current_balance: number;
-    account_id?: number;
     capsule_type?: string;
     target_amount_source?: string;
     monthly_contribution_source?: string;
@@ -811,7 +800,7 @@ export interface Capsule {
         reserve_target_amount: number;
         recommended_monthly_reserve: number;
     }>;
-    holdings: CapsuleHolding[];
+    funding_sources?: Array<{ account_id: number; account_name?: string | null; target_amount: number; sort_order: number }>;
 }
 
 /** What a capsule rule fires on. It reads as a statement about an entry's

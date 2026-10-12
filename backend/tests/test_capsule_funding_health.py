@@ -54,8 +54,8 @@ def db():
             session.flush()
             session.add_all([
                 models.Capsule(id=offset + i, client_id=client_id, name=f"Capsule {offset + i}",
-                               account_id=offset + 2, target_amount_minor=1000,
-                               monthly_contribution_minor=0, current_balance_minor=99999)
+                               target_amount_minor=1000,
+                               monthly_contribution_minor=0)
                 for i in [1, 2]
             ])
         session.commit()
@@ -288,7 +288,6 @@ def test_pending_proposals_and_legacy_caches_are_not_journal_claims(db):
     propose_transaction(db, 1, origin="capsule", date=WHEN, description="Not posted",
                         amount_minor=12345, currency="USD", origin_ref={"capsule_id": 1},
                         legs=[Leg(2, debit=12345, capsule_id=1), Leg(1, credit=12345)])
-    db.add(models.CapsuleHolding(capsule_id=1, account_id=2, held_amount_minor=99999))
     db.flush()
     result = issues(db)
     assert all(result[code]["count"] == 0 for code in [BALANCE, SHARE, CURRENCY])

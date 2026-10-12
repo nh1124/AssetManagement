@@ -548,7 +548,6 @@ export const getGoalCapsules = async (goalId: number): Promise<Array<{
     id: number;
     name: string;
     current_balance: number;
-    account_id: number | null;
 }>> => {
     const response = await api.get(`/life-events/${goalId}/capsules`);
     return response.data;
@@ -895,13 +894,6 @@ export const syncProductReserves = async () => {
     return response.data;
 };
 
-export const getCapsuleHoldings = async (
-    capsuleId: number
-): Promise<Array<{ id: number; account_id: number; account_name?: string | null; held_amount: number; note?: string | null }>> => {
-    const response = await api.get(`/capsules/${capsuleId}/holdings`);
-    return response.data;
-};
-
 export const getReconcileStatus = async (): Promise<ReconcileResponse> => {
     const response = await api.get('/analysis/reconcile');
     return response.data;
@@ -936,28 +928,6 @@ export const createCapsuleRule = async (rule: any) => {
 
 export const deleteCapsuleRule = async (id: number) => {
     const response = await api.delete(`/capsules/rules/${id}`);
-    return response.data;
-};
-
-export const createCapsuleHolding = async (
-    capsuleId: number,
-    payload: { account_id: number; held_amount: number; note?: string }
-) => {
-    const response = await api.post(`/capsules/${capsuleId}/holdings`, payload);
-    return response.data;
-};
-
-export const updateCapsuleHolding = async (
-    capsuleId: number,
-    holdingId: number,
-    payload: { held_amount?: number; note?: string }
-) => {
-    const response = await api.put(`/capsules/${capsuleId}/holdings/${holdingId}`, payload);
-    return response.data;
-};
-
-export const deleteCapsuleHolding = async (capsuleId: number, holdingId: number) => {
-    const response = await api.delete(`/capsules/${capsuleId}/holdings/${holdingId}`);
     return response.data;
 };
 

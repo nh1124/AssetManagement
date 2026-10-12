@@ -54,7 +54,7 @@ def _capsule_rule(db, cash, destination):
         name="Savings",
         target_amount_minor=to_minor(5000, "JPY"),
         monthly_contribution_minor=to_minor(0, "JPY"),
-        account_id=destination.id,
+        funding_sources=[models.CapsuleFundingSource(client_id=1, account_id=destination.id, target_amount_minor=to_minor(5000, "JPY") or 0)],
         auto_post=False,
     )
     db.add(capsule)

@@ -3,21 +3,17 @@ import type { ReactNode } from 'react';
 import { Check, ChevronLeft, ChevronRight, Loader2, Plus, Trash2, X, type LucideIcon } from 'lucide-react';
 import {
     createAccount,
-    createCapsuleHolding,
     createMilestone,
     createMonthlyPlanLines,
     deleteCapsule,
-    deleteCapsuleHolding,
     deleteMilestone,
     deleteMonthlyPlanLine,
     getAccounts,
     getBudgetSummary,
-    getCapsuleHoldings,
     getCapsules,
     getLifeEventsWithProgress,
     getMilestones,
     updateCapsule,
-    updateCapsuleHolding,
     updateMilestone,
     updateMonthlyPlanLines,
     type MonthlyPlanLinePayload,
@@ -74,15 +70,6 @@ interface CapsuleSummary {
     monthly_contribution?: number;
     life_event_id?: number | null;
     capsule_type?: string;
-    holdings?: CapsuleHolding[];
-}
-
-interface CapsuleHolding {
-    id: number;
-    account_id: number;
-    account_name?: string | null;
-    held_amount: number;
-    note?: string | null;
 }
 
 const todayIso = () => new Date().toISOString().split('T')[0];
@@ -225,7 +212,6 @@ export default function MobilePlanPage() {
             {selectedCapsule && (
                 <CapsuleSheet
                     capsule={selectedCapsule}
-                    accounts={accounts}
                     currency={currentCurrency}
                     onClose={() => setSelectedCapsule(null)}
                     onChanged={async () => {
@@ -812,29 +798,14 @@ function GoalSheet({ goal, currency, onClose, onChanged }: { goal: LifeEvent; cu
     );
 }
 
-function CapsuleSheet({ capsule, accounts, currency, onClose, onChanged }: { capsule: CapsuleSummary; accounts: Account[]; currency: string; onClose: () => void; onChanged: () => Promise<void> }) {
+function CapsuleSheet({ capsule, currency, onClose, onChanged }: { capsule: CapsuleSummary; currency: string; onClose: () => void; onChanged: () => Promise<void> }) {
     const { showToast } = useToast();
-    const assetAccounts = accounts.filter((account) => account.account_type === 'asset');
-    const [holdings, setHoldings] = useState<CapsuleHolding[]>([]);
     const [form, setForm] = useState({
         name: capsule.name,
         target_amount: String(capsule.target_amount ?? 0),
         monthly_contribution: String(capsule.monthly_contribution ?? 0),
     });
-    const [holdingForm, setHoldingForm] = useState({ id: '', account_id: '', held_amount: '', note: '' });
     const [isSaving, setIsSaving] = useState(false);
-
-    const loadHoldings = async () => {
-        try {
-            setHoldings(await getCapsuleHoldings(capsule.id));
-        } catch {
-            setHoldings(capsule.holdings ?? []);
-        }
-    };
-
-    useEffect(() => {
-        loadHoldings();
-    }, [capsule.id]);
 
     const saveCapsule = async () => {
         setIsSaving(true);
@@ -867,50 +838,6 @@ function CapsuleSheet({ capsule, accounts, currency, onClose, onChanged }: { cap
         }
     };
 
-    const saveHolding = async () => {
-        if (!holdingForm.account_id || !Number(holdingForm.held_amount)) {
-            showToast('Account and amount are required', 'warning');
-            return;
-        }
-        setIsSaving(true);
-        try {
-            if (holdingForm.id) {
-                await updateCapsuleHolding(capsule.id, Number(holdingForm.id), {
-                    held_amount: Number(holdingForm.held_amount),
-                    note: holdingForm.note || undefined,
-                });
-            } else {
-                await createCapsuleHolding(capsule.id, {
-                    account_id: Number(holdingForm.account_id),
-                    held_amount: Number(holdingForm.held_amount),
-                    note: holdingForm.note || undefined,
-                });
-            }
-            setHoldingForm({ id: '', account_id: '', held_amount: '', note: '' });
-            await loadHoldings();
-            await onChanged();
-            showToast('Allocation saved', 'success');
-        } catch {
-            showToast('Failed to save allocation', 'error');
-        } finally {
-            setIsSaving(false);
-        }
-    };
-
-    const removeHolding = async (id: number) => {
-        setIsSaving(true);
-        try {
-            await deleteCapsuleHolding(capsule.id, id);
-            await loadHoldings();
-            await onChanged();
-            showToast('Allocation removed', 'info');
-        } catch {
-            showToast('Failed to remove allocation', 'error');
-        } finally {
-            setIsSaving(false);
-        }
-    };
-
     return (
         <Sheet onClose={onClose}>
             <div className="mb-4 flex items-start justify-between gap-3">
@@ -935,43 +862,8 @@ function CapsuleSheet({ capsule, accounts, currency, onClose, onChanged }: { cap
             </div>
 
             <div className="mt-5 space-y-2">
-                <p className="text-xs uppercase tracking-wide text-slate-500">Asset Allocation</p>
-                <select value={holdingForm.account_id} onChange={(event) => setHoldingForm({ ...holdingForm, account_id: event.target.value })} className="h-11 w-full border border-slate-700 bg-slate-900 px-3 text-sm">
-                    <option value="">Account...</option>
-                    {assetAccounts.map((account) => (
-                        <option key={account.id} value={account.id}>{account.name}</option>
-                    ))}
-                </select>
-                <div className="grid grid-cols-2 gap-2">
-                    <input type="number" inputMode="decimal" placeholder="Amount" value={holdingForm.held_amount} onChange={(event) => setHoldingForm({ ...holdingForm, held_amount: event.target.value })} className="h-11 border border-slate-700 bg-slate-900 px-3 text-sm font-mono-nums" />
-                    <input placeholder="Note" value={holdingForm.note} onChange={(event) => setHoldingForm({ ...holdingForm, note: event.target.value })} className="h-11 border border-slate-700 bg-slate-900 px-3 text-sm" />
-                </div>
-                <button type="button" onClick={saveHolding} disabled={isSaving} className="flex h-11 w-full items-center justify-center gap-2 bg-cyan-600 text-sm font-semibold text-white disabled:opacity-50">
-                    <Plus size={15} /> {holdingForm.id ? 'Update Allocation' : 'Add Allocation'}
-                </button>
-            </div>
-
-            <div className="mt-4 divide-y divide-slate-800 border border-slate-800 bg-slate-900/60">
-                {holdings.length === 0 ? (
-                    <div className="px-3 py-4 text-sm text-slate-500">No allocations yet.</div>
-                ) : holdings.map((holding) => (
-                    <div key={holding.id} className="flex items-center justify-between gap-3 px-3 py-3">
-                        <button
-                            type="button"
-                            onClick={() => setHoldingForm({
-                                id: String(holding.id),
-                                account_id: String(holding.account_id),
-                                held_amount: String(holding.held_amount),
-                                note: holding.note || '',
-                            })}
-                            className="min-w-0 flex-1 text-left"
-                        >
-                            <p className="truncate text-sm text-slate-100">{holding.account_name || `Account ${holding.account_id}`}</p>
-                            <p className="mt-1 font-mono-nums text-[10px] text-cyan-300">{formatCurrency(holding.held_amount, currency)}</p>
-                        </button>
-                        <IconButton icon={Trash2} onClick={() => removeHolding(holding.id)} label="Remove allocation" />
-                    </div>
-                ))}
+                <p className="text-xs uppercase tracking-wide text-slate-500">Capsule Claim</p>
+                <p className="font-mono-nums text-cyan-300">{formatCurrency(capsule.current_balance ?? 0, currency)}</p>
             </div>
         </Sheet>
     );

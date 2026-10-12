@@ -45,8 +45,8 @@ def _capsule(db, *, client_id=1):
     db.add_all([cash, reserve])
     db.flush()
     capsule = models.Capsule(
-        client_id=client_id, name="Savings", account_id=reserve.id,
-        target_amount_minor=to_minor(500, "JPY"), monthly_contribution_minor=to_minor(10, "JPY"), current_balance_minor=to_minor(123, "JPY"),
+        client_id=client_id, name="Savings", funding_sources=[models.CapsuleFundingSource(client_id=client_id, account_id=reserve.id, target_amount_minor=to_minor(500, "JPY") or 0)],
+        target_amount_minor=to_minor(500, "JPY"), monthly_contribution_minor=to_minor(10, "JPY"),
     )
     db.add(capsule)
     db.commit()
@@ -105,15 +105,14 @@ def _snapshot(db):
     return {table.name: db.execute(table.select()).all() for table in Base.metadata.sorted_tables}
 
 
-def test_delete_capsule_cascades_rules_and_holdings_but_keeps_account_without_history(db):
+def test_delete_capsule_cascades_rules_and_plan_but_keeps_account_without_history(db):
     capsule, cash, reserve = _capsule(db)
     capsule_id, account_id = capsule.id, reserve.id
     capsule_service.create_rule(db, 1, _rule_payload(capsule_id))
-    capsule_service.create_holding(db, 1, capsule_id, schemas.CapsuleHoldingCreate(account_id=cash.id, held_amount=40))
     other, other_cash, _ = _capsule(db, client_id=2)
     other_id = other.id
     other_rule_id = capsule_service.create_rule(db, 2, _rule_payload(other_id)).id
-    other_holding_id = capsule_service.create_holding(db, 2, other_id, schemas.CapsuleHoldingCreate(account_id=other_cash.id, held_amount=20)).id
+    other_source_id = other.funding_sources[0].id
 
     deleted = delete_capsule(db, 1, capsule_id)
     db.expire_all()
@@ -122,26 +121,24 @@ def test_delete_capsule_cascades_rules_and_holdings_but_keeps_account_without_hi
     assert (deleted.capsule_id, deleted.rules_deleted) == (capsule_id, 1)
     assert (deleted.retained_account_id, deleted.retained_account_name) == (account_id, reserve.name)
     assert db.query(models.CapsuleRule).filter_by(capsule_id=capsule_id).count() == 0
-    assert db.query(models.CapsuleHolding).filter_by(capsule_id=capsule_id).count() == 0
     assert db.get(models.CapsuleRule, other_rule_id) is not None
-    assert db.get(models.CapsuleHolding, other_holding_id) is not None
+    assert db.query(models.CapsuleFundingSource).filter_by(capsule_id=capsule_id).count() == 0
+    assert db.get(models.CapsuleFundingSource, other_source_id) is not None
     assert db.get(models.Account, account_id).is_active is True
     assert db.query(models.Transaction).count() == db.query(models.JournalEntry).count() == 0
 
 
-def test_contribute_posts_attributed_transfers_clamps_and_keeps_cache_untouched(db):
+def test_contribute_posts_attributed_transfers_and_clamps(db):
     capsule, cash, reserve = _capsule(db)
     capsule_id, cash_id = capsule.id, cash.id
     result = capsule_workflow.contribute(db, 1, capsule_id, amount=300, from_account_id=cash_id)
     assert result == {"status": "ok", "amount": 300, "new_balance": 300}
-    assert db.get(models.Capsule, capsule_id).current_balance_minor == 123
     result = capsule_workflow.contribute(db, 1, capsule_id, amount=300, from_account_id=cash_id)
     assert result == {"status": "ok", "amount": 200, "new_balance": 500}
-    assert db.get(models.Capsule, capsule_id).current_balance_minor == 123
     assert capsule_workflow.contribute(db, 1, capsule_id, amount=10, from_account_id=cash_id) == {
         "status": "skipped", "message": "Capsule target already reached", "amount": 0.0, "new_balance": 500,
     }
-    assert db.query(models.CapsuleHolding).count() == db.query(models.TransactionProposal).count() == 0
+    assert db.query(models.TransactionProposal).count() == 0
     assert db.query(models.Transaction).count() == 2
     assert db.query(models.JournalEntry).count() == 4
     for leg in db.query(models.JournalEntry):
@@ -182,49 +179,28 @@ def test_rule_update_preserves_existing_explicit_capsule_reassignment(db):
     assert updated.capsule_id == second_id
 
 
-def test_holding_crud_replaces_existing_claim_and_leaves_current_balance_untouched(db):
-    capsule, cash, _ = _capsule(db)
-    capsule_id, cash_id = capsule.id, cash.id
-    assert capsule_service.list_holdings(db, 1, capsule_id) == []
-    holding = capsule_service.create_holding(db, 1, capsule_id, schemas.CapsuleHoldingCreate(account_id=cash_id, held_amount=800, note="first"))
-    holding_id = holding.id
-    assert db.get(models.Capsule, capsule_id).current_balance == 123
-    replacement = capsule_service.create_holding(db, 1, capsule_id, schemas.CapsuleHoldingCreate(account_id=cash_id, held_amount=50, note="replacement"))
-    assert replacement.id == holding_id
-    assert (replacement.held_amount, replacement.note) == (50, "replacement")
-    assert capsule_service.list_holdings(db, 1, capsule_id) == [replacement]
-    updated = capsule_service.update_holding(db, 1, capsule_id, holding_id, schemas.CapsuleHoldingUpdate(held_amount=20))
-    assert (updated.account_id, updated.held_amount, updated.note) == (cash_id, 20, "replacement")
-    assert db.get(models.Capsule, capsule_id).current_balance == 123
-    assert capsule_service.delete_holding(db, 1, capsule_id, holding_id)
-    assert capsule_service.list_holdings(db, 1, capsule_id) == []
-    assert db.get(models.Capsule, capsule_id).current_balance == 123
-    for model in (models.Transaction, models.TransactionProposal, models.JournalEntry):
-        assert db.query(model).count() == 0
-
-
-def test_capsule_crud_clamps_inputs_ignores_balance_patch_and_holdings(db):
+def test_capsule_crud_clamps_inputs_and_ignores_retired_balance_input(db):
     payload = schemas.CapsuleCreate(name="Manual", target_amount=-10, monthly_contribution=-5, current_balance=999)
     capsule = capsule_service.create_capsule(db, 1, payload)
     capsule_id = capsule.id
-    assert (capsule.target_amount, capsule.monthly_contribution, capsule.current_balance) == (0, 0, 0)
+    assert (capsule.target_amount, capsule.monthly_contribution, capsule_service.capsule_balance(db, capsule)) == (0, 0, 0)
     cash = models.Account(client_id=1, name="Cash", account_type="asset")
     db.add(cash)
     db.commit()
-    capsule_service.create_holding(db, 1, capsule_id, schemas.CapsuleHoldingCreate(account_id=cash.id, held_amount=75))
     updated = capsule_service.update_capsule(db, 1, capsule_id, schemas.CapsuleUpdate(
         target_amount=-1, monthly_contribution=None, current_balance=999,
         capsule_type=None, target_amount_source=None, monthly_contribution_source=None,
     ))
-    assert (updated.target_amount, updated.monthly_contribution, updated.current_balance_minor) == (0, 0, 0)
+    assert (updated.target_amount, updated.monthly_contribution, capsule_service.capsule_balance(db, updated)) == (0, 0, 0)
+    for model in (models.Transaction, models.TransactionProposal, models.JournalEntry):
+        assert db.query(model).count() == 0
     assert (updated.capsule_type, updated.target_amount_source, updated.monthly_contribution_source) == ("manual", "manual", "manual")
-    updated.current_balance_minor = 1
     db.commit()
     details = capsule_service.list_capsule_details(db, 1)
     assert details[0]["current_balance"] == 0
     assert not db.new and not db.dirty and not db.deleted
     db.rollback()
-    assert db.get(models.Capsule, capsule_id).current_balance == 1
+    assert capsule_service.capsule_balance(db, db.get(models.Capsule, capsule_id)) == 0
     assert capsule_service.list_capsules(db, 1, skip=1) == []
     assert capsule_service.list_capsules(db, 2) == []
 
@@ -233,7 +209,6 @@ def test_unknown_foreign_and_mismatched_ids_return_none_or_false_and_write_nothi
     capsule, cash, _ = _capsule(db)
     capsule_id = capsule.id
     rule_id = capsule_service.create_rule(db, 1, _rule_payload(capsule_id)).id
-    holding_id = capsule_service.create_holding(db, 1, capsule_id, schemas.CapsuleHoldingCreate(account_id=cash.id, held_amount=20)).id
     other, _, _ = _capsule(db)
     other_id = other.id
     before = _snapshot(db)
@@ -248,18 +223,12 @@ def test_unknown_foreign_and_mismatched_ids_return_none_or_false_and_write_nothi
         assert capsule_service.delete_capsule(db, client_id, missing_capsule_id) is None
         assert capsule_service.update_rule(db, client_id, missing_rule_id, schemas.CapsuleRuleUpdate(amount_value=25)) is None
         assert capsule_service.delete_rule(db, client_id, missing_rule_id) is False
-        assert capsule_service.update_holding(db, client_id, missing_capsule_id, holding_id, schemas.CapsuleHoldingUpdate(held_amount=25)) is None
-        assert capsule_service.delete_holding(db, client_id, missing_capsule_id, holding_id) is False
-    for owner_id, missing_id in [(capsule_id, 99999), (other_id, holding_id)]:
-        assert capsule_service.update_holding(db, 1, owner_id, missing_id, schemas.CapsuleHoldingUpdate(held_amount=25)) is None
-        assert capsule_service.delete_holding(db, 1, owner_id, missing_id) is False
     assert _snapshot(db) == before
 
 
 @pytest.mark.parametrize("operation", [
     "create_capsule", "update_capsule", "delete_capsule",
     "create_rule", "update_rule", "delete_rule",
-    "create_holding", "replace_holding", "update_holding", "delete_holding",
     "contribute", "create_product_reserve_pools",
     "sync_product_reserves", "create_goal_capsule",
 ])
@@ -267,7 +236,6 @@ def test_commit_false_leaves_every_new_writing_function_rollbackable(db, monkeyp
     capsule, cash, _ = _capsule(db)
     capsule_id, cash_id = capsule.id, cash.id
     rule_id = capsule_service.create_rule(db, 1, _rule_payload(capsule_id)).id
-    holding_id = capsule_service.create_holding(db, 1, capsule_id, schemas.CapsuleHoldingCreate(account_id=cash_id, held_amount=20)).id
     goal = models.LifeEvent(client_id=1, name="Goal", target_date=date(2027, 12, 31), target_amount_minor=to_minor(200, "JPY"))
     product = models.Product(
         client_id=1, name="Item", funding_capsule_id=capsule_id,
@@ -292,10 +260,6 @@ def test_commit_false_leaves_every_new_writing_function_rollbackable(db, monkeyp
         "create_rule": lambda: capsule_service.create_rule(db, 1, _rule_payload(capsule_id), commit=False),
         "update_rule": lambda: capsule_service.update_rule(db, 1, rule_id, schemas.CapsuleRuleUpdate(amount_value=25), commit=False),
         "delete_rule": lambda: capsule_service.delete_rule(db, 1, rule_id, commit=False),
-        "create_holding": lambda: capsule_service.create_holding(db, 1, capsule_id, schemas.CapsuleHoldingCreate(account_id=capsule.account_id, held_amount=25), commit=False),
-        "replace_holding": lambda: capsule_service.create_holding(db, 1, capsule_id, schemas.CapsuleHoldingCreate(account_id=cash_id, held_amount=25), commit=False),
-        "update_holding": lambda: capsule_service.update_holding(db, 1, capsule_id, holding_id, schemas.CapsuleHoldingUpdate(held_amount=25), commit=False),
-        "delete_holding": lambda: capsule_service.delete_holding(db, 1, capsule_id, holding_id, commit=False),
         "contribute": lambda: capsule_workflow.contribute(db, 1, capsule_id, amount=25, from_account_id=cash_id, commit=False),
         "create_product_reserve_pools": lambda: capsule_workflow.create_product_reserve_pools(db, 1, commit=False),
         "sync_product_reserves": lambda: capsule_workflow.sync_product_reserves(db, 1, commit=False),
@@ -313,8 +277,6 @@ def test_commit_false_leaves_every_new_writing_function_rollbackable(db, monkeyp
 
 def test_list_capsule_details_neither_flushes_nor_commits(db, monkeypatch):
     capsule, cash, _ = _capsule(db)
-    capsule_service.create_holding(db, 1, capsule.id, schemas.CapsuleHoldingCreate(
-        account_id=cash.id, held_amount=20))
     before = _snapshot(db)
 
     def unexpected_write(*_args, **_kwargs):
@@ -325,29 +287,6 @@ def test_list_capsule_details_neither_flushes_nor_commits(db, monkeypatch):
     assert capsule_service.list_capsule_details(db, 1)[0]["current_balance"] == 0
     assert not db.new and not db.dirty and not db.deleted
     assert _snapshot(db) == before
-
-
-@pytest.mark.parametrize("method", ["read", "create", "update", "delete"])
-def test_holding_http_errors_keep_capsule_and_holding_not_found_distinct(db, method):
-    capsule, cash, _ = _capsule(db)
-    client = db.get(models.Client, 1)
-    calls = {
-        "read": lambda capsule_id: capsule_router.read_capsule_holdings(capsule_id, db=db, current_client=client),
-        "create": lambda capsule_id: capsule_router.create_capsule_holding(capsule_id, schemas.CapsuleHoldingCreate(account_id=cash.id, held_amount=10), db=db, current_client=client),
-        "update": lambda capsule_id: capsule_router.update_capsule_holding(capsule_id, 99999, schemas.CapsuleHoldingUpdate(held_amount=10), db=db, current_client=client),
-        "delete": lambda capsule_id: capsule_router.delete_capsule_holding(capsule_id, 99999, db=db, current_client=client),
-    }
-    error_type = NotFound if method == "create" else HTTPException
-    with pytest.raises(error_type) as error:
-        calls[method](99999)
-    if method == "create":
-        assert str(error.value) == "Capsule not found"
-    else:
-        assert (error.value.status_code, error.value.detail) == (404, "Capsule not found")
-    if method in {"update", "delete"}:
-        with pytest.raises(HTTPException) as error:
-            calls[method](capsule.id)
-        assert (error.value.status_code, error.value.detail) == (404, "Holding not found")
 
 
 def test_deleting_a_capsule_leaves_its_account_and_balance_alone(db):
@@ -384,7 +323,7 @@ def test_deleting_a_capsule_leaves_its_account_and_balance_alone(db):
 
 def test_deleting_a_capsule_with_no_account_reports_none(db):
     capsule = models.Capsule(client_id=1, name="Unbound", target_amount_minor=to_minor(100, "JPY"),
-                             monthly_contribution_minor=0, current_balance_minor=0)
+                             monthly_contribution_minor=0)
     db.add(capsule)
     db.commit()
     deleted = delete_capsule(db, 1, capsule.id)

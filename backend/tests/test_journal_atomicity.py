@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.services import capsule_service
 from app.services.ledger_valuation import calculate_account_valued_balance
 
 from app.services.money_storage import to_minor, rule_amount_fields
@@ -141,7 +142,6 @@ def test_report_goal_allocation_rolls_back_when_journal_posting_fails(monkeypatc
         assert db.query(models.Transaction).count() == 0
         assert db.query(models.JournalEntry).count() == 0
         assert db.query(models.Capsule).count() == 0
-        assert db.query(models.CapsuleHolding).count() == 0
         assert db.query(models.MonthlyAction).count() == 0
     finally:
         db.close()
@@ -166,7 +166,6 @@ def test_report_goal_allocation_commits_journal_and_capsule(monkeypatch) -> None
             name=goal.name,
             target_amount_minor=to_minor(goal.target_amount, "JPY"),
             monthly_contribution_minor=to_minor(0, "JPY"),
-            current_balance_minor=to_minor(0, "JPY"),
             capsule_type="life_event",
             target_amount_source="life_event",
             monthly_contribution_source="manual",
@@ -207,8 +206,7 @@ def test_report_goal_allocation_commits_journal_and_capsule(monkeypatch) -> None
         assert db.query(models.JournalEntry).count() == 2
         assert db.query(models.MonthlyAction).filter_by(status="applied").count() == 1
         capsule = db.query(models.Capsule).filter_by(life_event_id=goal.id).one()
-        holding = db.query(models.CapsuleHolding).filter_by(capsule_id=capsule.id).one()
-        assert holding.held_amount == 10000
+        assert capsule_service.capsule_balance(db, capsule) == 10000
     finally:
         db.close()
 

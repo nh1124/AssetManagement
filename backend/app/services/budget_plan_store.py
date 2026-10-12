@@ -454,15 +454,13 @@ def _apply_plan_line_data(db: Session, client_id: int, line: models.MonthlyPlanL
             line.name = capsule.name
             funding_accounts = {source.account_id for source in capsule.funding_sources}
             if line.account_id is not None:
-                allowed = funding_accounts or ({capsule.account_id} if capsule.account_id is not None else set())
+                allowed = funding_accounts
                 if line.account_id not in allowed:
                     raise Invalid(f"Account {line.account_id} is not a funding account of capsule {capsule.id} ({capsule.name})")
             elif len(funding_accounts) > 1:
                 raise Invalid(f"Capsule {capsule.id} ({capsule.name}) has several funding accounts; account_id is required")
             elif funding_accounts:
                 line.account_id = next(iter(funding_accounts))
-            else:
-                line.account_id = capsule.account_id
             if line.source in {None, "manual", "capsule"}:
                 line.source_kind = "capsule"
     assign_plan_line_identity(line)

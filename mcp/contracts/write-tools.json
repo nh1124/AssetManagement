@@ -314,7 +314,7 @@
     "body": "object",
     "source": "src/tools/capsules.ts",
     "path_fragment": "/capsules/",
-    "allowed_fields": ["name", "target_amount", "monthly_contribution", "current_balance"],
+    "allowed_fields": ["name", "target_amount", "monthly_contribution", "account_id"],
     "required_fields": ["name", "target_amount", "monthly_contribution"]
   },
   {
@@ -324,7 +324,7 @@
     "body": "object",
     "source": "src/tools/capsules.ts",
     "path_fragment": "/capsules/${id}",
-    "allowed_fields": ["name", "target_amount", "monthly_contribution", "current_balance", "life_event_id", "capsule_type", "target_amount_source", "monthly_contribution_source"],
+    "allowed_fields": ["name", "target_amount", "monthly_contribution", "life_event_id", "capsule_type", "target_amount_source", "monthly_contribution_source"],
     "required_fields": []
   },
   {
@@ -372,34 +372,6 @@
     "path_fragment": "/capsules/${capsule_id}/funding-sources",
     "allowed_fields": ["account_id", "target_amount", "max_share_bp", "sort_order"],
     "required_fields": ["account_id"]
-  },
-  {
-    "tool": "capsule_holdings_upsert",
-    "method": "post",
-    "path": "/capsules/{capsule_id}/holdings",
-    "body": "object",
-    "source": "src/tools/capsules.ts",
-    "path_fragment": "/holdings",
-    "allowed_fields": ["account_id", "held_amount", "note"],
-    "required_fields": ["account_id"]
-  },
-  {
-    "tool": "capsule_holdings_update",
-    "method": "put",
-    "path": "/capsules/{capsule_id}/holdings/{holding_id}",
-    "body": "object",
-    "source": "src/tools/capsules.ts",
-    "path_fragment": "/holdings/${holding_id}",
-    "allowed_fields": ["held_amount", "note"],
-    "required_fields": []
-  },
-  {
-    "tool": "capsule_holdings_delete",
-    "method": "delete",
-    "path": "/capsules/{capsule_id}/holdings/{holding_id}",
-    "body": "none",
-    "source": "src/tools/capsules.ts",
-    "path_fragment": "/holdings/${holding_id}"
   },
   {
     "tool": "data_import_replace_current_client",

@@ -46,10 +46,8 @@ def db():
         ])
         session.flush()
         session.add_all([
-            models.Capsule(id=1, client_id=1, name="Savings", account_id=1,
-                           target_amount_minor=1000, monthly_contribution_minor=10, current_balance_minor=0),
-            models.Capsule(id=2, client_id=2, name="Foreign savings", account_id=3,
-                           target_amount_minor=10000, monthly_contribution_minor=0, current_balance_minor=0),
+            models.Capsule(id=1, client_id=1, name="Savings", target_amount_minor=1000, monthly_contribution_minor=10),
+            models.Capsule(id=2, client_id=2, name="Foreign savings", target_amount_minor=10000, monthly_contribution_minor=0),
         ])
         session.commit()
         yield session
@@ -173,6 +171,7 @@ def test_plan_supplies_routing_even_without_legacy_account(db):
     def preview():
         return service.capsule_transfer_specs(db, 1, entries=entries, description="Transfer", amount=200)
 
+    service.set_funding_sources(db, 1, 1, [_input(1, 1000)])
     before = preview()
     assert len(before) == 1
     assert (before[0].destination_account_id, before[0].amount) == (1, 100)
@@ -180,7 +179,6 @@ def test_plan_supplies_routing_even_without_legacy_account(db):
     # The plan now points at the source itself, so no movement is proposed.
     assert preview() == []
     service.set_funding_sources(db, 1, 1, [_input(1, 50)])
-    db.get(models.Capsule, 1).account_id = None
     db.commit()
     assert preview() == before
     assert db.query(models.Transaction).count() == db.query(models.JournalEntry).count() == 0
@@ -215,7 +213,7 @@ def test_http_round_trip_and_capsule_response_are_read_only(db, monkeypatch):
             expected = response.json()
             assert [(r["account_id"], r["target_amount"]) for r in expected] == [(2, 900), (1, 500)]
             # Intent is allowed to differ from the capsule's target; no money moved.
-            assert db.get(models.Capsule, 1).account_id == 1
+            assert db.get(models.Capsule, 1).target_amount_minor == 1000
             assert db.query(models.Transaction).count() == db.query(models.JournalEntry).count() == 0
             for capsule_id in [2, 99999]:
                 assert (await request(http, "PUT", f"/capsules/{capsule_id}/funding-sources", json=[])).status_code == 404

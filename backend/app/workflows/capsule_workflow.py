@@ -31,9 +31,12 @@ def contribute(
     if amount <= 0:
         raise Invalid("Contribution amount must be positive")
 
-    destination = ledger_service.get_account(db, client_id, capsule.account_id)
-    if not destination:
+    sources = capsule_service.list_funding_sources(db, client_id, capsule.id)
+    if not sources:
         raise NotFound("Reservation account not found")
+    for source in sources:
+        if not ledger_service.get_account(db, client_id, source.account_id):
+            raise NotFound("Reservation account not found")
     remaining = capsule_service.remaining_target(db, capsule)
     if remaining <= 0:
         return {
@@ -45,12 +48,15 @@ def contribute(
     amount = min(amount, remaining)
     currency = get_client_currency(db, client_id)
     money = Money.from_major(str(amount), currency)
+    weights = [source.target_amount_minor for source in sources]
+    parts = money.allocate(weights if any(weights) else [1] * len(sources))
     ledger_service.create_transaction(
         db, client_id=client_id, date=date.today(),
         description=f"Manual contribution: {capsule.name}",
         amount_minor=money.minor, currency=currency,
-        legs=[Leg(destination.id, debit=money.minor, capsule_id=capsule.id),
-              Leg(from_account.id, credit=money.minor)],
+        legs=[Leg(source.account_id, debit=part.minor, capsule_id=capsule.id)
+              for source, part in zip(sources, parts) if part.minor]
+             + [Leg(from_account.id, credit=money.minor)],
     )
     db.flush()
     if commit:

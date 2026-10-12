@@ -210,8 +210,6 @@ def get_budget_summary(
                     sources = capsule.funding_sources
                     if len(sources) == 1:
                         line["account_id"] = sources[0].account_id
-                    elif not sources:
-                        line["account_id"] = capsule.account_id
                 line["name"] = capsule.name
                 line["target_name"] = capsule.name
                 line["account_name"] = ctx.target_name_maps["account"].get(line["account_id"])
@@ -234,8 +232,6 @@ def get_budget_summary(
         sources = capsule.funding_sources
         if len(sources) == 1:
             line["account_id"] = sources[0].account_id
-        elif not sources:
-            line["account_id"] = capsule.account_id
         # Several funding accounts and no account named: the row cannot be
         # assigned to one of them, so it keeps standing for the whole capsule
         # and its virtual rows are suppressed below by target id alone.

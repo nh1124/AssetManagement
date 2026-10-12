@@ -117,7 +117,8 @@ class BudgetContext:
 
     @cached_property
     def capsule_account_ids(self) -> dict[int, int | None]:
-        return {capsule.id: capsule.account_id for capsule in self.capsules}
+        return {capsule.id: capsule.funding_sources[0].account_id if len(capsule.funding_sources) == 1 else None
+                for capsule in self.capsules}
 
     def capsule(self, capsule_id: int | None) -> models.Capsule | None:
         if not capsule_id:

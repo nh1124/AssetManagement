@@ -31,10 +31,9 @@ FORMAT_FIELDS = {
     "period_reviews": ["id","start_date","end_date","label","reflection","next_actions","created_at","updated_at"],
     "monthly_actions": ["id","source_period","target_period","proposal_id","kind","description","amount","target_id","payload","result","status","idempotency_key","created_at","applied_at"],
     "milestones": ["id","life_event_id","date","target_amount","note","source","source_snapshot","is_active_plan","created_at"],
-    "capsules": ["id","name","target_amount","monthly_contribution","current_balance","account_id","life_event_id","capsule_type","target_amount_source","monthly_contribution_source","created_at"],
+    "capsules": ["id","name","target_amount","monthly_contribution","life_event_id","capsule_type","target_amount_source","monthly_contribution_source","created_at"],
     "capsule_funding_sources": ["id","capsule_id","account_id","target_amount","max_share_bp","sort_order","created_at","updated_at"],
     "capsule_rules": ["id","capsule_id","trigger_type","trigger_category","trigger_description","source_mode","source_account_id","destination_account_id","amount_type","amount_value","is_active","created_at"],
-    "capsule_holdings": ["id","capsule_id","account_id","held_amount","note","updated_at"],
     "simulation_scenarios": ["id","life_event_id","name","description","annual_return","inflation","monthly_savings","contribution_schedule","allocation_mode","created_at","updated_at"],
     "exchange_rates": ["id","base_currency","quote_currency","rate","as_of_date","source","created_at","updated_at"],
 }
@@ -55,8 +54,8 @@ def _seed_client(db, client_id, base, marker):
                 values[field] = STAMP
         money_names = {
             "monthly_plan_lines": ("amount",), "life_events": ("target_amount",),
-            "milestones": ("target_amount",), "capsules": ("target_amount", "monthly_contribution", "current_balance"),
-            "capsule_holdings": ("held_amount",), "monthly_actions": ("amount",),
+            "milestones": ("target_amount",), "capsules": ("target_amount", "monthly_contribution"),
+            "monthly_actions": ("amount",),
             "capsule_funding_sources": ("target_amount",),
             "products": ("last_unit_price", "purchase_price"), "simulation_configs": ("monthly_savings",),
             "simulation_scenarios": ("monthly_savings",), "registry_entries": ("amount",),
@@ -81,8 +80,8 @@ def _seed_client(db, client_id, base, marker):
     expense = add(models.Account, 2, name=f"{marker}-expense", account_type="expense")
     goal = add(models.LifeEvent, 3, name=marker, target_date=date(2027, 1, 1), target_amount=1000)
     capsule = add(
-        models.Capsule, 4, name=marker, account_id=cash.id, life_event_id=goal.id,
-        target_amount=1000, monthly_contribution=10, current_balance=0,
+        models.Capsule, 4, name=marker, life_event_id=goal.id,
+        target_amount=1000, monthly_contribution=10,
     )
     product = add(
         models.Product, 5, name=marker, category="expense", last_unit_price=100,
@@ -144,7 +143,6 @@ def _seed_client(db, client_id, base, marker):
         models.CapsuleRule, 19, capsule_id=capsule.id, trigger_type="expense",
         source_account_id=cash.id, destination_account_id=cash.id, amount_value=10,
     )
-    add(models.CapsuleHolding, 20, capsule_id=capsule.id, account_id=cash.id, held_amount=0, note=marker)
     add(
         models.CapsuleFundingSource, 24, client_id=client.id, capsule_id=capsule.id,
         account_id=cash.id, target_amount=250, max_share_bp=6000, sort_order=3,
@@ -264,4 +262,3 @@ def test_ordered_accounts_and_budget_plans_keep_their_declared_order(seeded):
     assert [row["id"] for row in document["data"]["accounts"]] == [9999, 10001, 10002]
     assert [row["id"] for row in document["data"]["budget_plans"]] == [10029, 10030, rows["budget_plans"][0].id]
     assert document["data"] == export_client(db, client)["data"]
-

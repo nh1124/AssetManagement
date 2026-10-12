@@ -15,11 +15,13 @@ from ..services.capsule_service import (
     capsule_balance,
     create_capsule_for_goal,
     get_capsule,
-    total_held_amount_for_account,
-    upsert_capsule_holding,
+    claimed_minor,
+    account_claimed_minor,
 )
 from ..services.goal_service import get_life_event
-from ..services.ledger_service import get_account
+from ..services.ledger_service import get_account, create_transaction
+from ..domain.journal import Leg
+from ..domain.money import Money
 from ..services.ledger_valuation import calculate_account_valued_balance
 from ..services.registry_service import (
     get_entry,
@@ -175,10 +177,9 @@ def _apply_pause_recurring(db: Session, action: models.MonthlyAction) -> dict:
 def _apply_boost_allocation(db: Session, action: models.MonthlyAction) -> dict:
     """Earmark a larger share of one account for a goal.
 
-    This used to write a GoalAllocation row holding a percentage per
-    (goal, account) pair. That table was dropped in v5 and capsule_holdings
-    carries the same idea as an amount, so `delta_percent` is now applied
-    against the account's balance and accumulated on the goal's capsule.
+    Apply delta_percent to the account balance, then post a balanced entry
+    at the same account. The attributed leg changes the capsule claim; its
+    unattributed counterparty preserves the account balance.
     """
     payload = action.payload or {}
     life_event_id = int(payload["life_event_id"])
@@ -198,19 +199,22 @@ def _apply_boost_allocation(db: Session, action: models.MonthlyAction) -> dict:
 
     # An account cannot have more earmarked against it than it holds, counting
     # what other capsules already claim.
-    claimed = total_held_amount_for_account(db, account_id)
+    currency = money_client_currency(db, action.client_id)
+    claimed = Money(account_claimed_minor(db, action.client_id, account_id).get(currency, 0), currency).to_float()
     headroom = max(0.0, balance - float(claimed))
     applied = min(requested, headroom) if requested > 0 else requested
 
-    holding = upsert_capsule_holding(
-        db,
-        capsule,
-        account_id,
-        applied,
-        note=f"boost_allocation {delta_percent:+g}% ({action.source_period})",
-    )
+    current_claim = claimed_minor(db, action.client_id, capsule.id, account_id).get(currency, 0)
+    delta = Money.from_major(str(applied), currency).minor
+    delta = max(delta, -max(0, current_claim))
+    applied = Money(delta, currency).to_float()
+    if delta:
+        create_transaction(db, client_id=action.client_id, date=date.today(),
+            description=f"boost_allocation {delta_percent:+g}% ({action.source_period})",
+            amount_minor=abs(delta), currency=currency,
+            legs=[Leg(account_id, debit=max(0, delta), credit=max(0, -delta), capsule_id=capsule.id),
+                  Leg(account_id, debit=max(0, -delta), credit=max(0, delta))])
     db.flush()
-
     return {
         "capsule_id": capsule.id,
         "account_id": account_id,
@@ -218,7 +222,7 @@ def _apply_boost_allocation(db: Session, action: models.MonthlyAction) -> dict:
         "requested_amount": round(requested, 2),
         "applied_amount": round(applied, 2),
         "clamped": applied < requested,
-        "held_amount": round(holding.held_amount, 2),
+        "claimed_amount": Money(claimed_minor(db, action.client_id, capsule.id, account_id).get(currency, 0), currency).to_float(),
         "capsule_balance": round(capsule_balance(db, capsule), 2),
     }
 

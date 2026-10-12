@@ -258,15 +258,14 @@ def test_credit_settlement_without_plan_keeps_posted_activity(database):
         assert not db.new and not db.dirty and not db.deleted
 
 
-def test_capsule_list_computes_balance_without_updating_cache(database):
+def test_capsule_list_reports_claim_without_retired_fields(database):
     with database() as db:
         cash = models.Account(client_id=1, name="Custom cash", account_type="asset")
         source = models.Account(client_id=1, name="Source", account_type="asset")
-        capsule = models.Capsule(client_id=1, name="Reserve", current_balance_minor=999,
+        capsule = models.Capsule(client_id=1, name="Reserve",
                                  target_amount_minor=1000, monthly_contribution_minor=0)
         db.add_all([cash, source, capsule])
         db.flush()
-        db.add(models.CapsuleHolding(capsule_id=capsule.id, account_id=cash.id, held_amount_minor=250))
         create_transaction(db, client_id=1, date=date(2026, 10, 12), description="Attributed reserve",
                            amount_minor=250, currency="JPY",
                            legs=[Leg(cash.id, debit=250, capsule_id=capsule.id), Leg(source.id, credit=250)])
@@ -275,5 +274,5 @@ def test_capsule_list_computes_balance_without_updating_cache(database):
     response = request("GET", "/capsules/")
     assert response.status_code == 200, response.text
     assert response.json()[0]["current_balance"] == 250
-    with database() as db:
-        assert db.get(models.Capsule, capsule_id).current_balance_minor == 999
+    assert "holdings" not in response.json()[0]
+    assert "account_id" not in response.json()[0]

@@ -27,7 +27,7 @@ def _capsule_allocation_amounts(capsule: models.Capsule, currency: str) -> list[
     whole = Money(capsule.monthly_contribution_minor or 0, currency)
     sources = sorted(capsule.funding_sources, key=lambda source: (source.sort_order, source.id))
     if not sources:
-        return [(capsule.account_id, whole)]
+        return [(None, whole)]
     weights = [source.target_amount_minor for source in sources]
     # A zero-target plan has no relative weights; retain its rows and the whole
     # contribution with equal shares, including the one-source legacy shape.

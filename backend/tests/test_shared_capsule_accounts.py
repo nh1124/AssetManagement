@@ -84,7 +84,7 @@ def test_unattributed_balance_on_two_accounts_is_not_earmarked(db):
 def test_an_unbound_capsule_ignores_its_legacy_cache(db):
     session, _, _ = db
     capsule = models.Capsule(client_id=1, name="Unbound", target_amount_minor=0,
-                             monthly_contribution_minor=0, current_balance_minor=98765)
+                             monthly_contribution_minor=0)
     session.add(capsule)
     session.commit()
     assert _sum_capsule_balance(session, 1) == 0

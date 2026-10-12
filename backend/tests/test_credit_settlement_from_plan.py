@@ -138,7 +138,7 @@ def test_capsule_allocation_subtracts_month_movement_not_balance(card_plan, monk
     investment = models.Account(client_id=1, name="investment", account_type="asset")
     db.add(investment)
     db.flush()
-    capsule = models.Capsule(client_id=1, name="reserve", account_id=investment.id, current_balance_minor=to_minor(20000, "JPY"))
+    capsule = models.Capsule(client_id=1, name="reserve", funding_sources=[models.CapsuleFundingSource(client_id=1, account_id=investment.id, target_amount_minor=0)])
     db.add(capsule)
     db.flush()
     source = models.Account(client_id=1, name="cash", account_type="asset")

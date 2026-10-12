@@ -18,9 +18,6 @@ class Capsule(Base):
     name = Column(String, index=True)
     target_amount_minor = Column(MinorUnits)
     monthly_contribution_minor = Column(MinorUnits)
-    # Unread legacy cache. Claims come from journal legs; F2b removes this column.
-    current_balance_minor = Column(MinorUnits, default=0)
-    account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     # The capsule decides whether its reservations need a decision; the vocabulary
     # deliberately matches RecurringTransaction.auto_post.
     auto_post = Column(Boolean, default=False, server_default="false", nullable=False)
@@ -30,9 +27,7 @@ class Capsule(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     client = relationship("Client", back_populates="capsules")
-    account = relationship("Account", foreign_keys=[account_id])
     life_event = relationship("LifeEvent", back_populates="capsules")
-    holdings = relationship("CapsuleHolding", back_populates="capsule", cascade="all, delete-orphan")
     funding_sources = relationship(
         "CapsuleFundingSource", back_populates="capsule", cascade="all, delete-orphan",
         order_by="(CapsuleFundingSource.sort_order, CapsuleFundingSource.id)",
@@ -57,16 +52,6 @@ class Capsule(Base):
     @monthly_contribution.expression
     def monthly_contribution(cls):
         return major_expression(cls.monthly_contribution_minor, client_currency_expression(cls))
-
-    @hybrid_property
-    def current_balance(self) -> float | None:
-        if self.current_balance_minor is None:
-            return None
-        return Money(self.current_balance_minor, client_currency(self)).to_float()
-
-    @current_balance.expression
-    def current_balance(cls):
-        return major_expression(cls.current_balance_minor, client_currency_expression(cls))
 
 
 class CapsuleFundingSource(Base):
@@ -142,27 +127,3 @@ class CapsuleRule(Base):
             (cls.amount_type == "percentage", cast(cls.percentage_bp, Float) / 100),
             else_=major_expression(cls.amount_minor, client_currency_expression(cls)),
         )
-
-
-class CapsuleHolding(Base):
-    __tablename__ = "capsule_holdings"
-
-    id = Column(Integer, primary_key=True, index=True)
-    capsule_id = Column(Integer, ForeignKey("capsules.id", ondelete="CASCADE"), nullable=False)
-    account_id = Column(Integer, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
-    held_amount_minor = Column(MinorUnits, nullable=False, default=0)
-    note = Column(String, nullable=True)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-    capsule = relationship("Capsule", back_populates="holdings")
-    account = relationship("Account")
-
-    @hybrid_property
-    def held_amount(self) -> float | None:
-        if self.held_amount_minor is None:
-            return None
-        return Money(self.held_amount_minor, client_currency(self)).to_float()
-
-    @held_amount.expression
-    def held_amount(cls):
-        return major_expression(cls.held_amount_minor, client_currency_expression(cls))

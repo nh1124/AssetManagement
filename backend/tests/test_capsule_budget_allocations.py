@@ -40,7 +40,7 @@ def db():
             for i in range(1, 6)
         ])
         session.add(models.BudgetPlan(id=1, client_id=1, name="Baseline", is_default=True))
-        session.add(models.Capsule(id=1, client_id=1, name="Capsule", account_id=4,
+        session.add(models.Capsule(id=1, client_id=1, name="Capsule", funding_sources=[models.CapsuleFundingSource(client_id=1, account_id=4, target_amount_minor=30000)],
                                   target_amount_minor=30000, monthly_contribution_minor=1001))
         session.commit()
         yield session
@@ -159,11 +159,11 @@ def test_one_source_preserves_the_previous_account_and_amount(db, weight):
     assert (result[0]["account_id"], result[0]["amount"]) == (4, 1001)
 
 
-def test_no_plan_uses_legacy_account_and_neither_means_no_row(db):
+def test_seeded_single_source_and_empty_plan_rows(db):
     result = rows(db)
     assert len(result) == 1
     assert (result[0]["account_id"], result[0]["amount"]) == (4, 1001)
-    db.get(models.Capsule, 1).account_id = None
+    db.get(models.Capsule, 1).funding_sources = []
     db.commit()
     assert rows(db) == []
 
@@ -177,15 +177,15 @@ def test_stored_row_suppresses_only_its_own_account(db):
     ]
 
 
-def test_save_keeps_caller_account_even_when_legacy_column_differs(db):
+def test_save_keeps_caller_funding_account(db):
     funding(db)
     result = create_plan_lines(db, 1, [payload(3, 667)])
     assert result[0].account_id == 3
-    assert db.get(models.Capsule, 1).account_id == 4
+    assert [s.account_id for s in db.get(models.Capsule, 1).funding_sources] == [2, 3]
 
 
 @pytest.mark.parametrize("account_id", [1, 4, 5, 999])
-def test_save_refuses_account_outside_plan_including_legacy_and_foreign(db, account_id):
+def test_save_refuses_account_outside_plan_including_foreign(db, account_id):
     funding(db)
     with pytest.raises(Invalid) as error:
         create_plan_lines(db, 1, [payload(account_id)])
@@ -203,14 +203,14 @@ def test_save_refuses_omitted_account_with_multiple_sources(db):
     assert db.query(models.MonthlyPlanLine).count() == 0
 
 
-def test_save_fills_single_source_and_legacy_without_a_plan(db):
+def test_save_fills_single_source_and_leaves_empty_plan_unbound(db):
     funding(db, accounts=(3,), weights=(30000,))
     assert create_plan_lines(db, 1, [payload()])[0].account_id == 3
     capsule_service.set_funding_sources(db, 1, 1, [])
-    assert create_plan_lines(db, 1, [dict(payload(), target_period="2026-11")])[0].account_id == 4
+    assert create_plan_lines(db, 1, [dict(payload(), target_period="2026-11")])[0].account_id is None
 
 
-def test_without_plan_explicit_account_must_match_legacy_fallback(db):
+def test_seeded_plan_refuses_other_account(db):
     with pytest.raises(Invalid) as error:
         create_plan_lines(db, 1, [payload(2)])
     assert str(error.value) == "Account 2 is not a funding account of capsule 1 (Capsule)"
@@ -234,7 +234,6 @@ def test_update_preserves_account_and_validates_explicit_changes(db):
 def test_legacy_life_event_row_keeps_named_funding_account(db):
     funding(db)
     goal_id = goal_for_capsule(db)
-    db.get(models.Capsule, 1).account_id = 4
     db.commit()
     saved = stored(db, 3, 667, target_type="life_event", target_id=goal_id)
     result = rows(db)
@@ -292,31 +291,30 @@ def test_product_pool_warnings_name_each_plan_account_and_its_share(db):
     ]
 
 
-def test_report_creates_a_funding_source_and_leaves_retiring_column_alone(db):
+def test_report_creates_one_funding_source_and_reports_claim(db):
     goal = models.LifeEvent(client_id=1, name="Goal", target_amount_minor=30000,
                             target_date=date(2027, 10, 12), priority=1)
     db.add(goal)
     db.commit()
     result = report_service._apply_allocate_to_goal(db, 1, PERIOD, {"target_id": goal.id, "amount": 500})
     cap = db.get(models.Capsule, result["capsule_id"])
-    assert cap.account_id is None
+    assert "account_id" not in capsule_service.capsule_to_dict(db, cap)
     assert [(s.account_id, s.target_amount_minor) for s in cap.funding_sources] == [(result["account_id"], 30000)]
     report_service._apply_allocate_to_goal(db, 1, PERIOD, {"target_id": goal.id, "amount": 100})
     assert len(cap.funding_sources) == 1
-    assert cap.account_id is None
+    assert "account_id" not in capsule_service.capsule_to_dict(db, cap)
 
 
 @pytest.mark.parametrize("has_plan", [False, True])
-def test_report_preserves_existing_funding_and_legacy_fallback(db, has_plan):
+def test_report_preserves_existing_funding(db, has_plan):
     if has_plan:
         funding(db)
     goal_id = goal_for_capsule(db)
     cap = db.get(models.Capsule, 1)
-    cap.account_id = 4
     db.commit()
     report_service._apply_allocate_to_goal(db, 1, PERIOD, {"target_id": goal_id, "amount": 500})
-    assert cap.account_id == 4
-    assert [s.account_id for s in cap.funding_sources] == ([2, 3] if has_plan else [])
+    assert "account_id" not in capsule_service.capsule_to_dict(db, cap)
+    assert [s.account_id for s in cap.funding_sources] == ([2, 3] if has_plan else [4])
 
 
 def goal_for_capsule(db):
@@ -325,7 +323,6 @@ def goal_for_capsule(db):
     db.add(goal)
     db.flush()
     db.get(models.Capsule, 1).life_event_id = goal.id
-    db.get(models.Capsule, 1).account_id = None
     db.commit()
     return goal.id
 
@@ -372,10 +369,9 @@ def test_goal_delete_refuses_without_destination_even_without_legacy_account(db)
     assert db.query(models.Transaction).count() == 1
 
 
-def test_goal_delete_removes_both_empty_plan_accounts_not_legacy_account(db):
+def test_goal_delete_removes_empty_plan_accounts_and_keeps_other_accounts(db):
     funding(db)
     goal_id = goal_for_capsule(db)
-    db.get(models.Capsule, 1).account_id = 4
     db.commit()
     assert goal_service.delete_goal(db, 1, goal_id)
     assert db.get(models.Account, 2) is None

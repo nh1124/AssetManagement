@@ -98,7 +98,7 @@ def test_logical_balance_follows_the_plan_and_ignores_the_recurring_definition()
         _post_opening_balances(db, [(cash, 700000), (bank, 300000), (credit, 100000)])
         emergency = models.Capsule(
             client_id=1, name="Emergency", target_amount_minor=100000,
-            monthly_contribution_minor=10000, current_balance_minor=25000,
+            monthly_contribution_minor=10000,
         )
         db.add(emergency)
         db.flush()

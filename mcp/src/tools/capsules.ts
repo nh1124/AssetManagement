@@ -82,14 +82,14 @@ Use when: 新しい貯蓄目標を作りたいとき`,
         name: z.string().min(1).describe("カプセル名"),
         target_amount: z.number().min(1).describe("目標金額（円）"),
         monthly_contribution: z.number().min(0).describe("月額積立額（円）"),
-        current_balance: z.number().min(0).optional().describe("現在残高（円、デフォルト0）")
+        account_id: z.number().int().min(1).optional().describe("One funding source for the capsule whole target")
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
     },
-    async ({ name, target_amount, monthly_contribution, current_balance }) => {
+    async ({ name, target_amount, monthly_contribution, account_id }) => {
       try {
         const body: Record<string, unknown> = { name, target_amount, monthly_contribution };
-        if (current_balance !== undefined) body.current_balance = current_balance;
+        if (account_id !== undefined) body.account_id = account_id;
         const data = await api.post<Capsule>("/capsules/", body);
         return {
           content: [{ type: "text", text: `Created capsule:\n${JSON.stringify(data, null, 2)}` }],
@@ -108,23 +108,21 @@ Use when: 新しい貯蓄目標を作りたいとき`,
       title: "貯蓄カプセル更新",
       description: `既存の貯蓄カプセルを更新します。
 
-Use when: カプセルの目標額・月額・残高を変更したいとき`,
+Use when: カプセルの目標額・月額を変更したいとき`,
       inputSchema: z.object({
         id: z.number().int().min(1).describe("カプセルID"),
         name: z.string().min(1).optional().describe("カプセル名"),
         target_amount: z.number().min(1).optional().describe("目標金額（円）"),
-        monthly_contribution: z.number().min(0).optional().describe("月額積立額（円）"),
-        current_balance: z.number().min(0).optional().describe("現在残高（円）")
+        monthly_contribution: z.number().min(0).optional().describe("月額積立額（円）")
       }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false }
     },
-    async ({ id, name, target_amount, monthly_contribution, current_balance }) => {
+    async ({ id, name, target_amount, monthly_contribution }) => {
       try {
         const body: Record<string, unknown> = {};
         if (name !== undefined) body.name = name;
         if (target_amount !== undefined) body.target_amount = target_amount;
         if (monthly_contribution !== undefined) body.monthly_contribution = monthly_contribution;
-        if (current_balance !== undefined) body.current_balance = current_balance;
         const data = await api.put<Capsule>(`/capsules/${id}`, body);
         return {
           content: [{ type: "text", text: `Updated capsule ${id}:\n${JSON.stringify(data, null, 2)}` }],
@@ -295,106 +293,5 @@ Use when: カプセルの目標額・月額・残高を変更したいとき`,
     },
   );
 
-  server.registerTool(
-    "capsule_holdings_list",
-    {
-      title: "List capsule holdings",
-      description: "Lists account holdings assigned to one capsule.",
-      inputSchema: z.object({ capsule_id: z.number().int().min(1).describe("Capsule ID") }).strict(),
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    },
-    async ({ capsule_id }) => {
-      try {
-        const data = await api.get<unknown>(`/capsules/${capsule_id}/holdings`);
-        return {
-          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
-          structuredContent: toStructured({ holdings: data }),
-        };
-      } catch (err) {
-        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
-      }
-    },
-  );
 
-  server.registerTool(
-    "capsule_holdings_upsert",
-    {
-      title: "Upsert capsule holding",
-      description: "Creates or replaces the holding amount for an account in one capsule.",
-      inputSchema: z
-        .object({
-          capsule_id: z.number().int().min(1).describe("Capsule ID"),
-          account_id: z.number().int().min(1).describe("Account ID"),
-          held_amount: z.number().min(0).describe("Amount held for this capsule"),
-          note: z.string().nullable().optional(),
-        })
-        .strict(),
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    },
-    async ({ capsule_id, ...body }) => {
-      try {
-        const data = await api.post<unknown>(`/capsules/${capsule_id}/holdings`, body);
-        return {
-          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
-          structuredContent: toStructured(data),
-        };
-      } catch (err) {
-        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
-      }
-    },
-  );
-
-  server.registerTool(
-    "capsule_holdings_update",
-    {
-      title: "Update capsule holding",
-      description: "Updates a capsule holding amount or note.",
-      inputSchema: z
-        .object({
-          capsule_id: z.number().int().min(1).describe("Capsule ID"),
-          holding_id: z.number().int().min(1).describe("Holding ID"),
-          held_amount: z.number().min(0).optional(),
-          note: z.string().nullable().optional(),
-        })
-        .strict(),
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    },
-    async ({ capsule_id, holding_id, ...body }) => {
-      try {
-        const data = await api.put<unknown>(`/capsules/${capsule_id}/holdings/${holding_id}`, body);
-        return {
-          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
-          structuredContent: toStructured(data),
-        };
-      } catch (err) {
-        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
-      }
-    },
-  );
-
-  server.registerTool(
-    "capsule_holdings_delete",
-    {
-      title: "Delete capsule holding",
-      description: "Deletes one account holding from a capsule.",
-      inputSchema: z
-        .object({
-          capsule_id: z.number().int().min(1).describe("Capsule ID"),
-          holding_id: z.number().int().min(1).describe("Holding ID"),
-        })
-        .strict(),
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
-    },
-    async ({ capsule_id, holding_id }) => {
-      try {
-        const data = await api.delete<unknown>(`/capsules/${capsule_id}/holdings/${holding_id}`);
-        return {
-          content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
-          structuredContent: toStructured(data ?? { capsule_id, holding_id }),
-        };
-      } catch (err) {
-        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
-      }
-    },
-  );
 }

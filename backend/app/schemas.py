@@ -923,27 +923,24 @@ class SimulationScenarioCompareItem(BaseModel):
     deterministic_yearly: list[dict[str, Any]]
 
 class CapsuleBase(BaseModel):
-    account_id: Optional[int] = None
     auto_post: bool = False
     name: str
     target_amount: float
     monthly_contribution: float
-    current_balance: float = 0.0
     life_event_id: Optional[int] = None
     capsule_type: str = "manual"
     target_amount_source: str = "manual"
     monthly_contribution_source: str = "manual"
 
 class CapsuleCreate(CapsuleBase):
-    pass
+    # Compatibility shorthand: one funding source for the capsule's whole target.
+    account_id: Optional[int] = None
 
 class CapsuleUpdate(BaseModel):
-    account_id: Optional[int] = None
     auto_post: bool = False
     name: Optional[str] = None
     target_amount: Optional[float] = None
     monthly_contribution: Optional[float] = None
-    current_balance: Optional[float] = None
     life_event_id: Optional[int] = None
     capsule_type: Optional[str] = None
     target_amount_source: Optional[str] = None
@@ -975,11 +972,11 @@ class CapsuleFundingSource(CapsuleFundingSourceInput):
 
 class Capsule(CapsuleBase):
     id: int
-    account_id: Optional[int] = None
+    # Computed journal claim, never a stored balance.
+    current_balance: float = 0.0
     recommended_monthly_contribution: float = 0.0
     linked_products: list[dict[str, Any]] = []
     created_at: datetime
-    holdings: list["CapsuleHolding"] = []
     funding_sources: list[CapsuleFundingSource] = Field(default_factory=list)
 
     class Config:
@@ -1021,31 +1018,6 @@ class CapsuleRule(CapsuleRuleBase):
     capsule_name: Optional[str] = None
     source_account_name: Optional[str] = None
     created_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
-class CapsuleHoldingBase(BaseModel):
-    account_id: int
-    held_amount: float = Field(ge=0)
-    note: Optional[str] = None
-
-
-class CapsuleHoldingCreate(CapsuleHoldingBase):
-    pass
-
-
-class CapsuleHoldingUpdate(BaseModel):
-    held_amount: Optional[float] = Field(default=None, ge=0)
-    note: Optional[str] = None
-
-
-class CapsuleHolding(CapsuleHoldingBase):
-    id: int
-    capsule_id: int
-    account_name: Optional[str] = None
-    updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True

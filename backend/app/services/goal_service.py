@@ -91,7 +91,6 @@ def list_goal_capsules(db: Session, client_id: int, life_event_id: int) -> list[
             "id": cap.id,
             "name": cap.name,
             "current_balance": capsule_balance(db, cap),
-            "account_id": cap.account_id,
         }
         for cap in db_event.capsules
     ]
@@ -122,7 +121,6 @@ def delete_goal(
 
     accounts_by_capsule = {
         cap.id: [source.account_id for source in cap.funding_sources]
-        if cap.funding_sources else ([cap.account_id] if cap.account_id is not None else [])
         for cap in db_event.capsules
     }
     currency = get_client_currency(db, client_id)
@@ -145,16 +143,11 @@ def delete_goal(
 
     account_ids_to_delete = {account_id for ids in accounts_by_capsule.values() for account_id in ids}
 
-    # Nullify account_id on capsules so accounts can be deleted without FK violation
-    for cap in db_event.capsules:
-        cap.account_id = None
-    db.flush()
-
     db.delete(db_event)
     db.flush()
 
     # Removing journal history would leave each transaction's counterparty unbalanced.
-    # Keep accounts with history inactive even when capsule holdings are empty.
+    # Keep accounts with history inactive even when no capsule claims remain.
     for account_id in account_ids_to_delete:
         account = db.get(models.Account, account_id)
         if not account:

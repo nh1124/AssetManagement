@@ -304,8 +304,7 @@ def _reserve_capsule(db, *, target=400000):
         name="asset reserve",
         target_amount_minor=to_minor(target, "JPY"),
         monthly_contribution_minor=to_minor(0, "JPY"),
-        current_balance_minor=to_minor(0, "JPY"),
-        account_id=account.id,
+        funding_sources=[models.CapsuleFundingSource(client_id=1, account_id=account.id, target_amount_minor=to_minor(target, "JPY") or 0)],
     )
     db.add(capsule)
     db.flush()
@@ -336,7 +335,6 @@ def test_a_rule_triggers_on_the_income_account_not_the_category() -> None:
         assert len(updated) == 1
         assert updated[0].legs[1]["account_id"] == bank.id
         assert updated[0].amount == 8808
-        assert db.query(models.CapsuleHolding).count() == 0
     finally:
         db.close()
 
@@ -445,6 +443,5 @@ def test_a_percentage_rule_measures_the_whole_payment() -> None:
         # rounded to whole yen: JPY has no minor unit, so a reservation of
         # 25,827.2 could never match a bank statement. See docs/specs/money_plan.md.
         assert updated[0].amount == 25827.0
-        assert db.query(models.CapsuleHolding).count() == 0
     finally:
         db.close()

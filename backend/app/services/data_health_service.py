@@ -714,7 +714,6 @@ def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
         .join(models.CapsuleRule, models.CapsuleRule.capsule_id == models.Capsule.id)
         .filter(
             models.Capsule.client_id == client_id,
-            models.Capsule.account_id.is_(None),
             ~models.Capsule.funding_sources.any(),
             models.CapsuleRule.is_active.is_(True),
         )
@@ -727,7 +726,7 @@ def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
             "code": "capsule_without_account",
             "severity": "warning",
             "title": "Capsule rules without a reservation account",
-            "detail": "An active rule cannot reserve money until its capsule has a funding plan or a reservation account.",
+            "detail": "An active rule cannot reserve money until its capsule has a funding plan.",
             "count": len(capsule_without_account),
             "repairable": False,
             "items": capsule_without_account[:100],

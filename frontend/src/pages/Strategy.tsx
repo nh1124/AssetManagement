@@ -13,11 +13,9 @@ import {
     createBudgetPlan,
     createMonthlyPlanLines,
     createCapsule,
-    createCapsuleHolding,
     createCapsuleRule,
     deleteBudgetPlan,
     deleteCapsule,
-    deleteCapsuleHolding,
     deleteCapsuleRule,
     deleteMonthlyPlanLine,
     getAccounts,
@@ -272,7 +270,7 @@ export default function Strategy() {
     const [capsuleFilterType, setCapsuleFilterType] = useState<'all' | 'managed' | 'life_event' | 'product_pool' | 'manual'>('all');
     const [showRuleForm, setShowRuleForm] = useState(false);
     const [editingCapsuleId, setEditingCapsuleId] = useState<number | null>(null);
-    const [capsuleForm, setCapsuleForm] = useState({ name: '', target_amount: '', current_balance: '0' });
+    const [capsuleForm, setCapsuleForm] = useState({ name: '', target_amount: '' });
     const [ruleForm, setRuleForm] = useState({
         capsule_id: '',
         trigger_type: 'Income' as CapsuleTriggerKind,
@@ -283,8 +281,6 @@ export default function Strategy() {
         amount_type: 'fixed',
         amount_value: '',
     });
-    const [expandedHoldingCapsules, setExpandedHoldingCapsules] = useState<Set<number>>(new Set());
-    const [holdingForms, setHoldingForms] = useState<Record<number, { account_id: string; held_amount: string }>>({});
 
     const variableCandidateTotal = Object.values(budgetEdits).reduce((sum, amount) => sum + amount, 0);
     const variableBudgetTotal = Number(budgetSummary?.total_variable_budget ?? 0);
@@ -738,7 +734,7 @@ export default function Strategy() {
     const recurringContextFor = (line: Partial<MonthlyPlanLine>) => {
         const key = planLineKey(line);
         return [...planLineDrafts, ...(budgetSummary?.plan_lines ?? [])].find((candidate) => (
-            candidate.recurring_transaction_id && planLineKey(candidate) === key
+            (candidate.recurring_amount ?? 0) > 0 && planLineKey(candidate) === key
         ));
     };
 
@@ -879,7 +875,7 @@ export default function Strategy() {
         } else if (targetType === 'capsule' && targetId) {
             const capsule = capsules.find((item) => item.id === targetId);
             name = capsule?.name ?? name;
-            accountId = capsule?.account_id ?? null;
+            accountId = capsule?.funding_sources?.length === 1 ? capsule.funding_sources[0].account_id : null;
         } else if (targetType === 'life_event' && targetId) {
             name = lifeEvents.find((event) => event.id === targetId)?.name ?? name;
             accountId = null;
@@ -1000,9 +996,8 @@ export default function Strategy() {
             ? {
                 name: capsule.name,
                 target_amount: String(capsule.target_amount),
-                current_balance: '0',
             }
-            : { name: '', target_amount: '', current_balance: '0' });
+            : { name: '', target_amount: '' });
         setShowCapsuleForm(true);
     };
 
@@ -1030,7 +1025,7 @@ export default function Strategy() {
         setCapsuleDeleteModal({
             capsuleId: capsule.id,
             capsuleName: capsule.name,
-            accountId: capsule.account_id ?? null,
+            accountId: capsule.funding_sources?.length === 1 ? capsule.funding_sources[0].account_id : null,
             confirming: false,
         });
     };
@@ -1062,41 +1057,6 @@ export default function Strategy() {
             await Promise.all([fetchCapsules(), fetchBudgetSummary()]);
         } catch (error) {
             showToast('Failed to sync product reserves', 'error');
-        }
-    };
-
-    const toggleHoldings = (capsuleId: number) => {
-        setExpandedHoldingCapsules((prev) => {
-            const next = new Set(prev);
-            if (next.has(capsuleId)) next.delete(capsuleId);
-            else next.add(capsuleId);
-            return next;
-        });
-    };
-
-    const saveHolding = async (capsuleId: number) => {
-        const form = holdingForms[capsuleId];
-        if (!form?.account_id || !form?.held_amount) return;
-        try {
-            await createCapsuleHolding(capsuleId, {
-                account_id: Number(form.account_id),
-                held_amount: Number(form.held_amount),
-            });
-            setHoldingForms((prev) => ({ ...prev, [capsuleId]: { account_id: '', held_amount: '' } }));
-            showToast('Holding saved', 'success');
-            await fetchCapsules();
-        } catch (error) {
-            showToast('Failed to save holding', 'error');
-        }
-    };
-
-    const removeHolding = async (capsuleId: number, holdingId: number) => {
-        try {
-            await deleteCapsuleHolding(capsuleId, holdingId);
-            showToast('Holding removed', 'info');
-            await fetchCapsules();
-        } catch (error) {
-            showToast('Failed to remove holding', 'error');
         }
     };
 
@@ -2449,9 +2409,6 @@ export default function Strategy() {
                 <div className="grid grid-cols-1 min-[1120px]:grid-cols-2 gap-3">
                     {visibleCapsules.length === 0 ? <p className="text-xs text-slate-600">No capsules found.</p> : visibleCapsules.map((capsule) => {
                         const progress = capsule.target_amount > 0 ? Math.min(100, (capsule.current_balance / capsule.target_amount) * 100) : 0;
-                        const holdingsExpanded = expandedHoldingCapsules.has(capsule.id);
-                        const holdingForm = holdingForms[capsule.id] ?? { account_id: '', held_amount: '' };
-                        const holdingsTotal = (capsule.holdings ?? []).reduce((s, h) => s + h.held_amount, 0);
                         const protectedCapsule = capsuleIsProtected(capsule);
                         const managedCapsule = capsuleIsRegistryManaged(capsule);
                         const ruleFormOpen = showRuleForm && ruleForm.capsule_id === String(capsule.id);
@@ -2493,54 +2450,6 @@ export default function Strategy() {
                                 <div className="h-1.5 bg-slate-900 rounded-full overflow-hidden"><div className="h-full bg-purple-500" style={{ width: `${progress}%` }} /></div>
                                 {showCapsuleForm && editingCapsuleId === capsule.id && renderCapsuleForm()}
                                 {ruleFormOpen && renderAutoRuleForm()}
-                                <div>
-                                    <button
-                                        type="button"
-                                        onClick={() => toggleHoldings(capsule.id)}
-                                        className="flex items-center gap-1 text-[10px] text-slate-500 hover:text-slate-300 w-full"
-                                    >
-                                        <ChevronRight size={10} className={`transition-transform ${holdingsExpanded ? 'rotate-90' : ''}`} />
-                                        <span>Holdings ({(capsule.holdings ?? []).length})</span>
-                                        {(capsule.holdings ?? []).length > 0 && (
-                                            <span className="ml-auto font-mono-nums">{formatCurrency(holdingsTotal)}</span>
-                                        )}
-                                    </button>
-                                    {holdingsExpanded && (
-                                        <div className="mt-2 space-y-1">
-                                            {(capsule.holdings ?? []).length === 0 && (
-                                                <p className="text-[10px] text-slate-600">No holdings recorded.</p>
-                                            )}
-                                            {(capsule.holdings ?? []).map((h) => (
-                                                <div key={h.id} className="flex items-center gap-2 text-[10px]">
-                                                    <span className="flex-1 text-slate-400 truncate">{h.account_name}</span>
-                                                    <span className="font-mono-nums text-slate-300">{formatCurrency(h.held_amount)}</span>
-                                                    <button type="button" title="Remove holding" onClick={() => removeHolding(capsule.id, h.id)} className="text-slate-600 hover:text-rose-400"><Trash2 size={10} /></button>
-                                                </div>
-                                            ))}
-                                            <div className="flex gap-1.5 pt-2 border-t border-slate-800">
-                                                <select
-                                                    title="Select account"
-                                                    value={holdingForm.account_id}
-                                                    onChange={(e) => setHoldingForms((prev) => ({ ...prev, [capsule.id]: { ...prev[capsule.id], account_id: e.target.value } }))}
-                                                    className="flex-1 bg-slate-900 border border-slate-700 px-1.5 py-1 text-[10px] text-slate-300"
-                                                >
-                                                    <option value="">Account...</option>
-                                                    {accounts.filter((a) => a.account_type === 'asset').map((a) => (
-                                                        <option key={a.id} value={a.id}>{a.name}</option>
-                                                    ))}
-                                                </select>
-                                                <input
-                                                    type="number"
-                                                    placeholder="Amount"
-                                                    value={holdingForm.held_amount}
-                                                    onChange={(e) => setHoldingForms((prev) => ({ ...prev, [capsule.id]: { ...prev[capsule.id], held_amount: e.target.value } }))}
-                                                    className="w-24 bg-slate-900 border border-slate-700 px-1.5 py-1 text-[10px] font-mono-nums"
-                                                />
-                                                <button type="button" onClick={() => saveHolding(capsule.id)} className="px-2 py-1 bg-purple-900/50 border border-purple-800 text-purple-300 text-[10px]">Add</button>
-                                            </div>
-                                        </div>
-                                    )}
-                                </div>
                                 <div className="flex justify-end gap-3 text-[10px]">
                                     <button onClick={() => openCapsuleForm(capsule)} className="text-slate-400 hover:text-white flex items-center gap-1"><Edit2 size={10} /> Edit</button>
                                     <button onClick={() => ruleFormOpen ? setShowRuleForm(false) : openAutoRuleForm(capsule)} className="text-slate-400 hover:text-cyan-300 flex items-center gap-1"><Plus size={10} /> Auto Rule</button>

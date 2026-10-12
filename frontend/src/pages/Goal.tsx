@@ -4,12 +4,10 @@ import { Area, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, 
 import {
     applyMilestonesFromSimulation,
     compareSimulationScenarios,
-    createCapsuleHolding,
     createGoal,
     createGoalCapsule,
     createMilestone,
     createSimulationScenario,
-    deleteCapsuleHolding,
     deleteGoal,
     deleteMilestone,
     deleteSimulationScenario,
@@ -22,7 +20,6 @@ import {
     getSimulationScenarios,
     previewMilestonesFromSimulation,
     runMonteCarloSimulation,
-    updateCapsuleHolding,
     updateGoal,
     updateMilestone,
 } from '../api';
@@ -34,7 +31,6 @@ import type {
     Account,
     ContributionScheduleItem,
     ContributionScheduleKind,
-    CapsuleHolding,
     Capsule,
     LifeEvent,
     Milestone,
@@ -162,9 +158,6 @@ export default function Goal() {
     const [eventForm, setEventForm] = useState(emptyEventForm);
     const [editingEvent, setEditingEvent] = useState<LifeEvent | null>(null);
     const [showEventModal, setShowEventModal] = useState(false);
-    const [accounts, setAccounts] = useState<Account[]>([]);
-    const [holdingForm, setHoldingForm] = useState({ account_id: '', held_amount: '', note: '' });
-    const [holdingEdits, setHoldingEdits] = useState<Record<number, string>>({});
     const [milestoneForm, setMilestoneForm] = useState({ date: '', target_amount: '', note: '' });
     const [simParams, setSimParams] = useState({ annual_return: 5, inflation: 2 });
     const [contributions, setContributions] = useState<ContributionDraft[]>([
@@ -208,7 +201,7 @@ export default function Goal() {
     const [deleteModal, setDeleteModal] = useState<{
         goalId: number;
         goalName: string;
-        capsules: Array<{ id: number; name: string; current_balance: number; account_id: number | null }>;
+        capsules: Array<{ id: number; name: string; current_balance: number }>;
         transferAccountId: string;
         confirming: boolean;
         assetAccounts: Account[];
@@ -493,10 +486,9 @@ export default function Goal() {
                     'annual',
                 )
                 : null;
-            const [capsuleData, accountsData] = await Promise.all([getCapsules(), getAccounts('asset')]);
+            const capsuleData = await getCapsules();
             setDashboard(baseDashboardData);
             setCapsules(capsuleData);
-            setAccounts(accountsData as Account[]);
 
             const selectedEvents = directDashboardData?.events ?? baseDashboardData.events;
             const nextSelected = preferredId
@@ -893,46 +885,6 @@ export default function Goal() {
             await fetchGoalWorkspace(selectedGoal.id);
         } catch (error) {
             showToast(getErrorDetail(error, 'Failed to create goal capsule'), 'error');
-        }
-    };
-
-    const saveHolding = async () => {
-        if (!linkedCapsule || !holdingForm.account_id || !holdingForm.held_amount) return;
-        try {
-            await createCapsuleHolding(linkedCapsule.id, {
-                account_id: Number(holdingForm.account_id),
-                held_amount: Number(holdingForm.held_amount),
-                note: holdingForm.note || undefined,
-            });
-            setHoldingForm({ account_id: '', held_amount: '', note: '' });
-            showToast('Holding saved', 'success');
-            await fetchGoalWorkspace(selectedGoal?.id);
-        } catch (error) {
-            showToast(getErrorDetail(error, 'Failed to save holding'), 'error');
-        }
-    };
-
-    const updateHolding = async (holdingId: number) => {
-        if (!linkedCapsule) return;
-        const newAmount = holdingEdits[holdingId];
-        if (newAmount === undefined) return;
-        try {
-            await updateCapsuleHolding(linkedCapsule.id, holdingId, { held_amount: Number(newAmount) });
-            showToast('Holding updated', 'success');
-            await fetchGoalWorkspace(selectedGoal?.id);
-        } catch (error) {
-            showToast(getErrorDetail(error, 'Failed to update holding'), 'error');
-        }
-    };
-
-    const removeHolding = async (holdingId: number) => {
-        if (!linkedCapsule) return;
-        try {
-            await deleteCapsuleHolding(linkedCapsule.id, holdingId);
-            showToast('Holding removed', 'info');
-            await fetchGoalWorkspace(selectedGoal?.id);
-        } catch (error) {
-            showToast('Failed to remove holding', 'error');
         }
     };
 
@@ -2105,9 +2057,6 @@ export default function Goal() {
     };
 
     const renderAssetAllocation = () => {
-        const holdings = linkedCapsule?.holdings ?? [];
-        const holdingsTotal = holdings.reduce((s, h) => s + h.held_amount, 0);
-        const assetAccounts = accounts.filter((a) => a.account_type === 'asset' && a.role !== 'earmarked');
         const capsuleProgress = linkedCapsule
             ? Math.min(100, (linkedCapsule.current_balance / (linkedCapsule.target_amount || 1)) * 100)
             : 0;
@@ -2123,7 +2072,7 @@ export default function Goal() {
                         <div className="bg-cyan-950/20 border border-cyan-800/50 p-3 flex flex-col md:flex-row md:items-center justify-between gap-3 text-xs">
                             <div>
                                 <p className="text-cyan-200">No linked capsule for this goal.</p>
-                                <p className="text-[10px] text-slate-500 mt-1">Create a dedicated sinking fund to track physical holdings.</p>
+                                <p className="text-[10px] text-slate-500 mt-1">Create a sinking fund to track journal claims.</p>
                             </div>
                             <button type="button" onClick={ensureSelectedGoalCapsule} className="px-3 py-1.5 bg-cyan-700 hover:bg-cyan-600 text-white text-[10px]">
                                 Create Capsule
@@ -2150,80 +2099,6 @@ export default function Goal() {
                     )}
                 </div>
 
-                {/* Section 2: Physical Holdings */}
-                {linkedCapsule && (
-                    <div className="bg-slate-800/30 border border-slate-700 p-4">
-                        <div className="flex items-center justify-between mb-3">
-                            <h3 className="text-[10px] text-slate-500 uppercase tracking-wider flex items-center gap-1">
-                                <TrendingUp size={12} /> Physical Holdings
-                            </h3>
-                            <span className="text-[10px] font-mono-nums text-slate-400">
-                                {formatCurrency(holdingsTotal)} / {formatCurrency(linkedCapsule.current_balance)}
-                            </span>
-                        </div>
-                        <div className="space-y-2 mb-4">
-                            {holdings.length === 0 ? (
-                                <p className="text-xs text-slate-600">No holdings recorded. Add which accounts physically hold this capsule's funds.</p>
-                            ) : (
-                                holdings.map((h: CapsuleHolding) => {
-                                    const editValue = holdingEdits[h.id] ?? String(h.held_amount);
-                                    return (
-                                        <div key={h.id} className="grid grid-cols-1 min-[640px]:grid-cols-[1fr_160px_auto] items-center gap-2 bg-slate-900/60 border border-slate-700 p-2 text-xs">
-                                            <div className="min-w-0">
-                                                <p className="text-slate-200 truncate">{h.account_name}</p>
-                                                {h.note && <p className="text-[10px] text-slate-500">{h.note}</p>}
-                                            </div>
-                                            <div className="flex items-center gap-2">
-                                                <input
-                                                    type="number"
-                                                    title="Held amount"
-                                                    placeholder="Amount"
-                                                    value={editValue}
-                                                    onChange={(e) => setHoldingEdits({ ...holdingEdits, [h.id]: e.target.value })}
-                                                    className="w-full bg-slate-950 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums"
-                                                />
-                                            </div>
-                                            <div className="flex justify-end gap-2">
-                                                <button type="button" onClick={() => updateHolding(h.id)} className="p-1.5 text-slate-500 hover:text-emerald-400" title="Save"><Check size={13} /></button>
-                                                <button type="button" onClick={() => removeHolding(h.id)} className="p-1.5 text-slate-600 hover:text-rose-400" title="Remove holding"><Trash2 size={13} /></button>
-                                            </div>
-                                        </div>
-                                    );
-                                })
-                            )}
-                        </div>
-                        <div className="grid grid-cols-12 gap-2 border-t border-slate-800 pt-3">
-                            <select
-                                title="Select account for holding"
-                                value={holdingForm.account_id}
-                                onChange={(e) => setHoldingForm({ ...holdingForm, account_id: e.target.value })}
-                                className="col-span-12 md:col-span-5 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs text-slate-300"
-                            >
-                                <option value="">Select account...</option>
-                                {assetAccounts.map((a) => (
-                                    <option key={a.id} value={a.id}>{a.name}</option>
-                                ))}
-                            </select>
-                            <input
-                                type="number"
-                                title="Held amount"
-                                placeholder="Amount"
-                                value={holdingForm.held_amount}
-                                onChange={(e) => setHoldingForm({ ...holdingForm, held_amount: e.target.value })}
-                                className="col-span-8 md:col-span-4 bg-slate-900 border border-slate-700 px-2 py-1.5 text-xs font-mono-nums"
-                            />
-                            <button
-                                type="button"
-                                title="Add holding"
-                                onClick={saveHolding}
-                                disabled={!holdingForm.account_id || !holdingForm.held_amount}
-                                className="col-span-4 md:col-span-3 bg-purple-900/50 border border-purple-800 text-purple-300 hover:bg-purple-900 disabled:opacity-40"
-                            >
-                                <Plus size={14} className="mx-auto" />
-                            </button>
-                        </div>
-                    </div>
-                )}
 
             </div>
         );

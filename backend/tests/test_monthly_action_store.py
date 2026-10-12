@@ -183,7 +183,7 @@ def test_apply_set_budget_failure_rolls_back_feature_rows_and_commits_failed_act
     db.expire_all()
     for model in (
         models.MonthlyPlanLine, models.RegistryEntry, models.RecurringTransaction,
-        models.Capsule, models.CapsuleHolding,
+        models.Capsule,
     ):
         assert db.query(model).count() == 0, model.__tablename__
     assert db.query(models.BudgetPlan).count() == 1

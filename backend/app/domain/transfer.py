@@ -7,7 +7,7 @@ import math
 from datetime import date, datetime
 from typing import Any
 
-EXPORT_VERSION = 10
+EXPORT_VERSION = 11
 
 DATA_COLLECTIONS = [
     "accounts",
@@ -28,7 +28,6 @@ DATA_COLLECTIONS = [
     "capsules",
     "capsule_funding_sources",
     "capsule_rules",
-    "capsule_holdings",
     "simulation_scenarios",
     "exchange_rates",
 ]
@@ -214,14 +213,11 @@ def validate_import_payload(
     check_ref("journal_entries", "account_id", "accounts", required=True)
     check_ref("journal_entries", "capsule_id", "capsules")
     check_ref("milestones", "life_event_id", "life_events")
-    check_ref("capsules", "account_id", "accounts")
     check_ref("capsules", "life_event_id", "life_events")
     check_ref("capsule_funding_sources", "capsule_id", "capsules", required=True)
     check_ref("capsule_funding_sources", "account_id", "accounts", required=True)
     check_ref("capsule_rules", "capsule_id", "capsules", required=True)
     check_ref("capsule_rules", "source_account_id", "accounts")
-    check_ref("capsule_holdings", "capsule_id", "capsules", required=True)
-    check_ref("capsule_holdings", "account_id", "accounts", required=True)
     check_ref("simulation_scenarios", "life_event_id", "life_events", required=True)
     check_ref("monthly_plan_lines", "account_id", "accounts")
     check_ref("monthly_plan_lines", "source_account_id", "accounts")

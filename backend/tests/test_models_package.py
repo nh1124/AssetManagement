@@ -9,9 +9,9 @@ from app import models
 from app.database import Base
 
 
-# F2a adds the nullable, indexed capsule attribution FK on journal legs.
-# Keep the complete schema pinned, including its ON DELETE SET NULL behavior.
-EXPECTED_METADATA_SHA256 = "c1207a50b36e911b743b28325eaa29f519af3408edb014bac96f5fcccf8ef7a5"
+# F2c removes the holding table and the capsule account/cache columns.
+# Keep every remaining column, constraint and index pinned.
+EXPECTED_METADATA_SHA256 = "56ec51a2311c5caa6dde6e07c044ec480d08a9575911cba5ecf02a6aceb09e11"
 
 MODEL_NAMES = (
     "Client", "ClientMfaSetting", "ClientRecoveryCode",
@@ -21,7 +21,7 @@ MODEL_NAMES = (
     "BudgetPlan", "MonthlyPlanLine", "PeriodReview", "MonthlyAction",
     "AiOperationPolicy", "AiAuditLog", "AiChangeRequest",
     "SimulationConfig", "SimulationScenario",
-    "Capsule", "CapsuleFundingSource", "CapsuleRule", "CapsuleHolding",
+    "Capsule", "CapsuleFundingSource", "CapsuleRule",
 )
 ENUM_NAMES = ("AccountType", "AccountRole")
 
@@ -89,8 +89,8 @@ def _metadata_snapshot():
 
 def test_metadata_matches_the_minor_unit_schema():
     snapshot = _metadata_snapshot()
-    assert len(snapshot["table_names"]) == 28
-    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 360
+    assert len(snapshot["table_names"]) == 27
+    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 352
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == EXPECTED_METADATA_SHA256
 

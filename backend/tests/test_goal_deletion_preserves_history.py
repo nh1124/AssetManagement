@@ -72,11 +72,10 @@ def _setup(db, *, claimed_amount=0):
     capsule = models.Capsule(
         client_id=client.id,
         life_event_id=goal.id,
-        account_id=earmarked.id,
+        funding_sources=[models.CapsuleFundingSource(client_id=client.id, account_id=earmarked.id, target_amount_minor=to_minor(500, "JPY") or 0)],
         name=goal.name,
         target_amount_minor=to_minor(500, "JPY"),
         monthly_contribution_minor=to_minor(0, "JPY"),
-        current_balance_minor=to_minor(0, "JPY"),
         capsule_type="life_event",
         target_amount_source="life_event",
         monthly_contribution_source="manual",

@@ -48,7 +48,7 @@ def _payload(posting, **overrides):
 def _rule(posting, *, auto_post=False):
     db, client, cash, _, reserve = posting
     capsule = models.Capsule(
-        client_id=client.id, name="Savings", account_id=reserve.id,
+        client_id=client.id, name="Savings", funding_sources=[models.CapsuleFundingSource(client_id=client.id, account_id=reserve.id, target_amount_minor=to_minor(5000, "JPY") or 0)],
         target_amount_minor=to_minor(5000, "JPY"), monthly_contribution_minor=to_minor(0, "JPY"), auto_post=auto_post,
     )
     db.add(capsule)

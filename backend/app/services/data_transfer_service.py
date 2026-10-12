@@ -26,7 +26,7 @@ from ..domain.transfer import (
 from .data_health_service import check_data_health
 from .budget_lines import assign_plan_line_identity
 from .cache_service import invalidate_client
-from .capsule_service import capsule_balance, create_capsule_for_goal
+from .capsule_service import create_capsule_for_goal
 from .registry_service import account_entry_type, account_line_type
 
 
@@ -389,9 +389,8 @@ def export_client(db: Session, client: models.Client) -> dict:
             "capsules": [
                 {
                     **row_fields(capsule, ["id", "name", "target_amount", "monthly_contribution"]),
-                    "current_balance": capsule_balance(db, capsule),
                     **row_fields(capsule, [
-                        "account_id", "life_event_id", "capsule_type", "target_amount_source",
+                        "life_event_id", "capsule_type", "target_amount_source",
                         "monthly_contribution_source", "created_at",
                     ]),
                 }
@@ -428,14 +427,6 @@ def export_client(db: Session, client: models.Client) -> dict:
                 for rule in db.query(models.CapsuleRule)
                 .filter(models.CapsuleRule.client_id == client.id)
                 .order_by(models.CapsuleRule.id)
-                .all()
-            ],
-            "capsule_holdings": [
-                row_fields(holding, ["id", "capsule_id", "account_id", "held_amount", "note", "updated_at"])
-                for holding in db.query(models.CapsuleHolding)
-                .join(models.Capsule, models.Capsule.id == models.CapsuleHolding.capsule_id)
-                .filter(models.Capsule.client_id == client.id)
-                .order_by(models.CapsuleHolding.id)
                 .all()
             ],
             "simulation_scenarios": [
@@ -536,17 +527,6 @@ def import_client(
         if tx_ids:
             db.query(models.JournalEntry).filter(
                 models.JournalEntry.transaction_id.in_(tx_ids)
-            ).delete(synchronize_session=False)
-
-        capsule_ids = [
-            row[0]
-            for row in db.query(models.Capsule.id)
-            .filter(models.Capsule.client_id == client.id)
-            .all()
-        ]
-        if capsule_ids:
-            db.query(models.CapsuleHolding).filter(
-                models.CapsuleHolding.capsule_id.in_(capsule_ids)
             ).delete(synchronize_session=False)
 
         for model in [
@@ -901,7 +881,6 @@ def import_client(
                 name=item["name"],
                 target_amount_minor=to_minor(item.get("target_amount") or 0, money_client_currency(db, client.id)),
                 monthly_contribution_minor=to_minor(item.get("monthly_contribution") or 0, money_client_currency(db, client.id)),
-                account_id=account_map.get(item.get("account_id")),
                 life_event_id=event_map.get(item.get("life_event_id")),
                 capsule_type=item.get("capsule_type") or ("life_event" if item.get("life_event_id") else "manual"),
                 target_amount_source=item.get("target_amount_source") or "manual",
@@ -996,20 +975,6 @@ def import_client(
                         sort_order=item.get("sort_order") or 0,
                         max_share_bp=item.get("max_share_bp"),
                         created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
-                        updated_at=parse_datetime(item.get("updated_at")) or datetime.utcnow(),
-                    )
-                )
-
-        for item in data.get("capsule_holdings", []):
-            capsule_id = capsule_map.get(item.get("capsule_id"))
-            account_id = account_map.get(item.get("account_id"))
-            if capsule_id and account_id:
-                db.add(
-                    models.CapsuleHolding(
-                        capsule_id=capsule_id,
-                        account_id=account_id,
-                        held_amount_minor=to_minor(item.get("held_amount") or 0, money_client_currency(db, client.id)),
-                        note=item.get("note"),
                         updated_at=parse_datetime(item.get("updated_at")) or datetime.utcnow(),
                     )
                 )
@@ -1134,4 +1099,3 @@ def import_client(
         "validation": validation,
         "health": check_data_health(db, client.id),
     }
-

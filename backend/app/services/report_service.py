@@ -10,6 +10,7 @@ from .money_storage import to_minor, money_client_currency
 
 from .. import models
 from ..domain.money import Money
+from ..domain.journal import Leg
 from .ledger_service import get_or_create_account, create_transaction
 from .fx_service import get_client_currency
 from .reporting_service import (
@@ -19,7 +20,7 @@ from .reporting_service import (
     get_variance_analysis,
     get_variance_analysis_for_range,
 )
-from .capsule_service import create_capsule_for_goal, upsert_capsule_holding, set_funding_sources
+from .capsule_service import create_capsule_for_goal, set_funding_sources
 from ..schemas import CapsuleFundingSourceInput
 from .goal_service import get_life_events_with_progress
 
@@ -339,6 +340,7 @@ def _apply_allocate_to_goal(
     savings_account = get_or_create_account(db, "savings", client_id, "asset", commit=False)
     currency = get_client_currency(db, client_id)
 
+    capsule = create_capsule_for_goal(db, client_id, goal)
     transaction = create_transaction(
         db,
         client_id=client_id,
@@ -346,32 +348,21 @@ def _apply_allocate_to_goal(
         description=f"Monthly action allocation {period}: {goal.name}",
         amount_minor=Money.from_major(str(amount), currency).minor,
         currency=currency,
-        from_account_id=cash_account.id,
-        to_account_id=savings_account.id,
+        legs=[Leg(savings_account.id, debit=Money.from_major(str(amount), currency).minor, capsule_id=capsule.id),
+              Leg(cash_account.id, credit=Money.from_major(str(amount), currency).minor)],
     )
     db.flush()
 
-    capsule = create_capsule_for_goal(db, client_id, goal)
-    if not capsule.funding_sources and capsule.account_id is None:
-        # The legacy account_id column is being retired; declare intent in the plan.
+    if not capsule.funding_sources:
+        # An unbound goal capsule declares the existing savings destination in its plan.
         set_funding_sources(db, client_id, capsule.id, [CapsuleFundingSourceInput(
             account_id=savings_account.id, target_amount=capsule.target_amount or 0.0,
         )], commit=False)
-    holding = upsert_capsule_holding(
-        db,
-        capsule,
-        savings_account.id,
-        amount,
-        note=f"Monthly action allocation {period}",
-    )
-    db.flush()
-
     return {
         "transaction_id": transaction.id,
         "goal_id": goal.id,
         "account_id": savings_account.id,
         "capsule_id": capsule.id,
-        "holding_id": holding.id,
         "allocated_amount": amount,
     }
 

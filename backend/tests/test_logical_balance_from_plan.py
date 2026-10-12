@@ -236,7 +236,7 @@ def test_capsule_allocation_does_not_reserve_unfunded_plan() -> None:
         capsule = models.Capsule(
             client_id=1,
             name="Reserve",
-            current_balance_minor=to_minor(1000, "JPY"),
+
         )
         db.add(capsule)
         db.commit()

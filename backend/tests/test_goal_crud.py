@@ -40,7 +40,7 @@ def _goal_with_capsule_account(db):
     db.add_all([goal, earmarked, income])
     db.flush()
     capsule = models.Capsule(
-        client_id=1, life_event_id=goal.id, account_id=earmarked.id,
+        client_id=1, life_event_id=goal.id, funding_sources=[models.CapsuleFundingSource(client_id=1, account_id=earmarked.id, target_amount_minor=to_minor(500, "JPY") or 0)],
         name=goal.name, target_amount_minor=to_minor(500, "JPY"), monthly_contribution_minor=to_minor(0, "JPY"),
     )
     db.add(capsule)
@@ -73,7 +73,6 @@ def test_delete_goal_preserves_every_ledger_leg_and_transaction_and_balances_boo
     )
     db.commit()
     # Zero holdings must not be mistaken for an account without journal history.
-    assert db.query(models.CapsuleHolding).count() == 0
     before_entries = _journal_rows(db)
     before_transactions = [
         (row.id, row.client_id, row.date, row.description, row.amount, row.currency)
@@ -155,7 +154,7 @@ def test_create_goal_writes_one_goal_annual_milestones_and_one_capsule_without_a
     assert goal_service.list_goals(db, 1) == [goal]
     assert goal_service.list_goals(db, 2) == []
     capsule = db.query(models.Capsule).one()
-    assert (capsule.client_id, capsule.life_event_id, capsule.account_id) == (1, goal.id, None)
+    assert (capsule.client_id, capsule.life_event_id, capsule.funding_sources) == (1, goal.id, [])
     assert (capsule.name, capsule.target_amount, capsule.monthly_contribution) == (payload.name, 500, 0)
     assert (capsule.capsule_type, capsule.target_amount_source) == ("life_event", "life_event")
     expected_rows = build_default_milestone_rows(db, 1, goal.id)
@@ -165,7 +164,7 @@ def test_create_goal_writes_one_goal_annual_milestones_and_one_capsule_without_a
         (row["date"], Money.from_major(str(row["target_amount"]), get_client_currency(db, 1)).to_float(), row["note"], row["source"], row["source_snapshot"])
         for row in sorted(expected_rows, key=lambda row: row["date"])
     ]
-    for model in (models.Account, models.Transaction, models.JournalEntry, models.CapsuleHolding, models.CapsuleRule):
+    for model in (models.Account, models.Transaction, models.JournalEntry, models.CapsuleRule):
         assert db.query(model).count() == 0
     if commit:
         assert commits == [(1, 0, 0), (1, len(milestones), 0), (1, len(milestones), 1)]

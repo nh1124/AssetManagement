@@ -166,9 +166,9 @@ def test_export_omits_balance_and_a_v8_cache_still_imports(db):
     _post(db, income, wallet, 112419, "EUR")
     _post(db, income, wallet, 23248, "USD")
     document = export_client(db, db.get(models.Client, 1))
-    # F1a took the format to 10; what this test is about is that the balance
+    # F2c took the format to 11; what this test is about is that the balance
     # column is absent and that a v8 document carrying one is ignored.
-    assert document["version"] == 10
+    assert document["version"] == 11
     assert all("balance" not in row for row in document["data"]["accounts"])
     data = document["data"]
     for row in data["accounts"]:

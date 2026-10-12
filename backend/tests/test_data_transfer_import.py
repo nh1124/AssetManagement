@@ -58,8 +58,8 @@ def _seed(db, client_id=101, base=10000):
                 values[field] = STAMP
         money_names = {
             "monthly_plan_lines": ("amount",), "life_events": ("target_amount",),
-            "milestones": ("target_amount",), "capsules": ("target_amount", "monthly_contribution", "current_balance"),
-            "capsule_holdings": ("held_amount",), "monthly_actions": ("amount",),
+            "milestones": ("target_amount",), "capsules": ("target_amount", "monthly_contribution"),
+            "monthly_actions": ("amount",),
             "capsule_funding_sources": ("target_amount",),
             "products": ("last_unit_price", "purchase_price"), "simulation_configs": ("monthly_savings",),
             "simulation_scenarios": ("monthly_savings",), "registry_entries": ("amount",),
@@ -80,8 +80,8 @@ def _seed(db, client_id=101, base=10000):
     expense = add(models.Account, 3, name="food", account_type="expense")
     goal = add(models.LifeEvent, 4, name="goal", start_date=date(2026, 10, 1),
                target_date=date(2027, 1, 1), target_amount=1000, note="goal note")
-    capsule = add(models.Capsule, 5, name="goal", account_id=cash.id, life_event_id=goal.id,
-                  target_amount=1000, monthly_contribution=10, current_balance=0,
+    capsule = add(models.Capsule, 5, name="goal", life_event_id=goal.id,
+                  target_amount=1000, monthly_contribution=10,
                   capsule_type="life_event", target_amount_source="life_event")
     product = add(models.Product, 6, name="food", category="expense", last_unit_price=100,
                   units_per_purchase=2, frequency_days=30, budget_account_id=expense.id,
@@ -119,8 +119,6 @@ def _seed(db, client_id=101, base=10000):
                     source_snapshot={"nested": {"account_id": cash.id}})
     add(models.CapsuleRule, 19, capsule_id=capsule.id, trigger_type="Expense",
         source_account_id=cash.id, destination_account_id=cash.id, amount_value=10)
-    add(models.CapsuleHolding, 20, capsule_id=capsule.id, account_id=cash.id,
-        held_amount=0, note="holding")
     add(models.CapsuleFundingSource, 24, client_id=client.id, capsule_id=capsule.id,
         account_id=cash.id, target_amount=250, max_share_bp=6000, sort_order=3)
     add(models.SimulationScenario, 21, life_event_id=goal.id, name="scenario",

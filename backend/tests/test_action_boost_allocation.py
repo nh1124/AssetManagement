@@ -1,13 +1,10 @@
-"""boost_allocation now earmarks capsule holdings instead of GoalAllocation rows.
-
-The goal_allocations table was dropped in migration 20260505_0015 and the model
-went with it, so the old implementation raised AttributeError the moment the
-action was applied. These tests pin the capsule-based replacement.
-"""
+"""boost_allocation earmarks cash with attributed, balanced journal entries."""
 from __future__ import annotations
 
 from app.services.money_storage import to_minor
 from app.services.ledger_service import create_transaction
+from app.services.capsule_service import claimed_minor
+from app.domain.journal import Leg
 
 
 from datetime import date, timedelta
@@ -54,7 +51,7 @@ def _seed(db, *, balance: float = 1_000_000.0):
     return savings, goal
 
 
-def test_boost_allocation_creates_capsule_holding_for_the_goal():
+def test_boost_allocation_creates_journal_claim_for_the_goal():
     db = _session()
     try:
         savings, goal = _seed(db)
@@ -74,13 +71,8 @@ def test_boost_allocation_creates_capsule_holding_for_the_goal():
         assert result["clamped"] is False
 
         capsule = db.query(models.Capsule).filter_by(client_id=1, life_event_id=goal.id).one()
-        holding = db.query(models.CapsuleHolding).filter_by(
-            capsule_id=capsule.id, account_id=savings.id
-        ).one()
-        assert holding.held_amount == pytest.approx(100_000.0)
-        # Legacy holdings cannot manufacture a journal claim or refresh its cache.
-        assert capsule.current_balance_minor == 0
-        assert result["capsule_balance"] == 0
+        assert claimed_minor(db, 1, capsule.id, savings.id) == {"JPY": 100_000}
+        assert result["capsule_balance"] == 100_000
     finally:
         db.close()
 
@@ -100,10 +92,7 @@ def test_boost_allocation_accumulates_on_repeat():
             apply_action(db, client_id=1, action_id=action["id"])
 
         capsule = db.query(models.Capsule).filter_by(client_id=1, life_event_id=goal.id).one()
-        holding = db.query(models.CapsuleHolding).filter_by(
-            capsule_id=capsule.id, account_id=savings.id
-        ).one()
-        assert holding.held_amount == pytest.approx(200_000.0)
+        assert claimed_minor(db, 1, capsule.id, savings.id) == {"JPY": 200_000}
     finally:
         db.close()
 
@@ -124,13 +113,14 @@ def test_boost_allocation_cannot_earmark_more_than_the_account_holds():
         db.flush()
         other_capsule = models.Capsule(
             client_id=1, life_event_id=other.id, name="car",
-            target_amount_minor=to_minor(500_000, "JPY"), monthly_contribution_minor=to_minor(0, "JPY"), current_balance_minor=to_minor(0, "JPY"),
+            target_amount_minor=to_minor(500_000, "JPY"), monthly_contribution_minor=to_minor(0, "JPY"),
         )
         db.add(other_capsule)
         db.flush()
-        db.add(models.CapsuleHolding(
-            capsule_id=other_capsule.id, account_id=savings.id, held_amount_minor=to_minor(90_000.0, "JPY")
-        ))
+        create_transaction(db, client_id=1, date=date(2026, 1, 1), description="Other claim",
+                           amount_minor=90000, currency="JPY",
+                           legs=[Leg(savings.id, debit=90000, capsule_id=other_capsule.id),
+                                 Leg(savings.id, credit=90000)])
         db.commit()
 
         action = create_action(
@@ -167,5 +157,26 @@ def test_boost_allocation_rejects_an_unknown_goal():
 
         refreshed = db.query(models.MonthlyAction).filter_by(id=action["id"]).one()
         assert refreshed.status == "failed"
+    finally:
+        db.close()
+
+
+def test_boost_allocation_release_clamps_to_claim_and_preserves_account_money():
+    from app.services.ledger_valuation import calculate_account_valued_balance
+    db = _session()
+    try:
+        savings, goal = _seed(db, balance=100_000)
+        for percent in [10, -50]:
+            action = create_action(db, client_id=1, source_period="2026-10", kind="boost_allocation",
+                                   payload={"life_event_id": goal.id, "account_id": savings.id, "delta_percent": percent})
+            result = apply_action(db, client_id=1, action_id=action["id"])["result"]
+            assert calculate_account_valued_balance(db, savings) == 100_000
+            if percent == 10:
+                assert result["capsule_balance"] == 10_000
+            else:
+                assert result["applied_amount"] == -10_000
+                assert result["claimed_amount"] == result["capsule_balance"] == 0
+        for transaction in db.query(models.Transaction):
+            assert sum(leg.debit_minor for leg in transaction.journal_entries) == sum(leg.credit_minor for leg in transaction.journal_entries) == transaction.amount_minor
     finally:
         db.close()

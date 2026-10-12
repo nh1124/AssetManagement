@@ -39,10 +39,7 @@ class BasisPoints(MinorUnits):
 def client_currency(row):
     if hasattr(row, "_deleted_money_currency"):
         return row._deleted_money_currency
-    if row.__tablename__ == "capsule_holdings":
-        client = row.capsule.client if row.capsule is not None else None
-    else:
-        client = row.client
+    client = row.client
     if client is None:
         raise ValueError(f"Cannot resolve client currency for {row.__tablename__}, row {row.id}")
     return settings_currency(client.general_settings)
@@ -58,11 +55,6 @@ def client_currency_expression(cls):
     from .client import Client
     raw = func.upper(func.trim(Client.general_settings["currency"].as_string()))
     currency = func.coalesce(func.nullif(raw, ""), "JPY")
-    if cls.__tablename__ == "capsule_holdings":
-        from .capsule import Capsule
-        return select(currency).select_from(Client).join(
-            Capsule, Capsule.client_id == Client.id,
-        ).where(Capsule.id == cls.capsule_id).correlate_except(Client, Capsule).scalar_subquery()
     return select(currency).where(Client.id == cls.client_id).correlate_except(Client).scalar_subquery()
 
 
