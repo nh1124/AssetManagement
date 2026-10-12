@@ -1,15 +1,30 @@
-import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import type { ReactElement } from 'react';
+import { BrowserRouter, Navigate, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import StudioLayout from './components/StudioLayout';
 import ScreenTabs from './components/ScreenTabs';
 import Pending from './components/Pending';
 import Record from './pages/Record';
+import Overview from './pages/assets/Overview';
+import Accounts from './pages/assets/Accounts';
+import Earmarks from './pages/assets/Earmarks';
 import { SETTINGS_PATH, STUDIO_HOME, STUDIO_SCREENS, type StudioScreen } from './navigation';
 import './theme.css';
 
-/** What each screen will hold, so a routed-but-empty screen says which wave fills it. */
+/** Screens a wave has built, by path and then by tab segment.
+ *
+ * Everything absent still routes and renders its note below, so adding a screen
+ * is one entry here rather than another branch in the route tree.
+ */
+const BUILT: Record<string, { index: ReactElement; tabs?: Record<string, ReactElement> }> = {
+    assets: {
+        index: <Overview />,
+        tabs: { accounts: <Accounts />, earmarks: <Earmarks /> },
+    },
+};
+
+/** What each unbuilt screen will hold, and which wave fills it. */
 const PENDING_NOTES: Record<string, { wave: string; note: string }> = {
     ledger: { wave: 'W2', note: '記録の一覧、未照合（取引の提案）、予算との対応。' },
-    assets: { wave: 'W3', note: '貸借対照表、口座（active の切り替え）、取り置き（展開で口座別の内訳）。' },
     flows: { wave: 'W2', note: '対象月の収入と支出を分類ごとに。' },
     budget: { wave: 'W4', note: '月末計画と照合済み実績の差、行動の記録。' },
     goals: { wave: 'W5', note: '資産推移、ゴール案の比較と切り替え。' },
@@ -24,7 +39,7 @@ const PENDING_NOTES: Record<string, { wave: string; note: string }> = {
     'debug/data-health': { wave: 'W8', note: 'data_health の全件表示と修復。リリース前に削除する。' },
 };
 
-function ScreenShell({ screen }: { screen: StudioScreen }) {
+function PendingScreen({ screen }: { screen: StudioScreen }) {
     const { pathname } = useLocation();
     const pending = PENDING_NOTES[screen.path];
     const tab = screen.tabs?.find((candidate) => {
@@ -32,13 +47,10 @@ function ScreenShell({ screen }: { screen: StudioScreen }) {
         return pathname.replace(/\/+$/, '') === full;
     });
     return (
-        <>
-            <ScreenTabs screen={screen} />
-            <Pending wave={pending?.wave ?? '未割当'}>
-                {pending?.note}
-                {tab?.segment ? `（${tab.label}）` : null}
-            </Pending>
-        </>
+        <Pending wave={pending?.wave ?? '未割当'}>
+            {pending?.note}
+            {tab?.segment ? `（${tab.label}）` : null}
+        </Pending>
     );
 }
 
@@ -49,20 +61,32 @@ export default function StudioApp() {
                 <Route element={<StudioLayout />}>
                     <Route index element={<Navigate to={STUDIO_HOME} replace />} />
                     <Route path="record" element={<Record />} />
-                    {STUDIO_SCREENS.map((screen) => (
-                        <Route key={screen.path} path={screen.path}>
-                            <Route index element={<ScreenShell screen={screen} />} />
-                            {screen.tabs
-                                ?.filter((tab) => tab.segment)
-                                .map((tab) => (
-                                    <Route
-                                        key={tab.segment}
-                                        path={tab.segment}
-                                        element={<ScreenShell screen={screen} />}
-                                    />
-                                ))}
-                        </Route>
-                    ))}
+                    {STUDIO_SCREENS.map((screen) => {
+                        const built = BUILT[screen.path];
+                        return (
+                            <Route
+                                key={screen.path}
+                                path={screen.path}
+                                element={<><ScreenTabs screen={screen} /><Outlet /></>}
+                            >
+                                <Route
+                                    index
+                                    element={built?.index ?? <PendingScreen screen={screen} />}
+                                />
+                                {screen.tabs
+                                    ?.filter((tab) => tab.segment)
+                                    .map((tab) => (
+                                        <Route
+                                            key={tab.segment}
+                                            path={tab.segment}
+                                            element={
+                                                built?.tabs?.[tab.segment] ?? <PendingScreen screen={screen} />
+                                            }
+                                        />
+                                    ))}
+                            </Route>
+                        );
+                    })}
                     <Route
                         path={SETTINGS_PATH}
                         element={

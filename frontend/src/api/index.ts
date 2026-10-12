@@ -316,9 +316,13 @@ export const skipReviewAction = async (id: number): Promise<MonthlyAction> => {
 };
 
 // Accounts endpoints
-export const getAccounts = async (accountType?: string): Promise<Account[]> => {
-    const params = accountType ? `?account_type=${accountType}` : '';
-    const response = await api.get(`/accounts/${params}`);
+export const getAccounts = async (accountType?: string, isActive?: boolean): Promise<Account[]> => {
+    const params = new URLSearchParams();
+    if (accountType) params.append('account_type', accountType);
+    // Omission preserves the API's active-only default for existing callers.
+    if (isActive !== undefined) params.append('is_active', String(isActive));
+    const query = params.toString();
+    const response = await api.get(`/accounts/${query ? `?${query}` : ''}`);
     return response.data;
 };
 
