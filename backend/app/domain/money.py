@@ -13,12 +13,28 @@ from functools import total_ordering
 
 CURRENCY_EXPONENTS = {"JPY": 0, "USD": 2, "EUR": 2}
 
+DEFAULT_CURRENCY = "JPY"
+
 
 def _places(currency: str) -> int:
     # A new currency needs an explicit precision decision; guessing hides typos.
     if currency not in CURRENCY_EXPONENTS:
         raise ValueError(f"Unsupported currency {currency!r}; define its minor-unit precision")
     return CURRENCY_EXPONENTS[currency]
+
+
+def normalize_currency(currency: str | None, *, default: str = DEFAULT_CURRENCY) -> str:
+    """The canonical code for a currency, or the default when none was stated.
+
+    Normalising and validating belong in one call. A caller that accepts
+    " usd " has already decided to take whatever its input holds, so the only
+    honest answer to a code this module cannot denominate is to refuse it
+    here -- at the boundary that read it -- rather than pass it on to whichever
+    Money happens to be built from it next.
+    """
+    code = (currency or "").strip().upper() or default
+    _places(code)
+    return code
 
 
 def _round_minor(value: Fraction, rounding: str) -> int:

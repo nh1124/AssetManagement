@@ -8,12 +8,24 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..domain.errors import Invalid
+from ..domain.money import normalize_currency as domain_normalize_currency
 
 FRANKFURTER_URL = "https://api.frankfurter.dev/v1/latest"
 
 
 def normalize_currency(currency: str | None) -> str:
-    return (currency or "JPY").strip().upper() or "JPY"
+    """Canonicalise a currency code, refusing one this system cannot denominate.
+
+    X11: this used to return `" gbp "` as `"GBP"` without asking whether GBP
+    was supported, so an unsupported code entered a client's settings quietly
+    and failed much later, at the first Money built from it. The rule itself
+    lives in the domain; the service's job is to state it as an HTTP-visible
+    refusal at the boundary that accepted the value.
+    """
+    try:
+        return domain_normalize_currency(currency)
+    except ValueError as exc:
+        raise Invalid(str(exc)) from exc
 
 
 def get_client_currency(db: Session, client_id: int | None) -> str:

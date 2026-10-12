@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 from backend.app import models, schemas
+from backend.app.domain.errors import Invalid
 from backend.app.database import Base, get_db
 from backend.app.dependencies import get_current_client
 from backend.app.routers import quick_templates, recurring, registry_entries, transactions
@@ -272,21 +273,26 @@ def test_currency_is_client_scoped_and_not_cached(posting, kind):
 
 
 @pytest.mark.parametrize("kind", KINDS)
-def test_unsupported_setting_normalizes_but_money_storage_refuses_it(posting, kind):
+def test_an_unsupported_setting_is_refused_the_moment_it_is_read(posting, kind):
+    """X11: the refusal moved from money storage to the code that resolves it.
+
+    This test used to assert the defect. `normalize_currency` canonicalised
+    `" gbp "` to `"GBP"` without validating, so three of the four paths failed
+    deep inside money storage and the fourth -- the template -- persisted an
+    unsupported currency without complaint. Every path now refuses in the same
+    place, and nothing is written in any of them.
+    """
     db, client, accounts, http = posting
     client.general_settings = {"currency": " gbp "}
     db.commit()
-    assert fx_service.normalize_currency(" gbp ") == "GBP"
-    assert fx_service.get_client_currency(db, client.id) == "GBP"
-    if kind in {"transaction", "recurring", "registry"}:
-        with pytest.raises(ValueError, match="Unsupported currency 'GBP'"):
-            http.post(PATHS[kind], json=_payload(kind, accounts))
-        assert db.query(models.Transaction).count() == 0
-    else:
-        response = http.post(PATHS[kind], json=_payload(kind, accounts))
-        assert response.status_code == 200, response.text
-        field = "default_currency" if kind == "template" else "currency"
-        assert response.json()[field] == "GBP"
+    with pytest.raises(Invalid, match="Unsupported currency 'GBP'"):
+        fx_service.normalize_currency(" gbp ")
+    with pytest.raises(Invalid, match="Unsupported currency 'GBP'"):
+        fx_service.get_client_currency(db, client.id)
+    with pytest.raises(Invalid, match="Unsupported currency 'GBP'"):
+        http.post(PATHS[kind], json=_payload(kind, accounts))
+    assert db.query(models.Transaction).count() == 0
+    assert db.query(models.QuickTemplate).count() == 0
 
 
 @pytest.mark.parametrize("kind", ["recurring", "registry", "template"])

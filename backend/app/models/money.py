@@ -1,7 +1,7 @@
 from sqlalchemy import BigInteger, Float, Integer, case, cast, select, func
 from sqlalchemy.types import TypeDecorator
 
-from ..domain.money import CURRENCY_EXPONENTS, Money
+from ..domain.money import CURRENCY_EXPONENTS, Money, normalize_currency
 
 
 class MinorUnits(TypeDecorator):
@@ -51,9 +51,7 @@ def client_currency(row):
 def settings_currency(settings):
     # Cur1 allows an unset preference on a known client; an absent owner is different.
     value = settings.get("currency") if isinstance(settings, dict) else None
-    currency = (value or "JPY").strip().upper() or "JPY"
-    Money(0, currency)
-    return currency
+    return normalize_currency(value)
 
 
 def client_currency_expression(cls):
