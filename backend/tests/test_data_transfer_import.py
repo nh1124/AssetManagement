@@ -248,6 +248,21 @@ def test_round_trip_preserves_every_collection_and_document(db):
     expected["exported_at"] = restored["exported_at"]
     expected["manifest"]["client_id"] = target.id
     expected["manifest"]["exported_at"] = restored["exported_at"]
+    # Health is derived from the restored rows, so its references name the
+    # destination IDs too. F3 makes this fixture's plan mismatch and share
+    # warnings visible; keep comparing their full contents after remapping.
+    def remap_health(value):
+        if isinstance(value, list):
+            return [remap_health(item) for item in value]
+        if isinstance(value, dict):
+            return {
+                key: maps[REFERENCES[key]][item] if key in REFERENCES and item is not None
+                else remap_health(item)
+                for key, item in value.items()
+            }
+        return value
+
+    expected["health"] = remap_health(expected["health"])
     checksums = {key: _checksum(value) for key, value in expected["data"].items()}
     expected["manifest"]["checksums"] = checksums
     expected["manifest"]["payload_checksum"] = _checksum({"data": expected["data"], "checksums": checksums})

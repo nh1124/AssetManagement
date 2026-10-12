@@ -12,6 +12,8 @@ from .budget_actuals import LINE_SIDE, claimed_leg_ids
 from .budget_context import BudgetContext
 from .journal_legs import primary_accounts
 from .ledger_service import BALANCE_TOLERANCE
+from .ledger_valuation import calculate_account_balances
+from .fx_service import get_client_currency, normalize_currency
 from ..domain.money import Money
 from .budget_lines import assign_plan_line_identity, line_identity_key, newest_line_key
 from .budget_plan_store import get_or_create_default_plan
@@ -550,6 +552,141 @@ def _unclaimed_budget_leg_items(db: Session, client_id: int) -> list[dict[str, A
     return items
 
 
+def _capsule_funding_issues(db: Session, client_id: int) -> list[dict[str, Any]]:
+    """Compare saved intent with attributed journal facts, without changing either.
+
+    Claims retain their currency and recorded account even if the funding plan
+    has since changed. Pending proposals and legacy balance caches are not facts.
+    """
+    with db.no_autoflush:
+        currency = get_client_currency(db, client_id)
+        capsules = {
+            row.id: row for row in db.query(models.Capsule)
+            .filter_by(client_id=client_id).order_by(models.Capsule.id).all()
+        }
+        accounts = {
+            row.id: row for row in db.query(models.Account)
+            .filter_by(client_id=client_id).order_by(models.Account.id).all()
+        }
+        sources = db.query(models.CapsuleFundingSource).filter(
+            models.CapsuleFundingSource.client_id == client_id,
+            models.CapsuleFundingSource.capsule_id.in_(capsules),
+            models.CapsuleFundingSource.account_id.in_(accounts),
+        ).order_by(models.CapsuleFundingSource.capsule_id, models.CapsuleFundingSource.account_id).all()
+        rules = db.query(models.CapsuleRule).filter(
+            models.CapsuleRule.client_id == client_id,
+            models.CapsuleRule.capsule_id.in_(capsules),
+            models.CapsuleRule.destination_account_id.in_(accounts),
+        ).order_by(models.CapsuleRule.id).all()
+        rows = db.query(
+            models.JournalEntry.capsule_id,
+            models.JournalEntry.account_id,
+            models.Transaction.currency,
+            func.sum(models.JournalEntry.debit_minor - models.JournalEntry.credit_minor),
+        ).join(
+            models.Transaction, models.Transaction.id == models.JournalEntry.transaction_id,
+        ).filter(
+            models.Transaction.client_id == client_id,
+            models.JournalEntry.capsule_id.in_(capsules),
+            models.JournalEntry.account_id.in_(accounts),
+        ).group_by(
+            models.JournalEntry.capsule_id, models.JournalEntry.account_id, models.Transaction.currency,
+        ).all()
+        holdings = calculate_account_balances(db, list(accounts.values()), target_currency=currency)
+
+    claims: dict[tuple[int, int, str], int] = defaultdict(int)
+    for capsule_id, account_id, denomination, amount in rows:
+        claims[capsule_id, account_id, normalize_currency(denomination)] += int(amount)
+
+    by_account: dict[tuple[int, str], list[dict[str, Any]]] = defaultdict(list)
+    by_capsule: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    for (capsule_id, account_id, denomination), amount in sorted(claims.items()):
+        if not amount:
+            continue
+        by_account[account_id, denomination].append({
+            "capsule_id": capsule_id, "name": capsules[capsule_id].name, "claimed_minor": amount,
+        })
+        by_capsule[capsule_id][denomination] += amount
+
+    beyond_balance = []
+    for (account_id, denomination), involved in sorted(by_account.items()):
+        total = sum(item["claimed_minor"] for item in involved)
+        balance = holdings[account_id].balances_minor.get(denomination, 0)
+        if total > balance:
+            beyond_balance.append({
+                "account_id": account_id, "account_name": accounts[account_id].name,
+                "currency": denomination, "claimed_total_minor": total,
+                "balance_minor": balance, "excess_minor": total - balance, "capsules": involved,
+            })
+
+    beyond_share = []
+    planned: dict[int, int] = defaultdict(int)
+    references: dict[tuple[int, int], set[str]] = defaultdict(set)
+    for source in sources:
+        planned[source.capsule_id] += source.target_amount_minor
+        references[source.capsule_id, source.account_id].add("plan")
+        if source.max_share_bp is None:
+            continue
+        claim = claims.get((source.capsule_id, source.account_id, currency), 0)
+        balance = holdings[source.account_id].balances_minor.get(currency, 0)
+        # Multiply first. Integer claims breach the exact rational allowance
+        # iff they exceed its floor; no float ratio or FX valuation is involved.
+        allowance = balance * source.max_share_bp // 10000
+        if claim > allowance:
+            beyond_share.append({
+                "capsule_id": source.capsule_id, "name": capsules[source.capsule_id].name,
+                "account_id": source.account_id, "account_name": accounts[source.account_id].name,
+                "currency": currency, "max_share_bp": source.max_share_bp,
+                "claimed_minor": claim, "allowance_minor": allowance, "balance_minor": balance,
+            })
+
+    outside_currency = []
+    for capsule_id, amounts in sorted(by_capsule.items()):
+        foreign = {code: amount for code, amount in sorted(amounts.items()) if code != currency and amount}
+        if foreign:
+            outside_currency.append({
+                "capsule_id": capsule_id, "name": capsules[capsule_id].name,
+                "client_currency": currency, "claims_minor": foreign,
+            })
+
+    plan_mismatch = []
+    for capsule_id, total in sorted(planned.items()):
+        target = capsules[capsule_id].target_amount_minor or 0
+        if total != target:
+            plan_mismatch.append({
+                "capsule_id": capsule_id, "name": capsules[capsule_id].name, "currency": currency,
+                "planned_total_minor": total, "target_amount_minor": target, "difference_minor": total - target,
+            })
+
+    for rule in rules:
+        references[rule.capsule_id, rule.destination_account_id].add("rule")
+    inactive_accounts = []
+    for (capsule_id, account_id), named_by in sorted(references.items()):
+        if accounts[account_id].is_active is False:
+            inactive_accounts.append({
+                "capsule_id": capsule_id, "name": capsules[capsule_id].name,
+                "account_id": account_id, "account_name": accounts[account_id].name,
+                "named_by": "both" if len(named_by) == 2 else next(iter(named_by)),
+            })
+
+    checks = [
+        ("account_earmarked_beyond_its_balance", "error", "Account claims exceed its holdings",
+         "Attributed capsule claims exceed the account's journal balance in the same currency. Spending can leave a promise unfunded.", beyond_balance),
+        ("capsule_beyond_its_declared_share", "warning", "Capsule claim exceeds its declared share",
+         "The claim exceeds the funding source's share of the account's balance in the client's currency. The balance can change independently.", beyond_share),
+        ("capsule_claim_outside_the_client_currency", "warning", "Capsule claims outside the client's currency",
+         "These claims are reported per currency and are excluded from the target clamp and the figure deciding whether the capsule is funded.", outside_currency),
+        ("capsule_plan_does_not_total_its_target", "warning", "Capsule funding plan differs from its target",
+         "Fixed funding plan amounts do not follow changes to the capsule's target. Both amounts are in the client's currency.", plan_mismatch),
+        ("capsule_funding_account_is_inactive", "warning", "Capsule funding account is inactive",
+         "A funding plan or rule destination names an inactive account. Suggested reservations display Account unavailable and cannot be approved.", inactive_accounts),
+    ]
+    return [{
+        "code": code, "severity": severity, "title": title, "detail": detail,
+        "count": len(items), "repairable": False, "items": items[:100],
+    } for code, severity, title, detail, items in checks]
+
+
 def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
     default_plan = db.query(models.BudgetPlan).filter_by(client_id=client_id, is_default=True).first()
     null_plan_count = (
@@ -595,6 +732,7 @@ def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
             "repairable": False,
             "items": capsule_without_account[:100],
         },
+        *_capsule_funding_issues(db, client_id),
         {
             "code": "recurring_without_registry",
             "severity": "error",
