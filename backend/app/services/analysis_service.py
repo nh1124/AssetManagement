@@ -52,14 +52,37 @@ def _sum_unpaid_liabilities(db: Session, client_id: int) -> float:
 
 
 def _sum_capsule_balance(db: Session, client_id: int) -> float:
+    """What this client has earmarked, counting each account once.
+
+    F0: this added "that capsule's account balance" once per capsule, so N
+    capsules sharing an account subtracted the same money N times from
+    logical_balance. Nothing prevents sharing -- capsules.account_id has no
+    unique constraint and no service validates it -- so the N-times figure was
+    reachable rather than hypothetical: three capsules on an account holding
+    100,000 reported 300,000 earmarked.
+
+    Counting each distinct account once is the honest reading of the model as
+    it stands, where a capsule's reservation is the whole balance of the
+    account it reserves into. It is still coarse for a shared account, because
+    the whole balance is attributed even when only part of it was reserved.
+    capsule_funding_design.md replaces this with the sum of the claims on each
+    account, which is exact; until then this is wrong by an unknown amount
+    rather than wrong by a factor.
+    """
     capsules = db.query(models.Capsule).filter(
         models.Capsule.client_id == client_id
     ).all()
-    account_capsules = [capsule for capsule in capsules if capsule.account]
-    balances = calculate_account_valued_balances(db, [capsule.account for capsule in account_capsules])
-    return sum(
-        (balances.get(capsule.account.id, 0.0) if capsule.account else capsule.current_balance) or 0.0
-        for capsule in capsules
+    accounts = {
+        capsule.account.id: capsule.account
+        for capsule in capsules if capsule.account is not None
+    }
+    balances = calculate_account_valued_balances(db, list(accounts.values()))
+    earmarked = sum(balances.get(account_id, 0.0) or 0.0 for account_id in accounts)
+    # A capsule bound to no account still reports the legacy cache, which is
+    # zero for every row in this database. F2 retires the column.
+    return earmarked + sum(
+        capsule.current_balance or 0.0
+        for capsule in capsules if capsule.account is None
     )
 
 

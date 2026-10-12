@@ -550,6 +550,36 @@ def _unclaimed_budget_leg_items(db: Session, client_id: int) -> list[dict[str, A
     return items
 
 
+def _capsules_sharing_an_account(db: Session, client_id: int) -> list[dict[str, Any]]:
+    """Accounts that more than one capsule reserves into.
+
+    Grouping in Python rather than in SQL keeps one query and one meaning on
+    both databases; string aggregation is spelled differently on each.
+    """
+    by_account: dict[tuple[int, str], list[str]] = {}
+    rows = (
+        db.query(models.Capsule.account_id, models.Account.name, models.Capsule.name)
+        .join(models.Account, models.Account.id == models.Capsule.account_id)
+        .filter(
+            models.Capsule.client_id == client_id,
+            models.Capsule.account_id.isnot(None),
+        )
+        .all()
+    )
+    for account_id, account_name, capsule_name in rows:
+        by_account.setdefault((account_id, account_name), []).append(capsule_name)
+    return [
+        {
+            "account_id": account_id,
+            "account_name": account_name,
+            "capsule_count": len(names),
+            "capsules": sorted(name for name in names if name is not None),
+        }
+        for (account_id, account_name), names in sorted(by_account.items())
+        if len(names) > 1
+    ]
+
+
 def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
     default_plan = db.query(models.BudgetPlan).filter_by(client_id=client_id, is_default=True).first()
     null_plan_count = (
@@ -584,7 +614,23 @@ def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
         .all()
     ]
 
+    capsules_sharing_an_account = _capsules_sharing_an_account(db, client_id)
+
     issues = [
+        {
+            "code": "capsules_sharing_an_account",
+            "severity": "error",
+            "title": "Capsules reserving into the same account",
+            "detail": (
+                "A capsule's reservation is the balance of the account it reserves into, so two "
+                "capsules on one account each claim all of it: the earmarked total is overstated "
+                "and every one of them reads the others' money as its own progress, which stops "
+                "their rules firing once the shared balance passes the smallest target."
+            ),
+            "count": len(capsules_sharing_an_account),
+            "repairable": False,
+            "items": capsules_sharing_an_account[:100],
+        },
         {
             "code": "capsule_without_account",
             "severity": "warning",
