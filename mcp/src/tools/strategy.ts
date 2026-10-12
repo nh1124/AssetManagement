@@ -354,7 +354,7 @@ export function registerStrategyTools(server: McpServer): void {
     "registry_entries_delete",
     {
       title: "Delete registry entry",
-      description: "Soft-deletes a registry source and disables its budget/recurring generation.",
+      description: "Deletes a registry source and the recurring definitions it owns. Postings already made stay in the journal. To keep the definition but stop it, set is_active=false instead.",
       inputSchema: z.object({ id: z.number().int().min(1).describe("Registry entry ID") }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },

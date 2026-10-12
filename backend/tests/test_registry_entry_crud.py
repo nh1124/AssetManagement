@@ -4,7 +4,7 @@ from datetime import date
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from backend.app import models, schemas
@@ -17,6 +17,14 @@ from backend.app.services import registry_service
 @pytest.fixture
 def db():
     engine = create_engine("sqlite:///:memory:")
+
+    # Deleting a definition relies on the schema's own ON DELETE rules, which
+    # SQLite ignores unless asked. Without this the test would pass on
+    # behaviour Postgres does not have.
+    @event.listens_for(engine, "connect")
+    def _foreign_keys(connection, _record):
+        connection.execute("PRAGMA foreign_keys=ON")
+
     Base.metadata.create_all(bind=engine)
     session = sessionmaker(autocommit=False, autoflush=False, bind=engine)()
     session.add_all([
@@ -80,21 +88,68 @@ def test_update_entry_preserves_the_one_to_one_recurring_link(db):
     assert (saved.name, saved.amount, saved.day_of_month) == ("updated", 2500, 14)
 
 
-def test_delete_entry_preserves_soft_delete_and_removes_all_linked_recurring_rows(db):
+def test_delete_entry_removes_the_definition_and_all_linked_recurring_rows(db):
+    """X2: DELETE deletes. It used to drop three flags and keep the row.
+
+    The old behaviour left an entry no reader could see -- every query filters
+    on is_active -- while it still held its name, so the same subscription
+    could not be registered again under the same identity.
+    """
     entry = registry_service.create_entry(db, 1, _data(db))
     entry_id = entry.id
-    # Legacy duplicates must also disappear when their definition is disabled.
+    # Legacy duplicates must also disappear with their definition.
     db.add(models.RecurringTransaction(client_id=1, source_registry_entry_id=entry_id))
     db.commit()
     assert db.query(models.RecurringTransaction).count() == 2
     assert registry_service.delete_entry(db, 1, entry_id) is True
     db.expire_all()
-    saved = db.query(models.RegistryEntry).one()
-    assert saved.id == entry_id
-    assert saved.source_recurring_transaction_id is None
-    assert (saved.is_active, saved.budget_active, saved.generate_recurring) == (False, False, False)
+    assert db.query(models.RegistryEntry).count() == 0
     assert db.query(models.RecurringTransaction).count() == 0
+    assert registry_service.delete_entry(db, 1, entry_id) is False
     assert registry_service.delete_entry(db, 1, 999) is False
+
+
+def test_re_registering_after_a_delete_leaves_no_ghost(db):
+    """A deactivated row was invisible to readers but still exported and imported.
+
+    Re-registering the same subscription used to leave two rows behind, one of
+    them reachable only through a backup.
+    """
+    first = registry_service.create_entry(db, 1, _data(db))
+    assert registry_service.delete_entry(db, 1, first.id) is True
+    second = registry_service.create_entry(db, 1, _data(db))
+    assert db.query(models.RegistryEntry).one().id == second.id
+    assert db.query(models.RecurringTransaction).one().source_registry_entry_id == second.id
+
+
+def test_delete_entry_keeps_postings_the_recurring_row_already_made(db):
+    """Deleting a definition must not rewrite history, only unlink it."""
+    entry = registry_service.create_entry(db, 1, _data(db))
+    recurring_id = entry.source_recurring_transaction_id
+    accounts = {row.name: row.id for row in db.query(models.Account).filter_by(client_id=1)}
+    posted = models.Transaction(
+        client_id=1, date=date(2026, 10, 1), description="subscription",
+        amount_minor=1200, currency="JPY", recurring_transaction_id=recurring_id,
+    )
+    db.add(posted)
+    db.commit()
+    db.add_all([
+        models.JournalEntry(transaction_id=posted.id, account_id=accounts["subscriptions"],
+                            debit_minor=1200, credit_minor=0),
+        models.JournalEntry(transaction_id=posted.id, account_id=accounts["bank"],
+                            debit_minor=0, credit_minor=1200),
+    ])
+    db.commit()
+    posted_id = posted.id
+
+    assert registry_service.delete_entry(db, 1, entry.id) is True
+    db.expire_all()
+    survivor = db.query(models.Transaction).one()
+    assert survivor.id == posted_id
+    assert survivor.amount_minor == 1200
+    assert db.query(models.JournalEntry).count() == 2
+    # The provenance is gone because its cause is; the money is not.
+    assert survivor.recurring_transaction_id is None
 
 
 @pytest.mark.parametrize("key", ["budget_account_id", "source_account_id", "destination_account_id"])

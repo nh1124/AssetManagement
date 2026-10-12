@@ -110,12 +110,17 @@ def delete_entry(
     ).first()
     if not entry:
         return False
+    # X2: DELETE removes the definition. It used to drop three flags and leave
+    # the row, which every reader filters out anyway, so the entry became
+    # unreachable data that still occupied its (client, name) identity. The
+    # recurring rows go with it -- the registry owns them -- and the postings
+    # they already produced stay in the journal with their provenance nulled,
+    # exactly as before: deleting a definition must not rewrite history.
     for recurring in linked_recurring_transactions(db, entry):
         db.delete(recurring)
     entry.source_recurring_transaction_id = None
-    entry.is_active = False
-    entry.budget_active = False
-    entry.generate_recurring = False
+    db.flush()
+    db.delete(entry)
     if commit:
         db.commit()
     else:
