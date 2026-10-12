@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from backend.app.domain.money import Money
+
 from datetime import date
 
 from sqlalchemy import create_engine
@@ -103,7 +105,7 @@ def test_hand_entered_transaction_has_no_definition():
             client_id=1,
             date=date(2026, 6, 15),
             description="Hand-entered rent",
-            amount=1000,
+            amount_minor=Money.from_major(str(1000), "JPY").minor,
             currency="JPY",
         )
         db.add(transaction)

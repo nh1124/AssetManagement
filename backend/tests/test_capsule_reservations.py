@@ -1,3 +1,4 @@
+from backend.app.domain.money import Money
 from datetime import date
 
 import pytest
@@ -80,7 +81,7 @@ def _trigger(posting, *, compound=False):
         client_id=1,
         date=WHEN,
         description="Lunch",
-        amount=10000,
+        amount_minor=Money.from_major(str(10000), "JPY").minor,
         currency="JPY",
         legs=[
             ledger.Leg(
@@ -152,7 +153,7 @@ def test_target_clamps_to_journal_balance(posting):
             client_id=1,
             date=WHEN,
             description="Existing savings",
-            amount=amount,
+            amount_minor=Money.from_major(str(amount), "JPY").minor,
             from_account_id=cash.id,
             to_account_id=reserve.id,
         )
@@ -179,7 +180,7 @@ def test_percentage_reservation_rounds_minor_units_and_balances_legs(posting, au
     db.flush()
     tx = ledger.create_transaction(
         db, client_id=1, date=WHEN, description="Uneven percentage",
-        amount=101.0, currency=currency,
+        amount_minor=Money.from_major(str(101.0), currency).minor, currency=currency,
         from_account_id=cash.id, to_account_id=expense.id,
     )
     reservation, = _apply(posting, tx)
@@ -188,12 +189,12 @@ def test_percentage_reservation_rounds_minor_units_and_balances_legs(posting, au
     if auto_post:
         db.flush()
         entries = db.query(models.JournalEntry).filter_by(transaction_id=reservation.id).all()
-        debits = sum(entry.debit for entry in entries)
-        credits = sum(entry.credit for entry in entries)
+        debits = sum(entry.debit_minor for entry in entries)
+        credits = sum(entry.credit_minor for entry in entries)
     else:
         debits = sum(leg["debit"] for leg in reservation.legs)
         credits = sum(leg["credit"] for leg in reservation.legs)
-    assert debits == credits == reservation.amount
+    assert debits == credits == reservation.amount_minor
 
 
 def test_approval_moves_account_balances(posting):

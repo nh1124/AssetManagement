@@ -7,6 +7,7 @@ from dateutil.relativedelta import relativedelta
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..domain.money import Money
 from .ledger_service import get_or_create_account, create_transaction
 from .reporting_service import (
     get_balance_sheet,
@@ -338,7 +339,7 @@ def _apply_allocate_to_goal(
         client_id=client_id,
         date=date.today(),
         description=f"Monthly action allocation {period}: {goal.name}",
-        amount=amount,
+        amount_minor=Money.from_major(str(amount), "JPY").minor,
         currency="JPY",
         from_account_id=cash_account.id,
         to_account_id=savings_account.id,

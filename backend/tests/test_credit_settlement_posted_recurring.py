@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from backend.app.domain.money import Money
+
 from datetime import date
 
 import pytest
@@ -62,7 +64,7 @@ def _plan(db, card, subs, amount=5000, plan_id=None):
 
 
 def _post(db, card, subs, amount):
-    tx = models.Transaction(client_id=1, date=date(2026, 10, 11), description="subscription", amount=amount, currency="JPY")
+    tx = models.Transaction(client_id=1, date=date(2026, 10, 11), description="subscription", amount_minor=Money.from_major(str(amount), "JPY").minor, currency="JPY")
     db.add(tx)
     db.flush()
     process_transaction(db, tx, from_account_id=card.id, to_account_id=subs.id)

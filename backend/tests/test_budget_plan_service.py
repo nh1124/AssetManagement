@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from backend.app.domain.money import Money
+
 from datetime import date
 
 from fastapi import HTTPException
@@ -66,7 +68,7 @@ def test_data_health_repairs_plan_line_source_from_posted_transaction() -> None:
             client_id=1,
             date=date(2026, 5, 10),
             description="credit beauty",
-            amount=120000,
+            amount_minor=Money.from_major(str(120000), "JPY").minor,
             currency="JPY",
         )
         db.add_all([line, tx])
@@ -398,7 +400,7 @@ def test_budget_summary_combines_income_spending_allocations_and_debt() -> None:
             client_id=1,
             date=date(2026, 5, 10),
             description="NISA transfer",
-            amount=50000,
+            amount_minor=Money.from_major(str(50000), "JPY").minor,
             currency="JPY",
         )
         db.add(tx)
@@ -1055,14 +1057,14 @@ def test_cash_flow_projection_uses_remaining_current_month_plan_after_actuals() 
             client_id=1,
             date=date.today(),
             description="salary",
-            amount=100000,
+            amount_minor=Money.from_major(str(100000), "JPY").minor,
             currency="JPY",
         )
         expense_tx = models.Transaction(
             client_id=1,
             date=date.today(),
             description="food",
-            amount=30000,
+            amount_minor=Money.from_major(str(30000), "JPY").minor,
             currency="JPY",
         )
         db.add_all([income_tx, expense_tx])
@@ -1121,14 +1123,14 @@ def test_cash_flow_projection_does_not_double_count_current_month_over_actuals()
             client_id=1,
             date=period_to_range(add_months(current_period, -1))[0],
             description="opening income",
-            amount=100000,
+            amount_minor=Money.from_major(str(100000), "JPY").minor,
             currency="JPY",
         )
         expense_tx = models.Transaction(
             client_id=1,
             date=date.today(),
             description="food",
-            amount=70000,
+            amount_minor=Money.from_major(str(70000), "JPY").minor,
             currency="JPY",
         )
         db.add_all([opening_tx, expense_tx])
@@ -1208,21 +1210,21 @@ def test_financed_expense_counts_as_budget_usage_without_cash_flow_expense() -> 
             client_id=1,
             date=period_to_range(add_months(current_period, -1))[0],
             description="opening income",
-            amount=100000,
+            amount_minor=Money.from_major(str(100000), "JPY").minor,
             currency="JPY",
         )
         financed_expense = models.Transaction(
             client_id=1,
             date=date.today(),
             description="beauty",
-            amount=600000,
+            amount_minor=Money.from_major(str(600000), "JPY").minor,
             currency="JPY",
         )
         repayment = models.Transaction(
             client_id=1,
             date=date.today(),
             description="medical loan repayment",
-            amount=30000,
+            amount_minor=Money.from_major(str(30000), "JPY").minor,
             currency="JPY",
         )
         db.add_all([opening_tx, financed_expense, repayment])
@@ -1436,7 +1438,7 @@ def test_income_direct_to_asset_counts_as_allocation_actual_without_remaining_ca
             client_id=1,
             date=date.today(),
             description="payroll stock contribution",
-            amount=54515,
+            amount_minor=Money.from_major(str(54515), "JPY").minor,
             currency="JPY",
         )
         db.add_all([line, tx])
@@ -1475,7 +1477,7 @@ def test_balance_projection_tracks_debt_payment_and_liability_asset_purchase() -
             client_id=1,
             date=period_to_range(add_months(next_period, -2))[0],
             description="opening borrowing",
-            amount=100000,
+            amount_minor=Money.from_major(str(100000), "JPY").minor,
             currency="JPY",
         )
         db.add(opening)
@@ -1596,7 +1598,7 @@ def test_credit_expense_creates_credit_settlement_projection() -> None:
             client_id=1,
             date=start,
             description="credit food",
-            amount=50000,
+            amount_minor=Money.from_major(str(50000), "JPY").minor,
             currency="JPY",
         )
         db.add(tx)
@@ -1658,14 +1660,14 @@ def test_credit_settlement_uses_liability_closing_day_and_payment_offset() -> No
                 client_id=1,
                 date=date(2026, 5, 10),
                 description="before close",
-                amount=10000,
+                amount_minor=Money.from_major(str(10000), "JPY").minor,
                 currency="JPY",
             ),
             models.Transaction(
                 client_id=1,
                 date=date(2026, 5, 20),
                 description="after close",
-                amount=20000,
+                amount_minor=Money.from_major(str(20000), "JPY").minor,
                 currency="JPY",
             ),
         ]
@@ -1706,7 +1708,7 @@ def test_credit_settlement_applies_fixed_payment_policy() -> None:
             client_id=1,
             date=date(2026, 5, 10),
             description="credit food",
-            amount=20000,
+            amount_minor=Money.from_major(str(20000), "JPY").minor,
             currency="JPY",
         )
         db.add(charge)
@@ -1742,7 +1744,7 @@ def test_credit_settlement_spreads_installment_policy_across_future_months() -> 
             client_id=1,
             date=date(2026, 5, 10),
             description="installment purchase",
-            amount=30000,
+            amount_minor=Money.from_major(str(30000), "JPY").minor,
             currency="JPY",
         )
         db.add(charge)

@@ -10,6 +10,8 @@ These tests pin down what counts as a pair, and that it is only ever reported.
 
 from __future__ import annotations
 
+from backend.app.domain.money import Money
+
 from datetime import date
 
 from sqlalchemy import create_engine
@@ -44,7 +46,7 @@ def _accounts(db):
 
 def _post(db, description: str, amount: float, when: date, credit, debit):
     tx = models.Transaction(
-        client_id=1, date=when, description=description, amount=amount, currency="JPY"
+        client_id=1, date=when, description=description, amount_minor=Money.from_major(str(amount), "JPY").minor, currency="JPY"
     )
     db.add(tx)
     db.flush()

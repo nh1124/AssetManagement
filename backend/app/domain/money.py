@@ -11,14 +11,14 @@ from fractions import Fraction
 from functools import total_ordering
 
 
-_DECIMAL_PLACES = {"JPY": 0, "USD": 2, "EUR": 2}
+CURRENCY_EXPONENTS = {"JPY": 0, "USD": 2, "EUR": 2}
 
 
 def _places(currency: str) -> int:
     # A new currency needs an explicit precision decision; guessing hides typos.
-    if currency not in _DECIMAL_PLACES:
+    if currency not in CURRENCY_EXPONENTS:
         raise ValueError(f"Unsupported currency {currency!r}; define its minor-unit precision")
-    return _DECIMAL_PLACES[currency]
+    return CURRENCY_EXPONENTS[currency]
 
 
 def _round_minor(value: Fraction, rounding: str) -> int:

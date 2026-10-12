@@ -86,12 +86,12 @@ def _seed(db, client_id=101, base=10000):
                    config={"nested": [{"account_id": cash.id, "capsule_id": capsule.id}]})
     batch = add(models.TransactionBatch, 11, quick_template_id=template.id, label="batch",
                 input_payload={"nested": {"account_id": cash.id, "life_event_id": goal.id}})
-    tx = add(models.Transaction, 12, date=date(2026, 10, 2), description="food", amount=100,
+    tx = add(models.Transaction, 12, date=date(2026, 10, 2), description="food", amount_minor=100,
              batch_id=batch.id, recurring_transaction_id=recurring.id)
     add(models.JournalEntry, 13, transaction_id=tx.id, account_id=expense.id,
-        debit=100, credit=0, memo="debit", sort_order=0)
+        debit_minor=100, credit_minor=0, memo="debit", sort_order=0)
     add(models.JournalEntry, 14, transaction_id=tx.id, account_id=cash.id,
-        debit=0, credit=100, memo="credit", sort_order=1)
+        debit_minor=0, credit_minor=100, memo="credit", sort_order=1)
     plan = add(models.BudgetPlan, 15, name="default", is_default=True, sort_order=10)
     line = add(models.MonthlyPlanLine, 16, plan_id=plan.id, target_period="2026-10",
                line_type="expense", target_type="account", target_id=expense.id,
@@ -124,7 +124,7 @@ def _seed(db, client_id=101, base=10000):
     # Tables outside the backup format must survive a failed restore too,
     # including proposal links that a transaction deletion sets to NULL.
     add(models.TransactionProposal, 24, origin="test", date=date(2026, 10, 2),
-        description="proposal", amount=100, legs=[{"account_id": cash.id}],
+        description="proposal", amount_minor=100, legs=[{"account_id": cash.id}],
         trigger_transaction_id=tx.id, posted_transaction_id=tx.id, idempotency_key="proposal")
     add(models.ClientMfaSetting, 25, enabled=False, totp_secret_encrypted="test-secret")
     add(models.ClientRecoveryCode, 26, code_hash="test-hash")

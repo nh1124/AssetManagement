@@ -97,12 +97,12 @@ def _seed_client(db, client_id, base, marker):
         input_payload={"nested": {"account_id": cash.id, "life_event_id": goal.id}},
     )
     tx = add(
-        models.Transaction, 11, date=date(2026, 10, 2), description=marker, amount=100,
+        models.Transaction, 11, date=date(2026, 10, 2), description=marker, amount_minor=100,
         batch_id=batch.id, recurring_transaction_id=recurring.id,
     )
     db.flush()
-    add(models.JournalEntry, 12, transaction_id=tx.id, account_id=expense.id, debit=100, credit=0, memo=marker, sort_order=0)
-    add(models.JournalEntry, 13, transaction_id=tx.id, account_id=cash.id, debit=0, credit=100, memo=marker, sort_order=1)
+    add(models.JournalEntry, 12, transaction_id=tx.id, account_id=expense.id, debit_minor=100, credit_minor=0, memo=marker, sort_order=0)
+    add(models.JournalEntry, 13, transaction_id=tx.id, account_id=cash.id, debit_minor=0, credit_minor=100, memo=marker, sort_order=1)
     plan = add(models.BudgetPlan, 14, name=marker, is_default=True, sort_order=20)
     add(
         models.MonthlyPlanLine, 15, plan_id=plan.id, target_period=PERIOD, line_type="expense",

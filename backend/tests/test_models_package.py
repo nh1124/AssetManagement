@@ -9,8 +9,8 @@ from app import models
 from app.database import Base
 
 
-# Captured from models.py at 8c38107, before moving any definitions.
-BEFORE_METADATA_SHA256 = "8e86957aa770226c24af0991261e077b8c64771a56b2860fb2429b0ef41e2eb0"
+# B4 deliberately changes four ledger columns; pin the resulting public schema.
+EXPECTED_METADATA_SHA256 = "465bf7a804bb24d864b3dc570620e919d1168c6bf9363ac9071f504bc2a45c7f"
 
 MODEL_NAMES = (
     "Client", "ClientMfaSetting", "ClientRecoveryCode",
@@ -86,12 +86,12 @@ def _metadata_snapshot():
     return {"table_names": names, "tables": tables}
 
 
-def test_metadata_matches_before_the_package_split():
+def test_metadata_matches_the_ledger_minor_unit_schema():
     snapshot = _metadata_snapshot()
     assert len(snapshot["table_names"]) == 27
     assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 349
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
-    assert hashlib.sha256(encoded).hexdigest() == BEFORE_METADATA_SHA256
+    assert hashlib.sha256(encoded).hexdigest() == EXPECTED_METADATA_SHA256
 
 
 def test_all_relationship_mappers_configure():

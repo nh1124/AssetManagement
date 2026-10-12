@@ -1,7 +1,8 @@
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from datetime import date, datetime
 from datetime import date as DateType
 from typing import Any, List, Optional, Literal
+from .domain.money import Money
 
 # What a capsule rule's trigger describes, as a statement about an entry's
 # legs: Income is a credit leg on an income account, Expense a debit leg on an
@@ -286,6 +287,20 @@ class Transaction(TransactionBase):
 
 class TransactionProposal(BaseModel):
     model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def major_legs(cls, value):
+        # Proposal JSON belongs to the integer ledger; only its response is major units.
+        if hasattr(value, "amount_minor"):
+            data = {name: getattr(value, name) for name in cls.model_fields}
+            data["legs"] = [{
+                **leg,
+                "debit": Money(leg["debit"], value.currency).to_float(),
+                "credit": Money(leg["credit"], value.currency).to_float(),
+            } for leg in value.legs]
+            return data
+        return value
 
     id: int
     client_id: int

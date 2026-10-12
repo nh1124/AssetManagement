@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from backend.app.domain.money import Money
+
 import json
 from datetime import date
 
@@ -76,7 +78,7 @@ def _client_with_data(db):
         client_id=client.id,
         date=date(2026, 6, 1),
         description="Lunch",
-        amount=1200,
+        amount_minor=Money.from_major(str(1200), "JPY").minor,
         currency="JPY",
     )
     db.add(tx)

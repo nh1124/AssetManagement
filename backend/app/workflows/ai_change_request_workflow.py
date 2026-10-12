@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..domain.errors import Conflict, Invalid, NotFound, Refused
+from ..domain.money import Money
 from ..services import ai_change_request_store
 from ..services.ledger_service import (
     ensure_default_accounts,
@@ -476,11 +477,12 @@ def _apply_dispatch(db: Session, client_id: int, row: models.AiChangeRequest) ->
     if (row.resource, row.action) == ("transactions", "create"):
         ensure_default_accounts(db, client_id=client_id, commit=False)
         data = schemas.TransactionCreate(**row.input_payload).model_dump()
+        data["amount_minor"] = Money.from_major(str(data.pop("amount")), data["currency"]).minor
         legs = data.pop("legs", None)
         from_account_id = data.pop("from_account_id", None)
         to_account_id = data.pop("to_account_id", None)
         if legs is None:
-            legs = simple_legs(data["amount"], from_account_id, to_account_id)
+            legs = simple_legs(data["amount_minor"], from_account_id, to_account_id)
         # mfa_verified stays False: nothing on the row proves a verification
         # happened, and row.requires_mfa says the opposite - that one was
         # demanded. A gate with no proof must stay shut, so a policy of
@@ -498,7 +500,7 @@ def _apply_dispatch(db: Session, client_id: int, row: models.AiChangeRequest) ->
                 origin_ref={"change_request_id": row.id},
                 date=data["date"],
                 description=data["description"],
-                amount=data["amount"],
+                amount_minor=data["amount_minor"],
                 currency=data["currency"],
                 legs=legs,
             )

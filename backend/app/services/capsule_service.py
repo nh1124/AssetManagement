@@ -480,13 +480,14 @@ def apply_capsule_rules_for_transaction(
     )
     resolved = []
     for spec in specs:
+        amount_minor = Money.from_major(str(spec.amount), transaction.currency).minor
         legs = ledger_service.simple_legs(
-            spec.amount, spec.source_account_id, spec.destination_account_id,
+            amount_minor, spec.source_account_id, spec.destination_account_id,
         )
         columns = dict(
             date=transaction.date,
             description=f"Capsule reservation: {spec.capsule_name}",
-            amount=spec.amount,
+            amount_minor=amount_minor,
             currency=transaction.currency,
             legs=legs,
         )

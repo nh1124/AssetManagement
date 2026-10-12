@@ -1,3 +1,4 @@
+from backend.app.domain.money import Money
 from datetime import date
 
 import pytest
@@ -68,7 +69,7 @@ def test_delete_capsule_preserves_every_journal_entry_and_transaction_and_balanc
     for amount, source, destination in [(500, cash.id, reserve.id), (75, reserve.id, cash.id)]:
         ledger_service.create_transaction(
             db, client_id=1, date=date(2026, 10, 11), description="Reserve transfer",
-            amount=amount, from_account_id=source, to_account_id=destination,
+            amount_minor=Money.from_major(str(amount), "JPY").minor, from_account_id=source, to_account_id=destination,
         )
     db.commit()
     before_entries, before_transactions = _journal_rows(db), _transaction_rows(db)

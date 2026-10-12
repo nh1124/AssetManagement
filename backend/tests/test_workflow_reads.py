@@ -1,3 +1,4 @@
+from backend.app.domain.money import Money
 from datetime import date
 
 import pytest
@@ -100,7 +101,7 @@ def test_transaction_read_prevents_removing_another_clients_entry(db):
     cash = ledger_service.create_account(db, 1, {"name": "Cash", "account_type": "asset"})
     expense = ledger_service.create_account(db, 1, {"name": "Supplies", "account_type": "expense"})
     transaction = ledger_service.create_transaction(
-        db, client_id=1, date=date(2026, 10, 11), description="Supplies", amount=100,
+        db, client_id=1, date=date(2026, 10, 11), description="Supplies", amount_minor=Money.from_major(str(100), "JPY").minor,
         from_account_id=cash.id, to_account_id=expense.id,
     )
     db.commit()

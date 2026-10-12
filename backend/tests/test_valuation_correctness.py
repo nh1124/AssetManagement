@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from backend.app.domain.money import Money
+
 from datetime import date, timedelta
 
 from sqlalchemy import create_engine
@@ -44,15 +46,15 @@ def _post_opening_cash(db, client_id: int, amount: float) -> models.Account:
         client_id=client_id,
         date=date.today(),
         description="Opening cash",
-        amount=amount,
+        amount_minor=Money.from_major(str(amount), "JPY").minor,
         currency="JPY",
     )
     db.add(transaction)
     db.flush()
     db.add_all(
         [
-            models.JournalEntry(transaction_id=transaction.id, account_id=cash.id, debit=amount, credit=0),
-            models.JournalEntry(transaction_id=transaction.id, account_id=equity.id, debit=0, credit=amount),
+            models.JournalEntry(transaction_id=transaction.id, account_id=cash.id, debit_minor=Money.from_major(str(amount), transaction.currency).minor, credit_minor=Money.from_major(str(0), transaction.currency).minor),
+            models.JournalEntry(transaction_id=transaction.id, account_id=equity.id, debit_minor=Money.from_major(str(0), transaction.currency).minor, credit_minor=Money.from_major(str(amount), transaction.currency).minor),
         ]
     )
     db.commit()

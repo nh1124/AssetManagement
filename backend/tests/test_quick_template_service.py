@@ -287,7 +287,7 @@ def test_batch_unbalanced_legs_remain_400_and_roll_back_all_writes(posting):
     with pytest.raises(workflow.BatchPostingError) as error:
         workflow.post_transaction_batch(db, client.id, payload)
     assert status_for(error.value) == 400
-    assert str(error.value) == "Journal entry does not balance: debit 290.0 vs credit 300.0"
+    assert str(error.value) == "Journal entry does not balance: debit 290 vs credit 300"
     assert _counts(db) == (0, 0, 0, 0)
     assert db.query(models.CapsuleHolding).count() == 0
     assert all(account.balance == 0 for account in (cash, food, reserve))

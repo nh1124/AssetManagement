@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from ..domain.errors import Invalid
+from ..domain.money import Money
+from ..domain.journal import Leg, coerce_leg, validate_legs
 from ..domain.transfer import (
     EXPORT_VERSION,
     build_manifest,
@@ -16,7 +18,6 @@ from ..domain.transfer import (
     parse_date,
     parse_datetime,
     validate_import_payload,
-    assert_imported_journal_invariant,
     remap_nested_ids,
     remap_action_target_id,
 )
@@ -828,7 +829,7 @@ def import_client(
                 client_id=client.id,
                 date=parse_date(item.get("date")),
                 description=item["description"],
-                amount=item.get("amount") or 0,
+                amount_minor=Money.from_major(str(item.get("amount") or 0), item.get("currency") or "JPY").minor,
                 currency=item.get("currency") or "JPY",
                 # from_account_id / to_account_id in a v6 or older payload are
                 # ignored: the journal_entries below are the accounts, and they
@@ -845,12 +846,14 @@ def import_client(
             transaction_id = transaction_map.get(item.get("transaction_id"))
             account_id = account_map.get(item.get("account_id"))
             if transaction_id and account_id:
+                transaction = db.get(models.Transaction, transaction_id)
+                leg = coerce_leg({**item, "account_id": account_id}, transaction.currency)
                 db.add(
                     models.JournalEntry(
                         transaction_id=transaction_id,
                         account_id=account_id,
-                        debit=item.get("debit") or 0,
-                        credit=item.get("credit") or 0,
+                        debit_minor=leg.debit,
+                        credit_minor=leg.credit,
                         memo=item.get("memo"),
                         sort_order=item.get("sort_order"),
                     )
@@ -864,11 +867,14 @@ def import_client(
             entries = db.query(models.JournalEntry).filter(
                 models.JournalEntry.transaction_id == transaction_id
             ).all()
-            assert_imported_journal_invariant(
-                transaction_id,
-                transaction.amount,
-                [{"debit": entry.debit, "credit": entry.credit} for entry in entries],
-            )
+            if len(entries) < 2:
+                raise ValueError(f"Transaction {transaction_id} has fewer than two journal entries")
+            try:
+                validate_legs([
+                    Leg(entry.account_id, entry.debit_minor, entry.credit_minor) for entry in entries
+                ], transaction.amount_minor)
+            except ValueError as exc:
+                raise ValueError(f"Transaction {transaction_id}: {exc}") from exc
         for account in db.query(models.Account).filter(models.Account.client_id == client.id).all():
             account.balance = calculate_account_journal_balance(db, account)
 

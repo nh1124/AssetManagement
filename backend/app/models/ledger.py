@@ -1,10 +1,13 @@
 from datetime import datetime
 import enum
 
-from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, Boolean, DateTime, JSON, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, Boolean, DateTime, JSON, UniqueConstraint, select
+from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import relationship
 
 from ..database import Base
+from ..domain.money import Money
+from .money import MinorUnits, major_expression
 
 class AccountType(str, enum.Enum):
     ASSET = "asset"
@@ -63,13 +66,36 @@ class JournalEntry(Base):
     id = Column(Integer, primary_key=True, index=True)
     transaction_id = Column(Integer, ForeignKey("transactions.id"), index=True)
     account_id = Column(Integer, ForeignKey("accounts.id"), index=True)
-    debit = Column(Float, default=0)
-    credit = Column(Float, default=0)
+    debit_minor = Column(MinorUnits, nullable=False, default=0)
+    credit_minor = Column(MinorUnits, nullable=False, default=0)
     memo = Column(String, nullable=True)  # per-leg note, e.g. "own share" / "advance for A"
     sort_order = Column(Integer, nullable=True)
     
     account = relationship("Account", back_populates="entries")
-    transaction = relationship("Transaction", back_populates="journal_entries")
+    # Major-unit reads need currency even after a loaded leg is detached.
+    transaction = relationship("Transaction", back_populates="journal_entries", lazy="joined")
+
+    @hybrid_property
+    def debit(self) -> float:
+        return Money(self.debit_minor, self.transaction.currency).to_float()
+
+    @debit.expression
+    def debit(cls):
+        currency = select(Transaction.currency).where(
+            Transaction.id == cls.transaction_id,
+        ).correlate_except(Transaction).scalar_subquery()
+        return major_expression(cls.debit_minor, currency)
+
+    @hybrid_property
+    def credit(self) -> float:
+        return Money(self.credit_minor, self.transaction.currency).to_float()
+
+    @credit.expression
+    def credit(cls):
+        currency = select(Transaction.currency).where(
+            Transaction.id == cls.transaction_id,
+        ).correlate_except(Transaction).scalar_subquery()
+        return major_expression(cls.credit_minor, currency)
 
 
 class Transaction(Base):
@@ -79,7 +105,7 @@ class Transaction(Base):
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
     date = Column(Date)
     description = Column(String)
-    amount = Column(Float)
+    amount_minor = Column(MinorUnits, nullable=False)
     currency = Column(String, default='JPY')
     batch_id = Column(Integer, ForeignKey("transaction_batches.id"), nullable=True)
     # NULL means entered by hand or posted before provenance was recorded.
@@ -99,6 +125,14 @@ class Transaction(Base):
     # services.journal_legs.primary_accounts from the leg on each side.
     journal_entries = relationship("JournalEntry", back_populates="transaction")
 
+    @hybrid_property
+    def amount(self) -> float:
+        return Money(self.amount_minor, self.currency).to_float()
+
+    @amount.expression
+    def amount(cls):
+        return major_expression(cls.amount_minor, cls.currency)
+
 
 class TransactionProposal(Base):
     __tablename__ = "transaction_proposals"
@@ -112,7 +146,7 @@ class TransactionProposal(Base):
     origin_ref = Column(JSON, nullable=False, default=dict)
     date = Column(Date, nullable=False)
     description = Column(String, nullable=False)
-    amount = Column(Float, nullable=False)
+    amount_minor = Column(MinorUnits, nullable=False)
     currency = Column(String, nullable=False, default="JPY")
     legs = Column(JSON, nullable=False)
     # The cause may be deleted; SET NULL preserves the record of the proposal.
@@ -134,3 +168,11 @@ class TransactionProposal(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     decided_at = Column(DateTime, nullable=True)
     decided_by_client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
+
+    @hybrid_property
+    def amount(self) -> float:
+        return Money(self.amount_minor, self.currency).to_float()
+
+    @amount.expression
+    def amount(cls):
+        return major_expression(cls.amount_minor, cls.currency)

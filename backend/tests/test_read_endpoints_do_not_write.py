@@ -7,6 +7,8 @@ request are not observed; startup jobs are deliberately not run against this DB.
 """
 from __future__ import annotations
 
+from backend.app.domain.money import Money
+
 from dataclasses import dataclass
 from datetime import date, timedelta
 import asyncio
@@ -124,9 +126,9 @@ def _seed(db, scenario, today):
     income = models.Account(client_id=1, name="Guard salary", account_type="revenue")
     db.add_all([cash, expense, income])
     db.flush()
-    create_transaction(db, client_id=1, date=today, amount=100000,
+    create_transaction(db, client_id=1, date=today, amount_minor=Money.from_major(str(100000), "JPY").minor,
                        description="Salary", from_account_id=income.id, to_account_id=cash.id)
-    lunch = create_transaction(db, client_id=1, date=today, amount=1200,
+    lunch = create_transaction(db, client_id=1, date=today, amount_minor=Money.from_major(str(1200), "JPY").minor,
                                description="Lunch", from_account_id=cash.id, to_account_id=expense.id)
     batch = models.TransactionBatch(client_id=1, label="Guard batch")
     db.add(batch)

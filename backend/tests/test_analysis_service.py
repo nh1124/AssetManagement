@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from backend.app.domain.money import Money
+
 from datetime import date, timedelta
 
 from sqlalchemy import create_engine
@@ -61,15 +63,15 @@ def _post_opening_balances(db, accounts: list[tuple[models.Account, float]]) -> 
         client_id=accounts[0][0].client_id,
         date=date.today(),
         description="Opening balances",
-        amount=0,
+        amount_minor=Money.from_major(str(0), "JPY").minor,
         )
     db.add(tx)
     db.flush()
     for account, amount in accounts:
         if account.account_type in ("asset", "expense", "item"):
-            db.add(models.JournalEntry(transaction_id=tx.id, account_id=account.id, debit=amount, credit=0))
+            db.add(models.JournalEntry(transaction_id=tx.id, account_id=account.id, debit_minor=Money.from_major(str(amount), tx.currency).minor, credit_minor=Money.from_major(str(0), tx.currency).minor))
         else:
-            db.add(models.JournalEntry(transaction_id=tx.id, account_id=account.id, debit=0, credit=amount))
+            db.add(models.JournalEntry(transaction_id=tx.id, account_id=account.id, debit_minor=Money.from_major(str(0), tx.currency).minor, credit_minor=Money.from_major(str(amount), tx.currency).minor))
 
 
 def test_logical_balance_follows_the_plan_and_ignores_the_recurring_definition() -> None:
@@ -161,7 +163,7 @@ def test_update_transaction_rebuilds_journal_and_keeps_reconcile_clean() -> None
             client_id=1,
             date=date.today(),
             description="Lunch",
-            amount=1000,
+            amount_minor=Money.from_major(str(1000), "JPY").minor,
             )
         db.add(tx)
         db.commit()
@@ -208,7 +210,7 @@ def test_foreign_currency_transactions_are_valued_with_exchange_rates() -> None:
             client_id=1,
             date=date.today(),
             description="USD income",
-            amount=10,
+            amount_minor=Money.from_major(str(10), "USD").minor,
             currency="USD",
         )
         db.add(tx)
@@ -239,7 +241,7 @@ def test_auto_update_detects_used_currency_once_per_day() -> None:
             client_id=1,
             date=date.today(),
             description="USD income",
-            amount=10,
+            amount_minor=Money.from_major(str(10), "USD").minor,
             currency="USD",
         )
         db.add(tx)
@@ -282,14 +284,14 @@ def test_roadmap_projection_returns_projection_and_liability_demand() -> None:
             client_id=1,
             date=today,
             description="Opening balances",
-            amount=0,
+            amount_minor=Money.from_major(str(0), "JPY").minor,
             )
         db.add(opening)
         db.flush()
         db.add_all(
             [
-                models.JournalEntry(transaction_id=opening.id, account_id=cash.id, debit=500000, credit=0),
-                models.JournalEntry(transaction_id=opening.id, account_id=credit.id, debit=0, credit=100000),
+                models.JournalEntry(transaction_id=opening.id, account_id=cash.id, debit_minor=Money.from_major(str(500000), opening.currency).minor, credit_minor=Money.from_major(str(0), opening.currency).minor),
+                models.JournalEntry(transaction_id=opening.id, account_id=credit.id, debit_minor=Money.from_major(str(0), opening.currency).minor, credit_minor=Money.from_major(str(100000), opening.currency).minor),
             ]
         )
         goal = models.LifeEvent(
@@ -399,7 +401,7 @@ def test_profit_loss_rollup_uses_parent_account_category() -> None:
             client_id=1,
             date=date.today(),
             description="Lunch",
-            amount=1200,
+            amount_minor=Money.from_major(str(1200), "JPY").minor,
         )
         db.add(tx)
         db.commit()
@@ -430,13 +432,13 @@ def test_period_pl_and_balance_sheet_respect_explicit_dates() -> None:
             client_id=1,
             date=date(2026, 4, 30),
             description="April salary",
-            amount=100000,
+            amount_minor=Money.from_major(str(100000), "JPY").minor,
         )
         may_income = models.Transaction(
             client_id=1,
             date=date(2026, 5, 1),
             description="May salary",
-            amount=200000,
+            amount_minor=Money.from_major(str(200000), "JPY").minor,
         )
         db.add_all([april_income, may_income])
         db.commit()
@@ -466,14 +468,14 @@ def test_account_flows_and_account_transactions_use_journal_sides() -> None:
             client_id=1,
             date=date(2026, 5, 1),
             description="Salary",
-            amount=500000,
+            amount_minor=Money.from_major(str(500000), "JPY").minor,
             currency="JPY",
         )
         lunch = models.Transaction(
             client_id=1,
             date=date(2026, 5, 3),
             description="Lunch",
-            amount=1200,
+            amount_minor=Money.from_major(str(1200), "JPY").minor,
             currency="JPY",
         )
         db.add(income)

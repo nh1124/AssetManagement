@@ -10,6 +10,7 @@ from datetime import date
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
+from ..domain.money import Money
 from ..domain.errors import NotFound, Refused
 from .cache_service import invalidate_client
 from .capsule_service import apply_capsule_rules_for_transaction, capsule_balance
@@ -124,7 +125,7 @@ def delete_goal(
             client_id=client_id,
             date=date.today(),
             description=f"Goal deleted – funds returned from Capsule: {cap.name}",
-            amount=bal,
+            amount_minor=Money.from_major(str(bal), "JPY").minor,
             currency="JPY",
             from_account_id=cap.account_id,
             to_account_id=transfer_account_id,

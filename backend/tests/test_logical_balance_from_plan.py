@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from backend.app.domain.money import Money
+
 from datetime import date
 
 from sqlalchemy import create_engine
@@ -50,7 +52,7 @@ def _post_opening_cash(db, client_id: int, amount: float) -> models.Account:
         client_id=client_id,
         date=date.today(),
         description="Opening cash",
-        amount=amount,
+        amount_minor=Money.from_major(str(amount), "JPY").minor,
         currency="JPY",
     )
     db.add(transaction)
@@ -60,14 +62,14 @@ def _post_opening_cash(db, client_id: int, amount: float) -> models.Account:
             models.JournalEntry(
                 transaction_id=transaction.id,
                 account_id=cash.id,
-                debit=amount,
-                credit=0,
+                debit_minor=Money.from_major(str(amount), transaction.currency).minor,
+                credit_minor=Money.from_major(str(0), transaction.currency).minor,
             ),
             models.JournalEntry(
                 transaction_id=transaction.id,
                 account_id=equity.id,
-                debit=0,
-                credit=amount,
+                debit_minor=Money.from_major(str(0), transaction.currency).minor,
+                credit_minor=Money.from_major(str(amount), transaction.currency).minor,
             ),
         ]
     )
@@ -144,7 +146,7 @@ def test_posted_expense_leaves_only_plan_remainder() -> None:
             client_id=1,
             date=date.today(),
             description="Posted spending",
-            amount=3000,
+            amount_minor=Money.from_major(str(3000), "JPY").minor,
             currency="JPY",
         )
         db.add(transaction)
@@ -154,14 +156,14 @@ def test_posted_expense_leaves_only_plan_remainder() -> None:
                 models.JournalEntry(
                     transaction_id=transaction.id,
                     account_id=expense.id,
-                    debit=3000,
-                    credit=0,
+                    debit_minor=Money.from_major(str(3000), transaction.currency).minor,
+                    credit_minor=Money.from_major(str(0), transaction.currency).minor,
                 ),
                 models.JournalEntry(
                     transaction_id=transaction.id,
                     account_id=cash.id,
-                    debit=0,
-                    credit=3000,
+                    debit_minor=Money.from_major(str(0), transaction.currency).minor,
+                    credit_minor=Money.from_major(str(3000), transaction.currency).minor,
                 ),
             ]
         )
@@ -191,7 +193,7 @@ def test_debt_payment_does_not_subtract_liability_twice() -> None:
             client_id=1,
             date=date.today(),
             description="Opening liability",
-            amount=10000,
+            amount_minor=Money.from_major(str(10000), "JPY").minor,
             currency="JPY",
         )
         db.add(transaction)
@@ -201,14 +203,14 @@ def test_debt_payment_does_not_subtract_liability_twice() -> None:
                 models.JournalEntry(
                     transaction_id=transaction.id,
                     account_id=opening.id,
-                    debit=10000,
-                    credit=0,
+                    debit_minor=Money.from_major(str(10000), transaction.currency).minor,
+                    credit_minor=Money.from_major(str(0), transaction.currency).minor,
                 ),
                 models.JournalEntry(
                     transaction_id=transaction.id,
                     account_id=card.id,
-                    debit=0,
-                    credit=10000,
+                    debit_minor=Money.from_major(str(0), transaction.currency).minor,
+                    credit_minor=Money.from_major(str(10000), transaction.currency).minor,
                 ),
             ]
         )

@@ -5,6 +5,7 @@ from datetime import date
 import pytest
 
 from backend.app import models, schemas
+from backend.app.domain.money import Money
 from backend.app.routers.transactions import approve_proposal as approve_proposal_endpoint
 from backend.app.services.ai_policy_service import replace_client_policies
 from backend.app.workflows.ai_change_request_workflow import (
@@ -108,7 +109,10 @@ def test_queued_proposal_preserves_requested_amount_and_resolved_legs(posting, e
 
     proposal = db.query(models.TransactionProposal).one()
     assert proposal.amount == payload["amount"]
-    assert proposal.legs == expected_legs
+    assert proposal.legs == [{**leg,
+        "debit": Money.from_major(str(leg["debit"]), payload["currency"]).minor,
+        "credit": Money.from_major(str(leg["credit"]), payload["currency"]).minor,
+    } for leg in expected_legs]
     assert proposal.date == date(2026, 10, 11)
     assert proposal.description == payload["description"]
     assert proposal.currency == payload["currency"]

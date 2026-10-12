@@ -1,4 +1,5 @@
 """Settlement forecasts use the selected plan's remaining card spending."""
+from backend.app.domain.money import Money
 
 from datetime import date
 
@@ -137,7 +138,7 @@ def test_capsule_allocation_subtracts_month_movement_not_balance(card_plan, monk
         target_type="capsule", target_id=capsule.id, account_id=None,
         source_account_id=card.id, name="reserve", amount=4000, is_active=True,
     )
-    tx = models.Transaction(client_id=1, date=date(2026, 10, 11), description="investment", amount=4000, currency="JPY")
+    tx = models.Transaction(client_id=1, date=date(2026, 10, 11), description="investment", amount_minor=Money.from_major(str(4000), "JPY").minor, currency="JPY")
     db.add_all([plan, tx])
     db.flush()
     process_transaction(db, tx, from_account_id=card.id, to_account_id=investment.id)

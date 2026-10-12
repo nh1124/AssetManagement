@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from backend.app.domain.money import Money
+
 from datetime import date
 
 import pytest
@@ -87,6 +89,11 @@ def _propose(db, cash, capsule, **kwargs):
         ],
     }
     data.update(kwargs)
+    currency = data.get("currency", "JPY")
+    data["amount_minor"] = Money.from_major(str(data.pop("amount")), currency).minor
+    data["legs"] = [Leg(leg.account_id,
+        Money.from_major(str(leg.debit), currency).minor,
+        Money.from_major(str(leg.credit), currency).minor, leg.memo) for leg in data["legs"]]
     return propose_transaction(db, 1, **data)
 
 
@@ -238,7 +245,7 @@ def test_list_proposals_filters_status_origin_and_client_newest_first(posting):
         origin="capsule",
         date=date(2026, 10, 11),
         description="Other client's proposal",
-        amount=1000,
+        amount_minor=Money.from_major(str(1000), "JPY").minor,
         legs=[
             Leg(
                 account_id=other_account.id,

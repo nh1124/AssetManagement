@@ -5,6 +5,7 @@ from datetime import date
 from sqlalchemy.orm import Session, joinedload
 
 from .. import models
+from ..domain.money import Money
 from ..domain.errors import Conflict
 from .cache_service import invalidate_client
 from .ledger_service import create_transaction
@@ -105,7 +106,7 @@ def post_recurring_transaction(
         recurring_transaction_id=recurring.id,
         date=posting_date,
         description=recurring.name,
-        amount=recurring.amount,
+        amount_minor=Money.from_major(str(recurring.amount), recurring.currency).minor,
         currency=recurring.currency,
         from_account_id=recurring.from_account_id,
         to_account_id=recurring.to_account_id,

@@ -12,6 +12,7 @@ from .budget_actuals import LINE_SIDE, claimed_leg_ids
 from .budget_context import BudgetContext
 from .journal_legs import primary_accounts
 from .ledger_service import BALANCE_TOLERANCE, calculate_account_journal_balance
+from ..domain.money import Money
 from .budget_lines import assign_plan_line_identity, line_identity_key, newest_line_key
 from .budget_plan_store import get_or_create_default_plan
 from .periods import period_to_range
@@ -383,10 +384,11 @@ def _unbalanced_journal_items(db: Session, client_id: int) -> list[dict[str, Any
             models.Transaction.id,
             models.Transaction.date,
             models.Transaction.description,
-            models.Transaction.amount,
+            models.Transaction.amount_minor,
+            models.Transaction.currency,
             func.count(models.JournalEntry.id).label("legs"),
-            func.coalesce(func.sum(models.JournalEntry.debit), 0.0).label("total_debit"),
-            func.coalesce(func.sum(models.JournalEntry.credit), 0.0).label("total_credit"),
+            func.coalesce(func.sum(models.JournalEntry.debit_minor), 0).label("total_debit"),
+            func.coalesce(func.sum(models.JournalEntry.credit_minor), 0).label("total_credit"),
         )
         .outerjoin(models.JournalEntry, models.JournalEntry.transaction_id == models.Transaction.id)
         .filter(models.Transaction.client_id == client_id)
@@ -396,7 +398,7 @@ def _unbalanced_journal_items(db: Session, client_id: int) -> list[dict[str, Any
 
     items: list[dict[str, Any]] = []
     for row in rows:
-        amount = row.amount or 0.0
+        amount = row.amount_minor
         problems = []
         if row.legs < 2:
             problems.append("too_few_legs")
@@ -410,10 +412,11 @@ def _unbalanced_journal_items(db: Session, client_id: int) -> list[dict[str, Any
             "transaction_id": row.id,
             "date": row.date.isoformat() if row.date else None,
             "description": row.description,
-            "amount": round(amount, 2),
+            "amount": Money(amount, row.currency).to_float(),
             "legs": row.legs,
-            "total_debit": round(row.total_debit, 2),
-            "total_credit": round(row.total_credit, 2),
+            # PostgreSQL SUM(bigint) returns numeric even though every addend is integer.
+            "total_debit": Money(int(row.total_debit), row.currency).to_float(),
+            "total_credit": Money(int(row.total_credit), row.currency).to_float(),
             "problem": ",".join(problems),
             # Only a person can say which of the amount and the legs is right.
             "repairable": False,

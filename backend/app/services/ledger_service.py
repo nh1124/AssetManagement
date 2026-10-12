@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from .. import models
 from ..domain.errors import Invalid, NotFound
+from ..domain.money import Money
 from ..domain.journal import (
     BALANCE_TOLERANCE,
     DEBIT_NORMAL_TYPES,
@@ -345,12 +346,15 @@ def calculate_account_journal_balance(
     return total_credit - total_debit
 
 
-def _apply_debit(account: models.Account, amount: float) -> None:
-    account.balance += signed_delta(account.account_type, debit=amount, credit=0.0)
+def _apply_debit(account: models.Account, amount: int, currency: str) -> None:
+    # B5 will replace this cache; until then its unit remains major currency.
+    major = Money(amount, currency).to_float()
+    account.balance += signed_delta(account.account_type, debit=major, credit=0.0)
 
 
-def _apply_credit(account: models.Account, amount: float) -> None:
-    account.balance += signed_delta(account.account_type, debit=0.0, credit=amount)
+def _apply_credit(account: models.Account, amount: int, currency: str) -> None:
+    major = Money(amount, currency).to_float()
+    account.balance += signed_delta(account.account_type, debit=0.0, credit=major)
 
 
 def _post_transaction_journal(
@@ -372,10 +376,10 @@ def _post_transaction_journal(
         raise ValueError("transaction.client_id is required")
 
     if legs is None:
-        posted = simple_legs(transaction.amount, from_account_id, to_account_id)
+        posted = simple_legs(transaction.amount_minor, from_account_id, to_account_id)
     else:
-        posted = [coerce_leg(leg) for leg in legs]
-    validate_legs(posted, transaction.amount or 0.0)
+        posted = [coerce_leg(leg, transaction.currency) for leg in legs]
+    validate_legs(posted, transaction.amount_minor)
 
     accounts: dict[int, models.Account] = {}
     for leg in posted:
@@ -388,16 +392,16 @@ def _post_transaction_journal(
     for leg in posted:
         account = accounts[leg.account_id]
         if leg.debit:
-            _apply_debit(account, leg.debit)
+            _apply_debit(account, leg.debit, transaction.currency)
         else:
-            _apply_credit(account, leg.credit)
+            _apply_credit(account, leg.credit, transaction.currency)
 
     for order, leg in enumerate(posted):
         db.add(models.JournalEntry(
             transaction_id=transaction.id,
             account_id=leg.account_id,
-            debit=leg.debit,
-            credit=leg.credit,
+            debit_minor=leg.debit,
+            credit_minor=leg.credit,
             memo=leg.memo,
             sort_order=order,
         ))
@@ -500,6 +504,7 @@ def create_transaction(
     for name in columns:
         if name not in models.Transaction.__table__.columns:
             raise TypeError(f"Unknown keyword {name!r} for table transactions")
+    Money(columns["amount_minor"], columns.get("currency", "JPY"))
     transaction = models.Transaction(client_id=client_id, **columns)
     db.add(transaction)
     db.flush()
@@ -522,15 +527,16 @@ def propose_transaction(
     origin: str,
     date: date,
     description: str,
-    amount: float,
+    amount_minor: int,
     legs: Sequence,
     currency: str = "JPY",
     origin_ref: dict | None = None,
     trigger_transaction_id: int | None = None,
     idempotency_key: str | None = None,
 ) -> models.TransactionProposal:
-    proposed = [coerce_leg(leg) for leg in legs]
-    validate_legs(proposed, amount)
+    Money(amount_minor, currency)
+    proposed = [coerce_leg(leg, currency) for leg in legs]
+    validate_legs(proposed, amount_minor)
     for account_id in {leg.account_id for leg in proposed}:
         if _get_account_by_id(db, account_id, client_id) is None:
             raise ValueError(f"Account {account_id} not found for this client")
@@ -544,8 +550,13 @@ def propose_transaction(
                 "origin": origin,
                 "origin_ref": origin_ref,
                 "date": date.isoformat(),
-                "amount": amount,
-                "legs": stored_legs,
+                # Existing proposals must keep matching after their storage units change.
+                "amount": Money(amount_minor, currency).to_float(),
+                "legs": [{
+                    **leg,
+                    "debit": Money(leg["debit"], currency).to_float(),
+                    "credit": Money(leg["credit"], currency).to_float(),
+                } for leg in stored_legs],
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -564,7 +575,7 @@ def propose_transaction(
         origin_ref=origin_ref,
         date=date,
         description=description,
-        amount=amount,
+        amount_minor=amount_minor,
         currency=currency,
         legs=stored_legs,
         trigger_transaction_id=trigger_transaction_id,
@@ -588,9 +599,9 @@ def approve_proposal(
         client_id=proposal.client_id,
         date=proposal.date,
         description=proposal.description,
-        amount=proposal.amount,
+        amount_minor=proposal.amount_minor,
         currency=proposal.currency,
-        legs=proposal.legs,
+        legs=[Leg(**leg) for leg in proposal.legs],
     )
     proposal.status = "posted"
     proposal.posted_transaction_id = transaction.id
@@ -660,10 +671,10 @@ def _rollback_transaction_effects(db: Session, transaction: models.Transaction) 
         account = _get_account_by_id(db, entry.account_id, client_id)
         if not account:
             continue
-        if entry.debit:
-            _apply_credit(account, entry.debit)
-        if entry.credit:
-            _apply_debit(account, entry.credit)
+        if entry.debit_minor:
+            _apply_credit(account, entry.debit_minor, transaction.currency)
+        if entry.credit_minor:
+            _apply_debit(account, entry.credit_minor, transaction.currency)
 
 
 def revert_transaction(
@@ -710,8 +721,8 @@ def update_transaction(
         prior = [
             Leg(
                 account_id=entry.account_id,
-                debit=entry.debit or 0.0,
-                credit=entry.credit or 0.0,
+                debit=entry.debit_minor,
+                credit=entry.credit_minor,
                 memo=entry.memo,
             )
             for entry in db.query(models.JournalEntry)
@@ -729,6 +740,18 @@ def update_transaction(
         legs = update_data.pop("legs", None)
         given_from = update_data.pop("from_account_id", None)
         given_to = update_data.pop("to_account_id", None)
+        currency = update_data.get("currency", tx.currency)
+        # Changing currency preserves the major amount, including retained compound legs.
+        if "amount" in update_data or currency != tx.currency:
+            amount = update_data.pop("amount", Money(tx.amount_minor, tx.currency).to_major())
+            tx.amount_minor = Money.from_major(str(amount), currency).minor
+        if currency != tx.currency:
+            prior = [coerce_leg({
+                "account_id": leg.account_id,
+                "debit": Money(leg.debit, tx.currency).to_major(),
+                "credit": Money(leg.credit, tx.currency).to_major(),
+                "memo": leg.memo,
+            }, currency) for leg in prior]
         for field, value in update_data.items():
             setattr(tx, field, value)
 
@@ -747,7 +770,7 @@ def update_transaction(
                 prior_debits[0].account_id if len(prior_debits) == 1 else None
             )
             if resolved_from is not None and resolved_to is not None:
-                legs = simple_legs(tx.amount, resolved_from, resolved_to)
+                legs = simple_legs(tx.amount_minor, resolved_from, resolved_to)
             else:
                 legs = prior
 

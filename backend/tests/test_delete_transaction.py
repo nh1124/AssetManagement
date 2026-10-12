@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from backend.app.domain.money import Money
+
 from datetime import date
 
 import pytest
@@ -63,7 +65,7 @@ def _create(db, **kwargs):
         client_id=1,
         date=date(2026, 10, 10),
         description="Lunch",
-        amount=1000,
+        amount_minor=Money.from_major(str(1000), "JPY").minor,
         currency="JPY",
         **kwargs,
     )

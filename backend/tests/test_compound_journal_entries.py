@@ -11,6 +11,8 @@ leg belongs to no plan line at all.
 """
 from __future__ import annotations
 
+from backend.app.domain.money import Money
+
 from datetime import date
 
 from sqlalchemy import create_engine
@@ -68,21 +70,21 @@ def _split_meal(db):
         client_id=1,
         date=WHEN,
         description="dinner with a friend",
-        amount=5000,
+        amount_minor=Money.from_major(str(5000), "JPY").minor,
         currency="JPY",
     )
     db.add(tx)
     db.flush()
     db.add_all([
-        models.JournalEntry(transaction_id=tx.id, account_id=card.id, debit=0, credit=5000, sort_order=0),
+        models.JournalEntry(transaction_id=tx.id, account_id=card.id, debit_minor=Money.from_major(str(0), tx.currency).minor, credit_minor=Money.from_major(str(5000), tx.currency).minor, sort_order=0),
         models.JournalEntry(
-            transaction_id=tx.id, account_id=food.id, debit=3000, credit=0, memo="own share", sort_order=1
+            transaction_id=tx.id, account_id=food.id, debit_minor=Money.from_major(str(3000), tx.currency).minor, credit_minor=Money.from_major(str(0), tx.currency).minor, memo="own share", sort_order=1
         ),
         models.JournalEntry(
             transaction_id=tx.id,
             account_id=advance.id,
-            debit=2000,
-            credit=0,
+            debit_minor=Money.from_major(str(2000), tx.currency).minor,
+            credit_minor=Money.from_major(str(0), tx.currency).minor,
             memo="advance / friend",
             sort_order=2,
         ),
@@ -230,15 +232,15 @@ def test_a_cash_funded_line_still_reports_its_own_leg_as_cash() -> None:
         db.add_all([client, cash, food, advance])
         db.flush()
         tx = models.Transaction(
-            client_id=1, date=WHEN, description="dinner", amount=5000,
+            client_id=1, date=WHEN, description="dinner", amount_minor=Money.from_major(str(5000), "JPY").minor,
             currency="JPY",
         )
         db.add(tx)
         db.flush()
         db.add_all([
-            models.JournalEntry(transaction_id=tx.id, account_id=cash.id, debit=0, credit=5000),
-            models.JournalEntry(transaction_id=tx.id, account_id=food.id, debit=3000, credit=0),
-            models.JournalEntry(transaction_id=tx.id, account_id=advance.id, debit=2000, credit=0),
+            models.JournalEntry(transaction_id=tx.id, account_id=cash.id, debit_minor=Money.from_major(str(0), tx.currency).minor, credit_minor=Money.from_major(str(5000), tx.currency).minor),
+            models.JournalEntry(transaction_id=tx.id, account_id=food.id, debit_minor=Money.from_major(str(3000), tx.currency).minor, credit_minor=Money.from_major(str(0), tx.currency).minor),
+            models.JournalEntry(transaction_id=tx.id, account_id=advance.id, debit_minor=Money.from_major(str(2000), tx.currency).minor, credit_minor=Money.from_major(str(0), tx.currency).minor),
         ])
         cash.balance = -5000
         food.balance = 3000
@@ -278,16 +280,16 @@ def _split_payroll(db):
         client_id=1,
         date=WHEN,
         description="October payroll",
-        amount=258272,
+        amount_minor=Money.from_major(str(258272), "JPY").minor,
         currency="JPY",
     )
     db.add(tx)
     db.flush()
     db.add_all([
-        models.JournalEntry(transaction_id=tx.id, account_id=salary.id, debit=0, credit=258272),
-        models.JournalEntry(transaction_id=tx.id, account_id=bank.id, debit=202757, credit=0),
-        models.JournalEntry(transaction_id=tx.id, account_id=savings.id, debit=1000, credit=0),
-        models.JournalEntry(transaction_id=tx.id, account_id=stock.id, debit=54515, credit=0),
+        models.JournalEntry(transaction_id=tx.id, account_id=salary.id, debit_minor=Money.from_major(str(0), tx.currency).minor, credit_minor=Money.from_major(str(258272), tx.currency).minor),
+        models.JournalEntry(transaction_id=tx.id, account_id=bank.id, debit_minor=Money.from_major(str(202757), tx.currency).minor, credit_minor=Money.from_major(str(0), tx.currency).minor),
+        models.JournalEntry(transaction_id=tx.id, account_id=savings.id, debit_minor=Money.from_major(str(1000), tx.currency).minor, credit_minor=Money.from_major(str(0), tx.currency).minor),
+        models.JournalEntry(transaction_id=tx.id, account_id=stock.id, debit_minor=Money.from_major(str(54515), tx.currency).minor, credit_minor=Money.from_major(str(0), tx.currency).minor),
     ])
     salary.balance = 258272
     bank.balance = 202757
@@ -405,14 +407,14 @@ def test_transaction_account_mode_still_works_on_a_two_leg_entry() -> None:
         db.add_all([client, salary, bank])
         db.flush()
         tx = models.Transaction(
-            client_id=1, date=WHEN, description="payroll", amount=200000,
+            client_id=1, date=WHEN, description="payroll", amount_minor=Money.from_major(str(200000), "JPY").minor,
             currency="JPY",
         )
         db.add(tx)
         db.flush()
         db.add_all([
-            models.JournalEntry(transaction_id=tx.id, account_id=salary.id, debit=0, credit=200000),
-            models.JournalEntry(transaction_id=tx.id, account_id=bank.id, debit=200000, credit=0),
+            models.JournalEntry(transaction_id=tx.id, account_id=salary.id, debit_minor=Money.from_major(str(0), tx.currency).minor, credit_minor=Money.from_major(str(200000), tx.currency).minor),
+            models.JournalEntry(transaction_id=tx.id, account_id=bank.id, debit_minor=Money.from_major(str(200000), tx.currency).minor, credit_minor=Money.from_major(str(0), tx.currency).minor),
         ])
         salary.balance = 200000
         bank.balance = 200000

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from backend.app.domain.money import Money
+
 from datetime import date
 
 import pytest
@@ -345,14 +347,14 @@ def test_delete_transaction_rolls_back_reversal_and_rows_when_commit_fails(monke
             client_id=client.id,
             date=date(2026, 7, 1),
             description="Delete rollback",
-            amount=1000,
+            amount_minor=Money.from_major(str(1000), "JPY").minor,
         )
         db.add(transaction)
         db.flush()
         db.add_all(
             [
-                models.JournalEntry(transaction_id=transaction.id, account_id=food.id, debit=1000, credit=0),
-                models.JournalEntry(transaction_id=transaction.id, account_id=cash.id, debit=0, credit=1000),
+                models.JournalEntry(transaction_id=transaction.id, account_id=food.id, debit_minor=Money.from_major(str(1000), transaction.currency).minor, credit_minor=Money.from_major(str(0), transaction.currency).minor),
+                models.JournalEntry(transaction_id=transaction.id, account_id=cash.id, debit_minor=Money.from_major(str(0), transaction.currency).minor, credit_minor=Money.from_major(str(1000), transaction.currency).minor),
             ]
         )
         db.commit()

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from backend.app.domain.money import Money
+
 from datetime import date
 
 import pytest
@@ -108,7 +110,7 @@ def test_goal_deletion_preserves_ledger_history():
             client_id=client.id,
             date=date(2026, 10, 11),
             description="Fund goal through ledger",
-            amount=500,
+            amount_minor=Money.from_major(str(500), "JPY").minor,
             currency="JPY",
             from_account_id=income.id,
             to_account_id=earmarked.id,

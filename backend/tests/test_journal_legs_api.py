@@ -6,6 +6,8 @@ so it serves as the checksum.
 """
 from __future__ import annotations
 
+from backend.app.domain.money import Money
+
 from datetime import date
 
 import pytest
@@ -327,14 +329,14 @@ def test_data_health_reports_an_entry_whose_legs_do_not_balance() -> None:
         client = _client(db)
         card, food, _advance = _accounts(db)
         tx = models.Transaction(
-            client_id=1, date=WHEN, description="hand-edited", amount=5000,
+            client_id=1, date=WHEN, description="hand-edited", amount_minor=Money.from_major(str(5000), "JPY").minor,
             currency="JPY",
         )
         db.add(tx)
         db.flush()
         db.add_all([
-            models.JournalEntry(transaction_id=tx.id, account_id=card.id, debit=0, credit=5000),
-            models.JournalEntry(transaction_id=tx.id, account_id=food.id, debit=4000, credit=0),
+            models.JournalEntry(transaction_id=tx.id, account_id=card.id, debit_minor=Money.from_major(str(0), tx.currency).minor, credit_minor=Money.from_major(str(5000), tx.currency).minor),
+            models.JournalEntry(transaction_id=tx.id, account_id=food.id, debit_minor=Money.from_major(str(4000), tx.currency).minor, credit_minor=Money.from_major(str(0), tx.currency).minor),
         ])
         db.commit()
 

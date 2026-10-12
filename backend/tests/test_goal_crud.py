@@ -1,3 +1,4 @@
+from backend.app.domain.money import Money
 from datetime import date
 
 import pytest
@@ -63,7 +64,7 @@ def test_delete_goal_preserves_every_ledger_leg_and_transaction_and_balances_boo
     goal_id, capsule_id, account_id, income_id = _goal_with_capsule_account(db)
     ledger_service.create_transaction(
         db, client_id=1, date=date(2026, 10, 11), description="Fund goal",
-        amount=500, from_account_id=income_id, to_account_id=account_id,
+        amount_minor=Money.from_major(str(500), "JPY").minor, from_account_id=income_id, to_account_id=account_id,
     )
     db.commit()
     # Zero holdings must not be mistaken for an account without journal history.
