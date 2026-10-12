@@ -9,9 +9,9 @@ from app import models
 from app.database import Base
 
 
-# F1a adds eight funding-plan columns and the account's nullable policy column.
-# All pre-existing metadata is unchanged; keep the complete schema pinned.
-EXPECTED_METADATA_SHA256 = "879c3b461797e53f75f0854a9d6faf9086dc7a8657d8bd11289be57f881c947c"
+# F1b moves the share declaration onto the plan and adds a rule destination.
+# Keep the complete schema pinned, including both new intent columns.
+EXPECTED_METADATA_SHA256 = "5377ce8e598c6efdf409dfa09baeb4b12613c15cab64cac041a6f93bd0e88a3c"
 
 MODEL_NAMES = (
     "Client", "ClientMfaSetting", "ClientRecoveryCode",
@@ -90,7 +90,7 @@ def _metadata_snapshot():
 def test_metadata_matches_the_minor_unit_schema():
     snapshot = _metadata_snapshot()
     assert len(snapshot["table_names"]) == 28
-    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 358
+    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 359
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == EXPECTED_METADATA_SHA256
 

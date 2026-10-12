@@ -951,6 +951,7 @@ class CapsuleUpdate(BaseModel):
 class CapsuleFundingSourceInput(BaseModel):
     account_id: int = Field(gt=0)
     target_amount: float = Field(default=0.0, ge=0, allow_inf_nan=False)
+    max_share_bp: Optional[int] = Field(default=None, ge=0, le=10000, strict=True)
     sort_order: int = 0
 
     class Config:
@@ -991,6 +992,7 @@ class CapsuleRuleBase(BaseModel):
     trigger_description: Optional[str] = None
     source_mode: Literal["transaction_account", "fixed_account"] = "transaction_account"
     source_account_id: Optional[int] = None
+    destination_account_id: Optional[int] = None
     amount_type: Literal["fixed", "percentage"] = "fixed"
     amount_value: float = Field(ge=0)
     is_active: bool = True
@@ -1007,6 +1009,7 @@ class CapsuleRuleUpdate(BaseModel):
     trigger_description: Optional[str] = None
     source_mode: Optional[Literal["transaction_account", "fixed_account"]] = None
     source_account_id: Optional[int] = None
+    destination_account_id: Optional[int] = None
     amount_type: Optional[Literal["fixed", "percentage"]] = None
     amount_value: Optional[float] = Field(default=None, ge=0)
     is_active: Optional[bool] = None

@@ -135,13 +135,11 @@ def test_data_health_is_silent_when_every_capsule_has_its_own_account(db):
     assert (issue["count"], issue["items"]) == (0, [])
 
 
-def test_sharing_an_account_also_stops_the_rules_firing(db):
-    """The other half of the defect, which F0 does not fix and F2 does.
+def test_sharing_an_account_no_longer_stops_the_rules_firing(db):
+    """F1b fixes the bug F0 pinned: shared balance is not one's own claim.
 
-    Each capsule reads the whole shared balance as its own progress, so all of
-    them decide they are past their target and no reservation is proposed. This
-    is recorded here so that the behaviour is pinned rather than discovered
-    again: it is the reason the design is changing, not an accident.
+    Previously all three read the whole shared balance and proposed nothing.
+    With no attributed reservations yet, each still has its own full headroom.
     """
     session, cash, pooled_account = db
     _capsules(session, pooled_account, ["Wedding", "Car", "Travel"], target=50000)
@@ -152,13 +150,20 @@ def test_sharing_an_account_also_stops_the_rules_firing(db):
             amount_type="fixed", amount_minor=10000, is_active=True,
         ))
     session.commit()
+    income = models.Account(client_id=1, name="Salary", account_type="income")
+    session.add(income)
+    session.flush()
     salary = ledger_service.create_transaction(
         session, client_id=1, date=WHEN, description="Salary",
         amount_minor=Money.from_major("200000", "JPY").minor, currency="JPY",
-        from_account_id=pooled_account.id, to_account_id=cash.id,
+        from_account_id=income.id,
+        to_account_id=cash.id,
     )
+    session.flush()
     specs = capsule_service.capsule_transfer_specs(
         session, 1, entries=list(salary.journal_entries),
         description="Salary", amount=200000, currency="JPY",
     )
-    assert specs == []
+    assert len(specs) == 3
+    assert [spec.amount_minor for spec in specs] == [10000, 10000, 10000]
+    assert {spec.destination_account_id for spec in specs} == {pooled_account.id}

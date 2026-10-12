@@ -342,7 +342,7 @@
     "body": "object",
     "source": "src/tools/capsules.ts",
     "path_fragment": "/capsules/rules",
-    "allowed_fields": ["capsule_id", "trigger_type", "trigger_category", "trigger_description", "source_mode", "source_account_id", "amount_type", "amount_value", "is_active"],
+    "allowed_fields": ["capsule_id", "trigger_type", "trigger_category", "trigger_description", "source_mode", "source_account_id", "destination_account_id", "amount_type", "amount_value", "is_active"],
     "required_fields": ["capsule_id", "trigger_type", "amount_value"]
   },
   {
@@ -352,7 +352,7 @@
     "body": "object",
     "source": "src/tools/capsules.ts",
     "path_fragment": "/capsules/rules/${id}",
-    "allowed_fields": ["capsule_id", "trigger_type", "trigger_category", "trigger_description", "source_mode", "source_account_id", "amount_type", "amount_value", "is_active"],
+    "allowed_fields": ["capsule_id", "trigger_type", "trigger_category", "trigger_description", "source_mode", "source_account_id", "destination_account_id", "amount_type", "amount_value", "is_active"],
     "required_fields": []
   },
   {
@@ -370,7 +370,7 @@
     "body": "array",
     "source": "src/tools/capsules.ts",
     "path_fragment": "/capsules/${capsule_id}/funding-sources",
-    "allowed_fields": ["account_id", "target_amount", "sort_order"],
+    "allowed_fields": ["account_id", "target_amount", "max_share_bp", "sort_order"],
     "required_fields": ["account_id"]
   },
   {

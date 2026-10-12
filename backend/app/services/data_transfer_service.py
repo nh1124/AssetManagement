@@ -409,7 +409,7 @@ def export_client(db: Session, client: models.Client) -> dict:
                 .all()
             ],
             "capsule_funding_sources": [
-                row_fields(source, ["id", "capsule_id", "account_id", "target_amount", "sort_order", "created_at", "updated_at"])
+                row_fields(source, ["id", "capsule_id", "account_id", "target_amount", "max_share_bp", "sort_order", "created_at", "updated_at"])
                 for source in db.query(models.CapsuleFundingSource)
                 .filter(models.CapsuleFundingSource.client_id == client.id)
                 .order_by(models.CapsuleFundingSource.id)
@@ -426,6 +426,7 @@ def export_client(db: Session, client: models.Client) -> dict:
                         "trigger_description",
                         "source_mode",
                         "source_account_id",
+                        "destination_account_id",
                         "amount_type",
                         "amount_value",
                         "is_active",
@@ -980,6 +981,7 @@ def import_client(
                         trigger_description=item.get("trigger_description"),
                         source_mode=item.get("source_mode") or "transaction_account",
                         source_account_id=account_map.get(item.get("source_account_id")),
+                        destination_account_id=account_map.get(item.get("destination_account_id")),
                         amount_type=item.get("amount_type") or "fixed",
                         **rule_amount_fields(item.get("amount_value") or 0, item.get("amount_type") or "fixed", money_client_currency(db, client.id)),
                         is_active=item.get("is_active", True),
@@ -1000,6 +1002,7 @@ def import_client(
                             item.get("target_amount") or 0, money_client_currency(db, client.id),
                         ),
                         sort_order=item.get("sort_order") or 0,
+                        max_share_bp=item.get("max_share_bp"),
                         created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
                         updated_at=parse_datetime(item.get("updated_at")) or datetime.utcnow(),
                     )

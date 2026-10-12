@@ -118,11 +118,11 @@ def _seed(db, client_id=101, base=10000):
                     target_amount=1000, note="milestone",
                     source_snapshot={"nested": {"account_id": cash.id}})
     add(models.CapsuleRule, 19, capsule_id=capsule.id, trigger_type="Expense",
-        source_account_id=cash.id, amount_value=10)
+        source_account_id=cash.id, destination_account_id=cash.id, amount_value=10)
     add(models.CapsuleHolding, 20, capsule_id=capsule.id, account_id=cash.id,
         held_amount=0, note="holding")
     add(models.CapsuleFundingSource, 24, client_id=client.id, capsule_id=capsule.id,
-        account_id=cash.id, target_amount=250, sort_order=3)
+        account_id=cash.id, target_amount=250, max_share_bp=6000, sort_order=3)
     add(models.SimulationScenario, 21, life_event_id=goal.id, name="scenario",
         annual_return=5, inflation=2, monthly_savings=10,
         contribution_schedule=[{"period": "2026-10", "amount": 10, "account_id": cash.id}])
@@ -231,9 +231,12 @@ def test_round_trip_preserves_every_collection_and_document(db):
 
     # Reconnecting the registry's recurring and capsule links triggers the
     # existing ORM onupdate timestamp; this is not an import-time rewrite.
-    old_registry = original["data"]["registry_entries"][0]
+    # It fires on whichever side the flush happens to touch, so comparing the
+    # two exports against each other is a race -- it failed about once in five
+    # full runs. Both are bounded below by the seeded stamp, which is what
+    # actually says the timestamp was not zeroed or moved backwards.
     new_registry = restored["data"]["registry_entries"][0]
-    assert datetime.fromisoformat(new_registry["updated_at"]) >= datetime.fromisoformat(old_registry["updated_at"])
+    assert datetime.fromisoformat(new_registry["updated_at"]) >= STAMP
     expected["data"]["registry_entries"][0]["updated_at"] = new_registry["updated_at"]
     # Restore targets the authenticated client and never restores its identity
     # or settings. Hashes necessarily change with remapped IDs and timestamps.

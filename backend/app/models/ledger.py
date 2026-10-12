@@ -7,7 +7,7 @@ from sqlalchemy.orm import relationship
 
 from ..database import Base
 from ..domain.money import Money
-from .money import MinorUnits, BasisPoints, major_expression, client_currency, client_currency_expression
+from .money import MinorUnits, major_expression, client_currency, client_currency_expression
 
 class AccountType(str, enum.Enum):
     ASSET = "asset"
@@ -36,8 +36,6 @@ class Account(Base):
     expected_return = Column(Float, default=0.0)  # Annual return rate % for asset accounts
     role = Column(String, default=AccountRole.UNASSIGNED.value, server_default=AccountRole.UNASSIGNED.value, nullable=False)
     role_target_amount_minor = Column(MinorUnits, nullable=True)
-    # Capsule commitment policy; unread until F3's health checks and proposal warnings.
-    max_capsule_share_bp = Column(BasisPoints, nullable=True)
     liability_kind = Column(String, nullable=True)  # card | loan | other; only a card settles monthly
     liability_closing_day = Column(Integer, nullable=True)
     liability_payment_day = Column(Integer, nullable=True)

@@ -172,27 +172,27 @@ def test_unbound_capsule_does_not_block_trigger(posting):
     assert db.query(models.TransactionProposal).count() == 0
 
 
-def test_target_clamps_to_journal_balance(posting):
+def test_target_clamps_to_own_pending_reservations(posting):
     db, _, cash, _, reserve, _ = posting
     _rule(posting)
     currency = get_client_currency(db, 1)
-    for amount in [4000, 1000]:
+    for expected in [3000, 2000, 0]:
         ledger.create_transaction(
             db,
             client_id=1,
             date=WHEN,
             description="Existing savings",
-            amount_minor=Money.from_major(str(amount), currency).minor,
+            amount_minor=4000,
             currency=currency,
             from_account_id=cash.id,
             to_account_id=reserve.id,
         )
         result = _apply(posting, _trigger(posting))
-        if amount == 4000:
-            assert result[0].amount == 1000
+        if expected:
+            assert result[0].amount == expected
         else:
             assert result == []
-    assert db.query(models.TransactionProposal).count() == 1
+    assert db.query(models.TransactionProposal).count() == 2
 
 
 def test_percentage_uses_whole_compound_amount(posting):

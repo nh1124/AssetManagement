@@ -16,7 +16,6 @@ from ..domain.money import Money
 from . import ledger_service
 from .cache_service import invalidate_client
 from .fx_service import get_client_currency
-from .ledger_valuation import calculate_account_valued_balance
 from .product_reserve_service import product_reserve_values
 
 
@@ -128,6 +127,7 @@ def funding_source_to_dict(source: models.CapsuleFundingSource) -> dict:
         "account_id": source.account_id,
         "account_name": source.account.name if source.account else None,
         "target_amount": source.target_amount,
+        "max_share_bp": source.max_share_bp,
         "sort_order": source.sort_order,
         "created_at": source.created_at,
         "updated_at": source.updated_at,
@@ -148,18 +148,42 @@ def set_funding_sources(
     payloads: Sequence[schemas.CapsuleFundingSourceInput], *, commit: bool = True,
 ) -> list[models.CapsuleFundingSource]:
     """Replace a capsule's intent atomically; this does not reserve or move money."""
-    capsule = get_capsule(db, client_id, capsule_id)
+    capsule = db.query(models.Capsule).filter(
+        models.Capsule.client_id == client_id, models.Capsule.id == capsule_id,
+    ).with_for_update().first()
     if capsule is None:
         raise NotFound("Capsule not found")
     account_ids = [payload.account_id for payload in payloads]
     if len(set(account_ids)) != len(account_ids):
         raise Invalid("Duplicate funding source account")
-    owned_ids = {row.id for row in db.query(models.Account.id).filter(
+    # Serialize competing declarations on the same account, in a stable order.
+    accounts = db.query(models.Account).filter(
         models.Account.client_id == client_id,
         models.Account.id.in_(account_ids),
-    ).all()}
-    if owned_ids != set(account_ids):
+    ).order_by(models.Account.id).with_for_update().all()
+    if {account.id for account in accounts} != set(account_ids):
         raise NotFound("Account not found")
+    named_rule = db.query(models.CapsuleRule).filter(
+        models.CapsuleRule.client_id == client_id,
+        models.CapsuleRule.capsule_id == capsule_id,
+        models.CapsuleRule.destination_account_id.is_not(None),
+        models.CapsuleRule.destination_account_id.notin_(account_ids),
+    ).order_by(models.CapsuleRule.id).first()
+    if named_rule is not None:
+        raise Invalid(f"Cannot remove account {named_rule.destination_account_id}: rule {named_rule.id} names it as its destination")
+    other_shares = dict(db.query(
+        models.CapsuleFundingSource.account_id,
+        func.coalesce(func.sum(models.CapsuleFundingSource.max_share_bp), 0),
+    ).filter(
+        models.CapsuleFundingSource.client_id == client_id,
+        models.CapsuleFundingSource.capsule_id != capsule_id,
+        models.CapsuleFundingSource.account_id.in_(account_ids),
+    ).group_by(models.CapsuleFundingSource.account_id).all())
+    account_names = {account.id: account.name for account in accounts}
+    for payload in payloads:
+        total = other_shares.get(payload.account_id, 0) + (payload.max_share_bp or 0)
+        if total > 10000:
+            raise Invalid(f"Declared capsule shares for account {payload.account_id} ({account_names[payload.account_id]}) total {total} bp, exceeding 10000 bp")
     currency = money_client_currency(db, client_id)
     # Complete validation/conversion before touching the saved plan.
     amounts = [to_minor(payload.target_amount, currency) for payload in payloads]
@@ -172,6 +196,7 @@ def set_funding_sources(
                 client_id=client_id, account_id=payload.account_id,
             )
         source.target_amount_minor = amount
+        source.max_share_bp = payload.max_share_bp
         source.sort_order = payload.sort_order
         sources.append(source)
     # Retain matching rows so INSERT cannot collide with a not-yet-deleted row.
@@ -247,8 +272,12 @@ def list_rules(db: Session, client_id: int) -> list[models.CapsuleRule]:
 def create_rule(
     db: Session, client_id: int, payload: schemas.CapsuleRuleCreate, *, commit: bool = True,
 ) -> models.CapsuleRule:
-    if get_capsule(db, client_id, payload.capsule_id) is None:
+    capsule = db.query(models.Capsule).filter(
+        models.Capsule.client_id == client_id, models.Capsule.id == payload.capsule_id,
+    ).with_for_update().first()
+    if capsule is None:
         raise NotFound("Capsule not found")
+    _validate_rule_destination(db, client_id, capsule.id, payload.destination_account_id)
     if payload.source_account_id:
         account = db.query(models.Account).filter(
             models.Account.id == payload.source_account_id,
@@ -273,6 +302,16 @@ def update_rule(
     if rule is None:
         return None
     data = patch.model_dump(exclude_unset=True)
+    capsule_id = data.get("capsule_id", rule.capsule_id)
+    capsule = db.query(models.Capsule).filter(
+        models.Capsule.client_id == client_id, models.Capsule.id == capsule_id,
+    ).with_for_update().first()
+    if capsule is None:
+        raise NotFound("Capsule not found")
+    _validate_rule_destination(
+        db, client_id, capsule_id,
+        data.get("destination_account_id", rule.destination_account_id),
+    )
     if "amount_type" in data or "amount_value" in data:
         value = data.pop("amount_value", rule.amount_value)
         data.update(rule_amount_fields(value, data.get("amount_type", rule.amount_type), money_client_currency(db, client_id)))
@@ -280,6 +319,15 @@ def update_rule(
         setattr(rule, key, value)
     _finish_write(db, client_id, rule, commit=commit)
     return rule
+
+
+def _validate_rule_destination(db: Session, client_id: int, capsule_id: int, account_id: int | None) -> None:
+    if account_id is not None and db.query(models.CapsuleFundingSource.id).filter(
+        models.CapsuleFundingSource.client_id == client_id,
+        models.CapsuleFundingSource.capsule_id == capsule_id,
+        models.CapsuleFundingSource.account_id == account_id,
+    ).first() is None:
+        raise NotFound(f"Destination account {account_id} is not in capsule {capsule_id}'s funding plan")
 
 
 def delete_rule(db: Session, client_id: int, rule_id: int, *, commit: bool = True) -> bool:
@@ -500,8 +548,79 @@ class CapsuleTransferSpec:
     capsule_name: str
     source_account_id: int
     destination_account_id: int
-    amount: float
+    amount_minor: int
+    currency: str
     auto_post: bool
+
+    @property
+    def amount(self) -> float:
+        # Major units are only the preview/API boundary, never the clamp.
+        return Money(self.amount_minor, self.currency).to_float()
+
+
+def _capsule_proposals(db: Session, client_id: int, capsule_id: int, status: str):
+    return db.query(models.TransactionProposal).filter(
+        models.TransactionProposal.client_id == client_id,
+        models.TransactionProposal.origin == "capsule",
+        models.TransactionProposal.origin_ref["capsule_id"].as_integer() == capsule_id,
+        models.TransactionProposal.status == status,
+    )
+
+
+def claimed_minor(
+    db: Session, client_id: int, capsule_id: int, account_id: int | None = None,
+) -> dict[str, int]:
+    """Posted attributed movement, from the journal, per currency in minor units.
+
+    A transfer's operating source is not also a capsule claim. With no account
+    filter, sum the accounts reservations have funded (their recorded debit
+    destinations), independently of today's editable plan. F2 adds the missing
+    release attribution; this wave only has attributed reservation movements.
+
+    Per currency, and never totalled: a reservation triggered by a dollar
+    payment is counted in cents, and adding those to yen is exactly the
+    operation B5 removed from the account balance. Callers decide what to do
+    with a currency they did not expect.
+    """
+    with db.no_autoflush:
+        proposals = _capsule_proposals(db, client_id, capsule_id, "posted").filter(
+            models.TransactionProposal.posted_transaction_id.is_not(None),
+        ).all()
+        if not proposals:
+            return {}
+        account_ids = {account_id} if account_id is not None else {
+            leg["account_id"] for proposal in proposals for leg in proposal.legs
+            if leg["debit"] > 0
+        }
+        if not account_ids:
+            return {}
+        rows = db.query(
+            models.Transaction.currency,
+            func.coalesce(func.sum(
+                models.JournalEntry.debit_minor - models.JournalEntry.credit_minor,
+            ), 0),
+        ).join(
+            models.Transaction, models.Transaction.id == models.JournalEntry.transaction_id,
+        ).filter(
+            models.Transaction.client_id == client_id,
+            models.JournalEntry.transaction_id.in_(
+                {p.posted_transaction_id for p in proposals},
+            ),
+            models.JournalEntry.account_id.in_(account_ids),
+        ).group_by(models.Transaction.currency).all()
+        return {currency: int(total) for currency, total in rows if total}
+
+
+def _pending_claimed_minor(db: Session, client_id: int, capsule_id: int) -> dict[str, int]:
+    # Pending is a decision outstanding, not a journal fact. Rejected proposals
+    # enter neither query. The proposal already stores the exact reserved
+    # amount, in its own currency, so this is grouped the same way.
+    with db.no_autoflush:
+        rows = _capsule_proposals(db, client_id, capsule_id, "pending").with_entities(
+            models.TransactionProposal.currency,
+            func.coalesce(func.sum(models.TransactionProposal.amount_minor), 0),
+        ).group_by(models.TransactionProposal.currency).all()
+        return {currency: int(total) for currency, total in rows if total}
 
 
 def capsule_transfer_specs(
@@ -512,6 +631,7 @@ def capsule_transfer_specs(
     description: str | None,
     amount: float,
     currency: str | None = None,
+    amount_minor: int | None = None,
 ) -> list[CapsuleTransferSpec]:
     """Evaluate entries exposing account_id, debit and credit, whether posted journal entries or unsaved draft legs."""
     # Preview must not flush unrelated pending changes or attach its draft legs.
@@ -524,39 +644,87 @@ def capsule_transfer_specs(
                 models.Account.id.in_({entry.account_id for entry in entries}),
             ).all()
         }
+        client_currency = money_client_currency(db, client_id)
         rules = db.query(models.CapsuleRule).filter(
             models.CapsuleRule.client_id == client_id,
             models.CapsuleRule.is_active.is_(True),
         ).all()
         specs = []
+        evaluated_minor: dict[int, int] = {}
+        # A reservation is denominated in the triggering transaction's currency,
+        # so the amount is computed there: a percentage keeps the payment's own
+        # precision, which a detour through a zero-decimal currency would round
+        # away. A fixed rule's amount is stored in the client's currency and is
+        # re-read as the same number here -- "reserve 300" against a dollar
+        # payment reserves 300 dollars. That is this feature's existing
+        # behaviour; whether such an amount should be converted is a question
+        # for capsule_funding_design.md, not something a routing wave changes.
+        base_minor = amount_minor if amount_minor is not None else Money.from_major(
+            str(max(0, amount or 0)), currency,
+        ).minor
         for rule in rules:
             triggered = _triggered_legs(rule, description, entries, accounts)
             if not triggered:
                 continue
             capsule = rule.capsule
-            if not capsule or capsule.account_id is None:
+            if not capsule:
                 continue
             source_account_id = _resolve_rule_source_account_id(rule, entries, triggered[0])
-            if source_account_id is None or source_account_id == capsule.account_id:
+            if source_account_id is None:
                 continue
-            # Holdings-based remaining_target still serves legacy contribute until H6;
-            # the two definitions intentionally coexist for this wave.
-            balance = calculate_account_valued_balance(db, capsule.account)
-            reserved = min(
-                _resolve_rule_amount(rule, amount, currency=currency),
-                max(0.0, (capsule.target_amount or 0.0) - balance),
-            )
+            reserved = _resolve_rule_amount_minor(rule, base_minor, currency=currency)
+            if currency == client_currency:
+                # The target, the claims and this reservation are all in the
+                # same currency, so they can be subtracted from one another.
+                posted_claim = claimed_minor(db, client_id, capsule.id).get(currency, 0)
+                pending_claim = _pending_claimed_minor(db, client_id, capsule.id).get(currency, 0)
+                headroom = (
+                    (capsule.target_amount_minor or 0)
+                    - posted_claim - pending_claim - evaluated_minor.get(capsule.id, 0)
+                )
+                reserved = min(reserved, max(0, headroom))
+            # Otherwise there is no common unit: the capsule's target is
+            # denominated in the client's currency and this reservation is not.
+            # Reserving what the rule says is the only answer that invents
+            # nothing -- converting would make the amount depend on a rate, and
+            # subtracting cents from yen is the operation B5 removed. F3 reports
+            # a capsule's claims in each currency so this stays visible.
             if reserved <= 0:
                 continue
-            specs.append(CapsuleTransferSpec(
-                capsule_id=capsule.id,
-                rule_id=rule.id,
-                capsule_name=capsule.name,
-                source_account_id=source_account_id,
-                destination_account_id=capsule.account_id,
-                amount=reserved,
-                auto_post=capsule.auto_post,
-            ))
+            if rule.destination_account_id is not None:
+                destinations = [(rule.destination_account_id, Money(reserved, currency))]
+            elif capsule.funding_sources:
+                sources = sorted(capsule.funding_sources, key=lambda s: (s.sort_order, s.id))
+                weights = [source.target_amount_minor for source in sources]
+                if not any(weights):
+                    continue
+                # Plan weights approximate remaining need until F2: remaining
+                # need = plan amount - claim, whose outflow side does not exist yet.
+                destinations = [(source.account_id, part) for source, part in zip(
+                    sources, Money(reserved, currency).allocate(weights),
+                )]
+            elif capsule.account_id is not None:
+                destinations = [(capsule.account_id, Money(reserved, currency))]
+            else:
+                continue
+            for destination_account_id, part in destinations:
+                if part.minor == 0 or source_account_id == destination_account_id:
+                    continue
+                specs.append(CapsuleTransferSpec(
+                    capsule_id=capsule.id,
+                    rule_id=rule.id,
+                    capsule_name=capsule.name,
+                    source_account_id=source_account_id,
+                    destination_account_id=destination_account_id,
+                    amount_minor=part.minor,
+                    currency=currency,
+                    auto_post=capsule.auto_post,
+                ))
+                if currency == client_currency:
+                    # Only what the clamp can read is accumulated for it.
+                    evaluated_minor[capsule.id] = (
+                        evaluated_minor.get(capsule.id, 0) + part.minor
+                    )
         return specs
 
 
@@ -577,6 +745,16 @@ def apply_capsule_rules_for_transaction(
     if transaction.client_id is None:
         return []
     db.flush()
+    # Re-evaluating a recorded trigger must return its own reservations rather
+    # than clamp against them and create a second, smaller proposal. Amend first
+    # withdraws the old reservations, so it still evaluates the new entry.
+    existing = _reservation_query(db, transaction.client_id, transaction.id).all()
+    if any(p.status != "rejected" for p in existing):
+        if commit:
+            db.commit()
+        return [db.get(models.Transaction, p.posted_transaction_id)
+                if p.status == "posted" and p.posted_transaction_id is not None else p
+                for p in existing]
     specs = capsule_transfer_specs(
         db,
         transaction.client_id,
@@ -584,10 +762,11 @@ def apply_capsule_rules_for_transaction(
         description=transaction.description,
         amount=transaction.amount,
         currency=transaction.currency,
+        amount_minor=transaction.amount_minor,
     )
     resolved = []
     for spec in specs:
-        amount_minor = Money.from_major(str(spec.amount), transaction.currency).minor
+        amount_minor = spec.amount_minor
         legs = ledger_service.simple_legs(
             amount_minor, spec.source_account_id, spec.destination_account_id,
         )
@@ -786,10 +965,21 @@ def _resolve_rule_amount(
     "10% of my salary" means the gross, so a payroll entry split across a bank
     account, a savings plan and a stock plan is measured on its total.
     """
-    value = max(0, rule.percentage_bp or 0) if rule.amount_type == "percentage" else max(0.0, rule.amount_value or 0.0)
+    base = Money.from_major(str(max(0, amount or 0)), currency)
+    return Money(_resolve_rule_amount_minor(rule, base.minor, currency=currency), currency).to_float()
+
+
+def _resolve_rule_amount_minor(rule: models.CapsuleRule, amount_minor: int, *, currency: str) -> int:
     if rule.amount_type == "percentage":
-        base = Money.from_float(float(max(0.0, amount or 0.0)), currency, rounding=ROUND_HALF_UP)
-        # The decimal representation preserves fractional percentages without float division.
-        ratio = Fraction(value, 10000)
-        return base.scale(ratio, rounding=ROUND_HALF_UP).to_float()
-    return value
+        ratio = Fraction(max(0, rule.percentage_bp or 0), 10000)
+        return Money(max(0, amount_minor), currency).scale(ratio, rounding=ROUND_HALF_UP).minor
+    # A fixed rule amount is stored in the client's currency, while the
+    # reservation it produces is denominated in the triggering transaction's.
+    # Nothing converts between the two: the figure is re-read as the same
+    # number in the transaction's currency, which is what this has always
+    # done -- "reserve 300" against a USD payment reserves 300 USD. Returning
+    # rule.amount_minor directly would instead reserve 3.00 USD for a JPY
+    # client, because the stored integer counts the client's minor units.
+    # Whether a rule's amount should be converted is a question for
+    # capsule_funding_design.md, not something to change in a routing wave.
+    return Money.from_major(str(max(0.0, rule.amount_value or 0.0)), currency).minor

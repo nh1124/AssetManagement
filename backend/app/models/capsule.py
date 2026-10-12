@@ -81,6 +81,7 @@ class CapsuleFundingSource(Base):
     capsule_id = Column(Integer, ForeignKey("capsules.id", ondelete="CASCADE"), nullable=False, index=True)
     account_id = Column(Integer, ForeignKey("accounts.id"), nullable=False)
     target_amount_minor = Column(MinorUnits, nullable=False, default=0, server_default="0")
+    max_share_bp = Column(BasisPoints, nullable=True)
     sort_order = Column(Integer, nullable=False, default=0, server_default="0")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -116,6 +117,7 @@ class CapsuleRule(Base):
     trigger_description = Column(String, nullable=True)
     source_mode = Column(String, default="transaction_account", nullable=False)
     source_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
+    destination_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     amount_type = Column(String, default="fixed", nullable=False)
     amount_minor = Column(MinorUnits, nullable=True)
     percentage_bp = Column(BasisPoints, nullable=True)
@@ -125,6 +127,7 @@ class CapsuleRule(Base):
     client = relationship("Client", back_populates="capsule_rules")
     capsule = relationship("Capsule")
     source_account = relationship("Account", foreign_keys=[source_account_id])
+    destination_account = relationship("Account", foreign_keys=[destination_account_id])
 
     @hybrid_property
     def amount_value(self) -> float:

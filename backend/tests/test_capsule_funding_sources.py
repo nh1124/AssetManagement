@@ -162,7 +162,7 @@ def test_commit_false_replacement_rolls_back_all_changes(db, monkeypatch):
     assert _plan(db) == [(1, 100, 0), (2, 200, 0)]
 
 
-def test_plan_and_account_policy_do_not_change_rule_routing_or_clamping(db):
+def test_plan_supplies_routing_even_without_legacy_account(db):
     service.create_rule(db, 1, schemas.CapsuleRuleCreate(
         capsule_id=1, trigger_type="Transfer", source_mode="fixed_account",
         source_account_id=2, amount_type="fixed", amount_value=100,
@@ -176,13 +176,13 @@ def test_plan_and_account_policy_do_not_change_rule_routing_or_clamping(db):
     before = preview()
     assert len(before) == 1
     assert (before[0].destination_account_id, before[0].amount) == (1, 100)
-    db.get(models.Account, 1).max_capsule_share_bp = 0
     service.set_funding_sources(db, 1, 1, [_input(2, 50)])
-    assert preview() == before
-    # A plan does not supply a routing destination for an unbound capsule yet.
+    # The plan now points at the source itself, so no movement is proposed.
+    assert preview() == []
+    service.set_funding_sources(db, 1, 1, [_input(1, 50)])
     db.get(models.Capsule, 1).account_id = None
     db.commit()
-    assert preview() == []
+    assert preview() == before
     assert db.query(models.Transaction).count() == db.query(models.JournalEntry).count() == 0
 
 

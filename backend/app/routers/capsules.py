@@ -40,6 +40,7 @@ def _rule_to_dict(rule: models.CapsuleRule) -> dict:
         "trigger_description": rule.trigger_description,
         "source_mode": rule.source_mode,
         "source_account_id": rule.source_account_id,
+        "destination_account_id": rule.destination_account_id,
         "source_account_name": rule.source_account.name if rule.source_account else None,
         "amount_type": rule.amount_type,
         "amount_value": rule.amount_value,
@@ -103,7 +104,7 @@ def preview_for_transaction(
     db: Session = Depends(database.get_db),
     current_client: models.Client = Depends(dependencies.get_current_client),
 ):
-    return [asdict(spec) for spec in capsule_transfer_specs(
+    return [schemas.CapsuleTransferPreview.model_validate(spec, from_attributes=True).model_dump() for spec in capsule_transfer_specs(
         db,
         current_client.id,
         entries=draft.legs,
