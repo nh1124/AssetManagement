@@ -9,6 +9,10 @@ import Accounts from './pages/assets/Accounts';
 import Earmarks from './pages/assets/Earmarks';
 import Ledger from './pages/ledger/Ledger';
 import Flows from './pages/Flows';
+import Ai from './pages/automation/Ai';
+import Approvals from './pages/automation/Approvals';
+import Audit from './pages/automation/Audit';
+import DataHealth from './pages/debug/DataHealth';
 import { SETTINGS_PATH, STUDIO_HOME, STUDIO_SCREENS, type StudioScreen } from './navigation';
 import './theme.css';
 
@@ -27,6 +31,10 @@ const BUILT: Record<string, { index: ReactElement; tabs?: Record<string, ReactEl
         index: <Overview />,
         tabs: { accounts: <Accounts />, earmarks: <Earmarks /> },
     },
+    'automation/ai': { index: <Ai /> },
+    'automation/approvals': { index: <Approvals /> },
+    'automation/audit': { index: <Audit /> },
+    'debug/data-health': { index: <DataHealth /> },
 };
 
 /** What each unbuilt screen will hold, and which wave fills it. */
@@ -40,10 +48,6 @@ const PENDING_NOTES: Record<string, { wave: string; note: string }> = {
     'db/definitions': { wave: 'W6', note: '継続支出・収入・返済・配分の定義（registry）。' },
     'db/fixed-assets': { wave: 'W6', note: '固定資産と更新費の積立。' },
     'db/consumables': { wave: 'W6', note: '消耗品の単価と購入周期。' },
-    'automation/ai': { wave: 'W7', note: 'AI 操作の権限ルール。' },
-    'automation/approvals': { wave: 'W7', note: '変更要求の承認と適用。' },
-    'automation/audit': { wave: 'W7', note: 'AI 操作の監査ログ。' },
-    'debug/data-health': { wave: 'W8', note: 'data_health の全件表示と修復。リリース前に削除する。' },
 };
 
 function PendingScreen({ screen }: { screen: StudioScreen }) {
