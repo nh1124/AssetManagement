@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { getAccounts, updateAccount } from '../../../api';
 import type { Account, AccountRole } from '../../../types';
-import { assetErrorMessage, useAssetData } from './useAssetData';
+import { assetErrorMessage, useResource as useAssetData } from '../../useResource';
 
 // Item accounts are returned by the API but omitted by the shared legacy type.
 type AssetAccount = Omit<Account, 'account_type'> & {

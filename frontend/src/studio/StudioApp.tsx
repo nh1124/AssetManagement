@@ -7,6 +7,8 @@ import Record from './pages/Record';
 import Overview from './pages/assets/Overview';
 import Accounts from './pages/assets/Accounts';
 import Earmarks from './pages/assets/Earmarks';
+import Ledger from './pages/ledger/Ledger';
+import Flows from './pages/Flows';
 import { SETTINGS_PATH, STUDIO_HOME, STUDIO_SCREENS, type StudioScreen } from './navigation';
 import './theme.css';
 
@@ -16,6 +18,11 @@ import './theme.css';
  * is one entry here rather than another branch in the route tree.
  */
 const BUILT: Record<string, { index: ReactElement; tabs?: Record<string, ReactElement> }> = {
+    ledger: {
+        index: <Ledger />,
+        tabs: { unmatched: <Ledger unmatched /> },
+    },
+    flows: { index: <Flows /> },
     assets: {
         index: <Overview />,
         tabs: { accounts: <Accounts />, earmarks: <Earmarks /> },

@@ -60,7 +60,7 @@ export const STUDIO_GROUPS: StudioGroup[] = [
                 tabs: [
                     { segment: '', label: 'すべての記録' },
                     { segment: 'unmatched', label: '未照合' },
-                    { segment: 'budget', label: '予算' },
+                    // The budget screen owns the plan; repeating numbers at two depths makes them drift apart.
                 ],
             },
             {

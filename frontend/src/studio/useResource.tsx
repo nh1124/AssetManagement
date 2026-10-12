@@ -16,7 +16,7 @@ export function assetErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : '通信に失敗しました。もう一度お試しください。';
 }
 
-export function useAssetData<T>(load: () => Promise<T>) {
+export function useResource<T>(load: () => Promise<T>) {
     const [data, setData] = useState<T | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');

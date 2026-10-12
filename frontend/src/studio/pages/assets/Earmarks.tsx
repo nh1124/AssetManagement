@@ -4,7 +4,7 @@ import { getCapsules } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
 import type { Capsule } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
-import { useAssetData } from './useAssetData';
+import { useResource as useAssetData } from '../../useResource';
 
 const loadCapsules = (): Promise<Capsule[]> => getCapsules();
 const percentFormat = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 2 });

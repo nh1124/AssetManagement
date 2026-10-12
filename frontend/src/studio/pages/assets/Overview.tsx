@@ -1,6 +1,6 @@
 import { getBalanceSheet } from '../../../api';
 import { formatCurrency } from '../../../utils/currency';
-import { useAssetData } from './useAssetData';
+import { useResource as useAssetData } from '../../useResource';
 
 interface BalanceSheet {
     as_of_date: string;
