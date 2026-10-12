@@ -44,14 +44,22 @@ except ModuleNotFoundError:
 
 
 def _give_fixture_lines_a_plan(db, client_id: int = 1) -> int:
-    """Put the fixture's plan lines on a plan, the way a write path would.
+    """Put the fixture's plan lines on a plan, as whoever wrote them would have.
 
     These fixtures build MonthlyPlanLine rows without a plan_id, as the legacy
-    data did. The read used to supply one for them -- that was X9 -- so the
-    plan now has to exist before the summary is read, and the write-path
-    resolver is what creates it and adopts the orphan lines.
+    data did. Two waves moved that out of the application: X9 stopped reads
+    creating the plan, and X5 removed the orphan adoption from the write
+    resolver, because X5 also removed the only thing that produced orphans.
+    Adopting these rows is now the fixture's own business, which is where it
+    belongs -- the production path writes a plan_id when it writes the line.
     """
-    return resolve_budget_plan_id(db, client_id)
+    plan_id = resolve_budget_plan_id(db, client_id)
+    db.query(models.MonthlyPlanLine).filter(
+        models.MonthlyPlanLine.client_id == client_id,
+        models.MonthlyPlanLine.plan_id.is_(None),
+    ).update({"plan_id": plan_id}, synchronize_session=False)
+    db.commit()
+    return plan_id
 
 
 def _session():
@@ -1984,7 +1992,7 @@ def test_recurring_budget_context_converts_currency_to_client_currency() -> None
         db.close()
 
 
-def test_write_resolver_backfills_legacy_null_plan_lines_to_default_plan() -> None:
+def test_the_repair_adopts_legacy_null_plan_lines_and_the_resolvers_do_not() -> None:
     db = _session()
     try:
         client = models.Client(id=1, name="test", general_settings={}, ai_config={})
@@ -2003,6 +2011,7 @@ def test_write_resolver_backfills_legacy_null_plan_lines_to_default_plan() -> No
         db.add(line)
         db.commit()
 
+        # A read creates nothing and adopts nothing (X9).
         empty_summary = get_budget_summary(db, client_id=1, period="2026-05")
         db.refresh(line)
         assert empty_summary["plan_id"] is None
@@ -2010,7 +2019,16 @@ def test_write_resolver_backfills_legacy_null_plan_lines_to_default_plan() -> No
         assert line.plan_id is None
         assert db.query(models.BudgetPlan).count() == 0
 
+        # The write resolver creates the plan but leaves the orphan where it is
+        # (X5): nothing produces orphans any more, so adopting one is a repair.
         resolve_budget_plan_id(db, 1)
+        db.refresh(line)
+        assert db.query(models.BudgetPlan).count() == 1
+        assert line.plan_id is None
+        assert get_budget_summary(db, client_id=1, period="2026-05")["plan_lines"] == []
+
+        # The repair is where a repair belongs.
+        repair_data_health(db, 1)
         summary = get_budget_summary(db, client_id=1, period="2026-05")
         db.refresh(line)
 

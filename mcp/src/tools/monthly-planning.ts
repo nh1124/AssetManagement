@@ -264,7 +264,7 @@ export function registerMonthlyPlanningTools(server: McpServer): void {
     "monthly_plan_lines_delete",
     {
       title: "Delete monthly plan line",
-      description: "Soft-deletes one monthly plan line.",
+      description: "Deletes one monthly plan line.",
       inputSchema: z.object({ id: z.number().int().min(1).describe("Plan line ID") }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },

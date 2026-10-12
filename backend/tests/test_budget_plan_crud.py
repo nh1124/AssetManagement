@@ -66,21 +66,31 @@ def test_create_plan_writes_one_plan_without_disturbing_existing_default(plannin
     assert db.query(models.BudgetPlan).filter_by(is_default=True).one().id == baseline.id
 
 
-def test_delete_plan_soft_deletes_lines_and_leaves_orphans_with_null_plan_id(planning):
+def test_delete_plan_takes_its_lines_and_leaves_every_other_plan_alone(planning):
+    """X5: the plan's lines go with it, active or not.
+
+    This used to deactivate them and let the foreign key null their plan_id,
+    leaving rows that no reader could see and that no longer said which plan
+    they had belonged to -- reachable only through a backup, which does not
+    filter on is_active.
+    """
     db, client = planning
     plan = _plan(db)
     plan_id = plan.id
-    lines = [_line(db, plan), _line(db, plan, name="Rent", is_active=False)]
+    line_ids = [_line(db, plan).id, _line(db, plan, name="Rent", is_active=False).id]
     other_plan = _plan(db, name="Other")
     other_line = _line(db, other_plan)
 
     assert store.delete_plan(db, client.id, plan_id) is True
     db.expire_all()
     assert db.get(models.BudgetPlan, plan_id) is None
-    assert db.query(models.MonthlyPlanLine).count() == 3
-    assert all(line.is_active is False and line.plan_id is None for line in lines)
+    assert [db.get(models.MonthlyPlanLine, line_id) for line_id in line_ids] == [None, None]
+    assert db.query(models.MonthlyPlanLine).count() == 1
     assert other_line.is_active is True
     assert other_line.plan_id == other_plan.id
+    # No orphan can be produced any more, so nothing is left to adopt.
+    assert db.query(models.MonthlyPlanLine).filter(
+        models.MonthlyPlanLine.plan_id.is_(None)).count() == 0
 
 
 @pytest.mark.parametrize("missing", ["unknown_id", "other_client"])
@@ -106,17 +116,30 @@ def test_update_and_delete_missing_plan_return_none_and_false_without_writing(pl
         event.remove(db.bind, "before_cursor_execute", capture_write)
 
 
-def test_delete_single_plan_line_soft_deletes_only_that_line(planning):
+def test_delete_single_plan_line_removes_only_that_line(planning):
+    """X13: deleting one line deletes it, and frees its identity.
+
+    is_active keeps its other two jobs -- the deduplication repair and
+    copy-period replacement both use it to mark a line superseded -- so a
+    line can still be set aside without being destroyed. That is simply no
+    longer what DELETE does.
+    """
     db, client = planning
     plan = _plan(db)
     deleted = _line(db, plan)
+    deleted_id, identity = deleted.id, deleted.identity_key
     kept = _line(db, plan, name="Rent")
-    assert store.delete_plan_line(db, client.id, deleted.id) is True
+    assert store.delete_plan_line(db, client.id, deleted_id) is True
     db.expire_all()
-    assert db.query(models.MonthlyPlanLine).count() == 2
-    assert deleted.is_active is False
+    assert db.get(models.MonthlyPlanLine, deleted_id) is None
+    assert db.query(models.MonthlyPlanLine).count() == 1
     assert kept.is_active is True
     assert (kept.plan_id, kept.amount) == (plan.id, 100)
+    # The partial unique index covers active rows by identity; a deleted line
+    # must not keep holding one.
+    replacement = _line(db, plan)
+    assert replacement.identity_key == identity
+    assert store.delete_plan_line(db, client.id, deleted_id) is False
 
 
 def test_list_plans_orders_by_sort_order_then_id_and_scopes_to_client(planning):
@@ -173,6 +196,8 @@ def test_commit_false_leaves_changes_rollbackable_by_caller(planning, operation)
     assert db.get(models.BudgetPlan, plan_id).is_default is False
     assert db.get(models.BudgetPlan, default_id).is_default is True
     line = db.get(models.MonthlyPlanLine, line_id)
+    # Both deletes are now real, so a rollback has to bring the line back.
+    assert line is not None
     assert line.is_active is True and line.plan_id == plan_id
 
 

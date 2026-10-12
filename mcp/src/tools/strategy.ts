@@ -165,7 +165,7 @@ export function registerStrategyTools(server: McpServer): void {
     "budget_plans_delete",
     {
       title: "Delete budget plan",
-      description: "Deletes a non-default Strategy budget plan and soft-deletes its monthly plan lines.",
+      description: "Deletes a non-default Strategy budget plan and the monthly plan lines it holds.",
       inputSchema: z.object({ id: z.number().int().min(1).describe("Budget plan ID") }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },

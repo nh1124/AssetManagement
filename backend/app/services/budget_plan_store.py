@@ -137,11 +137,17 @@ def delete_plan(
         return False
     if plan.is_default:
         raise ValueError("Cannot delete the default plan")
-    # Preserve the existing inactive orphans: deleting the plan nulls their FK.
+    # X5: the plan's lines go with it. This used to deactivate them and let the
+    # foreign key null their plan_id, which left rows no reader could see --
+    # every query filters on is_active -- and that no longer said which plan
+    # they had belonged to. The export carries plan lines without that filter,
+    # so they came back from a backup as untraceable orphans. A plan is a
+    # container and its lines are its contents; discarding the container while
+    # keeping the contents in no container holds less information than either.
     db.query(models.MonthlyPlanLine).filter(
         models.MonthlyPlanLine.client_id == client_id,
         models.MonthlyPlanLine.plan_id == plan_id,
-    ).update({"is_active": False})
+    ).delete(synchronize_session=False)
     db.delete(plan)
     if commit:
         db.commit()
@@ -159,7 +165,12 @@ def delete_plan_line(
     ).first()
     if not line:
         return False
-    line.is_active = False
+    # X13: DELETE removes the line, for the same reason as X2 and X5. is_active
+    # keeps its other two jobs -- the deduplication repair and copy-period
+    # replacement both use it to mark a line superseded -- so the flag still
+    # means something; it is just no longer what deleting does behind the
+    # caller's back.
+    db.delete(line)
     if commit:
         db.commit()
     else:
@@ -168,7 +179,10 @@ def delete_plan_line(
 
 
 def get_or_create_default_plan(db: Session, client_id: int) -> models.BudgetPlan:
-    # Write path only: creates/repairs the default and adopts active orphan lines.
+    # Write path only: it creates the default plan and repairs a client that
+    # somehow has two. It no longer adopts orphan plan lines: X5 removed the
+    # only thing that produced them, and data_health_service's repair -- the
+    # right home for a repair -- already performs that update itself.
     defaults = (
         db.query(models.BudgetPlan)
         .filter_by(client_id=client_id, is_default=True)
@@ -190,14 +204,6 @@ def get_or_create_default_plan(db: Session, client_id: int) -> models.BudgetPlan
         for extra in defaults[1:]:
             extra.is_default = False
         db.add(plan)
-        db.commit()
-        db.refresh(plan)
-    changed = db.query(models.MonthlyPlanLine).filter(
-        models.MonthlyPlanLine.client_id == client_id,
-        models.MonthlyPlanLine.plan_id.is_(None),
-        models.MonthlyPlanLine.is_active.is_(True),
-    ).update({"plan_id": plan.id})
-    if changed:
         db.commit()
         db.refresh(plan)
     return plan
