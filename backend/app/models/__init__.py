@@ -13,7 +13,7 @@ from .product import Product
 from .registry import RecurringTransaction, RegistryEntry
 from .goal import LifeEvent, Milestone
 from .budget import BudgetPlan, MonthlyPlanLine
-from .planning import PeriodReview, MonthlyAction
+from .planning import PeriodReview, MonthlyAction, PeriodClose
 from .ai import AiOperationPolicy, AiAuditLog, AiChangeRequest
 from .simulation import SimulationConfig, SimulationScenario
 from .capsule import Capsule, CapsuleFundingSource, CapsuleRule, CapsuleDrawdown
@@ -40,6 +40,7 @@ __all__ = [
     "BudgetPlan",
     "MonthlyPlanLine",
     "PeriodReview",
+    "PeriodClose",
     "MonthlyAction",
     "AiOperationPolicy",
     "AiAuditLog",

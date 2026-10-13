@@ -11,6 +11,7 @@ import { capsuleClaims, claimTotals } from './presentation';
 const ACTIONS: Array<{ value: GoalCapsuleAction; label: string }> = [
     { value: 'keep', label: '取り置きはそのまま' },
     { value: 'stop_rules', label: '取り置きへの自動確保を止める' },
+    { value: 'detach', label: 'ゴールとの紐づけを解除する（取り置きは残す）' },
     { value: 'release', label: '取り置きを崩して口座へ戻す' },
 ];
 
@@ -34,7 +35,7 @@ export default function GoalArchive({ goal, clientName, busy, error, onArchive, 
         const decision = action;
         const destination = decision === 'release' ? accountId : null;
         const detail = decision === 'release' ? `口座「${account?.name}」へ ${claimTotals(resource.data.capsules)} を戻します。` : ACTIONS.find((row) => row.value === decision)?.label;
-        if (!(await confirm(`「${clientName}」のゴール「${goal.name}」を中止します。\n${detail}\nゴールを戻しても、停止した規則は停止したまま、戻したお金は戻したままです。`, '中止する'))) return;
+        if (!(await confirm(`「${clientName}」のゴール「${goal.name}」を中止します。\n${detail}\nゴールを戻しても、解除した紐づけは戻らず、停止した規則は停止したまま、戻したお金は戻したままです。`, '中止する'))) return;
         onArchive(() => archiveGoal(goal.id, { capsule_action: decision, transfer_account_id: destination }));
     };
     return <Overlay title={`「${goal.name}」を中止`} onClose={() => { if (!busy) onCancel(); }}>
@@ -50,13 +51,14 @@ export default function GoalArchive({ goal, clientName, busy, error, onArchive, 
                 {ACTIONS.map((row) => <label key={row.value} className="flex items-center gap-2 text-sm"><input type="radio" name="capsule_action" value={row.value} checked={action === row.value} onChange={() => setAction(row.value)} />{row.label}</label>)}
                 {action === 'keep' && <p className="text-xs text-[var(--studio-text-muted)]">確保済みのお金を残し、自動確保も続けます。</p>}
                 {action === 'stop_rules' && <p className="text-xs text-[var(--studio-text-muted)]">すべての自動確保規則を無効にします。確保済みのお金はそのままです。規則は手動で再開できます。</p>}
+                {action === 'detach' && <p className="text-xs text-[var(--studio-text-muted)]">確保済みのお金と自動確保規則を残し、このゴールとの紐づけだけを解除します。独立した取り置きとして続きます。通貨の換算やお金の移動はありません。</p>}
                 {action === 'release' && <>
                     <Choice label="戻す先の口座" value={accountId} options={resource.data?.accounts ?? []} required onChange={setAccountId} />
                     <p className="text-sm">戻す先：{account?.name ?? '未選択'} ／ 合計：{resource.data ? claimTotals(resource.data.capsules) : '—'}</p>
-                    <p className="text-xs text-[var(--studio-text-muted)]">自動確保規則は続きます。口座が同じ場合は、口座残高を変えずに取り置きの帰属を解除します。</p>
+                    <p className="text-xs text-[var(--studio-text-muted)]">自動確保規則は続きます。口座が同じ場合は、口座残高を変えずに取り置きの帰属を解除します。クライアント通貨以外の確保額がある場合は返金できません。紐づけを解除するか、取り置きからその通貨の口座へ取り崩してください。</p>
                     {resource.data && !resource.data.accounts.length && <p className="text-sm text-[var(--studio-danger)]">有効な資産口座を先に作成してください。</p>}
                 </>}
-                <p className="text-sm text-[var(--studio-text-muted)]">ゴールの復元は、取り置きの判断を取り消しません。停止した規則は停止したまま、口座へ戻したお金は戻したままです。</p>
+                <p className="text-sm text-[var(--studio-text-muted)]">ゴールの復元は、取り置きの判断を取り消しません。解除した紐づけは戻らず、停止した規則は停止したまま、口座へ戻したお金は戻したままです。</p>
                 <div className="flex gap-2"><button type="submit" disabled={locked || (action === 'release' && !account)} className={buttonClass}>中止を確認</button><button type="button" disabled={busy} onClick={onCancel} className={buttonClass}>キャンセル</button></div>
             </fieldset>
         </form>

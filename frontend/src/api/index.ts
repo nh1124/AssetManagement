@@ -1,4 +1,5 @@
 import axios from 'axios';
+import type { TransactionWithPeriodClose } from './periodCloses';
 import type {
     Account,
     AccountEarmark,
@@ -459,7 +460,7 @@ export const rejectTransactionProposal = async (id: number, note?: string): Prom
     return response.data;
 };
 
-export const createTransaction = async (transaction: Omit<Transaction, 'id'>): Promise<Transaction> => {
+export const createTransaction = async (transaction: Omit<Transaction, 'id'>): Promise<TransactionWithPeriodClose> => {
     const response = await api.post('/transactions/', transaction);
     return response.data;
 };
@@ -467,7 +468,7 @@ export const createTransaction = async (transaction: Omit<Transaction, 'id'>): P
 export const updateTransaction = async (
     id: number,
     transaction: Partial<Omit<Transaction, 'id'>>
-): Promise<Transaction> => {
+): Promise<TransactionWithPeriodClose> => {
     const response = await api.put(`/transactions/${id}`, transaction);
     return response.data;
 };

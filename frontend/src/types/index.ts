@@ -329,7 +329,7 @@ export interface LifeEvent {
     roadmap?: RoadmapEntry[];
 }
 
-export type GoalCapsuleAction = 'keep' | 'stop_rules' | 'release';
+export type GoalCapsuleAction = 'keep' | 'stop_rules' | 'release' | 'detach';
 
 export interface GoalArchiveRequest {
     capsule_action: GoalCapsuleAction;

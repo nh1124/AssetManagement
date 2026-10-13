@@ -7,6 +7,7 @@ from typing import Any
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from .periods import period_to_range
 from .. import models
 from .budget_actuals import LINE_SIDE, claimed_leg_ids
 from .budget_context import BudgetContext
@@ -697,6 +698,23 @@ def _capsule_funding_issues(db: Session, client_id: int) -> list[dict[str, Any]]
     } for code, severity, title, detail, items in checks]
 
 
+def _entries_in_closed_periods(db: Session, client_id: int) -> list[dict]:
+    items = []
+    for close in db.query(models.PeriodClose).filter_by(client_id=client_id).order_by(models.PeriodClose.period):
+        start, end = period_to_range(close.period)
+        for tx in db.query(models.Transaction).filter(
+            models.Transaction.client_id == client_id,
+            models.Transaction.date >= start, models.Transaction.date < end,
+            models.Transaction.created_at > close.closed_at,
+        ).order_by(models.Transaction.date, models.Transaction.id):
+            items.append({
+                "transaction_id": tx.id, "date": tx.date.isoformat(),
+                "description": tx.description, "period": close.period,
+                "created_at": tx.created_at.isoformat(), "closed_at": close.closed_at.isoformat(),
+            })
+    return items
+
+
 def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
     default_plan = db.query(models.BudgetPlan).filter_by(client_id=client_id, is_default=True).first()
     null_plan_count = (
@@ -731,7 +749,14 @@ def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
         .all()
     ]
 
+    late_entries = _entries_in_closed_periods(db, client_id)
     issues = [
+        {
+            "code": "entries_in_a_closed_period", "severity": "warning",
+            "title": "締め後に記録された取引",
+            "detail": "締め済みの月に、締め日時より後で作成された取引があります。締めは目印であり、修正は可能です。",
+            "count": len(late_entries), "repairable": False, "items": late_entries[:100],
+        },
         {
             "code": "capsule_without_account",
             "severity": "warning",

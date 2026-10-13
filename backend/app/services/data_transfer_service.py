@@ -342,6 +342,11 @@ def export_client(db: Session, client: models.Client) -> dict:
                 .order_by(models.PeriodReview.start_date, models.PeriodReview.end_date)
                 .all()
             ],
+            "period_closes": [
+                row_fields(close, ["id", "period", "closed_at", "note"])
+                for close in db.query(models.PeriodClose).filter_by(client_id=client.id)
+                .order_by(models.PeriodClose.period).all()
+            ],
             "monthly_actions": [
                 row_fields(
                     action,
@@ -540,6 +545,7 @@ def import_client(
         for model in [
             models.MonthlyPlanLine,
             models.PeriodReview,
+            models.PeriodClose,
             models.MonthlyAction,
             models.CapsuleDrawdown,
             models.CapsuleRule,
@@ -832,6 +838,13 @@ def import_client(
             db.add(transaction)
             db.flush()
             transaction_map[old_id] = transaction.id
+
+        for item in data.get("period_closes", []):
+            # Preserve close instants so restoration does not hide late entries.
+            db.add(models.PeriodClose(
+                client_id=client.id, period=item["period"],
+                closed_at=parse_datetime(item["closed_at"]), note=item.get("note"),
+            ))
 
         for item in data.get("period_reviews", []):
             db.add(

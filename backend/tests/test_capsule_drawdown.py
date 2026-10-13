@@ -239,7 +239,7 @@ def test_annotation_write_failure_rolls_back_journal(db):
 def test_backup_carries_and_restores_drawdowns_with_remapped_ids(db, kind):
     tx, row = draw(db, kind=kind)
     document = json.loads(json.dumps(export_client(db, db.get(models.Client, 1))))
-    assert document["version"] == 13
+    assert document["version"] == 14
     assert document["manifest"]["counts"]["capsule_drawdowns"] == 1
     exported = document["data"]["capsule_drawdowns"][0]
     assert (exported["kind"], exported["amount_minor"], exported["note"]) == (kind, 125, "Purpose")

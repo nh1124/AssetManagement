@@ -4,10 +4,11 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from datetime import date, datetime
 from typing import Any
 
-EXPORT_VERSION = 13
+EXPORT_VERSION = 14
 
 DATA_COLLECTIONS = [
     "accounts",
@@ -23,6 +24,7 @@ DATA_COLLECTIONS = [
     "budget_plans",
     "monthly_plan_lines",
     "period_reviews",
+    "period_closes",
     "monthly_actions",
     "milestones",
     "capsules",
@@ -225,6 +227,23 @@ def validate_import_payload(
     check_ref("monthly_plan_lines", "account_id", "accounts")
     check_ref("monthly_plan_lines", "source_account_id", "accounts")
     check_ref("monthly_plan_lines", "plan_id", "budget_plans")
+
+    closed_periods = set()
+    for item in data.get("period_closes", []):
+        period = item.get("period")
+        valid_period = isinstance(period, str) and re.fullmatch(r"[0-9]{4}-(0[1-9]|1[0-2])", period) and period[:4] != "0000"
+        if not valid_period:
+            issue("error", "invalid_period", "Period must be a valid YYYY-MM.", "period_closes", item.get("id"), "period")
+        elif period in closed_periods:
+            issue("error", "duplicate_period_close", "A month can be closed only once.", "period_closes", item.get("id"), "period")
+        if isinstance(period, str):
+            closed_periods.add(period)
+        try:
+            closed_at = parse_datetime(item.get("closed_at"))
+            if closed_at is None or closed_at.tzinfo is not None:
+                raise ValueError("closed_at must be a naive UTC timestamp")
+        except (TypeError, ValueError):
+            issue("error", "invalid_closed_at", "closed_at must be a UTC timestamp without an offset.", "period_closes", item.get("id"), "closed_at")
 
     drawdown_pairs = set()
     for item in data.get("capsule_drawdowns", []):

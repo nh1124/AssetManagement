@@ -78,7 +78,7 @@ def _set_archived(
 
 def archive_goal(
     db: Session, client_id: int, life_event_id: int, *,
-    capsule_action: Literal["keep", "stop_rules", "release"] = "keep",
+    capsule_action: Literal["keep", "stop_rules", "release", "detach"] = "keep",
     transfer_account_id: int | None = None, commit: bool = True,
 ) -> models.LifeEvent | None:
     event = db.query(models.LifeEvent).filter(
@@ -86,7 +86,7 @@ def archive_goal(
     ).with_for_update().first()
     if event is None:
         return None
-    if capsule_action not in {"keep", "stop_rules", "release"}:
+    if capsule_action not in {"keep", "stop_rules", "release", "detach"}:
         raise Refused("Unknown capsule_action", status_code=422)
     # Serialize releases on the goal and commit the choice with its journal movements.
     try:
@@ -94,6 +94,14 @@ def archive_goal(
             if transfer_account_id is None:
                 raise Refused("transfer_account_id is required for release.", status_code=422)
             _return_goal_claims(db, client_id, event, transfer_account_id, reason="Goal archived")
+        elif capsule_action == "detach":
+            # Change only the FK: removing from the relationship would delete
+            # the capsule through the goal's delete-orphan cascade.
+            for capsule in db.query(models.Capsule).filter(
+                models.Capsule.client_id == client_id,
+                models.Capsule.life_event_id == life_event_id,
+            ):
+                capsule.life_event_id = None
         elif capsule_action == "stop_rules":
             capsule_ids = [cap.id for cap in event.capsules]
             for rule in db.query(models.CapsuleRule).filter(
@@ -194,7 +202,17 @@ def _return_goal_claims(
         raise NotFound("Transfer destination account not found")
     if destination.account_type != "asset" or destination.is_active is False:
         raise Refused("Transfer destination must be an active asset account.", status_code=422)
-    for capsule_id, name, account_id, currency, minor in _goal_claims(db, client_id, event):
+    claims = _goal_claims(db, client_id, event)
+    client_currency = money_client_currency(db, client_id)
+    # Validate the whole release before posting any client-currency claim.
+    for _, name, _, currency, _ in claims:
+        if currency != client_currency:
+            raise Refused(
+                f"取り置き「{name}」の {currency} の確保額は、このゴールから返金できません。"
+                f"ゴールとの紐づけを解除するか、{currency} の口座へその通貨のまま取り崩してください。",
+                status_code=422,
+            )
+    for capsule_id, name, account_id, currency, minor in claims:
         # Running reservation rules here could earmark the returned money again.
         create_transaction(
             db, client_id=client_id, date=date.today(),

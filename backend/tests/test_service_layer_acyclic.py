@@ -35,6 +35,7 @@ LAYERS: dict[str, int] = {
     "monthly_action_store": 0,
     "money_storage": 0,
     "period_review_service": 0,
+    "period_close_service": 0,  # Review markers do not depend on journal writers.
     "quick_template_service": 0,
     "periods": 0,
     "product_reserve_service": 0,

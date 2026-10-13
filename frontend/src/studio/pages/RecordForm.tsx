@@ -1,4 +1,5 @@
 import { useConfirm } from '../components/useConfirm';
+import ClosedPeriodWarning from '../components/ClosedPeriodWarning';
 import DrawdownClaim from '../components/DrawdownClaim';
 import { clientToday, useTimezone } from '../datetime';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
@@ -213,12 +214,13 @@ export default function RecordForm({ existing, onSaved, onCancel }: {
         submitInFlight.current = true;
         setSubmitting(true);
         try {
+            let closedPeriod: string | null | undefined;
             if (existing) {
                 const reservations = await getCapsuleReservations(existing.id);
                 const affected = reservations.filter((row) => row.status !== 'rejected').map((row) => row.capsule_name || '取り置き').join('、');
                 if (!(await confirm(`「${currentClient?.name ?? ''}」の取引 #${existing.id}を ${formatCurrency(numericAmount, currency)}（${currency}）に編集しますか？\n元の取引が発火させた取り置き予約を取り消して再評価するため、確保額・取り置きが変わる場合があります。${affected ? `\n対象：${affected}` : ''}\n紐づく取り崩し記録は再計算・更新されません。`, '保存する'))) return;
-                await updateTransaction(existing.id, { date, amount: numericAmount, description, currency, legs: editLegs });
-                setConfirmation('取引を更新しました。');
+                const result = await updateTransaction(existing.id, { date, amount: numericAmount, description, currency, legs: editLegs });
+                setConfirmation(`取引を更新しました。${result.closed_period ? ` ${result.closed_period} は締め済みです。締め後の変更として報告されます。` : ''}`);
                 onSaved?.();
                 return;
             }
@@ -244,14 +246,15 @@ export default function RecordForm({ existing, onSaved, onCancel }: {
                     })) : [{ account_id: Number(debitAccountId), debit: numericAmount }]),
                     { account_id: Number(creditAccountId), credit: numericAmount },
                 ];
-                await createTransaction({ date, amount: numericAmount, description, currency, legs });
+                const result = await createTransaction({ date, amount: numericAmount, description, currency, legs });
+                closedPeriod = result.closed_period;
             }
             // Keep the first debit pick when returning from a split to a simple entry.
             if (splitActive) setDebitAccountId(splitRows[0].accountId);
             setAmount('');
             setDescription('');
             setSplitRows([]);
-            setConfirmation(kind === 'allocation' ? '用途を確保しました。' : '取引を記録しました。');
+            setConfirmation(kind === 'allocation' ? '用途を確保しました。' : `取引を記録しました。${closedPeriod ? ` ${closedPeriod} は締め済みです。締め後の変更として報告されます。` : ''}`);
         } catch (failure: unknown) {
             setError(errorMessage(failure));
         } finally {
@@ -281,6 +284,7 @@ export default function RecordForm({ existing, onSaved, onCancel }: {
                         <label className="block space-y-2 text-sm">
                             <span className="text-[var(--studio-text-muted)]">日付</span>
                             <input type="date" required value={date} onChange={(event) => setDate(event.target.value)} className={inputClass} />
+                            <ClosedPeriodWarning date={date} />
                         </label>
                     )}
                     <div><label className="block space-y-2 text-sm">

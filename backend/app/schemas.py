@@ -790,7 +790,7 @@ class LifeEventUpdate(BaseModel):
     plan_status_override: Optional[str] = None
 
 class GoalArchiveRequest(BaseModel):
-    capsule_action: Literal["keep", "stop_rules", "release"] = "keep"
+    capsule_action: Literal["keep", "stop_rules", "release", "detach"] = "keep"
     transfer_account_id: Optional[int] = None
 
 class LifeEvent(LifeEventBase):

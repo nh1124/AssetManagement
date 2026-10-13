@@ -29,6 +29,7 @@ FORMAT_FIELDS = {
     "budget_plans": ["id","name","description","is_default","sort_order","created_at","updated_at"],
     "monthly_plan_lines": ["id","target_period","line_type","target_type","target_id","account_id","source_account_id","name","amount","source","source_kind","identity_key","manual_override","cash_treatment","plan_id","is_active","created_at","updated_at"],
     "period_reviews": ["id","start_date","end_date","label","reflection","next_actions","created_at","updated_at"],
+    "period_closes": ["id","period","closed_at","note"],
     "monthly_actions": ["id","source_period","target_period","proposal_id","kind","description","amount","target_id","payload","result","status","idempotency_key","created_at","applied_at"],
     "milestones": ["id","life_event_id","date","target_amount","note","source","source_snapshot","is_active_plan","created_at"],
     "capsules": ["id","name","target_amount","monthly_contribution","life_event_id","capsule_type","target_amount_source","monthly_contribution_source","created_at"],
@@ -127,6 +128,7 @@ def _seed_client(db, client_id, base, marker):
         source_account_id=cash.id, name=marker, amount=100,
         identity_key=f"{marker}-expense",
     )
+    add(models.PeriodClose, 26, period=PERIOD, closed_at=STAMP, note=marker)
     add(
         models.PeriodReview, 16, start_date=date(2026, 10, 1), end_date=date(2026, 11, 1),
         label=marker, reflection=marker, next_actions=marker,

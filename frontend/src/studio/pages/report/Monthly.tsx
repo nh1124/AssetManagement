@@ -6,7 +6,8 @@ import { useResource } from '../../useResource';
 import { DataTable, Feedback } from '../db/Database';
 import { buttonClass } from '../db/forms';
 import MonthPicker from '../ledger/MonthPicker';
-import { currentMonth } from '../ledger/periods';
+import { clientToday, useTimezone } from '../../datetime';
+import MonthlyClose from './MonthlyClose';
 import { ComparisonChart } from './Charts';
 import { ReportContext, ReportFigures, ReportProposals, type ProfitLoss } from './ReportReading';
 
@@ -68,11 +69,13 @@ function MonthlyReading({ period, currency, clientName, onBusy }: { period: stri
 
 export default function Monthly() {
     const { clientId, currentClient } = useClient();
-    const [period, setPeriod] = useState(currentMonth);
+    const timezone = useTimezone();
+    const [period, setPeriod] = useState(() => clientToday(timezone).slice(0, 7));
     const [busy, setBusy] = useState(false);
     const currency = currentClient?.general_settings?.currency || 'JPY';
     return <section className="space-y-6">
         <MonthPicker value={period} onChange={setPeriod} disabled={busy} />
+        <MonthlyClose key={`close:${clientId}:${period}`} period={period} disabled={busy} onBusy={setBusy} />
         <MonthlyReading key={`${clientId}:${currency}:${period}`} period={period} currency={currency} clientName={currentClient?.id === clientId ? currentClient.name : undefined} onBusy={setBusy} />
     </section>;
 }

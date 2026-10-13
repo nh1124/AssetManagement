@@ -62,3 +62,15 @@ class MonthlyAction(Base):
     @amount.expression
     def amount(cls):
         return major_expression(cls.amount_minor, client_currency_expression(cls))
+
+
+class PeriodClose(Base):
+    """A review marker; journal corrections remain permitted after closing."""
+    __tablename__ = "period_closes"
+    __table_args__ = (UniqueConstraint("client_id", "period", name="uq_period_closes_client_period"),)
+
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
+    period = Column(String(7), nullable=False)
+    closed_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    note = Column(String, nullable=True)

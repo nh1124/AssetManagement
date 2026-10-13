@@ -11,6 +11,7 @@ from ..dependencies import get_current_client
 from ..services.ai_policy_service import assert_direct_ledger_write_allowed
 from ..services.ledger_service import list_proposals as list_proposals_service
 from ..services.cache_service import invalidate_client
+from ..services.period_close_service import is_closed
 from ..services.journal_legs import primary_accounts
 from ..workflows.ledger_entry_workflow import (
     record_entry,
@@ -24,6 +25,18 @@ from ..workflows.ledger_entry_workflow import (
 )
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
+
+
+class TransactionWithPeriodClose(schemas.Transaction):
+    # Preserve every existing response field while exposing the current marker.
+    closed_period: str | None = None
+
+
+def _write_response(db: Session, client_id: int, tx: models.Transaction) -> dict:
+    row = _serialize_transaction(tx)
+    period = f"{tx.date.year:04d}-{tx.date.month:02d}"
+    row["closed_period"] = period if is_closed(db, client_id, period) else None
+    return row
 
 
 def _serialize_leg(entry: models.JournalEntry) -> dict:
@@ -104,7 +117,7 @@ def get_transactions(
     return items
 
 
-@router.post("/", response_model=schemas.Transaction)
+@router.post("/", response_model=TransactionWithPeriodClose)
 def create_transaction(
     transaction: schemas.TransactionCreate,
     db: Session = Depends(get_db),
@@ -123,7 +136,7 @@ def create_transaction(
     db_transaction = record_entry(db, current_client.id, transaction)
     invalidate_client(current_client.id)
 
-    return _serialize_transaction(db_transaction)
+    return _write_response(db, current_client.id, db_transaction)
 
 
 @router.get("/{transaction_id}/capsule-reservations")
@@ -204,7 +217,7 @@ def get_transaction(
     return _serialize_transaction(transaction)
 
 
-@router.put("/{transaction_id}", response_model=schemas.Transaction)
+@router.put("/{transaction_id}", response_model=TransactionWithPeriodClose)
 def update_transaction(
     transaction_id: int,
     payload: schemas.TransactionUpdate,
@@ -229,7 +242,7 @@ def update_transaction(
     if not tx:
         raise HTTPException(status_code=404, detail="Transaction not found")
     invalidate_client(current_client.id)
-    return _serialize_transaction(tx)
+    return _write_response(db, current_client.id, tx)
 
 
 @router.delete("/{transaction_id}")

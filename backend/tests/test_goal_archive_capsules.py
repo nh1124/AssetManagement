@@ -52,6 +52,13 @@ def workspace():
     engine.dispose()
 
 
+def client_currency_claims_only(db):
+    foreign = db.query(models.Transaction).filter_by(currency='USD').one()
+    db.query(models.JournalEntry).filter_by(transaction_id=foreign.id).delete()
+    db.delete(foreign)
+    db.commit()
+
+
 def journal_rows(db):
     return db.execute(models.JournalEntry.__table__.select()).all()
 
@@ -80,15 +87,16 @@ def test_stop_rules_leaves_claims_money_and_history_alone(workspace):
     assert capsule_service.claimed_minor(db, client.id, capsule.id) == {'JPY': 700, 'USD': 125}
 
 
-def test_release_returns_each_currency_from_actual_claim_accounts(workspace):
+def test_release_returns_client_currency_from_actual_claim_accounts(workspace):
     db, client, _, goal, capsule, _, _, source, destination = workspace
+    client_currency_claims_only(db)
     before = journal_rows(db)
     archive_life_event(goal.id, schemas.GoalArchiveRequest(capsule_action='release', transfer_account_id=destination.id), db=db, current_client=client)
     assert capsule_service.claimed_minor(db, client.id, capsule.id) == {}
-    assert db.query(models.Transaction).count() == 6
+    assert db.query(models.Transaction).count() == 4
     assert journal_rows(db)[:len(before)] == before
     released = db.query(models.Transaction).filter(models.Transaction.description.like('Goal archived%')).all()
-    assert sorted((row.currency, row.amount_minor) for row in released) == [('JPY', 200), ('JPY', 500), ('USD', 125)]
+    assert sorted((row.currency, row.amount_minor) for row in released) == [('JPY', 200), ('JPY', 500)]
     for tx in released:
         legs = db.query(models.JournalEntry).filter_by(transaction_id=tx.id).all()
         assert sum(row.debit_minor for row in legs) == sum(row.credit_minor for row in legs) == tx.amount_minor
@@ -101,16 +109,17 @@ def test_release_returns_each_currency_from_actual_claim_accounts(workspace):
     assert all(row.is_active for row in db.query(models.CapsuleRule))
     goal_service.unarchive_goal(db, client.id, goal.id)
     assert capsule_service.claimed_minor(db, client.id, capsule.id) == {}
-    assert db.query(models.Transaction).count() == 6
+    assert db.query(models.Transaction).count() == 4
 
 
 def test_release_repeated_without_new_claims_moves_nothing(workspace):
     db, client, _, goal, _, _, _, _, destination = workspace
+    client_currency_claims_only(db)
     goal_service.archive_goal(db, client.id, goal.id, capsule_action='release', transfer_account_id=destination.id)
     stamp = goal.archived_at
     goal_service.archive_goal(db, client.id, goal.id, capsule_action='release', transfer_account_id=destination.id)
     assert goal.archived_at == stamp
-    assert db.query(models.Transaction).count() == 6
+    assert db.query(models.Transaction).count() == 4
 
 
 @pytest.mark.parametrize('empty', [False, True])
@@ -141,21 +150,25 @@ def test_release_rejects_unusable_destination_without_changes(workspace, kind):
     assert journal_rows(db) == before
 
 
-@pytest.mark.parametrize('action', ['stop_rules', 'release'])
+@pytest.mark.parametrize('action', ['stop_rules', 'release', 'detach'])
 def test_capsule_decision_can_rollback_with_callers_transaction(workspace, action):
     db, client, _, goal, capsule, _, _, _, destination = workspace
+    if action == 'release':
+        client_currency_claims_only(db)
     before = journal_rows(db)
     goal_service.archive_goal(db, client.id, goal.id, capsule_action=action, transfer_account_id=destination.id, commit=False)
     assert goal.archived_at is not None
     db.rollback()
     assert goal.archived_at is None
     assert journal_rows(db) == before
-    assert capsule_service.claimed_minor(db, client.id, capsule.id) == {'JPY': 700, 'USD': 125}
+    assert capsule_service.claimed_minor(db, client.id, capsule.id) == ({'JPY': 700} if action == 'release' else {'JPY': 700, 'USD': 125})
+    assert capsule.life_event_id == goal.id
     assert all(row.is_active for row in db.query(models.CapsuleRule))
 
 
 def test_posting_failure_rolls_back_earlier_release_and_archive(workspace, monkeypatch):
     db, client, _, goal, capsule, _, _, _, destination = workspace
+    client_currency_claims_only(db)
     before = journal_rows(db)
     post = goal_service.create_transaction
     calls = 0
@@ -172,11 +185,12 @@ def test_posting_failure_rolls_back_earlier_release_and_archive(workspace, monke
         goal_service.archive_goal(db, client.id, goal.id, capsule_action='release', transfer_account_id=destination.id)
     assert goal.archived_at is None
     assert journal_rows(db) == before
-    assert capsule_service.claimed_minor(db, client.id, capsule.id) == {'JPY': 700, 'USD': 125}
+    assert capsule_service.claimed_minor(db, client.id, capsule.id) == {'JPY': 700}
 
 
 def test_release_to_source_unearmarks_without_changing_its_own_money(workspace):
     db, client, _, goal, capsule, _, _, source, _ = workspace
+    client_currency_claims_only(db)
     goal_service.archive_goal(db, client.id, goal.id, capsule_action='release', transfer_account_id=source.id)
     assert capsule_service.claimed_minor(db, client.id, capsule.id) == {}
     entries = db.query(models.JournalEntry).filter_by(account_id=source.id).join(models.Transaction).filter(models.Transaction.currency == 'JPY').all()
@@ -207,3 +221,35 @@ def test_roadmap_can_project_archived_goal_with_monthly_plan(workspace):
     assert roadmap['params']['reference_date'] == date.today().isoformat()
     assert roadmap['milestones'][0]['life_event_id'] == goal.id
     assert strategy_service.get_roadmap_projection(db, client.id, years=1)['events'] == []
+
+
+def test_detach_keeps_capsules_rules_money_and_history(workspace):
+    db, client, _, goal, capsule, empty, unrelated, *_ = workspace
+    before = {table.name: db.execute(table.select()).all() for table in Base.metadata.sorted_tables if table.name not in {'life_events', 'capsules'}}
+    result = archive_life_event(goal.id, schemas.GoalArchiveRequest(capsule_action='detach'), db=db, current_client=client)
+    assert result.archived_at is not None
+    assert capsule.life_event_id is None
+    assert empty.life_event_id is None
+    assert unrelated.life_event_id is None
+    assert db.query(models.Capsule).count() == 3
+    assert capsule_service.claimed_minor(db, client.id, capsule.id) == {'JPY': 700, 'USD': 125}
+    assert {table.name: db.execute(table.select()).all() for table in Base.metadata.sorted_tables if table.name not in {'life_events', 'capsules'}} == before
+    goal_service.unarchive_goal(db, client.id, goal.id)
+    assert capsule.life_event_id is None
+    assert goal.capsules == []
+
+
+@pytest.mark.parametrize('commit', [True, False])
+def test_release_refuses_foreign_claim_before_any_posting(workspace, commit):
+    db, client, _, goal, capsule, _, _, _, destination = workspace
+    before = journal_rows(db)
+    with pytest.raises(Refused) as failure:
+        goal_service.archive_goal(db, client.id, goal.id, capsule_action='release', transfer_account_id=destination.id, commit=commit)
+    assert failure.value.status_code == 422
+    assert capsule.name in str(failure.value)
+    assert 'USD' in str(failure.value)
+    assert '紐づけを解除' in str(failure.value)
+    assert 'USD の口座' in str(failure.value)
+    assert goal.archived_at is None
+    assert journal_rows(db) == before
+    assert capsule_service.claimed_minor(db, client.id, capsule.id) == {'JPY': 700, 'USD': 125}
