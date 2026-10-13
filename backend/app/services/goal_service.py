@@ -5,7 +5,7 @@ these records as the Goal domain. This module keeps routers and reports from dep
 strategy execution services directly.
 """
 
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy.orm import Session
 
@@ -29,6 +29,8 @@ __all__ = [
     "list_goals",
     "create_goal_record",
     "update_goal",
+    "archive_goal",
+    "unarchive_goal",
     "delete_goal",
     "list_goal_capsules",
     "calculate_overall_goal_probability",
@@ -47,8 +49,41 @@ def get_life_event(db: Session, client_id: int, life_event_id: int) -> models.Li
     ).first()
 
 
-def list_goals(db: Session, client_id: int) -> list[models.LifeEvent]:
-    return db.query(models.LifeEvent).filter(models.LifeEvent.client_id == client_id).all()
+def list_goals(db: Session, client_id: int, include_archived: bool = False) -> list[models.LifeEvent]:
+    query = db.query(models.LifeEvent).filter(models.LifeEvent.client_id == client_id)
+    if not include_archived:
+        query = query.filter(models.LifeEvent.archived_at.is_(None))
+    return query.all()
+
+
+def _set_archived(
+    db: Session, client_id: int, life_event_id: int, archived: bool, *, commit: bool,
+) -> models.LifeEvent | None:
+    event = get_life_event(db, client_id, life_event_id)
+    if event is None:
+        return None
+    # Calling off a plan preserves capsules, claims and history. Unlike delete,
+    # archive never returns funds to another account or removes related rows.
+    event.archived_at = (event.archived_at or datetime.utcnow()) if archived else None
+    if commit:
+        db.commit()
+        db.refresh(event)
+        invalidate_client(client_id)
+    else:
+        db.flush()
+    return event
+
+
+def archive_goal(
+    db: Session, client_id: int, life_event_id: int, *, commit: bool = True,
+) -> models.LifeEvent | None:
+    return _set_archived(db, client_id, life_event_id, True, commit=commit)
+
+
+def unarchive_goal(
+    db: Session, client_id: int, life_event_id: int, *, commit: bool = True,
+) -> models.LifeEvent | None:
+    return _set_archived(db, client_id, life_event_id, False, commit=commit)
 
 
 def create_goal_record(

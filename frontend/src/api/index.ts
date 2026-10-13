@@ -16,6 +16,8 @@ import type {
     CapsuleDrawdown,
     CapsuleDrawdownInput,
     CapsuleDrawdownResult,
+    Capsule,
+    CapsuleRule,
     CapsuleFundingSource,
     CapsuleFundingSourceInput,
     CapsuleTransferPreview,
@@ -24,6 +26,7 @@ import type {
     ExchangeRate,
     ExchangeRateAutoUpdateResult,
     LoginResult,
+    LifeEvent,
     MonthlyAction,
     MonteCarloResult,
     MfaRecoveryCodes,
@@ -506,13 +509,13 @@ export const createTransactionBatch = async (payload: {
 };
 
 // Life Events endpoints
-export const getLifeEvents = async () => {
-    const response = await api.get('/life-events/');
+export const getLifeEvents = async (includeArchived = false): Promise<LifeEvent[]> => {
+    const response = await api.get('/life-events/', { params: { include_archived: includeArchived } });
     return response.data;
 };
 
-export const getLifeEventsWithProgress = async () => {
-    const response = await api.get('/life-events/with-progress');
+export const getLifeEventsWithProgress = async (includeArchived = false): Promise<LifeEvent[]> => {
+    const response = await api.get('/life-events/with-progress', { params: { include_archived: includeArchived } });
     return response.data;
 };
 
@@ -537,12 +540,14 @@ export const getGoalDashboard = async (
     return response.data;
 };
 
-export const createGoal = async (event: any) => {
+export type GoalPayload = Pick<LifeEvent, 'name' | 'target_amount' | 'target_date' | 'start_date' | 'priority' | 'note' | 'active_plan_basis' | 'active_plan_label' | 'plan_status_override'>;
+
+export const createGoal = async (event: GoalPayload): Promise<LifeEvent> => {
     const response = await api.post('/life-events/', event);
     return response.data;
 };
 
-export const updateGoal = async (id: number, event: any) => {
+export const updateGoal = async (id: number, event: Partial<GoalPayload>): Promise<LifeEvent> => {
     const response = await api.put(`/life-events/${id}`, event);
     return response.data;
 };
@@ -550,6 +555,16 @@ export const updateGoal = async (id: number, event: any) => {
 export const deleteGoal = async (id: number, transferAccountId?: number) => {
     const params = transferAccountId != null ? `?transfer_account_id=${transferAccountId}` : '';
     const response = await api.delete(`/life-events/${id}${params}`);
+    return response.data;
+};
+
+export const archiveGoal = async (id: number): Promise<LifeEvent> => {
+    const response = await api.post(`/life-events/${id}/archive`);
+    return response.data;
+};
+
+export const unarchiveGoal = async (id: number): Promise<LifeEvent> => {
+    const response = await api.post(`/life-events/${id}/unarchive`);
     return response.data;
 };
 
@@ -786,7 +801,7 @@ export const getMilestones = async (lifeEventId?: number): Promise<Milestone[]> 
     return response.data;
 };
 
-export const createMilestone = async (milestone: any): Promise<Milestone> => {
+export const createMilestone = async (milestone: Omit<Milestone, 'id'>): Promise<Milestone> => {
     const response = await api.post('/roadmap/milestones', milestone);
     return response.data;
 };
@@ -869,7 +884,7 @@ export const previewCapsuleTransfersForTransaction = async (draft: {
     return response.data;
 };
 
-export const getCapsules = async () => {
+export const getCapsules = async (): Promise<Capsule[]> => {
     const response = await api.get('/capsules/');
     return response.data;
 };
@@ -897,17 +912,19 @@ export const contributeToCapsule = async (id: number, payload: {
     return response.data;
 };
 
-export const createCapsule = async (capsule: any) => {
+export type CapsulePayload = Pick<Capsule, 'name' | 'target_amount' | 'monthly_contribution' | 'life_event_id' | 'capsule_type' | 'target_amount_source' | 'monthly_contribution_source'> & { auto_post?: boolean; account_id?: number | null };
+
+export const createCapsule = async (capsule: CapsulePayload): Promise<Capsule> => {
     const response = await api.post('/capsules/', capsule);
     return response.data;
 };
 
-export const createGoalCapsule = async (lifeEventId: number) => {
+export const createGoalCapsule = async (lifeEventId: number): Promise<Capsule> => {
     const response = await api.post(`/capsules/life-events/${lifeEventId}`);
     return response.data;
 };
 
-export const updateCapsule = async (id: number, capsule: any) => {
+export const updateCapsule = async (id: number, capsule: Partial<CapsulePayload>): Promise<Capsule> => {
     const response = await api.put(`/capsules/${id}`, capsule);
     return response.data;
 };
@@ -941,7 +958,7 @@ export const getReconcileStatus = async (): Promise<ReconcileResponse> => {
     return response.data;
 };
 
-export const getCapsuleRules = async () => {
+export const getCapsuleRules = async (): Promise<CapsuleRule[]> => {
     const response = await api.get('/capsules/rules');
     return response.data;
 };
@@ -963,7 +980,7 @@ export const getCapsuleReservations = async (transactionId: number): Promise<Cap
     return response.data;
 };
 
-export const createCapsuleRule = async (rule: any) => {
+export const createCapsuleRule = async (rule: Omit<CapsuleRule, 'id' | 'created_at' | 'capsule_name' | 'source_account_name' | 'source_mode' | 'amount_type'> & { source_mode: string; amount_type: string }): Promise<CapsuleRule> => {
     const response = await api.post('/capsules/rules', rule);
     return response.data;
 };

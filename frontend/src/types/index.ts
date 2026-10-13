@@ -309,6 +309,7 @@ export interface LifeEvent {
     active_plan_basis?: string;
     active_plan_label?: string | null;
     plan_status_override?: string | null;
+    archived_at?: string | null;
     created_at?: string;
     current_funded?: number;
     projected_amount?: number;
@@ -581,7 +582,7 @@ export interface Milestone {
     life_event_id?: number;
     date: string;
     target_amount: number;
-    note?: string;
+    note?: string | null;
     source?: string;
     source_snapshot?: Record<string, unknown> | null;
     is_active_plan?: boolean;
@@ -861,6 +862,7 @@ export interface CapsuleRule {
     source_mode: 'transaction_account' | 'fixed_account';
     source_account_id?: number | null;
     source_account_name?: string | null;
+    destination_account_id?: number | null;
     amount_type: 'fixed' | 'percentage';
     amount_value: number;
     is_active: boolean;

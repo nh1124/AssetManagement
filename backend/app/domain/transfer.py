@@ -7,7 +7,7 @@ import math
 from datetime import date, datetime
 from typing import Any
 
-EXPORT_VERSION = 12
+EXPORT_VERSION = 13
 
 DATA_COLLECTIONS = [
     "accounts",

@@ -9,6 +9,8 @@ from ..services.goal_service import (
     get_life_events_with_progress,
     list_goals,
     update_goal,
+    archive_goal,
+    unarchive_goal,
     delete_goal,
     list_goal_capsules,
     calculate_overall_goal_probability,
@@ -23,19 +25,21 @@ router = APIRouter(prefix="/life-events", tags=["life_events"])
 
 @router.get("/")
 def get_life_events(
+    include_archived: bool = False,
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
     """Get all life events for current client."""
-    return list_goals(db, current_client.id)
+    return list_goals(db, current_client.id, include_archived=include_archived)
 
 @router.get("/with-progress")
 def get_life_events_progress(
+    include_archived: bool = False,
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
     """Get all life events with calculated progress for current client."""
-    return get_life_events_with_progress(db, client_id=current_client.id)
+    return get_life_events_with_progress(db, client_id=current_client.id, include_archived=include_archived)
 
 @router.get("/goal-probability")
 def get_goal_probability(
@@ -88,6 +92,30 @@ def update_life_event(
     if updated is None:
         raise HTTPException(status_code=404, detail="Life event not found")
     return updated
+
+@router.post("/{event_id}/archive", response_model=schemas.LifeEvent)
+def archive_life_event(
+    event_id: int,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    event = archive_goal(db, current_client.id, event_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail="Life event not found")
+    return event
+
+
+@router.post("/{event_id}/unarchive", response_model=schemas.LifeEvent)
+def unarchive_life_event(
+    event_id: int,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    event = unarchive_goal(db, current_client.id, event_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail="Life event not found")
+    return event
+
 
 @router.get("/{event_id}/capsules")
 def get_capsules_for_goal(

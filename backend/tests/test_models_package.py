@@ -9,8 +9,8 @@ from app import models
 from app.database import Base
 
 
-# R2 adds capsule_drawdowns; preserve the rest of the schema snapshot.
-EXPECTED_METADATA_SHA256 = "202c76b3b97c16cb57ab0d2d521cb0b32a8f66cb3428d34ea7dba5ee1bf56f48"
+# R3 adds LifeEvent.archived_at; preserve the rest of the schema snapshot.
+EXPECTED_METADATA_SHA256 = "f2456cb9c5f78c0c25bd30bb6e321b137204e66461211511dc81364ed8980cf0"
 
 MODEL_NAMES = (
     "Client", "ClientMfaSetting", "ClientRecoveryCode",
@@ -89,7 +89,7 @@ def _metadata_snapshot():
 def test_metadata_matches_the_minor_unit_schema():
     snapshot = _metadata_snapshot()
     assert len(snapshot["table_names"]) == 28
-    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 360
+    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 361
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == EXPECTED_METADATA_SHA256
 

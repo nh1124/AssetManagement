@@ -241,6 +241,7 @@ def export_client(db: Session, client: models.Client) -> dict:
                         "active_plan_basis",
                         "active_plan_label",
                         "plan_status_override",
+                        "archived_at",
                         "created_at",
                     ],
                 )
@@ -806,6 +807,7 @@ def import_client(
                 active_plan_basis=item.get("active_plan_basis") or "milestone",
                 active_plan_label=item.get("active_plan_label"),
                 plan_status_override=item.get("plan_status_override"),
+                archived_at=parse_datetime(item.get("archived_at")),
                 created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
             )
             db.add(event)

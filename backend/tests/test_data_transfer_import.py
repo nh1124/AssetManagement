@@ -79,7 +79,7 @@ def _seed(db, client_id=101, base=10000):
     cash = add(models.Account, 2, name="cash", account_type="asset",  parent_id=parent.id)
     expense = add(models.Account, 3, name="food", account_type="expense")
     goal = add(models.LifeEvent, 4, name="goal", start_date=date(2026, 10, 1),
-               target_date=date(2027, 1, 1), target_amount=1000, note="goal note")
+               target_date=date(2027, 1, 1), target_amount=1000, note="goal note", archived_at=STAMP)
     capsule = add(models.Capsule, 5, name="goal", life_event_id=goal.id,
                   target_amount=1000, monthly_contribution=10,
                   capsule_type="life_event", target_amount_source="life_event")

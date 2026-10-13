@@ -24,6 +24,7 @@ class LifeEvent(Base):
     active_plan_basis = Column(String, default="milestone", server_default="milestone", nullable=False)
     active_plan_label = Column(String, nullable=True)
     plan_status_override = Column(String, nullable=True)
+    archived_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     client = relationship("Client", back_populates="life_events")

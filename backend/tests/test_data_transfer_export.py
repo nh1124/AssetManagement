@@ -23,7 +23,7 @@ FORMAT_FIELDS = {
     "registry_entries": ["id","name","entry_type","category","amount","currency","frequency","frequency_days","day_of_month","month_of_year","line_type","budget_account_id","source_account_id","destination_account_id","funding_capsule_id","budget_treatment","generate_recurring","budget_active","is_active","source_product_id","source_recurring_transaction_id","note","start_period","end_period","created_at","updated_at"],
     "quick_templates": ["id","tray","name","template_kind","description","category","default_currency","default_from_account_id","default_to_account_id","config","sort_order","is_active","created_at","updated_at"],
     "transaction_batches": ["id","quick_template_id","label","source","input_payload","created_at"],
-    "life_events": ["id","name","start_date","target_date","target_amount","priority","note","active_plan_basis","active_plan_label","plan_status_override","created_at"],
+    "life_events": ["id","name","start_date","target_date","target_amount","priority","note","active_plan_basis","active_plan_label","plan_status_override","archived_at","created_at"],
     "transactions": ["id","date","description","amount","currency","batch_id","recurring_transaction_id","created_at"],
     "journal_entries": ["id","transaction_id","account_id","capsule_id","debit","credit","memo","sort_order"],
     "budget_plans": ["id","name","description","is_default","sort_order","created_at","updated_at"],

@@ -790,6 +790,7 @@ class LifeEventUpdate(BaseModel):
 
 class LifeEvent(LifeEventBase):
     id: int
+    archived_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
 
     class Config:
