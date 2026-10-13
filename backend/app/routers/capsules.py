@@ -16,6 +16,7 @@ from ..services.capsule_service import (
     funding_source_to_dict,
 )
 from ..workflows import capsule_workflow
+from .transactions import _serialize_transaction
 
 router = APIRouter(
     prefix="/capsules",
@@ -142,6 +143,29 @@ def delete_capsule(
     if deleted is None:
         raise HTTPException(status_code=404, detail="Capsule not found")
     return {"message": "Capsule deleted successfully", **asdict(deleted)}
+
+
+@router.post("/{capsule_id}/drawdown", response_model=schemas.CapsuleDrawdownResult)
+def record_capsule_drawdown(
+    capsule_id: int, payload: schemas.CapsuleDrawdownRequest,
+    db: Session = Depends(database.get_db),
+    current_client: models.Client = Depends(dependencies.get_current_client),
+):
+    transaction, drawdown = capsule_service.record_drawdown(
+        db, current_client.id, capsule_id, **payload.model_dump(),
+    )
+    return {"transaction": _serialize_transaction(transaction),
+            "drawdown": capsule_service.drawdown_to_dict(drawdown)}
+
+
+@router.get("/{capsule_id}/drawdowns", response_model=List[schemas.CapsuleDrawdown])
+def read_capsule_drawdowns(
+    capsule_id: int,
+    db: Session = Depends(database.get_db),
+    current_client: models.Client = Depends(dependencies.get_current_client),
+):
+    return [capsule_service.drawdown_to_dict(row)
+            for row in capsule_service.list_drawdowns(db, current_client.id, capsule_id)]
 
 
 @router.post("/{capsule_id}/contribute")

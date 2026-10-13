@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from datetime import date as Date
 from decimal import ROUND_HALF_UP
 from fractions import Fraction
 from typing import Protocol, Sequence
@@ -13,6 +14,7 @@ from .money_storage import to_minor, money_client_currency, rule_amount_fields, 
 from .. import models, schemas
 from ..domain.errors import Invalid, NotFound
 from ..domain.money import Money
+from ..domain.journal import Leg
 from . import ledger_service
 from .cache_service import invalidate_client
 from .fx_service import get_client_currency
@@ -134,6 +136,75 @@ def list_funding_sources(
     if capsule is None:
         return None
     return sorted(capsule.funding_sources, key=lambda source: (source.sort_order, source.id))
+
+
+def drawdown_to_dict(drawdown: models.CapsuleDrawdown) -> dict:
+    transaction = drawdown.transaction
+    return {
+        "id": drawdown.id, "client_id": drawdown.client_id,
+        "capsule_id": drawdown.capsule_id, "transaction_id": drawdown.transaction_id,
+        "kind": drawdown.kind, "amount_minor": drawdown.amount_minor,
+        "amount": Money(drawdown.amount_minor, transaction.currency).to_float(),
+        "currency": transaction.currency, "date": transaction.date,
+        "description": transaction.description, "note": drawdown.note,
+        "created_at": drawdown.created_at,
+    }
+
+
+def list_drawdowns(db: Session, client_id: int, capsule_id: int) -> list[models.CapsuleDrawdown]:
+    if get_capsule(db, client_id, capsule_id) is None:
+        raise Invalid("Capsule not found for this client")
+    return db.query(models.CapsuleDrawdown).filter(
+        models.CapsuleDrawdown.client_id == client_id,
+        models.CapsuleDrawdown.capsule_id == capsule_id,
+    ).order_by(models.CapsuleDrawdown.created_at.desc(), models.CapsuleDrawdown.id.desc()).all()
+
+
+def record_drawdown(
+    db: Session, client_id: int, capsule_id: int, *, amount: float,
+    from_account_id: int, to_account_id: int, kind: str, date: Date,
+    description: str, note: str | None = None, commit: bool = True,
+) -> tuple[models.Transaction, models.CapsuleDrawdown]:
+    # Serialize drawdowns of one capsule, including changes to its funding plan.
+    capsule = db.query(models.Capsule).filter(
+        models.Capsule.client_id == client_id, models.Capsule.id == capsule_id,
+    ).with_for_update().first()
+    if capsule is None:
+        raise Invalid("Capsule not found for this client")
+    for account_id in (from_account_id, to_account_id):
+        if ledger_service.get_account(db, client_id, account_id) is None:
+            raise Invalid(f"Account {account_id} not found for this client")
+    if kind not in {"as_intended", "diverted"}:
+        raise Invalid("Drawdown kind must be as_intended or diverted")
+    currency = get_client_currency(db, client_id)
+    try:
+        money = Money.from_major(str(amount), currency)
+    except (ValueError, ArithmeticError) as exc:
+        raise Invalid("Drawdown amount must be a finite positive amount") from exc
+    if money.minor <= 0:
+        raise Invalid("Drawdown amount must be positive")
+    if not any(source.account_id == from_account_id for source in capsule.funding_sources):
+        raise Invalid("Source account is not a capsule funding source")
+    claim = claimed_minor(db, client_id, capsule_id).get(currency, 0)
+    if money.minor > claim:
+        raise Invalid(f"Drawdown exceeds capsule claim of {Money(claim, currency).to_major()} {currency}")
+    try:
+        transaction = ledger_service.create_transaction(
+            db, client_id=client_id, date=date, description=description,
+            amount_minor=money.minor, currency=currency,
+            legs=[Leg(to_account_id, debit=money.minor),
+                  Leg(from_account_id, credit=money.minor, capsule_id=capsule_id)],
+        )
+        drawdown = models.CapsuleDrawdown(
+            client_id=client_id, capsule_id=capsule_id, transaction_id=transaction.id,
+            kind=kind, amount_minor=money.minor, note=note,
+        )
+        db.add(drawdown)
+        _finish_write(db, client_id, drawdown, commit=commit)
+        return transaction, drawdown
+    except Exception:
+        db.rollback()
+        raise
 
 
 def _percent(basis_points: int) -> str:

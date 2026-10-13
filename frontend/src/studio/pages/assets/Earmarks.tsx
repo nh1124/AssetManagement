@@ -8,6 +8,7 @@ import { useResource as useAssetData } from '../../useResource';
 import { Feedback } from '../db/Database';
 import { buttonClass } from '../db/forms';
 import FundingPlanEditor, { FundingPlanSummary } from './FundingPlanEditor';
+import Drawdowns from './Drawdowns';
 
 const loadCapsules = (): Promise<Capsule[]> => getCapsules();
 const percentFormat = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 2 });
@@ -112,6 +113,7 @@ function EarmarksForClient({ currency }: { currency: string }) {
                                                         <FundingPlanSummary total={sources.reduce((sum, source) => sum + source.target_amount, 0)} target={capsule.target_amount} currency={currency} />
                                                         <button type="button" disabled={loading || Boolean(error) || editingId !== null} onClick={() => { setMessage(''); setEditingId(capsule.id); }} className={buttonClass}>資金計画を編集</button>
                                                     </div>}
+                                                    <Drawdowns capsule={capsule} currency={currency} onRecorded={reload} />
                                                 </td>
                                             </tr>
                                         )}

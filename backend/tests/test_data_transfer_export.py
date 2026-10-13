@@ -32,6 +32,7 @@ FORMAT_FIELDS = {
     "monthly_actions": ["id","source_period","target_period","proposal_id","kind","description","amount","target_id","payload","result","status","idempotency_key","created_at","applied_at"],
     "milestones": ["id","life_event_id","date","target_amount","note","source","source_snapshot","is_active_plan","created_at"],
     "capsules": ["id","name","target_amount","monthly_contribution","life_event_id","capsule_type","target_amount_source","monthly_contribution_source","created_at"],
+    "capsule_drawdowns": ["id","capsule_id","transaction_id","kind","amount_minor","note","created_at"],
     "capsule_funding_sources": ["id","capsule_id","account_id","target_amount","max_share_bp","sort_order","created_at","updated_at"],
     "capsule_rules": ["id","capsule_id","trigger_type","trigger_category","trigger_description","source_mode","source_account_id","destination_account_id","amount_type","amount_value","is_active","created_at"],
     "simulation_scenarios": ["id","life_event_id","name","description","annual_return","inflation","monthly_savings","contribution_schedule","allocation_mode","created_at","updated_at"],
@@ -116,7 +117,9 @@ def _seed_client(db, client_id, base, marker):
     )
     db.flush()
     add(models.JournalEntry, 12, transaction_id=tx.id, account_id=expense.id, debit_minor=100, credit_minor=0, memo=marker, sort_order=0)
-    add(models.JournalEntry, 13, transaction_id=tx.id, account_id=cash.id, debit_minor=0, credit_minor=100, memo=marker, sort_order=1)
+    add(models.JournalEntry, 13, transaction_id=tx.id, account_id=cash.id, debit_minor=0, credit_minor=100, memo=marker, sort_order=1, capsule_id=capsule.id)
+    add(models.CapsuleDrawdown, 25, capsule_id=capsule.id, transaction_id=tx.id,
+        kind="as_intended", amount_minor=100, note=marker)
     plan = add(models.BudgetPlan, 14, name=marker, is_default=True, sort_order=20)
     add(
         models.MonthlyPlanLine, 15, plan_id=plan.id, target_period=PERIOD, line_type="expense",

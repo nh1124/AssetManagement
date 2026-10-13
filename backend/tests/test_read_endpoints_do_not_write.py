@@ -106,6 +106,10 @@ def _seed(db, scenario, today):
                              funding_sources=[models.CapsuleFundingSource(client_id=1, account_id=cash.id, target_amount_minor=to_minor(200000, "JPY"))])
     db.add(capsule)
     db.flush()
+    credit = db.query(models.JournalEntry).filter_by(transaction_id=lunch.id, account_id=cash.id).one()
+    credit.capsule_id = capsule.id
+    db.add(models.CapsuleDrawdown(client_id=1, capsule_id=capsule.id,
+                                 transaction_id=lunch.id, kind="as_intended", amount_minor=1200))
     product = models.Product(client_id=1, name="Guard supplies", category="Guard food",
                              last_unit_price_minor=to_minor(1000, "JPY"), frequency_days=30, units_per_purchase=1,
                              last_purchase_date=today, budget_account_id=expense.id,

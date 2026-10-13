@@ -105,7 +105,9 @@ def _seed(db, client_id=101, base=10000):
     add(models.JournalEntry, 13, transaction_id=tx.id, account_id=expense.id,
         debit_minor=100, credit_minor=0, memo="debit", sort_order=0)
     add(models.JournalEntry, 14, transaction_id=tx.id, account_id=cash.id,
-        debit_minor=0, credit_minor=100, memo="credit", sort_order=1)
+        debit_minor=0, credit_minor=100, memo="credit", sort_order=1, capsule_id=capsule.id)
+    add(models.CapsuleDrawdown, 25, capsule_id=capsule.id, transaction_id=tx.id,
+        kind="diverted", amount_minor=100, note="drawdown note")
     plan = add(models.BudgetPlan, 15, name="default", is_default=True, sort_order=10)
     line = add(models.MonthlyPlanLine, 16, plan_id=plan.id, target_period="2026-10",
                line_type="expense", target_type="account", target_id=expense.id,

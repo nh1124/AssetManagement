@@ -9,9 +9,8 @@ from app import models
 from app.database import Base
 
 
-# F2c removes the holding table and the capsule account/cache columns.
-# Keep every remaining column, constraint and index pinned.
-EXPECTED_METADATA_SHA256 = "56ec51a2311c5caa6dde6e07c044ec480d08a9575911cba5ecf02a6aceb09e11"
+# R2 adds capsule_drawdowns; preserve the rest of the schema snapshot.
+EXPECTED_METADATA_SHA256 = "202c76b3b97c16cb57ab0d2d521cb0b32a8f66cb3428d34ea7dba5ee1bf56f48"
 
 MODEL_NAMES = (
     "Client", "ClientMfaSetting", "ClientRecoveryCode",
@@ -21,7 +20,7 @@ MODEL_NAMES = (
     "BudgetPlan", "MonthlyPlanLine", "PeriodReview", "MonthlyAction",
     "AiOperationPolicy", "AiAuditLog", "AiChangeRequest",
     "SimulationConfig", "SimulationScenario",
-    "Capsule", "CapsuleFundingSource", "CapsuleRule",
+    "Capsule", "CapsuleFundingSource", "CapsuleRule", "CapsuleDrawdown",
 )
 ENUM_NAMES = ("AccountType", "AccountRole")
 
@@ -89,8 +88,8 @@ def _metadata_snapshot():
 
 def test_metadata_matches_the_minor_unit_schema():
     snapshot = _metadata_snapshot()
-    assert len(snapshot["table_names"]) == 27
-    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 352
+    assert len(snapshot["table_names"]) == 28
+    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 360
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == EXPECTED_METADATA_SHA256
 

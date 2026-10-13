@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { isAxiosError } from 'axios';
-import { contributeToCapsule, createTransaction, getAccounts, getCapsules } from '../../api';
+import { contributeToCapsule, createTransaction, getAccounts, getCapsules, recordCapsuleDrawdown } from '../../api';
 import { useClient } from '../../context/ClientContext';
 import { getCurrencySymbol } from '../../utils/currency';
-import type { Account, Capsule, TransactionLeg } from '../../types';
+import type { Account, Capsule, CapsuleDrawdownKind, TransactionLeg } from '../../types';
 
 // The API also returns item accounts, which the shared legacy type omits.
 type RecordAccount = Omit<Account, 'account_type'> & {
@@ -81,7 +81,7 @@ function AccountSelect({ label, value, accounts, onChange }: {
     );
 }
 
-export default function Record() {
+function RecordForClient() {
     const { currentClient } = useClient();
     // Money is per-currency here and is never totalled across currencies, so
     // the entry takes the client's currency rather than assuming one.
@@ -99,6 +99,8 @@ export default function Record() {
     const [debitAccountId, setDebitAccountId] = useState('');
     const [creditAccountId, setCreditAccountId] = useState('');
     const [capsuleId, setCapsuleId] = useState('');
+    const [drawdownCapsuleId, setDrawdownCapsuleId] = useState('');
+    const [drawdownKind, setDrawdownKind] = useState<CapsuleDrawdownKind>('as_intended');
     const [splitRows, setSplitRows] = useState<SplitRow[]>([]);
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState('');
@@ -127,8 +129,12 @@ export default function Record() {
 
     const fields = ACCOUNT_FIELDS[kind];
     const debitAccounts = accounts.filter((account) => fields.debitTypes.includes(account.account_type));
-    const creditAccounts = accounts.filter((account) => fields.creditTypes.includes(account.account_type));
-    const supportsSplit = kind === 'expense' || kind === 'purchase';
+    const supportsDrawdown = kind === 'expense' || kind === 'purchase';
+    const drawdownCapsule = supportsDrawdown ? capsules.find((capsule) => String(capsule.id) === drawdownCapsuleId) : undefined;
+    const drawdownActive = supportsDrawdown && Boolean(drawdownCapsuleId);
+    const creditAccounts = accounts.filter((account) => fields.creditTypes.includes(account.account_type)
+        && (!drawdownActive || drawdownCapsule?.funding_sources?.some((source) => source.account_id === account.id)));
+    const supportsSplit = supportsDrawdown && !drawdownActive;
     const splitActive = supportsSplit && splitRows.length > 0;
     const numericAmount = Number(amount);
     const splitTotal = splitRows.reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
@@ -141,7 +147,8 @@ export default function Record() {
         : hasAccount(debitAccounts, debitAccountId);
     const allocationReady = !capsulesLoading && !capsulesError && capsules.some((capsule) => String(capsule.id) === capsuleId);
     const canSubmit = !accountsLoading && !accountsError && validAmount && Boolean(date)
-        && hasAccount(creditAccounts, creditAccountId) && (kind === 'allocation' ? allocationReady : validDebit);
+        && hasAccount(creditAccounts, creditAccountId) && (kind === 'allocation' ? allocationReady : validDebit)
+        && (!drawdownActive || (!capsulesLoading && !capsulesError && Boolean(drawdownCapsule)));
 
     const changeKind = (next: RecordKind) => {
         const nextFields = ACCOUNT_FIELDS[next];
@@ -149,6 +156,8 @@ export default function Record() {
         if (!accounts.some((account) => String(account.id) === debitAccountId && nextFields.debitTypes.includes(account.account_type))) setDebitAccountId('');
         if (!accounts.some((account) => String(account.id) === creditAccountId && nextFields.creditTypes.includes(account.account_type))) setCreditAccountId('');
         setKind(next);
+        setDrawdownCapsuleId('');
+        setDrawdownKind('as_intended');
         setSplitRows([]);
         setError('');
         setConfirmation('');
@@ -183,6 +192,11 @@ export default function Record() {
                 await contributeToCapsule(Number(capsuleId), {
                     amount: numericAmount,
                     from_account_id: Number(creditAccountId),
+                });
+            } else if (drawdownActive) {
+                await recordCapsuleDrawdown(Number(drawdownCapsuleId), {
+                    amount: numericAmount, from_account_id: Number(creditAccountId),
+                    to_account_id: Number(debitAccountId), kind: drawdownKind, date, description,
                 });
             } else {
                 const legs: TransactionLeg[] = [
@@ -241,6 +255,35 @@ export default function Record() {
                             <input type="text" value={description} onChange={(event) => setDescription(event.target.value)} className={inputClass} />
                         </label>
                     )}
+                    {supportsDrawdown && <div className="space-y-3">
+                        <label className="block space-y-2 text-sm">
+                            <span className="text-[var(--studio-text-muted)]">取り崩す取り置き（任意）</span>
+                            <select disabled={capsulesLoading || Boolean(capsulesError)} value={drawdownCapsuleId} onChange={(event) => {
+                                const next = event.target.value;
+                                setDrawdownCapsuleId(next);
+                                setDrawdownKind('as_intended');
+                                if (next) {
+                                    setSplitRows([]);
+                                    const selected = capsules.find((capsule) => String(capsule.id) === next);
+                                    if (!selected?.funding_sources?.some((source) => String(source.account_id) === creditAccountId)) setCreditAccountId('');
+                                }
+                            }} className={inputClass}>
+                                <option value="">{capsulesLoading ? '読み込んでいます…' : '選択しない'}</option>
+                                {capsules.map((capsule) => <option key={capsule.id} value={capsule.id}>{capsule.name}</option>)}
+                            </select>
+                        </label>
+                        {capsulesError && <p role="alert" className="text-xs text-[var(--studio-danger)]">取り置きを取得できませんでした。{capsulesError}</p>}
+                        {drawdownActive && <>
+                            <label className="block space-y-2 text-sm">
+                                <span className="text-[var(--studio-text-muted)]">区分</span>
+                                <select value={drawdownKind} onChange={(event) => setDrawdownKind(event.target.value as CapsuleDrawdownKind)} className={inputClass}>
+                                    <option value="as_intended">意図どおり使った</option>
+                                    <option value="diverted">他に回した</option>
+                                </select>
+                            </label>
+                            <p className="text-xs text-[var(--studio-text-muted)]">支払元は取り置きの資金源から選びます。使い道の口座は一つにまとめて記録します。</p>
+                        </>}
+                    </div>}
                     {kind === 'allocation' ? (
                         <label className="block space-y-2 text-sm">
                             <span className="text-[var(--studio-text-muted)]">取り置き</span>
@@ -296,4 +339,9 @@ export default function Record() {
             </form>
         </section>
     );
+}
+
+export default function Record() {
+    const { clientId } = useClient();
+    return <RecordForClient key={clientId} />;
 }

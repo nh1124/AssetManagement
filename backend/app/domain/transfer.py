@@ -7,7 +7,7 @@ import math
 from datetime import date, datetime
 from typing import Any
 
-EXPORT_VERSION = 11
+EXPORT_VERSION = 12
 
 DATA_COLLECTIONS = [
     "accounts",
@@ -26,6 +26,7 @@ DATA_COLLECTIONS = [
     "monthly_actions",
     "milestones",
     "capsules",
+    "capsule_drawdowns",
     "capsule_funding_sources",
     "capsule_rules",
     "simulation_scenarios",
@@ -216,12 +217,29 @@ def validate_import_payload(
     check_ref("capsules", "life_event_id", "life_events")
     check_ref("capsule_funding_sources", "capsule_id", "capsules", required=True)
     check_ref("capsule_funding_sources", "account_id", "accounts", required=True)
+    check_ref("capsule_drawdowns", "capsule_id", "capsules", required=True)
+    check_ref("capsule_drawdowns", "transaction_id", "transactions", required=True)
     check_ref("capsule_rules", "capsule_id", "capsules", required=True)
     check_ref("capsule_rules", "source_account_id", "accounts")
     check_ref("simulation_scenarios", "life_event_id", "life_events", required=True)
     check_ref("monthly_plan_lines", "account_id", "accounts")
     check_ref("monthly_plan_lines", "source_account_id", "accounts")
     check_ref("monthly_plan_lines", "plan_id", "budget_plans")
+
+    drawdown_pairs = set()
+    for item in data.get("capsule_drawdowns", []):
+        pair = (_as_int(item.get("capsule_id")), _as_int(item.get("transaction_id")))
+        if pair in drawdown_pairs:
+            issue("error", "duplicate_drawdown", "A transaction can have only one drawdown per capsule.",
+                  "capsule_drawdowns", item.get("id"))
+        drawdown_pairs.add(pair)
+        if item.get("kind") not in {"as_intended", "diverted"}:
+            issue("error", "invalid_drawdown_kind", "Drawdown kind must be as_intended or diverted.",
+                  "capsule_drawdowns", item.get("id"), "kind")
+        amount = item.get("amount_minor")
+        if type(amount) is not int or amount <= 0:
+            issue("error", "invalid_drawdown_amount", "Drawdown amount_minor must be a positive integer.",
+                  "capsule_drawdowns", item.get("id"), "amount_minor")
 
     journal_entries_by_transaction: dict[int, list[dict[str, Any]]] = {}
     for entry in data.get("journal_entries", []):

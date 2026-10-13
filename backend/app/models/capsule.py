@@ -87,6 +87,27 @@ class CapsuleFundingSource(Base):
         return major_expression(cls.target_amount_minor, client_currency_expression(cls))
 
 
+class CapsuleDrawdown(Base):
+    """Why an attributed credit left an earmark; never a balance source."""
+
+    __tablename__ = "capsule_drawdowns"
+    __table_args__ = (
+        UniqueConstraint("capsule_id", "transaction_id", name="uq_capsule_drawdowns_transaction"),
+        CheckConstraint("kind IN ('as_intended', 'diverted')", name="ck_capsule_drawdown_kind"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
+    capsule_id = Column(Integer, ForeignKey("capsules.id", ondelete="CASCADE"), nullable=False, index=True)
+    transaction_id = Column(Integer, ForeignKey("transactions.id", ondelete="CASCADE"), nullable=False)
+    kind = Column(String, nullable=False)
+    amount_minor = Column(MinorUnits, nullable=False)
+    note = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    transaction = relationship("Transaction")
+
+
 class CapsuleRule(Base):
     __tablename__ = "capsule_rules"
     __table_args__ = (CheckConstraint(

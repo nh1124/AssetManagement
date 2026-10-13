@@ -399,6 +399,13 @@ def export_client(db: Session, client: models.Client) -> dict:
                 .order_by(models.Capsule.id)
                 .all()
             ],
+            "capsule_drawdowns": [
+                row_fields(drawdown, ["id", "capsule_id", "transaction_id", "kind", "amount_minor", "note", "created_at"])
+                for drawdown in db.query(models.CapsuleDrawdown)
+                .filter(models.CapsuleDrawdown.client_id == client.id)
+                .order_by(models.CapsuleDrawdown.id)
+                .all()
+            ],
             "capsule_funding_sources": [
                 row_fields(source, ["id", "capsule_id", "account_id", "target_amount", "max_share_bp", "sort_order", "created_at", "updated_at"])
                 for source in db.query(models.CapsuleFundingSource)
@@ -533,6 +540,7 @@ def import_client(
             models.MonthlyPlanLine,
             models.PeriodReview,
             models.MonthlyAction,
+            models.CapsuleDrawdown,
             models.CapsuleRule,
             models.Capsule,
             models.ExchangeRate,
@@ -939,6 +947,16 @@ def import_client(
             .all()
         ):
             create_capsule_for_goal(db, client.id, event)
+
+        for item in data.get("capsule_drawdowns", []):
+            db.add(models.CapsuleDrawdown(
+                client_id=client.id,
+                capsule_id=capsule_map[int(item["capsule_id"])],
+                transaction_id=transaction_map[int(item["transaction_id"])],
+                kind=item["kind"], amount_minor=item["amount_minor"],
+                note=item.get("note"),
+                created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
+            ))
 
         for item in data.get("capsule_rules", []):
             capsule_id = capsule_map.get(item.get("capsule_id"))

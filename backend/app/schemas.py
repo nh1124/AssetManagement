@@ -983,6 +983,39 @@ class Capsule(CapsuleBase):
         from_attributes = True
 
 
+class CapsuleDrawdownRequest(BaseModel):
+    amount: float = Field(gt=0, allow_inf_nan=False)
+    from_account_id: int
+    to_account_id: int
+    kind: Literal["as_intended", "diverted"]
+    date: date
+    description: str
+    note: Optional[str] = None
+
+    class Config:
+        extra = "forbid"
+
+
+class CapsuleDrawdown(BaseModel):
+    id: int
+    client_id: int
+    capsule_id: int
+    transaction_id: int
+    kind: Literal["as_intended", "diverted"]
+    amount_minor: int
+    amount: float
+    currency: str
+    date: date
+    description: str
+    note: Optional[str] = None
+    created_at: datetime
+
+
+class CapsuleDrawdownResult(BaseModel):
+    transaction: Transaction
+    drawdown: CapsuleDrawdown
+
+
 class CapsuleRuleBase(BaseModel):
     capsule_id: int
     trigger_type: CapsuleTriggerLiteral

@@ -782,6 +782,38 @@ export interface RoadmapProjection {
     };
 }
 
+export type CapsuleDrawdownKind = 'as_intended' | 'diverted';
+
+export interface CapsuleDrawdownInput {
+    amount: number;
+    from_account_id: number;
+    to_account_id: number;
+    kind: CapsuleDrawdownKind;
+    date: string;
+    description: string;
+    note?: string;
+}
+
+export interface CapsuleDrawdown {
+    id: number;
+    client_id: number;
+    capsule_id: number;
+    transaction_id: number;
+    kind: CapsuleDrawdownKind;
+    amount_minor: number;
+    amount: number;
+    currency: string;
+    date: string;
+    description: string;
+    note: string | null;
+    created_at: string;
+}
+
+export interface CapsuleDrawdownResult {
+    transaction: Transaction;
+    drawdown: CapsuleDrawdown;
+}
+
 export interface CapsuleFundingSource {
     id: number;
     account_id: number;

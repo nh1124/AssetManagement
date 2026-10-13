@@ -13,6 +13,9 @@ import type {
     AiOperationPolicyPayload,
     AnalysisSummary,
     ContributionScheduleItem,
+    CapsuleDrawdown,
+    CapsuleDrawdownInput,
+    CapsuleDrawdownResult,
     CapsuleFundingSource,
     CapsuleFundingSourceInput,
     CapsuleTransferPreview,
@@ -846,6 +849,16 @@ export const compareSimulationScenarios = async (
 };
 
 // Capsules endpoints
+export const recordCapsuleDrawdown = async (capsuleId: number, payload: CapsuleDrawdownInput): Promise<CapsuleDrawdownResult> => {
+    const response = await api.post<CapsuleDrawdownResult>(`/capsules/${capsuleId}/drawdown`, payload);
+    return response.data;
+};
+
+export const getCapsuleDrawdowns = async (capsuleId: number): Promise<CapsuleDrawdown[]> => {
+    const response = await api.get<CapsuleDrawdown[]>(`/capsules/${capsuleId}/drawdowns`);
+    return response.data;
+};
+
 export const previewCapsuleTransfersForTransaction = async (draft: {
     description: string;
     amount: number;
