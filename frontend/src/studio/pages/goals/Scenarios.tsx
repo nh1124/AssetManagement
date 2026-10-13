@@ -1,3 +1,4 @@
+import { useConfirm } from '../../components/useConfirm';
 import { useCallback, useRef, useState } from 'react';
 import { applyMilestonesFromSimulation, compareSimulationScenarios, getSimulationScenarios, previewMilestonesFromSimulation } from '../../../api';
 import type { ContributionScheduleItem, LifeEvent, MilestoneSimulationBasis, MilestoneSimulationInterval, MilestoneSimulationPreview, MilestoneSimulationRequest, SimulationScenario, SimulationScenarioCompareItem } from '../../../types';
@@ -60,6 +61,7 @@ export default function Scenarios({ goal, currency, clientName, onAdopted, onBus
     goal: LifeEvent; currency: string; clientName?: string;
     onAdopted: () => void; onBusy: (busy: boolean) => void;
 }) {
+    const confirm = useConfirm();
     const load = useCallback(() => getSimulationScenarios(goal.id), [goal.id]);
     const resource = useResource(load);
     const mutation = useMutation();
@@ -98,9 +100,9 @@ export default function Scenarios({ goal, currency, clientName, onAdopted, onBus
             if (data) setPreview({ scenario, request, data });
         });
     };
-    const adopt = () => {
+    const adopt = async () => {
         if (disabled || !preview || !preview.data.items.length || preview.data.life_event_id !== goal.id) return;
-        if (!window.confirm(`「${clientName}」のゴール「${goal.name}」に「${preview.scenario.name}」を採用します。\n現在のマイルストーン${preview.data.existing_count}件を置き換え、プレビューの前提から${preview.data.items.length}件を再生成します。\n採用したマイルストーンは、システム全体でこのゴールの計画・進捗判定の基準になります。\n採用時に再計算するため、現在の確保額や基準日が変わると金額も変わる場合があります。\nこの計画へ切り替えますか？`)) return;
+        if (!(await confirm(`「${clientName}」のゴール「${goal.name}」に「${preview.scenario.name}」を採用します。\n現在のマイルストーン${preview.data.existing_count}件を置き換え、プレビューの前提から${preview.data.items.length}件を再生成します。\n採用したマイルストーンは、システム全体でこのゴールの計画・進捗判定の基準になります。\n採用時に再計算するため、現在の確保額や基準日が変わると金額も変わる場合があります。\nこの計画へ切り替えますか？`, '採用する'))) return;
         run(() => applyMilestonesFromSimulation(goal.id, preview.request), `「${preview.scenario.name}」の前提をゴールの計画として採用しました。`, () => {
             setPreview(null);
             setComparison(null);

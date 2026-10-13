@@ -1,3 +1,5 @@
+import Overlay from '../../components/Overlay';
+import { useConfirm } from '../../components/useConfirm';
 import { Fragment, useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 import { deleteCapsule, getCapsules, getLifeEvents } from '../../../api';
@@ -17,6 +19,7 @@ const loadGoals = () => getLifeEvents();
 const percentFormat = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 2 });
 
 function EarmarksForClient({ currency, clientName }: { currency: string; clientName?: string }) {
+    const confirm = useConfirm();
     const { data: capsules, loading, error, reload, setData } = useResource(loadCapsules);
     const goals = useResource(loadGoals);
     const mutation = useMutation();
@@ -27,10 +30,10 @@ function EarmarksForClient({ currency, clientName }: { currency: string; clientN
     const [message, setMessage] = useState('');
     const [rulesBusy, setRulesBusy] = useState(false);
     const disabled = loading || Boolean(error) || mutation.busy || rulesBusy || editingId !== null || !clientName;
-    const remove = (capsule: Capsule) => {
+    const remove = async (capsule: Capsule) => {
         if (disabled) return;
         const accounts = (capsule.funding_sources ?? []).map((row) => row.account_name || `口座 #${row.account_id}`).join('、');
-        if (!window.confirm(`「${clientName}」の取り置き「${capsule.name}」と規則を削除しますか？\n口座${accounts ? `「${accounts}」` : ''}の残高・取引履歴はそのまま残ります。取り置きの帰属は解除されます。`)) return;
+        if (!(await confirm(`「${clientName}」の取り置き「${capsule.name}」と規則を削除しますか？\n口座${accounts ? `「${accounts}」` : ''}の残高・取引履歴はそのまま残ります。取り置きの帰属は解除されます。`, '削除する'))) return;
         let result: Awaited<ReturnType<typeof deleteCapsule>> | null = null;
         setDeleteResult(null);
         void mutation.run(async () => { result = await deleteCapsule(capsule.id); }, '', () => { setDeleteResult(result); reload(); });
@@ -59,11 +62,11 @@ function EarmarksForClient({ currency, clientName }: { currency: string; clientN
             <Feedback message={message} />
             <Feedback error={goals.error || mutation.error} message={mutation.message} />
             {deleteResult && <Feedback message={`「${deleteResult.capsule_name || '取り置き'}」と規則${deleteResult.rules_deleted}件を削除しました。${deleteResult.retained_account_id !== null ? `口座「${deleteResult.retained_account_name || '名称未設定'}」（#${deleteResult.retained_account_id}）の残高・履歴は残っています。` : '応答に保持した口座の指定はありません。口座の残高・履歴は変更していません。'}`} />}
-            {editor && <EarmarkEditor key={editor.capsule?.id ?? 'new'} capsule={editor.capsule} capsules={capsules ?? []} goals={goals.data ?? []} currency={currency} busy={disabled} onCancel={() => setEditor(null)} onSave={(action) => {
+            {editor && <Overlay title={editor.capsule ? `${editor.capsule.name}を編集` : '新しい取り置き'} onClose={() => setEditor(null)}><Feedback error={mutation.error} /><EarmarkEditor key={editor.capsule?.id ?? 'new'} capsule={editor.capsule} capsules={capsules ?? []} goals={goals.data ?? []} currency={currency} busy={disabled} onCancel={() => setEditor(null)} onSave={(action) => {
                 if (disabled) return;
                 setDeleteResult(null);
                 void mutation.run(action, '取り置きを保存しました。', () => { setEditor(null); reload(); });
-            }} />}
+            }} /></Overlay>}
             {capsules && (capsules.length ? (
                 <DataTable columns={['用途', '現在確保している額', '目標', '進捗', '操作']}>
                 {capsules.map((capsule) => {
@@ -100,7 +103,9 @@ function EarmarksForClient({ currency, clientName }: { currency: string; clientN
                             {isExpanded && (
                                 <tr id={`funding-plan-${capsule.id}`} className="bg-[var(--studio-bg)]">
                                     <td colSpan={5} className="px-5 py-4"><fieldset disabled={!clientName || loading || Boolean(error) || mutation.busy || rulesBusy || editor !== null} className="min-w-0">
-                                        {editingId === capsule.id ? <FundingPlanEditor
+                                        <p className="mb-3 text-xs text-[var(--studio-text-muted)]">月額積立：{formatCurrency(capsule.monthly_contribution, currency)} ／ 資金源：{sources.length}口座</p>
+                                        <details className="space-y-3"><summary className="cursor-pointer text-sm text-[var(--studio-accent)]">資金計画</summary>
+                                        {editingId === capsule.id && <Overlay title={`「${capsule.name}」の資金計画を編集`} onClose={() => setEditingId(null)}><FundingPlanEditor
                                             capsuleId={capsule.id} sources={sources} target={capsule.target_amount} currency={currency}
                                             onCancel={() => setEditingId(null)}
                                             onSaved={(savedSources) => {
@@ -109,7 +114,8 @@ function EarmarksForClient({ currency, clientName }: { currency: string; clientN
                                                 setEditingId(null);
                                                 setMessage(`「${capsule.name}」の資金計画を保存しました。`);
                                             }}
-                                        /> : <div className="space-y-3">
+                                        /></Overlay>}
+                                        <div className="space-y-3">
                                             {sources.length ? (
                                                 <div className="space-y-3">
                                                     <p className="text-xs text-[var(--studio-text-muted)]">資金計画（口座ごとの計画額）</p>
@@ -130,9 +136,14 @@ function EarmarksForClient({ currency, clientName }: { currency: string; clientN
                                             ) : <p className="text-sm text-[var(--studio-text-muted)]">資金計画はまだありません。</p>}
                                             <FundingPlanSummary total={sources.reduce((sum, source) => sum + source.target_amount, 0)} target={capsule.target_amount} currency={currency} />
                                             <button type="button" disabled={disabled || editor !== null} onClick={() => { setMessage(''); setEditingId(capsule.id); }} className={buttonClass}>資金計画を編集</button>
-                                        </div>}
+                                        </div>
+                                        </details>
+                                        <details className="mt-3"><summary className="cursor-pointer text-sm text-[var(--studio-accent)]">取り置きの規則</summary>
                                         <CapsuleRules capsule={capsule} currency={currency} disabled={disabled || editor !== null} onBusy={setRulesBusy} />
+                                        </details>
+                                        <details className="mt-3"><summary className="cursor-pointer text-sm text-[var(--studio-accent)]">取り崩し履歴</summary>
                                         <Drawdowns capsule={capsule} currency={currency} onRecorded={reload} />
+                                        </details>
                                         </fieldset>
                                     </td>
                                 </tr>

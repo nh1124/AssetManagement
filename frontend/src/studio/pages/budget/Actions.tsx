@@ -1,3 +1,5 @@
+import Overlay from '../../components/Overlay';
+import { useConfirm } from '../../components/useConfirm';
 import { clientToday, useTimezone } from '../../datetime';
 import { useCallback, useState } from 'react';
 import { applyReviewAction, createMonthlyAction, getMonthlyActions, processDueMonthlyActions, skipReviewAction } from '../../../api';
@@ -31,6 +33,7 @@ function RelatedBudget({ action, currency }: { action: MonthlyAction; currency: 
 }
 
 function MonthlyActions({ sourcePeriod, currency, clientName }: { sourcePeriod: string; currency: string; clientName?: string }) {
+    const confirm = useConfirm();
     const load = useCallback(() => getMonthlyActions(sourcePeriod), [sourcePeriod]);
     const resource = useResource(load);
     const mutation = useMutation();
@@ -41,10 +44,10 @@ function MonthlyActions({ sourcePeriod, currency, clientName }: { sourcePeriod: 
         if (disabled) return;
         void mutation.run(() => createMonthlyAction(payload), '行動を未実行として追加しました。', () => { setAdding(false); resource.reload(); });
     };
-    const decide = (action: MonthlyAction, apply: boolean) => {
+    const decide = async (action: MonthlyAction, apply: boolean) => {
         if (disabled || adding || action.status !== 'pending') return;
         const verb = apply ? '実行' : '見送り';
-        if (!window.confirm(`「${clientName}」の「${action.description || KINDS[action.kind] || action.kind}」を${verb}にしますか？${apply ? '\n関連する予算・定義・確保額に変更を反映します。予定月が将来でも、今すぐ実行します。' : ''}`)) return;
+        if (!(await confirm(`「${clientName}」の「${action.description || KINDS[action.kind] || action.kind}」を${verb}にしますか？${apply ? '\n関連する予算・定義・確保額に変更を反映します。予定月が将来でも、今すぐ実行します。' : ''}`, apply ? '実行する' : '見送る'))) return;
         let updated: MonthlyAction | null = null;
         void mutation.run(async () => { updated = await (apply ? applyReviewAction(action.id) : skipReviewAction(action.id)); }, `行動を${verb}にしました。`, () => {
             const result = updated;
@@ -52,8 +55,8 @@ function MonthlyActions({ sourcePeriod, currency, clientName }: { sourcePeriod: 
             resource.reload();
         });
     };
-    const processDue = () => {
-        if (disabled || adding || !window.confirm(`「${clientName}」の期限が到来した行動を実行しますか？\n表示中の記録月にかかわらず、全期間の未実行・失敗した行動を対象に、関連する予算・定義・確保額へ反映します。`)) return;
+    const processDue = async () => {
+        if (disabled || adding || !(await confirm(`「${clientName}」の期限が到来した行動を実行しますか？\n表示中の記録月にかかわらず、全期間の未実行・失敗した行動を対象に、関連する予算・定義・確保額へ反映します。`, '実行する'))) return;
         let rows: MonthlyAction[] = [];
         void mutation.run(async () => { rows = (await processDueMonthlyActions()).processed; }, '期限が到来した行動の処理が完了しました。', () => { setProcessed(rows); resource.reload(); });
     };
@@ -68,12 +71,12 @@ function MonthlyActions({ sourcePeriod, currency, clientName }: { sourcePeriod: 
         </div>
         <Feedback loading={resource.loading} error={resource.error} />
         <Feedback error={mutation.error} message={mutation.message} />
-        {processed && <div role="status" className="space-y-2 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5 text-sm">
-            <p>処理対象：{processed.length}件 ／ 実行済み：{processed.filter((row) => row.status === 'applied').length}件 ／ 失敗：{processed.filter((row) => row.status === 'failed').length}件</p>
+        {processed && <details role="status" className="space-y-2 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5 text-sm">
+            <summary className="cursor-pointer">処理対象：{processed.length}件 ／ 実行済み：{processed.filter((row) => row.status === 'applied').length}件 ／ 失敗：{processed.filter((row) => row.status === 'failed').length}件</summary>
             {processed.map((row) => <p key={row.id} className={row.status === 'failed' ? 'text-[var(--studio-danger)]' : ''}>#{row.id} {row.description || KINDS[row.kind]}（予定：{row.target_period || '未設定'}）— {STATES[row.status]}{typeof row.result.error === 'string' && `：${row.result.error}`}</p>)}
             {!processed.length && <p className="text-[var(--studio-text-muted)]">期限が到来した行動はありませんでした。</p>}
-        </div>}
-        {adding && <ActionEditor sourcePeriod={sourcePeriod} currency={currency} busy={disabled} onSave={save} onCancel={() => setAdding(false)} />}
+        </details>}
+        {adding && <Overlay title="行動を追加" onClose={() => setAdding(false)}><Feedback error={mutation.error} /><ActionEditor sourcePeriod={sourcePeriod} currency={currency} busy={disabled} onSave={save} onCancel={() => setAdding(false)} /></Overlay>}
         {resource.data && <DataTable columns={['行動', '予定', '関連する予算', '状態', '操作']}>
             {resource.data.length ? resource.data.map((row) => <tr key={row.id}>
                 <th scope="row" className="px-5 py-3 font-medium">{row.description || KINDS[row.kind] || row.kind}<span className="mt-1 block text-xs font-normal text-[var(--studio-text-muted)]">{KINDS[row.kind] || row.kind}・#{row.id}</span></th>

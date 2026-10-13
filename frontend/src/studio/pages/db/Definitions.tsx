@@ -1,3 +1,5 @@
+import Overlay from '../../components/Overlay';
+import { useConfirm } from '../../components/useConfirm';
 import { useState, type FormEvent } from 'react';
 import { createRegistryEntry, deleteRegistryEntry, getRegistryEntries, updateRegistryEntry } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
@@ -78,7 +80,6 @@ function DefinitionEditor({ entry, type, currency, lookups, busy, onSave, onCanc
         });
     };
     return <form onSubmit={submit} className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
-        <h3 className="mb-4 text-sm font-semibold">{entry ? `${entry.name}を編集` : '定義の新規作成'}</h3>
         <fieldset disabled={busy} className="grid gap-4 md:grid-cols-2">
             <Field label="名称"><input required value={form.name} onChange={(event) => set('name', event.target.value)} className={inputClass} /></Field>
             <Field label="定義の種別"><select value={form.entry_type} onChange={(event) => { const next = event.target.value as RegistryEntryType; setForm((previous) => ({ ...previous, entry_type: next, line_type: DEFAULT_LINES[next] })); }} className={inputClass}>{Object.entries(TYPES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
@@ -112,6 +113,7 @@ function DefinitionEditor({ entry, type, currency, lookups, busy, onSave, onCanc
 }
 
 function DefinitionsForClient({ tab, currency }: { tab: Tab; currency: string }) {
+    const confirm = useConfirm();
     const resource = useResource(getRegistryEntries);
     const lookups = useResource(loadLookups);
     const mutation = useMutation();
@@ -119,15 +121,15 @@ function DefinitionsForClient({ tab, currency }: { tab: Tab; currency: string })
     const rows = resource.data?.filter((entry) => entryTab(entry) === tab) ?? [];
     const disabled = resource.loading || Boolean(resource.error) || mutation.busy;
     const editorDisabled = disabled || lookups.loading || Boolean(lookups.error) || !lookups.data;
-    const remove = (entry: RegistryEntry) => {
-        if (disabled || !window.confirm(`「${entry.name}」の定義を削除しますか？`)) return;
+    const remove = async (entry: RegistryEntry) => {
+        if (disabled || !(await confirm(`「${entry.name}」の定義を削除しますか？`, '削除する'))) return;
         void mutation.run(() => deleteRegistryEntry(entry.id), `「${entry.name}」の削除処理が完了しました。`, resource.reload);
     };
     const accountName = (id: number | null | undefined, name?: string | null) => name || (id == null ? '—' : lookups.data?.accounts.find((row) => row.id === id)?.name ?? `#${id}`);
     return <section className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold">{TYPES[TAB_TYPES[tab]]}</h2><p className="mt-1 text-xs text-[var(--studio-text-muted)]">定義をもとに予算と自動記帳を作成します。{tab === 'index' && '固定資産・消耗品の定義も含みます。'}</p></div><div className="flex gap-2"><button type="button" disabled={editorDisabled || editor !== null} onClick={() => setEditor({ entry: null })} className={buttonClass}>新規作成</button><button type="button" disabled={resource.loading || lookups.loading || mutation.busy || editor !== null} onClick={() => { resource.reload(); lookups.reload(); }} className={buttonClass}>再読み込み</button></div></div>
         <Feedback loading={resource.loading || lookups.loading} error={mutation.error || resource.error || lookups.error} message={mutation.message} />
-        {editor && lookups.data && <DefinitionEditor key={editor.entry?.id ?? 'new'} entry={editor.entry} type={TAB_TYPES[tab]} currency={currency} lookups={lookups.data} busy={editorDisabled} onCancel={() => setEditor(null)} onSave={(action) => void mutation.run(action, '定義を保存しました。', () => { setEditor(null); resource.reload(); })} />}
+        {editor && lookups.data && <Overlay title={editor.entry ? `${editor.entry.name}を編集` : '定義の新規作成'} onClose={() => setEditor(null)}><Feedback error={mutation.error} /><DefinitionEditor key={editor.entry?.id ?? 'new'} entry={editor.entry} type={TAB_TYPES[tab]} currency={currency} lookups={lookups.data} busy={editorDisabled} onCancel={() => setEditor(null)} onSave={(action) => void mutation.run(action, '定義を保存しました。', () => { setEditor(null); resource.reload(); })} /></Overlay>}
         {resource.data && <DataTable columns={['名称', '周期・予定日', '金額', '口座', '予算に反映するか', '操作']}>
             {rows.length ? rows.map((row) => <tr key={row.id}>
                 <th scope="row" className="px-5 py-3 font-medium">{row.name}<span className="mt-1 block text-xs font-normal text-[var(--studio-text-muted)]">{TYPES[row.entry_type]}{!row.is_active && '・無効'}</span></th>

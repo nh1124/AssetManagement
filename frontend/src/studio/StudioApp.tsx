@@ -14,6 +14,7 @@ import Trends from './pages/report/Trends';
 import Monthly from './pages/report/Monthly';
 import Review from './pages/report/Review';
 import Goals from './pages/goals/Goals';
+import GoalPage from './pages/goals/GoalPage';
 import Ai from './pages/automation/Ai';
 import Approvals from './pages/automation/Approvals';
 import Audit from './pages/automation/Audit';
@@ -23,7 +24,7 @@ import Fx from './pages/db/Fx';
 import Definitions from './pages/db/Definitions';
 import Products from './pages/db/Products';
 import Settings from './pages/Settings';
-import { SETTINGS_PATH, STUDIO_HOME, STUDIO_SCREENS } from './navigation';
+import { SETTINGS_PATH, STUDIO_EDITOR_PATHS, STUDIO_HOME, STUDIO_SCREENS } from './navigation';
 import './theme.css';
 
 /** Every screen, by path and then by tab segment.
@@ -66,7 +67,11 @@ export default function StudioApp() {
             <Routes>
                 <Route element={<StudioLayout />}>
                     <Route index element={<Navigate to={STUDIO_HOME} replace />} />
-                    <Route path="record" element={<Record />} />
+                    <Route path={STUDIO_EDITOR_PATHS.record} element={<Record />} />
+                    {/* Editors have URLs without becoming destinations in the rail. */}
+                    <Route path={STUDIO_EDITOR_PATHS.transaction} element={<Record />} />
+                    <Route path={STUDIO_EDITOR_PATHS.newGoal} element={<GoalPage />} />
+                    <Route path={STUDIO_EDITOR_PATHS.editGoal} element={<GoalPage />} />
                     {STUDIO_SCREENS.map((screen) => {
                         const screenRoutes = SCREENS[screen.path];
                         return (

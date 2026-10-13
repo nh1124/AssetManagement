@@ -150,6 +150,12 @@ def list_entries(
     )
 
 
+def get_entry(
+    db: Session, client_id: int, transaction_id: int,
+) -> models.Transaction | None:
+    return ledger_service.get_transaction(db, client_id, transaction_id)
+
+
 def approve_entry_proposal(
     db: Session, client_id: int, proposal_id: int,
 ) -> models.Transaction | None:

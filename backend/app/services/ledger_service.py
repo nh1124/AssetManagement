@@ -417,6 +417,23 @@ def get_transaction(db: Session, client_id: int, transaction_id: int) -> models.
     ).first()
 
 
+def get_transaction(
+    db: Session, client_id: int, transaction_id: int,
+) -> models.Transaction | None:
+    """One entry by id, with its legs.
+
+    An editor reachable by URL needs the row it names. Without this it has to
+    walk the paginated list until the row turns up, which costs more the longer
+    the history grows and asks the database for everything to find one thing.
+    """
+    return db.query(models.Transaction).options(
+        selectinload(models.Transaction.journal_entries),
+    ).filter(
+        models.Transaction.id == transaction_id,
+        models.Transaction.client_id == client_id,
+    ).first()
+
+
 def list_transactions(
     db: Session,
     client_id: int,

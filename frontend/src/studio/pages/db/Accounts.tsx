@@ -1,3 +1,5 @@
+import Overlay from '../../components/Overlay';
+import { useConfirm } from '../../components/useConfirm';
 import { useState, type FormEvent } from 'react';
 import { createAccount, deleteAccount, updateAccount } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
@@ -35,7 +37,6 @@ function AccountEditor({ account, accounts, currency, busy, onSave, onCancel }: 
             : createAccount({ ...payload, account_type: type }));
     };
     return <form onSubmit={submit} className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
-        <h3 className="mb-4 text-sm font-semibold">{account ? `${account.name}を編集` : '口座・勘定科目の新規作成'}</h3>
         <fieldset disabled={busy} className="grid gap-4 md:grid-cols-2">
             <Field label="名称"><input required value={name} onChange={(event) => setName(event.target.value)} className={inputClass} /></Field>
             <Field label="種別"><select disabled={Boolean(account)} value={type} onChange={(event) => { setType(event.target.value as DatabaseAccount['account_type']); setParent(null); }} className={inputClass}>{Object.entries(ACCOUNT_TYPES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
@@ -49,18 +50,17 @@ function AccountEditor({ account, accounts, currency, busy, onSave, onCancel }: 
 }
 
 function AccountsForClient({ currency }: { currency: string }) {
+    const confirm = useConfirm();
     const resource = useResource(loadAccounts);
     const mutation = useMutation();
     const [editor, setEditor] = useState<{ account: DatabaseAccount | null } | null>(null);
     const accounts = resource.data ?? [];
     const disabled = resource.loading || Boolean(resource.error) || mutation.busy;
-    const remove = (account: DatabaseAccount) => {
+    const remove = async (account: DatabaseAccount) => {
         // The server archives rather than erases: an account named by a journal
         // entry cannot disappear. Restoring it is the toggle on 資産 > 口座.
-        if (disabled || !window.confirm(
-            `「${account.name}」を無効にしますか？\n`
-            + '記録は残り、あとから資産 > 口座で戻せます。'
-        )) return;
+        if (disabled || !(await confirm(`「${account.name}」を無効にしますか？\n`
+            + '記録は残り、あとから資産 > 口座で戻せます。', '無効にする'))) return;
         void mutation.run(() => deleteAccount(account.id), `「${account.name}」を無効にしました。`, () => {
             resource.setData((previous) => previous?.filter((row) => row.id !== account.id) ?? null);
             resource.reload();
@@ -69,7 +69,7 @@ function AccountsForClient({ currency }: { currency: string }) {
     return <section className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold">口座・勘定科目</h2><p className="mt-1 text-xs text-[var(--studio-text-muted)]">表示通貨：{currency}。無効の口座も含みます。</p></div><div className="flex gap-2"><button type="button" disabled={disabled || editor !== null} onClick={() => setEditor({ account: null })} className={buttonClass}>新規作成</button><button type="button" disabled={resource.loading || mutation.busy || editor !== null} onClick={resource.reload} className={buttonClass}>再読み込み</button></div></div>
         <Feedback loading={resource.loading} error={mutation.error || resource.error} message={mutation.message} />
-        {editor && resource.data && <AccountEditor key={editor.account?.id ?? 'new'} account={editor.account} accounts={resource.data} currency={currency} busy={disabled} onCancel={() => setEditor(null)} onSave={(action) => void mutation.run(action, '口座・勘定科目を保存しました。', () => { setEditor(null); resource.reload(); })} />}
+        {editor && resource.data && <Overlay title={editor.account ? `${editor.account.name}を編集` : '口座・勘定科目の新規作成'} onClose={() => setEditor(null)}><Feedback error={mutation.error} /><AccountEditor key={editor.account?.id ?? 'new'} account={editor.account} accounts={resource.data} currency={currency} busy={disabled} onCancel={() => setEditor(null)} onSave={(action) => void mutation.run(action, '口座・勘定科目を保存しました。', () => { setEditor(null); resource.reload(); })} /></Overlay>}
         {resource.data && Object.entries(ACCOUNT_TYPES).map(([type, label]) => {
             const rows = accounts.filter((row) => row.account_type === type);
             return <section key={type} className="space-y-2"><h3 className="text-sm font-semibold">{label} <span className="font-normal text-[var(--studio-text-muted)]">{rows.length}件</span></h3>

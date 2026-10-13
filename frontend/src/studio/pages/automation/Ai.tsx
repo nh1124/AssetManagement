@@ -1,3 +1,5 @@
+import Overlay from '../../components/Overlay';
+import { DataTable, Feedback } from '../db/Database';
 import { useRef, useState } from 'react';
 import { getAiExecutionSettings, getAiPolicies, updateAiExecutionSettings, updateAiPolicies } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
@@ -19,6 +21,7 @@ function policyPayload(row: AiOperationPolicy): AiOperationPolicyPayload {
 
 function Policies({ currency }: { currency: string }) {
     const { data, setData, loading, error, reload } = useResource(getAiPolicies);
+    const [editing, setEditing] = useState(false);
     const [edits, setEdits] = useState<Record<number, PolicyEdit>>({});
     const [saving, setSaving] = useState(false);
     const [operationError, setOperationError] = useState('');
@@ -44,6 +47,7 @@ function Policies({ currency }: { currency: string }) {
             const updated = await updateAiPolicies(rows.map(policyPayload));
             setData(updated);
             setEdits({});
+            setEditing(false);
             setConfirmation(`${changed}行の権限ルールを保存しました。`);
         } catch (failure: unknown) {
             setOperationError(assetErrorMessage(failure));
@@ -57,11 +61,23 @@ function Policies({ currency }: { currency: string }) {
         <section className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
                 <h2 className="text-lg font-semibold">AI操作の権限ルール</h2>
-                <button type="button" onClick={reload} disabled={loading || saving || changed > 0} className={buttonClass}>再読み込み</button>
+                <div className="flex gap-2"><button type="button" disabled={loading || saving || Boolean(error) || !data?.length} onClick={() => setEditing(true)} className={buttonClass}>権限ルールを編集</button><button type="button" onClick={reload} disabled={loading || saving || changed > 0} className={buttonClass}>再読み込み</button></div>
             </div>
             {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">権限ルールを読み込んでいます…</p>}
             {(error || operationError) && <p role="alert" className="text-sm text-[var(--studio-danger)]">{error || operationError}</p>}
             {confirmation && <p role="status" className="text-sm text-[var(--studio-positive)]">{confirmation}</p>}
+            {data && <DataTable columns={['対象', '操作', '権限ルール', 'リスク']}>
+                {data.length ? data.map((row) => <tr key={row.id}>
+                    <th scope="row" className="px-5 py-3 font-medium">{row.resource}<span className="mt-1 block text-xs font-normal text-[var(--studio-text-muted)]">{row.ai_client_id == null ? 'すべてのAIクライアント' : `AIクライアント #${row.ai_client_id}`}</span></th>
+                    <td className="px-5 py-3">{row.action}</td>
+                    <td className="space-y-2 px-5 py-3"><p>{MODE_LABELS[row.mode]}{row.require_mfa && ' ／ MFAを必須にする'}</p>
+                        {row.threshold_amount != null && <p className="text-xs text-[var(--studio-text-muted)]">金額条件：{formatCurrency(row.threshold_amount, currency)}（{currency}）</p>}
+                        {row.threshold_count != null && <p className="text-xs text-[var(--studio-text-muted)]">件数条件：{row.threshold_count}件</p>}
+                    </td><td className="px-5 py-3">{RISK_LABELS[row.risk]}</td>
+                </tr>) : <tr><td colSpan={4} className="px-5 py-4 text-[var(--studio-text-muted)]">登録された権限ルールはありません。</td></tr>}
+            </DataTable>}
+            {editing && <Overlay title="AI操作の権限ルールを編集" onClose={() => { setEditing(false); setEdits({}); }}>
+                <Feedback error={operationError || error} />
             {data && (rows.length ? (
                 <fieldset disabled={loading || saving || Boolean(error)}>
                     <div className="overflow-x-auto rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)]">
@@ -98,12 +114,14 @@ function Policies({ currency }: { currency: string }) {
                 <button type="button" onClick={() => void save()} disabled={loading || saving || Boolean(error) || !changed} className={buttonClass}>{saving ? '保存中…' : '保存'}</button>
                 {changed > 0 && <button type="button" onClick={() => { setEdits({}); setOperationError(''); }} disabled={saving} className={buttonClass}>変更を戻す</button>}
             </div>
+            </Overlay>}
         </section>
     );
 }
 
 function ExecutionSettings() {
     const { data, setData, loading, error, reload } = useResource(getAiExecutionSettings);
+    const [editing, setEditing] = useState(false);
     const [mode, setMode] = useState<AiExecutionSettings['mcp_write_mode'] | null>(null);
     const [saving, setSaving] = useState(false);
     const [operationError, setOperationError] = useState('');
@@ -120,6 +138,7 @@ function ExecutionSettings() {
             // Supported operations are server capabilities, so only the write mode is edited.
             setData(await updateAiExecutionSettings({ ...data, mcp_write_mode: mode }));
             setMode(null);
+            setEditing(false);
             setConfirmation('実行設定を保存しました。');
         } catch (failure: unknown) {
             setOperationError(assetErrorMessage(failure));
@@ -129,7 +148,10 @@ function ExecutionSettings() {
         }
     };
     return (
-        <section className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
+        <>
+        <button type="button" disabled={loading || saving} onClick={() => setEditing(true)} className={buttonClass}>AI実行設定</button>
+        {!editing && <Feedback error={error || operationError} message={confirmation} />}
+        {editing && <Overlay title="AI実行設定" onClose={() => { setEditing(false); setMode(null); }}><section className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
             <div className="flex items-center justify-between gap-3"><h2 className="text-sm font-semibold">AI実行設定</h2><button type="button" onClick={reload} disabled={loading || saving || changed} className={buttonClass}>再読み込み</button></div>
             {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">実行設定を読み込んでいます…</p>}
             {(error || operationError) && <p role="alert" className="text-sm text-[var(--studio-danger)]">{error || operationError}</p>}
@@ -144,7 +166,8 @@ function ExecutionSettings() {
                 {data.supported_change_request_operations.length ? <ul className="space-y-1 text-xs">{data.supported_change_request_operations.map((operation) => <li key={operation}>{operation}</li>)}</ul> : <p className="text-xs text-[var(--studio-text-muted)]">対応する操作はありません。</p>}
             </>}
             <button type="button" onClick={() => void save()} disabled={loading || saving || Boolean(error) || !changed} className={buttonClass}>{saving ? '保存中…' : '実行設定を保存'}</button>
-        </section>
+        </section></Overlay>}
+        </>
     );
 }
 

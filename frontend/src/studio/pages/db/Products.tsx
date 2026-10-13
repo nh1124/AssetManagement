@@ -1,3 +1,5 @@
+import Overlay from '../../components/Overlay';
+import { useConfirm } from '../../components/useConfirm';
 import { useState, type FormEvent } from 'react';
 import { createProduct, deleteProduct, getProducts, updateProduct } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
@@ -57,7 +59,6 @@ function ProductEditor({ product, assets, currency, lookups, busy, onSave, onCan
         onSave(() => product ? updateProduct(product.id, payload) : createProduct(payload));
     };
     return <form onSubmit={submit} className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
-        <h3 className="mb-4 text-sm font-semibold">{product ? `${product.name}を編集` : `${assets ? '固定資産' : '消耗品'}の新規作成`}</h3>
         <fieldset disabled={busy} className="grid gap-4 md:grid-cols-2">
             <Field label="物品名"><input required value={name} onChange={(event) => setName(event.target.value)} className={inputClass} /></Field>
             <Field label="分類"><input value={category} onChange={(event) => setCategory(event.target.value)} className={inputClass} /></Field>
@@ -82,6 +83,7 @@ function ProductEditor({ product, assets, currency, lookups, busy, onSave, onCan
 }
 
 function ProductsForClient({ assets, currency }: { assets: boolean; currency: string }) {
+    const confirm = useConfirm();
     const resource = useResource(loadProducts);
     const lookups = useResource(loadLookups);
     const mutation = useMutation();
@@ -89,8 +91,8 @@ function ProductsForClient({ assets, currency }: { assets: boolean; currency: st
     const rows = resource.data?.filter((product) => assets ? product.is_asset : !product.is_asset) ?? [];
     const disabled = resource.loading || Boolean(resource.error) || mutation.busy;
     const editorDisabled = disabled || lookups.loading || Boolean(lookups.error) || !lookups.data;
-    const remove = (product: Product) => {
-        if (disabled || !window.confirm(`「${product.name}」を削除しますか？`)) return;
+    const remove = async (product: Product) => {
+        if (disabled || !(await confirm(`「${product.name}」を削除しますか？`, '削除する'))) return;
         void mutation.run(() => deleteProduct(product.id), `「${product.name}」を削除しました。`, () => {
             resource.setData((previous) => previous?.filter((row) => row.id !== product.id) ?? null);
             resource.reload();
@@ -99,7 +101,7 @@ function ProductsForClient({ assets, currency }: { assets: boolean; currency: st
     return <section className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold">{assets ? '固定資産' : '消耗品'}</h2><p className="mt-1 text-xs text-[var(--studio-text-muted)]">表示通貨：{currency}{assets ? '。更新予定は取得日と耐用月数から算出した目安です。' : '。単価は購入額を購入単位の個数で割った金額です。'}</p></div><div className="flex gap-2"><button type="button" disabled={editorDisabled || editor !== null} onClick={() => setEditor({ product: null })} className={buttonClass}>新規作成</button><button type="button" disabled={resource.loading || lookups.loading || mutation.busy || editor !== null} onClick={() => { resource.reload(); lookups.reload(); }} className={buttonClass}>再読み込み</button></div></div>
         <Feedback loading={resource.loading || lookups.loading} error={mutation.error || resource.error || lookups.error} message={mutation.message} />
-        {editor && lookups.data && <ProductEditor key={editor.product?.id ?? 'new'} product={editor.product} assets={assets} currency={currency} lookups={lookups.data} busy={editorDisabled} onCancel={() => setEditor(null)} onSave={(action) => void mutation.run(action, '物品を保存しました。', () => { setEditor(null); resource.reload(); })} />}
+        {editor && lookups.data && <Overlay title={editor.product ? `${editor.product.name}を編集` : `${assets ? '固定資産' : '消耗品'}の新規作成`} onClose={() => setEditor(null)}><Feedback error={mutation.error} /><ProductEditor key={editor.product?.id ?? 'new'} product={editor.product} assets={assets} currency={currency} lookups={lookups.data} busy={editorDisabled} onCancel={() => setEditor(null)} onSave={(action) => void mutation.run(action, '物品を保存しました。', () => { setEditor(null); resource.reload(); })} /></Overlay>}
         {resource.data && <DataTable columns={assets ? ['物品', '取得額', '取得日', '耐用月数', '更新予定', '積立先の取り置き', '操作'] : ['物品', '単価', '購入単位', '購入周期', '予算口座', '操作']}>
             {rows.length ? rows.map((row) => <tr key={row.id}>
                 <th scope="row" className="px-5 py-3 font-medium">{row.name}<span className="mt-1 block text-xs font-normal text-[var(--studio-text-muted)]">{row.category === 'Uncategorized' ? '未分類' : row.category}</span></th>

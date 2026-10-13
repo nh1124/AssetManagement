@@ -1,3 +1,5 @@
+import { useConfirm } from '../../components/useConfirm';
+import Overlay from '../../components/Overlay';
 import { useCallback, useState, type FormEvent } from 'react';
 import { applyPeriodReportAction, getPeriodReport, getPeriodReview, getProfitLoss, savePeriodReview } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
@@ -10,9 +12,10 @@ import { ReportContext, ReportFigures, ReportProposals, type ProfitLoss } from '
 
 interface Period { startDate: string; endDate: string }
 
-function ReviewEditor({ initial, clientName, disabled, onBusy, onDirty }: {
+function ReviewEditor({ initial, clientName, disabled, onBusy, onDirty, onSaved }: {
     initial: PeriodReview; clientName?: string; disabled: boolean;
     onBusy: (busy: boolean) => void; onDirty: (dirty: boolean) => void;
+    onSaved: (review: PeriodReview) => void;
 }) {
     const [reflection, setReflection] = useState(initial.reflection);
     const [nextActions, setNextActions] = useState(initial.next_actions);
@@ -32,6 +35,7 @@ function ReviewEditor({ initial, clientName, disabled, onBusy, onDirty }: {
         }, '振り返りを保存しました。', () => {
             setSaved(savedReview);
             onDirty(false);
+            onSaved(savedReview);
         }).finally(() => onBusy(false));
     };
     return <form onSubmit={submit} className="space-y-5 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
@@ -56,6 +60,7 @@ function PeriodReading({ period, currency, clientName, onBusy, onDirty }: {
     const report = useResource(loadReport);
     const profitLoss = useResource(loadProfitLoss);
     const [busy, setBusy] = useState(false);
+    const [editing, setEditing] = useState(false);
     const lock = (value: boolean) => { setBusy(value); onBusy(value); };
     const refreshReport = () => { report.reload(); profitLoss.reload(); };
     return <div className="space-y-4">
@@ -64,7 +69,17 @@ function PeriodReading({ period, currency, clientName, onBusy, onDirty }: {
             <section className="min-w-0 space-y-3">
                 <Feedback loading={review.loading} error={review.error} />
                 {review.error && <button type="button" disabled={review.loading} onClick={review.reload} className={buttonClass}>振り返りを再取得</button>}
-                {review.data && <ReviewEditor initial={review.data} clientName={clientName} disabled={busy || review.loading || Boolean(review.error)} onBusy={lock} onDirty={onDirty} />}
+                {review.data && <>
+                    <div className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
+                        <h2 className="text-lg font-semibold">数字を見ながら振り返る</h2>
+                        <p className="text-sm leading-relaxed text-[var(--studio-text-muted)]">うまくいったこと、気になった変化と、次の期間に変えたいことを書き留めます。</p>
+                        <dl className="space-y-4 text-sm"><div><dt className="text-[var(--studio-text-muted)]">振り返り</dt><dd className="mt-2 whitespace-pre-wrap">{review.data.reflection || 'まだ記入されていません'}</dd></div><div><dt className="text-[var(--studio-text-muted)]">次の行動</dt><dd className="mt-2 whitespace-pre-wrap">{review.data.next_actions || 'まだ記入されていません'}</dd></div></dl>
+                        <button type="button" disabled={busy || review.loading || Boolean(review.error) || !clientName} onClick={() => setEditing(true)} className={buttonClass}>振り返りを編集</button>
+                    </div>
+                    {editing && <Overlay title="振り返りを編集" onClose={() => { setEditing(false); onDirty(false); }}>
+                        <ReviewEditor initial={review.data} clientName={clientName} disabled={busy || review.loading || Boolean(review.error)} onBusy={lock} onDirty={onDirty} onSaved={(saved) => { review.setData(saved); setEditing(false); }} />
+                    </Overlay>}
+                </>}
             </section>
             <section className="min-w-0 space-y-6">
                 <div className="flex items-center justify-between gap-3"><h2 className="text-lg font-semibold">この期間の全体像</h2><button type="button" disabled={busy || report.loading || profitLoss.loading} onClick={refreshReport} className={buttonClass}>数字を再読み込み</button></div>
@@ -81,16 +96,17 @@ function PeriodReading({ period, currency, clientName, onBusy, onDirty }: {
 }
 
 function ReviewForClient({ currency, clientName }: { currency: string; clientName?: string }) {
+    const confirm = useConfirm();
     const [period, setPeriod] = useState<Period>(() => monthRange(currentMonth()));
     const [draft, setDraft] = useState(period);
     const [busy, setBusy] = useState(false);
     const [dirty, setDirty] = useState(false);
     const valid = /^\d{4}-\d{2}-\d{2}$/.test(draft.startDate) && /^\d{4}-\d{2}-\d{2}$/.test(draft.endDate) && draft.startDate <= draft.endDate;
-    const choose = (next: Period) => {
+    const choose = async (next: Period) => {
         if (busy || next.startDate > next.endDate) return;
         if (next.startDate !== period.startDate || next.endDate !== period.endDate) {
             // Changing the period remounts the editor, so warn before discarding an unsaved draft.
-            if (dirty && !window.confirm('未保存の振り返りがあります。変更を破棄して、別の期間を表示しますか？')) return;
+            if (dirty && !(await confirm('未保存の振り返りがあります。変更を破棄して、別の期間を表示しますか？', '破棄して表示する'))) return;
             setDirty(false);
             setPeriod(next);
         }

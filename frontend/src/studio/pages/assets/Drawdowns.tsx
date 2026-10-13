@@ -1,3 +1,4 @@
+import Overlay from '../../components/Overlay';
 import { useCallback, useState, type FormEvent } from 'react';
 import { getAccounts, getCapsuleDrawdowns, recordCapsuleDrawdown } from '../../../api';
 import type { Capsule, CapsuleDrawdownKind } from '../../../types';
@@ -33,7 +34,6 @@ function DrawdownForm({ capsule, currency, onRecorded, onCancel }: {
         }, '', () => onRecorded(confirmation));
     };
     return <form onSubmit={submit} className="space-y-3 rounded-md border border-[var(--studio-border)] p-4">
-        <p className="text-sm font-medium">取り崩す</p>
         <Feedback loading={accounts.loading} error={mutation.error || accounts.error} />
         {accounts.error && <button type="button" onClick={accounts.reload} className={buttonClass}>口座を再読み込み</button>}
         <fieldset disabled={mutation.busy || accounts.loading || Boolean(accounts.error)} className="grid gap-3 md:grid-cols-2">
@@ -64,9 +64,9 @@ export default function Drawdowns({ capsule, currency, onRecorded }: { capsule: 
     const [message, setMessage] = useState('');
     return <div className="mt-4 space-y-3 border-t border-[var(--studio-border)] pt-4">
         <Feedback message={message} loading={history.loading} error={history.error} />
-        {open ? <DrawdownForm capsule={capsule} currency={currency} onCancel={() => setOpen(false)} onRecorded={(result) => {
+        {open ? <Overlay title={`「${capsule.name}」を取り崩す`} onClose={() => setOpen(false)}><DrawdownForm capsule={capsule} currency={currency} onCancel={() => setOpen(false)} onRecorded={(result) => {
             setOpen(false); setMessage(result); history.reload(); onRecorded();
-        }} /> : <button type="button" onClick={() => { setMessage(''); setOpen(true); }} disabled={!capsule.funding_sources?.length} className={buttonClass}>取り崩す</button>}
+        }} /></Overlay> : <button type="button" onClick={() => { setMessage(''); setOpen(true); }} disabled={!capsule.funding_sources?.length} className={buttonClass}>取り崩す</button>}
         <p className="text-xs text-[var(--studio-text-muted)]">取り崩し履歴</p>
         {history.error && <button type="button" onClick={history.reload} className={buttonClass}>履歴を再読み込み</button>}
         {history.data && (history.data.length ? <table className="w-full text-left text-xs">

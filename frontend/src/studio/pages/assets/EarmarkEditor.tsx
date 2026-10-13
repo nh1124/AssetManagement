@@ -1,3 +1,4 @@
+import { useConfirm } from '../../components/useConfirm';
 import { useState, type FormEvent } from 'react';
 import { createCapsule, createGoalCapsule, updateCapsule } from '../../../api';
 import type { Capsule, LifeEvent } from '../../../types';
@@ -8,6 +9,7 @@ export default function EarmarkEditor({ capsule, capsules, goals, currency, busy
     capsule: Capsule | null; capsules: Capsule[]; goals: LifeEvent[]; currency: string; busy: boolean;
     onSave: (action: () => Promise<unknown>) => void; onCancel: () => void;
 }) {
+    const confirm = useConfirm();
     const [name, setName] = useState(capsule?.name ?? '');
     const [target, setTarget] = useState(String(capsule?.target_amount ?? 0));
     const [monthly, setMonthly] = useState(String(capsule?.monthly_contribution ?? 0));
@@ -19,10 +21,10 @@ export default function EarmarkEditor({ capsule, capsules, goals, currency, busy
         const goal = goals.find((entry) => entry.id === id);
         if (goal) { setName(row?.name ?? goal.name); setTarget(String(row?.target_amount ?? goal.target_amount)); setMonthly(String(row?.monthly_contribution ?? 0)); }
     };
-    const submit = (event: FormEvent<HTMLFormElement>) => {
+    const submit = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         if (busy || !name.trim()) return;
-        if (!capsule && goalId && existing && !window.confirm(`このゴールには「${existing.name}」の取り置きが既にあります。既存の取り置きを使い、名称・目標額・月額を入力内容に変更しますか？`)) return;
+        if (!capsule && goalId && existing && !(await confirm(`このゴールには「${existing.name}」の取り置きが既にあります。既存の取り置きを使い、名称・目標額・月額を入力内容に変更しますか？`, '変更する'))) return;
         const fields = { name: name.trim(), target_amount: Number(target), monthly_contribution: Number(monthly) };
         onSave(async () => {
             if (capsule) return updateCapsule(capsule.id, fields);
@@ -35,7 +37,6 @@ export default function EarmarkEditor({ capsule, capsules, goals, currency, busy
         });
     };
     return <form onSubmit={submit} className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
-        <h3 className="text-sm font-semibold">{capsule ? `${capsule.name}を編集` : '新しい取り置き'}</h3>
         <fieldset disabled={busy} className="grid gap-4 md:grid-cols-2">
             <Field label="名称"><input required value={name} onChange={(event) => setName(event.target.value)} className={inputClass} /></Field>
             <Field label={`目標額（${currency}）`}><input required type="number" min="0" step="any" value={target} onChange={(event) => setTarget(event.target.value)} className={inputClass} /></Field>

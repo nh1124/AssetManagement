@@ -1,3 +1,4 @@
+import { useConfirm } from '../../components/useConfirm';
 import { clientToday, formatDate, useTimezone } from '../../datetime';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { deleteTransaction, getTransactionsPage } from '../../../api';
@@ -5,7 +6,7 @@ import { useClient } from '../../../context/ClientContext';
 import type { Transaction } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import { assetErrorMessage, useResource } from '../../useResource';
-import RecordForm from '../RecordForm';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import MonthPicker from './MonthPicker';
 import { monthRange } from './periods';
 
@@ -27,11 +28,13 @@ function RecordResults({ month, currency, onDeleted, onBusy }: {
     onDeleted: () => void;
     onBusy: (busy: boolean) => void;
 }) {
+    const confirm = useConfirm();
     const timezone = useTimezone();
     const loadPage = useCallback(() => getTransactionsPage({ ...monthRange(month), limit: PAGE_SIZE, offset: 0 }), [month]);
     const { data: page, setData, loading, error, reload } = useResource(loadPage);
     const [busy, setBusy] = useState(false);
-    const [editing, setEditing] = useState<Transaction | null>(null);
+    const navigate = useNavigate();
+    const location = useLocation();
     const [operationError, setOperationError] = useState('');
     const [confirmation, setConfirmation] = useState('');
     const inFlight = useRef(false);
@@ -62,7 +65,7 @@ function RecordResults({ month, currency, onDeleted, onBusy }: {
     const remove = async (transaction: Transaction) => {
         if (inFlight.current || loading || error) return;
         const amount = `${formatCurrency(transaction.amount, transaction.currency || currency)} (${transaction.currency || currency})`;
-        if (!window.confirm(`${transaction.date}「${transaction.description || '内容未入力'}」${amount} の記録を削除しますか？\n削除は取り消せません。`)) return;
+        if (!(await confirm(`${transaction.date}「${transaction.description || '内容未入力'}」${amount} の記録を削除しますか？\n削除は取り消せません。`, '削除する'))) return;
         inFlight.current = true;
         setBusy(true);
         onBusy(true);
@@ -88,15 +91,12 @@ function RecordResults({ month, currency, onDeleted, onBusy }: {
         <div className="space-y-4">
             <div className="flex items-center justify-between gap-4">
                 <h2 className="text-lg font-semibold">すべての記録</h2>
-                <button type="button" onClick={reload} disabled={loading || busy || editing !== null} className={buttonClass}>再読み込み</button>
+                <button type="button" onClick={reload} disabled={loading || busy} className={buttonClass}>再読み込み</button>
             </div>
             {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">記録を読み込んでいます…</p>}
             {error && <p role="alert" className="text-sm text-[var(--studio-danger)]">記録を取得できませんでした。{error}</p>}
             {operationError && <p role="alert" className="text-sm text-[var(--studio-danger)]">{operationError}</p>}
             {confirmation && <p role="status" className="rounded-md bg-[var(--studio-accent-soft)] p-3 text-sm text-[var(--studio-positive)]">{confirmation}</p>}
-            {editing && <RecordForm key={editing.id} existing={editing} onCancel={() => { setEditing(null); onBusy(false); }} onSaved={() => {
-                setEditing(null); onBusy(false); reload(); onDeleted(); setConfirmation('取引を更新しました。');
-            }} />}
             {page && (page.items.length ? (
                 <div className="overflow-x-auto rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)]">
                     <table className="w-full text-left text-sm" aria-busy={loading || busy}>
@@ -111,14 +111,14 @@ function RecordResults({ month, currency, onDeleted, onBusy }: {
                                     <th scope="row" className="px-5 py-3 font-medium">{transaction.description || '内容未入力'}</th>
                                     <td className="whitespace-nowrap px-5 py-3 text-right tabular-nums">{formatCurrency(transaction.amount, transaction.currency || currency)}<span className="ml-2 text-xs text-[var(--studio-text-muted)]">{transaction.currency || currency}</span></td>
                                     <td className="px-5 py-3 text-[var(--studio-text-muted)]">{accountLabel(transaction)}</td>
-                                    <td className="px-5 py-3"><div className="flex gap-2"><button type="button" disabled={loading || Boolean(error) || busy || editing !== null} onClick={() => { setEditing(transaction); onBusy(true); }} aria-label={`${transaction.description}を編集`} className={buttonClass}>編集</button><button type="button" onClick={() => void remove(transaction)} disabled={loading || Boolean(error) || busy || editing !== null} aria-label={`${transaction.date} ${transaction.description}を削除`} className="rounded-md border border-[var(--studio-border)] px-3 py-1.5 text-xs text-[var(--studio-danger)] hover:bg-[var(--studio-bg)] disabled:opacity-40">削除</button></div></td>
+                                    <td className="px-5 py-3"><div className="flex gap-2"><button type="button" disabled={loading || Boolean(error) || busy} onClick={() => navigate(`/record/${transaction.id}`, { state: { returnTo: location.pathname + location.search } })} aria-label={`${transaction.description}を編集`} className={buttonClass}>編集</button><button type="button" onClick={() => void remove(transaction)} disabled={loading || Boolean(error) || busy} aria-label={`${transaction.date} ${transaction.description}を削除`} className="rounded-md border border-[var(--studio-border)] px-3 py-1.5 text-xs text-[var(--studio-danger)] hover:bg-[var(--studio-bg)] disabled:opacity-40">削除</button></div></td>
                                 </tr>
                             ))}
                         </tbody>
                     </table>
                 </div>
             ) : !loading && !error && <p className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-6 text-sm text-[var(--studio-text-muted)]">この月の記録はありません。</p>)}
-            {page && page.items.length < page.total && <button type="button" onClick={() => void loadMore()} disabled={loading || Boolean(error) || busy || editing !== null} className={buttonClass}>{busy ? '処理中…' : '次を読み込む'}（{page.items.length} / {page.total}件）</button>}
+            {page && page.items.length < page.total && <button type="button" onClick={() => void loadMore()} disabled={loading || Boolean(error) || busy} className={buttonClass}>{busy ? '処理中…' : '次を読み込む'}（{page.items.length} / {page.total}件）</button>}
         </div>
     );
 }
@@ -127,8 +127,14 @@ export default function Records({ onDeleted }: { onDeleted: () => void }) {
     const { currentClient } = useClient();
     const currency = currentClient?.general_settings?.currency || 'JPY';
     const timezone = useTimezone();
-    const [monthEdit, setMonth] = useState<string | null>(null);
-    const month = monthEdit ?? clientToday(timezone).slice(0, 7);
+    const [search, setSearch] = useSearchParams();
+    const monthEdit = search.get('month');
+    const month = monthEdit && /^\d{4}-(0[1-9]|1[0-2])$/.test(monthEdit) ? monthEdit : clientToday(timezone).slice(0, 7);
+    const setMonth = (value: string) => setSearch((previous) => {
+        const next = new URLSearchParams(previous);
+        next.set('month', value);
+        return next;
+    }, { replace: true });
     const [busy, setBusy] = useState(false);
 
     return (

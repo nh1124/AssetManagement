@@ -155,3 +155,11 @@ export const STUDIO_SCREENS: StudioScreen[] = STUDIO_GROUPS.flatMap((group) => g
 export const STUDIO_HOME = 'assets';
 
 export const SETTINGS_PATH = 'settings';
+
+// Editor URLs belong to the route map without adding destinations to the rail.
+export const STUDIO_EDITOR_PATHS = {
+    record: 'record',
+    transaction: 'record/:transactionId',
+    newGoal: 'goals/new',
+    editGoal: 'goals/:goalId/edit',
+} as const;

@@ -1,3 +1,4 @@
+import { useConfirm } from '../../components/useConfirm';
 import { useRef, useState } from 'react';
 import { checkDataHealth, repairDataHealth } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
@@ -56,6 +57,7 @@ function IssueCard({ issue, currency }: { issue: DataHealthIssue; currency: stri
 }
 
 function HealthForClient({ clientId, clientName, currency }: { clientId: number; clientName?: string; currency: string }) {
+    const confirm = useConfirm();
     const { data, setData, loading, error, reload } = useResource(checkDataHealth);
     const [repairing, setRepairing] = useState(false);
     const [operationError, setOperationError] = useState('');
@@ -65,7 +67,7 @@ function HealthForClient({ clientId, clientName, currency }: { clientId: number;
 
     const repair = async () => {
         if (inFlight.current || loading || error || !data || !repairable || !clientName) return;
-        if (!window.confirm(`「${clientName}」（クライアント #${clientId}）の自動修復可能な問題をすべて修復しますか？\nこの操作は実データに書き込みます。修復後に再検査します。`)) return;
+        if (!(await confirm(`「${clientName}」（クライアント #${clientId}）の自動修復可能な問題をすべて修復しますか？\nこの操作は実データに書き込みます。修復後に再検査します。`, '修復する'))) return;
         inFlight.current = true;
         setRepairing(true);
         setOperationError('');

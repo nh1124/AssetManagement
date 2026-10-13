@@ -1,3 +1,4 @@
+import { useConfirm } from '../../components/useConfirm';
 import { useState, type FormEvent } from 'react';
 import { compareStatement, postReconciliationAdjustment } from '../../../api/reconciliation';
 import { getCapsules } from '../../../api';
@@ -12,6 +13,7 @@ import { buttonClass, inputClass, primaryClass, useMutation, type DatabaseAccoun
 function ReconciliationForClient({ accounts, disabled, onPosted }: {
     accounts: DatabaseAccount[]; disabled: boolean; onPosted: () => void;
 }) {
+    const confirm = useConfirm();
     const { clientId, currentClient } = useClient();
     const timezone = useTimezone();
     const capsules = useResource(getCapsules);
@@ -36,14 +38,14 @@ function ReconciliationForClient({ accounts, disabled, onPosted }: {
         let result: ReconciliationComparison | null = null;
         void mutation.run(async () => { result = await compareStatement(accountId, date, statement, currency); }, '', () => setComparison(result));
     };
-    const post = (event: FormEvent<HTMLFormElement>) => {
+    const post = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         if (locked || !comparison || comparison.difference_minor === 0 || counterId === null || counterId === comparison.account.id) return;
         const factor = ['JPY', 'KRW'].includes(comparison.currency) ? 1 : 100;
         const direction = comparison.difference_minor > 0 ? '増やす（借方）' : '減らす（貸方）';
         const counter = accounts.find((row) => row.id === counterId);
         const capsule = capsules.data?.find((row) => row.id === capsuleId);
-        if (!window.confirm(`「${currentClient?.name}」の${formatDate(comparison.as_of, timezone)}の口座「${comparison.account.name}」を ${formatCurrency(Math.abs(comparison.difference_minor) / factor, comparison.currency)}（${comparison.currency}）${direction}調整を記帳しますか？\n相手科目：${counter?.name ?? `#${counterId}`}\n取り置き：${capsule?.name ?? '指定しない'}`)) return;
+        if (!(await confirm(`「${currentClient?.name}」の${formatDate(comparison.as_of, timezone)}の口座「${comparison.account.name}」を ${formatCurrency(Math.abs(comparison.difference_minor) / factor, comparison.currency)}（${comparison.currency}）${direction}調整を記帳しますか？\n相手科目：${counter?.name ?? `#${counterId}`}\n取り置き：${capsule?.name ?? '指定しない'}`, '記帳する'))) return;
         let transaction: Transaction | null = null;
         void mutation.run(async () => {
             transaction = await postReconciliationAdjustment(comparison.account.id, {

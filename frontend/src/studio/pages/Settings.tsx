@@ -1,3 +1,4 @@
+import { useConfirm } from '../components/useConfirm';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import QRCode from 'qrcode';
 import { disableMfa, exportData, getMfaStatus, importData, regenerateMfaRecoveryCodes, startMfaSetup, updateClientSettings, verifyMfaSetup } from '../../api';
@@ -57,6 +58,7 @@ const COMMON_ZONES = ['UTC', 'Asia/Tokyo', 'Asia/Shanghai', 'Asia/Singapore', 'A
 const sectionClass = 'space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5';
 
 function SettingsForClient() {
+    const confirm = useConfirm();
     const { clientId, currentClient, refreshClients } = useClient();
     const { t } = useLanguage();
     const timezone = useTimezone();
@@ -120,16 +122,16 @@ function SettingsForClient() {
             mfa.reload();
         });
     };
-    const turnOffMfa = () => {
-        if (mfaDisabled || !mfa.data?.enabled || !hasCredential || !window.confirm(t('mfa.disableConfirm'))) return;
+    const turnOffMfa = async () => {
+        if (mfaDisabled || !mfa.data?.enabled || !hasCredential || !(await confirm(t('mfa.disableConfirm'), '解除する'))) return;
         void mutation.run(() => disableMfa({ current_password: password || undefined, code: code.trim() || undefined }), 'mfa.disabledDone', () => {
             clearSecurity();
             mfa.setData((previous) => previous ? { ...previous, enabled: false, recovery_codes_remaining: 0 } : previous);
             mfa.reload();
         });
     };
-    const regenerateCodes = () => {
-        if (mfaDisabled || !mfa.data?.enabled || !hasCredential || !window.confirm(t('mfa.regenerateConfirm'))) return;
+    const regenerateCodes = async () => {
+        if (mfaDisabled || !mfa.data?.enabled || !hasCredential || !(await confirm(t('mfa.regenerateConfirm'), '再生成する'))) return;
         void mutation.run(() => regenerateMfaRecoveryCodes({ current_password: password || undefined, code: code.trim() || undefined }), 'mfa.regenerated', (result) => {
             clearCredentials();
             setRecoveryCodes(result.recovery_codes);
@@ -151,9 +153,9 @@ function SettingsForClient() {
             window.setTimeout(() => URL.revokeObjectURL(url), 1000);
         }, 'settings.exported');
     };
-    const upload = () => {
+    const upload = async () => {
         if (disabled || !file) return;
-        if (!window.confirm(t('settings.importConfirm', { file: file.name, name: currentClient?.name ?? '', id: clientId }))) return;
+        if (!(await confirm(t('settings.importConfirm', { file: file.name, name: currentClient?.name ?? '', id: clientId }), '読み込む'))) return;
         void mutation.run(async () => {
             let payload: unknown;
             try { payload = JSON.parse(await file.text()); }
@@ -175,8 +177,9 @@ function SettingsForClient() {
         <div><h2 className="text-lg font-semibold">{t('settings.title')}</h2><p className="mt-1 text-xs text-[var(--studio-text-muted)]">{identified ? t('settings.client', { name: currentClient.name, id: clientId }) : t('settings.identifying')}</p></div>
         {mutation.error && <p role="alert" className="text-sm text-[var(--studio-danger)]">{t(mutation.error)}</p>}
         {mutation.message && <p role="status" className="text-sm text-[var(--studio-positive)]">{t(mutation.message)}</p>}
-        <form onSubmit={save} className={sectionClass}>
-            <h3 className="text-sm font-semibold">{t('settings.preferences')}</h3>
+        <details open className={sectionClass}>
+            <summary className="cursor-pointer text-sm font-semibold">{t('settings.preferences')}</summary>
+            <form onSubmit={save}>
             <fieldset disabled={disabled} className="space-y-4">
                 <div className="grid gap-4 md:grid-cols-3">
                     <Field label={t('settings.currency')}><input required pattern="[A-Z]{3}" maxLength={3} value={currency} onChange={(event) => setCurrencyEdit(event.target.value.toUpperCase())} className={inputClass} list="studio-settings-currencies" /><datalist id="studio-settings-currencies">{['JPY', 'USD', 'EUR', 'GBP', 'CNY', 'KRW'].map((entry) => <option key={entry} value={entry} />)}</datalist></Field>
@@ -187,9 +190,11 @@ function SettingsForClient() {
                 <p className="text-xs text-[var(--studio-text-muted)]">{t('settings.languageScope')}</p>
                 <button type="submit" disabled={disabled || !changed} className={primaryClass}>{t(mutation.busy ? 'common.busy' : 'settings.save')}</button>
             </fieldset>
-        </form>
-        <section className={sectionClass}>
-            <div className="flex items-center justify-between gap-3"><h3 className="text-sm font-semibold">{t('mfa.title')}</h3><button type="button" disabled={mfa.loading || mutation.busy} onClick={mfa.reload} className={buttonClass}>{t('common.reload')}</button></div>
+            </form>
+        </details>
+        <details className={sectionClass}>
+            <summary className="cursor-pointer text-sm font-semibold">{t('mfa.title')}</summary>
+            <div className="flex justify-end"><button type="button" disabled={mfa.loading || mutation.busy} onClick={mfa.reload} className={buttonClass}>{t('common.reload')}</button></div>
             {mfa.loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">{t('common.loading')}</p>}
             {mfa.error && <p role="alert" className="text-sm text-[var(--studio-danger)]">{t('settings.mfaLoadFailed')}</p>}
             {mfa.data && <dl className="space-y-2 text-sm">
@@ -225,9 +230,9 @@ function SettingsForClient() {
                 <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">{recoveryCodes.map((entry) => <li key={entry}><code className="select-all font-mono text-sm">{entry}</code></li>)}</ul>
                 <div className="flex flex-wrap gap-3"><button type="button" disabled={mutation.busy} onClick={() => void mutation.run(() => navigator.clipboard.writeText(recoveryCodes.join('\n')), 'mfa.copied')} className={buttonClass}>{t('mfa.copy')}</button><button type="button" disabled={mutation.busy} onClick={() => setRecoveryCodes([])} className={buttonClass}>{t('mfa.dismiss')}</button></div>
             </div>}
-        </section>
-        <section className={sectionClass}>
-            <h3 className="text-sm font-semibold">{t('settings.transfer')}</h3>
+        </details>
+        <details className={sectionClass}>
+            <summary className="cursor-pointer text-sm font-semibold">{t('settings.transfer')}</summary>
             <button type="button" disabled={disabled} onClick={download} className={buttonClass}>{t('settings.export')}</button>
             <div className="space-y-3 border-t border-[var(--studio-border)] pt-4">
                 <Field label={t('settings.file')}><input type="file" accept=".json,application/json" disabled={disabled} onChange={(event) => { setFile(event.target.files?.[0] ?? null); event.target.value = ''; }} className={inputClass} /></Field>
@@ -235,7 +240,7 @@ function SettingsForClient() {
                 <p className="text-xs text-[var(--studio-text-muted)]">{t('settings.importScope')}</p>
                 <button type="button" disabled={disabled || !file} onClick={upload} className={buttonClass}>{t(mutation.busy ? 'common.busy' : 'settings.import')}</button>
             </div>
-        </section>
+        </details>
     </section>;
 }
 

@@ -1,0 +1,78 @@
+import { useEffect, useId, useRef, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
+
+let scrollLocks = 0;
+let lockedScrollers: Array<{ element: HTMLElement; overflow: string }> = [];
+
+function lockPage() {
+    // The studio scrolls its main element, so locking only the document is insufficient.
+    if (scrollLocks++ === 0) {
+        lockedScrollers = [document.body, ...document.querySelectorAll<HTMLElement>('.studio-root main')]
+            .map((element) => ({ element, overflow: element.style.overflow }));
+        for (const { element } of lockedScrollers) element.style.overflow = 'hidden';
+    }
+    return () => {
+        if (--scrollLocks === 0) {
+            for (const { element, overflow } of lockedScrollers) element.style.overflow = overflow;
+            lockedScrollers = [];
+        }
+    };
+}
+
+export default function Overlay({ title, children, footer, describedBy, onClose }: {
+    title: string; children: ReactNode; footer?: ReactNode; describedBy?: string; onClose: () => void;
+}) {
+    const titleId = useId();
+    const panel = useRef<HTMLDialogElement>(null);
+
+    useEffect(() => {
+        const dialog = panel.current;
+        if (!dialog) return;
+        const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        const unlock = lockPage();
+        // The native modal top layer makes the rest of the UI inert, including nested overlays.
+        dialog.showModal();
+        return () => {
+            dialog.close();
+            unlock();
+            // Wait for the opening control to be enabled again after the state update.
+            requestAnimationFrame(() => { if (previous?.isConnected) previous.focus(); });
+        };
+    }, []);
+
+    // Keep studio tokens inherited without letting a disabled editor fieldset disable the close controls.
+    const host = document.querySelector('.studio-root') ?? document.body;
+    return createPortal(<dialog ref={panel} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={describedBy}
+        className="fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-3xl overflow-hidden rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-0 text-[var(--studio-text)] shadow-xl backdrop:bg-black/40"
+        onCancel={(event) => { event.preventDefault(); event.stopPropagation(); onClose(); }}
+        onClick={(event) => {
+            if (event.target !== event.currentTarget) return;
+            const rect = event.currentTarget.getBoundingClientRect();
+            if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) onClose();
+        }}
+        onKeyDown={(event) => {
+            if (event.key === 'Escape') event.stopPropagation();
+            if (event.key !== 'Tab') return;
+            const controls = [...event.currentTarget.querySelectorAll<HTMLElement>('button, input, select, textarea, a[href], [tabindex]')]
+                .filter((element) => !element.matches(':disabled') && element.tabIndex >= 0 && element.getClientRects().length > 0);
+            const first = controls[0];
+            const last = controls.at(-1);
+            if (!first || !last) { event.preventDefault(); event.currentTarget.focus(); return; }
+            if (event.shiftKey && (document.activeElement === first || document.activeElement === event.currentTarget)) {
+                event.preventDefault(); last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault(); first.focus();
+            }
+        }}>
+        <div className="flex max-h-[calc(100dvh-2rem)] flex-col">
+            <header className="flex shrink-0 items-center justify-between gap-4 border-b border-[var(--studio-border)] px-5 py-4">
+                <h2 id={titleId} className="text-base font-semibold">{title}</h2>
+                <button type="button" aria-label={`${title}を閉じる`} onClick={onClose} className="rounded-md px-3 py-1.5 text-xs text-[var(--studio-text-muted)] hover:bg-[var(--studio-accent-soft)]">閉じる</button>
+            </header>
+            <div className="min-h-0 overflow-y-auto overscroll-contain p-5">{children}</div>
+            <footer className="flex shrink-0 justify-end gap-3 border-t border-[var(--studio-border)] px-5 py-4">
+                {footer ?? <button type="button" onClick={onClose} className="rounded-md border border-[var(--studio-border)] px-3 py-1.5 text-xs text-[var(--studio-text-muted)] hover:bg-[var(--studio-accent-soft)]">閉じる</button>}
+            </footer>
+        </div>
+    </dialog>, host);
+}

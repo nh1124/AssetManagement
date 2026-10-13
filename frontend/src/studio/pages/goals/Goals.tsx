@@ -1,3 +1,5 @@
+import Overlay from '../../components/Overlay';
+import { useConfirm } from '../../components/useConfirm';
 import { useCallback, useState } from 'react';
 import { archiveGoal, getGoalCapsules, getLifeEventsWithProgress, unarchiveGoal } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
@@ -7,7 +9,7 @@ import { useResource } from '../../useResource';
 import { DataTable, Feedback } from '../db/Database';
 import { buttonClass, useMutation } from '../db/forms';
 import GoalDeletion from './GoalDeletion';
-import GoalEditor from './GoalEditor';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import Milestones from './Milestones';
 import Scenarios from './Scenarios';
 
@@ -42,14 +44,23 @@ function GoalDetail({ goal, currency, clientName, onChanged, onBusy }: {
 }
 
 function GoalsForClient({ currency, clientName }: { currency: string; clientName?: string }) {
-    const [includeArchived, setIncludeArchived] = useState(false);
+    const confirm = useConfirm();
+    const navigate = useNavigate();
+    const location = useLocation();
+    const [search, setSearch] = useSearchParams();
+    const includeArchived = search.get('archived') === 'true';
+    const setIncludeArchived = (value: boolean) => setSearch((previous) => {
+        const next = new URLSearchParams(previous);
+        if (value) next.set('archived', 'true'); else next.delete('archived');
+        return next;
+    }, { replace: true });
+    const edit = (path: string) => navigate(path, { state: { returnTo: location.pathname + location.search } });
     const load = useCallback(() => getLifeEventsWithProgress(includeArchived), [includeArchived]);
     const resource = useResource(load);
     const mutation = useMutation();
     const [selectedId, setSelectedId] = useState<number | null>(null);
     const [detailBusy, setDetailBusy] = useState(false);
     const [detailRevision, setDetailRevision] = useState(0);
-    const [editor, setEditor] = useState<{ goal: LifeEvent | null } | null>(null);
     const [deleting, setDeleting] = useState<LifeEvent | null>(null);
     const selected = resource.data?.find((goal) => goal.id === selectedId);
     const busy = detailBusy || mutation.busy;
@@ -61,25 +72,24 @@ function GoalsForClient({ currency, clientName }: { currency: string; clientName
     };
     const run = (action: () => Promise<unknown>, message: string) => {
         if (disabled) return;
-        void mutation.run(action, message, () => { setEditor(null); setDeleting(null); refresh(); });
+        void mutation.run(action, message, () => { setDeleting(null); refresh(); });
     };
-    const archive = (goal: LifeEvent) => {
-        if (!window.confirm(`「${clientName}」のゴール「${goal.name}」を中止しますか？\n取り置きと積み立てたお金・履歴はそのまま残ります。ゴールはアーカイブから戻せます。`)) return;
+    const archive = async (goal: LifeEvent) => {
+        if (!(await confirm(`「${clientName}」のゴール「${goal.name}」を中止しますか？\n取り置きと積み立てたお金・履歴はそのまま残ります。ゴールはアーカイブから戻せます。`, '中止する'))) return;
         run(() => archiveGoal(goal.id), `「${goal.name}」を中止しました。取り置きの貯蓄はそのままです。`);
     };
     return <section className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
             <div><h2 className="text-lg font-semibold">ゴール</h2><p className="mt-1 text-xs text-[var(--studio-text-muted)]">対象：{clientName || 'クライアントを確認中…'} ／ 表示通貨：{currency}。ゴールを選ぶと、計画案を比較・採用できます。</p></div>
-            <div className="flex gap-2"><button type="button" disabled={disabled || editor !== null || deleting !== null} onClick={() => setEditor({ goal: null })} className={buttonClass}>新しいゴール</button><button type="button" disabled={resource.loading || busy || editor !== null || deleting !== null} onClick={refresh} className={buttonClass}>再読み込み</button></div>
+            <div className="flex gap-2"><button type="button" disabled={disabled || deleting !== null} onClick={() => edit('/goals/new')} className={buttonClass}>新しいゴール</button><button type="button" disabled={resource.loading || busy || deleting !== null} onClick={refresh} className={buttonClass}>再読み込み</button></div>
         </div>
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={includeArchived} disabled={busy || editor !== null || deleting !== null} onChange={(event) => { setIncludeArchived(event.target.checked); setSelectedId(null); resource.reload(); }} />アーカイブを表示</label>
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={includeArchived} disabled={busy || deleting !== null} onChange={(event) => { setIncludeArchived(event.target.checked); setSelectedId(null); resource.reload(); }} />アーカイブを表示</label>
         <Feedback loading={resource.loading} error={resource.error} />
         <Feedback error={mutation.error} message={mutation.message} />
-        {editor && <GoalEditor key={editor.goal?.id ?? 'new'} goal={editor.goal} currency={currency} busy={disabled} onCancel={() => setEditor(null)} onSave={(action) => run(action, 'ゴールを保存しました。')} />}
-        {deleting && clientName && <GoalDeletion goal={deleting} currency={currency} clientName={clientName} busy={disabled} onCancel={() => setDeleting(null)} onDelete={(action) => run(action, 'ゴールを削除しました。')} />}
+        {deleting && clientName && <Overlay title={`「${deleting.name}」を削除`} onClose={() => setDeleting(null)}><Feedback error={mutation.error} /><GoalDeletion goal={deleting} currency={currency} clientName={clientName} busy={disabled} onCancel={() => setDeleting(null)} onDelete={(action) => run(action, 'ゴールを削除しました。')} /></Overlay>}
         {resource.data && <DataTable columns={['名称', '目標額', '目標日', '現在の確保額', '進捗', '計画の状態', '操作']}>
             {resource.data.length ? resource.data.map((goal) => <tr key={goal.id} className={goal.id === selectedId ? 'bg-[var(--studio-accent-soft)]' : ''}>
-                <th scope="row" className="px-5 py-3 font-medium"><button type="button" disabled={disabled || editor !== null || deleting !== null} onClick={() => setSelectedId(goal.id)} aria-expanded={goal.id === selectedId} className="rounded text-left text-[var(--studio-accent)] hover:underline focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)] disabled:opacity-40">{goal.name}</button></th>
+                <th scope="row" className="px-5 py-3 font-medium"><button type="button" disabled={disabled || deleting !== null} onClick={() => setSelectedId(goal.id)} aria-expanded={goal.id === selectedId} className="rounded text-left text-[var(--studio-accent)] hover:underline focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)] disabled:opacity-40">{goal.name}</button></th>
                 <td className="whitespace-nowrap px-5 py-3 tabular-nums">{formatCurrency(goal.target_amount, currency)}</td>
                 <td className="whitespace-nowrap px-5 py-3">{goal.target_date}</td>
                 <td className="whitespace-nowrap px-5 py-3 tabular-nums">{goal.current_funded == null ? '—' : formatCurrency(goal.current_funded, currency)}</td>
@@ -87,13 +97,13 @@ function GoalsForClient({ currency, clientName }: { currency: string; clientName
                 <td className="whitespace-nowrap px-5 py-3 tabular-nums">{goal.funded_percentage == null ? '—' : `${percent(goal.funded_percentage)}%`}</td>
                 <td className="whitespace-nowrap px-5 py-3">{goal.archived_at ? '中止・アーカイブ' : goal.plan_status ? PLAN_STATES[goal.plan_status] || goal.plan_status : '—'}</td>
                 <td className="px-5 py-3"><div className="flex gap-2 whitespace-nowrap">
-                    <button type="button" disabled={disabled || editor !== null || deleting !== null} onClick={() => { setSelectedId(null); setEditor({ goal }); }} className={buttonClass}>編集</button>
-                    {goal.archived_at ? <button type="button" disabled={disabled || editor !== null || deleting !== null} onClick={() => run(() => unarchiveGoal(goal.id), `「${goal.name}」を戻しました。`)} className={buttonClass}>戻す</button> : <button type="button" disabled={disabled || editor !== null || deleting !== null} onClick={() => archive(goal)} className={buttonClass}>中止する</button>}
-                    <button type="button" disabled={disabled || editor !== null || deleting !== null} onClick={() => { setSelectedId(null); setDeleting(goal); }} className={`${buttonClass} text-[var(--studio-danger)]`}>削除</button>
+                    <button type="button" disabled={disabled || deleting !== null} onClick={() => edit(`/goals/${goal.id}/edit`)} className={buttonClass}>編集</button>
+                    {goal.archived_at ? <button type="button" disabled={disabled || deleting !== null} onClick={() => run(() => unarchiveGoal(goal.id), `「${goal.name}」を戻しました。`)} className={buttonClass}>戻す</button> : <button type="button" disabled={disabled || deleting !== null} onClick={() => archive(goal)} className={buttonClass}>中止する</button>}
+                    <button type="button" disabled={disabled || deleting !== null} onClick={() => { setSelectedId(null); setDeleting(goal); }} className={`${buttonClass} text-[var(--studio-danger)]`}>削除</button>
                 </div></td>
             </tr>) : <tr><td colSpan={7} className="px-5 py-4 text-[var(--studio-text-muted)]">ゴールはありません。</td></tr>}
         </DataTable>}
-        {selected && !editor && !deleting && <GoalDetail key={`${selected.id}:${detailRevision}`} goal={selected} currency={currency} clientName={clientName} onBusy={setDetailBusy} onChanged={resource.reload} />}
+        {selected && !deleting && <GoalDetail key={`${selected.id}:${detailRevision}`} goal={selected} currency={currency} clientName={clientName} onBusy={setDetailBusy} onChanged={resource.reload} />}
     </section>;
 }
 

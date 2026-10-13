@@ -1,3 +1,5 @@
+import Overlay from '../../components/Overlay';
+import { useConfirm } from '../../components/useConfirm';
 import { useState, type FormEvent } from 'react';
 import { createCapsuleRule, deleteCapsuleRule, getCapsuleRules } from '../../../api';
 import type { Capsule, CapsuleRule, CapsuleTriggerKind } from '../../../types';
@@ -30,7 +32,6 @@ function RuleEditor({ capsule, currency, accounts, busy, onSave, onCancel }: {
         onSave({ capsule_id: capsule.id, trigger_type: trigger, trigger_category: category.trim() || null, trigger_description: description.trim() || null, source_mode: sourceMode, source_account_id: sourceMode === 'fixed_account' ? source : null, destination_account_id: destination, amount_type: amountType, amount_value: Number(amount), is_active: active });
     };
     return <form onSubmit={submit} className="rounded-lg border border-[var(--studio-border)] p-5">
-        <h4 className="mb-4 text-sm font-semibold">新しい規則</h4>
         <fieldset disabled={busy} className="grid gap-4 md:grid-cols-2">
             <Field label="発火する取引"><select value={trigger} onChange={(event) => setTrigger(event.target.value as CapsuleTriggerKind)} className={inputClass}>{Object.entries(TRIGGERS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
             <Field label="分類の条件（任意）"><input value={category} onChange={(event) => setCategory(event.target.value)} className={inputClass} /></Field>
@@ -47,6 +48,7 @@ function RuleEditor({ capsule, currency, accounts, busy, onSave, onCancel }: {
 }
 
 export default function CapsuleRules({ capsule, currency, disabled, onBusy }: { capsule: Capsule; currency: string; disabled: boolean; onBusy: (busy: boolean) => void }) {
+    const confirm = useConfirm();
     const rules = useResource(loadRules);
     const accounts = useResource(loadAccounts);
     const mutation = useMutation();
@@ -65,7 +67,7 @@ export default function CapsuleRules({ capsule, currency, disabled, onBusy }: { 
         <p className="text-xs text-[var(--studio-text-muted)]">入金先を未設定にすると、資金計画の口座へ配分します。資金計画がない場合は先に設定してください。</p>
         <Feedback loading={rules.loading || accounts.loading} error={rules.error || accounts.error} />
         <Feedback error={mutation.error} message={mutation.message} />
-        {editing && accounts.data && <RuleEditor capsule={capsule} currency={currency} accounts={accounts.data} busy={locked} onCancel={() => setEditing(false)} onSave={(payload) => run(() => createCapsuleRule(payload), '規則を作成しました。', true)} />}
+        {editing && accounts.data && <Overlay title={`「${capsule.name}」の新しい規則`} onClose={() => setEditing(false)}><Feedback error={mutation.error} /><RuleEditor capsule={capsule} currency={currency} accounts={accounts.data} busy={locked} onCancel={() => setEditing(false)} onSave={(payload) => run(() => createCapsuleRule(payload), '規則を作成しました。', true)} /></Overlay>}
         {rows && <DataTable columns={['発火条件', '資金元', '金額', '入金先', '状態', '操作']}>
             {rows.length ? rows.map((row) => <tr key={row.id}>
                 <th scope="row" className="px-5 py-3 font-normal">{TRIGGERS[row.trigger_type]}{row.trigger_category && <p className="text-xs">分類：{row.trigger_category}</p>}{row.trigger_description && <p className="text-xs">摘要：{row.trigger_description}</p>}</th>
@@ -73,7 +75,7 @@ export default function CapsuleRules({ capsule, currency, disabled, onBusy }: { 
                 <td className="whitespace-nowrap px-5 py-3 tabular-nums">{row.amount_type === 'percentage' ? `${row.amount_value}%` : formatCurrency(row.amount_value, currency)}</td>
                 <td className="px-5 py-3">{row.destination_account_id == null ? '資金計画に配分' : name(row.destination_account_id)}</td>
                 <td className="px-5 py-3">{row.is_active ? '有効' : '無効'}</td>
-                <td className="px-5 py-3"><button type="button" disabled={locked || editing} className={`${buttonClass} text-[var(--studio-danger)]`} onClick={() => { if (window.confirm(`「${capsule.name}」の${TRIGGERS[row.trigger_type]}の規則を削除しますか？既存の取引・残高はそのまま残ります。`)) run(() => deleteCapsuleRule(row.id), '規則を削除しました。'); }}>削除</button></td>
+                <td className="px-5 py-3"><button type="button" disabled={locked || editing} className={`${buttonClass} text-[var(--studio-danger)]`} onClick={async () => { if ((await confirm(`「${capsule.name}」の${TRIGGERS[row.trigger_type]}の規則を削除しますか？既存の取引・残高はそのまま残ります。`, '削除する'))) run(() => deleteCapsuleRule(row.id), '規則を削除しました。'); }}>削除</button></td>
             </tr>) : <tr><td colSpan={6} className="px-5 py-4 text-[var(--studio-text-muted)]">規則はありません。</td></tr>}
         </DataTable>}
     </section>;

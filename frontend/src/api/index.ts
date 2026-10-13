@@ -427,6 +427,11 @@ export const getTransactionsPage = async (
     return response.data;
 };
 
+export const getTransaction = async (id: number): Promise<Transaction> => {
+    const response = await api.get(`/transactions/${id}`);
+    return response.data;
+};
+
 export const getTransactionProposals = async (params?: { status?: string; origin?: string }): Promise<TransactionProposal[]> => {
     const search = new URLSearchParams();
     if (params?.status) search.set('status', params.status);

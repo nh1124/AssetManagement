@@ -1,3 +1,5 @@
+import Overlay from '../../components/Overlay';
+import { useConfirm } from '../../components/useConfirm';
 import { useCallback, useState, type FormEvent } from 'react';
 import { createMilestone, deleteMilestone, getMilestones, updateMilestone } from '../../../api';
 import type { Milestone } from '../../../types';
@@ -21,7 +23,6 @@ function MilestoneEditor({ row, goalId, currency, busy, onSave, onCancel }: {
         onSave(() => row ? updateMilestone(row.id, payload) : createMilestone({ ...payload, life_event_id: goalId }));
     };
     return <form onSubmit={submit} className="rounded-lg border border-[var(--studio-border)] p-5">
-        <h4 className="mb-4 text-sm font-semibold">{row ? 'マイルストーンを編集' : '新しいマイルストーン'}</h4>
         <fieldset disabled={busy} className="grid gap-4 md:grid-cols-2">
             <Field label="予定日"><input required type="date" value={date} onChange={(event) => setDate(event.target.value)} className={inputClass} /></Field>
             <Field label={`計画額（${currency}）`}><input required type="number" min="0" step="any" value={amount} onChange={(event) => setAmount(event.target.value)} className={inputClass} /></Field>
@@ -35,6 +36,7 @@ function MilestoneEditor({ row, goalId, currency, busy, onSave, onCancel }: {
 export default function Milestones({ goalId, currency, disabled, onChanged, onBusy }: {
     goalId: number; currency: string; disabled: boolean; onChanged: () => void; onBusy: (busy: boolean) => void;
 }) {
+    const confirm = useConfirm();
     const load = useCallback(() => getMilestones(goalId), [goalId]);
     const resource = useResource(load);
     const mutation = useMutation();
@@ -53,14 +55,14 @@ export default function Milestones({ goalId, currency, disabled, onChanged, onBu
         <p className="text-xs text-[var(--studio-text-muted)]">採用中の行を進捗計算に使います。シナリオを採用すると、手動で編集したものを含む現在のマイルストーンが置き換わります。</p>
         <Feedback loading={resource.loading} error={resource.error} />
         <Feedback error={mutation.error} message={mutation.message} />
-        {editor && <MilestoneEditor key={editor.row?.id ?? 'new'} row={editor.row} goalId={goalId} currency={currency} busy={locked} onCancel={() => setEditor(null)} onSave={(action) => run(action, 'マイルストーンを保存しました。', true)} />}
+        {editor && <Overlay title={editor.row ? 'マイルストーンを編集' : '新しいマイルストーン'} onClose={() => setEditor(null)}><Feedback error={mutation.error} /><MilestoneEditor key={editor.row?.id ?? 'new'} row={editor.row} goalId={goalId} currency={currency} busy={locked} onCancel={() => setEditor(null)} onSave={(action) => run(action, 'マイルストーンを保存しました。', true)} /></Overlay>}
         {resource.data && <DataTable columns={['予定日', '計画額', 'メモ', '進捗計算に採用', '操作']}>
             {resource.data.length ? resource.data.map((row) => <tr key={row.id}>
                 <th scope="row" className="whitespace-nowrap px-5 py-3 font-normal">{row.date}</th>
                 <td className="whitespace-nowrap px-5 py-3 tabular-nums">{formatCurrency(row.target_amount, currency)}</td>
                 <td className="px-5 py-3">{row.note || '—'}</td>
                 <td className="px-5 py-3"><label className="flex items-center gap-2"><input type="checkbox" checked={row.is_active_plan !== false} disabled={locked || editor !== null} aria-label={`${row.date}のマイルストーンを進捗計算に採用`} onChange={(event) => run(() => updateMilestone(row.id, { is_active_plan: event.target.checked }), '採用状態を変更しました。')} />{row.is_active_plan === false ? '参考' : '採用中'}</label></td>
-                <RowActions name={`${row.date}のマイルストーン`} disabled={locked || editor !== null} onEdit={() => setEditor({ row })} onDelete={() => { if (window.confirm(`${row.date}のマイルストーン（${formatCurrency(row.target_amount, currency)}）を削除しますか？`)) run(() => deleteMilestone(row.id), 'マイルストーンを削除しました。'); }} />
+                <RowActions name={`${row.date}のマイルストーン`} disabled={locked || editor !== null} onEdit={() => setEditor({ row })} onDelete={async () => { if ((await confirm(`${row.date}のマイルストーン（${formatCurrency(row.target_amount, currency)}）を削除しますか？`, '削除する'))) run(() => deleteMilestone(row.id), 'マイルストーンを削除しました。'); }} />
             </tr>) : <tr><td colSpan={5} className="px-5 py-4 text-[var(--studio-text-muted)]">マイルストーンはありません。</td></tr>}
         </DataTable>}
     </section>;

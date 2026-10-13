@@ -21,7 +21,6 @@ export default function GoalEditor({ goal, currency, busy, onSave, onCancel }: {
         onSave(() => goal ? updateGoal(goal.id, payload) : createGoal(payload));
     };
     return <form onSubmit={submit} className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
-        <h3 className="text-sm font-semibold">{goal ? `${goal.name}を編集` : '新しいゴール'}</h3>
         <p className="text-xs text-[var(--studio-text-muted)]">延期するときは目標日を変更してください。</p>
         <fieldset disabled={busy} className="grid gap-4 md:grid-cols-2">
             <Field label="名称"><input required value={name} onChange={(event) => setName(event.target.value)} className={inputClass} /></Field>

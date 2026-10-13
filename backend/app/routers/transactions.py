@@ -17,6 +17,7 @@ from ..workflows.ledger_entry_workflow import (
     amend_entry,
     remove_entry,
     list_entries,
+    get_entry,
     entry_capsule_reservations,
     approve_entry_proposal,
     reject_entry_proposal,
@@ -184,6 +185,23 @@ def reject_proposal(
         raise HTTPException(status_code=404, detail="Transaction proposal not found")
     invalidate_client(current_client.id)
     return proposal
+
+
+@router.get("/{transaction_id}")
+def get_transaction(
+    transaction_id: int,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    """One entry by id.
+
+    Declared below the literal paths: a path parameter registered first would
+    match /proposals and fail it as a non-integer id.
+    """
+    transaction = get_entry(db, current_client.id, transaction_id)
+    if transaction is None:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    return _serialize_transaction(transaction)
 
 
 @router.put("/{transaction_id}", response_model=schemas.Transaction)

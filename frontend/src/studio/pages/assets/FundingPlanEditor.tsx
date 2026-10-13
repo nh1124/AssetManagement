@@ -82,7 +82,6 @@ export default function FundingPlanEditor({ capsuleId, sources, target, currency
     };
 
     return <form onSubmit={submit} className="space-y-4">
-        <p className="text-sm font-medium">資金計画を編集</p>
         <p className="text-xs text-[var(--studio-text-muted)]">計画額は配分の固定ウェイトです。上限は、その口座の資金をこの取り置きが利用できる最大割合です。同じ口座について、すべての取り置きの上限の合計が100％を超えると保存できません。空欄は上限なし、0％は利用不可です。</p>
         <Feedback loading={accounts.loading} error={validationError || mutation.error || accounts.error} />
         {accounts.error && <button type="button" onClick={accounts.reload} disabled={mutation.busy} className={buttonClass}>口座を再読み込み</button>}

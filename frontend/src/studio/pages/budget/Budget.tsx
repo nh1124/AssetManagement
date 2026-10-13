@@ -1,3 +1,5 @@
+import Overlay from '../../components/Overlay';
+import { useConfirm } from '../../components/useConfirm';
 import { clientToday, useTimezone } from '../../datetime';
 import { useCallback, useState, type FormEvent } from 'react';
 import { createMonthlyPlanLines, deleteMonthlyPlanLine, getBudgetSummary, updateMonthlyPlanLines, type MonthlyPlanLinePayload } from '../../../api';
@@ -38,7 +40,6 @@ function AmountEditor({ line, currency, busy, onSave, onCancel }: {
         onSave(Number(amount));
     };
     return <form onSubmit={submit} className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
-        <h3 className="text-sm font-semibold">「{lineName(line)}」の金額を編集</h3>
         <p className="text-xs text-[var(--studio-text-muted)]">{line.target_period}の計画額を変更します。{line.id == null && '表示中の項目を、この月の予算行として保存します。'}</p>
         {line.target_type === 'capsule' && <p className="text-xs text-[var(--studio-warning)]">取り置きの月額積立計画にも反映されます。</p>}
         <fieldset disabled={busy} className="grid gap-4 md:grid-cols-2">
@@ -49,17 +50,18 @@ function AmountEditor({ line, currency, busy, onSave, onCancel }: {
 }
 
 function MonthlyBudget({ period, currency, clientName, onBusy }: { period: string; currency: string; clientName?: string; onBusy: (busy: boolean) => void }) {
+    const confirm = useConfirm();
     const load = useCallback((): Promise<BudgetSummary> => getBudgetSummary(period), [period]);
     const resource = useResource(load);
     const mutation = useMutation();
     const [copyBusy, setCopyBusy] = useState(false);
     const [editing, setEditing] = useState<MonthlyPlanLine | null>(null);
     const disabled = resource.loading || Boolean(resource.error) || mutation.busy || copyBusy || !clientName;
-    const save = (amount: number) => {
+    const save = async (amount: number) => {
         if (disabled || !editing || !resource.data) return;
         const name = lineName(editing);
         const effect = editing.target_type === 'capsule' ? '\n取り置きの月額積立計画にも反映されます。' : '';
-        if (!window.confirm(`「${clientName}」の${period}「${name}」を ${formatCurrency(editing.amount, currency)} → ${formatCurrency(amount, currency)}（${currency}）に変更しますか？${effect}`)) return;
+        if (!(await confirm(`「${clientName}」の${period}「${name}」を ${formatCurrency(editing.amount, currency)} → ${formatCurrency(amount, currency)}（${currency}）に変更しますか？${effect}`, '変更する'))) return;
         // Send only writable fields; summary actuals and synchronization state are server-owned.
         const payload: MonthlyPlanLinePayload = {
             target_period: editing.target_period, line_type: editing.line_type, target_type: editing.target_type,
@@ -74,11 +76,11 @@ function MonthlyBudget({ period, currency, clientName, onBusy }: { period: strin
             resource.reload();
         });
     };
-    const remove = (line: MonthlyPlanLine) => {
+    const remove = async (line: MonthlyPlanLine) => {
         if (disabled || line.id == null) return;
         const id = line.id;
         const generated = line.source !== 'manual' || Boolean(line.registry_entry_ids?.length);
-        if (!window.confirm(`「${clientName}」の${period}「${lineName(line)}」の予算行を削除しますか？\n${generated ? '定義から作られた項目は、削除後も表示される場合があります。' : '削除は取り消せません。'}`)) return;
+        if (!(await confirm(`「${clientName}」の${period}「${lineName(line)}」の予算行を削除しますか？\n${generated ? '定義から作られた項目は、削除後も表示される場合があります。' : '削除は取り消せません。'}`, '削除する'))) return;
         void mutation.run(() => deleteMonthlyPlanLine(id), '予算行を削除しました。', () => {
             resource.setData((previous) => previous ? { ...previous, plan_lines: previous.plan_lines.filter((row) => row.id !== id) } : null);
             resource.reload();
@@ -93,7 +95,7 @@ function MonthlyBudget({ period, currency, clientName, onBusy }: { period: strin
         <Feedback loading={resource.loading} error={resource.error} />
         <Feedback error={mutation.error} message={mutation.message} />
         <MonthCopy period={period} disabled={disabled || editing !== null} clientName={clientName} onBusy={(busy) => { setCopyBusy(busy); onBusy(busy); }} onCopied={resource.reload} />
-        {editing && <AmountEditor key={editing.id ?? lineName(editing)} line={editing} currency={currency} busy={disabled} onSave={save} onCancel={() => setEditing(null)} />}
+        {editing && <Overlay title={`「${lineName(editing)}」の金額を編集`} onClose={() => setEditing(null)}><Feedback error={mutation.error} /><AmountEditor key={editing.id ?? lineName(editing)} line={editing} currency={currency} busy={disabled} onSave={save} onCancel={() => setEditing(null)} /></Overlay>}
         {resource.data && <>
             <p className="text-xs text-[var(--studio-text-muted)]">計画全体の状態：{FEASIBILITY[resource.data.feasibility_status]}</p>
             <DataTable columns={['計画項目', '種別', '月末計画', '照合済み実績', '月末計画との差', '状態', '操作']}>

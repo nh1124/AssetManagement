@@ -1,3 +1,4 @@
+import Overlay from '../../components/Overlay';
 import Reconciliation from './Reconciliation';
 import { useEffect, useRef, useState } from 'react';
 import { getAccounts, updateAccount } from '../../../api';
@@ -34,6 +35,7 @@ async function loadAccounts(): Promise<AssetAccount[]> {
 
 export default function Accounts() {
     const { data: accounts, setData: setAccounts, loading, error, reload } = useAssetData(loadAccounts);
+    const [reconciling, setReconciling] = useState(false);
     const [updatingId, setUpdatingId] = useState<number | null>(null);
     const [operationError, setOperationError] = useState('');
     const [confirmation, setConfirmation] = useState('');
@@ -73,7 +75,7 @@ export default function Accounts() {
                     <h2 className="text-lg font-semibold">口座</h2>
                     <p className="mt-1 text-xs text-[var(--studio-text-muted)]">無効の口座も表示しています。状態を切り替えると再び利用できます。</p>
                 </div>
-                <button type="button" onClick={reload} disabled={loading || updatingId !== null} className="rounded-md border border-[var(--studio-border)] px-3 py-1.5 text-xs text-[var(--studio-text-muted)] hover:bg-[var(--studio-accent-soft)] disabled:opacity-40">再読み込み</button>
+                <div className="flex gap-2"><button type="button" onClick={() => setReconciling(true)} disabled={loading || Boolean(error) || updatingId !== null} className="rounded-md border border-[var(--studio-border)] px-3 py-1.5 text-xs text-[var(--studio-text-muted)] hover:bg-[var(--studio-accent-soft)] disabled:opacity-40">残高照合</button><button type="button" onClick={reload} disabled={loading || updatingId !== null} className="rounded-md border border-[var(--studio-border)] px-3 py-1.5 text-xs text-[var(--studio-text-muted)] hover:bg-[var(--studio-accent-soft)] disabled:opacity-40">再読み込み</button></div>
             </div>
             {confirmation && <p role="status" className="rounded-md bg-[var(--studio-accent-soft)] p-3 text-sm text-[var(--studio-positive)]">{confirmation}</p>}
             {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">口座を読み込んでいます…</p>}
@@ -111,7 +113,7 @@ export default function Accounts() {
                     </table>
                 </div>
             ) : <p className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-6 text-sm text-[var(--studio-text-muted)]">口座はありません。</p>)}
-            <Reconciliation accounts={accounts ?? []} disabled={loading || Boolean(error) || updatingId !== null} onPosted={reload} />
+            {reconciling && <Overlay title="残高照合" onClose={() => setReconciling(false)}><Reconciliation accounts={accounts ?? []} disabled={loading || Boolean(error) || updatingId !== null} onPosted={reload} /></Overlay>}
         </section>
     );
 }

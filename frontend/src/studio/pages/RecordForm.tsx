@@ -1,3 +1,4 @@
+import { useConfirm } from '../components/useConfirm';
 import { clientToday, useTimezone } from '../datetime';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { isAxiosError } from 'axios';
@@ -79,6 +80,7 @@ function AccountSelect({ label, value, accounts, onChange }: {
 export default function RecordForm({ existing, onSaved, onCancel }: {
     existing?: Transaction; onSaved?: () => void; onCancel?: () => void;
 }) {
+    const confirm = useConfirm();
     const { clientId, currentClient } = useClient();
     const identified = currentClient?.id === clientId;
     // Money is per-currency here and is never totalled across currencies, so
@@ -211,7 +213,7 @@ export default function RecordForm({ existing, onSaved, onCancel }: {
             if (existing) {
                 const reservations = await getCapsuleReservations(existing.id);
                 const affected = reservations.filter((row) => row.status !== 'rejected').map((row) => row.capsule_name || '取り置き').join('、');
-                if (!window.confirm(`「${currentClient?.name ?? ''}」の取引 #${existing.id}を ${formatCurrency(numericAmount, currency)}（${currency}）に編集しますか？\n元の取引が発火させた取り置き予約を取り消して再評価するため、確保額・取り置きが変わる場合があります。${affected ? `\n対象：${affected}` : ''}\n紐づく取り崩し記録は再計算・更新されません。`)) return;
+                if (!(await confirm(`「${currentClient?.name ?? ''}」の取引 #${existing.id}を ${formatCurrency(numericAmount, currency)}（${currency}）に編集しますか？\n元の取引が発火させた取り置き予約を取り消して再評価するため、確保額・取り置きが変わる場合があります。${affected ? `\n対象：${affected}` : ''}\n紐づく取り崩し記録は再計算・更新されません。`, '保存する'))) return;
                 await updateTransaction(existing.id, { date, amount: numericAmount, description, currency, legs: editLegs });
                 setConfirmation('取引を更新しました。');
                 onSaved?.();
@@ -255,7 +257,7 @@ export default function RecordForm({ existing, onSaved, onCancel }: {
 
     return (
         <section className="mx-auto w-full max-w-xl rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-6">
-            <h2 className="text-lg font-semibold">{existing ? '取引を編集' : '取引を記録'}</h2>
+            <h2 className="text-lg font-semibold">{existing ? `取引 #${existing.id}「${existing.description || '内容未入力'}」を編集` : '取引を記録'}</h2>
             <p className="mt-1 text-xs text-[var(--studio-text-muted)]">対象：{identified ? currentClient.name : 'クライアントを確認中…'} ／ {currency}</p>
             <form onSubmit={handleSubmit} className="mt-6 space-y-5">
                 {confirmation && <p role="status" className="rounded-md bg-[var(--studio-accent-soft)] p-3 text-sm text-[var(--studio-positive)]">{confirmation}</p>}
@@ -386,7 +388,7 @@ export default function RecordForm({ existing, onSaved, onCancel }: {
                         {capsulesError && <p role="alert" className="text-xs text-[var(--studio-danger)]">取り置きを取得できませんでした。既存の帰属を保持します。{capsulesError}</p>}
                     </div>}
                     <button type="submit" disabled={!canSubmit || submitting} className="w-full rounded-md bg-[var(--studio-accent)] px-4 py-2.5 text-sm font-medium text-[var(--studio-accent-text)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40">
-                        {submitting ? '保存しています…' : existing ? '変更を保存' : '記録する'}
+                        {submitting ? '保存しています…' : existing ? '保存' : '記録する'}
                     </button>
                 </fieldset>
                 {onCancel && <button type="button" disabled={submitting} onClick={onCancel} className={secondaryButtonClass}>キャンセル</button>}

@@ -1,3 +1,4 @@
+import { useConfirm } from '../../components/useConfirm';
 import { Link } from 'react-router-dom';
 import type { ActionProposal, MonthlyReport } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
@@ -32,7 +33,9 @@ export function ReportFigures({ report, profitLoss, currency }: { report: Monthl
 }
 
 export function ReportContext({ report, currency }: { report: MonthlyReport; currency: string }) {
-    return <div className="grid gap-6 md:grid-cols-2">
+    return <details>
+        <summary className="cursor-pointer text-sm text-[var(--studio-accent)]">支出の注意点・ゴールの進捗</summary>
+        <div className="mt-4 grid gap-6 md:grid-cols-2">
         <section className="space-y-3">
             <h3 className="text-sm font-semibold">支出で確認したいこと</h3>
             {report.anomalies.length ? <ul className="space-y-3">{report.anomalies.map((row: Record<string, unknown>, index) => <li key={index} className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-4 text-sm">
@@ -47,13 +50,15 @@ export function ReportContext({ report, currency }: { report: MonthlyReport; cur
                 <p className="mt-2 text-[var(--studio-text-muted)]">見込み進捗 {typeof row.probability_current === 'number' ? `${row.probability_current}%` : '—'} ／ 期間中の変化 {typeof row.delta === 'number' ? `${row.delta > 0 ? '+' : ''}${row.delta}ポイント` : '—'}</p>
             </li>)}</ul> : <p className="text-sm text-[var(--studio-text-muted)]">この期間のゴールはありません。</p>}
         </section>
-    </div>;
+        </div>
+    </details>;
 }
 
 export function ReportProposals({ report, currency, clientName, disabled, apply, onApplied, onBusy }: {
     report: MonthlyReport; currency: string; clientName?: string; disabled: boolean;
     apply: (proposalId: string) => Promise<unknown>; onApplied: () => void; onBusy: (busy: boolean) => void;
 }) {
+    const confirm = useConfirm();
     const mutation = useMutation();
     const effect = (proposal: ActionProposal) => {
         const targetId = proposal.target_life_event_id ?? proposal.target_id;
@@ -69,14 +74,14 @@ export function ReportProposals({ report, currency, clientName, disabled, apply,
         }
         return proposal.description;
     };
-    const run = (proposal: ActionProposal) => {
+    const run = async (proposal: ActionProposal) => {
         if (disabled || mutation.busy || !clientName || !proposal.auto_executable || proposal.applied || proposal.action_status === 'applied') return;
-        if (!window.confirm(`「${clientName}」のレポート（${report.period}）の提案を適用しますか？\n${effect(proposal)}`)) return;
+        if (!(await confirm(`「${clientName}」のレポート（${report.period}）の提案を適用しますか？\n${effect(proposal)}`, "適用する"))) return;
         onBusy(true);
         void mutation.run(() => apply(proposal.id), '提案を適用しました。', onApplied).finally(() => onBusy(false));
     };
-    return <section className="space-y-3">
-        <h3 className="text-base font-semibold">次にできること</h3>
+    return <details className="space-y-3">
+        <summary className="cursor-pointer text-base font-semibold">次にできること</summary>
         <Feedback error={mutation.error} message={mutation.message} />
         {report.action_proposals.length ? <ul className="space-y-3">{report.action_proposals.map((proposal) => <li key={proposal.id} className="space-y-3 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
             <div className="flex flex-wrap items-center justify-between gap-3"><h4 className="text-sm font-semibold">{KINDS[proposal.kind]}</h4><span className="text-xs text-[var(--studio-text-muted)]">{proposal.applied ? '適用済み' : STATES[proposal.action_status ?? 'pending']}</span></div>
@@ -84,5 +89,5 @@ export function ReportProposals({ report, currency, clientName, disabled, apply,
             {proposal.auto_executable ? <button type="button" className={buttonClass} disabled={disabled || mutation.busy || !clientName || proposal.applied || proposal.action_status === 'applied'} onClick={() => run(proposal)}>この提案を適用</button>
                 : <Link to="/budget" className="text-sm text-[var(--studio-accent)] underline">予算で検討する</Link>}
         </li>)}</ul> : <p className="text-sm text-[var(--studio-text-muted)]">この期間の提案はありません。</p>}
-    </section>;
+    </details>;
 }

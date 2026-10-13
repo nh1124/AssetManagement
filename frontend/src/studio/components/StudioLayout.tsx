@@ -3,6 +3,7 @@ import { LogOut, Settings as SettingsIcon } from 'lucide-react';
 import { useLanguage } from '../i18n';
 import { useAuth } from '../../context/AuthContext';
 import { SETTINGS_PATH, STUDIO_GROUPS, STUDIO_SCREENS } from '../navigation';
+import ConfirmProvider from './ConfirmProvider';
 
 /** The screen whose path is the longest prefix of the current location.
  *
@@ -95,14 +96,15 @@ export default function StudioLayout() {
 
     return (
         <div lang={language} className="studio-root flex h-screen min-h-0 overflow-hidden bg-[var(--studio-bg)] text-[var(--studio-text)]">
+            <ConfirmProvider>
             <Rail />
             <div className="flex min-w-0 flex-1 flex-col">
                 <header className="flex h-14 flex-shrink-0 items-center gap-3 border-b border-[var(--studio-border)] bg-[var(--studio-surface)] px-6">
                     <div className="min-w-0">
                         <p className="text-[11px] text-[var(--studio-text-faint)]">
-                            {screen ? t(screen.section) : pathname === '/record' ? t('group.workspace') : ''}
+                            {screen ? t(screen.section) : pathname.startsWith('/record') ? t('group.workspace') : ''}
                         </p>
-                        <h1 className="truncate text-sm font-semibold">{t(screen?.label ?? (pathname === '/record' ? 'shell.record' : 'settings.title'))}</h1>
+                        <h1 className="truncate text-sm font-semibold">{pathname.startsWith('/record/') ? '取引を編集' : t(screen?.label ?? (pathname === '/record' ? 'shell.record' : 'settings.title'))}</h1>
                     </div>
                     <div className="flex-1" />
                     <NavLink
@@ -124,6 +126,7 @@ export default function StudioLayout() {
                     <Outlet />
                 </main>
             </div>
+            </ConfirmProvider>
         </div>
     );
 }

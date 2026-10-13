@@ -70,7 +70,6 @@ export default function ActionEditor({ sourcePeriod, currency, busy, onSave, onC
         onSave({ source_period: sourcePeriod, target_period: targetPeriod, kind, description: description.trim(), payload });
     };
     return <form onSubmit={submit} className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
-        <h3 className="text-sm font-semibold">行動を追加</h3>
         <p className="text-xs text-[var(--studio-text-muted)]">行動を未実行として記録します。実行するか、予定月になって期限到来の処理をすると反映されます。</p>
         <Feedback loading={lookups.loading} error={lookups.error} />
         {lookups.error && <button type="button" disabled={busy || lookups.loading} onClick={lookups.reload} className={buttonClass}>選択肢を再読み込み</button>}
