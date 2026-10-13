@@ -25,8 +25,9 @@ CODES = {
     "capsule_claim_outside_the_client_currency": "warning",
     "capsule_plan_does_not_total_its_target": "warning",
     "capsule_funding_account_is_inactive": "warning",
+    "capsule_claim_negative_on_account": "warning",
 }
-BALANCE, SHARE, CURRENCY, PLAN, INACTIVE = CODES
+BALANCE, SHARE, CURRENCY, PLAN, INACTIVE, NEGATIVE = CODES
 WHEN = date(2026, 10, 12)
 
 
@@ -118,6 +119,38 @@ def test_attributed_release_reduces_claim_and_balance_equally(db):
     post(db, 4000, [Leg(4, debit=4000), Leg(2, credit=4000, capsule_id=1)])
     assert claimed_minor(db, 1, 1, 2) == {"JPY": 6000}
     assert issues(db)[BALANCE]["count"] == 0
+
+
+@pytest.mark.parametrize("currency", ["JPY", "USD", "EUR"])
+def test_existing_negative_claim_is_reported_per_account_and_currency_without_repair(db, currency):
+    post(db, 100, [Leg(2, debit=100, capsule_id=1), Leg(1, credit=100)], currency=currency)
+    post(db, 140, [Leg(4, debit=140), Leg(2, credit=140, capsule_id=1)], currency=currency)
+    post(db, 200, [Leg(3, debit=200, capsule_id=1), Leg(1, credit=200)], currency=currency)
+    post(db, 120, [Leg(2, debit=120, capsule_id=2), Leg(1, credit=120)], currency=currency)
+    if currency != "JPY":
+        post(db, 100000, [Leg(2, debit=100000, capsule_id=1), Leg(1, credit=100000)])
+    db.commit()
+    before = snapshot(db)
+    issue = issues(db)[NEGATIVE]
+    assert issue["severity"] == "warning" and issue["repairable"] is False
+    assert issue["count"] == 1
+    assert issue["items"] == [{
+        "capsule_id": 1, "name": "Capsule 1", "account_id": 2, "account_name": "Account 2",
+        "currency": currency, "claimed_minor": -40,
+    }]
+    assert snapshot(db) == before
+    assert not db.new and not db.dirty and not db.deleted
+
+
+@pytest.mark.parametrize("release", [0, 100])
+def test_nonnegative_claims_including_fully_released_claim_are_silent(db, release):
+    for currency in ["JPY", "USD"]:
+        post(db, 100, [Leg(2, debit=100, capsule_id=1), Leg(1, credit=100)], currency=currency)
+        if release:
+            post(db, release, [Leg(4, debit=release), Leg(2, credit=release, capsule_id=1)], currency=currency)
+    post(db, 50, [Leg(3, debit=50, capsule_id=2), Leg(1, credit=50)])
+    assert issues(db)[NEGATIVE]["count"] == 0
+    assert issues(db)[NEGATIVE]["items"] == []
 
 
 def test_claim_exceeds_declared_share_with_exact_figures(db):
@@ -265,6 +298,9 @@ def seed_violation(db, code, client_id):
         db.get(models.Account, reserve).is_active = False
         source(db, capsule_id, reserve, client_id=client_id)
         rule(db, capsule_id, reserve, client_id=client_id)
+    elif code == NEGATIVE:
+        post(db, 40, [Leg(expense, debit=40), Leg(reserve, credit=40, capsule_id=capsule_id)],
+             client_id=client_id, currency=currency)
     db.flush()
 
 
@@ -277,7 +313,7 @@ def test_each_check_is_client_scoped_and_uses_that_clients_currency(db, code):
     if code == CURRENCY:
         assert foreign["items"][0]["client_currency"] == "USD"
         assert foreign["items"][0]["claims_minor"] == {"JPY": 12345}
-    elif code in {BALANCE, SHARE, PLAN}:
+    elif code in {BALANCE, SHARE, PLAN, NEGATIVE}:
         assert foreign["items"][0]["currency"] == "USD"
 
 
@@ -305,6 +341,7 @@ def test_every_issue_caps_items_at_100_but_keeps_full_count(db):
         post(db, 100, [Leg(row_id, debit=100, capsule_id=row_id), Leg(1, credit=100)])
         post(db, 99, [Leg(4, debit=99), Leg(row_id, credit=99)])
         post(db, 1, [Leg(row_id, debit=1, capsule_id=row_id), Leg(1, credit=1)], currency="USD")
+        post(db, 1, [Leg(4, debit=1), Leg(row_id, credit=1, capsule_id=row_id)], currency="EUR")
     result = issues(db)
     for code, severity in CODES.items():
         issue = result[code]
@@ -327,6 +364,7 @@ def test_http_health_returns_all_codes_and_counts_without_writes(db, monkeypatch
     post(db, 10000, [Leg(2, debit=10000, capsule_id=1), Leg(1, credit=10000)])
     post(db, 4000, [Leg(4, debit=4000), Leg(2, credit=4000)])
     post(db, 12345, [Leg(2, debit=12345, capsule_id=1), Leg(1, credit=12345)], currency="USD")
+    post(db, 40, [Leg(4, debit=40), Leg(3, credit=40, capsule_id=1)])
     source(db, amount=900, share=500)
     rule(db)
     db.get(models.Account, 2).is_active = False

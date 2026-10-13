@@ -116,6 +116,42 @@ def test_claim_limit_uses_only_client_currency(db):
         draw(db, amount=701)
     draw(db, amount=700)
     assert capsule.claimed_minor(db, 1, 1) == {"USD": 100000}
+    assert capsule.claimed_minor(db, 1, 1, account_id=2) == {"USD": 100000}
+
+
+def seed_second_account_claim(db):
+    db.add(models.CapsuleFundingSource(client_id=1, capsule_id=1, account_id=1, target_amount_minor=1000))
+    ledger.create_transaction(db, client_id=1, date=WHEN, description="Reserve in another account",
+                              amount_minor=1000, currency="JPY",
+                              legs=[Leg(1, debit=1000, capsule_id=1), Leg(3, credit=1000)])
+    db.commit()
+
+
+@pytest.mark.parametrize("amount,remaining", [(125, 575), (700, 0)])
+def test_drawdown_uses_only_source_account_claim_including_exact_release(db, amount, remaining):
+    seed_second_account_claim(db)
+    draw(db, amount=amount)
+    assert capsule.claimed_minor(db, 1, 1, account_id=2).get("JPY", 0) == remaining
+    assert capsule.claimed_minor(db, 1, 1, account_id=1) == {"JPY": 1000}
+    assert capsule.claimed_minor(db, 1, 1) == {"JPY": 1000 + remaining}
+
+
+def test_drawdown_cannot_use_other_accounts_claim_and_names_its_limit(db):
+    seed_second_account_claim(db)
+    with pytest.raises(Invalid) as failure:
+        draw(db, amount=701)
+    assert str(failure.value) == "Drawdown exceeds the capsule claim of 700 JPY on Account 2"
+    assert db.query(models.Transaction).count() == 2
+    assert db.query(models.CapsuleDrawdown).count() == 0
+    assert capsule.claimed_minor(db, 1, 1) == {"JPY": 1700}
+
+
+def test_drawdown_from_funding_account_without_a_claim_is_refused(db):
+    db.add(models.CapsuleFundingSource(client_id=1, capsule_id=1, account_id=1, target_amount_minor=0))
+    db.commit()
+    with pytest.raises(Invalid, match="claim of 0 JPY on Account 1"):
+        draw(db, from_account_id=1)
+    assert capsule.claimed_minor(db, 1, 1) == {"JPY": 700}
 
 
 def test_minor_units_follow_client_currency(db):

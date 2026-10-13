@@ -44,10 +44,10 @@ LAYERS: dict[str, int] = {
     # L1 - the ledger itself, and reading it one journal leg at a time
     "journal_legs": 1,
     "ledger_service": 1,
-    "reconciliation_service": 1,  # Statement corrections use only ledger primitives.
     "ledger_valuation": 1,  # Values the ledger through fx_service.
     # L2 - the source of truth for recurring cash flow, and its bucket model
     "capsule_service": 2,
+    "reconciliation_service": 2,  # Attributed corrections also enforce capsule claims.
     "registry_service": 2,
     # L3 - generated from the registry. The budget_* modules are one feature
     # split across files: the loader and the line vocabulary at the bottom,

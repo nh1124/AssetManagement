@@ -192,8 +192,10 @@ def record_drawdown(
     ).with_for_update().first()
     if capsule is None:
         raise Invalid("Capsule not found for this client")
+    accounts = {}
     for account_id in (from_account_id, to_account_id):
-        if ledger_service.get_account(db, client_id, account_id) is None:
+        accounts[account_id] = ledger_service.get_account(db, client_id, account_id)
+        if accounts[account_id] is None:
             raise Invalid(f"Account {account_id} not found for this client")
     if kind not in {"as_intended", "diverted"}:
         raise Invalid("Drawdown kind must be as_intended or diverted")
@@ -206,9 +208,10 @@ def record_drawdown(
         raise Invalid("Drawdown amount must be positive")
     if not any(source.account_id == from_account_id for source in capsule.funding_sources):
         raise Invalid("Source account is not a capsule funding source")
-    claim = claimed_minor(db, client_id, capsule_id).get(currency, 0)
+    # Another account's earmark cannot fund a release from this account.
+    claim = claimed_minor(db, client_id, capsule_id, account_id=from_account_id).get(currency, 0)
     if money.minor > claim:
-        raise Invalid(f"Drawdown exceeds capsule claim of {Money(claim, currency).to_major()} {currency}")
+        raise Invalid(f"Drawdown exceeds the capsule claim of {Money(claim, currency).to_major()} {currency} on {accounts[from_account_id].name}")
     try:
         transaction = ledger_service.create_transaction(
             db, client_id=client_id, date=date, description=description,

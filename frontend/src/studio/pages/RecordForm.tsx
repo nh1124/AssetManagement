@@ -1,4 +1,5 @@
 import { useConfirm } from '../components/useConfirm';
+import DrawdownClaim from '../components/DrawdownClaim';
 import { clientToday, useTimezone } from '../datetime';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { isAxiosError } from 'axios';
@@ -103,6 +104,7 @@ export default function RecordForm({ existing, onSaved, onCancel }: {
     const [capsuleId, setCapsuleId] = useState('');
     const [drawdownCapsuleId, setDrawdownCapsuleId] = useState('');
     const [drawdownKind, setDrawdownKind] = useState<CapsuleDrawdownKind>('as_intended');
+    const [claimRevision, setClaimRevision] = useState(0);
     const [splitRows, setSplitRows] = useState<SplitRow[]>([]);
     // Keep every original leg, memo and attribution; compound entries cannot
     // be faithfully reconstructed from the derived from/to account pair.
@@ -148,6 +150,7 @@ export default function RecordForm({ existing, onSaved, onCancel }: {
     const drawdownActive = supportsDrawdown && Boolean(drawdownCapsuleId);
     const creditAccounts = accounts.filter((account) => fields.creditTypes.includes(account.account_type)
         && (!drawdownActive || drawdownCapsule?.funding_sources?.some((source) => source.account_id === account.id)));
+    const drawdownAccount = drawdownActive ? creditAccounts.find((account) => String(account.id) === creditAccountId) : undefined;
     const supportsSplit = supportsDrawdown && !drawdownActive;
     const splitActive = supportsSplit && splitRows.length > 0;
     const numericAmount = Number(amount);
@@ -230,6 +233,8 @@ export default function RecordForm({ existing, onSaved, onCancel }: {
                     amount: numericAmount, from_account_id: Number(creditAccountId),
                     to_account_id: Number(debitAccountId), kind: drawdownKind, date, description,
                 });
+                // A second entry needs the remaining claim after this release.
+                setClaimRevision((value) => value + 1);
             } else {
                 const legs: TransactionLeg[] = [
                     ...(splitActive ? splitRows.map((row) => ({
@@ -278,10 +283,12 @@ export default function RecordForm({ existing, onSaved, onCancel }: {
                             <input type="date" required value={date} onChange={(event) => setDate(event.target.value)} className={inputClass} />
                         </label>
                     )}
-                    <label className="block space-y-2 text-sm">
+                    <div><label className="block space-y-2 text-sm">
                         <span className="text-[var(--studio-text-muted)]">金額（{getCurrencySymbol(currency)}）</span>
                         <input type="number" required min="0.01" step="0.01" inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} className={inputClass} />
                     </label>
+                        {!existing && drawdownCapsule && drawdownAccount && <DrawdownClaim key={`${clientId}:${drawdownCapsule.id}:${drawdownAccount.id}:${currency}:${claimRevision}`} accountId={drawdownAccount.id} accountName={drawdownAccount.name} capsuleId={drawdownCapsule.id} currency={currency} />}
+                    </div>
                     {(existing || kind !== 'allocation') && (
                         <label className="block space-y-2 text-sm">
                             <span className="text-[var(--studio-text-muted)]">内容</span>

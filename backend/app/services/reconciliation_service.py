@@ -12,6 +12,7 @@ from ..domain.money import Money
 from .ledger_service import create_transaction, get_account
 from .cache_service import invalidate_client
 from .fx_service import get_client_currency
+from .capsule_service import claimed_minor
 
 
 def statement_money(db: Session, client_id: int, statement: Decimal | str, currency: str | None = None) -> Money:
@@ -80,7 +81,7 @@ def post_adjustment(
             raise NotFound("Counter account not found for this client")
         if capsule_id is not None and db.query(models.Capsule).filter(
             models.Capsule.client_id == client_id, models.Capsule.id == capsule_id,
-        ).first() is None:
+        ).with_for_update().first() is None:
             raise NotFound("Capsule not found for this client")
         comparison = compare_to_statement(db, client_id, account_id, as_of=as_of,
                                           statement_minor=statement_minor, currency=currency)
@@ -90,11 +91,20 @@ def post_adjustment(
         if difference == 0:
             raise Invalid("Statement already matches the ledger; zero difference has nothing to post")
         amount = abs(difference)
+        reconciled_leg = Leg(account_id, debit=amount if difference > 0 else 0,
+                             credit=amount if difference < 0 else 0, capsule_id=capsule_id)
+        # Claim direction follows this leg's debit minus credit, regardless of
+        # account type. Locking the capsule also serializes against drawdowns.
+        claim_change = reconciled_leg.debit - reconciled_leg.credit
+        if capsule_id is not None and claim_change < 0:
+            denomination = comparison["currency"]
+            claim = claimed_minor(db, client_id, capsule_id, account_id=account_id).get(denomination, 0)
+            if claim + claim_change < 0:
+                raise Invalid(f"Adjustment exceeds the capsule claim of {Money(claim, denomination).to_major()} {denomination} on {account.name}")
         transaction = create_transaction(
             db, client_id=client_id, date=as_of, currency=comparison["currency"], amount_minor=amount,
             description=note or f"残高照合：{account.name}",
-            legs=[Leg(account_id, debit=amount if difference > 0 else 0,
-                      credit=amount if difference < 0 else 0, capsule_id=capsule_id),
+            legs=[reconciled_leg,
                   Leg(counter_account_id, debit=amount if difference < 0 else 0,
                       credit=amount if difference > 0 else 0)],
         )

@@ -600,6 +600,7 @@ def _capsule_funding_issues(db: Session, client_id: int) -> list[dict[str, Any]]
 
     by_account: dict[tuple[int, str], list[dict[str, Any]]] = defaultdict(list)
     by_capsule: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    negative_on_account = []
     for (capsule_id, account_id, denomination), amount in sorted(claims.items()):
         if not amount:
             continue
@@ -607,6 +608,13 @@ def _capsule_funding_issues(db: Session, client_id: int) -> list[dict[str, Any]]
             "capsule_id": capsule_id, "name": capsules[capsule_id].name, "claimed_minor": amount,
         })
         by_capsule[capsule_id][denomination] += amount
+        # Other accounts and currencies cannot cancel a recorded over-release.
+        if amount < 0:
+            negative_on_account.append({
+                "capsule_id": capsule_id, "name": capsules[capsule_id].name,
+                "account_id": account_id, "account_name": accounts[account_id].name,
+                "currency": denomination, "claimed_minor": amount,
+            })
 
     beyond_balance = []
     for (account_id, denomination), involved in sorted(by_account.items()):
@@ -670,6 +678,8 @@ def _capsule_funding_issues(db: Session, client_id: int) -> list[dict[str, Any]]
             })
 
     checks = [
+        ("capsule_claim_negative_on_account", "warning", "Capsule claim is negative on an account",
+         "Attributed releases exceed the capsule's claim on this account in this currency. Existing journal facts are reported without rewriting them.", negative_on_account),
         ("account_earmarked_beyond_its_balance", "error", "Account claims exceed its holdings",
          "Attributed capsule claims exceed the account's journal balance in the same currency. Spending can leave a promise unfunded.", beyond_balance),
         ("capsule_beyond_its_declared_share", "warning", "Capsule claim exceeds its declared share",

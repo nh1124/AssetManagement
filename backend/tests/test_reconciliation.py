@@ -108,6 +108,47 @@ def test_no_capsule_leaves_existing_claim_unchanged(db):
     assert capsule_service.claimed_minor(db, 1, 1) == {"JPY": 1000}
 
 
+@pytest.mark.parametrize("account_id", [1, 5])
+@pytest.mark.parametrize("currency", ["JPY", "USD"])
+@pytest.mark.parametrize("difference", [-101, -100, 50])
+def test_attributed_adjustment_limits_only_claim_reducing_leg(db, account_id, currency, difference):
+    db.get(models.Client, 1).general_settings = {"currency": currency}
+    post(db, 100, target=account_id, capsule_id=1, currency=currency)
+    post(db, 900, target=account_id, currency=currency)
+    post(db, 1000, target=3, capsule_id=1, currency=currency)
+    # Neither another account nor another denomination can cover this release.
+    foreign = "USD" if currency == "JPY" else "JPY"
+    post(db, 100000, target=account_id, capsule_id=1, currency=foreign)
+    arguments = dict(as_of=DAY, statement_minor=1000 + difference, counter_account_id=2,
+                     capsule_id=1, currency=currency)
+    if difference == -101:
+        with pytest.raises(Invalid) as failure:
+            reconcile.post_adjustment(db, 1, account_id, **arguments)
+        name = "Bank" if account_id == 1 else "Card"
+        amount = "100" if currency == "JPY" else "1.00"
+        assert str(failure.value) == f"Adjustment exceeds the capsule claim of {amount} {currency} on {name}"
+        assert db.query(models.Transaction).count() == 4
+    else:
+        tx = reconcile.post_adjustment(db, 1, account_id, **arguments)
+        leg = next(row for row in tx.journal_entries if row.account_id == account_id)
+        assert leg.debit_minor - leg.credit_minor == difference
+        assert reconcile.compare_to_statement(db, 1, account_id, as_of=DAY,
+                                              statement_minor=1000 + difference, currency=currency)["difference_minor"] == 0
+    assert capsule_service.claimed_minor(db, 1, 1, account_id=account_id).get(currency, 0) == (100 if difference == -101 else 100 + difference)
+    assert capsule_service.claimed_minor(db, 1, 1, account_id=3) == {currency: 1000}
+    assert capsule_service.claimed_minor(db, 1, 1, account_id=account_id)[foreign] == 100000
+
+
+def test_increasing_adjustment_does_not_require_an_existing_positive_claim(db):
+    ledger_service.create_transaction(db, client_id=1, date=DAY, description="Existing over-release",
+                                      amount_minor=100, currency="JPY",
+                                      legs=[Leg(2, debit=100), Leg(1, credit=100, capsule_id=1)])
+    db.commit()
+    assert capsule_service.claimed_minor(db, 1, 1, account_id=1) == {"JPY": -100}
+    adjust(db, -50, capsule_id=1)
+    assert capsule_service.claimed_minor(db, 1, 1, account_id=1) == {"JPY": -50}
+
+
 def test_claims_have_same_account_cutoff_and_currency_as_comparison(db):
     post(db, 700, capsule_id=1)
     post(db, 200, capsule_id=1, target=3)

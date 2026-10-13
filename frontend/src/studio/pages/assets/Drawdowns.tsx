@@ -1,4 +1,5 @@
 import Overlay from '../../components/Overlay';
+import DrawdownClaim from '../../components/DrawdownClaim';
 import { useCallback, useState, type FormEvent } from 'react';
 import { getAccounts, getCapsuleDrawdowns, recordCapsuleDrawdown } from '../../../api';
 import type { Capsule, CapsuleDrawdownKind } from '../../../types';
@@ -22,6 +23,7 @@ function DrawdownForm({ capsule, currency, onRecorded, onCancel }: {
     const [kind, setKind] = useState<CapsuleDrawdownKind>('as_intended');
     const [date, setDate] = useState(today);
     const [description, setDescription] = useState('');
+    const source = capsule.funding_sources?.find((row) => String(row.account_id) === fromAccountId);
     const submit = (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         let confirmation = '';
@@ -37,7 +39,9 @@ function DrawdownForm({ capsule, currency, onRecorded, onCancel }: {
         <Feedback loading={accounts.loading} error={mutation.error || accounts.error} />
         {accounts.error && <button type="button" onClick={accounts.reload} className={buttonClass}>口座を再読み込み</button>}
         <fieldset disabled={mutation.busy || accounts.loading || Boolean(accounts.error)} className="grid gap-3 md:grid-cols-2">
-            <Field label={`金額（${currency}）`}><input required type="number" min="0.01" step="any" value={amount} onChange={(event) => setAmount(event.target.value)} className={inputClass} /></Field>
+            <div><Field label={`金額（${currency}）`}><input required type="number" min="0.01" step="any" value={amount} onChange={(event) => setAmount(event.target.value)} className={inputClass} /></Field>
+                {source && <DrawdownClaim key={`${capsule.id}:${source.account_id}:${currency}`} accountId={source.account_id} accountName={source.account_name ?? `口座 #${source.account_id}`} capsuleId={capsule.id} currency={currency} />}
+            </div>
             <Field label="引き出す口座"><select required value={fromAccountId} onChange={(event) => setFromAccountId(event.target.value)} className={inputClass}>
                 <option value="">選択してください</option>
                 {capsule.funding_sources?.map((source) => <option key={source.id} value={source.account_id}>{source.account_name ?? `#${source.account_id}`}</option>)}
