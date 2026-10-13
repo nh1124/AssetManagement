@@ -7,6 +7,7 @@ import { formatCurrency } from '../../../utils/currency';
 import { useResource } from '../../useResource';
 import { DataTable, EditorActions, Feedback, Field, RowActions } from '../db/Database';
 import { buttonClass, inputClass, useMutation } from '../db/forms';
+import MonthCopy from './MonthCopy';
 import MonthPicker from '../ledger/MonthPicker';
 
 // budget_plan_service returns plan_lines and plan_id, not the legacy budget model.
@@ -47,12 +48,13 @@ function AmountEditor({ line, currency, busy, onSave, onCancel }: {
     </form>;
 }
 
-function MonthlyBudget({ period, currency, clientName }: { period: string; currency: string; clientName?: string }) {
+function MonthlyBudget({ period, currency, clientName, onBusy }: { period: string; currency: string; clientName?: string; onBusy: (busy: boolean) => void }) {
     const load = useCallback((): Promise<BudgetSummary> => getBudgetSummary(period), [period]);
     const resource = useResource(load);
     const mutation = useMutation();
+    const [copyBusy, setCopyBusy] = useState(false);
     const [editing, setEditing] = useState<MonthlyPlanLine | null>(null);
-    const disabled = resource.loading || Boolean(resource.error) || mutation.busy || !clientName;
+    const disabled = resource.loading || Boolean(resource.error) || mutation.busy || copyBusy || !clientName;
     const save = (amount: number) => {
         if (disabled || !editing || !resource.data) return;
         const name = lineName(editing);
@@ -85,11 +87,12 @@ function MonthlyBudget({ period, currency, clientName }: { period: string; curre
     return <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
             <div><h2 className="text-lg font-semibold">予算と実績</h2><p className="mt-1 text-xs text-[var(--studio-text-muted)]">対象：{clientName || 'クライアントを確認中…'} ／ 表示通貨：{currency}</p></div>
-            <button type="button" disabled={resource.loading || mutation.busy || editing !== null} onClick={resource.reload} className={buttonClass}>再読み込み</button>
+            <button type="button" disabled={resource.loading || mutation.busy || copyBusy || editing !== null} onClick={resource.reload} className={buttonClass}>再読み込み</button>
         </div>
         <p className="text-xs text-[var(--studio-text-muted)]">照合はサーバーが口座と対象期間から計算します。差は月末計画 − 照合済み実績です。</p>
         <Feedback loading={resource.loading} error={resource.error} />
         <Feedback error={mutation.error} message={mutation.message} />
+        <MonthCopy period={period} disabled={disabled || editing !== null} clientName={clientName} onBusy={(busy) => { setCopyBusy(busy); onBusy(busy); }} onCopied={resource.reload} />
         {editing && <AmountEditor key={editing.id ?? lineName(editing)} line={editing} currency={currency} busy={disabled} onSave={save} onCancel={() => setEditing(null)} />}
         {resource.data && <>
             <p className="text-xs text-[var(--studio-text-muted)]">計画全体の状態：{FEASIBILITY[resource.data.feasibility_status]}</p>
@@ -115,11 +118,12 @@ function MonthlyBudget({ period, currency, clientName }: { period: string; curre
 export default function Budget() {
     const { clientId, currentClient } = useClient();
     const timezone = useTimezone();
+    const [busy, setBusy] = useState(false);
     const [periodEdit, setPeriod] = useState<string | null>(null);
     const period = periodEdit ?? clientToday(timezone).slice(0, 7);
     const currency = currentClient?.general_settings?.currency || 'JPY';
     return <section className="space-y-4">
-        <MonthPicker value={period} onChange={setPeriod} />
-        <MonthlyBudget key={`${clientId}:${period}:${currency}`} period={period} currency={currency} clientName={currentClient?.id === clientId ? currentClient.name : undefined} />
+        <MonthPicker value={period} onChange={setPeriod} disabled={busy} />
+        <MonthlyBudget key={`${clientId}:${period}:${currency}`} period={period} currency={currency} clientName={currentClient?.id === clientId ? currentClient.name : undefined} onBusy={setBusy} />
     </section>;
 }

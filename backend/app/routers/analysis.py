@@ -1,11 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from decimal import Decimal
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 from datetime import date
 from typing import Optional
 from ..database import get_db
 from ..dependencies import get_current_client
-from .. import models
-from ..services import analysis_service
+from .. import models, schemas
+from ..services import analysis_service, reconciliation_service
+from ..services.ai_policy_service import assert_direct_ledger_write_allowed
+from .transactions import _serialize_transaction
 from ..services.cache_service import get_or_set
 from ..services.reporting_service import (
     get_net_worth_history as reporting_get_net_worth_history,
@@ -183,30 +186,41 @@ def get_net_worth_history(
     )
 
 
-@router.get("/reconcile")
-def check_reconcile(
+@router.get("/reconcile/{account_id}", response_model=schemas.ReconciliationComparison)
+def compare_statement(
+    account_id: int,
+    as_of: date = Query(...),
+    statement: Decimal = Query(..., allow_inf_nan=False),
+    currency: str | None = Query(None),
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    # Retain the HTTP contract for existing clients after removing the cache.
-    discrepancies = []
-    return {
-        "status": "ok" if not discrepancies else "discrepancies_found",
-        "discrepancy_count": len(discrepancies),
-        "discrepancies": discrepancies,
-    }
+    money = reconciliation_service.statement_money(db, current_client.id, statement, currency)
+    return reconciliation_service.compare_to_statement(
+        db, current_client.id, account_id, as_of=as_of,
+        statement_minor=money.minor, currency=money.currency,
+    )
 
 
-@router.post("/reconcile/fix")
-def fix_reconcile(
+@router.post("/reconcile/{account_id}/adjust", response_model=schemas.Transaction)
+def adjust_statement(
+    account_id: int,
+    payload: schemas.ReconciliationAdjustment,
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
+    request: Request = None,
 ):
-    # There is no stored balance left to repair.
-    fixed = []
-    return {
-        "status": "fixed",
-        "fixed_count": len(fixed),
-        "fixed_accounts": fixed,
-    }
-
+    assert_direct_ledger_write_allowed(
+        db, current_client.id,
+        mcp_client_id=request.headers.get("x-mcp-client-id") if request else None,
+        risk="medium",
+    )
+    money = reconciliation_service.statement_money(db, current_client.id, payload.statement, payload.currency)
+    transaction = reconciliation_service.post_adjustment(
+        db, current_client.id, account_id, as_of=payload.as_of,
+        statement_minor=money.minor, currency=money.currency,
+        counter_account_id=payload.counter_account_id,
+        capsule_id=payload.capsule_id, note=payload.note,
+        expected_ledger_minor=payload.expected_ledger_minor,
+    )
+    return _serialize_transaction(transaction)

@@ -18,7 +18,7 @@ from app.dependencies import get_current_client
 from app.domain.money import Money
 from app.domain.transfer import build_manifest
 from app.models.money import MinorUnits
-from app.routers import accounts as router, analysis
+from app.routers import accounts as router
 from app.services import ledger_service as ledger
 from app.services.data_transfer_service import export_client, import_client
 from app.services.ledger_valuation import calculate_account_balances, calculate_account_valued_balances
@@ -205,12 +205,6 @@ def test_settings_hybrids_crud_and_binder(db, currency):
             db.execute(sa.update(models.Account).where(models.Account.id == -1).values({f"{name}_minor": 1.25}))
     ledger.update_account(db, 1, account.id, {name: None for name in SETTINGS})
     assert all(getattr(account, f"{name}_minor") is None for name in SETTINGS)
-
-
-def test_legacy_reconcile_routes_keep_their_responses(db):
-    client = db.get(models.Client, 1)
-    assert analysis.check_reconcile(db, client) == {"status": "ok", "discrepancy_count": 0, "discrepancies": []}
-    assert analysis.fix_reconcile(db, client) == {"status": "fixed", "fixed_count": 0, "fixed_accounts": []}
 
 
 def _migration():

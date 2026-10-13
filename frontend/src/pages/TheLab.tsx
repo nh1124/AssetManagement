@@ -35,15 +35,13 @@ import {
     applyReviewAction,
     skipReviewAction,
     applyPeriodReportAction,
-    getReconcileStatus,
     getVarianceAnalysis,
-    fixReconcile,
     savePeriodReview,
     updateTransaction,
 } from '../api';
 import { useToast } from '../components/Toast';
 import { formatCurrency as formatCurrencyWithSetting } from '../utils/currency';
-import type { AccountFlowAnalysis, AccountFlowGrain, AccountFlowTransaction, ActionProposal, AnalysisSummary, BudgetPlan, MonthlyAction, MonthlyReport, PeriodReview, NetWorthHistoryPoint, ReconcileResponse, ReviewActionKind } from '../types';
+import type { AccountFlowAnalysis, AccountFlowGrain, AccountFlowTransaction, ActionProposal, AnalysisSummary, BudgetPlan, MonthlyAction, MonthlyReport, PeriodReview, NetWorthHistoryPoint, ReviewActionKind } from '../types';
 
 interface TheLabProps {
     onNavigate?: (page: string) => void;
@@ -55,7 +53,6 @@ const PORTFOLIO_TABS = [
     { id: 'history', label: 'History' },
     { id: 'kpi', label: 'KPI' },
     { id: 'capsules', label: 'Capsules' },
-    { id: 'reconcile', label: 'Data Quality' },
 ];
 
 const PERIOD_TABS = [
@@ -204,9 +201,6 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
     });
     const [reviewSaving, setReviewSaving] = useState(false);
     const [actionSaving, setActionSaving] = useState(false);
-    const [reconcileResult, setReconcileResult] = useState<ReconcileResponse | null>(null);
-    const [reconcileLoading, setReconcileLoading] = useState(false);
-    const [lastVerified, setLastVerified] = useState(() => localStorage.getItem('finance_reconcile_last_verified') || '');
     const [applyingProposalId, setApplyingProposalId] = useState<string | null>(null);
     const { showToast } = useToast();
     const { currentClient } = useClient();
@@ -595,44 +589,6 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
     const handleSkipReviewAction = async (id: number) => {
         await skipReviewAction(id);
         await refreshActions();
-    };
-
-    const updateLastVerified = () => {
-        const timestamp = new Date().toLocaleString();
-        localStorage.setItem('finance_reconcile_last_verified', timestamp);
-        setLastVerified(timestamp);
-    };
-
-    const handleRunReconcile = async () => {
-        setReconcileLoading(true);
-        try {
-            const result = await getReconcileStatus();
-            setReconcileResult(result);
-            updateLastVerified();
-        } catch (error) {
-            console.error('Failed to run reconcile:', error);
-            showToast('Failed to run reconcile check', 'error');
-        } finally {
-            setReconcileLoading(false);
-        }
-    };
-
-    const handleFixReconcile = async () => {
-        if (!window.confirm('Auto-fix account balances from journal entries?')) return;
-
-        setReconcileLoading(true);
-        try {
-            await fixReconcile();
-            const result = await getReconcileStatus();
-            setReconcileResult(result);
-            updateLastVerified();
-            showToast('Reconcile fix completed', 'success');
-        } catch (error) {
-            console.error('Failed to fix reconcile:', error);
-            showToast('Failed to auto-fix reconcile discrepancies', 'error');
-        } finally {
-            setReconcileLoading(false);
-        }
     };
 
     const handleApplyProposal = async (proposal: ActionProposal) => {
@@ -1792,94 +1748,6 @@ export default function TheLab({ onNavigate, mode }: TheLabProps) {
                         )}
                     </div>
                 );
-            case 'reconcile': {
-                const discrepancies = reconcileResult?.discrepancies ?? reconcileResult?.fixed_accounts ?? [];
-                const isOk = reconcileResult?.status === 'ok';
-                const hasDiscrepancies = reconcileResult?.status === 'discrepancies_found';
-
-                return (
-                    <div className="space-y-4">
-                        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 bg-slate-800/30 border border-slate-700 p-4">
-                            <div>
-                                <div className="flex items-center gap-2 mb-1">
-                                    <span className={`text-[10px] uppercase px-2 py-1 border ${isOk
-                                        ? 'text-emerald-400 border-emerald-800 bg-emerald-950/40'
-                                        : hasDiscrepancies
-                                            ? 'text-rose-400 border-rose-800 bg-rose-950/40'
-                                            : 'text-slate-400 border-slate-700 bg-slate-900/60'
-                                        }`}>
-                                        {reconcileResult?.status ?? 'Not Checked'}
-                                    </span>
-                                    <span className="text-[10px] text-slate-500">
-                                        Last verified: {lastVerified || '—'}
-                                    </span>
-                                </div>
-                                <p className="text-xs text-slate-400">
-                                    Journal entries are compared with stored account balances.
-                                </p>
-                            </div>
-                            <div className="flex gap-2">
-                                <button
-                                    onClick={handleRunReconcile}
-                                    disabled={reconcileLoading}
-                                    className="px-3 py-2 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-xs text-white"
-                                >
-                                    {reconcileLoading ? 'Running...' : 'Run Check'}
-                                </button>
-                                <button
-                                    onClick={handleFixReconcile}
-                                    disabled={reconcileLoading || !hasDiscrepancies}
-                                    className="px-3 py-2 bg-rose-700 hover:bg-rose-600 disabled:opacity-40 text-xs text-white"
-                                >
-                                    Auto Fix
-                                </button>
-                            </div>
-                        </div>
-
-                        {isOk && (
-                            <div className="border border-emerald-900 bg-emerald-950/20 p-4 text-xs text-emerald-300">
-                                Account balances match journal-entry truth.
-                            </div>
-                        )}
-
-                        {hasDiscrepancies && (
-                            <div className="border border-amber-900 bg-amber-950/20 p-4 text-xs text-amber-200 space-y-1">
-                                <p>Possible causes include direct database edits, retroactive transaction bugs, or interrupted sync work.</p>
-                                <p>When none apply, export data before deeper investigation.</p>
-                            </div>
-                        )}
-
-                        {discrepancies.length > 0 && (
-                            <div className="border border-slate-700 overflow-x-auto">
-                                <table className="w-full text-xs">
-                                    <thead className="bg-slate-900/80">
-                                        <tr className="border-b border-slate-800">
-                                            <th className="text-left p-2 text-slate-500 uppercase font-medium">Account</th>
-                                            <th className="text-left p-2 text-slate-500 uppercase font-medium">Type</th>
-                                            <th className="text-right p-2 text-slate-500 uppercase font-medium">Stored</th>
-                                            <th className="text-right p-2 text-slate-500 uppercase font-medium">Calculated</th>
-                                            <th className="text-right p-2 text-slate-500 uppercase font-medium">Difference</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {discrepancies.map((item) => (
-                                            <tr key={item.account_id} className="border-b border-slate-800/50">
-                                                <td className="p-2 text-slate-200">{item.account_name}</td>
-                                                <td className="p-2 text-slate-400">{item.account_type}</td>
-                                                <td className="p-2 text-right font-mono-nums">{formatCurrency(item.stored_balance)}</td>
-                                                <td className="p-2 text-right font-mono-nums">{formatCurrency(item.calculated_balance)}</td>
-                                                <td className={`p-2 text-right font-mono-nums ${item.difference >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                                                    {item.difference >= 0 ? '+' : ''}{formatCurrency(item.difference)}
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        )}
-                    </div>
-                );
-            }
             case 'capsules':
                 return (
                     <div className="space-y-2">

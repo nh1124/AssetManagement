@@ -170,6 +170,8 @@ def _seed(db, scenario, today):
             "capsule_id": capsule.id, "transaction_id": lunch.id, "month": today.strftime("%Y-%m"),
             "plan_ids": str(plan.id) if plan else None,
             "start_date": start.isoformat(), "end_date": end.isoformat(),
+            # Statement reconciliation is a pure read, including its historical claims.
+            "as_of": today.isoformat(), "statement": "98800",
             "start_period": today.strftime("%Y-%m")}
 
 

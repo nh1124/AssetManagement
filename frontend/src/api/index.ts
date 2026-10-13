@@ -39,7 +39,6 @@ import type {
     PeriodReview,
     NetWorthHistoryPoint,
     QuickTemplate,
-    ReconcileResponse,
     RecurringTransaction,
     RegistryEntry,
     ReviewActionCreate,
@@ -953,11 +952,6 @@ export const syncProductReserves = async () => {
     return response.data;
 };
 
-export const getReconcileStatus = async (): Promise<ReconcileResponse> => {
-    const response = await api.get('/analysis/reconcile');
-    return response.data;
-};
-
 export const getCapsuleRules = async (): Promise<CapsuleRule[]> => {
     const response = await api.get('/capsules/rules');
     return response.data;
@@ -987,11 +981,6 @@ export const createCapsuleRule = async (rule: Omit<CapsuleRule, 'id' | 'created_
 
 export const deleteCapsuleRule = async (id: number) => {
     const response = await api.delete(`/capsules/rules/${id}`);
-    return response.data;
-};
-
-export const fixReconcile = async (): Promise<ReconcileResponse> => {
-    const response = await api.post('/analysis/reconcile/fix');
     return response.data;
 };
 

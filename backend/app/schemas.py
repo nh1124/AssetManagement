@@ -1,3 +1,4 @@
+from decimal import Decimal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from datetime import date, datetime
 from datetime import date as DateType
@@ -1103,3 +1104,35 @@ class CapsuleTransferPreview(BaseModel):
     destination_account_id: int
     amount: float
     auto_post: bool
+
+
+class ReconciliationAccount(BaseModel):
+    id: int
+    name: str
+    account_type: str
+
+
+class ReconciliationClaim(BaseModel):
+    capsule_id: int
+    capsule_name: str
+    claimed_minor: int
+
+
+class ReconciliationComparison(BaseModel):
+    account: ReconciliationAccount
+    as_of: DateType
+    ledger_minor: int
+    statement_minor: int
+    difference_minor: int
+    currency: str
+    capsule_claims: list[ReconciliationClaim]
+
+
+class ReconciliationAdjustment(BaseModel):
+    as_of: DateType
+    statement: Decimal = Field(allow_inf_nan=False)
+    counter_account_id: int
+    capsule_id: int | None = None
+    note: str | None = None
+    currency: str | None = None
+    expected_ledger_minor: int | None = None

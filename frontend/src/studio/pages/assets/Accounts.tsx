@@ -1,3 +1,4 @@
+import Reconciliation from './Reconciliation';
 import { useEffect, useRef, useState } from 'react';
 import { getAccounts, updateAccount } from '../../../api';
 import type { Account, AccountRole } from '../../../types';
@@ -110,6 +111,7 @@ export default function Accounts() {
                     </table>
                 </div>
             ) : <p className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-6 text-sm text-[var(--studio-text-muted)]">口座はありません。</p>)}
+            <Reconciliation accounts={accounts ?? []} disabled={loading || Boolean(error) || updatingId !== null} onPosted={reload} />
         </section>
     );
 }

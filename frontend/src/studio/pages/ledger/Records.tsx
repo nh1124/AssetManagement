@@ -5,6 +5,7 @@ import { useClient } from '../../../context/ClientContext';
 import type { Transaction } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import { assetErrorMessage, useResource } from '../../useResource';
+import RecordForm from '../RecordForm';
 import MonthPicker from './MonthPicker';
 import { monthRange } from './periods';
 
@@ -30,6 +31,7 @@ function RecordResults({ month, currency, onDeleted, onBusy }: {
     const loadPage = useCallback(() => getTransactionsPage({ ...monthRange(month), limit: PAGE_SIZE, offset: 0 }), [month]);
     const { data: page, setData, loading, error, reload } = useResource(loadPage);
     const [busy, setBusy] = useState(false);
+    const [editing, setEditing] = useState<Transaction | null>(null);
     const [operationError, setOperationError] = useState('');
     const [confirmation, setConfirmation] = useState('');
     const inFlight = useRef(false);
@@ -86,12 +88,15 @@ function RecordResults({ month, currency, onDeleted, onBusy }: {
         <div className="space-y-4">
             <div className="flex items-center justify-between gap-4">
                 <h2 className="text-lg font-semibold">すべての記録</h2>
-                <button type="button" onClick={reload} disabled={loading || busy} className={buttonClass}>再読み込み</button>
+                <button type="button" onClick={reload} disabled={loading || busy || editing !== null} className={buttonClass}>再読み込み</button>
             </div>
             {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">記録を読み込んでいます…</p>}
             {error && <p role="alert" className="text-sm text-[var(--studio-danger)]">記録を取得できませんでした。{error}</p>}
             {operationError && <p role="alert" className="text-sm text-[var(--studio-danger)]">{operationError}</p>}
             {confirmation && <p role="status" className="rounded-md bg-[var(--studio-accent-soft)] p-3 text-sm text-[var(--studio-positive)]">{confirmation}</p>}
+            {editing && <RecordForm key={editing.id} existing={editing} onCancel={() => { setEditing(null); onBusy(false); }} onSaved={() => {
+                setEditing(null); onBusy(false); reload(); onDeleted(); setConfirmation('取引を更新しました。');
+            }} />}
             {page && (page.items.length ? (
                 <div className="overflow-x-auto rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)]">
                     <table className="w-full text-left text-sm" aria-busy={loading || busy}>
@@ -106,14 +111,14 @@ function RecordResults({ month, currency, onDeleted, onBusy }: {
                                     <th scope="row" className="px-5 py-3 font-medium">{transaction.description || '内容未入力'}</th>
                                     <td className="whitespace-nowrap px-5 py-3 text-right tabular-nums">{formatCurrency(transaction.amount, transaction.currency || currency)}<span className="ml-2 text-xs text-[var(--studio-text-muted)]">{transaction.currency || currency}</span></td>
                                     <td className="px-5 py-3 text-[var(--studio-text-muted)]">{accountLabel(transaction)}</td>
-                                    <td className="px-5 py-3"><button type="button" onClick={() => void remove(transaction)} disabled={loading || Boolean(error) || busy} aria-label={`${transaction.date} ${transaction.description}を削除`} className="rounded-md border border-[var(--studio-border)] px-3 py-1.5 text-xs text-[var(--studio-danger)] hover:bg-[var(--studio-bg)] disabled:opacity-40">削除</button></td>
+                                    <td className="px-5 py-3"><div className="flex gap-2"><button type="button" disabled={loading || Boolean(error) || busy || editing !== null} onClick={() => { setEditing(transaction); onBusy(true); }} aria-label={`${transaction.description}を編集`} className={buttonClass}>編集</button><button type="button" onClick={() => void remove(transaction)} disabled={loading || Boolean(error) || busy || editing !== null} aria-label={`${transaction.date} ${transaction.description}を削除`} className="rounded-md border border-[var(--studio-border)] px-3 py-1.5 text-xs text-[var(--studio-danger)] hover:bg-[var(--studio-bg)] disabled:opacity-40">削除</button></div></td>
                                 </tr>
                             ))}
                         </tbody>
                     </table>
                 </div>
             ) : !loading && !error && <p className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-6 text-sm text-[var(--studio-text-muted)]">この月の記録はありません。</p>)}
-            {page && page.items.length < page.total && <button type="button" onClick={() => void loadMore()} disabled={loading || Boolean(error) || busy} className={buttonClass}>{busy ? '処理中…' : '次を読み込む'}（{page.items.length} / {page.total}件）</button>}
+            {page && page.items.length < page.total && <button type="button" onClick={() => void loadMore()} disabled={loading || Boolean(error) || busy || editing !== null} className={buttonClass}>{busy ? '処理中…' : '次を読み込む'}（{page.items.length} / {page.total}件）</button>}
         </div>
     );
 }
