@@ -1,3 +1,4 @@
+import { formatDateTime, useTimezone } from '../../datetime';
 import { useRef, useState } from 'react';
 import { getAiAuditLogs } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
@@ -13,6 +14,7 @@ async function loadFirstPage() {
 }
 
 function AuditForClient() {
+    const timezone = useTimezone();
     const { data, setData, loading, error, reload } = useResource(loadFirstPage);
     const [loadingMore, setLoadingMore] = useState(false);
     const [operationError, setOperationError] = useState('');
@@ -48,7 +50,7 @@ function AuditForClient() {
                         <thead className="border-b border-[var(--studio-border)] text-xs text-[var(--studio-text-muted)]"><tr>{['日時', '操作', '実行元', '結果'].map((label) => <th scope="col" key={label} className="px-5 py-3 font-medium">{label}</th>)}</tr></thead>
                         <tbody className="divide-y divide-[var(--studio-border)]">
                             {data.items.map((row) => <tr key={row.id}>
-                                <td className="whitespace-nowrap px-5 py-3 text-xs"><time dateTime={row.created_at}>{new Date(row.created_at).toLocaleString('ja-JP')}</time></td>
+                                <td className="whitespace-nowrap px-5 py-3 text-xs"><time dateTime={row.created_at}>{formatDateTime(row.created_at, timezone)}</time></td>
                                 <th scope="row" className="px-5 py-3 font-medium">{row.resource}・{row.action}</th>
                                 <td className="px-5 py-3">{SOURCE_LABELS[row.source]}{row.tool_name && <span className="mt-1 block text-xs text-[var(--studio-text-muted)]">{row.tool_name}</span>}</td>
                                 <td className={`whitespace-nowrap px-5 py-3 ${row.decision === 'failed' || row.decision === 'denied' ? 'text-[var(--studio-danger)]' : ''}`}>{DECISION_LABELS[row.decision]}</td>

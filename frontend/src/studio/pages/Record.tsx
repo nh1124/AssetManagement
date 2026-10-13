@@ -1,3 +1,4 @@
+import { clientToday, useTimezone } from '../datetime';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { isAxiosError } from 'axios';
 import { contributeToCapsule, createTransaction, getAccounts, getCapsules, recordCapsuleDrawdown } from '../../api';
@@ -43,12 +44,6 @@ const ACCOUNT_FIELDS: Record<RecordKind, {
 const inputClass = 'w-full rounded-md border border-[var(--studio-border)] bg-[var(--studio-surface)] px-3 py-2 text-sm text-[var(--studio-text)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)]';
 const secondaryButtonClass = 'rounded-md border border-[var(--studio-border)] px-3 py-1.5 text-xs text-[var(--studio-text-muted)] hover:bg-[var(--studio-accent-soft)] disabled:opacity-40';
 
-function today() {
-    // UTC can still be yesterday when the user starts recording in the morning.
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-}
-
 function errorMessage(error: unknown): string {
     if (isAxiosError<{ detail?: unknown; message?: string }>(error)) {
         const data = error.response?.data;
@@ -93,7 +88,9 @@ function RecordForClient() {
     const [accountsError, setAccountsError] = useState('');
     const [capsulesError, setCapsulesError] = useState('');
     const [kind, setKind] = useState<RecordKind>('expense');
-    const [date, setDate] = useState(today);
+    const timezone = useTimezone();
+    const [dateEdit, setDate] = useState<string | null>(null);
+    const date = dateEdit ?? clientToday(timezone);
     const [amount, setAmount] = useState('');
     const [description, setDescription] = useState('');
     const [debitAccountId, setDebitAccountId] = useState('');

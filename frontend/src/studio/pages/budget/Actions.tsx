@@ -1,3 +1,4 @@
+import { clientToday, useTimezone } from '../../datetime';
 import { useCallback, useState } from 'react';
 import { applyReviewAction, createMonthlyAction, getMonthlyActions, processDueMonthlyActions, skipReviewAction } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
@@ -7,7 +8,6 @@ import { useResource } from '../../useResource';
 import { DataTable, Feedback } from '../db/Database';
 import { buttonClass, useMutation } from '../db/forms';
 import MonthPicker from '../ledger/MonthPicker';
-import { currentMonth } from '../ledger/periods';
 import ActionEditor from './ActionEditor';
 
 const STATES: Record<MonthlyAction['status'], string> = { pending: '未実行', applied: '実行済み', skipped: '見送り', failed: '失敗' };
@@ -91,7 +91,9 @@ function MonthlyActions({ sourcePeriod, currency, clientName }: { sourcePeriod: 
 
 export default function Actions() {
     const { clientId, currentClient } = useClient();
-    const [sourcePeriod, setSourcePeriod] = useState(currentMonth);
+    const timezone = useTimezone();
+    const [sourcePeriodEdit, setSourcePeriod] = useState<string | null>(null);
+    const sourcePeriod = sourcePeriodEdit ?? clientToday(timezone).slice(0, 7);
     const currency = currentClient?.general_settings?.currency || 'JPY';
     return <section className="space-y-4">
         <MonthPicker value={sourcePeriod} onChange={setSourcePeriod} />

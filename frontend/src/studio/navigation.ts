@@ -24,123 +24,124 @@ import {
     Wallet,
 } from 'lucide-react';
 import type { ComponentType } from 'react';
+import type { TranslationKey } from './i18n';
 
 export interface StudioScreen {
     /** Route path under the studio basename. */
     path: string;
-    label: string;
+    label: TranslationKey;
     icon: ComponentType<{ size?: number | string; className?: string }>;
     /** Shown in the header above the screen title. */
-    section: string;
+    section: TranslationKey;
     /** Tabs are route segments, so a tab is a URL and the back button works. */
-    tabs?: Array<{ segment: string; label: string }>;
+    tabs?: Array<{ segment: string; label: TranslationKey }>;
 }
 
 export interface StudioGroup {
     id: string;
     /** Rail heading. Null renders the group without one. */
-    label: string | null;
+    label: TranslationKey | null;
     screens: StudioScreen[];
 }
 
-const WORKSPACE = 'ワークスペース';
-const DATABASE = 'データベース';
-const AUTOMATION = 'オートメーション';
-const PROTOTYPE = '試作';
+const WORKSPACE = 'group.workspace';
+const DATABASE = 'group.database';
+const AUTOMATION = 'group.automation';
+const PROTOTYPE = 'group.prototype';
 
 export const STUDIO_GROUPS: StudioGroup[] = [
     {
         id: 'workspace',
-        label: 'WORKSPACE',
+        label: 'group.workspace',
         screens: [
             {
                 path: 'ledger',
-                label: '家計簿',
+                label: 'screen.ledger',
                 icon: BookOpen,
                 section: WORKSPACE,
                 tabs: [
-                    { segment: '', label: 'すべての記録' },
-                    { segment: 'unmatched', label: '未照合' },
+                    { segment: '', label: 'tab.records' },
+                    { segment: 'unmatched', label: 'tab.unmatched' },
                     // The budget screen owns the plan; repeating numbers at two depths makes them drift apart.
                 ],
             },
             {
                 path: 'assets',
-                label: '資産',
+                label: 'screen.assets',
                 icon: Wallet,
                 section: WORKSPACE,
                 tabs: [
-                    { segment: '', label: '全体の状況' },
-                    { segment: 'accounts', label: '口座' },
-                    { segment: 'earmarks', label: '取り置き' },
+                    { segment: '', label: 'tab.overview' },
+                    { segment: 'accounts', label: 'tab.accounts' },
+                    { segment: 'earmarks', label: 'tab.earmarks' },
                 ],
             },
-            { path: 'flows', label: '収支', icon: Activity, section: WORKSPACE },
+            { path: 'flows', label: 'screen.flows', icon: Activity, section: WORKSPACE },
             {
                 path: 'budget',
-                label: '予算',
+                label: 'screen.budget',
                 icon: ClipboardList,
                 section: WORKSPACE,
                 tabs: [
-                    { segment: '', label: '予算と実績' },
-                    { segment: 'actions', label: '行動' },
+                    { segment: '', label: 'tab.budget' },
+                    { segment: 'actions', label: 'tab.actions' },
                 ],
             },
             {
                 path: 'report',
-                label: 'レポート',
+                label: 'screen.report',
                 icon: ChartLine,
                 section: WORKSPACE,
                 tabs: [
-                    { segment: '', label: '推移' },
-                    { segment: 'monthly', label: '月次' },
-                    { segment: 'review', label: '振り返り' },
+                    { segment: '', label: 'tab.trends' },
+                    { segment: 'monthly', label: 'tab.monthly' },
+                    { segment: 'review', label: 'tab.review' },
                 ],
             },
-            { path: 'goals', label: 'ゴール', icon: Flag, section: WORKSPACE },
+            { path: 'goals', label: 'screen.goals', icon: Flag, section: WORKSPACE },
         ],
     },
     {
         id: 'database',
-        label: 'DATABASE',
+        label: 'group.database',
         screens: [
-            { path: 'db/accounts', label: '口座・勘定科目', icon: Landmark, section: DATABASE },
-            { path: 'db/fx', label: '為替レート', icon: Coins, section: DATABASE },
+            { path: 'db/accounts', label: 'screen.accounts', icon: Landmark, section: DATABASE },
+            { path: 'db/fx', label: 'screen.fx', icon: Coins, section: DATABASE },
             {
                 path: 'db/definitions',
-                label: '収支・配分の定義',
+                label: 'screen.definitions',
                 icon: Repeat,
                 section: DATABASE,
                 tabs: [
-                    { segment: '', label: 'サービス・継続支出' },
-                    { segment: 'income', label: '収入' },
-                    { segment: 'repayment', label: '返済' },
-                    { segment: 'allocation', label: '配分' },
+                    { segment: '', label: 'tab.services' },
+                    { segment: 'income', label: 'tab.income' },
+                    { segment: 'repayment', label: 'tab.repayment' },
+                    { segment: 'allocation', label: 'tab.allocation' },
                 ],
             },
-            { path: 'db/fixed-assets', label: '固定資産', icon: Boxes, section: DATABASE },
-            { path: 'db/consumables', label: '消耗品', icon: Layers, section: DATABASE },
+            { path: 'db/fixed-assets', label: 'screen.fixedAssets', icon: Boxes, section: DATABASE },
+            { path: 'db/consumables', label: 'screen.consumables', icon: Layers, section: DATABASE },
         ],
     },
     {
         id: 'automation',
-        label: 'Automation',
+        label: 'group.automation',
         screens: [
-            { path: 'automation/ai', label: 'AI操作', icon: PiggyBank, section: AUTOMATION },
-            { path: 'automation/approvals', label: '承認リクエスト', icon: ShieldCheck, section: AUTOMATION },
-            { path: 'automation/audit', label: '監査ログ', icon: ScrollText, section: AUTOMATION },
+            { path: 'automation/ai', label: 'screen.ai', icon: PiggyBank, section: AUTOMATION },
+            { path: 'automation/approvals', label: 'screen.approvals', icon: ShieldCheck, section: AUTOMATION },
+            { path: 'automation/audit', label: 'screen.audit', icon: ScrollText, section: AUTOMATION },
         ],
     },
     {
         id: 'prototype',
-        label: 'PROTOTYPE',
+        label: 'group.prototype',
         screens: [
             {
                 /* Debug surface for data_health. It is deliberately not part of the
                  * product: the decision was to show health as notifications and
                  * inline repair prompts, and to delete this page before release. */
                 path: 'debug/data-health',
-                label: 'データ健全性',
+                label: 'screen.health',
                 icon: FlaskConical,
                 section: PROTOTYPE,
             },

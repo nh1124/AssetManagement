@@ -1,10 +1,10 @@
+import { clientToday, useTimezone } from '../datetime';
 import { useCallback, useState } from 'react';
 import { getProfitLoss } from '../../api';
 import { useClient } from '../../context/ClientContext';
 import { formatCurrency } from '../../utils/currency';
 import { useResource } from '../useResource';
 import MonthPicker from './ledger/MonthPicker';
-import { currentMonth } from './ledger/periods';
 
 // Match reporting_service.get_profit_loss_for_range, including its plural expenses.
 interface ProfitLoss {
@@ -84,7 +84,9 @@ function MonthlyFlows({ month, currency }: { month: string; currency: string }) 
 export default function Flows() {
     const { clientId, currentClient } = useClient();
     const currency = currentClient?.general_settings?.currency || 'JPY';
-    const [month, setMonth] = useState(currentMonth);
+    const timezone = useTimezone();
+    const [monthEdit, setMonth] = useState<string | null>(null);
+    const month = monthEdit ?? clientToday(timezone).slice(0, 7);
     return (
         <section className="space-y-4">
             <MonthPicker value={month} onChange={setMonth} />

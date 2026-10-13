@@ -1,5 +1,6 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { LogOut, Settings as SettingsIcon } from 'lucide-react';
+import { useLanguage } from '../i18n';
 import { useAuth } from '../../context/AuthContext';
 import { SETTINGS_PATH, STUDIO_GROUPS, STUDIO_SCREENS } from '../navigation';
 
@@ -18,6 +19,7 @@ function useCurrentScreen() {
 
 function Rail() {
     const { user } = useAuth();
+    const { t } = useLanguage();
     return (
         <aside className="flex w-60 flex-shrink-0 flex-col bg-[var(--studio-rail)] text-[var(--studio-rail-text)]">
             <div className="px-5 pt-5 pb-6">
@@ -30,7 +32,7 @@ function Rail() {
                     </span>
                 </div>
                 <p className="mt-1 pl-9 text-[10px] tracking-[0.18em] text-[var(--studio-rail-group)]">
-                    FINANCIAL STUDIO
+                    {t('shell.subtitle')}
                 </p>
             </div>
 
@@ -39,7 +41,7 @@ function Rail() {
                     <div key={group.id} className="mb-4">
                         {group.label && (
                             <p className="px-5 pb-2 text-[10px] font-medium tracking-[0.16em] text-[var(--studio-rail-group)]">
-                                {group.label}
+                                {t(group.label)}
                             </p>
                         )}
                         {group.screens.map((screen) => {
@@ -57,7 +59,7 @@ function Rail() {
                                     }
                                 >
                                     <Icon size={16} />
-                                    <span>{screen.label}</span>
+                                    <span>{t(screen.label)}</span>
                                 </NavLink>
                             );
                         })}
@@ -78,7 +80,7 @@ function Rail() {
                     }
                 >
                     <SettingsIcon size={16} />
-                    <span className="flex-1 text-left">{user?.name || '設定'}</span>
+                    <span className="flex-1 text-left">{t('settings.title')}{user?.name && <span className="mt-1 block text-xs opacity-70">{user.name}</span>}</span>
                 </NavLink>
             </div>
         </aside>
@@ -87,30 +89,33 @@ function Rail() {
 
 export default function StudioLayout() {
     const screen = useCurrentScreen();
+    const { pathname } = useLocation();
+    const { t, language } = useLanguage();
     const { logout } = useAuth();
 
     return (
-        <div className="studio-root flex h-screen min-h-0 overflow-hidden bg-[var(--studio-bg)] text-[var(--studio-text)]">
+        <div lang={language} className="studio-root flex h-screen min-h-0 overflow-hidden bg-[var(--studio-bg)] text-[var(--studio-text)]">
             <Rail />
             <div className="flex min-w-0 flex-1 flex-col">
                 <header className="flex h-14 flex-shrink-0 items-center gap-3 border-b border-[var(--studio-border)] bg-[var(--studio-surface)] px-6">
                     <div className="min-w-0">
                         <p className="text-[11px] text-[var(--studio-text-faint)]">
-                            {screen?.section ?? ''}
+                            {screen ? t(screen.section) : pathname === '/record' ? t('group.workspace') : ''}
                         </p>
-                        <h1 className="truncate text-sm font-semibold">{screen?.label ?? '設定'}</h1>
+                        <h1 className="truncate text-sm font-semibold">{t(screen?.label ?? (pathname === '/record' ? 'shell.record' : 'settings.title'))}</h1>
                     </div>
                     <div className="flex-1" />
                     <NavLink
                         to="/record"
                         className="rounded-md bg-[var(--studio-accent)] px-3 py-2 text-xs font-medium text-[var(--studio-accent-text)] transition-opacity hover:opacity-90"
                     >
-                        取引を記録
+                        {t('shell.record')}
                     </NavLink>
                     <button
                         onClick={logout}
                         className="rounded p-2 text-[var(--studio-text-muted)] transition-colors hover:bg-[var(--studio-accent-soft)] hover:text-[var(--studio-text)]"
-                        title="サインアウト"
+                        title={t('shell.signOut')}
+                        aria-label={t('shell.signOut')}
                     >
                         <LogOut size={16} />
                     </button>

@@ -1,3 +1,4 @@
+import { clientToday, formatDate, useTimezone } from '../../datetime';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { deleteTransaction, getTransactionsPage } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
@@ -5,7 +6,7 @@ import type { Transaction } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import { assetErrorMessage, useResource } from '../../useResource';
 import MonthPicker from './MonthPicker';
-import { currentMonth, monthRange } from './periods';
+import { monthRange } from './periods';
 
 const PAGE_SIZE = 50;
 const buttonClass = 'rounded-md border border-[var(--studio-border)] px-3 py-1.5 text-xs text-[var(--studio-text-muted)] hover:bg-[var(--studio-accent-soft)] disabled:opacity-40';
@@ -25,6 +26,7 @@ function RecordResults({ month, currency, onDeleted, onBusy }: {
     onDeleted: () => void;
     onBusy: (busy: boolean) => void;
 }) {
+    const timezone = useTimezone();
     const loadPage = useCallback(() => getTransactionsPage({ ...monthRange(month), limit: PAGE_SIZE, offset: 0 }), [month]);
     const { data: page, setData, loading, error, reload } = useResource(loadPage);
     const [busy, setBusy] = useState(false);
@@ -100,7 +102,7 @@ function RecordResults({ month, currency, onDeleted, onBusy }: {
                         <tbody className="divide-y divide-[var(--studio-border)]">
                             {page.items.map((transaction) => (
                                 <tr key={transaction.id}>
-                                    <td className="whitespace-nowrap px-5 py-3 text-[var(--studio-text-muted)]"><time dateTime={transaction.date}>{transaction.date}</time></td>
+                                    <td className="whitespace-nowrap px-5 py-3 text-[var(--studio-text-muted)]"><time dateTime={transaction.date}>{formatDate(transaction.date, timezone)}</time></td>
                                     <th scope="row" className="px-5 py-3 font-medium">{transaction.description || '内容未入力'}</th>
                                     <td className="whitespace-nowrap px-5 py-3 text-right tabular-nums">{formatCurrency(transaction.amount, transaction.currency || currency)}<span className="ml-2 text-xs text-[var(--studio-text-muted)]">{transaction.currency || currency}</span></td>
                                     <td className="px-5 py-3 text-[var(--studio-text-muted)]">{accountLabel(transaction)}</td>
@@ -119,7 +121,9 @@ function RecordResults({ month, currency, onDeleted, onBusy }: {
 export default function Records({ onDeleted }: { onDeleted: () => void }) {
     const { currentClient } = useClient();
     const currency = currentClient?.general_settings?.currency || 'JPY';
-    const [month, setMonth] = useState(currentMonth);
+    const timezone = useTimezone();
+    const [monthEdit, setMonth] = useState<string | null>(null);
+    const month = monthEdit ?? clientToday(timezone).slice(0, 7);
     const [busy, setBusy] = useState(false);
 
     return (

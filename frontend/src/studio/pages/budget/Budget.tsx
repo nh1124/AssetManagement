@@ -1,3 +1,4 @@
+import { clientToday, useTimezone } from '../../datetime';
 import { useCallback, useState, type FormEvent } from 'react';
 import { createMonthlyPlanLines, deleteMonthlyPlanLine, getBudgetSummary, updateMonthlyPlanLines, type MonthlyPlanLinePayload } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
@@ -7,7 +8,6 @@ import { useResource } from '../../useResource';
 import { DataTable, EditorActions, Feedback, Field, RowActions } from '../db/Database';
 import { buttonClass, inputClass, useMutation } from '../db/forms';
 import MonthPicker from '../ledger/MonthPicker';
-import { currentMonth } from '../ledger/periods';
 
 // budget_plan_service returns plan_lines and plan_id, not the legacy budget model.
 export interface BudgetSummary {
@@ -114,7 +114,9 @@ function MonthlyBudget({ period, currency, clientName }: { period: string; curre
 
 export default function Budget() {
     const { clientId, currentClient } = useClient();
-    const [period, setPeriod] = useState(currentMonth);
+    const timezone = useTimezone();
+    const [periodEdit, setPeriod] = useState<string | null>(null);
+    const period = periodEdit ?? clientToday(timezone).slice(0, 7);
     const currency = currentClient?.general_settings?.currency || 'JPY';
     return <section className="space-y-4">
         <MonthPicker value={period} onChange={setPeriod} />

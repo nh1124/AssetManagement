@@ -1,8 +1,10 @@
 import { NavLink } from 'react-router-dom';
+import { useLanguage } from '../i18n';
 import type { StudioScreen } from '../navigation';
 
 /** Tabs are links, not state: each one is a URL you can reload and go back to. */
 export default function ScreenTabs({ screen }: { screen: StudioScreen }) {
+    const { t } = useLanguage();
     if (!screen.tabs?.length) return null;
     return (
         <div className="mb-4 inline-flex gap-1 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-1">
@@ -19,7 +21,7 @@ export default function ScreenTabs({ screen }: { screen: StudioScreen }) {
                         }`
                     }
                 >
-                    {tab.label}
+                    {t(tab.label)}
                 </NavLink>
             ))}
         </div>
