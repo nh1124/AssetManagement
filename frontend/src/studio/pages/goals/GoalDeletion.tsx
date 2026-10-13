@@ -2,10 +2,10 @@ import { useConfirm } from '../../components/useConfirm';
 import { useCallback, useState, type FormEvent } from 'react';
 import { deleteGoal, getCapsules, getGoalCapsules } from '../../../api';
 import type { LifeEvent } from '../../../types';
-import { formatCurrency } from '../../../utils/currency';
 import { useResource } from '../../useResource';
 import { Choice, DataTable, Feedback } from '../db/Database';
 import { buttonClass, loadAccounts } from '../db/forms';
+import { capsuleClaims, claimTotals } from './presentation';
 
 export default function GoalDeletion({ goal, currency, clientName, busy, onDelete, onCancel }: {
     goal: LifeEvent; currency: string; clientName: string; busy: boolean;
@@ -21,20 +21,20 @@ export default function GoalDeletion({ goal, currency, clientName, busy, onDelet
     const resource = useResource(load);
     const [accountId, setAccountId] = useState<number | null>(null);
     const account = resource.data?.accounts.find((row) => row.id === accountId);
-    const needsTransfer = resource.data?.capsules.some((row) => row.current_balance > 0) ?? false;
+    const needsTransfer = resource.data?.capsules.some((row) => row.claims.some((claim) => claim.amount > 0)) ?? false;
     const submit = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         if (busy || resource.loading || resource.error || !resource.data || (needsTransfer && !account)) return;
-        const amounts = resource.data?.capsules.map((row) => `${row.name}：${formatCurrency(row.current_balance, currency)}`).join('\n');
-        const returnMessage = needsTransfer && account ? `取り置きの確保額（${currency}）を口座「${account.name}」に返金します。` : `表示通貨（${currency}）の返金対象額はありません。`;
+        const amounts = resource.data.capsules.map((row) => `${row.name}：${capsuleClaims(row)}`).join('\n');
+        const returnMessage = needsTransfer && account ? `取り置きの確保額 ${claimTotals(resource.data.capsules)} を口座「${account.name}」に返金します。` : '返金対象額はありません。';
         if (!(await confirm(`「${clientName}」のゴール「${goal.name}」を削除します。\n${returnMessage}\n取り置き・規則・マイルストーンも削除します。復元はできません。\n${amounts || '取り置きはありません。'}\n${needsTransfer && account ? `返金先「${account.name}」で` : ''}削除しますか？`, '削除する'))) return;
         onDelete(() => deleteGoal(goal.id, needsTransfer ? account?.id : undefined));
     };
     return <form onSubmit={submit} className="space-y-4 rounded-lg border border-[var(--studio-danger)] p-5">
-        <p className="text-xs text-[var(--studio-text-muted)]">取り置き・規則・マイルストーンも削除されます。履歴を残して計画を中止したい場合は「中止する」を使ってください。</p>
+        <p className="text-xs text-[var(--studio-text-muted)]">表示通貨：{currency}。取り置き・規則・マイルストーンも削除されます。履歴を残して計画を中止したい場合は「中止する」を使ってください。</p>
         <Feedback loading={resource.loading} error={resource.error} />
-        {resource.data && <DataTable columns={['取り置き', `返金する確保額（${currency}）`]}>
-            {resource.data.capsules.map((row) => <tr key={row.id}><th scope="row" className="px-5 py-3 font-normal">{row.name}</th><td className="px-5 py-3 tabular-nums">{formatCurrency(row.current_balance, currency)}</td></tr>)}
+        {resource.data && <DataTable columns={['取り置き', '返金する確保額（通貨別）']}>
+            {resource.data.capsules.map((row) => <tr key={row.id}><th scope="row" className="px-5 py-3 font-normal">{row.name}</th><td className="px-5 py-3 tabular-nums">{capsuleClaims(row)}</td></tr>)}
         </DataTable>}
         <fieldset disabled={busy || resource.loading || Boolean(resource.error)} className="space-y-4">
             {needsTransfer && <Choice label="返金先の口座" value={accountId} options={resource.data?.accounts ?? []} required onChange={setAccountId} />}

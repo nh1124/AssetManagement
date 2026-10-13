@@ -96,10 +96,15 @@ def update_life_event(
 @router.post("/{event_id}/archive", response_model=schemas.LifeEvent)
 def archive_life_event(
     event_id: int,
+    payload: schemas.GoalArchiveRequest = schemas.GoalArchiveRequest(),
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    event = archive_goal(db, current_client.id, event_id)
+    event = archive_goal(
+        db, current_client.id, event_id,
+        capsule_action=payload.capsule_action,
+        transfer_account_id=payload.transfer_account_id,
+    )
     if event is None:
         raise HTTPException(status_code=404, detail="Life event not found")
     return event

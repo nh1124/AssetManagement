@@ -28,6 +28,8 @@ import type {
     ExchangeRateAutoUpdateResult,
     LoginResult,
     LifeEvent,
+    GoalArchiveRequest,
+    GoalCapsule,
     MonthlyAction,
     MonteCarloResult,
     MfaRecoveryCodes,
@@ -568,8 +570,8 @@ export const deleteGoal = async (id: number, transferAccountId?: number) => {
     return response.data;
 };
 
-export const archiveGoal = async (id: number): Promise<LifeEvent> => {
-    const response = await api.post(`/life-events/${id}/archive`);
+export const archiveGoal = async (id: number, payload: GoalArchiveRequest = { capsule_action: 'keep', transfer_account_id: null }): Promise<LifeEvent> => {
+    const response = await api.post(`/life-events/${id}/archive`, payload);
     return response.data;
 };
 
@@ -578,11 +580,7 @@ export const unarchiveGoal = async (id: number): Promise<LifeEvent> => {
     return response.data;
 };
 
-export const getGoalCapsules = async (goalId: number): Promise<Array<{
-    id: number;
-    name: string;
-    current_balance: number;
-}>> => {
+export const getGoalCapsules = async (goalId: number): Promise<GoalCapsule[]> => {
     const response = await api.get(`/life-events/${goalId}/capsules`);
     return response.data;
 };
@@ -796,6 +794,8 @@ export const getRoadmapProjection = async (params: {
     monthly_savings?: number;
     contribution_schedule?: ContributionScheduleItem[];
     allocation_mode?: 'weighted' | 'direct';
+    roadmap_interval?: 'auto' | 'monthly' | 'quarterly' | 'annual';
+    include_archived?: boolean;
 } = {}): Promise<RoadmapProjection> => {
     const { contribution_schedule, ...rest } = params;
     const response = await api.get('/roadmap/projection', {

@@ -897,6 +897,8 @@ def get_roadmap_projection(
     monthly_savings: float | None = None,
     contribution_schedule: list[dict[str, Any]] | None = None,
     allocation_mode: str = "weighted",
+    roadmap_interval: str = "auto",
+    include_archived: bool = False,
 ) -> dict:
     """Combine historical net worth, forward simulation, goals, and milestones."""
 
@@ -908,8 +910,10 @@ def get_roadmap_projection(
         inflation=inflation,
         contribution_schedule=contribution_schedule,
         allocation_mode=allocation_mode,
+        roadmap_interval=roadmap_interval,
+        include_archived=include_archived,
     )
-    progression = calculate_roadmap_progression(events)
+    progression = calculate_roadmap_progression([event for event in events if not event["archived_at"]])
     milestones = db.query(models.Milestone).filter(
         models.Milestone.client_id == client_id
     ).order_by(models.Milestone.date, models.Milestone.id).all()
@@ -953,6 +957,7 @@ def get_roadmap_projection(
             "inflation": inflation,
             "monthly_savings": monthly_savings,
             "contribution_schedule": contribution_schedule or [],
+            "reference_date": date.today().isoformat(),
         },
     }
 

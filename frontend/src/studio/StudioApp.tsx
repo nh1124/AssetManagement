@@ -15,6 +15,7 @@ import Monthly from './pages/report/Monthly';
 import Review from './pages/report/Review';
 import Goals from './pages/goals/Goals';
 import GoalPage from './pages/goals/GoalPage';
+import GoalWorkspace from './pages/goals/GoalWorkspace';
 import Ai from './pages/automation/Ai';
 import Approvals from './pages/automation/Approvals';
 import Audit from './pages/automation/Audit';
@@ -72,6 +73,7 @@ export default function StudioApp() {
                     <Route path={STUDIO_EDITOR_PATHS.transaction} element={<Record />} />
                     <Route path={STUDIO_EDITOR_PATHS.newGoal} element={<GoalPage />} />
                     <Route path={STUDIO_EDITOR_PATHS.editGoal} element={<GoalPage />} />
+                    <Route path="goals/:goalId" element={<GoalWorkspace />} />
                     {STUDIO_SCREENS.map((screen) => {
                         const screenRoutes = SCREENS[screen.path];
                         return (

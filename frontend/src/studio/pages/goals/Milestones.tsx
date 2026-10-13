@@ -6,13 +6,15 @@ import type { Milestone } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import { useResource } from '../../useResource';
 import { DataTable, EditorActions, Feedback, Field, RowActions } from '../db/Database';
-import { buttonClass, inputClass, today, useMutation } from '../db/forms';
+import { buttonClass, inputClass, useMutation } from '../db/forms';
+import { clientToday, formatDate, useTimezone } from '../../datetime';
 
 function MilestoneEditor({ row, goalId, currency, busy, onSave, onCancel }: {
     row: Milestone | null; goalId: number; currency: string; busy: boolean;
     onSave: (action: () => Promise<unknown>) => void; onCancel: () => void;
 }) {
-    const [date, setDate] = useState(row?.date ?? today());
+    const timezone = useTimezone();
+    const [date, setDate] = useState(row?.date ?? clientToday(timezone));
     const [amount, setAmount] = useState(String(row?.target_amount ?? 0));
     const [note, setNote] = useState(row?.note ?? '');
     const [active, setActive] = useState(row?.is_active_plan !== false);
@@ -58,7 +60,7 @@ export default function Milestones({ goalId, currency, disabled, onChanged, onBu
         {editor && <Overlay title={editor.row ? 'マイルストーンを編集' : '新しいマイルストーン'} onClose={() => setEditor(null)}><Feedback error={mutation.error} /><MilestoneEditor key={editor.row?.id ?? 'new'} row={editor.row} goalId={goalId} currency={currency} busy={locked} onCancel={() => setEditor(null)} onSave={(action) => run(action, 'マイルストーンを保存しました。', true)} /></Overlay>}
         {resource.data && <DataTable columns={['予定日', '計画額', 'メモ', '進捗計算に採用', '操作']}>
             {resource.data.length ? resource.data.map((row) => <tr key={row.id}>
-                <th scope="row" className="whitespace-nowrap px-5 py-3 font-normal">{row.date}</th>
+                <th scope="row" className="whitespace-nowrap px-5 py-3 font-normal">{formatDate(row.date)}</th>
                 <td className="whitespace-nowrap px-5 py-3 tabular-nums">{formatCurrency(row.target_amount, currency)}</td>
                 <td className="px-5 py-3">{row.note || '—'}</td>
                 <td className="px-5 py-3"><label className="flex items-center gap-2"><input type="checkbox" checked={row.is_active_plan !== false} disabled={locked || editor !== null} aria-label={`${row.date}のマイルストーンを進捗計算に採用`} onChange={(event) => run(() => updateMilestone(row.id, { is_active_plan: event.target.checked }), '採用状態を変更しました。')} />{row.is_active_plan === false ? '参考' : '採用中'}</label></td>

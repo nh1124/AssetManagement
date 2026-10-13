@@ -329,6 +329,20 @@ export interface LifeEvent {
     roadmap?: RoadmapEntry[];
 }
 
+export type GoalCapsuleAction = 'keep' | 'stop_rules' | 'release';
+
+export interface GoalArchiveRequest {
+    capsule_action: GoalCapsuleAction;
+    transfer_account_id: number | null;
+}
+
+export interface GoalCapsule {
+    id: number;
+    name: string;
+    current_balance: number;
+    claims: Array<{ currency: string; amount_minor: number; amount: number }>;
+}
+
 export interface MilestonePlanSummary {
     id: number;
     date: string;
@@ -763,6 +777,7 @@ export interface RoadmapProjection {
         annual_return: number;
         inflation: number;
         monthly_savings?: number | null;
+        reference_date: string;
     };
 }
 

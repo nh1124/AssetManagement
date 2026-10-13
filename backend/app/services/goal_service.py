@@ -6,17 +6,20 @@ strategy execution services directly.
 """
 
 from datetime import date, datetime
+from typing import Literal
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .money_storage import minor_fields, money_client_currency
 
 from .. import models, schemas
 from ..domain.errors import NotFound, Refused
+from ..domain.journal import Leg
+from ..domain.money import Money
 from .cache_service import invalidate_client
-from .capsule_service import apply_capsule_rules_for_transaction, capsule_balance, claimed_minor
+from .capsule_service import capsule_balance, claimed_minor
 from .ledger_service import create_transaction
-from .fx_service import get_client_currency
 from .strategy_service import (
     calculate_overall_goal_probability,
     generate_budget_from_goals,
@@ -62,8 +65,7 @@ def _set_archived(
     event = get_life_event(db, client_id, life_event_id)
     if event is None:
         return None
-    # Calling off a plan preserves capsules, claims and history. Unlike delete,
-    # archive never returns funds to another account or removes related rows.
+    # Restoring only changes the goal; earlier capsule decisions remain facts.
     event.archived_at = (event.archived_at or datetime.utcnow()) if archived else None
     if commit:
         db.commit()
@@ -75,9 +77,42 @@ def _set_archived(
 
 
 def archive_goal(
-    db: Session, client_id: int, life_event_id: int, *, commit: bool = True,
+    db: Session, client_id: int, life_event_id: int, *,
+    capsule_action: Literal["keep", "stop_rules", "release"] = "keep",
+    transfer_account_id: int | None = None, commit: bool = True,
 ) -> models.LifeEvent | None:
-    return _set_archived(db, client_id, life_event_id, True, commit=commit)
+    event = db.query(models.LifeEvent).filter(
+        models.LifeEvent.id == life_event_id, models.LifeEvent.client_id == client_id,
+    ).with_for_update().first()
+    if event is None:
+        return None
+    if capsule_action not in {"keep", "stop_rules", "release"}:
+        raise Refused("Unknown capsule_action", status_code=422)
+    # Serialize releases on the goal and commit the choice with its journal movements.
+    try:
+        if capsule_action == "release":
+            if transfer_account_id is None:
+                raise Refused("transfer_account_id is required for release.", status_code=422)
+            _return_goal_claims(db, client_id, event, transfer_account_id, reason="Goal archived")
+        elif capsule_action == "stop_rules":
+            capsule_ids = [cap.id for cap in event.capsules]
+            for rule in db.query(models.CapsuleRule).filter(
+                models.CapsuleRule.client_id == client_id,
+                models.CapsuleRule.capsule_id.in_(capsule_ids),
+            ):
+                rule.is_active = False
+        _set_archived(db, client_id, life_event_id, True, commit=False)
+        if commit:
+            db.commit()
+    except Exception:
+        # A participating caller owns rollback when it also owns the commit.
+        if commit:
+            db.rollback()
+        raise
+    if commit:
+        db.refresh(event)
+        invalidate_client(client_id)
+    return event
 
 
 def unarchive_goal(
@@ -126,9 +161,48 @@ def list_goal_capsules(db: Session, client_id: int, life_event_id: int) -> list[
             "id": cap.id,
             "name": cap.name,
             "current_balance": capsule_balance(db, cap),
+            "claims": [
+                {"currency": currency, "amount_minor": minor, "amount": Money(minor, currency).to_float()}
+                for currency, minor in sorted(claimed_minor(db, client_id, cap.id).items())
+            ],
         }
         for cap in db_event.capsules
     ]
+
+
+def _goal_claims(db: Session, client_id: int, event: models.LifeEvent) -> list[tuple]:
+    # Journal attribution survives funding-plan edits, so the plan is not a holdings list.
+    return db.query(
+        models.Capsule.id, models.Capsule.name, models.JournalEntry.account_id,
+        models.Transaction.currency,
+        func.sum(models.JournalEntry.debit_minor - models.JournalEntry.credit_minor).label("minor"),
+    ).join(models.JournalEntry, models.JournalEntry.capsule_id == models.Capsule.id).join(
+        models.Transaction, models.Transaction.id == models.JournalEntry.transaction_id,
+    ).filter(
+        models.Capsule.client_id == client_id, models.Capsule.life_event_id == event.id,
+        models.Transaction.client_id == client_id,
+    ).group_by(
+        models.Capsule.id, models.Capsule.name, models.JournalEntry.account_id, models.Transaction.currency,
+    ).having(func.sum(models.JournalEntry.debit_minor - models.JournalEntry.credit_minor) > 0).all()
+
+
+def _return_goal_claims(
+    db: Session, client_id: int, event: models.LifeEvent, transfer_account_id: int, *, reason: str,
+) -> None:
+    destination = db.get(models.Account, transfer_account_id)
+    if destination is None or destination.client_id != client_id:
+        raise NotFound("Transfer destination account not found")
+    if destination.account_type != "asset" or destination.is_active is False:
+        raise Refused("Transfer destination must be an active asset account.", status_code=422)
+    for capsule_id, name, account_id, currency, minor in _goal_claims(db, client_id, event):
+        # Running reservation rules here could earmark the returned money again.
+        create_transaction(
+            db, client_id=client_id, date=date.today(),
+            description=f"{reason} – funds returned from Capsule: {name}",
+            amount_minor=int(minor), currency=currency,
+            legs=[Leg(transfer_account_id, debit=int(minor)),
+                  Leg(account_id, credit=int(minor), capsule_id=capsule_id)],
+        )
 
 
 def delete_goal(
@@ -139,42 +213,18 @@ def delete_goal(
     if db_event is None:
         return False
 
-    capsules_with_balance = [
-        c for c in db_event.capsules
-        if capsule_balance(db, c) > 0
-    ]
-    if capsules_with_balance and transfer_account_id is None:
+    if _goal_claims(db, client_id, db_event) and transfer_account_id is None:
         raise Refused(
             "transfer_account_id is required because one or more capsules have a non-zero balance.",
             status_code=422,
         )
 
-    if transfer_account_id is not None:
-        dest_account = db.get(models.Account, transfer_account_id)
-        if not dest_account or dest_account.client_id != client_id:
-            raise NotFound("Transfer destination account not found")
-
     accounts_by_capsule = {
         cap.id: [source.account_id for source in cap.funding_sources]
         for cap in db_event.capsules
     }
-    currency = get_client_currency(db, client_id)
-    for cap in capsules_with_balance:
-        for account_id in accounts_by_capsule[cap.id]:
-            minor = claimed_minor(db, client_id, cap.id, account_id).get(currency, 0)
-            if minor <= 0:
-                continue
-            tx = create_transaction(
-                db,
-                client_id=client_id,
-                date=date.today(),
-                description=f"Goal deleted – funds returned from Capsule: {cap.name}",
-                amount_minor=minor,
-                currency=currency,
-                from_account_id=account_id,
-                to_account_id=transfer_account_id,
-            )
-            apply_capsule_rules_for_transaction(db, tx, commit=False)
+    if transfer_account_id is not None:
+        _return_goal_claims(db, client_id, db_event, transfer_account_id, reason="Goal deleted")
 
     account_ids_to_delete = {account_id for ids in accounts_by_capsule.values() for account_id in ids}
 

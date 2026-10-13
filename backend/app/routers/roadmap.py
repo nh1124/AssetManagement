@@ -33,13 +33,16 @@ def read_roadmap_projection(
     monthly_savings: float | None = Query(default=None, ge=0),
     contribution_schedule: str | None = Query(default=None),
     allocation_mode: str = Query(default="weighted", pattern="^(weighted|direct)$"),
+    roadmap_interval: str = Query(default="auto", pattern="^(auto|monthly|quarterly|annual)$"),
+    include_archived: bool = False,
     db: Session = Depends(database.get_db),
     current_client: models.Client = Depends(dependencies.get_current_client),
 ):
     parsed_schedule = parse_contribution_schedule(contribution_schedule)
     key = (
         f"client:{current_client.id}:roadmap_projection:{years}:{annual_return}:"
-        f"{inflation}:{monthly_savings}:{allocation_mode}:{json.dumps(parsed_schedule, sort_keys=True)}"
+        f"{inflation}:{monthly_savings}:{allocation_mode}:{roadmap_interval}:{include_archived}:"
+        f"{json.dumps(parsed_schedule, sort_keys=True)}"
     )
     return get_or_set(
         key,
@@ -53,6 +56,8 @@ def read_roadmap_projection(
             monthly_savings=monthly_savings,
             contribution_schedule=parsed_schedule,
             allocation_mode=allocation_mode,
+            roadmap_interval=roadmap_interval,
+            include_archived=include_archived,
         ),
     )
 
