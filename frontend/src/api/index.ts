@@ -13,6 +13,8 @@ import type {
     AiOperationPolicyPayload,
     AnalysisSummary,
     ContributionScheduleItem,
+    CapsuleFundingSource,
+    CapsuleFundingSourceInput,
     CapsuleTransferPreview,
     DataHealthResult,
     DataRepairResult,
@@ -856,6 +858,21 @@ export const previewCapsuleTransfersForTransaction = async (draft: {
 
 export const getCapsules = async () => {
     const response = await api.get('/capsules/');
+    return response.data;
+};
+
+export const getCapsuleFundingSources = async (capsuleId: number): Promise<CapsuleFundingSource[]> => {
+    const response = await api.get<CapsuleFundingSource[]>(`/capsules/${capsuleId}/funding-sources`);
+    return response.data;
+};
+
+export const updateCapsuleFundingSources = async (capsuleId: number, sources: CapsuleFundingSourceInput[]): Promise<CapsuleFundingSource[]> => {
+    // PUT replaces the whole plan; any omitted funding source is removed.
+    // Allowlist request fields because the server rejects response-only keys.
+    const payload = sources.map(({ account_id, target_amount, max_share_bp, sort_order }) => ({
+        account_id, target_amount, max_share_bp, sort_order,
+    }));
+    const response = await api.put<CapsuleFundingSource[]>(`/capsules/${capsuleId}/funding-sources`, payload);
     return response.data;
 };
 

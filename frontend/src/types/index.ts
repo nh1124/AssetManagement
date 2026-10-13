@@ -782,6 +782,17 @@ export interface RoadmapProjection {
     };
 }
 
+export interface CapsuleFundingSource {
+    id: number;
+    account_id: number;
+    account_name?: string | null;
+    target_amount: number;
+    max_share_bp: number | null;
+    sort_order: number;
+}
+
+export type CapsuleFundingSourceInput = Pick<CapsuleFundingSource, 'account_id' | 'target_amount' | 'max_share_bp' | 'sort_order'>;
+
 export interface Capsule {
     id: number;
     life_event_id?: number | null;
@@ -800,7 +811,7 @@ export interface Capsule {
         reserve_target_amount: number;
         recommended_monthly_reserve: number;
     }>;
-    funding_sources?: Array<{ id: number; account_id: number; account_name?: string | null; target_amount: number; max_share_bp: number | null; sort_order: number }>;
+    funding_sources?: CapsuleFundingSource[];
 }
 
 /** What a capsule rule fires on. It reads as a statement about an entry's

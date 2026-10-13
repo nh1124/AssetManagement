@@ -262,7 +262,11 @@ def test_share_invariant_is_atomic_and_counts_null_as_zero(db):
     before = _saved_plan(retirement)
     with pytest.raises(Invalid) as error:
         _plan(db, retirement, (2, 123, 5000), (4, 456, 0))
-    assert str(error.value) == "Declared capsule shares for account 2 (NISA) total 11000 bp, exceeding 10000 bp"
+    # The person typed a percentage, so the refusal answers in one.
+    assert str(error.value) == (
+        "Declared capsule shares for account 2 (NISA) total 110%, "
+        "which is more than the account has"
+    )
     assert not db.new and not db.dirty and not db.deleted
     db.commit()
     db.expire_all()

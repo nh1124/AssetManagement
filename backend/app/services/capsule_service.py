@@ -136,6 +136,12 @@ def list_funding_sources(
     return sorted(capsule.funding_sources, key=lambda source: (source.sort_order, source.id))
 
 
+def _percent(basis_points: int) -> str:
+    """Basis points as a percentage, without a trailing zero it does not need."""
+    text = f"{basis_points / 100:.2f}".rstrip("0").rstrip(".")
+    return text or "0"
+
+
 def set_funding_sources(
     db: Session, client_id: int, capsule_id: int,
     payloads: Sequence[schemas.CapsuleFundingSourceInput], *, commit: bool = True,
@@ -176,7 +182,14 @@ def set_funding_sources(
     for payload in payloads:
         total = other_shares.get(payload.account_id, 0) + (payload.max_share_bp or 0)
         if total > 10000:
-            raise Invalid(f"Declared capsule shares for account {payload.account_id} ({account_names[payload.account_id]}) total {total} bp, exceeding 10000 bp")
+            # Basis points are how the share is stored, not how it was asked for.
+            # The message reaches a person who typed a percentage, so it answers
+            # in percent and names the account they have to take it from.
+            raise Invalid(
+                f"Declared capsule shares for account {payload.account_id} "
+                f"({account_names[payload.account_id]}) total {_percent(total)}%, "
+                f"which is more than the account has"
+            )
     currency = money_client_currency(db, client_id)
     # Complete validation/conversion before touching the saved plan.
     amounts = [to_minor(payload.target_amount, currency) for payload in payloads]
