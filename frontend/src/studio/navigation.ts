@@ -10,6 +10,7 @@ import {
     Activity,
     BookOpen,
     Boxes,
+    ChartLine,
     ClipboardList,
     Coins,
     FlaskConical,
@@ -83,6 +84,17 @@ export const STUDIO_GROUPS: StudioGroup[] = [
                 tabs: [
                     { segment: '', label: '予算と実績' },
                     { segment: 'actions', label: '行動' },
+                ],
+            },
+            {
+                path: 'report',
+                label: 'レポート',
+                icon: ChartLine,
+                section: WORKSPACE,
+                tabs: [
+                    { segment: '', label: '推移' },
+                    { segment: 'monthly', label: '月次' },
+                    { segment: 'review', label: '振り返り' },
                 ],
             },
             { path: 'goals', label: 'ゴール', icon: Flag, section: WORKSPACE },

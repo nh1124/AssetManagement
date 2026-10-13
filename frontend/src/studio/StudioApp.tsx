@@ -10,6 +10,9 @@ import Ledger from './pages/ledger/Ledger';
 import Flows from './pages/Flows';
 import Budget from './pages/budget/Budget';
 import Actions from './pages/budget/Actions';
+import Trends from './pages/report/Trends';
+import Monthly from './pages/report/Monthly';
+import Review from './pages/report/Review';
 import Goals from './pages/goals/Goals';
 import Ai from './pages/automation/Ai';
 import Approvals from './pages/automation/Approvals';
@@ -35,6 +38,7 @@ const SCREENS: Record<string, { index: ReactElement; tabs?: Record<string, React
     },
     flows: { index: <Flows /> },
     budget: { index: <Budget />, tabs: { actions: <Actions /> } },
+    report: { index: <Trends />, tabs: { monthly: <Monthly />, review: <Review /> } },
     goals: { index: <Goals /> },
     assets: {
         index: <Overview />,
