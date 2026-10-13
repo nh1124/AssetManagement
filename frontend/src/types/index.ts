@@ -798,6 +798,15 @@ export interface CapsuleDrawdownResult {
     drawdown: CapsuleDrawdown;
 }
 
+export interface AccountEarmark {
+    capsule_id: number;
+    capsule_name: string;
+    claimed: number;
+    claimed_minor: number;
+    currency: string;
+    max_share_bp: number | null;
+}
+
 export interface CapsuleFundingSource {
     id: number;
     account_id: number;

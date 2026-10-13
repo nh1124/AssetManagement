@@ -4,7 +4,7 @@ from typing import List, Optional, Literal
 from .. import models
 from ..database import get_db
 from ..dependencies import get_current_client
-from ..services import ledger_service
+from ..services import capsule_service, ledger_service
 from ..services.cache_service import invalidate_client
 from ..services.ledger_valuation import AccountBalances, calculate_account_balances
 from pydantic import BaseModel, Field
@@ -12,6 +12,15 @@ from pydantic import BaseModel, Field
 router = APIRouter(prefix="/accounts", tags=["accounts"])
 
 # Pydantic schemas
+class AccountEarmarkResponse(BaseModel):
+    capsule_id: int
+    capsule_name: str
+    claimed: float
+    claimed_minor: int
+    currency: str
+    max_share_bp: Optional[int] = None
+
+
 class AccountCreate(BaseModel):
     name: str
     account_type: str
@@ -147,6 +156,16 @@ def get_account_tree(
     accounts = ledger_service.list_accounts(db, current_client.id, ordered=False)
     balances = calculate_account_balances(db, accounts)
     return _build_tree(accounts, balances)
+
+@router.get("/{account_id}/earmarks", response_model=List[AccountEarmarkResponse])
+def get_account_earmarks(
+    account_id: int,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    if ledger_service.get_account(db, current_client.id, account_id) is None:
+        raise HTTPException(status_code=404, detail="Account not found")
+    return capsule_service.list_account_earmarks(db, current_client.id, account_id)
 
 @router.get("/by-type")
 def get_accounts_grouped_by_type(

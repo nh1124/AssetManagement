@@ -1,6 +1,9 @@
 import Overlay from '../../components/Overlay';
 import Reconciliation from './Reconciliation';
-import { useEffect, useRef, useState } from 'react';
+import AccountEarmarks from './AccountEarmarks';
+import { Fragment, useEffect, useRef, useState } from 'react';
+import { ChevronDown, ChevronRight } from 'lucide-react';
+import { useClient } from '../../../context/ClientContext';
 import { getAccounts, updateAccount } from '../../../api';
 import type { Account, AccountRole } from '../../../types';
 import { assetErrorMessage, useResource as useAssetData } from '../../useResource';
@@ -33,14 +36,21 @@ async function loadAccounts(): Promise<AssetAccount[]> {
     return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name, 'ja'));
 }
 
-export default function Accounts() {
-    const { data: accounts, setData: setAccounts, loading, error, reload } = useAssetData(loadAccounts);
+function AccountsForClient() {
+    const { data: accounts, setData: setAccounts, loading, error, reload: reloadAccounts } = useAssetData(loadAccounts);
     const [reconciling, setReconciling] = useState(false);
     const [updatingId, setUpdatingId] = useState<number | null>(null);
     const [operationError, setOperationError] = useState('');
     const [confirmation, setConfirmation] = useState('');
+    const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
+    const [earmarkRevision, setEarmarkRevision] = useState(0);
     const updateInFlight = useRef(false);
     const mounted = useRef(false);
+    const reload = () => {
+        reloadAccounts();
+        // Account refreshes and reconciliation must also refresh expanded claims.
+        setEarmarkRevision((revision) => revision + 1);
+    };
 
     useEffect(() => {
         mounted.current = true;
@@ -94,8 +104,15 @@ export default function Accounts() {
                                 <tbody key={type.value} className="divide-y divide-[var(--studio-border)]">
                                     <tr className="bg-[var(--studio-bg)]"><th scope="rowgroup" colSpan={4} className="px-5 py-2 text-xs font-medium text-[var(--studio-text-muted)]">{type.label}</th></tr>
                                     {rows.map((account) => (
-                                        <tr key={account.id} className={account.is_active ? '' : 'opacity-50'}>
-                                            <th scope="row" className="px-5 py-3 font-medium">{account.name}</th>
+                                        <Fragment key={account.id}><tr className={account.is_active ? '' : 'opacity-50'}>
+                                            <th scope="row" className="px-5 py-3 font-medium">{account.account_type === 'asset' ? <button type="button" aria-expanded={expanded.has(account.id)} aria-controls={`account-earmarks-${account.id}`} aria-label={`${account.name}の取り置き`} onClick={() => setExpanded((previous) => {
+                                                const next = new Set(previous);
+                                                if (next.has(account.id)) next.delete(account.id);
+                                                else next.add(account.id);
+                                                return next;
+                                            })} className="flex items-center gap-2 rounded text-left hover:text-[var(--studio-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)]">
+                                                {expanded.has(account.id) ? <ChevronDown size={16} aria-hidden="true" /> : <ChevronRight size={16} aria-hidden="true" />}{account.name}
+                                            </button> : account.name}</th>
                                             <td className="whitespace-nowrap px-5 py-3 text-[var(--studio-text-muted)]">{type.label}</td>
                                             <td className="whitespace-nowrap px-5 py-3 text-[var(--studio-text-muted)]">{ROLE_LABELS[account.role] ?? '未設定'}</td>
                                             <td className="px-5 py-3">
@@ -106,6 +123,8 @@ export default function Accounts() {
                                                 </button>
                                             </td>
                                         </tr>
+                                        {account.account_type === 'asset' && expanded.has(account.id) && <tr id={`account-earmarks-${account.id}`} className="bg-[var(--studio-bg)]"><td colSpan={4} className="px-5 py-4"><AccountEarmarks key={earmarkRevision} accountId={account.id} accountName={account.name} disabled={loading || Boolean(error) || updatingId !== null} /></td></tr>}
+                                        </Fragment>
                                     ))}
                                 </tbody>
                             );
@@ -116,4 +135,10 @@ export default function Accounts() {
             {reconciling && <Overlay title="残高照合" onClose={() => setReconciling(false)}><Reconciliation accounts={accounts ?? []} disabled={loading || Boolean(error) || updatingId !== null} onPosted={reload} /></Overlay>}
         </section>
     );
+}
+
+export default function Accounts() {
+    const { clientId } = useClient();
+    // Client changes must discard pending confirmations and account-specific drafts.
+    return <AccountsForClient key={clientId} />;
 }

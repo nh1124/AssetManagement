@@ -1,6 +1,7 @@
 import axios from 'axios';
 import type {
     Account,
+    AccountEarmark,
     AccountFlowAnalysis,
     AccountFlowGrain,
     AccountFlowTransactionPage,
@@ -330,6 +331,11 @@ export const getAccounts = async (accountType?: string, isActive?: boolean): Pro
     if (isActive !== undefined) params.append('is_active', String(isActive));
     const query = params.toString();
     const response = await api.get(`/accounts/${query ? `?${query}` : ''}`);
+    return response.data;
+};
+
+export const getAccountEarmarks = async (accountId: number): Promise<AccountEarmark[]> => {
+    const response = await api.get<AccountEarmark[]>(`/accounts/${accountId}/earmarks`);
     return response.data;
 };
 
@@ -888,8 +894,8 @@ export const previewCapsuleTransfersForTransaction = async (draft: {
     return response.data;
 };
 
-export const getCapsules = async (): Promise<Capsule[]> => {
-    const response = await api.get('/capsules/');
+export const getCapsules = async (skip = 0, limit = 100): Promise<Capsule[]> => {
+    const response = await api.get('/capsules/', { params: { skip, limit } });
     return response.data;
 };
 

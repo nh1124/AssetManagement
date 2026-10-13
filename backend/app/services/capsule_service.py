@@ -138,6 +138,27 @@ def list_funding_sources(
     return sorted(capsule.funding_sources, key=lambda source: (source.sort_order, source.id))
 
 
+def list_account_earmarks(db: Session, client_id: int, account_id: int) -> list[dict]:
+    sources = db.query(models.CapsuleFundingSource, models.Capsule).join(
+        models.Capsule, models.Capsule.id == models.CapsuleFundingSource.capsule_id,
+    ).filter(
+        models.CapsuleFundingSource.client_id == client_id,
+        models.CapsuleFundingSource.account_id == account_id,
+        models.Capsule.client_id == client_id,
+    ).order_by(models.Capsule.id).all()
+    currency = money_client_currency(db, client_id)
+    earmarks = []
+    for source, capsule in sources:
+        # Select the client's currency without combining foreign-currency claims.
+        claim = claimed_minor(db, client_id, capsule.id, account_id).get(currency, 0)
+        earmarks.append({
+            "capsule_id": capsule.id, "capsule_name": capsule.name,
+            "claimed": Money(claim, currency).to_float(), "claimed_minor": claim,
+            "currency": currency, "max_share_bp": source.max_share_bp,
+        })
+    return earmarks
+
+
 def drawdown_to_dict(drawdown: models.CapsuleDrawdown) -> dict:
     transaction = drawdown.transaction
     return {
