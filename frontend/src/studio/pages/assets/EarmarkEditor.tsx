@@ -2,12 +2,13 @@ import { useConfirm } from '../../components/useConfirm';
 import { useId, useState, type FormEvent } from 'react';
 import { createCapsule, createGoalCapsule, updateCapsule } from '../../../api';
 import type { Capsule, LifeEvent } from '../../../types';
-import { Choice, EditorActions, Field } from '../db/Database';
-import { inputClass } from '../db/forms';
+import { Choice, Field } from '../db/Database';
+import { OverlayFooter } from '../../components/Overlay';
+import { inputClass, primaryClass } from '../db/forms';
 
-export default function EarmarkEditor({ capsule, capsules, goals, currency, busy, onSave, onCancel }: {
+export default function EarmarkEditor({ capsule, capsules, goals, currency, busy, onSave }: {
     capsule: Capsule | null; capsules: Capsule[]; goals: LifeEvent[]; currency: string; busy: boolean;
-    onSave: (action: () => Promise<unknown>) => void; onCancel: () => void;
+    onSave: (action: () => Promise<unknown>) => void;
 }) {
     const formId = useId();
     const confirm = useConfirm();
@@ -37,14 +38,14 @@ export default function EarmarkEditor({ capsule, capsules, goals, currency, busy
             return createCapsule(fields);
         });
     };
-    return <form id={formId} onSubmit={submit} className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
+    return <form id={formId} onSubmit={submit} className="space-y-4">
         <fieldset disabled={busy} className="grid gap-4 md:grid-cols-2">
             <Field label="名称"><input required value={name} onChange={(event) => setName(event.target.value)} className={inputClass} /></Field>
             <Field label={`目標額（${currency}）`}><input required type="number" min="0" step="any" value={target} onChange={(event) => setTarget(event.target.value)} className={inputClass} /></Field>
             <Field label={`月額（${currency}）`}><input required type="number" min="0" step="any" value={monthly} onChange={(event) => setMonthly(event.target.value)} className={inputClass} /></Field>
             {!capsule && <Choice label="紐づけるゴール（任意）" value={goalId} options={goals} onChange={chooseGoal} />}
             {!capsule && existing && goalId !== null && <p className="text-xs text-[var(--studio-text-muted)] md:col-span-2">このゴールの既存の取り置き「{existing.name}」を編集します。貯蓄と資金計画は残ります。</p>}
-            <EditorActions form={formId} busy={busy} onCancel={onCancel} />
         </fieldset>
+        <OverlayFooter><button type="submit" form={formId} disabled={busy} className={primaryClass}>{busy ? '保存中…' : '保存'}</button></OverlayFooter>
     </form>;
 }

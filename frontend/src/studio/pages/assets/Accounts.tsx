@@ -37,7 +37,7 @@ async function loadAccounts(): Promise<AssetAccount[]> {
     return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name, 'ja'));
 }
 
-function AccountsForClient() {
+function AccountsForClient({ subjects }: { subjects: boolean }) {
     const { data: accounts, setData: setAccounts, loading, error, reload: reloadAccounts } = useAssetData(loadAccounts);
     const [reconciling, setReconciling] = useState(false);
     const [updatingId, setUpdatingId] = useState<number | null>(null);
@@ -47,6 +47,11 @@ function AccountsForClient() {
     const [earmarkRevision, setEarmarkRevision] = useState(0);
     const updateInFlight = useRef(false);
     const mounted = useRef(false);
+    const types = ACCOUNT_TYPES.filter((type) => subjects
+        ? ['income', 'expense'].includes(type.value)
+        : ['asset', 'liability', 'item'].includes(type.value));
+    const visibleAccounts = accounts?.filter((account) => types.some((type) => type.value === account.account_type));
+    const columnCount = subjects ? 3 : 4;
     const reload = () => {
         reloadAccounts();
         // Account refreshes and reconciliation must also refresh expanded claims.
@@ -82,25 +87,25 @@ function AccountsForClient() {
     useReloadAction(reload, Boolean(loading || updatingId !== null));
     return (
         <section className="space-y-4">
-            <div className="flex items-center justify-between gap-4">
+            {!subjects && <div className="flex items-center justify-between gap-4">
                 <div className="flex gap-2"><button type="button" onClick={() => setReconciling(true)} disabled={loading || Boolean(error) || updatingId !== null} className="rounded-md border border-[var(--studio-border)] px-3 py-1.5 text-xs text-[var(--studio-text-muted)] hover:bg-[var(--studio-accent-soft)] disabled:opacity-40">残高照合</button></div>
-            </div>
+            </div>}
             {confirmation && <p role="status" className="rounded-md bg-[var(--studio-accent-soft)] p-3 text-sm text-[var(--studio-positive)]">{confirmation}</p>}
             {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">口座を読み込んでいます…</p>}
             {error && <p role="alert" className="text-sm text-[var(--studio-danger)]">口座一覧を取得できませんでした。{error}</p>}
             {operationError && <p role="alert" className="text-sm text-[var(--studio-danger)]">{operationError}</p>}
-            {accounts && (accounts.length ? (
+            {visibleAccounts && (visibleAccounts.length ? (
                 <div className="overflow-x-auto rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)]">
                     <table className="w-full text-left text-sm" aria-busy={loading || updatingId !== null}>
                         <thead className="border-b border-[var(--studio-border)] text-xs text-[var(--studio-text-muted)]">
-                            <tr><th scope="col" className="px-5 py-3 font-medium">名称</th><th scope="col" className="px-5 py-3 font-medium">種別</th><th scope="col" className="px-5 py-3 font-medium">役割</th><th scope="col" className="px-5 py-3 font-medium">状態</th></tr>
+                            <tr><th scope="col" className="px-5 py-3 font-medium">名称</th><th scope="col" className="px-5 py-3 font-medium">種別</th>{!subjects && <th scope="col" className="px-5 py-3 font-medium">役割</th>}<th scope="col" className="px-5 py-3 font-medium">状態</th></tr>
                         </thead>
-                        {ACCOUNT_TYPES.map((type) => {
-                            const rows = accounts.filter((account) => account.account_type === type.value);
+                        {types.map((type) => {
+                            const rows = visibleAccounts.filter((account) => account.account_type === type.value);
                             if (!rows.length) return null;
                             return (
                                 <tbody key={type.value} className="divide-y divide-[var(--studio-border)]">
-                                    <tr className="bg-[var(--studio-bg)]"><th scope="rowgroup" colSpan={4} className="px-5 py-2 text-xs font-medium text-[var(--studio-text-muted)]">{type.label}</th></tr>
+                                    <tr className="bg-[var(--studio-bg)]"><th scope="rowgroup" colSpan={columnCount} className="px-5 py-2 text-xs font-medium text-[var(--studio-text-muted)]">{type.label}</th></tr>
                                     {rows.map((account) => (
                                         <Fragment key={account.id}><tr className={account.is_active ? '' : 'opacity-50'}>
                                             <th scope="row" className="px-5 py-3 font-medium">{account.account_type === 'asset' ? <button type="button" aria-expanded={expanded.has(account.id)} aria-controls={`account-earmarks-${account.id}`} aria-label={`${account.name}の取り置き`} onClick={() => setExpanded((previous) => {
@@ -112,7 +117,7 @@ function AccountsForClient() {
                                                 {expanded.has(account.id) ? <ChevronDown size={16} aria-hidden="true" /> : <ChevronRight size={16} aria-hidden="true" />}{account.name}
                                             </button> : account.name}</th>
                                             <td className="whitespace-nowrap px-5 py-3 text-[var(--studio-text-muted)]">{type.label}</td>
-                                            <td className="whitespace-nowrap px-5 py-3 text-[var(--studio-text-muted)]">{ROLE_LABELS[account.role] ?? '未設定'}</td>
+                                            {!subjects && <td className="whitespace-nowrap px-5 py-3 text-[var(--studio-text-muted)]">{ROLE_LABELS[account.role] ?? '未設定'}</td>}
                                             <td className="px-5 py-3">
                                                 <button type="button" role="switch" aria-checked={account.is_active} aria-label={`${account.name}の有効状態`} disabled={loading || Boolean(error) || updatingId !== null} onClick={() => void toggleAccount(account)} className="flex items-center gap-2 whitespace-nowrap rounded-md px-1 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)] disabled:cursor-not-allowed">
                                                     <span aria-hidden="true" className={`flex h-5 w-9 items-center rounded-full px-0.5 ${account.is_active ? 'justify-end bg-[var(--studio-accent)]' : 'justify-start bg-[var(--studio-border-strong)]'}`}><span className="h-4 w-4 rounded-full bg-[var(--studio-surface)]" /></span>
@@ -129,14 +134,14 @@ function AccountsForClient() {
                         })}
                     </table>
                 </div>
-            ) : <p className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-6 text-sm text-[var(--studio-text-muted)]">口座はありません。</p>)}
+            ) : <p className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-6 text-sm text-[var(--studio-text-muted)]">{subjects ? '科目' : '口座'}はありません。</p>)}
             {reconciling && <Overlay title="残高照合" onClose={() => setReconciling(false)}><Reconciliation accounts={accounts ?? []} disabled={loading || Boolean(error) || updatingId !== null} onPosted={reload} /></Overlay>}
         </section>
     );
 }
 
-export default function Accounts() {
+export default function Accounts({ subjects = false }: { subjects?: boolean }) {
     const { clientId } = useClient();
     // Client changes must discard pending confirmations and account-specific drafts.
-    return <AccountsForClient key={clientId} />;
+    return <AccountsForClient key={`${clientId}:${subjects}`} subjects={subjects} />;
 }

@@ -76,7 +76,13 @@ export const STUDIO_GROUPS: StudioGroup[] = [
                     { segment: 'earmarks', label: 'tab.earmarks' },
                 ],
             },
-            { path: 'flows', label: 'screen.flows', icon: Activity, section: WORKSPACE },
+            {
+                path: 'flows', label: 'screen.flows', icon: Activity, section: WORKSPACE,
+                tabs: [
+                    { segment: '', label: 'tab.categories' },
+                    { segment: 'accounts', label: 'tab.subjects' },
+                ],
+            },
             {
                 path: 'budget',
                 label: 'screen.budget',

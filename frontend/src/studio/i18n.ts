@@ -27,6 +27,8 @@ const dictionary = {
     'tab.overview': ['全体の状況', 'Overview'],
     'tab.accounts': ['口座', 'Accounts'],
     'tab.earmarks': ['取り置き', 'Earmarks'],
+    'tab.categories': ['分類別', 'By category'],
+    'tab.subjects': ['科目', 'Accounts'],
     'tab.budget': ['予算と実績', 'Budget & actuals'],
     'tab.actions': ['行動', 'Actions'],
     'tab.trends': ['推移', 'Trends'],

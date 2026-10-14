@@ -67,7 +67,6 @@ export default function CapsuleRules({ capsule, currency, disabled, onBusy }: { 
     useReloadAction(() => { rules.reload(); accounts.reload(); }, Boolean(disabled || mutation.busy || rules.loading));
     return <section className="mt-6 space-y-3 border-t border-[var(--studio-border)] pt-5">
         <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex gap-2"><button type="button" disabled={locked || editing} onClick={() => setEditing(true)} className={buttonClass}>新しい規則</button></div></div>
-        <p className="text-xs text-[var(--studio-text-muted)]">入金先を未設定にすると、資金計画の口座へ配分します。資金計画がない場合は先に設定してください。</p>
         <Feedback loading={rules.loading || accounts.loading} error={rules.error || accounts.error} />
         <Feedback error={mutation.error} message={mutation.message} />
         {editing && accounts.data && <Overlay title={`「${capsule.name}」の新しい規則`} onClose={() => setEditing(false)}><Feedback error={mutation.error} /><RuleEditor capsule={capsule} currency={currency} accounts={accounts.data} busy={locked} onCancel={() => setEditing(false)} onSave={(payload) => run(() => createCapsuleRule(payload), '規則を作成しました。', true)} /></Overlay>}

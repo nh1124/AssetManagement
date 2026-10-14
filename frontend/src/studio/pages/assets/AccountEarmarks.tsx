@@ -1,112 +1,157 @@
 import { useReloadAction } from '../../components/useReloadAction';
-import { useCallback, useState, type FormEvent } from 'react';
+import { useCallback, useId, useState, type FormEvent } from 'react';
 import { getAccountEarmarks } from '../../../api';
-import type { Capsule } from '../../../types';
+import type { AccountEarmark, Capsule } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
-import { loadAllCapsules, saveAttachment, shareLabel } from './accountEarmarkFunding';
-import Overlay from '../../components/Overlay';
+import { loadAllCapsules, saveAttachment } from './accountEarmarkFunding';
+import Overlay, { OverlayFooter } from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
-import { useResource } from '../../useResource';
-import { Feedback, Field } from '../db/Database';
-import { buttonClass, inputClass, primaryClass, useMutation } from '../db/forms';
+import { assetErrorMessage, useResource } from '../../useResource';
+import { DataTable, Feedback } from '../db/Database';
+import { buttonClass, primaryClass, useMutation } from '../db/forms';
 
 const detachMessage = (capsuleName: string, accountName: string) =>
     `「${capsuleName}」は口座「${accountName}」から新たに資金を確保しなくなります。この口座で既に確保した額とその帰属は仕訳に残ります。紐づけを解除しますか？`;
 
-function AttachmentChoice({ capsule, accountId, accountName, onSaved }: {
-    capsule: Capsule; accountId: number; accountName: string; onSaved: () => void;
-}) {
-    const source = capsule.funding_sources?.find((row) => row.account_id === accountId);
-    const [attached, setAttached] = useState(Boolean(source));
-    const [share, setShare] = useState(source?.max_share_bp == null ? '' : String(source.max_share_bp / 100));
-    const [saved, setSaved] = useState({ attached: Boolean(source), share });
-    const [validation, setValidation] = useState('');
+interface AttachmentEditorProps {
+    accountId: number; accountName: string; earmarks: AccountEarmark[];
+    onSaved: (message: string) => void; onComplete: () => void; onBusy: (busy: boolean) => void;
+}
+
+function AttachmentList({ capsules, accountId, accountName, earmarks, onSaved, onComplete, onBusy }: AttachmentEditorProps & { capsules: Capsule[] }) {
+    const formId = useId();
+    const initial = () => new Set(capsules.filter((capsule) => capsule.funding_sources?.some((source) => source.account_id === accountId)).map((capsule) => capsule.id));
+    const [selected, setSelected] = useState(initial);
+    const [saved, setSaved] = useState(initial);
+    const [confirming, setConfirming] = useState(false);
+    const [message, setMessage] = useState('');
     const mutation = useMutation();
     const confirm = useConfirm();
-    const [confirming, setConfirming] = useState(false);
-    const changed = attached !== saved.attached || (attached && share !== saved.share);
+    const changes = capsules.filter((capsule) => selected.has(capsule.id) !== saved.has(capsule.id));
+    const busy = mutation.busy || confirming;
 
     const submit = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
-        if (mutation.busy || confirming || !changed) return;
-        const percent = share === '' ? null : Number(share);
-        if (attached && percent !== null && (!Number.isFinite(percent) || percent < 0 || percent > 100
-            || Math.abs(percent * 100 - Math.round(percent * 100)) > 1e-6)) {
-            setValidation('上限は0〜100％（小数第2位まで）で入力してください。');
-            return;
-        }
-        setValidation('');
-        if (!attached) {
+        if (busy || !changes.length) return;
+        const detaching = changes.filter((capsule) => !selected.has(capsule.id));
+        if (detaching.length) {
             setConfirming(true);
-            const accepted = await confirm(detachMessage(capsule.name, accountName), '紐づけを解除', '取り置きの紐づけを解除');
+            const accepted = await confirm(detachMessage(detaching.map((capsule) => capsule.name).join('」「'), accountName), '更新する', '取り置きの紐づけを解除');
             setConfirming(false);
             if (!accepted) return;
         }
-        // Blank is uncapped; explicit zero is a zero-share cap.
-        await mutation.run(async () => {
-            await saveAttachment(capsule.id, accountId,
-                attached ? (percent === null ? null : Math.round(percent * 100)) : undefined);
-            // Refresh the account even if this overlay closed during the request.
-            onSaved();
-        }, '紐づけを保存しました。', () => setSaved({ attached, share }));
+        setMessage('');
+        onBusy(true);
+        try {
+            await mutation.run(async () => {
+                const attached: string[] = [];
+                const detached: string[] = [];
+                let completed = false;
+                try {
+                    // Each capsule has its own PUT; remember successes so a retry
+                    // only applies unfinished changes after a partial failure.
+                    for (const capsule of changes) {
+                        const attach = selected.has(capsule.id);
+                        try {
+                            if (await saveAttachment(capsule.id, accountId, attach)) (attach ? attached : detached).push(capsule.name);
+                            setSaved((previous) => {
+                                const next = new Set(previous);
+                                if (attach) next.add(capsule.id);
+                                else next.delete(capsule.id);
+                                return next;
+                            });
+                        } catch (failure: unknown) {
+                            throw new Error(`「${capsule.name}」の紐づけを更新できませんでした。${assetErrorMessage(failure)}`);
+                        }
+                    }
+                    completed = true;
+                } finally {
+                    const message = [
+                        attached.length ? `紐づけました：${attached.join('、')}。` : '',
+                        detached.length ? `解除しました：${detached.join('、')}。` : '',
+                    ].filter(Boolean).join(' ');
+                    // Refresh even after an error: earlier capsule writes may have succeeded.
+                    setMessage(message);
+                    onSaved(message || (completed ? '紐づけの変更はありませんでした。' : ''));
+                }
+            }, '', onComplete);
+        } finally {
+            onBusy(false);
+        }
     };
 
-    // Each attachment is saved independently; a shared footer would imply a batch write.
-    return <form onSubmit={(event) => void submit(event)} className="space-y-2 rounded-md border border-[var(--studio-border)] p-3">
-        <fieldset disabled={mutation.busy || confirming} className="flex flex-wrap items-end gap-3">
-            <label className="flex min-w-40 flex-1 items-center gap-2 py-2 text-sm">
-                <input type="checkbox" checked={attached} onChange={(event) => { setAttached(event.target.checked); setValidation(''); }} className="accent-[var(--studio-accent)]" />
-                {capsule.name}
-            </label>
-            <div className="w-40"><Field label="上限（％・任意）"><input type="number" min="0" max="100" step="0.01" disabled={!attached} value={share} placeholder="上限なし" aria-label={`${capsule.name}の上限（％）`} onChange={(event) => { setShare(event.target.value); setValidation(''); }} className={inputClass} /></Field></div>
-            <button type="submit" disabled={mutation.busy || confirming || !changed} aria-label={`${capsule.name}の紐づけを保存`} className={primaryClass}>{mutation.busy ? '保存中…' : '保存'}</button>
-        </fieldset>
-        <Feedback error={validation || mutation.error} message={mutation.message} />
+    return <form id={formId} onSubmit={(event) => void submit(event)} className="space-y-3">
+        <Feedback error={mutation.error} message={message} />
+        <DataTable columns={['取り置き', '確保額（現在）']}>
+            {capsules.length ? capsules.map((capsule) => {
+                const earmark = earmarks.find((row) => row.capsule_id === capsule.id);
+                return <tr key={capsule.id}>
+                    <th scope="row" className="px-5 py-3 font-normal"><label className="flex items-center gap-3">
+                        <input type="checkbox" checked={selected.has(capsule.id)} disabled={busy} onChange={(event) => {
+                            const checked = event.target.checked;
+                            setSelected((previous) => {
+                                const next = new Set(previous);
+                                if (checked) next.add(capsule.id);
+                                else next.delete(capsule.id);
+                                return next;
+                            });
+                        }} className="accent-[var(--studio-accent)]" />{capsule.name}
+                    </label></th>
+                    {/* The existing endpoint only reports attached capsules; a missing claim is not zero. */}
+                    <td className="whitespace-nowrap px-5 py-3 tabular-nums">{earmark ? formatCurrency(earmark.claimed, earmark.currency) : <span aria-label="現在の確保額は確認できません">—</span>}</td>
+                </tr>;
+            }) : <tr><td colSpan={2} className="px-5 py-4 text-[var(--studio-text-muted)]">取り置きはありません。</td></tr>}
+        </DataTable>
+        <OverlayFooter><button type="submit" form={formId} disabled={busy || !changes.length} className={primaryClass}>{mutation.busy ? '更新中…' : '更新'}</button></OverlayFooter>
     </form>;
 }
 
-function AttachmentEditor({ accountId, accountName, onSaved }: { accountId: number; accountName: string; onSaved: () => void }) {
+function AttachmentEditor(props: AttachmentEditorProps) {
     const capsules = useResource(loadAllCapsules);
     useReloadAction(capsules.reload, false, Boolean(capsules.error));
     return <div className="space-y-4">
-        <p className="text-xs text-[var(--studio-text-muted)]">上限の空欄は上限なし、0％は利用不可です。同じ口座の上限の合計が100％を超えると保存できません。</p>
         <Feedback loading={capsules.loading} error={capsules.error} />
-        {!capsules.loading && !capsules.error && capsules.data?.map((capsule) => <AttachmentChoice key={capsule.id} capsule={capsule} accountId={accountId} accountName={accountName} onSaved={onSaved} />)}
-        {capsules.data?.length === 0 && <p className="text-sm text-[var(--studio-text-muted)]">取り置きはありません。取り置き画面から作成できます。</p>}
+        {!capsules.loading && !capsules.error && capsules.data && <AttachmentList {...props} capsules={capsules.data} />}
     </div>;
 }
 
 export default function AccountEarmarks({ accountId, accountName, disabled }: { accountId: number; accountName: string; disabled: boolean }) {
+    // This endpoint has no as-of parameter, so claims remain explicitly current.
     const load = useCallback(() => getAccountEarmarks(accountId), [accountId]);
     const earmarks = useResource(load);
     const mutation = useMutation();
     const confirm = useConfirm();
     const [editing, setEditing] = useState(false);
+    const [selected, setSelected] = useState<AccountEarmark | null>(null);
     const [confirming, setConfirming] = useState(false);
-    const busy = disabled || mutation.busy || confirming;
-    const detach = async (capsuleId: number, capsuleName: string) => {
-        if (busy) return;
+    const [attachmentBusy, setAttachmentBusy] = useState(false);
+    const [message, setMessage] = useState('');
+    const busy = disabled || mutation.busy || confirming || attachmentBusy;
+    const locked = busy || earmarks.loading || Boolean(earmarks.error);
+    const detach = async (earmark: AccountEarmark) => {
+        if (locked) return;
         setConfirming(true);
-        const accepted = await confirm(detachMessage(capsuleName, accountName), '紐づけを解除', '取り置きの紐づけを解除');
+        const accepted = await confirm(detachMessage(earmark.capsule_name, accountName), '紐づけを解除', '取り置きの紐づけを解除');
         setConfirming(false);
         if (!accepted) return;
-        await mutation.run(() => saveAttachment(capsuleId, accountId, undefined), '取り置きの紐づけを解除しました。', earmarks.reload);
+        setMessage('');
+        await mutation.run(() => saveAttachment(earmark.capsule_id, accountId, false), `「${earmark.capsule_name}」の紐づけを解除しました。`, () => { setSelected(null); earmarks.reload(); });
     };
     useReloadAction(earmarks.reload, Boolean(busy), Boolean(earmarks.error));
     return <div className="space-y-3">
-        <Feedback loading={earmarks.loading} error={earmarks.error || mutation.error} message={mutation.message} />
-        {earmarks.data && <table className="w-full text-left text-xs">
-            <caption className="sr-only">{accountName}の取り置き</caption>
-            <thead className="text-[var(--studio-text-muted)]"><tr><th scope="col" className="pb-2 font-medium">取り置き</th><th scope="col" className="pb-2 text-right font-medium">確保額</th><th scope="col" className="pb-2 text-right font-medium">上限</th><th scope="col" className="pb-2 text-right font-medium">操作</th></tr></thead>
-            <tbody className="divide-y divide-[var(--studio-border)]">{earmarks.data.map((earmark) => <tr key={earmark.capsule_id}>
-                <th scope="row" className="py-2 font-normal">{earmark.capsule_name}</th>
-                <td className="whitespace-nowrap py-2 text-right tabular-nums">{formatCurrency(earmark.claimed, earmark.currency)}</td>
-                <td className="whitespace-nowrap py-2 text-right tabular-nums">{shareLabel(earmark.max_share_bp)}</td>
-                <td className="py-2 text-right"><button type="button" disabled={busy || earmarks.loading || Boolean(earmarks.error)} onClick={() => void detach(earmark.capsule_id, earmark.capsule_name)} className={buttonClass}>紐づけを解除</button></td>
-            </tr>)}</tbody>
-        </table>}
-        {earmarks.data?.length === 0 && <p className="text-sm text-[var(--studio-text-muted)]">紐づいている取り置きはありません。</p>}
-        <button type="button" disabled={busy} onClick={() => setEditing(true)} className={buttonClass}>取り置きを紐づける</button>
-        {editing && <Overlay title={`${accountName}に取り置きを紐づける`} onClose={() => setEditing(false)}><AttachmentEditor accountId={accountId} accountName={accountName} onSaved={earmarks.reload} /></Overlay>}
+        <Feedback loading={earmarks.loading} error={earmarks.error || mutation.error} message={message || mutation.message} />
+        {earmarks.data && <DataTable columns={['取り置き', '確保額（現在）']}>
+            {earmarks.data.length ? earmarks.data.map((earmark) => <tr key={earmark.capsule_id} onClick={() => { if (!locked) setSelected(earmark); }} className={locked ? '' : 'cursor-pointer hover:bg-[var(--studio-accent-soft)] focus-within:bg-[var(--studio-accent-soft)]'}>
+                <th scope="row" className="px-5 py-3 font-normal"><button type="button" disabled={locked} aria-haspopup="dialog" aria-label={`${accountName}の「${earmark.capsule_name}」を開く`} onClick={(event) => { event.stopPropagation(); setSelected(earmark); }} className="rounded text-left hover:text-[var(--studio-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)] disabled:opacity-40">{earmark.capsule_name}</button></th>
+                <td className="whitespace-nowrap px-5 py-3 tabular-nums">{formatCurrency(earmark.claimed, earmark.currency)}</td>
+            </tr>) : <tr><td colSpan={2} className="px-5 py-4 text-[var(--studio-text-muted)]">紐づいている取り置きはありません。</td></tr>}
+        </DataTable>}
+        <button type="button" disabled={locked} onClick={() => setEditing(true)} className={buttonClass}>取り置きを紐づける</button>
+        {editing && <Overlay title={`${accountName}に取り置きを紐づける`} onClose={() => setEditing(false)}><AttachmentEditor accountId={accountId} accountName={accountName} earmarks={earmarks.data ?? []} onBusy={setAttachmentBusy} onComplete={() => setEditing(false)} onSaved={(result) => { setMessage(result); earmarks.reload(); }} /></Overlay>}
+        {selected && <Overlay title={`${accountName}の「${selected.capsule_name}」`} onClose={() => setSelected(null)}>
+            <Feedback error={mutation.error} />
+            <dl className="flex items-center justify-between gap-4 text-sm"><dt>確保額（現在）</dt><dd className="tabular-nums">{formatCurrency(selected.claimed, selected.currency)}</dd></dl>
+            <OverlayFooter><button type="button" disabled={locked} onClick={() => void detach(selected)} className={`${buttonClass} text-[var(--studio-danger)]`}>{mutation.busy ? '解除中…' : '紐づけを解除'}</button></OverlayFooter>
+        </Overlay>}
     </div>;
 }

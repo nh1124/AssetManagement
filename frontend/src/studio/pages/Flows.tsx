@@ -6,6 +6,7 @@ import { useClient } from '../../context/ClientContext';
 import { formatCurrency } from '../../utils/currency';
 import { useResource } from '../useResource';
 import MonthPicker from './ledger/MonthPicker';
+import Accounts from './assets/Accounts';
 
 // Match reporting_service.get_profit_loss_for_range, including its plural expenses.
 interface ProfitLoss {
@@ -78,12 +79,13 @@ function MonthlyFlows({ month, currency }: { month: string; currency: string }) 
     );
 }
 
-export default function Flows() {
+export default function Flows({ subjects = false }: { subjects?: boolean }) {
     const { clientId, currentClient } = useClient();
     const currency = currentClient?.general_settings?.currency || 'JPY';
     const timezone = useTimezone();
     const [monthEdit, setMonth] = useState<string | null>(null);
     const month = monthEdit ?? clientToday(timezone).slice(0, 7);
+    if (subjects) return <Accounts subjects />;
     return (
         <section className="space-y-4">
             <MonthPicker value={month} onChange={setMonth} />

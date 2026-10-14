@@ -1,6 +1,8 @@
 import { useReloadAction } from '../../components/useReloadAction';
 import { useCallback } from 'react';
-import { clientToday, formatDate, useTimezone } from '../../datetime';
+import { useOutletContext } from 'react-router-dom';
+import { formatDate, useTimezone } from '../../datetime';
+import type { AssetPeriod } from './Assets';
 import { getBalanceSheet } from '../../../api';
 import { formatCurrency } from '../../../utils/currency';
 import { useResource as useAssetData } from '../../useResource';
@@ -34,9 +36,8 @@ function BalanceRows({ rows, currency, emptyLabel }: {
     );
 }
 
-export default function Overview() {
+function OverviewForDate({ asOf }: AssetPeriod) {
     const timezone = useTimezone();
-    const asOf = clientToday(timezone);
     const loadBalanceSheet = useCallback((): Promise<BalanceSheet> => getBalanceSheet(undefined, undefined, asOf), [asOf]);
     const { data: sheet, loading, error, reload } = useAssetData(loadBalanceSheet);
 
@@ -81,4 +82,11 @@ export default function Overview() {
             )}
         </section>
     );
+}
+
+export default function Overview() {
+    const { asOf } = useOutletContext<AssetPeriod>();
+    // A month change starts a fresh reader so stale figures and errors cannot
+    // appear under the newly selected month while its request is pending.
+    return <OverviewForDate key={asOf} asOf={asOf} />;
 }

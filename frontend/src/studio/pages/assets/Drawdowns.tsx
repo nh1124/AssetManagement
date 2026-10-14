@@ -6,7 +6,7 @@ import { getAccounts, getCapsuleDrawdowns, recordCapsuleDrawdown } from '../../.
 import type { Capsule, CapsuleDrawdownKind } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import { useResource } from '../../useResource';
-import { Feedback, Field } from '../db/Database';
+import { DataTable, Feedback, Field } from '../db/Database';
 import { buttonClass, inputClass, primaryClass, today, useMutation, type DatabaseAccount } from '../db/forms';
 
 const loadDestinations = async (): Promise<DatabaseAccount[]> => (await getAccounts() as DatabaseAccount[])
@@ -73,13 +73,12 @@ export default function Drawdowns({ capsule, currency, onRecorded }: { capsule: 
         {open ? <Overlay title={`「${capsule.name}」を取り崩す`} onClose={() => setOpen(false)}><DrawdownForm capsule={capsule} currency={currency} onRecorded={(result) => {
             setOpen(false); setMessage(result); history.reload(); onRecorded();
         }} /></Overlay> : <button type="button" onClick={() => { setMessage(''); setOpen(true); }} disabled={!capsule.funding_sources?.length} className={buttonClass}>取り崩す</button>}
-        {history.data && (history.data.length ? <table className="w-full text-left text-xs">
-            <caption className="sr-only">{capsule.name}の取り崩し履歴</caption>
-            <thead><tr><th scope="col" className="py-2">日付</th><th scope="col" className="py-2 text-right">金額</th><th scope="col" className="px-3 py-2">区分</th><th scope="col" className="py-2">内容</th></tr></thead>
-            <tbody>{history.data.map((row) => <tr key={row.id} className="border-t border-[var(--studio-border)]">
-                <td className="py-2">{row.date}</td><td className="py-2 text-right tabular-nums">{formatCurrency(row.amount, row.currency)}</td>
-                <td className="px-3 py-2">{kindLabel(row.kind)}</td><td className="py-2">{row.description}</td>
-            </tr>)}</tbody>
-        </table> : <p className="text-xs text-[var(--studio-text-muted)]">取り崩しはまだありません。</p>)}
+        {history.data && <DataTable columns={['日付', '金額', '区分', '内容']}>
+            {history.data.length ? history.data.map((row) => <tr key={row.id}>
+                <th scope="row" className="whitespace-nowrap px-5 py-3 font-normal">{row.date}</th>
+                <td className="whitespace-nowrap px-5 py-3 tabular-nums">{formatCurrency(row.amount, row.currency)}</td>
+                <td className="px-5 py-3">{kindLabel(row.kind)}</td><td className="px-5 py-3">{row.description}</td>
+            </tr>) : <tr><td colSpan={4} className="px-5 py-4 text-[var(--studio-text-muted)]">取り崩しはありません。</td></tr>}
+        </DataTable>}
     </div>;
 }

@@ -57,7 +57,7 @@ function EarmarksForClient({ currency, clientName }: { currency: string; clientN
             {error && <p role="alert" className="text-sm text-[var(--studio-danger)]">取り置きを取得できませんでした。{error}</p>}
             <Feedback error={goals.error || mutation.error} message={mutation.message} />
             {deleteResult && <Feedback message={`「${deleteResult.capsule_name || '取り置き'}」と規則${deleteResult.rules_deleted}件を削除しました。${deleteResult.retained_account_id !== null ? `口座「${deleteResult.retained_account_name || '名称未設定'}」（#${deleteResult.retained_account_id}）の残高・履歴は残っています。` : '応答に保持した口座の指定はありません。口座の残高・履歴は変更していません。'}`} />}
-            {editor && <Overlay title={editor.capsule ? `${editor.capsule.name}を編集` : '新しい取り置き'} onClose={() => setEditor(null)}><Feedback error={mutation.error} /><EarmarkEditor key={editor.capsule?.id ?? 'new'} capsule={editor.capsule} capsules={capsules ?? []} goals={goals.data ?? []} currency={currency} busy={disabled} onCancel={() => setEditor(null)} onSave={(action) => {
+            {editor && <Overlay title={editor.capsule ? `${editor.capsule.name}を編集` : '新しい取り置き'} onClose={() => setEditor(null)}><Feedback error={mutation.error} /><EarmarkEditor key={editor.capsule?.id ?? 'new'} capsule={editor.capsule} capsules={capsules ?? []} goals={goals.data ?? []} currency={currency} busy={disabled} onSave={(action) => {
                 if (disabled) return;
                 setDeleteResult(null);
                 void mutation.run(action, '取り置きを保存しました。', () => { setEditor(null); reload(); });
@@ -97,7 +97,6 @@ function EarmarksForClient({ currency, clientName }: { currency: string; clientN
                             {isExpanded && (
                                 <tr id={`earmark-details-${capsule.id}`} className="bg-[var(--studio-bg)]">
                                     <td colSpan={5} className="px-5 py-4"><fieldset disabled={!clientName || loading || Boolean(error) || mutation.busy || rulesBusy || editor !== null} className="min-w-0">
-                                        <p className="mb-3 text-xs text-[var(--studio-text-muted)]">月額積立：{formatCurrency(capsule.monthly_contribution, currency)} ／ 資金源：{sources.length}口座</p>
                                         <EarmarkAccounts capsuleId={capsule.id} sources={sources} />
                                         <details className="mt-3"><summary className="cursor-pointer text-sm text-[var(--studio-accent)]">取り置きの規則</summary>
                                         <CapsuleRules capsule={capsule} currency={currency} disabled={disabled || editor !== null} onBusy={setRulesBusy} />
