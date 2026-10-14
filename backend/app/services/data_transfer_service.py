@@ -264,6 +264,12 @@ def export_client(db: Session, client: models.Client) -> dict:
                 .order_by(models.LifeEvent.id)
                 .all()
             ],
+            "life_event_links": [
+                row_fields(link, ["id", "from_event_id", "to_event_id", "kind", "offset_months", "note", "created_at"])
+                for link in db.query(models.LifeEventLink)
+                .filter(models.LifeEventLink.client_id == client.id)
+                .order_by(models.LifeEventLink.id).all()
+            ],
             "transactions": [
                 row_fields(
                     transaction,
@@ -557,6 +563,7 @@ def import_client(
             ).delete(synchronize_session=False)
 
         for model in [
+            models.LifeEventLink,
             models.ProductDepreciation,
             models.MonthlyPlanLine,
             models.PeriodReview,
@@ -840,6 +847,16 @@ def import_client(
             db.add(event)
             db.flush()
             event_map[old_id] = event.id
+
+        for item in data.get("life_event_links", []):
+            db.add(models.LifeEventLink(
+                client_id=client.id,
+                from_event_id=event_map[int(item["from_event_id"])],
+                to_event_id=event_map[int(item["to_event_id"])],
+                kind=item["kind"], offset_months=item.get("offset_months", 0),
+                note=item.get("note"),
+                created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
+            ))
 
         for item in data.get("transactions", []):
             old_id = int(item["id"])

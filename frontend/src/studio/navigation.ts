@@ -104,7 +104,13 @@ export const STUDIO_GROUPS: StudioGroup[] = [
                     { segment: 'review', label: 'tab.review' },
                 ],
             },
-            { path: 'goals', label: 'screen.goals', icon: Flag, section: WORKSPACE },
+            {
+                path: 'goals', label: 'screen.goals', icon: Flag, section: WORKSPACE,
+                tabs: [
+                    { segment: '', label: 'tab.goals' },
+                    { segment: 'scenarios', label: 'tab.scenarios' },
+                ],
+            },
         ],
     },
     {

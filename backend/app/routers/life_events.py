@@ -18,8 +18,49 @@ from ..services.goal_service import (
     get_strategy_dashboard,
 )
 from ..workflows.goal_workflow import create_goal
+from ..services import life_event_graph
 
 router = APIRouter(prefix="/life-events", tags=["life_events"])
+
+
+@router.get("/links", response_model=list[schemas.LifeEventLink])
+def get_links(
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    return life_event_graph.list_links(db, current_client.id)
+
+
+@router.post("/links", response_model=schemas.LifeEventLink)
+def create_link(
+    payload: schemas.LifeEventLinkCreate,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    return life_event_graph.create_link(db, current_client.id, **payload.model_dump())
+
+
+@router.delete("/links/{link_id}")
+def delete_link(
+    link_id: int,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    life_event_graph.delete_link(db, current_client.id, link_id)
+    return {"message": "Deleted"}
+
+
+@router.get("/scenarios")
+def get_scenarios(
+    years: int = Query(30, ge=1, le=60),
+    annual_return: float = Query(5.0, allow_inf_nan=False),
+    inflation: float = Query(2.0, allow_inf_nan=False),
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    return life_event_graph.compare_scenarios(
+        db, current_client.id, years=years, annual_return=annual_return, inflation=inflation,
+    )
 
 
 

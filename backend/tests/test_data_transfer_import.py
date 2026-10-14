@@ -81,9 +81,15 @@ def _seed(db, client_id=101, base=10000):
     expense = add(models.Account, 3, name="food", account_type="expense")
     goal = add(models.LifeEvent, 4, name="goal", start_date=date(2026, 10, 1),
                target_date=date(2027, 1, 1), target_amount=1000, note="goal note", archived_at=STAMP)
+    next_goal = add(models.LifeEvent, 31, name="next", target_date=date(2028, 1, 1), target_amount=500)
+    add(models.LifeEventLink, 32, from_event_id=goal.id, to_event_id=next_goal.id,
+        kind="alternative", offset_months=12, note="graph note")
     capsule = add(models.Capsule, 5, name="goal", life_event_id=goal.id,
                   target_amount=1000, monthly_contribution=10,
                   capsule_type="life_event", target_amount_source="life_event")
+    add(models.Capsule, 33, name="next", life_event_id=next_goal.id,
+        target_amount=500, monthly_contribution=0,
+        capsule_type="life_event", target_amount_source="life_event")
     product = add(models.Product, 6, name="food", category="expense", last_unit_price=100,
                   units_per_purchase=2, frequency_days=30, budget_account_id=expense.id,
                   funding_capsule_id=capsule.id, last_purchase_date=date(2026, 10, 2),
@@ -181,6 +187,7 @@ REFERENCES = {
     "source_product_id": "products", "product_id": "products", "source_registry_entry_id": "registry_entries",
     "source_recurring_transaction_id": "recurring_transactions", "recurring_transaction_id": "recurring_transactions",
     "recurring_id": "recurring_transactions", "quick_template_id": "quick_templates", "batch_id": "transaction_batches",
+    "from_event_id": "life_events", "to_event_id": "life_events",
     "life_event_id": "life_events", "transaction_id": "transactions", "plan_id": "budget_plans",
     "plan_line_id": "monthly_plan_lines", "milestone_id": "milestones", "capsule_id": "capsules",
     "funding_capsule_id": "capsules",

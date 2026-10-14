@@ -9,14 +9,14 @@ from app import models
 from app.database import Base
 
 
-# T1 adds the monthly close marker; preserve the rest of the schema snapshot.
-EXPECTED_METADATA_SHA256 = "7d3577752de729faa513add75465cf20d391381b7789e4f0edf004be8e1582c5"
+# V1 adds graph edges; preserve the rest of the schema snapshot.
+EXPECTED_METADATA_SHA256 = "eefa696fa99f9d2b81e4c7e32b6b4cf4fdbe6b5e3163cdec1a18d6ac256836df"
 
 MODEL_NAMES = (
     "Client", "ClientMfaSetting", "ClientRecoveryCode",
     "Account", "JournalEntry", "Transaction", "TransactionProposal",
     "QuickTemplate", "TransactionBatch", "ExchangeRate", "Product",
-    "RecurringTransaction", "RegistryEntry", "LifeEvent", "Milestone",
+    "RecurringTransaction", "RegistryEntry", "LifeEvent", "LifeEventLink", "Milestone",
     "BudgetPlan", "MonthlyPlanLine", "PeriodReview", "MonthlyAction", "PeriodClose",
     "AiOperationPolicy", "AiAuditLog", "AiChangeRequest",
     "SimulationConfig", "SimulationScenario",
@@ -89,8 +89,8 @@ def _metadata_snapshot():
 
 def test_metadata_matches_the_minor_unit_schema():
     snapshot = _metadata_snapshot()
-    assert len(snapshot["table_names"]) == 30
-    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 379
+    assert len(snapshot["table_names"]) == 31
+    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 387
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == EXPECTED_METADATA_SHA256
 

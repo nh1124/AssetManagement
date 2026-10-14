@@ -47,9 +47,9 @@ def _checksum_sample(amount=12.5):
 # Captured from the router at 2f60437, before extracting the file format rules.
 EMPTY_TABLE_DIGEST = "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
 SAMPLE_DIGEST = "b0af7658403f3086011bd58bd60d0e583d974b3fd2530c69b845a2f300682108"
-# T1 adds the close-marker checksum. The sample data byte digest stays fixed;
-# the complete manifest payload digest follows the v15 format.
-PAYLOAD_DIGEST = "b4a7a61d72d2780476590d819f4a4b930129279d7ed439801b4a0ade80bae4fe"
+# V1 adds the edge checksum. The sample data byte digest stays fixed;
+# the complete manifest payload digest follows the v16 format.
+PAYLOAD_DIGEST = "42972017af1c27a775b892286ebe4ed322910f5f7ee29c627ac5ee7f1a156b8a"
 TABLE_DIGESTS = {
     "accounts": "69abf8cb7c47317e9cdeb2200e9bd1157c5b0c09fd880290e46e561fd78a51ee",
     "products": EMPTY_TABLE_DIGEST,
@@ -60,6 +60,7 @@ TABLE_DIGESTS = {
     "quick_templates": EMPTY_TABLE_DIGEST,
     "transaction_batches": EMPTY_TABLE_DIGEST,
     "life_events": EMPTY_TABLE_DIGEST,
+    "life_event_links": EMPTY_TABLE_DIGEST,
     "transactions": "e1f953879ca1d2c393b78eeb1caa65ea6d67a8a75ff0ee24b5813cb2cf40a458",
     "journal_entries": "206b4dd4f44356a6bc5662506bbd56268e8b123aa8255b7aebb1495e13f44e29",
     "budget_plans": EMPTY_TABLE_DIGEST,
@@ -97,9 +98,9 @@ def test_checksums_match_existing_backups_byte_for_byte():
     assert _sha256({"data": sample, "checksums": checksums}) == PAYLOAD_DIGEST
 
 
-def test_export_version_is_15_with_product_depreciations():
-    # Review markers must retain their original close instants after restore.
-    assert EXPORT_VERSION == 15
+def test_export_version_is_16_with_life_event_links():
+    # Graph edges must travel with their event endpoints.
+    assert EXPORT_VERSION == 16
 
 
 @pytest.mark.parametrize("value, expected", [
@@ -153,7 +154,7 @@ def test_malformed_dates_raise_instead_of_becoming_null(parser, value):
 def test_manifest_uses_only_supplied_metadata_and_format_checksums():
     sample = _checksum_sample()
     assert build_manifest(7, sample, "2026-10-05T06:07:08", "revision-123") == {
-        "export_version": 15,
+        "export_version": 16,
         "exported_at": "2026-10-05T06:07:08",
         "application": "AssetManagement",
         "alembic_revision": "revision-123",
@@ -174,73 +175,73 @@ def test_export_rows_serialize_dates_and_keep_other_values():
 def test_valid_payload_accepts_balanced_journal_and_matching_manifest():
     sample = _checksum_sample()
     manifest = {"counts": SAMPLE_COUNTS, "checksums": TABLE_DIGESTS, "payload_checksum": PAYLOAD_DIGEST}
-    assert validate_import_payload(sample, 15, manifest) == {
+    assert validate_import_payload(sample, 16, manifest) == {
         "status": "valid", "error_count": 0, "warning_count": 0,
         "counts": SAMPLE_COUNTS, "issues": [],
     }
 
 
 @pytest.mark.parametrize("data, version, manifest, expected", [
-    pytest.param({"unknown": []}, 15, None, {
+    pytest.param({"unknown": []}, 16, None, {
         "severity": "warning", "code": "unknown_collection",
         "detail": "This collection is not imported by this application version.", "collection": "unknown",
     }, id="unknown-collection"),
-    pytest.param({}, 16, None, {
+    pytest.param({}, 17, None, {
         "severity": "error", "code": "unsupported_version",
-        "detail": "Export version 16 is newer than supported version 15.",
+        "detail": "Export version 17 is newer than supported version 16.",
     }, id="unsupported-version"),
     pytest.param({}, 7, None, {
         "severity": "warning", "code": "older_version",
         "detail": "Export version 7 will be imported with compatibility defaults.",
     }, id="older-version"),
-    pytest.param({"accounts": [{}]}, 15, None, {
+    pytest.param({"accounts": [{}]}, 16, None, {
         "severity": "error", "code": "missing_id", "detail": "Row 0 is missing a valid id.",
         "collection": "accounts", "field": "id",
     }, id="missing-id"),
-    pytest.param({"accounts": [{"id": 1}, {"id": "1"}]}, 15, None, {
+    pytest.param({"accounts": [{"id": 1}, {"id": "1"}]}, 16, None, {
         "severity": "error", "code": "duplicate_id", "detail": "Duplicate id 1.",
         "collection": "accounts", "item_id": 1, "field": "id",
     }, id="duplicate-id"),
-    pytest.param({"capsule_rules": [{"id": 1, "capsule_id": "bad"}]}, 15, None, {
+    pytest.param({"capsule_rules": [{"id": 1, "capsule_id": "bad"}]}, 16, None, {
         "severity": "error", "code": "invalid_reference", "detail": "capsule_id is not a valid integer id.",
         "collection": "capsule_rules", "item_id": 1, "field": "capsule_id",
     }, id="invalid-reference"),
-    pytest.param({"capsule_rules": [{"id": 1}]}, 15, None, {
+    pytest.param({"capsule_rules": [{"id": 1}]}, 16, None, {
         "severity": "error", "code": "missing_reference", "detail": "capsule_id is required.",
         "collection": "capsule_rules", "item_id": 1, "field": "capsule_id",
     }, id="required-reference"),
-    pytest.param({"accounts": [{"id": 1, "parent_id": 99}]}, 15, None, {
+    pytest.param({"accounts": [{"id": 1, "parent_id": 99}]}, 16, None, {
         "severity": "error", "code": "missing_reference", "detail": "parent_id points to missing accounts id 99.",
         "collection": "accounts", "item_id": 1, "field": "parent_id",
     }, id="dangling-reference"),
-    pytest.param({"transactions": [{"id": 10, "amount": 12.5}]}, 15, None, {
+    pytest.param({"transactions": [{"id": 10, "amount": 12.5}]}, 16, None, {
         "severity": "error", "code": "journal_entries_missing",
         "detail": "Each transaction must have at least two journal entries.",
         "collection": "transactions", "item_id": 10,
     }, id="missing-journal"),
-    pytest.param(_checksum_sample(amount="bad"), 15, None, {
+    pytest.param(_checksum_sample(amount="bad"), 16, None, {
         "severity": "error", "code": "journal_amount_invalid",
         "detail": "Transaction and journal amounts must be numeric.", "collection": "transactions", "item_id": 10,
     }, id="nonnumeric-amount"),
-    pytest.param(_checksum_sample(amount=13), 15, None, {
+    pytest.param(_checksum_sample(amount=13), 16, None, {
         "severity": "error", "code": "journal_unbalanced",
         "detail": "Journal totals must satisfy debit=credit=amount; got debit=12.5, credit=12.5, amount=13.0.",
         "collection": "transactions", "item_id": 10,
     }, id="unbalanced-journal"),
-    pytest.param({"monthly_plan_lines": [{"id": 1, "target_type": "product", "target_id": 99}]}, 15, None, {
+    pytest.param({"monthly_plan_lines": [{"id": 1, "target_type": "product", "target_id": 99}]}, 16, None, {
         "severity": "error", "code": "missing_reference", "detail": "target_id points to missing products id 99.",
         "collection": "monthly_plan_lines", "item_id": 1, "field": "target_id",
     }, id="dangling-plan-target"),
-    pytest.param({}, 15, {"counts": {"accounts": 1}}, {
+    pytest.param({}, 16, {"counts": {"accounts": 1}}, {
         "severity": "error", "code": "count_mismatch", "detail": "Manifest count 1 does not match payload count 0.",
         "collection": "accounts",
     }, id="count-mismatch"),
-    pytest.param({}, 15, {"checksums": {"accounts": "bad"}}, {
+    pytest.param({}, 16, {"checksums": {"accounts": "bad"}}, {
         "severity": "warning", "code": "checksum_mismatch",
         "detail": "Collection checksum does not match the export manifest. This can happen with older exports after JSON number normalization.",
         "collection": "accounts",
     }, id="checksum-mismatch"),
-    pytest.param({}, 15, {"payload_checksum": "bad"}, {
+    pytest.param({}, 16, {"payload_checksum": "bad"}, {
         "severity": "warning", "code": "payload_checksum_mismatch",
         "detail": "Payload checksum does not match the export manifest. This can happen with older exports after JSON number normalization.",
     }, id="payload-checksum-mismatch"),

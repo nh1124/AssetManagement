@@ -17,6 +17,7 @@ import Review from './pages/report/Review';
 import Goals from './pages/goals/Goals';
 import GoalPage from './pages/goals/GoalPage';
 import GoalWorkspace from './pages/goals/GoalWorkspace';
+import LifeEventScenarios from './pages/goals/LifeEventScenarios';
 import Ai from './pages/automation/Ai';
 import Approvals from './pages/automation/Approvals';
 import Audit from './pages/automation/Audit';
@@ -42,7 +43,7 @@ const SCREENS: Record<string, { index: ReactElement; tabs?: Record<string, React
     flows: { index: <Flows />, tabs: { accounts: <Flows subjects /> } },
     budget: { index: <Budget />, tabs: { actions: <Actions /> } },
     report: { index: <Trends />, tabs: { monthly: <Monthly />, review: <Review /> } },
-    goals: { index: <Goals /> },
+    goals: { index: <Goals />, tabs: { scenarios: <LifeEventScenarios /> } },
     assets: {
         layout: <Assets />,
         index: <Overview />,

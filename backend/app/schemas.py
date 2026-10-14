@@ -786,6 +786,24 @@ class PeriodReview(PeriodReviewBase):
     class Config:
         from_attributes = True
 
+class LifeEventLinkCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    from_event_id: int
+    to_event_id: int
+    kind: Literal["after", "alternative"]
+    offset_months: int = 0
+    note: str | None = None
+
+
+class LifeEventLink(LifeEventLinkCreate):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    client_id: int
+    created_at: datetime | None = None
+
+
 class LifeEventBase(BaseModel):
     name: str
     start_date: Optional[date] = None

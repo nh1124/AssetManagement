@@ -72,6 +72,7 @@ LAYERS: dict[str, int] = {
     "data_health_service": 5,
     "data_transfer_service": 5,  # Backup includes L5 health; no service depends on it.
     "goal_service": 5,
+    "life_event_graph": 5,  # Resolves graph branches over the shared strategy projector.
     "milestone_service": 5,
     "report_service": 5,
     "simulation_service": 5,

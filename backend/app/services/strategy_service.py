@@ -863,28 +863,30 @@ def aggregate_life_event_demand_by_year(
 ) -> list[dict]:
     """Return cumulative future liability demand by calendar year."""
     years = max(1, min(years, 60))
-    current_year = date.today().year
     life_events = db.query(models.LifeEvent).filter(
         models.LifeEvent.client_id == client_id,
         models.LifeEvent.archived_at.is_(None),
     ).order_by(models.LifeEvent.target_date, models.LifeEvent.id).all()
 
+    return aggregate_event_demand_by_year(
+        [(event.target_date, event.target_amount or 0.0) for event in life_events], years,
+    )
+
+
+def aggregate_event_demand_by_year(
+    events: list[tuple[date | None, float]], years: int = 30,
+) -> list[dict]:
+    """Share calendar-year demand math between stored goals and resolved scenarios."""
+    years = max(1, min(years, 60))
+    current_year = date.today().year
     rows = []
     for year in range(current_year, current_year + years + 1):
-        due = [
-            event for event in life_events
-            if event.target_date and event.target_date.year <= year
-        ]
-        rows.append(
-            {
-                "year": year,
-                "cumulative_target": round(
-                    sum((event.target_amount or 0.0) for event in due),
-                    0,
-                ),
-                "event_count": len(due),
-            }
-        )
+        due = [amount for target_date, amount in events if target_date and target_date.year <= year]
+        rows.append({
+            "year": year,
+            "cumulative_target": round(sum(due), 0),
+            "event_count": len(due),
+        })
     return rows
 
 

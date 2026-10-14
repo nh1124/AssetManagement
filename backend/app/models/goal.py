@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Column, Integer, String, Date, ForeignKey, Boolean, DateTime, JSON
+from sqlalchemy import Column, Integer, String, Date, ForeignKey, Boolean, DateTime, JSON, CheckConstraint, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -30,6 +30,8 @@ class LifeEvent(Base):
     client = relationship("Client", back_populates="life_events")
     milestones = relationship("Milestone", back_populates="life_event", cascade="all, delete-orphan")
     capsules = relationship("Capsule", back_populates="life_event", cascade="all, delete-orphan")
+    outgoing_links = relationship("LifeEventLink", foreign_keys="LifeEventLink.from_event_id", cascade="all, delete-orphan")
+    incoming_links = relationship("LifeEventLink", foreign_keys="LifeEventLink.to_event_id", cascade="all, delete-orphan")
 
     @hybrid_property
     def target_amount(self) -> float | None:
@@ -40,6 +42,23 @@ class LifeEvent(Base):
     @target_amount.expression
     def target_amount(cls):
         return major_expression(cls.target_amount_minor, client_currency_expression(cls))
+
+
+class LifeEventLink(Base):
+    __tablename__ = "life_event_links"
+    __table_args__ = (
+        UniqueConstraint("client_id", "from_event_id", "to_event_id", name="uq_life_event_links_pair"),
+        CheckConstraint("kind IN ('after', 'alternative')", name="ck_life_event_links_kind"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
+    from_event_id = Column(Integer, ForeignKey("life_events.id", ondelete="CASCADE"), nullable=False)
+    to_event_id = Column(Integer, ForeignKey("life_events.id", ondelete="CASCADE"), nullable=False)
+    kind = Column(String, nullable=False)
+    offset_months = Column(Integer, nullable=False, default=0, server_default="0")
+    note = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class Milestone(Base):

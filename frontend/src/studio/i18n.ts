@@ -23,6 +23,8 @@ const dictionary = {
     'screen.audit': ['監査ログ', 'Audit log'],
     'screen.health': ['データ健全性', 'Data health'],
     'tab.records': ['すべての記録', 'All records'],
+    'tab.goals': ['ゴール一覧', 'Goals'],
+    'tab.scenarios': ['シナリオ', 'Scenarios'],
     'tab.unmatched': ['未照合', 'Unmatched'],
     'tab.overview': ['全体の状況', 'Overview'],
     'tab.accounts': ['口座', 'Accounts'],

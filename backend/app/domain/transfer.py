@@ -8,7 +8,7 @@ import re
 from datetime import date, datetime
 from typing import Any
 
-EXPORT_VERSION = 15
+EXPORT_VERSION = 16
 
 DATA_COLLECTIONS = [
     "accounts",
@@ -20,6 +20,7 @@ DATA_COLLECTIONS = [
     "quick_templates",
     "transaction_batches",
     "life_events",
+    "life_event_links",
     "transactions",
     "journal_entries",
     "budget_plans",
@@ -217,6 +218,8 @@ def validate_import_payload(
     check_ref("journal_entries", "account_id", "accounts", required=True)
     check_ref("journal_entries", "capsule_id", "capsules")
     check_ref("milestones", "life_event_id", "life_events")
+    check_ref("life_event_links", "from_event_id", "life_events", required=True)
+    check_ref("life_event_links", "to_event_id", "life_events", required=True)
     check_ref("capsules", "life_event_id", "life_events")
     check_ref("capsule_funding_sources", "capsule_id", "capsules", required=True)
     check_ref("capsule_funding_sources", "account_id", "accounts", required=True)
@@ -228,6 +231,32 @@ def validate_import_payload(
     check_ref("monthly_plan_lines", "account_id", "accounts")
     check_ref("monthly_plan_lines", "source_account_id", "accounts")
     check_ref("monthly_plan_lines", "plan_id", "budget_plans")
+
+    link_pairs = set()
+    graph: dict[int, list[int]] = {}
+    indegree: dict[int, int] = dict.fromkeys(id_sets.get("life_events", set()), 0)
+    for item in data.get("life_event_links", []):
+        source, target = _as_int(item.get("from_event_id")), _as_int(item.get("to_event_id"))
+        pair = (source, target)
+        if source == target or pair in link_pairs:
+            issue("error", "invalid_event_link", "Event links must be distinct non-self pairs.", "life_event_links", item.get("id"))
+        link_pairs.add(pair)
+        if item.get("kind") not in {"after", "alternative"} or type(item.get("offset_months", 0)) is not int:
+            issue("error", "invalid_event_link", "Event links require a valid kind and integer month offset.", "life_event_links", item.get("id"))
+        if source in indegree and target in indegree:
+            graph.setdefault(source, []).append(target)
+            indegree[target] += 1
+    ready = [event_id for event_id, degree in indegree.items() if degree == 0]
+    visited = 0
+    while ready:
+        source = ready.pop()
+        visited += 1
+        for target in graph.get(source, []):
+            indegree[target] -= 1
+            if indegree[target] == 0:
+                ready.append(target)
+    if visited != len(indegree):
+        issue("error", "event_link_cycle", "Event links must not contain a cycle.", "life_event_links")
 
     closed_periods = set()
     for item in data.get("period_closes", []):

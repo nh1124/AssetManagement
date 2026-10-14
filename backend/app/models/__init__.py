@@ -11,7 +11,7 @@ from .template import QuickTemplate, TransactionBatch
 from .fx import ExchangeRate
 from .product import Product, ProductDepreciation
 from .registry import RecurringTransaction, RegistryEntry
-from .goal import LifeEvent, Milestone
+from .goal import LifeEvent, LifeEventLink, Milestone
 from .budget import BudgetPlan, MonthlyPlanLine
 from .planning import PeriodReview, MonthlyAction, PeriodClose
 from .ai import AiOperationPolicy, AiAuditLog, AiChangeRequest
@@ -37,6 +37,7 @@ __all__ = [
     "RecurringTransaction",
     "RegistryEntry",
     "LifeEvent",
+    "LifeEventLink",
     "Milestone",
     "BudgetPlan",
     "MonthlyPlanLine",

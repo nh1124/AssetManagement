@@ -25,6 +25,7 @@ FORMAT_FIELDS = {
     "quick_templates": ["id","tray","name","template_kind","description","category","default_currency","default_from_account_id","default_to_account_id","config","sort_order","is_active","created_at","updated_at"],
     "transaction_batches": ["id","quick_template_id","label","source","input_payload","created_at"],
     "life_events": ["id","name","start_date","target_date","target_amount","priority","note","active_plan_basis","active_plan_label","plan_status_override","archived_at","created_at"],
+    "life_event_links": ["id","from_event_id","to_event_id","kind","offset_months","note","created_at"],
     "transactions": ["id","date","description","amount","currency","batch_id","recurring_transaction_id","created_at"],
     "journal_entries": ["id","transaction_id","account_id","capsule_id","debit","credit","memo","sort_order"],
     "budget_plans": ["id","name","description","is_default","sort_order","created_at","updated_at"],
@@ -82,6 +83,9 @@ def _seed_client(db, client_id, base, marker):
     cash = add(models.Account, 1, name=f"{marker}-cash", account_type="asset")
     expense = add(models.Account, 2, name=f"{marker}-expense", account_type="expense")
     goal = add(models.LifeEvent, 3, name=marker, target_date=date(2027, 1, 1), target_amount=1000)
+    next_goal = add(models.LifeEvent, 31, name=f"{marker}-next", target_date=date(2028, 1, 1), target_amount=500)
+    add(models.LifeEventLink, 32, from_event_id=goal.id, to_event_id=next_goal.id,
+        kind="alternative", offset_months=12, note=marker)
     capsule = add(
         models.Capsule, 4, name=marker, life_event_id=goal.id,
         target_amount=1000, monthly_contribution=10,
