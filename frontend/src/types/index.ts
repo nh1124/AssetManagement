@@ -352,6 +352,30 @@ export interface MilestonePlanSummary {
     gap?: number;
 }
 
+export type DepreciationMethod = 'none' | 'straight_line' | 'declining_balance';
+export type DepreciationInterval = 'monthly' | 'yearly';
+
+/** What has been written down, and what the next posting is due to be.
+ *  The book value is never stored: it is the price less the postings. */
+export interface DepreciationSchedule {
+    product_id: number;
+    currency: string;
+    method: DepreciationMethod;
+    interval: DepreciationInterval;
+    purchase_price_minor: number;
+    posted_minor: number;
+    book_value_minor: number;
+    next_period: string | null;
+    due_minor: number;
+    blocked_reason: string | null;
+}
+
+export interface DepreciationRunResult {
+    period: string;
+    posted: Array<{ product_id: number; name: string; amount_minor: number }>;
+    skipped: Array<{ product_id: number; name: string; reason: string }>;
+}
+
 export interface Product {
     id: number;
     name: string;
@@ -374,6 +398,12 @@ export interface Product {
     recommended_monthly_reserve?: number;
     purchase_price?: number;
     purchase_date?: string;
+    depreciation_method?: DepreciationMethod;
+    depreciation_annual_rate?: number | null;
+    depreciation_interval?: DepreciationInterval;
+    depreciation_start_date?: string | null;
+    depreciation_expense_account_id?: number | null;
+    depreciation_asset_account_id?: number | null;
     monthly_cost: number;
     next_purchase_date?: string;
 }

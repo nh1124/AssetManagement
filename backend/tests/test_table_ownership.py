@@ -37,6 +37,7 @@ OWNERS: dict[str, str] = {
     "simulation_configs": "services/simulation_config_service",
     "simulation_scenarios": "services/simulation_scenario_service",
     "products": "services/product_service",
+    "product_depreciations": "services/depreciation_service",
     "exchange_rates": "services/fx_service",
     "ai_change_requests": "services/ai_change_request_store",
     "ai_audit_logs": "services/ai_policy_service",

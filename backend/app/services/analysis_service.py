@@ -17,6 +17,9 @@ from .capsule_service import capsule_balance
 from .budget_context import BudgetContext
 from .budget_plan_store import find_budget_plan_id
 from .budget_projection import planned_cash_outflow_remaining
+from . import depreciation_service
+from .fx_service import get_client_currency
+from ..domain.money import Money
 from .periods import current_period_key
 from .journal_legs import legs_in_range
 from .goal_service import calculate_overall_goal_probability
@@ -266,64 +269,49 @@ def get_summary(db: Session, client_id: int) -> dict:
     }
 
 
-def calculate_depreciation(product: models.Product) -> dict | None:
-    """Calculate depreciation for assets > 30k JPY."""
-    purchase_price = product.purchase_price or product.last_unit_price
-
-    if not product.is_asset or not product.lifespan_months or purchase_price < 30000:
-        return None
-
-    purchase_date = product.purchase_date or product.last_purchase_date
-
-    if not purchase_date:
-        return {
-            "current_value": purchase_price,
-            "total_depreciation": 0,
-            "daily_rate": purchase_price / (product.lifespan_months * 30),
-            "monthly_depreciation": purchase_price / product.lifespan_months,
-        }
-
-    daily_rate = purchase_price / (product.lifespan_months * 30)
-    days_since_purchase = max(0, (date.today() - purchase_date).days)
-    total_depreciation = daily_rate * days_since_purchase
-    current_value = max(0, purchase_price - total_depreciation)
-
-    return {
-        "current_value": current_value,
-        "total_depreciation": total_depreciation,
-        "daily_rate": daily_rate,
-        "monthly_depreciation": purchase_price / product.lifespan_months,
-    }
-
-
 def get_depreciation_summary(db: Session, client_id: int) -> dict:
-    """Get total depreciation for all asset products belonging to current client."""
+    """What has actually been written down, read from the postings.
+
+    This used to compute a straight line of its own, which was the only answer
+    while nothing was posted. Now that depreciation is entered in the journal,
+    a second calculation here would be a second answer to one question, and the
+    two would part company the first time a posting was skipped or a method
+    changed. The book value is the purchase price less what was posted, and the
+    monthly figure is what the next posting is actually due to be.
+    """
     products = db.query(models.Product).filter(
         models.Product.client_id == client_id,
         models.Product.is_asset.is_(True),
-        models.Product.lifespan_months.isnot(None),
-    ).all()
+    ).order_by(models.Product.id).all()
 
+    currency = get_client_currency(db, client_id)
     items = []
     total_book_value = 0.0
     total_depreciation = 0.0
     monthly_expense = 0.0
 
     for product in products:
-        dep = calculate_depreciation(product)
-        if dep:
-            items.append(
-                {
-                    "name": product.name,
-                    "purchase_price": product.purchase_price or product.last_unit_price,
-                    "current_value": dep["current_value"],
-                    "total_depreciation": dep["total_depreciation"],
-                    "monthly_depreciation": dep["monthly_depreciation"],
-                }
-            )
-            total_book_value += dep["current_value"]
-            total_depreciation += dep["total_depreciation"]
-            monthly_expense += dep["monthly_depreciation"]
+        schedule = depreciation_service.schedule(db, client_id, product.id)
+        price = Money(schedule["purchase_price_minor"], currency).to_float()
+        posted = Money(schedule["posted_minor"], currency).to_float()
+        book_value = Money(schedule["book_value_minor"], currency).to_float()
+        due = Money(schedule["due_minor"], currency).to_float()
+        if price <= 0 and posted <= 0:
+            continue
+        items.append({
+            "product_id": product.id,
+            "name": product.name,
+            "purchase_price": price,
+            "current_value": book_value,
+            "total_depreciation": posted,
+            "monthly_depreciation": due,
+            "method": schedule["method"],
+            "next_period": schedule["next_period"],
+            "blocked_reason": schedule["blocked_reason"],
+        })
+        total_book_value += book_value
+        total_depreciation += posted
+        monthly_expense += due
 
     return {
         "items": items,

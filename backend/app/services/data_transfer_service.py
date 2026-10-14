@@ -95,11 +95,25 @@ def export_client(db: Session, client: models.Client) -> dict:
                         "budget_treatment",
                         "purchase_price",
                         "purchase_date",
+                        "depreciation_method",
+                        "depreciation_annual_rate",
+                        "depreciation_interval",
+                        "depreciation_start_date",
+                        "depreciation_expense_account_id",
+                        "depreciation_asset_account_id",
                     ],
                 )
                 for product in db.query(models.Product)
                 .filter(models.Product.client_id == client.id)
                 .order_by(models.Product.id)
+                .all()
+            ],
+            "product_depreciations": [
+                row_fields(row, ["id", "product_id", "period", "transaction_id",
+                                 "amount_minor", "created_at"])
+                for row in db.query(models.ProductDepreciation)
+                .filter(models.ProductDepreciation.client_id == client.id)
+                .order_by(models.ProductDepreciation.product_id, models.ProductDepreciation.period)
                 .all()
             ],
             "simulation_configs": [
@@ -543,6 +557,7 @@ def import_client(
             ).delete(synchronize_session=False)
 
         for model in [
+            models.ProductDepreciation,
             models.MonthlyPlanLine,
             models.PeriodReview,
             models.PeriodClose,
@@ -634,6 +649,12 @@ def import_client(
                 budget_treatment=item.get("budget_treatment") or "auto",
                 purchase_price_minor=to_minor(item.get("purchase_price"), money_client_currency(db, client.id)),
                 purchase_date=parse_date(item.get("purchase_date")),
+                depreciation_method=item.get("depreciation_method") or "none",
+                depreciation_annual_rate=item.get("depreciation_annual_rate"),
+                depreciation_interval=item.get("depreciation_interval") or "monthly",
+                depreciation_start_date=parse_date(item.get("depreciation_start_date")),
+                depreciation_expense_account_id=account_map.get(item.get("depreciation_expense_account_id")),
+                depreciation_asset_account_id=account_map.get(item.get("depreciation_asset_account_id")),
             )
             db.add(product)
             db.flush()
@@ -838,6 +859,19 @@ def import_client(
             db.add(transaction)
             db.flush()
             transaction_map[old_id] = transaction.id
+
+        for item in data.get("product_depreciations", []):
+            # Both ends must already be mapped: a posting names a product and
+            # the entry that carried it, and is meaningless without either.
+            product_id = product_map.get(int(item["product_id"]))
+            transaction_id = transaction_map.get(int(item["transaction_id"]))
+            if product_id is None or transaction_id is None:
+                continue
+            db.add(models.ProductDepreciation(
+                client_id=client.id, product_id=product_id, transaction_id=transaction_id,
+                period=item["period"], amount_minor=int(item["amount_minor"]),
+                created_at=parse_datetime(item.get("created_at")),
+            ))
 
         for item in data.get("period_closes", []):
             # Preserve close instants so restoration does not hide late entries.

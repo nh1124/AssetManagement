@@ -8,11 +8,12 @@ import re
 from datetime import date, datetime
 from typing import Any
 
-EXPORT_VERSION = 14
+EXPORT_VERSION = 15
 
 DATA_COLLECTIONS = [
     "accounts",
     "products",
+    "product_depreciations",
     "simulation_configs",
     "recurring_transactions",
     "registry_entries",

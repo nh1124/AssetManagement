@@ -9,7 +9,7 @@ from .client import Client, ClientMfaSetting, ClientRecoveryCode
 from .ledger import AccountType, AccountRole, Account, JournalEntry, Transaction, TransactionProposal
 from .template import QuickTemplate, TransactionBatch
 from .fx import ExchangeRate
-from .product import Product
+from .product import Product, ProductDepreciation
 from .registry import RecurringTransaction, RegistryEntry
 from .goal import LifeEvent, Milestone
 from .budget import BudgetPlan, MonthlyPlanLine
@@ -33,6 +33,7 @@ __all__ = [
     "TransactionBatch",
     "ExchangeRate",
     "Product",
+    "ProductDepreciation",
     "RecurringTransaction",
     "RegistryEntry",
     "LifeEvent",

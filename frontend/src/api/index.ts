@@ -24,6 +24,9 @@ import type {
     CapsuleFundingSourceInput,
     CapsuleTransferPreview,
     DataHealthResult,
+    DepreciationMethod,
+    DepreciationRunResult,
+    DepreciationSchedule,
     DataRepairResult,
     ExchangeRate,
     ExchangeRateAutoUpdateResult,
@@ -671,6 +674,35 @@ export const createProduct = async (product: any) => {
 
 export const updateProduct = async (id: number, product: any) => {
     const response = await api.put(`/products/${id}`, product);
+    return response.data;
+};
+
+// One request for every asset's position, so a list does not ask per row.
+export const getDepreciationSummary = async (): Promise<{
+    items: Array<{
+        product_id: number; name: string; purchase_price: number; current_value: number;
+        total_depreciation: number; monthly_depreciation: number;
+        method: DepreciationMethod; next_period: string | null; blocked_reason: string | null;
+    }>;
+    total_book_value: number; total_depreciation: number; monthly_expense: number;
+}> => {
+    const response = await api.get('/analysis/depreciation');
+    return response.data;
+};
+
+export const getDepreciationSchedule = async (productId: number): Promise<DepreciationSchedule> => {
+    const response = await api.get(`/products/${productId}/depreciation`);
+    return response.data;
+};
+
+export const postDepreciation = async (productId: number, period: string) => {
+    const response = await api.post(`/products/${productId}/depreciation`, { period });
+    return response.data as { transaction_id: number; period: string; amount_minor: number; schedule: DepreciationSchedule };
+};
+
+// Posts every product whose own next period is this one, and reports the rest.
+export const runDepreciation = async (period: string): Promise<DepreciationRunResult> => {
+    const response = await api.post('/products/depreciation/run', { period });
     return response.data;
 };
 

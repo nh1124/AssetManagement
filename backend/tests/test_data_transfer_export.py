@@ -17,7 +17,8 @@ from app.services.data_transfer_service import export_client
 # Freeze the file format independently of both ORM metadata and the exporter.
 FORMAT_FIELDS = {
     "accounts": ["id","name","account_type","parent_id","expected_return","role","role_target_amount","liability_closing_day","liability_payment_day","liability_payment_month_offset","liability_payment_policy","liability_minimum_payment","liability_fixed_payment_amount","liability_installment_months","liability_revolving_rate","is_active"],
-    "products": ["id","name","category","location","last_unit_price","units_per_purchase","frequency_days","last_purchase_date","is_asset","lifespan_months","budget_account_id","funding_capsule_id","budget_treatment","purchase_price","purchase_date"],
+    "products": ["id","name","category","location","last_unit_price","units_per_purchase","frequency_days","last_purchase_date","is_asset","lifespan_months","budget_account_id","funding_capsule_id","budget_treatment","purchase_price","purchase_date","depreciation_method","depreciation_annual_rate","depreciation_interval","depreciation_start_date","depreciation_expense_account_id","depreciation_asset_account_id"],
+    "product_depreciations": ["id","product_id","period","transaction_id","amount_minor","created_at"],
     "simulation_configs": ["id","user_id","annual_return","tax_rate","is_nisa","monthly_savings","volatility","inflation_rate"],
     "recurring_transactions": ["id","name","amount","currency","from_account_id","to_account_id","frequency","day_of_month","month_of_year","next_due_date","start_period","end_period","auto_post","is_active","source_registry_entry_id","created_at"],
     "registry_entries": ["id","name","entry_type","category","amount","currency","frequency","frequency_days","day_of_month","month_of_year","line_type","budget_account_id","source_account_id","destination_account_id","funding_capsule_id","budget_treatment","generate_recurring","budget_active","is_active","source_product_id","source_recurring_transaction_id","note","start_period","end_period","created_at","updated_at"],
@@ -88,6 +89,10 @@ def _seed_client(db, client_id, base, marker):
     product = add(
         models.Product, 5, name=marker, category="expense", last_unit_price=100,
         budget_account_id=expense.id, funding_capsule_id=capsule.id,
+        is_asset=True, lifespan_months=24, purchase_price=1200, purchase_date=date(2026, 1, 1),
+        depreciation_method="straight_line", depreciation_annual_rate=20.0,
+        depreciation_interval="monthly", depreciation_start_date=date(2026, 1, 1),
+        depreciation_expense_account_id=expense.id, depreciation_asset_account_id=cash.id,
     )
     add(models.SimulationConfig, 6, user_id=client_id)
     registry = add(
@@ -121,6 +126,8 @@ def _seed_client(db, client_id, base, marker):
     add(models.JournalEntry, 13, transaction_id=tx.id, account_id=cash.id, debit_minor=0, credit_minor=100, memo=marker, sort_order=1, capsule_id=capsule.id)
     add(models.CapsuleDrawdown, 25, capsule_id=capsule.id, transaction_id=tx.id,
         kind="as_intended", amount_minor=100, note=marker)
+    add(models.ProductDepreciation, 26, product_id=product.id, transaction_id=tx.id,
+        period=PERIOD, amount_minor=50)
     plan = add(models.BudgetPlan, 14, name=marker, is_default=True, sort_order=20)
     add(
         models.MonthlyPlanLine, 15, plan_id=plan.id, target_period=PERIOD, line_type="expense",

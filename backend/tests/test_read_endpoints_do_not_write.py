@@ -167,7 +167,7 @@ def _seed(db, scenario, today):
     return {"batch_id": batch.id, "account_id": cash.id, "event_id": goal.id, "life_event_id": goal.id,
             # lunch is the trigger a capsule rule would fire on, so the
             # reservation read is driven against an entry that has legs.
-            "capsule_id": capsule.id, "transaction_id": lunch.id, "month": today.strftime("%Y-%m"),
+            "capsule_id": capsule.id, "product_id": product.id, "transaction_id": lunch.id, "month": today.strftime("%Y-%m"),
             "plan_ids": str(plan.id) if plan else None,
             "start_date": start.isoformat(), "end_date": end.isoformat(),
             # Statement reconciliation is a pure read, including its historical claims.

@@ -120,6 +120,14 @@ def enrich_product(product: models.Product) -> dict:
         **reserve_values,
         "purchase_price": product.purchase_price,
         "purchase_date": product.purchase_date,
+        # The response is built field by field, so a column added to the model is
+        # invisible to every caller until it is named here.
+        "depreciation_method": product.depreciation_method or "none",
+        "depreciation_annual_rate": product.depreciation_annual_rate,
+        "depreciation_interval": product.depreciation_interval or "monthly",
+        "depreciation_start_date": product.depreciation_start_date,
+        "depreciation_expense_account_id": product.depreciation_expense_account_id,
+        "depreciation_asset_account_id": product.depreciation_asset_account_id,
         "monthly_cost": round(monthly_cost, 2),
         "next_purchase_date": next_purchase_date,
     }

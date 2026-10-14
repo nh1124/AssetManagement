@@ -13,7 +13,6 @@ from sqlalchemy.orm import sessionmaker
 from backend.app import models
 from backend.app.database import Base
 from backend.app.services.analysis_service import (
-    calculate_depreciation,
     calculate_logical_balance,
     get_summary,
 )
@@ -192,19 +191,3 @@ def test_logical_balance_subtracts_the_plan_remainder_not_the_recurring_definiti
         db.close()
 
 
-def test_future_purchase_date_has_zero_depreciation() -> None:
-    product = models.Product(
-        client=models.Client(id=1, general_settings={"currency": "JPY"}),
-        client_id=1,
-        name="Future laptop",
-        is_asset=True,
-        purchase_price_minor=to_minor(60000, "JPY"),
-        purchase_date=date.today() + timedelta(days=10),
-        lifespan_months=24,
-    )
-
-    depreciation = calculate_depreciation(product)
-
-    assert depreciation is not None
-    assert depreciation["current_value"] == 60000
-    assert depreciation["total_depreciation"] == 0

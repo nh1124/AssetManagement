@@ -86,7 +86,13 @@ def _seed(db, client_id=101, base=10000):
                   capsule_type="life_event", target_amount_source="life_event")
     product = add(models.Product, 6, name="food", category="expense", last_unit_price=100,
                   units_per_purchase=2, frequency_days=30, budget_account_id=expense.id,
-                  funding_capsule_id=capsule.id, last_purchase_date=date(2026, 10, 2))
+                  funding_capsule_id=capsule.id, last_purchase_date=date(2026, 10, 2),
+                  is_asset=True, lifespan_months=24, purchase_price=1200,
+                  purchase_date=date(2026, 1, 1), depreciation_method="straight_line",
+                  depreciation_annual_rate=20.0, depreciation_interval="monthly",
+                  depreciation_start_date=date(2026, 1, 1),
+                  depreciation_expense_account_id=expense.id,
+                  depreciation_asset_account_id=cash.id)
     add(models.SimulationConfig, 7, user_id=client.id)
     registry = add(models.RegistryEntry, 8, name="food", amount=100, line_type="expense",
                    budget_account_id=expense.id, source_account_id=cash.id,
@@ -109,6 +115,8 @@ def _seed(db, client_id=101, base=10000):
         debit_minor=0, credit_minor=100, memo="credit", sort_order=1, capsule_id=capsule.id)
     add(models.CapsuleDrawdown, 25, capsule_id=capsule.id, transaction_id=tx.id,
         kind="diverted", amount_minor=100, note="drawdown note")
+    add(models.ProductDepreciation, 26, product_id=product.id, transaction_id=tx.id,
+        period="2026-10", amount_minor=50)
     plan = add(models.BudgetPlan, 15, name="default", is_default=True, sort_order=10)
     line = add(models.MonthlyPlanLine, 16, plan_id=plan.id, target_period="2026-10",
                line_type="expense", target_type="account", target_id=expense.id,
@@ -176,6 +184,8 @@ REFERENCES = {
     "life_event_id": "life_events", "transaction_id": "transactions", "plan_id": "budget_plans",
     "plan_line_id": "monthly_plan_lines", "milestone_id": "milestones", "capsule_id": "capsules",
     "funding_capsule_id": "capsules",
+    "depreciation_expense_account_id": "accounts",
+    "depreciation_asset_account_id": "accounts",
 }
 
 

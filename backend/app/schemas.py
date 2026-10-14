@@ -420,6 +420,10 @@ class ExchangeRate(ExchangeRateBase):
         from_attributes = True
 
 # Product Schemas
+DepreciationMethodLiteral = Literal["none", "straight_line", "declining_balance"]
+DepreciationIntervalLiteral = Literal["monthly", "yearly"]
+
+
 class ProductBase(BaseModel):
     name: str
     category: str = "Uncategorized"
@@ -435,6 +439,12 @@ class ProductBase(BaseModel):
     budget_treatment: ProductBudgetTreatmentLiteral = "auto"
     purchase_price: Optional[float] = None
     purchase_date: Optional[date] = None
+    depreciation_method: DepreciationMethodLiteral = "none"
+    depreciation_annual_rate: Optional[float] = Field(default=None, ge=0, le=100)
+    depreciation_interval: DepreciationIntervalLiteral = "monthly"
+    depreciation_start_date: Optional[date] = None
+    depreciation_expense_account_id: Optional[int] = None
+    depreciation_asset_account_id: Optional[int] = None
 
 class ProductCreate(ProductBase):
     model_config = ConfigDict(extra="forbid")
@@ -455,8 +465,20 @@ class ProductUpdate(BaseModel):
     budget_treatment: Optional[ProductBudgetTreatmentLiteral] = None
     purchase_price: Optional[float] = None
     purchase_date: Optional[date] = None
+    depreciation_method: Optional[DepreciationMethodLiteral] = None
+    depreciation_annual_rate: Optional[float] = Field(default=None, ge=0, le=100)
+    depreciation_interval: Optional[DepreciationIntervalLiteral] = None
+    depreciation_start_date: Optional[date] = None
+    depreciation_expense_account_id: Optional[int] = None
+    depreciation_asset_account_id: Optional[int] = None
 
     model_config = ConfigDict(extra="forbid")
+
+class DepreciationPostRequest(BaseModel):
+    period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+
+    model_config = ConfigDict(extra="forbid")
+
 
 class Product(ProductBase):
     id: int

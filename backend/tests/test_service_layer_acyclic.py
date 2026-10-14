@@ -46,6 +46,7 @@ LAYERS: dict[str, int] = {
     "journal_legs": 1,
     "ledger_service": 1,
     "ledger_valuation": 1,  # Values the ledger through fx_service.
+    "depreciation_service": 1,  # Writes assets down with ledger primitives only.
     # L2 - the source of truth for recurring cash flow, and its bucket model
     "capsule_service": 2,
     "reconciliation_service": 2,  # Attributed corrections also enforce capsule claims.

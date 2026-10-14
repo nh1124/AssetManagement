@@ -8,10 +8,52 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
-from ..services import product_service
+from ..services import depreciation_service, product_service
 from ..workflows import product_workflow
 
 router = APIRouter(prefix="/products", tags=["products"])
+
+
+@router.post("/depreciation/run")
+def run_depreciation(
+    payload: schemas.DepreciationPostRequest,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    """Write down every product whose next period is this one.
+
+    Declared before the path-parameter routes so "depreciation" is not read as a
+    product id. Reports what it skipped rather than failing the batch: one
+    product missing an account should not stop the rest.
+    """
+    return depreciation_service.run_for_period(db, current_client.id, payload.period)
+
+
+@router.get("/{product_id}/depreciation")
+def get_depreciation_schedule(
+    product_id: int,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    return depreciation_service.schedule(db, current_client.id, product_id)
+
+
+@router.post("/{product_id}/depreciation")
+def post_depreciation(
+    product_id: int,
+    payload: schemas.DepreciationPostRequest,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    transaction, row = depreciation_service.post(
+        db, current_client.id, product_id, period=payload.period,
+    )
+    return {
+        "transaction_id": transaction.id,
+        "period": row.period,
+        "amount_minor": row.amount_minor,
+        "schedule": depreciation_service.schedule(db, current_client.id, product_id),
+    }
 
 
 @router.get("/", response_model=List[schemas.Product])
