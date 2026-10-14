@@ -1,6 +1,7 @@
+import { useReloadAction } from '../../components/useReloadAction';
 import Overlay from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
-import { useState, type FormEvent } from 'react';
+import { useId, useState, type FormEvent } from 'react';
 import { createAccount, deleteAccount, updateAccount } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
 import type { AccountRole } from '../../../types';
@@ -13,6 +14,7 @@ function AccountEditor({ account, accounts, currency, busy, onSave, onCancel }: 
     account: DatabaseAccount | null; accounts: DatabaseAccount[]; currency: string; busy: boolean;
     onSave: (action: () => Promise<unknown>) => void; onCancel: () => void;
 }) {
+    const formId = useId();
     const [name, setName] = useState(account?.name ?? '');
     const [type, setType] = useState<DatabaseAccount['account_type']>(account?.account_type ?? 'asset');
     const [role, setRole] = useState<AccountRole>(account?.role ?? 'unassigned');
@@ -36,7 +38,7 @@ function AccountEditor({ account, accounts, currency, busy, onSave, onCancel }: 
             ? updateAccount(account.id, { ...payload, role_target_amount: target === '' ? null : Number(target) })
             : createAccount({ ...payload, account_type: type }));
     };
-    return <form onSubmit={submit} className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
+    return <form id={formId} onSubmit={submit} className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
         <fieldset disabled={busy} className="grid gap-4 md:grid-cols-2">
             <Field label="名称"><input required value={name} onChange={(event) => setName(event.target.value)} className={inputClass} /></Field>
             <Field label="種別"><select disabled={Boolean(account)} value={type} onChange={(event) => { setType(event.target.value as DatabaseAccount['account_type']); setParent(null); }} className={inputClass}>{Object.entries(ACCOUNT_TYPES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
@@ -44,7 +46,7 @@ function AccountEditor({ account, accounts, currency, busy, onSave, onCancel }: 
             <Field label="期待年利（%）"><input required type="number" step="any" value={expectedReturn} onChange={(event) => setExpectedReturn(event.target.value)} className={inputClass} /></Field>
             {account && <Field label={`役割の目標額（${currency}）`}><input type="number" min="0" step="any" value={target} onChange={(event) => setTarget(event.target.value)} className={inputClass} /></Field>}
             <Choice label="親の口座・勘定科目" value={parent} options={parents} onChange={setParent} />
-            <EditorActions busy={busy} onCancel={onCancel} />
+            <EditorActions form={formId} busy={busy} onCancel={onCancel} />
         </fieldset>
     </form>;
 }
@@ -66,8 +68,9 @@ function AccountsForClient({ currency }: { currency: string }) {
             resource.reload();
         });
     };
+    useReloadAction(resource.reload, Boolean(resource.loading || mutation.busy || editor !== null));
     return <section className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold">口座・勘定科目</h2><p className="mt-1 text-xs text-[var(--studio-text-muted)]">表示通貨：{currency}。無効の口座も含みます。</p></div><div className="flex gap-2"><button type="button" disabled={disabled || editor !== null} onClick={() => setEditor({ account: null })} className={buttonClass}>新規作成</button><button type="button" disabled={resource.loading || mutation.busy || editor !== null} onClick={resource.reload} className={buttonClass}>再読み込み</button></div></div>
+        <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="mt-1 text-xs text-[var(--studio-text-muted)]">無効の口座も含みます。</p></div><div className="flex gap-2"><button type="button" disabled={disabled || editor !== null} onClick={() => setEditor({ account: null })} className={buttonClass}>新規作成</button></div></div>
         <Feedback loading={resource.loading} error={mutation.error || resource.error} message={mutation.message} />
         {editor && resource.data && <Overlay title={editor.account ? `${editor.account.name}を編集` : '口座・勘定科目の新規作成'} onClose={() => setEditor(null)}><Feedback error={mutation.error} /><AccountEditor key={editor.account?.id ?? 'new'} account={editor.account} accounts={resource.data} currency={currency} busy={disabled} onCancel={() => setEditor(null)} onSave={(action) => void mutation.run(action, '口座・勘定科目を保存しました。', () => { setEditor(null); resource.reload(); })} /></Overlay>}
         {resource.data && Object.entries(ACCOUNT_TYPES).map(([type, label]) => {

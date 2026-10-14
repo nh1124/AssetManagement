@@ -4,6 +4,7 @@ import { useLanguage } from '../i18n';
 import { useAuth } from '../../context/AuthContext';
 import { SETTINGS_PATH, STUDIO_GROUPS, STUDIO_SCREENS } from '../navigation';
 import ConfirmProvider from './ConfirmProvider';
+import ReloadScope from './ReloadScope';
 
 /** The screen whose path is the longest prefix of the current location.
  *
@@ -36,7 +37,6 @@ function Rail() {
                     {t('shell.subtitle')}
                 </p>
             </div>
-
             <nav className="flex-1 overflow-y-auto pb-4">
                 {STUDIO_GROUPS.map((group) => (
                     <div key={group.id} className="mb-4">
@@ -67,7 +67,6 @@ function Rail() {
                     </div>
                 ))}
             </nav>
-
             {/* Settings sits at the bottom of the rail, as decided for the rebuild. */}
             <div className="border-t border-white/10 px-3 py-3">
                 <NavLink
@@ -123,7 +122,7 @@ export default function StudioLayout() {
                     </button>
                 </header>
                 <main className="min-h-0 flex-1 overflow-auto p-6">
-                    <Outlet />
+                    <ReloadScope><Outlet /></ReloadScope>
                 </main>
             </div>
             </ConfirmProvider>

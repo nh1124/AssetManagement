@@ -1,3 +1,4 @@
+import { useReloadAction } from '../../components/useReloadAction';
 import { useCallback, useState } from 'react';
 import { applyMonthlyReportAction, getMonthlyReport, getProfitLoss, getVarianceAnalysis } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
@@ -25,8 +26,8 @@ function Variance({ year, month, currency }: { year: number; month: number; curr
     const resource = useResource(load);
     const rows = resource.data?.items.filter((row) => row.budget !== 0 || row.actual !== 0).sort((a, b) => Math.abs(b.variance) - Math.abs(a.variance)) ?? [];
     return <section className="space-y-4">
-        <div className="flex items-center justify-between gap-3"><h2 className="text-lg font-semibold">月の計画と、実際に使った額</h2><button type="button" disabled={resource.loading} onClick={resource.reload} className={buttonClass}>再読み込み</button></div>
-        <p className="text-sm leading-relaxed text-[var(--studio-text-muted)]">支出を分類ごとにまとめ、差が大きい順に並べています。差は計画 − 実績。マイナスは計画を超えた額です。月の途中は、ここまでの実績との比較になります。</p>
+        <div className="flex items-center justify-between gap-3"><h2 className="text-lg font-semibold">月の計画と、実際に使った額</h2></div>
+        <p className="text-sm leading-relaxed text-[var(--studio-text-muted)]">月の途中は、ここまでの実績との比較になります。</p>
         <Feedback loading={resource.loading} error={resource.error} />
         {resource.data && <>
             {resource.data.plan_id === null && <p className="text-sm text-[var(--studio-text-muted)]">対象の予算プランがありません。計画額は 0 として表示しています。</p>}
@@ -54,9 +55,10 @@ function MonthlyReading({ period, currency, clientName, onBusy }: { period: stri
     const [varianceRevision, setVarianceRevision] = useState(0);
     const lock = (value: boolean) => { setBusy(value); onBusy(value); };
     const refresh = () => { report.reload(); profitLoss.reload(); setVarianceRevision((value) => value + 1); };
+    useReloadAction(refresh, Boolean(report.loading || profitLoss.loading || busy));
     return <div className="space-y-8">
         <section className="space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold">{period} を読む</h2><p className="mt-1 text-xs text-[var(--studio-text-muted)]">対象：{clientName || 'クライアントを確認中…'} ／ 表示通貨：{currency}</p></div><button type="button" disabled={report.loading || profitLoss.loading || busy} onClick={refresh} className={buttonClass}>再読み込み</button></div>
+            <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold">{period} を読む</h2></div></div>
             <Feedback loading={report.loading} error={report.error} />
             <Feedback loading={profitLoss.loading} error={profitLoss.error} />
             {!profitLoss.loading && profitLoss.error && <button type="button" onClick={profitLoss.reload} className={buttonClass}>収入・支出を再取得</button>}

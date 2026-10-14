@@ -265,8 +265,7 @@ export default function RecordForm({ existing, onSaved, onCancel }: {
 
     return (
         <section className="mx-auto w-full max-w-xl rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-6">
-            <h2 className="text-lg font-semibold">{existing ? `取引 #${existing.id}「${existing.description || '内容未入力'}」を編集` : '取引を記録'}</h2>
-            <p className="mt-1 text-xs text-[var(--studio-text-muted)]">対象：{identified ? currentClient.name : 'クライアントを確認中…'} ／ {currency}</p>
+            {existing && <h2 className="text-lg font-semibold">取引 #{existing.id}「{existing.description || '内容未入力'}」を編集</h2>}
             <form onSubmit={handleSubmit} className="mt-6 space-y-5">
                 {confirmation && <p role="status" className="rounded-md bg-[var(--studio-accent-soft)] p-3 text-sm text-[var(--studio-positive)]">{confirmation}</p>}
                 {(error || accountsError || (kind === 'allocation' && capsulesError)) && (
@@ -325,7 +324,7 @@ export default function RecordForm({ existing, onSaved, onCancel }: {
                                     <option value="diverted">他に回した</option>
                                 </select>
                             </label>
-                            <p className="text-xs text-[var(--studio-text-muted)]">支払元は取り置きの資金源から選びます。使い道の口座は一つにまとめて記録します。</p>
+                    <p className="text-xs text-[var(--studio-text-muted)]">支払元は取り置きの資金源から選びます。</p>
                         </>}
                     </div>}
                     {!existing && <>{kind === 'allocation' ? (

@@ -1,6 +1,7 @@
+import { useReloadAction } from '../../components/useReloadAction';
 import Overlay from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
-import { useCallback, useState, type FormEvent } from 'react';
+import { useCallback, useId, useState, type FormEvent } from 'react';
 import { createMilestone, deleteMilestone, getMilestones, updateMilestone } from '../../../api';
 import type { Milestone } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
@@ -13,6 +14,7 @@ function MilestoneEditor({ row, goalId, currency, busy, onSave, onCancel }: {
     row: Milestone | null; goalId: number; currency: string; busy: boolean;
     onSave: (action: () => Promise<unknown>) => void; onCancel: () => void;
 }) {
+    const formId = useId();
     const timezone = useTimezone();
     const [date, setDate] = useState(row?.date ?? clientToday(timezone));
     const [amount, setAmount] = useState(String(row?.target_amount ?? 0));
@@ -24,13 +26,13 @@ function MilestoneEditor({ row, goalId, currency, busy, onSave, onCancel }: {
         const payload = { date, target_amount: Number(amount), note: note.trim(), is_active_plan: active };
         onSave(() => row ? updateMilestone(row.id, payload) : createMilestone({ ...payload, life_event_id: goalId }));
     };
-    return <form onSubmit={submit} className="rounded-lg border border-[var(--studio-border)] p-5">
+    return <form id={formId} onSubmit={submit} className="rounded-lg border border-[var(--studio-border)] p-5">
         <fieldset disabled={busy} className="grid gap-4 md:grid-cols-2">
             <Field label="予定日"><input required type="date" value={date} onChange={(event) => setDate(event.target.value)} className={inputClass} /></Field>
             <Field label={`計画額（${currency}）`}><input required type="number" min="0" step="any" value={amount} onChange={(event) => setAmount(event.target.value)} className={inputClass} /></Field>
             <Field label="メモ"><input value={note} onChange={(event) => setNote(event.target.value)} className={inputClass} /></Field>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={active} onChange={(event) => setActive(event.target.checked)} />進捗計算に採用する</label>
-            <EditorActions busy={busy} onCancel={onCancel} />
+            <EditorActions form={formId} busy={busy} onCancel={onCancel} />
         </fieldset>
     </form>;
 }
@@ -49,10 +51,10 @@ export default function Milestones({ goalId, currency, disabled, onChanged, onBu
         onBusy(true);
         void mutation.run(action, message, () => { if (close) setEditor(null); resource.reload(); onChanged(); }).finally(() => onBusy(false));
     };
+    useReloadAction(resource.reload, Boolean(disabled || mutation.busy || resource.loading));
     return <section className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="text-base font-semibold">マイルストーン</h3><div className="flex gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex gap-2">
             <button type="button" disabled={locked || editor !== null} onClick={() => setEditor({ row: null })} className={buttonClass}>新しいマイルストーン</button>
-            <button type="button" disabled={disabled || mutation.busy || resource.loading} onClick={resource.reload} className={buttonClass}>再読み込み</button>
         </div></div>
         <p className="text-xs text-[var(--studio-text-muted)]">採用中の行を進捗計算に使います。シナリオを採用すると、手動で編集したものを含む現在のマイルストーンが置き換わります。</p>
         <Feedback loading={resource.loading} error={resource.error} />

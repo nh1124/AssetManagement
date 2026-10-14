@@ -1,5 +1,15 @@
-import { useEffect, useId, useRef, type ReactNode } from 'react';
+import { useContext, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { X } from 'lucide-react';
+import { OverlayFooterContext } from './overlayContext';
+import ReloadScope from './ReloadScope';
+
+export function OverlayFooter({ children, fallback }: { children: ReactNode; fallback?: ReactNode }) {
+    const host = useContext(OverlayFooterContext);
+    // Portalling actions keeps their form's validation and busy state with the editor.
+    if (host === undefined) return fallback ?? children;
+    return host ? createPortal(children, host) : null;
+}
 
 let scrollLocks = 0;
 let lockedScrollers: Array<{ element: HTMLElement; overflow: string }> = [];
@@ -24,6 +34,7 @@ export default function Overlay({ title, children, footer, describedBy, onClose 
 }) {
     const titleId = useId();
     const panel = useRef<HTMLDialogElement>(null);
+    const [footerHost, setFooterHost] = useState<HTMLElement | null>(null);
 
     useEffect(() => {
         const dialog = panel.current;
@@ -67,11 +78,13 @@ export default function Overlay({ title, children, footer, describedBy, onClose 
         <div className="flex max-h-[calc(100dvh-2rem)] flex-col">
             <header className="flex shrink-0 items-center justify-between gap-4 border-b border-[var(--studio-border)] px-5 py-4">
                 <h2 id={titleId} className="text-base font-semibold">{title}</h2>
-                <button type="button" aria-label={`${title}を閉じる`} onClick={onClose} className="rounded-md px-3 py-1.5 text-xs text-[var(--studio-text-muted)] hover:bg-[var(--studio-accent-soft)]">閉じる</button>
+                <button type="button" aria-label={`${title}を閉じる`} onClick={onClose} className="rounded-md p-2 text-[var(--studio-text-muted)] hover:bg-[var(--studio-accent-soft)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)]"><X size={18} aria-hidden="true" /></button>
             </header>
-            <div className="min-h-0 overflow-y-auto overscroll-contain p-5">{children}</div>
-            <footer className="flex shrink-0 justify-end gap-3 border-t border-[var(--studio-border)] px-5 py-4">
-                {footer ?? <button type="button" onClick={onClose} className="rounded-md border border-[var(--studio-border)] px-3 py-1.5 text-xs text-[var(--studio-text-muted)] hover:bg-[var(--studio-accent-soft)]">閉じる</button>}
+            <OverlayFooterContext.Provider value={footerHost}>
+                <div className="min-h-0 overflow-y-auto overscroll-contain p-5"><ReloadScope>{children}</ReloadScope></div>
+            </OverlayFooterContext.Provider>
+            <footer ref={setFooterHost} className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-[var(--studio-border)] px-5 py-4 empty:hidden">
+                {footer}
             </footer>
         </div>
     </dialog>, host);

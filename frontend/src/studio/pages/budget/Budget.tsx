@@ -1,13 +1,14 @@
+import { useReloadAction } from '../../components/useReloadAction';
 import Overlay from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
 import { clientToday, useTimezone } from '../../datetime';
-import { useCallback, useState, type FormEvent } from 'react';
+import { useCallback, useId, useState, type FormEvent } from 'react';
 import { createMonthlyPlanLines, deleteMonthlyPlanLine, getBudgetSummary, updateMonthlyPlanLines, type MonthlyPlanLinePayload } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
 import type { MonthlyPlanLine, MonthlyPlanLineType } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import { useResource } from '../../useResource';
-import { DataTable, EditorActions, Feedback, Field, RowActions } from '../db/Database';
+import { DataTable, EditorActions, Feedback, Field } from '../db/Database';
 import { buttonClass, inputClass, useMutation } from '../db/forms';
 import MonthCopy from './MonthCopy';
 import MonthPicker from '../ledger/MonthPicker';
@@ -26,25 +27,24 @@ const BLOCKS: Array<{ type: MonthlyPlanLineType; label: string }> = [
     { type: 'borrowing', label: '借入' }, { type: 'drawdown', label: '取り崩し' },
 ];
 const STATES = { synced: '定義と一致', missing: '月の計画は未保存', diff: '定義との差あり' };
-const FEASIBILITY = { ok: '資金不足なし', warning: '計画収支に注意', shortfall: '計画上の資金不足' };
 const lineName = (line: MonthlyPlanLine) => line.target_name || line.name || line.account_name || '名称未設定';
 
 function AmountEditor({ line, currency, busy, onSave, onCancel }: {
     line: MonthlyPlanLine; currency: string; busy: boolean;
     onSave: (amount: number) => void; onCancel: () => void;
 }) {
+    const formId = useId();
     const [amount, setAmount] = useState(String(line.amount));
     const submit = (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         if (busy || amount.trim() === '' || !Number.isFinite(Number(amount)) || Number(amount) < 0) return;
         onSave(Number(amount));
     };
-    return <form onSubmit={submit} className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
-        <p className="text-xs text-[var(--studio-text-muted)]">{line.target_period}の計画額を変更します。{line.id == null && '表示中の項目を、この月の予算行として保存します。'}</p>
+    return <form id={formId} onSubmit={submit} className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
         {line.target_type === 'capsule' && <p className="text-xs text-[var(--studio-warning)]">取り置きの月額積立計画にも反映されます。</p>}
         <fieldset disabled={busy} className="grid gap-4 md:grid-cols-2">
             <Field label={`月末計画（${currency}）`}><input required type="number" min="0" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} className={inputClass} /></Field>
-            <EditorActions busy={busy} onCancel={onCancel} />
+            <EditorActions form={formId} busy={busy} onCancel={onCancel} />
         </fieldset>
     </form>;
 }
@@ -82,36 +82,32 @@ function MonthlyBudget({ period, currency, clientName, onBusy }: { period: strin
         const generated = line.source !== 'manual' || Boolean(line.registry_entry_ids?.length);
         if (!(await confirm(`「${clientName}」の${period}「${lineName(line)}」の予算行を削除しますか？\n${generated ? '定義から作られた項目は、削除後も表示される場合があります。' : '削除は取り消せません。'}`, '削除する'))) return;
         void mutation.run(() => deleteMonthlyPlanLine(id), '予算行を削除しました。', () => {
+            setEditing(null);
             resource.setData((previous) => previous ? { ...previous, plan_lines: previous.plan_lines.filter((row) => row.id !== id) } : null);
             resource.reload();
         });
     };
+    useReloadAction(resource.reload, Boolean(resource.loading || mutation.busy || copyBusy || editing !== null));
     return <div className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-            <div><h2 className="text-lg font-semibold">予算と実績</h2><p className="mt-1 text-xs text-[var(--studio-text-muted)]">対象：{clientName || 'クライアントを確認中…'} ／ 表示通貨：{currency}</p></div>
-            <button type="button" disabled={resource.loading || mutation.busy || copyBusy || editing !== null} onClick={resource.reload} className={buttonClass}>再読み込み</button>
-        </div>
-        <p className="text-xs text-[var(--studio-text-muted)]">照合はサーバーが口座と対象期間から計算します。差は月末計画 − 照合済み実績です。</p>
         <Feedback loading={resource.loading} error={resource.error} />
         <Feedback error={mutation.error} message={mutation.message} />
         <MonthCopy period={period} disabled={disabled || editing !== null} clientName={clientName} onBusy={(busy) => { setCopyBusy(busy); onBusy(busy); }} onCopied={resource.reload} />
-        {editing && <Overlay title={`「${lineName(editing)}」の金額を編集`} onClose={() => setEditing(null)}><Feedback error={mutation.error} /><AmountEditor key={editing.id ?? lineName(editing)} line={editing} currency={currency} busy={disabled} onSave={save} onCancel={() => setEditing(null)} /></Overlay>}
+        {editing && <Overlay title={`「${lineName(editing)}」の金額を編集`} onClose={() => setEditing(null)} footer={editing.id != null
+            ? <button type="button" disabled={disabled} onClick={() => remove(editing)} className={`${buttonClass} mr-auto text-[var(--studio-danger)]`}>削除</button>
+            : <span className="mr-auto text-xs text-[var(--studio-text-muted)]">未保存のため削除不可</span>}><Feedback error={mutation.error} /><AmountEditor key={editing.id ?? lineName(editing)} line={editing} currency={currency} busy={disabled} onSave={save} onCancel={() => setEditing(null)} /></Overlay>}
         {resource.data && <>
-            <p className="text-xs text-[var(--studio-text-muted)]">計画全体の状態：{FEASIBILITY[resource.data.feasibility_status]}</p>
-            <DataTable columns={['計画項目', '種別', '月末計画', '照合済み実績', '月末計画との差', '状態', '操作']}>
+            <DataTable columns={['計画項目', '種別', '月末計画', '照合済み実績', '月末計画との差', '状態']}>
                 {resource.data.plan_lines.length ? BLOCKS.map((block) => {
                     const lines = resource.data?.plan_lines.filter((line) => line.line_type === block.type) ?? [];
-                    return lines.map((line, index) => <tr key={line.id ?? `${block.type}:${index}`}>
-                        <th scope="row" className="px-5 py-3 font-medium">{lineName(line)}{line.account_name && <span className="mt-1 block text-xs font-normal text-[var(--studio-text-muted)]">{line.account_name}</span>}</th>
+                    return lines.map((line, index) => <tr key={line.id ?? `${block.type}:${index}`} onClick={() => { if (!disabled && editing === null) setEditing(line); }} className={disabled || editing !== null ? '' : 'cursor-pointer hover:bg-[var(--studio-accent-soft)] focus-within:bg-[var(--studio-accent-soft)]'}>
+                        <th scope="row" className="px-5 py-3 font-medium"><button type="button" disabled={disabled || editing !== null} aria-label={`${lineName(line)}の金額を編集`} aria-haspopup="dialog" onClick={(event) => { event.stopPropagation(); setEditing(line); }} className="rounded text-left hover:text-[var(--studio-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)] disabled:opacity-40">{lineName(line)}</button>{line.account_name && <span className="mt-1 block text-xs font-normal text-[var(--studio-text-muted)]">{line.account_name}</span>}</th>
                         <td className="whitespace-nowrap px-5 py-3">{block.label}</td>
                         <td className="whitespace-nowrap px-5 py-3 tabular-nums">{formatCurrency(line.amount, currency)}</td>
                         <td className="whitespace-nowrap px-5 py-3 tabular-nums">{line.actual == null ? '—' : formatCurrency(line.actual, currency)}</td>
                         <td className="whitespace-nowrap px-5 py-3 tabular-nums">{line.variance == null ? '—' : formatCurrency(line.variance, currency)}</td>
                         <td className="px-5 py-3 text-xs text-[var(--studio-text-muted)]">{line.sync_status ? STATES[line.sync_status] : line.suggested_status ? STATES[line.suggested_status] : '—'}</td>
-                        {line.id == null ? <td className="px-5 py-3"><button type="button" disabled={disabled || editing !== null} onClick={() => setEditing(line)} aria-label={`${lineName(line)}の金額を編集`} className={buttonClass}>編集</button><span className="mt-1 block text-xs text-[var(--studio-text-muted)]">未保存のため削除不可</span></td>
-                            : <RowActions name={lineName(line)} disabled={disabled || editing !== null} onEdit={() => setEditing(line)} onDelete={() => remove(line)} />}
                     </tr>);
-                }) : <tr><td colSpan={7} className="px-5 py-4 text-[var(--studio-text-muted)]">この月の予算行はありません。</td></tr>}
+                }) : <tr><td colSpan={6} className="px-5 py-4 text-[var(--studio-text-muted)]">この月の予算行はありません。</td></tr>}
             </DataTable>
         </>}
     </div>;

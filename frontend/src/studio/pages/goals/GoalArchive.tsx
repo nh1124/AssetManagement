@@ -1,7 +1,8 @@
-import { useCallback, useState, type FormEvent } from 'react';
+import { useCallback, useId, useState, type FormEvent } from 'react';
 import { archiveGoal, getGoalCapsules } from '../../../api';
 import type { GoalCapsuleAction, LifeEvent } from '../../../types';
-import Overlay from '../../components/Overlay';
+import Overlay, { OverlayFooter } from '../../components/Overlay';
+import { ReloadRegistration } from '../../components/ReloadScope';
 import { useConfirm } from '../../components/useConfirm';
 import { useResource } from '../../useResource';
 import { Choice, DataTable, Feedback } from '../db/Database';
@@ -19,6 +20,7 @@ export default function GoalArchive({ goal, clientName, busy, error, onArchive, 
     goal: LifeEvent; clientName: string; busy: boolean; error: string;
     onArchive: (action: () => Promise<unknown>) => void; onCancel: () => void;
 }) {
+    const formId = useId();
     const confirm = useConfirm();
     const load = useCallback(async () => {
         const [capsules, accounts] = await Promise.all([getGoalCapsules(goal.id), loadAccounts()]);
@@ -39,10 +41,9 @@ export default function GoalArchive({ goal, clientName, busy, error, onArchive, 
         onArchive(() => archiveGoal(goal.id, { capsule_action: decision, transfer_account_id: destination }));
     };
     return <Overlay title={`「${goal.name}」を中止`} onClose={() => { if (!busy) onCancel(); }}>
-        <form onSubmit={submit} className="space-y-4">
-            <p className="text-sm">対象：{clientName}。中止するとゴールをアーカイブへ移します。</p>
+        <ReloadRegistration run={resource.reload} active={Boolean(resource.error)} />
+        <form id={formId} onSubmit={submit} className="space-y-4">
             <Feedback loading={resource.loading} error={resource.error || error} />
-            {resource.error && <button type="button" onClick={resource.reload} className={buttonClass}>再読み込み</button>}
             {resource.data && <DataTable columns={['取り置き', '現在の確保額（通貨別）']}>
                 {resource.data.capsules.length ? resource.data.capsules.map((capsule) => <tr key={capsule.id}><th scope="row" className="px-5 py-3 font-medium">{capsule.name}</th><td className="px-5 py-3 tabular-nums">{capsuleClaims(capsule)}</td></tr>) : <tr><td colSpan={2} className="px-5 py-4 text-[var(--studio-text-muted)]">取り置きはありません。</td></tr>}
             </DataTable>}
@@ -59,7 +60,7 @@ export default function GoalArchive({ goal, clientName, busy, error, onArchive, 
                     {resource.data && !resource.data.accounts.length && <p className="text-sm text-[var(--studio-danger)]">有効な資産口座を先に作成してください。</p>}
                 </>}
                 <p className="text-sm text-[var(--studio-text-muted)]">ゴールの復元は、取り置きの判断を取り消しません。解除した紐づけは戻らず、停止した規則は停止したまま、口座へ戻したお金は戻したままです。</p>
-                <div className="flex gap-2"><button type="submit" disabled={locked || (action === 'release' && !account)} className={buttonClass}>中止を確認</button><button type="button" disabled={busy} onClick={onCancel} className={buttonClass}>キャンセル</button></div>
+                <div className="flex gap-2"><OverlayFooter><button type="submit" form={formId} disabled={locked || (action === 'release' && !account)} className={buttonClass}>中止を確認</button></OverlayFooter></div>
             </fieldset>
         </form>
     </Overlay>;

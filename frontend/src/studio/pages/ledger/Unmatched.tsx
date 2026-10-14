@@ -1,3 +1,4 @@
+import { useReloadAction } from '../../components/useReloadAction';
 import { useEffect, useRef, useState } from 'react';
 import { approveTransactionProposal, getAccounts, rejectTransactionProposal } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
@@ -57,14 +58,13 @@ export default function Unmatched({ proposals, loading, error, reload, onDecided
     const refresh = () => { reload(); reloadNames(); };
     const disabled = loading || Boolean(error) || namesLoading || Boolean(namesError) || decidingId !== null;
 
+    useReloadAction(refresh, Boolean(loading || namesLoading || decidingId !== null));
     return (
         <section className="space-y-4">
             <div className="flex items-center justify-between gap-4">
                 <div>
-                    <h2 className="text-lg font-semibold">未照合</h2>
                     <p className="mt-1 text-xs text-[var(--studio-text-muted)]">システムが提案した記録です。承認すると実際の取引として記帳されます。</p>
                 </div>
-                <button type="button" onClick={refresh} disabled={loading || namesLoading || decidingId !== null} className="rounded-md border border-[var(--studio-border)] px-3 py-1.5 text-xs text-[var(--studio-text-muted)] hover:bg-[var(--studio-accent-soft)] disabled:opacity-40">再読み込み</button>
             </div>
             {(loading || namesLoading) && <p role="status" className="text-sm text-[var(--studio-text-muted)]">提案と口座名を読み込んでいます…</p>}
             {error && <p role="alert" className="text-sm text-[var(--studio-danger)]">提案を取得できませんでした。{error}</p>}

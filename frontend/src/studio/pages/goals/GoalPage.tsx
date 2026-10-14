@@ -1,3 +1,4 @@
+import { useReloadAction } from '../../components/useReloadAction';
 import { useCallback } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { getLifeEvents } from '../../../api';
@@ -23,14 +24,14 @@ function GoalPageForClient({ goalId }: { goalId?: string }) {
     const currency = currentClient?.general_settings?.currency || 'JPY';
     const identified = currentClient?.id === clientId;
     const leave = () => navigate(returnTo, { replace: true });
+    useReloadAction(resource.reload, false, Boolean(resource.error));
     return <section className="mx-auto max-w-3xl space-y-4">
         <h2 className="text-lg font-semibold">{goalId ? `「${resource.data?.name ?? `ゴール #${goalId}`}」を編集` : '新しいゴール'}</h2>
-        <p className="text-xs text-[var(--studio-text-muted)]">対象：{identified ? currentClient.name : 'クライアントを確認中…'} ／ {currency}</p>
         <Feedback loading={resource.loading} error={resource.error || mutation.error} />
         {resource.loading && <button type="button" onClick={leave} className={buttonClass}>キャンセル</button>}
         {!resource.loading && !resource.error && <GoalEditor goal={resource.data} currency={currency} busy={!identified || mutation.busy} onCancel={leave}
             onSave={(action) => void mutation.run(action, 'ゴールを保存しました。', leave)} />}
-        {resource.error && <div className="flex gap-2"><button type="button" onClick={resource.reload} className={buttonClass}>再読み込み</button><button type="button" onClick={leave} className={buttonClass}>キャンセル</button></div>}
+        {resource.error && <div className="flex gap-2"><button type="button" onClick={leave} className={buttonClass}>キャンセル</button></div>}
     </section>;
 }
 

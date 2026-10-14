@@ -1,3 +1,4 @@
+import { useReloadAction } from '../../components/useReloadAction';
 import { useConfirm } from '../../components/useConfirm';
 import { clientToday, formatDate, useTimezone } from '../../datetime';
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -87,12 +88,9 @@ function RecordResults({ month, currency, onDeleted, onBusy }: {
         }
     };
 
+    useReloadAction(reload, Boolean(loading || busy));
     return (
         <div className="space-y-4">
-            <div className="flex items-center justify-between gap-4">
-                <h2 className="text-lg font-semibold">すべての記録</h2>
-                <button type="button" onClick={reload} disabled={loading || busy} className={buttonClass}>再読み込み</button>
-            </div>
             {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">記録を読み込んでいます…</p>}
             {error && <p role="alert" className="text-sm text-[var(--studio-danger)]">記録を取得できませんでした。{error}</p>}
             {operationError && <p role="alert" className="text-sm text-[var(--studio-danger)]">{operationError}</p>}

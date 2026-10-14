@@ -1,3 +1,4 @@
+import { useReloadAction } from '../../components/useReloadAction';
 import { useCallback, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { getGoalCapsules, getRoadmapProjection, unarchiveGoal } from '../../../api';
@@ -42,6 +43,7 @@ function GoalWorkspaceForClient({ goalId, currency, clientName }: { goalId: stri
         void mutation.run(action, message, () => { setDialog(null); if (deleted) navigate('/goals', { replace: true }); else refresh(); });
     };
     const goal = resource.data?.goal;
+    useReloadAction(refresh, busy || resource.loading || dialog !== null, Boolean(goal || resource.error));
     return <section className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
             <div><Link to={goal?.archived_at ? '/goals?archived=true' : '/goals'} className="text-sm text-[var(--studio-accent)] hover:underline">ゴール一覧へ</Link><h2 className="mt-2 text-lg font-semibold">{goal?.name ?? 'ゴール'}{goal?.archived_at && '（中止・アーカイブ）'}</h2></div>
@@ -49,11 +51,9 @@ function GoalWorkspaceForClient({ goalId, currency, clientName }: { goalId: stri
                 <button type="button" disabled={disabled || dialog !== null} onClick={() => navigate(`/goals/${goal.id}/edit`, { state: { returnTo: `/goals/${goal.id}` } })} className={buttonClass}>編集</button>
                 {goal.archived_at ? <button type="button" disabled={disabled || dialog !== null} onClick={() => run(() => unarchiveGoal(goal.id), 'ゴールを戻しました。停止した規則と戻したお金は、そのままです。')} className={buttonClass}>戻す</button> : <button type="button" disabled={disabled || dialog !== null} onClick={() => setDialog('archive')} className={buttonClass}>中止する</button>}
                 <button type="button" disabled={disabled || dialog !== null} onClick={() => setDialog('delete')} className={`${buttonClass} text-[var(--studio-danger)]`}>削除</button>
-                <button type="button" disabled={busy || resource.loading || dialog !== null} onClick={refresh} className={buttonClass}>再読み込み</button>
             </div>}
         </div>
         <Feedback loading={resource.loading} error={resource.error || mutation.error} message={mutation.message} />
-        {resource.error && <button type="button" onClick={refresh} className={buttonClass}>再読み込み</button>}
         {goal && resource.data && <>
             <section className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
                 <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="font-semibold">目標日までの推移</h3><div role="group" aria-label="試算方法" className="flex gap-2">
@@ -65,7 +65,6 @@ function GoalWorkspaceForClient({ goalId, currency, clientName }: { goalId: stri
             <dl className="grid gap-4 sm:grid-cols-3 lg:grid-cols-5">
                 {[['目標額', formatCurrency(goal.target_amount, currency)], ['現在の確保額', formatCurrency(goal.current_funded, currency)], ['進捗', goalPercent(goal.funded_percentage)], ['目標日', formatDate(goal.target_date)], ['計画の状態', goalPlanStatus(goal)]].map(([label, value]) => <div key={label}><dt className="text-xs text-[var(--studio-text-muted)]">{label}</dt><dd className="mt-2 font-semibold tabular-nums">{value}</dd></div>)}
             </dl>
-            <p className="text-xs text-[var(--studio-text-muted)]">対象：{clientName || 'クライアントを確認中…'} ／ 表示通貨：{currency}。進捗は目標額に対する現在の確保額です。</p>
             <details className="rounded-lg border border-[var(--studio-border)] p-5"><summary className="cursor-pointer font-semibold">マイルストーン</summary><div className="mt-5">
                 <Milestones key={milestoneRevision} goalId={goal.id} currency={currency} disabled={disabled || dialog !== null || Boolean(goal.archived_at)} onBusy={setDetailBusy} onChanged={() => { setScenarioRevision((value) => value + 1); refresh(); }} />
             </div></details>
@@ -78,7 +77,7 @@ function GoalWorkspaceForClient({ goalId, currency, clientName }: { goalId: stri
                 <Scenarios key={scenarioRevision} goal={goal} currency={currency} clientName={clientName} onBusy={setDetailBusy} onAdopted={() => { setMilestoneRevision((value) => value + 1); refresh(); }} />
             </fieldset></details>
             {dialog === 'archive' && clientName && <GoalArchive goal={goal} clientName={clientName} busy={busy} error={mutation.error} onCancel={() => setDialog(null)} onArchive={(action) => run(action, 'ゴールを中止しました。取り置きには選択した処理を適用しました。')} />}
-            {dialog === 'delete' && clientName && <Overlay title={`「${goal.name}」を削除`} onClose={() => { if (!busy) setDialog(null); }}><Feedback error={mutation.error} /><GoalDeletion goal={goal} currency={currency} clientName={clientName} busy={disabled} onCancel={() => setDialog(null)} onDelete={(action) => run(action, 'ゴールを削除しました。', true)} /></Overlay>}
+            {dialog === 'delete' && clientName && <Overlay title={`「${goal.name}」を削除`} onClose={() => { if (!busy) setDialog(null); }}><Feedback error={mutation.error} /><GoalDeletion goal={goal} clientName={clientName} busy={disabled} onDelete={(action) => run(action, 'ゴールを削除しました。', true)} /></Overlay>}
         </>}
     </section>;
 }

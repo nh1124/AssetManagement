@@ -1,6 +1,7 @@
+import { useReloadAction } from '../../components/useReloadAction';
 import { useConfirm } from '../../components/useConfirm';
-import Overlay from '../../components/Overlay';
-import { useCallback, useState, type FormEvent } from 'react';
+import Overlay, { OverlayFooter } from '../../components/Overlay';
+import { useCallback, useId, useState, type FormEvent } from 'react';
 import { applyPeriodReportAction, getPeriodReport, getPeriodReview, getProfitLoss, savePeriodReview } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
 import type { PeriodReview } from '../../../types';
@@ -17,6 +18,7 @@ function ReviewEditor({ initial, clientName, disabled, onBusy, onDirty, onSaved 
     onBusy: (busy: boolean) => void; onDirty: (dirty: boolean) => void;
     onSaved: (review: PeriodReview) => void;
 }) {
+    const formId = useId();
     const [reflection, setReflection] = useState(initial.reflection);
     const [nextActions, setNextActions] = useState(initial.next_actions);
     const [saved, setSaved] = useState(initial);
@@ -38,12 +40,11 @@ function ReviewEditor({ initial, clientName, disabled, onBusy, onDirty, onSaved 
             onSaved(savedReview);
         }).finally(() => onBusy(false));
     };
-    return <form onSubmit={submit} className="space-y-5 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
-        <div><h2 className="text-lg font-semibold">数字を見ながら振り返る</h2><p className="mt-2 text-sm leading-relaxed text-[var(--studio-text-muted)]">うまくいったこと、気になった変化と、次の期間に変えたいことを書き留めます。</p></div>
+    return <form id={formId} onSubmit={submit} className="space-y-5 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
         <fieldset disabled={disabled || mutation.busy || !clientName} className="space-y-5">
             <Field label="振り返り"><textarea rows={9} value={reflection} onChange={(event) => updateReflection(event.target.value)} className={inputClass} placeholder="この期間のお金の使い方や変化で、何が印象に残りましたか？" /></Field>
             <Field label="次の行動"><textarea rows={7} value={nextActions} onChange={(event) => updateNextActions(event.target.value)} className={inputClass} placeholder="続けたいこと、見直したいこと、次に試すこと" /></Field>
-            <div className="flex flex-wrap items-center gap-3"><button type="submit" disabled={!dirty} className={primaryClass}>{mutation.busy ? '保存中…' : '振り返りを保存'}</button><span className="text-xs text-[var(--studio-text-muted)]">{dirty ? '未保存の変更があります' : saved.id === 0 ? 'まだ記入されていません' : '保存済みの内容です'}</span></div>
+            <div className="flex flex-wrap items-center gap-3"><OverlayFooter><button type="submit" form={formId} disabled={disabled || mutation.busy || !clientName || !dirty} className={primaryClass}>{mutation.busy ? '保存中…' : '振り返りを保存'}</button></OverlayFooter><span className="text-xs text-[var(--studio-text-muted)]">{dirty ? '未保存の変更があります' : saved.id === 0 ? 'まだ記入されていません' : '保存済みの内容です'}</span></div>
         </fieldset>
         <Feedback error={mutation.error} message={mutation.message} />
     </form>;
@@ -63,8 +64,8 @@ function PeriodReading({ period, currency, clientName, onBusy, onDirty }: {
     const [editing, setEditing] = useState(false);
     const lock = (value: boolean) => { setBusy(value); onBusy(value); };
     const refreshReport = () => { report.reload(); profitLoss.reload(); };
+    useReloadAction(refreshReport, Boolean(busy || report.loading || profitLoss.loading));
     return <div className="space-y-4">
-        <p className="text-xs text-[var(--studio-text-muted)]">対象：{clientName || 'クライアントを確認中…'} ／ {startDate} 〜 {endDate} ／ 表示通貨：{currency}</p>
         <div className="grid items-start gap-6 xl:grid-cols-2">
             <section className="min-w-0 space-y-3">
                 <Feedback loading={review.loading} error={review.error} />
@@ -72,7 +73,6 @@ function PeriodReading({ period, currency, clientName, onBusy, onDirty }: {
                 {review.data && <>
                     <div className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
                         <h2 className="text-lg font-semibold">数字を見ながら振り返る</h2>
-                        <p className="text-sm leading-relaxed text-[var(--studio-text-muted)]">うまくいったこと、気になった変化と、次の期間に変えたいことを書き留めます。</p>
                         <dl className="space-y-4 text-sm"><div><dt className="text-[var(--studio-text-muted)]">振り返り</dt><dd className="mt-2 whitespace-pre-wrap">{review.data.reflection || 'まだ記入されていません'}</dd></div><div><dt className="text-[var(--studio-text-muted)]">次の行動</dt><dd className="mt-2 whitespace-pre-wrap">{review.data.next_actions || 'まだ記入されていません'}</dd></div></dl>
                         <button type="button" disabled={busy || review.loading || Boolean(review.error) || !clientName} onClick={() => setEditing(true)} className={buttonClass}>振り返りを編集</button>
                     </div>
@@ -82,7 +82,7 @@ function PeriodReading({ period, currency, clientName, onBusy, onDirty }: {
                 </>}
             </section>
             <section className="min-w-0 space-y-6">
-                <div className="flex items-center justify-between gap-3"><h2 className="text-lg font-semibold">この期間の全体像</h2><button type="button" disabled={busy || report.loading || profitLoss.loading} onClick={refreshReport} className={buttonClass}>数字を再読み込み</button></div>
+                <div className="flex items-center justify-between gap-3"><h2 className="text-lg font-semibold">この期間の全体像</h2></div>
                 <Feedback loading={report.loading} error={report.error} />
                 <Feedback loading={profitLoss.loading} error={profitLoss.error} />
                 {report.data && <>

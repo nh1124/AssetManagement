@@ -1,3 +1,4 @@
+import { useReloadAction } from '../../components/useReloadAction';
 import Overlay from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
 import { clientToday, useTimezone } from '../../datetime';
@@ -60,13 +61,12 @@ function MonthlyActions({ sourcePeriod, currency, clientName }: { sourcePeriod: 
         let rows: MonthlyAction[] = [];
         void mutation.run(async () => { rows = (await processDueMonthlyActions()).processed; }, '期限が到来した行動の処理が完了しました。', () => { setProcessed(rows); resource.reload(); });
     };
+    useReloadAction(resource.reload, Boolean(mutation.busy || resource.loading || adding));
     return <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-            <div><h2 className="text-lg font-semibold">行動</h2><p className="mt-1 text-xs text-[var(--studio-text-muted)]">{sourcePeriod}に記録した行動 ／ 対象：{clientName || 'クライアントを確認中…'}</p></div>
             <div className="flex flex-wrap gap-2">
                 <button type="button" disabled={disabled || adding} onClick={() => setAdding(true)} className={buttonClass}>行動を追加</button>
                 <button type="button" disabled={disabled || adding} onClick={processDue} className={buttonClass}>期限が到来した行動を処理</button>
-                <button type="button" disabled={mutation.busy || resource.loading || adding} onClick={resource.reload} className={buttonClass}>再読み込み</button>
             </div>
         </div>
         <Feedback loading={resource.loading} error={resource.error} />

@@ -1,10 +1,10 @@
+import { useReloadAction } from '../../components/useReloadAction';
 import { useCallback } from 'react';
 import { getAccountEarmarks } from '../../../api';
 import type { CapsuleFundingSource } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import { useResource } from '../../useResource';
 import { Feedback } from '../db/Database';
-import { buttonClass } from '../db/forms';
 import { shareLabel } from './accountEarmarkFunding';
 
 export default function EarmarkAccounts({ capsuleId, sources }: { capsuleId: number; sources: CapsuleFundingSource[] }) {
@@ -13,10 +13,10 @@ export default function EarmarkAccounts({ capsuleId, sources }: { capsuleId: num
         return { source, earmark: earmarks.find((earmark) => earmark.capsule_id === capsuleId) };
     })), [capsuleId, sources]);
     const claims = useResource(load);
+    useReloadAction(claims.reload, false, Boolean(claims.error));
     return <div className="space-y-3">
         <p className="text-xs text-[var(--studio-text-muted)]">取り置きの紐づけは「資産 &gt; 口座」から行います。</p>
         <Feedback loading={claims.loading} error={claims.error} />
-        {claims.error && <button type="button" onClick={claims.reload} className={buttonClass}>確保額を再読み込み</button>}
         {sources.length ? <table className="w-full text-left text-xs">
             <caption className="sr-only">取り置きの紐づいている口座と確保額</caption>
             <thead className="text-[var(--studio-text-muted)]"><tr><th scope="col" className="pb-2 font-medium">口座</th><th scope="col" className="pb-2 text-right font-medium">確保額</th><th scope="col" className="pb-2 text-right font-medium">上限</th></tr></thead>

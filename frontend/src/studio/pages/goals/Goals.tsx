@@ -1,3 +1,4 @@
+import { useReloadAction } from '../../components/useReloadAction';
 import { useCallback } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { getLifeEventsWithProgress } from '../../../api';
@@ -15,9 +16,9 @@ function GoalsForClient({ currency, clientName }: { currency: string; clientName
     const includeArchived = search.get('archived') === 'true';
     const load = useCallback(() => getLifeEventsWithProgress(includeArchived), [includeArchived]);
     const resource = useResource(load);
+    useReloadAction(resource.reload, false, Boolean(resource.error));
     return <section className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
-            <div><h2 className="text-lg font-semibold">ゴール</h2><p className="mt-1 text-xs text-[var(--studio-text-muted)]">対象：{clientName || 'クライアントを確認中…'} ／ 表示通貨：{currency}。ゴールを選ぶと将来の推移と計画を確認できます。</p></div>
             <button type="button" disabled={!clientName} onClick={() => navigate('/goals/new', { state: { returnTo: `/goals${includeArchived ? '?archived=true' : ''}` } })} className={buttonClass}>新しいゴール</button>
         </div>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={includeArchived} onChange={(event) => {
@@ -26,7 +27,6 @@ function GoalsForClient({ currency, clientName }: { currency: string; clientName
             setSearch(next, { replace: true });
         }} />アーカイブを表示</label>
         <Feedback loading={resource.loading} error={resource.error} />
-        {resource.error && <button type="button" onClick={resource.reload} className={buttonClass}>再読み込み</button>}
         {resource.data && <DataTable columns={['名称', '目標額', '目標日', '現在の確保額', '進捗', '計画の状態']}>
             {resource.data.length ? resource.data.map((goal) => <tr key={goal.id} className="cursor-pointer hover:bg-[var(--studio-accent-soft)]" onClick={() => navigate(`/goals/${goal.id}`)}>
                 <th scope="row" className="px-5 py-3 font-medium"><Link to={`/goals/${goal.id}`} onClick={(event) => event.stopPropagation()} className="rounded text-[var(--studio-accent)] hover:underline focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)]">{goal.name}</Link></th>

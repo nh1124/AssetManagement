@@ -1,5 +1,6 @@
+import { OverlayFooter } from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
-import { useState, type FormEvent } from 'react';
+import { useId, useState, type FormEvent } from 'react';
 import { compareStatement, postReconciliationAdjustment } from '../../../api/reconciliation';
 import { getCapsules } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
@@ -13,6 +14,7 @@ import { buttonClass, inputClass, primaryClass, useMutation, type DatabaseAccoun
 function ReconciliationForClient({ accounts, disabled, onPosted }: {
     accounts: DatabaseAccount[]; disabled: boolean; onPosted: () => void;
 }) {
+    const formId = useId();
     const confirm = useConfirm();
     const { clientId, currentClient } = useClient();
     const timezone = useTimezone();
@@ -61,8 +63,8 @@ function ReconciliationForClient({ accounts, disabled, onPosted }: {
         });
     };
     const factor = comparison && ['JPY', 'KRW'].includes(comparison.currency) ? 1 : 100;
-    return <section className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
-        <div><h3 className="text-base font-semibold">残高照合</h3><p className="mt-1 text-xs text-[var(--studio-text-muted)]">対象：{identified ? currentClient.name : 'クライアントを確認中…'}。指定した通貨の実残高を、その日までの仕訳と照合します。他の通貨は合算しません。</p></div>
+    return <section className="space-y-4">
+        <p className="text-xs text-[var(--studio-text-muted)]">他の通貨は合算しません。</p>
         <form onSubmit={compare} className="space-y-3">
             <fieldset disabled={locked} className="grid gap-3 md:grid-cols-2">
                 <Choice label="照合する口座" value={accountId} options={accounts} required onChange={(id) => { setAccountId(id); setCounterId(null); setCapsuleId(null); invalidate(); }} />
@@ -84,13 +86,13 @@ function ReconciliationForClient({ accounts, disabled, onPosted }: {
             <DataTable columns={['取り置き', `確保額（${comparison.currency}）`]}>
                 {comparison.capsule_claims.length ? comparison.capsule_claims.map((row) => <tr key={row.capsule_id}><th scope="row" className="px-5 py-3 font-normal">{row.capsule_name}</th><td className="px-5 py-3 tabular-nums">{formatCurrency(row.claimed_minor / factor, comparison.currency)}</td></tr>) : <tr><td colSpan={2} className="px-5 py-3 text-[var(--studio-text-muted)]">この口座・通貨の取り置きはありません。</td></tr>}
             </DataTable>
-            {comparison.difference_minor === 0 ? <p role="status" className="text-sm text-[var(--studio-positive)]">差額はありません。調整は不要です。</p> : <form onSubmit={post} className="space-y-3">
+            {comparison.difference_minor === 0 ? <p role="status" className="text-sm text-[var(--studio-positive)]">差額はありません。調整は不要です。</p> : <form id={formId} onSubmit={post} className="space-y-3">
                 <fieldset disabled={locked} className="grid gap-3 md:grid-cols-2">
                     <Choice label="相手科目" value={counterId} options={accounts.filter((row) => row.id !== comparison.account.id)} required onChange={setCounterId} />
                     <div><fieldset disabled={capsules.loading || Boolean(capsules.error)}><Choice label="調整を帰属させる取り置き（任意）" value={capsuleId} options={capsules.data ?? []} onChange={setCapsuleId} /></fieldset></div>
                     <p className="text-xs text-[var(--studio-warning)] md:col-span-2">取り置きを指定すると、照合する口座の確保額も差額だけ変わります。指定しなければ、取り置きの確保額は変わりません。</p>
                     <Field label="メモ（任意）"><input value={note} onChange={(event) => setNote(event.target.value)} className={inputClass} /></Field>
-                    <button type="submit" disabled={counterId === null || counterId === comparison.account.id} className={primaryClass}>{mutation.busy ? '記帳中…' : '調整を記帳'}</button>
+                    <OverlayFooter><button type="submit" form={formId} disabled={locked || counterId === null || counterId === comparison.account.id} className={primaryClass}>{mutation.busy ? '記帳中…' : '調整を記帳'}</button></OverlayFooter>
                 </fieldset>
                 <Feedback loading={capsules.loading} error={capsules.error} />
                 {capsules.error && <button type="button" disabled={mutation.busy} onClick={capsules.reload} className={buttonClass}>取り置きを再取得</button>}

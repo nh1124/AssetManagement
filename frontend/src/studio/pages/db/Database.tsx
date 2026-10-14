@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { OverlayFooter } from '../../components/Overlay';
 import { buttonClass, inputClass, primaryClass } from './forms';
 
 export function Feedback({ loading, error, message }: { loading?: boolean; error?: string; message?: string }) {
@@ -28,11 +29,12 @@ export function Choice({ label, value, options, onChange, required = false }: {
     </Field>;
 }
 
-export function EditorActions({ busy, onCancel }: { busy: boolean; onCancel: () => void }) {
-    return <div className="flex gap-2 md:col-span-2">
-        <button type="submit" disabled={busy} className={primaryClass}>{busy ? '保存中…' : '保存'}</button>
+export function EditorActions({ busy, form, onCancel }: { busy: boolean; form: string; onCancel: () => void }) {
+    const save = <button type="submit" form={form} disabled={busy} className={primaryClass}>{busy ? '保存中…' : '保存'}</button>;
+    return <OverlayFooter fallback={<div className="flex justify-end gap-2 md:col-span-2">
+        {save}
         <button type="button" disabled={busy} onClick={onCancel} className={buttonClass}>キャンセル</button>
-    </div>;
+    </div>}>{save}</OverlayFooter>;
 }
 
 export function DataTable({ columns, children }: { columns: string[]; children: ReactNode }) {

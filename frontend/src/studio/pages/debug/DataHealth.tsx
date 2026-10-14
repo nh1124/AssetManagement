@@ -90,10 +90,8 @@ function HealthForClient({ clientId, clientName, currency }: { clientId: number;
         <section className="space-y-4">
             <div className="rounded-lg border border-[var(--studio-warning)] bg-[var(--studio-surface)] p-4 text-sm text-[var(--studio-warning)]">
                 <p className="font-semibold">UI再構築のデバッグ用画面です。リリース前に削除してください。</p>
-                <p className="mt-1">データ健全性は通知と、問題のある入力箇所での修復案内に統合します。</p>
             </div>
             <div className="flex flex-wrap items-center justify-between gap-3">
-                <div><h2 className="text-lg font-semibold">データ健全性</h2><p className="mt-1 text-xs text-[var(--studio-text-muted)]">対象：{clientName ?? 'クライアントを確認中…'}（#{clientId}）</p></div>
                 <div className="flex gap-2"><button type="button" onClick={reload} disabled={loading || repairing} className={buttonClass}>再検査</button><button type="button" onClick={() => void repair()} disabled={loading || repairing || Boolean(error) || !repairable || !clientName} className={buttonClass}>{repairing ? '修復中…' : '修復する'}</button></div>
             </div>
             {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">データ健全性を検査しています…</p>}

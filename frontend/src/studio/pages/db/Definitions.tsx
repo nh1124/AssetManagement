@@ -1,6 +1,7 @@
+import { useReloadAction } from '../../components/useReloadAction';
 import Overlay from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
-import { useState, type FormEvent } from 'react';
+import { useId, useState, type FormEvent } from 'react';
 import { createRegistryEntry, deleteRegistryEntry, getRegistryEntries, updateRegistryEntry } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
 import type { MonthlyPlanLineType, RegistryEntry, RegistryEntryType, RegistryFrequency } from '../../../types';
@@ -62,6 +63,7 @@ function DefinitionEditor({ entry, type, currency, lookups, busy, onSave, onCanc
     entry: RegistryEntry | null; type: RegistryEntryType; currency: string; lookups: Lookups; busy: boolean;
     onSave: (action: () => Promise<unknown>) => void; onCancel: () => void;
 }) {
+    const formId = useId();
     const [form, setForm] = useState(() => toDraft(entry, currency, type));
     const set = <K extends keyof Draft>(key: K, value: Draft[K]) => setForm((previous) => ({ ...previous, [key]: value }));
     const scheduled = form.frequency === 'Monthly' || form.frequency === 'Yearly';
@@ -79,7 +81,7 @@ function DefinitionEditor({ entry, type, currency, lookups, busy, onSave, onCanc
             return entry ? updateRegistryEntry(entry.id, payload) : createRegistryEntry(payload);
         });
     };
-    return <form onSubmit={submit} className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
+    return <form id={formId} onSubmit={submit} className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
         <fieldset disabled={busy} className="grid gap-4 md:grid-cols-2">
             <Field label="名称"><input required value={form.name} onChange={(event) => set('name', event.target.value)} className={inputClass} /></Field>
             <Field label="定義の種別"><select value={form.entry_type} onChange={(event) => { const next = event.target.value as RegistryEntryType; setForm((previous) => ({ ...previous, entry_type: next, line_type: DEFAULT_LINES[next] })); }} className={inputClass}>{Object.entries(TYPES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
@@ -107,7 +109,7 @@ function DefinitionEditor({ entry, type, currency, lookups, busy, onSave, onCanc
                 <Field label="終了月"><input type="month" min={form.start_period || undefined} value={form.end_period ?? ''} onChange={(event) => set('end_period', event.target.value || null)} className={inputClass} /></Field>
                 <Field label="メモ"><textarea value={form.note ?? ''} onChange={(event) => set('note', event.target.value)} className={inputClass} /></Field>
             </div></details>
-            <EditorActions busy={busy} onCancel={onCancel} />
+            <EditorActions form={formId} busy={busy} onCancel={onCancel} />
         </fieldset>
     </form>;
 }
@@ -126,8 +128,9 @@ function DefinitionsForClient({ tab, currency }: { tab: Tab; currency: string })
         void mutation.run(() => deleteRegistryEntry(entry.id), `「${entry.name}」の削除処理が完了しました。`, resource.reload);
     };
     const accountName = (id: number | null | undefined, name?: string | null) => name || (id == null ? '—' : lookups.data?.accounts.find((row) => row.id === id)?.name ?? `#${id}`);
+    useReloadAction(() => { resource.reload(); lookups.reload(); }, Boolean(resource.loading || lookups.loading || mutation.busy || editor !== null));
     return <section className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold">{TYPES[TAB_TYPES[tab]]}</h2><p className="mt-1 text-xs text-[var(--studio-text-muted)]">定義をもとに予算と自動記帳を作成します。{tab === 'index' && '固定資産・消耗品の定義も含みます。'}</p></div><div className="flex gap-2"><button type="button" disabled={editorDisabled || editor !== null} onClick={() => setEditor({ entry: null })} className={buttonClass}>新規作成</button><button type="button" disabled={resource.loading || lookups.loading || mutation.busy || editor !== null} onClick={() => { resource.reload(); lookups.reload(); }} className={buttonClass}>再読み込み</button></div></div>
+        <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex gap-2"><button type="button" disabled={editorDisabled || editor !== null} onClick={() => setEditor({ entry: null })} className={buttonClass}>新規作成</button></div></div>
         <Feedback loading={resource.loading || lookups.loading} error={mutation.error || resource.error || lookups.error} message={mutation.message} />
         {editor && lookups.data && <Overlay title={editor.entry ? `${editor.entry.name}を編集` : '定義の新規作成'} onClose={() => setEditor(null)}><Feedback error={mutation.error} /><DefinitionEditor key={editor.entry?.id ?? 'new'} entry={editor.entry} type={TAB_TYPES[tab]} currency={currency} lookups={lookups.data} busy={editorDisabled} onCancel={() => setEditor(null)} onSave={(action) => void mutation.run(action, '定義を保存しました。', () => { setEditor(null); resource.reload(); })} /></Overlay>}
         {resource.data && <DataTable columns={['名称', '周期・予定日', '金額', '口座', '予算に反映するか', '操作']}>

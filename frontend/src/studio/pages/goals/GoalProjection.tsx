@@ -23,7 +23,7 @@ export default function GoalProjection({ goal, roadmap, currency, monteCarlo }: 
     const rows = projectionRows(goal, milestones, roadmap.params.reference_date || clientToday(timezone), resource.data);
     const axisStyle = { fill: 'var(--studio-text-muted)', fontSize: 11 };
     return <div className="space-y-3">
-        <p className="text-xs text-[var(--studio-text-muted)]">年利 {annual_return}% ／ インフレ {inflation}% ／ 全ゴールの月額積立 {formatCurrency(monthly_savings ?? 50000, currency)}（{currency}）を優先度で配分。通常試算は一定利回り、モンテカルロはインフレを差し引いた利回りの分布です。</p>
+        <p className="text-xs text-[var(--studio-text-muted)]">年利 {annual_return}% ／ インフレ {inflation}% ／ 全ゴールの月額積立 {formatCurrency(monthly_savings ?? 50000, currency)}（{currency}）</p>
         <Feedback loading={resource.loading} error={resource.error} />
         {resource.error && <button type="button" onClick={resource.reload} className={buttonClass}>再試算</button>}
         {!resource.loading && !resource.error && <>

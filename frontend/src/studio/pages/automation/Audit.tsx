@@ -1,3 +1,4 @@
+import { useReloadAction } from '../../components/useReloadAction';
 import { formatDateTime, useTimezone } from '../../datetime';
 import { useRef, useState } from 'react';
 import { getAiAuditLogs } from '../../../api';
@@ -37,9 +38,9 @@ function AuditForClient() {
         }
     };
 
+    useReloadAction(() => { setOperationError(''); reload(); }, Boolean(loading || loadingMore));
     return (
         <section className="space-y-4">
-            <div className="flex items-center justify-between gap-3"><h2 className="text-lg font-semibold">監査ログ</h2><button type="button" onClick={() => { setOperationError(''); reload(); }} disabled={loading || loadingMore} className={buttonClass}>再読み込み</button></div>
             {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">監査ログを読み込んでいます…</p>}
             {error && <p role="alert" className="text-sm text-[var(--studio-danger)]">監査ログを取得できませんでした。{error}</p>}
             {operationError && <p role="alert" className="text-sm text-[var(--studio-danger)]">{operationError}</p>}

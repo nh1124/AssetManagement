@@ -1,3 +1,4 @@
+import { useReloadAction } from '../../components/useReloadAction';
 import { useCallback } from 'react';
 import { clientToday, formatDate, useTimezone } from '../../datetime';
 import { getBalanceSheet } from '../../../api';
@@ -39,6 +40,7 @@ export default function Overview() {
     const loadBalanceSheet = useCallback((): Promise<BalanceSheet> => getBalanceSheet(undefined, undefined, asOf), [asOf]);
     const { data: sheet, loading, error, reload } = useAssetData(loadBalanceSheet);
 
+    useReloadAction(reload, Boolean(loading));
     return (
         <section className="space-y-4">
             <div className="flex items-center justify-between gap-4">
@@ -46,7 +48,6 @@ export default function Overview() {
                     <h2 className="text-lg font-semibold">貸借対照表</h2>
                     {sheet && <p className="mt-1 text-xs text-[var(--studio-text-muted)]">基準日：<time dateTime={sheet.as_of_date}>{formatDate(sheet.as_of_date, timezone)}</time></p>}
                 </div>
-                <button type="button" onClick={reload} disabled={loading} className="rounded-md border border-[var(--studio-border)] px-3 py-1.5 text-xs text-[var(--studio-text-muted)] hover:bg-[var(--studio-accent-soft)] disabled:opacity-40">再読み込み</button>
             </div>
             {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">貸借対照表を読み込んでいます…</p>}
             {error && <p role="alert" className="text-sm text-[var(--studio-danger)]">貸借対照表を取得できませんでした。{error}</p>}

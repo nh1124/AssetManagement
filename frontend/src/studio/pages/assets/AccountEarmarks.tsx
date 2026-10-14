@@ -1,3 +1,4 @@
+import { useReloadAction } from '../../components/useReloadAction';
 import { useCallback, useState, type FormEvent } from 'react';
 import { getAccountEarmarks } from '../../../api';
 import type { Capsule } from '../../../types';
@@ -50,6 +51,7 @@ function AttachmentChoice({ capsule, accountId, accountName, onSaved }: {
         }, '紐づけを保存しました。', () => setSaved({ attached, share }));
     };
 
+    // Each attachment is saved independently; a shared footer would imply a batch write.
     return <form onSubmit={(event) => void submit(event)} className="space-y-2 rounded-md border border-[var(--studio-border)] p-3">
         <fieldset disabled={mutation.busy || confirming} className="flex flex-wrap items-end gap-3">
             <label className="flex min-w-40 flex-1 items-center gap-2 py-2 text-sm">
@@ -57,7 +59,7 @@ function AttachmentChoice({ capsule, accountId, accountName, onSaved }: {
                 {capsule.name}
             </label>
             <div className="w-40"><Field label="上限（％・任意）"><input type="number" min="0" max="100" step="0.01" disabled={!attached} value={share} placeholder="上限なし" aria-label={`${capsule.name}の上限（％）`} onChange={(event) => { setShare(event.target.value); setValidation(''); }} className={inputClass} /></Field></div>
-            <button type="submit" disabled={!changed} className={primaryClass}>{mutation.busy ? '保存中…' : '保存'}</button>
+            <button type="submit" disabled={mutation.busy || confirming || !changed} aria-label={`${capsule.name}の紐づけを保存`} className={primaryClass}>{mutation.busy ? '保存中…' : '保存'}</button>
         </fieldset>
         <Feedback error={validation || mutation.error} message={mutation.message} />
     </form>;
@@ -65,10 +67,10 @@ function AttachmentChoice({ capsule, accountId, accountName, onSaved }: {
 
 function AttachmentEditor({ accountId, accountName, onSaved }: { accountId: number; accountName: string; onSaved: () => void }) {
     const capsules = useResource(loadAllCapsules);
+    useReloadAction(capsules.reload, false, Boolean(capsules.error));
     return <div className="space-y-4">
-        <p className="text-xs text-[var(--studio-text-muted)]">取り置きごとに紐づけと上限を保存します。上限の空欄は上限なし、0％は利用不可です。同じ口座の上限の合計が100％を超えると保存できません。</p>
+        <p className="text-xs text-[var(--studio-text-muted)]">上限の空欄は上限なし、0％は利用不可です。同じ口座の上限の合計が100％を超えると保存できません。</p>
         <Feedback loading={capsules.loading} error={capsules.error} />
-        {capsules.error && <button type="button" onClick={capsules.reload} className={buttonClass}>再読み込み</button>}
         {!capsules.loading && !capsules.error && capsules.data?.map((capsule) => <AttachmentChoice key={capsule.id} capsule={capsule} accountId={accountId} accountName={accountName} onSaved={onSaved} />)}
         {capsules.data?.length === 0 && <p className="text-sm text-[var(--studio-text-muted)]">取り置きはありません。取り置き画面から作成できます。</p>}
     </div>;
@@ -90,9 +92,9 @@ export default function AccountEarmarks({ accountId, accountName, disabled }: { 
         if (!accepted) return;
         await mutation.run(() => saveAttachment(capsuleId, accountId, undefined), '取り置きの紐づけを解除しました。', earmarks.reload);
     };
+    useReloadAction(earmarks.reload, Boolean(busy), Boolean(earmarks.error));
     return <div className="space-y-3">
         <Feedback loading={earmarks.loading} error={earmarks.error || mutation.error} message={mutation.message} />
-        {earmarks.error && <button type="button" disabled={busy} onClick={earmarks.reload} className={buttonClass}>再読み込み</button>}
         {earmarks.data && <table className="w-full text-left text-xs">
             <caption className="sr-only">{accountName}の取り置き</caption>
             <thead className="text-[var(--studio-text-muted)]"><tr><th scope="col" className="pb-2 font-medium">取り置き</th><th scope="col" className="pb-2 text-right font-medium">確保額</th><th scope="col" className="pb-2 text-right font-medium">上限</th><th scope="col" className="pb-2 text-right font-medium">操作</th></tr></thead>

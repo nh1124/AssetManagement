@@ -174,7 +174,7 @@ function SettingsForClient() {
         });
     };
     return <section className="space-y-6">
-        <div><h2 className="text-lg font-semibold">{t('settings.title')}</h2><p className="mt-1 text-xs text-[var(--studio-text-muted)]">{identified ? t('settings.client', { name: currentClient.name, id: clientId }) : t('settings.identifying')}</p></div>
+        <div><p className="mt-1 text-xs text-[var(--studio-text-muted)]">{identified ? t('settings.client', { name: currentClient.name, id: clientId }) : t('settings.identifying')}</p></div>
         {mutation.error && <p role="alert" className="text-sm text-[var(--studio-danger)]">{t(mutation.error)}</p>}
         {mutation.message && <p role="status" className="text-sm text-[var(--studio-positive)]">{t(mutation.message)}</p>}
         <details open className={sectionClass}>

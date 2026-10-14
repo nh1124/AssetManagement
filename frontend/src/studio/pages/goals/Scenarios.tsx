@@ -1,3 +1,4 @@
+import { useReloadAction } from '../../components/useReloadAction';
 import { useConfirm } from '../../components/useConfirm';
 import { useCallback, useRef, useState } from 'react';
 import { applyMilestonesFromSimulation, compareSimulationScenarios, getSimulationScenarios, previewMilestonesFromSimulation } from '../../../api';
@@ -42,7 +43,6 @@ function Comparison({ items, currency }: { items: SimulationScenarioCompareItem[
     const years = [...new Set(items.flatMap((item) => item.deterministic_yearly.map((row) => row.year)))].sort((a, b) => a - b);
     return <section className="space-y-3">
         <h4 className="text-sm font-semibold">２案の比較（{currency}）</h4>
-        <p className="text-xs text-[var(--studio-text-muted)]">現在の確保額と保存案の前提で再計算した結果です。</p>
         <DataTable columns={['比較項目', ...items.map((item) => item.scenario_name)]}>
             {metrics.map((metric) => <tr key={metric.label}><th scope="row" className="px-5 py-3 font-medium">{metric.label}</th>{items.map((item) => <td key={item.scenario_id} className="whitespace-nowrap px-5 py-3 tabular-nums">{metric.value(item)}</td>)}</tr>)}
         </DataTable>
@@ -109,9 +109,9 @@ export default function Scenarios({ goal, currency, clientName, onAdopted, onBus
             onAdopted();
         });
     };
+    useReloadAction(() => { setPreview(null); setComparison(null); setSelected([]); resource.reload(); }, Boolean(resource.loading || mutation.busy));
     return <section className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="text-base font-semibold">保存した計画案</h3>
-            <button type="button" disabled={resource.loading || mutation.busy} onClick={() => { setPreview(null); setComparison(null); setSelected([]); resource.reload(); }} className={buttonClass}>計画案を再読み込み</button>
         </div>
         <Feedback loading={resource.loading} error={resource.error} />
         <Feedback error={mutation.error} message={mutation.message} />

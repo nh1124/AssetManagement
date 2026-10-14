@@ -1,9 +1,10 @@
-import { useState, type FormEvent } from 'react';
+import { useReloadAction } from '../../components/useReloadAction';
+import { useId, useState, type FormEvent } from 'react';
 import { getCapsules, getLifeEvents, getRecurringTransactions } from '../../../api';
 import type { LifeEvent, ReviewActionCreate, ReviewActionKind } from '../../../types';
 import { useResource } from '../../useResource';
 import { Choice, EditorActions, Feedback, Field } from '../db/Database';
-import { buttonClass, inputClass, loadAccounts } from '../db/forms';
+import { inputClass, loadAccounts } from '../db/forms';
 
 const KINDS: Record<ReviewActionKind, string> = {
     set_budget: '支出予算を設定', add_recurring: '定常収支を追加', pause_recurring: '定常収支を停止',
@@ -23,6 +24,7 @@ export default function ActionEditor({ sourcePeriod, currency, busy, onSave, onC
     sourcePeriod: string; currency: string; busy: boolean;
     onSave: (payload: ReviewActionCreate) => void; onCancel: () => void;
 }) {
+    const formId = useId();
     const lookups = useResource(loadActionLookups);
     const [kind, setKind] = useState<ReviewActionKind>('set_budget');
     const [description, setDescription] = useState('');
@@ -69,10 +71,10 @@ export default function ActionEditor({ sourcePeriod, currency, busy, onSave, onC
         }
         onSave({ source_period: sourcePeriod, target_period: targetPeriod, kind, description: description.trim(), payload });
     };
-    return <form onSubmit={submit} className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
+    useReloadAction(lookups.reload, Boolean(busy || lookups.loading), Boolean(lookups.error));
+    return <form id={formId} onSubmit={submit} className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
         <p className="text-xs text-[var(--studio-text-muted)]">行動を未実行として記録します。実行するか、予定月になって期限到来の処理をすると反映されます。</p>
         <Feedback loading={lookups.loading} error={lookups.error} />
-        {lookups.error && <button type="button" disabled={busy || lookups.loading} onClick={lookups.reload} className={buttonClass}>選択肢を再読み込み</button>}
         <fieldset disabled={disabled} className="grid gap-4 md:grid-cols-2">
             <Field label="行動"><input required value={description} onChange={(event) => setDescription(event.target.value)} className={inputClass} /></Field>
             <Field label="種類"><select value={kind} onChange={(event) => { setKind(event.target.value as ReviewActionKind); setAccountId(null); setDestinationId(null); setReferenceId(null); setAmount(''); }} className={inputClass}>{Object.entries(KINDS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
@@ -98,8 +100,7 @@ export default function ActionEditor({ sourcePeriod, currency, busy, onSave, onC
             {kind !== 'pause_recurring' && <Field label={kind === 'boost_allocation' ? '確保額の変更割合（%）' : `金額（${kind === 'add_recurring' ? entryCurrency : currency}）`}>
                 <input required type="number" min={kind === 'boost_allocation' ? '-100' : kind === 'add_recurring' ? '0.01' : '0'} max={kind === 'boost_allocation' ? '100' : undefined} step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} className={inputClass} />
             </Field>}
-            <EditorActions busy={disabled} onCancel={onCancel} />
+            <EditorActions form={formId} busy={disabled} onCancel={onCancel} />
         </fieldset>
-        {disabled && !busy && <button type="button" onClick={onCancel} className={buttonClass}>キャンセル</button>}
     </form>;
 }

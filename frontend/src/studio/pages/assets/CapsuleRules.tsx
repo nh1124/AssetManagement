@@ -1,6 +1,7 @@
+import { useReloadAction } from '../../components/useReloadAction';
 import Overlay from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
-import { useState, type FormEvent } from 'react';
+import { useId, useState, type FormEvent } from 'react';
 import { createCapsuleRule, deleteCapsuleRule, getCapsuleRules } from '../../../api';
 import type { Capsule, CapsuleRule, CapsuleTriggerKind } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
@@ -16,6 +17,7 @@ function RuleEditor({ capsule, currency, accounts, busy, onSave, onCancel }: {
     capsule: Capsule; currency: string; accounts: Array<{ id: number; name: string; is_active?: boolean }>;
     busy: boolean; onSave: (payload: RuleInput) => void; onCancel: () => void;
 }) {
+    const formId = useId();
     const [trigger, setTrigger] = useState<CapsuleTriggerKind>('Income');
     const [category, setCategory] = useState('');
     const [description, setDescription] = useState('');
@@ -31,7 +33,7 @@ function RuleEditor({ capsule, currency, accounts, busy, onSave, onCancel }: {
         if (busy || (sourceMode === 'fixed_account' && source === null)) return;
         onSave({ capsule_id: capsule.id, trigger_type: trigger, trigger_category: category.trim() || null, trigger_description: description.trim() || null, source_mode: sourceMode, source_account_id: sourceMode === 'fixed_account' ? source : null, destination_account_id: destination, amount_type: amountType, amount_value: Number(amount), is_active: active });
     };
-    return <form onSubmit={submit} className="rounded-lg border border-[var(--studio-border)] p-5">
+    return <form id={formId} onSubmit={submit} className="rounded-lg border border-[var(--studio-border)] p-5">
         <fieldset disabled={busy} className="grid gap-4 md:grid-cols-2">
             <Field label="発火する取引"><select value={trigger} onChange={(event) => setTrigger(event.target.value as CapsuleTriggerKind)} className={inputClass}>{Object.entries(TRIGGERS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
             <Field label="分類の条件（任意）"><input value={category} onChange={(event) => setCategory(event.target.value)} className={inputClass} /></Field>
@@ -42,7 +44,7 @@ function RuleEditor({ capsule, currency, accounts, busy, onSave, onCancel }: {
             <Field label="金額の指定"><select value={amountType} onChange={(event) => setAmountType(event.target.value as CapsuleRule['amount_type'])} className={inputClass}><option value="fixed">固定額</option><option value="percentage">取引額の割合</option></select></Field>
             <Field label={amountType === 'fixed' ? `金額（${currency}）` : '割合（%）'}><input required type="number" min="0" step="any" value={amount} onChange={(event) => setAmount(event.target.value)} className={inputClass} /></Field>
             <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={active} onChange={(event) => setActive(event.target.checked)} />有効</label>
-            <EditorActions busy={busy} onCancel={onCancel} />
+            <EditorActions form={formId} busy={busy} onCancel={onCancel} />
         </fieldset>
     </form>;
 }
@@ -62,8 +64,9 @@ export default function CapsuleRules({ capsule, currency, disabled, onBusy }: { 
     };
     const rows = rules.data?.filter((row) => row.capsule_id === capsule.id);
     const name = (id: number | null | undefined, fallback?: string | null) => accounts.data?.find((row) => row.id === id)?.name || fallback || (id == null ? '未設定' : `口座 #${id}`);
+    useReloadAction(() => { rules.reload(); accounts.reload(); }, Boolean(disabled || mutation.busy || rules.loading));
     return <section className="mt-6 space-y-3 border-t border-[var(--studio-border)] pt-5">
-        <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="text-sm font-semibold">取り置きの規則</h3><div className="flex gap-2"><button type="button" disabled={locked || editing} onClick={() => setEditing(true)} className={buttonClass}>新しい規則</button><button type="button" disabled={disabled || mutation.busy || rules.loading} onClick={() => { rules.reload(); accounts.reload(); }} className={buttonClass}>再読み込み</button></div></div>
+        <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex gap-2"><button type="button" disabled={locked || editing} onClick={() => setEditing(true)} className={buttonClass}>新しい規則</button></div></div>
         <p className="text-xs text-[var(--studio-text-muted)]">入金先を未設定にすると、資金計画の口座へ配分します。資金計画がない場合は先に設定してください。</p>
         <Feedback loading={rules.loading || accounts.loading} error={rules.error || accounts.error} />
         <Feedback error={mutation.error} message={mutation.message} />

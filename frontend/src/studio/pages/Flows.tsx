@@ -1,3 +1,4 @@
+import { useReloadAction } from '../components/useReloadAction';
 import { clientToday, useTimezone } from '../datetime';
 import { useCallback, useState } from 'react';
 import { getProfitLoss } from '../../api';
@@ -52,14 +53,10 @@ function MonthlyFlows({ month, currency }: { month: string; currency: string }) 
     }, [month]);
     const { data: report, loading, error, reload } = useResource(load);
 
+    useReloadAction(reload, Boolean(loading));
     return (
         <div className="space-y-4">
             <div className="flex items-center justify-between gap-4">
-                <div>
-                    <h2 className="text-lg font-semibold">月の収支</h2>
-                    <p className="mt-1 text-xs text-[var(--studio-text-muted)]">表示通貨：{currency}</p>
-                </div>
-                <button type="button" onClick={reload} disabled={loading} className="rounded-md border border-[var(--studio-border)] px-3 py-1.5 text-xs text-[var(--studio-text-muted)] hover:bg-[var(--studio-accent-soft)] disabled:opacity-40">再読み込み</button>
             </div>
             {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">収支を読み込んでいます…</p>}
             {error && <p role="alert" className="text-sm text-[var(--studio-danger)]">収支を取得できませんでした。{error}</p>}

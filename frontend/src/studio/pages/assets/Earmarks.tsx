@@ -1,3 +1,4 @@
+import { useReloadAction } from '../../components/useReloadAction';
 import Overlay from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
 import { Fragment, useState } from 'react';
@@ -46,14 +47,11 @@ function EarmarksForClient({ currency, clientName }: { currency: string; clientN
         });
     };
 
+    useReloadAction(() => { reload(); goals.reload(); }, Boolean(loading || mutation.busy || rulesBusy || editor !== null));
     return (
         <section className="space-y-4">
             <div className="flex items-center justify-between gap-4">
-                <div>
-                    <h2 className="text-lg font-semibold">取り置き</h2>
-                    <p className="mt-1 text-xs text-[var(--studio-text-muted)]">対象：{clientName || 'クライアントを確認中…'} ／ {currency}。用途を展開すると、紐づいている口座の確保額と規則を確認できます。</p>
-                </div>
-                <div className="flex gap-2"><button type="button" disabled={disabled || editor !== null || goals.loading || Boolean(goals.error)} onClick={() => { setDeleteResult(null); setEditor({ capsule: null }); }} className={buttonClass}>新しい取り置き</button><button type="button" onClick={() => { reload(); goals.reload(); }} disabled={loading || mutation.busy || rulesBusy || editor !== null} className={buttonClass}>再読み込み</button></div>
+                <div className="flex gap-2"><button type="button" disabled={disabled || editor !== null || goals.loading || Boolean(goals.error)} onClick={() => { setDeleteResult(null); setEditor({ capsule: null }); }} className={buttonClass}>新しい取り置き</button></div>
             </div>
             {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">取り置きを読み込んでいます…</p>}
             {error && <p role="alert" className="text-sm text-[var(--studio-danger)]">取り置きを取得できませんでした。{error}</p>}

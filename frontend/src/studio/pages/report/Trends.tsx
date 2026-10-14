@@ -1,3 +1,5 @@
+import { useReloadAction } from '../../components/useReloadAction';
+import Overlay from '../../components/Overlay';
 import { useCallback, useState } from 'react';
 import { getAccountFlows, getAccountFlowTransactions, getNetWorthHistory } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
@@ -17,8 +19,9 @@ function EntryPage({ accountId, startDate, endDate, currency, offset, onOffset }
 }) {
     const load = useCallback(() => getAccountFlowTransactions({ accountId, startDate, endDate, limit: PAGE_SIZE, offset }), [accountId, startDate, endDate, offset]);
     const resource = useResource(load);
+    useReloadAction(resource.reload, Boolean(resource.loading));
     return <div className="space-y-3">
-        <div className="flex items-center justify-between gap-3"><p className="text-xs text-[var(--studio-text-muted)]">{startDate} 〜 {endDate}</p><button type="button" disabled={resource.loading} onClick={resource.reload} className={buttonClass}>再読み込み</button></div>
+        <div className="flex items-center justify-between gap-3"><p className="text-xs text-[var(--studio-text-muted)]">{startDate} 〜 {endDate}</p></div>
         <Feedback loading={resource.loading} error={resource.error} />
         {resource.data && <>
             <DataTable columns={['日付・記録', '内容・相手先', `借方（${currency}）`, `貸方（${currency}）`, '元の通貨の借方 / 貸方']}>
@@ -53,8 +56,7 @@ function AccountDetail({ account, startDate, endDate, currency, grain, buckets }
     const bucket = buckets.find((row) => row.key === bucketKey);
     const entryStart = bucket?.start_date ?? startDate;
     const entryEnd = bucket?.end_date ?? endDate;
-    return <section className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
-        <div><h3 className="text-base font-semibold">{account.account_name}の動き</h3><p className="mt-1 text-xs text-[var(--studio-text-muted)]">{GRAINS[grain]}の増減。記録の期間を選ぶと、その区間の仕訳を確認できます。</p></div>
+    return <section className="space-y-4">
         <MoneyLineChart rows={account.buckets.map((row) => ({ label: row.label, amount: row.normal_balance_delta }))} currency={currency} label="口座・科目の増減" axisLabel={GRAINS[grain]} />
         <Field label="記録の期間"><select value={bucketKey} onChange={(event) => setBucketKey(event.target.value)} className={inputClass}>
             <option value="">選択した期間すべて</option>
@@ -70,15 +72,14 @@ function AccountFlows({ startDate, endDate, currency, grain }: { startDate: stri
     const resource = useResource(load);
     const [selectedId, setSelectedId] = useState<number | null>(null);
     const selected = resource.data?.accounts.find((row) => row.account_id === selectedId);
-    return <section className="space-y-4">
-        <div className="flex items-center justify-between gap-3"><h2 className="text-lg font-semibold">どこへお金が動いたか</h2><button type="button" disabled={resource.loading} onClick={resource.reload} className={buttonClass}>再読み込み</button></div>
-        <p className="text-sm leading-relaxed text-[var(--studio-text-muted)]">口座・科目を選ぶと、{GRAINS[grain]}の動きと記録を読めます。増減は資産・費用では借方 − 貸方、負債・収入では貸方 − 借方です。</p>
+    useReloadAction(resource.reload, Boolean(resource.loading));
+    return <section className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
+        <h2 className="text-lg font-semibold">資金移動</h2>
         <Feedback loading={resource.loading} error={resource.error} />
         {resource.data && <>
-            <p className="text-xs text-[var(--studio-text-muted)]">{resource.data.start_date} 〜 {resource.data.end_date} ／ {GRAINS[resource.data.grain]} ／ 表示通貨：{currency}（取引日の為替で換算）</p>
             <DataTable columns={['口座・科目', '種別', '借方', '貸方', '増減', '仕訳数']}>
                 {resource.data.accounts.length ? resource.data.accounts.map((row) => <tr key={row.account_id} onClick={() => setSelectedId(row.account_id)} className={`cursor-pointer hover:bg-[var(--studio-accent-soft)] ${selectedId === row.account_id ? 'bg-[var(--studio-accent-soft)]' : ''}`}>
-                    <th scope="row" className="px-5 py-3 font-medium"><button type="button" aria-expanded={selectedId === row.account_id} onClick={() => setSelectedId(row.account_id)} className="rounded text-left text-[var(--studio-accent)] hover:underline focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)]">{row.account_name}</button></th>
+                    <th scope="row" className="px-5 py-3 font-medium"><button type="button" aria-haspopup="dialog" onClick={(event) => { event.stopPropagation(); setSelectedId(row.account_id); }} className="rounded text-left text-[var(--studio-accent)] hover:underline focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)]">{row.account_name}</button></th>
                     <td className="px-5 py-3">{ACCOUNT_TYPES[row.account_type]}</td>
                     <td className="whitespace-nowrap px-5 py-3 tabular-nums">{formatCurrency(row.total_debit, currency)}</td>
                     <td className="whitespace-nowrap px-5 py-3 tabular-nums">{formatCurrency(row.total_credit, currency)}</td>
@@ -86,7 +87,7 @@ function AccountFlows({ startDate, endDate, currency, grain }: { startDate: stri
                     <td className="px-5 py-3 tabular-nums">{row.transaction_count}</td>
                 </tr>) : <tr><td colSpan={6} className="px-5 py-4 text-[var(--studio-text-muted)]">この期間の口座の動きはありません。</td></tr>}
             </DataTable>
-            {selected && <AccountDetail key={selected.account_id} account={selected} startDate={startDate} endDate={endDate} currency={currency} grain={resource.data.grain} buckets={resource.data.buckets} />}
+            {selected && <Overlay title={selected.account_name} onClose={() => setSelectedId(null)}><AccountDetail key={selected.account_id} account={selected} startDate={startDate} endDate={endDate} currency={currency} grain={resource.data.grain} buckets={resource.data.buckets} /></Overlay>}
         </>}
     </section>;
 }
@@ -96,9 +97,10 @@ function NetWorth({ months, currency }: { months: number; currency: string }) {
     const resource = useResource(load);
     const first = resource.data?.[0];
     const latest = resource.data?.at(-1);
+    useReloadAction(resource.reload, Boolean(resource.loading));
     return <section className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
-        <div className="flex items-center justify-between gap-3"><h2 className="text-lg font-semibold">純資産の推移</h2><button type="button" disabled={resource.loading} onClick={resource.reload} className={buttonClass}>再読み込み</button></div>
-        <p className="text-sm text-[var(--studio-text-muted)]">各月末の資産 − 負債。今月は、登録されている記録までの値です。</p>
+        <h2 className="text-lg font-semibold">純資産の推移</h2>
+        <p className="text-sm text-[var(--studio-text-muted)]">今月は、登録されている記録までの値です。</p>
         <Feedback loading={resource.loading} error={resource.error} />
         {resource.data && (first && latest ? <>
             <dl className="flex flex-wrap gap-x-10 gap-y-4"><div><dt className="text-xs text-[var(--studio-text-muted)]">{latest.period} の純資産</dt><dd className="mt-2 text-2xl font-semibold tabular-nums">{formatCurrency(latest.net_worth, currency)}</dd></div><div><dt className="text-xs text-[var(--studio-text-muted)]">{first.period} からの増減</dt><dd className="mt-2 text-xl tabular-nums">{formatCurrency(latest.net_worth - first.net_worth, currency)}</dd></div></dl>
@@ -118,7 +120,6 @@ function TrendsForClient({ currency }: { currency: string }) {
         <div className="flex flex-wrap items-end gap-4">
             <Field label="表示期間"><select value={months} onChange={(event) => setMonths(Number(event.target.value))} className={inputClass}>{[12, 36, 60].map((value) => <option key={value} value={value}>{value}か月</option>)}</select></Field>
             <Field label="口座の集計単位"><select value={grain} onChange={(event) => { const value = event.target.value; if (value === 'day' || value === 'week' || value === 'month' || value === 'quarter') setGrain(value); }} className={inputClass}>{Object.entries(GRAINS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
-            <p className="pb-2 text-xs text-[var(--studio-text-muted)]">{startDate} 〜 {endDate} ／ 表示通貨：{currency}</p>
         </div>
         <NetWorth key={months} months={months} currency={currency} />
         <AccountFlows key={`${months}:${grain}`} startDate={startDate} endDate={endDate} currency={currency} grain={grain} />

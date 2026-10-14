@@ -1,6 +1,7 @@
-import Overlay from '../../components/Overlay';
+import { useReloadAction } from '../../components/useReloadAction';
+import Overlay, { OverlayFooter } from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
-import { useState, type FormEvent } from 'react';
+import { useId, useState, type FormEvent } from 'react';
 import { autoUpdateExchangeRates, createExchangeRate, deleteExchangeRate, getExchangeRates } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
 import type { ExchangeRate, ExchangeRateAutoUpdateResult } from '../../../types';
@@ -9,6 +10,7 @@ import { DataTable, Feedback, Field } from './Database';
 import { buttonClass, inputClass, primaryClass, today, useMutation } from './forms';
 
 function FxForClient({ currency }: { currency: string }) {
+    const formId = useId();
     const confirm = useConfirm();
     const resource = useResource(getExchangeRates);
     const mutation = useMutation();
@@ -36,8 +38,9 @@ function FxForClient({ currency }: { currency: string }) {
         let result: ExchangeRateAutoUpdateResult | null = null;
         void mutation.run(async () => { result = await autoUpdateExchangeRates(); }, '自動更新の結果を取得しました。', () => { setFetched(result); resource.reload(); });
     };
+    useReloadAction(resource.reload, Boolean(mutation.busy || resource.loading));
     return <section className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold">為替レート</h2><p className="mt-1 text-xs text-[var(--studio-text-muted)]">基準通貨1単位に対する換算先通貨のレート。クライアントの通貨：{currency}</p></div><div className="flex gap-2"><button type="button" disabled={disabled} onClick={() => setAdding(true)} className={buttonClass}>新規作成</button><button type="button" disabled={disabled} onClick={autoUpdate} className={buttonClass}>自動更新</button><button type="button" disabled={mutation.busy || resource.loading} onClick={resource.reload} className={buttonClass}>再読み込み</button></div></div>
+        <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex gap-2"><button type="button" disabled={disabled} onClick={() => setAdding(true)} className={buttonClass}>新規作成</button><button type="button" disabled={disabled} onClick={autoUpdate} className={buttonClass}>自動更新</button></div></div>
         <Feedback loading={resource.loading} error={mutation.error || resource.error} message={mutation.message} />
         {fetched && <details className="space-y-2 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5 text-sm" role="status">
             <summary className="cursor-pointer font-medium">換算先：{fetched.target_currency} ／ 取得：{fetched.updated.length}件 ／ スキップ：{fetched.skipped.length}件 ／ 失敗：{fetched.errors.length}件</summary>
@@ -46,16 +49,15 @@ function FxForClient({ currency }: { currency: string }) {
             {fetched.errors.map((row, index) => <p key={`error-${index}`} className="text-[var(--studio-danger)]">{row.base_currency} → {row.quote_currency}：{row.error}</p>)}
             {!fetched.detected_pairs.length && <p className="text-[var(--studio-text-muted)]">更新対象の通貨ペアはありませんでした。</p>}
         </details>}
-        {adding && <Overlay title="為替レートの新規作成" onClose={() => setAdding(false)}><Feedback error={mutation.error} /><form onSubmit={add} className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
+        {adding && <Overlay title="為替レートの新規作成" onClose={() => setAdding(false)}><Feedback error={mutation.error} /><form id={formId} onSubmit={add} className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
             <fieldset disabled={disabled} className="grid items-end gap-4 md:grid-cols-2 xl:grid-cols-5">
                 <Field label="基準通貨"><input required pattern="[A-Z]{3}" maxLength={3} value={base} onChange={(event) => setBase(event.target.value.toUpperCase())} className={inputClass} /></Field>
                 <Field label="換算先通貨"><input required pattern="[A-Z]{3}" maxLength={3} value={quote} onChange={(event) => setQuote(event.target.value.toUpperCase())} className={inputClass} /></Field>
                 <Field label="レート"><input required type="number" min="0" step="any" value={rate} onChange={(event) => setRate(event.target.value)} className={inputClass} /></Field>
                 <Field label="基準日"><input required type="date" value={date} onChange={(event) => setDate(event.target.value)} className={inputClass} /></Field>
-                <button type="submit" disabled={disabled || base === quote || Number(rate) <= 0} className={primaryClass}>{mutation.busy ? '処理中…' : '登録'}</button>
+                <OverlayFooter><button type="submit" form={formId} disabled={disabled || base === quote || Number(rate) <= 0} className={primaryClass}>{mutation.busy ? '処理中…' : '登録'}</button></OverlayFooter>
             </fieldset>
             {base === quote && <p className="text-xs text-[var(--studio-warning)]">基準通貨と換算先通貨は別の通貨を指定してください。</p>}
-            <button type="button" onClick={() => setAdding(false)} className={buttonClass}>キャンセル</button>
         </form></Overlay>}
         {resource.data && <DataTable columns={['基準通貨', '換算先通貨', 'レート', '基準日', '取得元', '操作']}>
             {resource.data.length ? [...resource.data].sort((a, b) => b.as_of_date.localeCompare(a.as_of_date) || b.id - a.id).map((row) => <tr key={row.id}>

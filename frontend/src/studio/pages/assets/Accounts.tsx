@@ -1,3 +1,4 @@
+import { useReloadAction } from '../../components/useReloadAction';
 import Overlay from '../../components/Overlay';
 import Reconciliation from './Reconciliation';
 import AccountEarmarks from './AccountEarmarks';
@@ -78,14 +79,11 @@ function AccountsForClient() {
         }
     };
 
+    useReloadAction(reload, Boolean(loading || updatingId !== null));
     return (
         <section className="space-y-4">
             <div className="flex items-center justify-between gap-4">
-                <div>
-                    <h2 className="text-lg font-semibold">口座</h2>
-                    <p className="mt-1 text-xs text-[var(--studio-text-muted)]">無効の口座も表示しています。状態を切り替えると再び利用できます。</p>
-                </div>
-                <div className="flex gap-2"><button type="button" onClick={() => setReconciling(true)} disabled={loading || Boolean(error) || updatingId !== null} className="rounded-md border border-[var(--studio-border)] px-3 py-1.5 text-xs text-[var(--studio-text-muted)] hover:bg-[var(--studio-accent-soft)] disabled:opacity-40">残高照合</button><button type="button" onClick={reload} disabled={loading || updatingId !== null} className="rounded-md border border-[var(--studio-border)] px-3 py-1.5 text-xs text-[var(--studio-text-muted)] hover:bg-[var(--studio-accent-soft)] disabled:opacity-40">再読み込み</button></div>
+                <div className="flex gap-2"><button type="button" onClick={() => setReconciling(true)} disabled={loading || Boolean(error) || updatingId !== null} className="rounded-md border border-[var(--studio-border)] px-3 py-1.5 text-xs text-[var(--studio-text-muted)] hover:bg-[var(--studio-accent-soft)] disabled:opacity-40">残高照合</button></div>
             </div>
             {confirmation && <p role="status" className="rounded-md bg-[var(--studio-accent-soft)] p-3 text-sm text-[var(--studio-positive)]">{confirmation}</p>}
             {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">口座を読み込んでいます…</p>}

@@ -1,6 +1,7 @@
+import { useReloadAction } from '../../components/useReloadAction';
 import Overlay from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
-import { useState, type FormEvent } from 'react';
+import { useId, useState, type FormEvent } from 'react';
 import { createProduct, deleteProduct, getDepreciationSummary, getProducts, postDepreciation,
          runDepreciation, updateProduct } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
@@ -34,6 +35,7 @@ function ProductEditor({ product, assets, currency, lookups, busy, onSave, onCan
     product: Product | null; assets: boolean; currency: string; lookups: Lookups; busy: boolean;
     onSave: (action: () => Promise<unknown>) => void; onCancel: () => void;
 }) {
+    const formId = useId();
     const [name, setName] = useState(product?.name ?? '');
     const [category, setCategory] = useState(product?.category ?? '');
     const [location, setLocation] = useState(product?.location ?? '');
@@ -78,7 +80,7 @@ function ProductEditor({ product, assets, currency, lookups, busy, onSave, onCan
         };
         onSave(() => product ? updateProduct(product.id, payload) : createProduct(payload));
     };
-    return <form onSubmit={submit} className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
+    return <form id={formId} onSubmit={submit} className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
         <fieldset disabled={busy} className="grid gap-4 md:grid-cols-2">
             <Field label="物品名"><input required value={name} onChange={(event) => setName(event.target.value)} className={inputClass} /></Field>
             <Field label="分類"><input value={category} onChange={(event) => setCategory(event.target.value)} className={inputClass} /></Field>
@@ -94,19 +96,18 @@ function ProductEditor({ product, assets, currency, lookups, busy, onSave, onCan
                     <Field label="記帳の開始月（未設定なら取得日から）"><input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} className={inputClass} /></Field>
                     <Choice label="減価償却費の科目" value={expenseAccount} options={lookups.accounts} onChange={setExpenseAccount} />
                     <Choice label="取り崩す物品の口座" value={assetAccount} options={lookups.accounts} onChange={setAssetAccount} />
-                    <p className="text-xs text-[var(--studio-text-muted)] md:col-span-2">記帳は直接法です。減価償却費を借方、物品の口座を貸方に立て、取得額は記録として残ります。</p>
                 </>}
             </> : <>
                 <Field label={`購入額（購入単位あたり・${currency}）`}><input required type="number" min="0" step="any" value={purchaseUnitPrice} onChange={(event) => setPurchaseUnitPrice(event.target.value)} className={inputClass} /></Field>
                 <Field label="購入単位（個数）"><input required type="number" min="1" step="1" value={units} onChange={(event) => setUnits(event.target.value)} className={inputClass} /></Field>
                 <Field label="購入周期（日・0は不定期）"><input required type="number" min="0" step="1" value={frequency} onChange={(event) => setFrequency(event.target.value)} className={inputClass} /></Field>
                 <Field label="最終購入日"><input type="date" value={lastPurchase} onChange={(event) => setLastPurchase(event.target.value)} className={inputClass} /></Field>
-                <p className="text-xs text-[var(--studio-text-muted)] md:col-span-2">単価：{formatCurrency(Number(purchaseUnitPrice) / (Number(units) || 1), currency)}（購入額 ÷ 個数）</p>
+                <p className="text-xs text-[var(--studio-text-muted)] md:col-span-2">単価：{formatCurrency(Number(purchaseUnitPrice) / (Number(units) || 1), currency)}</p>
             </>}
             <Choice label="予算口座" value={budget} options={lookups.accounts} onChange={setBudget} />
             <Choice label="積立先の取り置き" value={funding} options={lookups.capsules} onChange={setFunding} />
             <Field label="予算での扱い"><select value={treatment} onChange={(event) => setTreatment(event.target.value as Treatment)} className={inputClass}>{Object.entries(TREATMENTS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
-            <EditorActions busy={busy} onCancel={onCancel} />
+            <EditorActions form={formId} busy={busy} onCancel={onCancel} />
         </fieldset>
     </form>;
 }
@@ -158,8 +159,10 @@ function ProductsForClient({ assets, currency, timezone }: { assets: boolean; cu
             resource.reload();
         });
     };
+    useReloadAction(() => { resource.reload(); lookups.reload(); }, Boolean(resource.loading || lookups.loading || mutation.busy || editor !== null));
     return <section className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold">{assets ? '固定資産' : '消耗品'}</h2><p className="mt-1 text-xs text-[var(--studio-text-muted)]">表示通貨：{currency}{assets ? '。更新予定は取得日と耐用月数から算出した目安です。' : '。単価は購入額を購入単位の個数で割った金額です。'}</p></div><div className="flex gap-2">{assets && <button type="button" disabled={editorDisabled || editor !== null} onClick={() => void writeMonth()} className={buttonClass}>{period}分を記帳</button>}<button type="button" disabled={editorDisabled || editor !== null} onClick={() => setEditor({ product: null })} className={buttonClass}>新規作成</button><button type="button" disabled={resource.loading || lookups.loading || mutation.busy || editor !== null} onClick={() => { resource.reload(); lookups.reload(); }} className={buttonClass}>再読み込み</button></div></div>
+        <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex gap-2">{assets && <button type="button" disabled={editorDisabled || editor !== null} onClick={() => void writeMonth()} className={buttonClass}>{period}分を記帳</button>}<button type="button" disabled={editorDisabled || editor !== null} onClick={() => setEditor({ product: null })} className={buttonClass}>新規作成</button></div></div>
+        {assets && <p className="text-xs text-[var(--studio-text-muted)]">更新予定は目安です。</p>}
         <Feedback loading={resource.loading || lookups.loading || positions.loading} error={mutation.error || resource.error || lookups.error || positions.error} message={mutation.message} />
         {editor && lookups.data && <Overlay title={editor.product ? `${editor.product.name}を編集` : `${assets ? '固定資産' : '消耗品'}の新規作成`} onClose={() => setEditor(null)}><Feedback error={mutation.error} /><ProductEditor key={editor.product?.id ?? 'new'} product={editor.product} assets={assets} currency={currency} lookups={lookups.data} busy={editorDisabled} onCancel={() => setEditor(null)} onSave={(action) => void mutation.run(action, '物品を保存しました。', () => { setEditor(null); resource.reload(); positions.reload(); })} /></Overlay>}
         {resource.data && <DataTable columns={assets ? ['物品', '取得額', '帳簿価額', '減価の方法', '次回の記帳', '更新予定', '操作'] : ['物品', '単価', '購入単位', '購入周期', '予算口座', '操作']}>
