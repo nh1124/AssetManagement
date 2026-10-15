@@ -3,7 +3,7 @@ import { useCallback, useId, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { getLifeEventsWithProgress } from '../../../api';
-import { createLifeEventLink, deleteLifeEventLink, getLifeEventLinks, getLifeEventScenarios } from '../../../api/lifeEventGraph';
+import { adoptLifeEventScenario, createLifeEventLink, deleteLifeEventLink, getLifeEventLinks, getLifeEventScenarios } from '../../../api/lifeEventGraph';
 import type { LifeEventLink, LifeEventLinkInput, LifeEventScenario, ScenarioParameters } from '../../../api/lifeEventGraph';
 import { useClient } from '../../../context/ClientContext';
 import type { LifeEvent } from '../../../types';
@@ -13,7 +13,7 @@ import { useConfirm } from '../../components/useConfirm';
 import { useReloadAction } from '../../components/useReloadAction';
 import { useResource } from '../../useResource';
 import { Choice, DataTable, EditorActions, Feedback, Field } from '../db/Database';
-import { buttonClass, inputClass, useMutation } from '../db/forms';
+import { buttonClass, inputClass, primaryClass, useMutation } from '../db/forms';
 import LifeEventDiagram from './LifeEventDiagram';
 import LifeEventLinkDetails from './LifeEventLinkDetails';
 
@@ -90,7 +90,7 @@ function EventOutline({ events, links, scenario, evaluations, currency, disabled
             {rows.map(({ event, edge, depth, date, shared }) => <li key={edge ? `link-${edge.id}` : `root-${event.id}`} style={{ paddingLeft: `${depth * 24}px` }}>
                 <div className="flex items-center gap-3 rounded border-l-2 border-[var(--studio-border)] py-2 pl-3 text-sm">
                     {edge && <span className="text-xs text-[var(--studio-text-muted)]">{edge.kind === 'alternative' ? '選択肢' : '必ず続く'}・{edge.offset_months === 0 ? '目標日' : `${edge.offset_months > 0 ? '+' : ''}${edge.offset_months}か月`}</span>}
-                    <Link to={`/goals/${event.id}`} className="text-[var(--studio-accent)] hover:underline">{event.name}</Link>
+                    <Link to={`/goals/events/${event.id}`} className="text-[var(--studio-accent)] hover:underline">{event.name}</Link>
                     {evaluations[event.id]?.satisfied === false && <span className="text-xs text-[var(--studio-text-muted)]" aria-label="条件未達">○ 条件未達</span>}
                     {evaluations[event.id]?.conditions.length > 0 && evaluations[event.id]?.satisfied === null && <span className="text-xs text-[var(--studio-text-muted)]">○ 判定不能</span>}
                     <span className="tabular-nums">{date ?? '日付未設定'}</span>
@@ -151,10 +151,13 @@ function ScenarioResults({ currency, clientName, parameters, view }: { currency:
     const [editing, setEditing] = useState(false);
     const [editingLink, setEditingLink] = useState<LifeEventLink | null>(null);
     const [nextKind, setNextKind] = useState<LifeEventLinkInput['kind']>('after');
-    const [selectedId, setSelectedId] = useState('');
     const disabled = resource.loading || Boolean(resource.error) || mutation.busy || !clientName;
-    const selected = resource.data?.comparison.scenarios.find((item) => item.id === selectedId) ?? resource.data?.comparison.scenarios[0];
+    const selected = resource.data?.comparison.scenarios.find((item) => item.id === resource.data?.comparison.adopted.scenario_id);
     useReloadAction(resource.reload, resource.loading || mutation.busy || editing || editingLink !== null);
+    const adopt = (scenarioId: string) => {
+        if (disabled || !scenarioId) return;
+        void mutation.run(() => adoptLifeEventScenario(scenarioId), '案を採用しました。', resource.reload);
+    };
     const remove = async (edge: LifeEventLink) => {
         if (disabled) return;
         const source = resource.data?.events.find((event) => event.id === edge.from_event_id)?.name;
@@ -173,12 +176,14 @@ function ScenarioResults({ currency, clientName, parameters, view }: { currency:
                     </button>)}
                 </div></div>
             </div>
-            {resource.data && <Field label="日付の基準にする案"><select value={selected?.id ?? ''} onChange={(event) => setSelectedId(event.target.value)} disabled={disabled} className={inputClass}>
+            {resource.data && <Field label="採用する案"><select value={resource.data.comparison.adopted.scenario_id ?? ''} onChange={(event) => adopt(event.target.value)} disabled={disabled} className={inputClass}>
+                {resource.data.comparison.adopted.scenario_id === null && <option value="" disabled>未採用</option>}
                 {resource.data.comparison.scenarios.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
             </select></Field>}
         </div>
         <Feedback loading={resource.loading} error={resource.error || (!editing && !editingLink ? mutation.error : '')} message={mutation.message} />
         {resource.data && !resource.loading && !resource.error && <>
+            {!resource.data.comparison.adopted.exact && <p role="status" className="text-sm text-[var(--studio-warning)]">分岐の選択がまだ確定していません。</p>}
             {resource.data.comparison.truncated && <p role="status" className="text-sm text-[var(--studio-warning)]">{resource.data.comparison.fork_count}か所の分岐で64案を超えたため、先頭64案を表示しています。</p>}
             {view === 'diagram' ? <LifeEventDiagram evaluations={resource.data.evaluations} events={resource.data.events} links={resource.data.links} scenarios={resource.data.comparison.scenarios} scenario={selected} currency={currency} disabled={disabled}
                 onEdgeClick={setEditingLink} onConnect={(source, target) => {
@@ -187,6 +192,8 @@ function ScenarioResults({ currency, clientName, parameters, view }: { currency:
                 }} />
                 : <EventOutline evaluations={resource.data.evaluations} events={resource.data.events} links={resource.data.links} scenario={selected} currency={currency} disabled={disabled} onDelete={(edge) => { void remove(edge); }} />}
             <Comparison scenarios={resource.data.comparison.scenarios} currency={currency} />
+            {/* A provisional scenario is already selected, so onChange cannot confirm it unchanged. */}
+            {!resource.data.comparison.adopted.exact && selected && <div className="flex justify-end"><button type="button" disabled={disabled} onClick={() => adopt(selected.id)} className={primaryClass}>この案を採用</button></div>}
         </>}
         {editing && resource.data && <Overlay title="接続を追加" onClose={() => { if (!mutation.busy) setEditing(false); }}>
             <Feedback error={mutation.error} />
@@ -199,14 +206,14 @@ function ScenarioResults({ currency, clientName, parameters, view }: { currency:
     </div>;
 }
 
-function ScenariosForClient({ currency, clientName }: { currency: string; clientName?: string }) {
+function LifeEventGraphForClient({ currency, clientName }: { currency: string; clientName?: string }) {
     const [draft, setDraft] = useState(defaults);
     const [parameters, setParameters] = useState(defaults);
     const [view, setView] = useState<'diagram' | 'outline'>('diagram');
     return <section className="space-y-5">
         <div role="group" aria-label="イベントの表示" className="flex gap-1">
             {(['diagram', 'outline'] as const).map((mode) => <button key={mode} type="button" aria-pressed={view === mode} onClick={() => setView(mode)} className={`${buttonClass} ${view === mode ? 'bg-[var(--studio-accent-soft)] ring-1 ring-[var(--studio-accent)]' : ''}`}>
-                {mode === 'diagram' ? '図' : '一覧'}
+                {mode === 'diagram' ? '図' : '接続の一覧'}
             </button>)}
         </div>
         <form onSubmit={(event) => { event.preventDefault(); setParameters({ ...draft }); }} className="flex flex-wrap items-end gap-4">
@@ -220,8 +227,8 @@ function ScenariosForClient({ currency, clientName }: { currency: string; client
     </section>;
 }
 
-export default function LifeEventScenarios() {
+export default function LifeEventGraph() {
     const { clientId, currentClient } = useClient();
     const currency = currentClient?.general_settings?.currency || 'JPY';
-    return <ScenariosForClient key={`${clientId}:${currency}`} currency={currency} clientName={currentClient?.id === clientId ? currentClient.name : undefined} />;
+    return <LifeEventGraphForClient key={`${clientId}:${currency}`} currency={currency} clientName={currentClient?.id === clientId ? currentClient.name : undefined} />;
 }

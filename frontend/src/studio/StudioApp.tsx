@@ -14,10 +14,11 @@ import Actions from './pages/budget/Actions';
 import Trends from './pages/report/Trends';
 import Monthly from './pages/report/Monthly';
 import Review from './pages/report/Review';
-import Goals from './pages/goals/Goals';
+import LifeEventList from './pages/goals/LifeEventList';
+import GoalSummary from './pages/goals/GoalSummary';
 import GoalPage from './pages/goals/GoalPage';
 import GoalWorkspace from './pages/goals/GoalWorkspace';
-import LifeEventScenarios from './pages/goals/LifeEventScenarios';
+import LifeEventGraph from './pages/goals/LifeEventGraph';
 import Ai from './pages/automation/Ai';
 import Approvals from './pages/automation/Approvals';
 import Audit from './pages/automation/Audit';
@@ -43,7 +44,7 @@ const SCREENS: Record<string, { index: ReactElement; tabs?: Record<string, React
     flows: { index: <Flows />, tabs: { accounts: <Flows subjects /> } },
     budget: { index: <Budget />, tabs: { actions: <Actions /> } },
     report: { index: <Trends />, tabs: { monthly: <Monthly />, review: <Review /> } },
-    goals: { index: <Goals />, tabs: { scenarios: <LifeEventScenarios /> } },
+    goals: { index: <GoalSummary />, tabs: { events: <LifeEventList />, graph: <LifeEventGraph /> } },
     assets: {
         layout: <Assets />,
         index: <Overview />,
@@ -76,7 +77,7 @@ export default function StudioApp() {
                     <Route path={STUDIO_EDITOR_PATHS.transaction} element={<Record />} />
                     <Route path={STUDIO_EDITOR_PATHS.newGoal} element={<GoalPage />} />
                     <Route path={STUDIO_EDITOR_PATHS.editGoal} element={<GoalPage />} />
-                    <Route path="goals/:goalId" element={<GoalWorkspace />} />
+                    <Route path="goals/events/:goalId" element={<GoalWorkspace />} />
                     {STUDIO_SCREENS.map((screen) => {
                         const screenRoutes = SCREENS[screen.path];
                         return (

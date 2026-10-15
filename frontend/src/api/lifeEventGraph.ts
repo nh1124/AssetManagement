@@ -31,10 +31,16 @@ export interface LifeEventScenario {
     projection: Array<{ year: number; p10: number; p50: number; p90: number; cumulative_target: number }>;
 }
 
+export interface ScenarioAdoption {
+    scenario_id: string | null;
+    exact: boolean;
+}
+
 export interface ScenarioComparison {
     scenarios: LifeEventScenario[];
     truncated: boolean;
     fork_count: number;
+    adopted: ScenarioAdoption;
 }
 
 export interface ScenarioParameters {
@@ -57,4 +63,8 @@ export async function deleteLifeEventLink(id: number): Promise<void> {
 
 export async function getLifeEventScenarios(params: ScenarioParameters): Promise<ScenarioComparison> {
     return (await api.get<ScenarioComparison>('/life-events/scenarios', { params })).data;
+}
+
+export async function adoptLifeEventScenario(scenarioId: string): Promise<ScenarioAdoption> {
+    return (await api.post<ScenarioAdoption>('/life-events/scenarios/adopt', { scenario_id: scenarioId })).data;
 }

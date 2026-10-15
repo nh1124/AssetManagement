@@ -23,7 +23,7 @@ export default function GoalProjection({ goal, roadmap, currency, monteCarlo }: 
     const rows = projectionRows(goal, milestones, roadmap.params.reference_date || clientToday(timezone), resource.data);
     const axisStyle = { fill: 'var(--studio-text-muted)', fontSize: 11 };
     return <div className="space-y-3">
-        <p className="text-xs text-[var(--studio-text-muted)]">税引前年利 {goal.gross_annual_return ?? annual_return}% ／ 税引後の加重年利（推定） {goal.blended_after_tax_return?.toFixed(2) ?? '—'}% ／ 課税口座の税率 {goal.tax_rate ?? '—'}% ／ インフレ {inflation}% ／ 全ゴールの月額積立 {formatCurrency(monthly_savings ?? 50000, currency)}（{currency}）</p>
+        <p className="text-xs text-[var(--studio-text-muted)]">税引前年利 {goal.gross_annual_return ?? annual_return}% ／ 税引後の加重年利（推定） {goal.blended_after_tax_return?.toFixed(2) ?? '—'}% ／ 課税口座の税率 {goal.tax_rate ?? '—'}% ／ インフレ {inflation}% ／ 全ライフイベントの月額積立 {formatCurrency(monthly_savings ?? 50000, currency)}（{currency}）</p>
         <Feedback loading={resource.loading} error={resource.error} />
         {resource.error && <button type="button" onClick={resource.reload} className={buttonClass}>再試算</button>}
         {!resource.loading && !resource.error && <>
@@ -46,7 +46,7 @@ export default function GoalProjection({ goal, roadmap, currency, monteCarlo }: 
                     </ComposedChart>
                 </ResponsiveContainer>
             </div>
-            {goal.target_date <= clientToday(timezone) && <p className="text-xs text-[var(--studio-text-muted)]">目標日を迎えたゴールです。現在の確保額を表示しています。</p>}
+            {goal.target_date <= clientToday(timezone) && <p className="text-xs text-[var(--studio-text-muted)]">目標日を迎えたライフイベントです。現在の確保額を表示しています。</p>}
         </>}
     </div>;
 }

@@ -26,7 +26,7 @@ export default function EarmarkEditor({ capsule, capsules, goals, currency, busy
     const submit = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         if (busy || !name.trim()) return;
-        if (!capsule && goalId && existing && !(await confirm(`このゴールには「${existing.name}」の取り置きが既にあります。既存の取り置きを使い、名称・目標額・月額を入力内容に変更しますか？`, '変更する'))) return;
+        if (!capsule && goalId && existing && !(await confirm(`このライフイベントには「${existing.name}」の取り置きが既にあります。既存の取り置きを使い、名称・目標額・月額を入力内容に変更しますか？`, '変更する'))) return;
         const fields = { name: name.trim(), target_amount: Number(target), monthly_contribution: Number(monthly) };
         onSave(async () => {
             if (capsule) return updateCapsule(capsule.id, fields);
@@ -43,8 +43,8 @@ export default function EarmarkEditor({ capsule, capsules, goals, currency, busy
             <Field label="名称"><input required value={name} onChange={(event) => setName(event.target.value)} className={inputClass} /></Field>
             <Field label={`目標額（${currency}）`}><input required type="number" min="0" step="any" value={target} onChange={(event) => setTarget(event.target.value)} className={inputClass} /></Field>
             <Field label={`月額（${currency}）`}><input required type="number" min="0" step="any" value={monthly} onChange={(event) => setMonthly(event.target.value)} className={inputClass} /></Field>
-            {!capsule && <Choice label="紐づけるゴール（任意）" value={goalId} options={goals} onChange={chooseGoal} />}
-            {!capsule && existing && goalId !== null && <p className="text-xs text-[var(--studio-text-muted)] md:col-span-2">このゴールの既存の取り置き「{existing.name}」を編集します。貯蓄と資金計画は残ります。</p>}
+            {!capsule && <Choice label="紐づけるライフイベント（任意）" value={goalId} options={goals} onChange={chooseGoal} />}
+            {!capsule && existing && goalId !== null && <p className="text-xs text-[var(--studio-text-muted)] md:col-span-2">このライフイベントの既存の取り置き「{existing.name}」を編集します。貯蓄と資金計画は残ります。</p>}
         </fieldset>
         <OverlayFooter><button type="submit" form={formId} disabled={busy} className={primaryClass}>{busy ? '保存中…' : '保存'}</button></OverlayFooter>
     </form>;

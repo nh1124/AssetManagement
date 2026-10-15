@@ -92,7 +92,7 @@ function EarmarksForClient({ currency, clientName }: { currency: string; clientN
                                 <td className="px-5 py-3"><div className="flex gap-2 whitespace-nowrap">
                                     <button type="button" disabled={disabled || editor !== null} onClick={() => { setDeleteResult(null); setEditor({ capsule }); }} className={buttonClass}>編集</button>
                                     <button type="button" disabled={disabled || editor !== null || Boolean(capsule.life_event_id) || Boolean(capsule.linked_products?.length)} onClick={() => remove(capsule)} className={`${buttonClass} text-[var(--studio-danger)]`}>削除</button>
-                                </div>{capsule.life_event_id ? <p className="mt-2 text-xs text-[var(--studio-text-muted)]">ゴールの中止・削除はゴール画面から行えます。</p> : Boolean(capsule.linked_products?.length) && <p className="mt-2 text-xs text-[var(--studio-text-muted)]">削除するには物品の紐づけを解除してください。</p>}</td>
+                                </div>{capsule.life_event_id ? <p className="mt-2 text-xs text-[var(--studio-text-muted)]">ライフイベントの中止・削除はライフイベント画面から行えます。</p> : Boolean(capsule.linked_products?.length) && <p className="mt-2 text-xs text-[var(--studio-text-muted)]">削除するには物品の紐づけを解除してください。</p>}</td>
                             </tr>
                             {isExpanded && (
                                 <tr id={`earmark-details-${capsule.id}`} className="bg-[var(--studio-bg)]">

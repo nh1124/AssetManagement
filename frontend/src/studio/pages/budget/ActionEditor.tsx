@@ -8,7 +8,7 @@ import { inputClass, loadAccounts } from '../db/forms';
 
 const KINDS: Record<ReviewActionKind, string> = {
     set_budget: '支出予算を設定', add_recurring: '定常収支を追加', pause_recurring: '定常収支を停止',
-    boost_allocation: 'ゴールへの確保額を変更', change_capsule_contribution: '取り置きの月額積立を変更',
+    boost_allocation: 'ライフイベントへの確保額を変更', change_capsule_contribution: '取り置きの月額積立を変更',
 };
 
 async function loadActionLookups() {
@@ -92,9 +92,9 @@ export default function ActionEditor({ sourcePeriod, currency, busy, onSave, onC
                 <p className="text-xs text-[var(--studio-warning)] md:col-span-2">実行すると定義を無効にし、自動記帳と予算への反映を停止します。自動で再開する予定は設定されません。</p>
             </>}
             {kind === 'boost_allocation' && <>
-                <Choice label="ゴール" value={referenceId} required options={lookups.data?.goals ?? []} onChange={setReferenceId} />
+                <Choice label="ライフイベント" value={referenceId} required options={lookups.data?.goals ?? []} onChange={setReferenceId} />
                 <Choice label="資金を確保する口座" value={accountId} required options={accounts.filter((row) => row.account_type === 'asset')} onChange={setAccountId} />
-                <p className="text-xs text-[var(--studio-text-muted)] md:col-span-2">指定口座の残高に対する割合でゴールの確保額を変更します。負の割合は確保額を減らします。</p>
+                <p className="text-xs text-[var(--studio-text-muted)] md:col-span-2">指定口座の残高に対する割合でライフイベントの確保額を変更します。負の割合は確保額を減らします。</p>
             </>}
             {kind === 'change_capsule_contribution' && <Choice label="取り置き" value={referenceId} required options={lookups.data?.capsules ?? []} onChange={setReferenceId} />}
             {kind !== 'pause_recurring' && <Field label={kind === 'boost_allocation' ? '確保額の変更割合（%）' : `金額（${kind === 'add_recurring' ? entryCurrency : currency}）`}>

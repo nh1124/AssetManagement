@@ -14,14 +14,14 @@ import MonthPicker from '../ledger/MonthPicker';
 import ActionEditor from './ActionEditor';
 
 const STATES: Record<MonthlyAction['status'], string> = { pending: '未実行', applied: '実行済み', skipped: '見送り', failed: '失敗' };
-const KINDS: Record<string, string> = { set_budget: '支出予算を設定', add_recurring: '定常収支を追加', pause_recurring: '定常収支を停止', boost_allocation: 'ゴールへの確保額を変更', change_capsule_contribution: '取り置きの月額積立を変更' };
+const KINDS: Record<string, string> = { set_budget: '支出予算を設定', add_recurring: '定常収支を追加', pause_recurring: '定常収支を停止', boost_allocation: 'ライフイベントへの確保額を変更', change_capsule_contribution: '取り置きの月額積立を変更' };
 
 function RelatedBudget({ action, currency }: { action: MonthlyAction; currency: string }) {
     const payload = action.payload;
     const code = typeof payload.currency === 'string' ? payload.currency : currency;
     const accountId = payload.account_id ?? payload.to_account_id;
     const label = action.kind === 'set_budget' ? `支出予算・勘定科目 #${String(accountId ?? '—')}`
-        : action.kind === 'boost_allocation' ? `ゴール #${String(payload.life_event_id ?? '—')}・口座 #${String(accountId ?? '—')}`
+        : action.kind === 'boost_allocation' ? `ライフイベント #${String(payload.life_event_id ?? '—')}・口座 #${String(accountId ?? '—')}`
             : action.kind === 'change_capsule_contribution' ? `取り置き #${String(action.target_id ?? '—')}`
                 : action.kind === 'pause_recurring' ? `定常収支 #${String(payload.recurring_id ?? action.target_id ?? '—')}`
                     : action.kind === 'add_recurring' ? `${String(payload.name ?? '定常収支')}・${String(payload.from_account_id ?? '—')} → ${String(payload.to_account_id ?? '—')}` : '—';

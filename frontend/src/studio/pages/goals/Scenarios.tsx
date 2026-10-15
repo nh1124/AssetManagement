@@ -24,7 +24,7 @@ function Schedule({ items, currency }: { items: ContributionScheduleItem[]; curr
 
 function Assumptions({ scenario, currency }: { scenario: SimulationScenario; currency: string }) {
     return <div className="space-y-2">
-        <p className="text-xs">年利 {scenario.annual_return}% ／ インフレ {scenario.inflation}% ／ {scenario.allocation_mode === 'direct' ? 'このゴールへ直接配分' : '優先度で配分'}</p>
+        <p className="text-xs">年利 {scenario.annual_return}% ／ インフレ {scenario.inflation}% ／ {scenario.allocation_mode === 'direct' ? 'このライフイベントへ直接配分' : '優先度で配分'}</p>
         <p className="text-xs">月額積立：{scenario.monthly_savings == null ? 'システム設定に従う' : `${formatCurrency(scenario.monthly_savings, currency)}（${currency}）`}</p>
         <Schedule items={scenario.contribution_schedule} currency={currency} />
     </div>;
@@ -102,8 +102,8 @@ export default function Scenarios({ goal, currency, clientName, onAdopted, onBus
     };
     const adopt = async () => {
         if (disabled || !preview || !preview.data.items.length || preview.data.life_event_id !== goal.id) return;
-        if (!(await confirm(`「${clientName}」のゴール「${goal.name}」に「${preview.scenario.name}」を採用します。\n現在のマイルストーン${preview.data.existing_count}件を置き換え、プレビューの前提から${preview.data.items.length}件を再生成します。\n採用したマイルストーンは、システム全体でこのゴールの計画・進捗判定の基準になります。\n採用時に再計算するため、現在の確保額や基準日が変わると金額も変わる場合があります。\nこの計画へ切り替えますか？`, '採用する'))) return;
-        run(() => applyMilestonesFromSimulation(goal.id, preview.request), `「${preview.scenario.name}」の前提をゴールの計画として採用しました。`, () => {
+        if (!(await confirm(`「${clientName}」のライフイベント「${goal.name}」に「${preview.scenario.name}」を採用します。\n現在のマイルストーン${preview.data.existing_count}件を置き換え、プレビューの前提から${preview.data.items.length}件を再生成します。\n採用したマイルストーンは、システム全体でこのライフイベントの計画・進捗判定の基準になります。\n採用時に再計算するため、現在の確保額や基準日が変わると金額も変わる場合があります。\nこの計画へ切り替えますか？`, '採用する'))) return;
+        run(() => applyMilestonesFromSimulation(goal.id, preview.request), `「${preview.scenario.name}」の前提をライフイベントの計画として採用しました。`, () => {
             setPreview(null);
             setComparison(null);
             onAdopted();
@@ -125,7 +125,7 @@ export default function Scenarios({ goal, currency, clientName, onAdopted, onBus
                 <th scope="row" className="px-5 py-3 font-medium">{scenario.name}{scenario.description && <p className="mt-1 text-xs font-normal text-[var(--studio-text-muted)]">{scenario.description}</p>}</th>
                 <td className="min-w-64 px-5 py-3"><Assumptions scenario={scenario} currency={currency} /></td>
                 <td className="px-5 py-3"><button type="button" disabled={disabled} onClick={() => showPreview(scenario)} aria-label={`${scenario.name}の採用前プレビュー`} className={buttonClass}>採用前プレビュー</button></td>
-            </tr>) : <tr><td colSpan={4} className="px-5 py-4 text-[var(--studio-text-muted)]">このゴールの保存案はありません。</td></tr>}
+            </tr>) : <tr><td colSpan={4} className="px-5 py-4 text-[var(--studio-text-muted)]">このライフイベントの保存案はありません。</td></tr>}
         </DataTable>}
         <div className="flex items-center gap-3"><button type="button" disabled={disabled || selected.length !== 2} onClick={compare} className={buttonClass}>２案を比較</button><span className="text-xs text-[var(--studio-text-muted)]">選択：{selected.length} / 2案</span></div>
         {comparison && <Comparison items={comparison} currency={currency} />}
@@ -137,7 +137,7 @@ export default function Scenarios({ goal, currency, clientName, onAdopted, onBus
             <DataTable columns={['予定日', '計画額']}>
                 {preview.data.items.length ? preview.data.items.map((item, index) => <tr key={`${item.date}:${index}`}><th scope="row" className="whitespace-nowrap px-5 py-3 font-normal">{item.date}</th><td className="whitespace-nowrap px-5 py-3 tabular-nums">{formatCurrency(item.target_amount, currency)}</td></tr>) : <tr><td colSpan={2} className="px-5 py-4 text-[var(--studio-text-muted)]">採用できるマイルストーンはありません。</td></tr>}
             </DataTable>
-            <p className="text-sm">採用すると、システム全体のゴール計画・進捗判定の基準がこのマイルストーンに切り替わります。</p>
+            <p className="text-sm">採用すると、システム全体のライフイベント計画・進捗判定の基準がこのマイルストーンに切り替わります。</p>
             <div className="flex gap-2"><button type="button" disabled={disabled || !preview.data.items.length} onClick={adopt} className={primaryClass}>この案を計画として採用</button><button type="button" disabled={mutation.busy} onClick={() => setPreview(null)} className={buttonClass}>プレビューを閉じる</button></div>
         </section>}
     </section>;

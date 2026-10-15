@@ -10,7 +10,7 @@ import { useResource } from '../../useResource';
 import { DataTable, EditorActions, Feedback, Field } from '../db/Database';
 import { buttonClass, inputClass, loadLookups, useMutation } from '../db/forms';
 
-const metricLabels: Record<ConditionMetric, string> = { net_worth: '純資産', free_cash: '自由資金', account_balance: '口座残高', capsule_claim: '取り置きの確保額', goal_progress: 'ゴールの進捗', member_age: '年齢', date_reached: '日付' };
+const metricLabels: Record<ConditionMetric, string> = { net_worth: '純資産', free_cash: '自由資金', account_balance: '口座残高', capsule_claim: '取り置きの確保額', goal_progress: 'ライフイベントの進捗', member_age: '年齢', date_reached: '日付' };
 const comparisons = { gte: '以上', lte: '以下', eq: '等しい' };
 const moneyMetrics = new Set<ConditionMetric>(['net_worth', 'free_cash', 'account_balance', 'capsule_claim']);
 const referencedMetrics = new Set<ConditionMetric>(['account_balance', 'capsule_claim', 'goal_progress', 'member_age']);

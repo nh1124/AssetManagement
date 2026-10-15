@@ -29,7 +29,7 @@ export default function GoalDeletion({ goal, clientName, busy, onDelete }: {
         if (busy || resource.loading || resource.error || !resource.data || (needsTransfer && !account)) return;
         const amounts = resource.data.capsules.map((row) => `${row.name}：${capsuleClaims(row)}`).join('\n');
         const returnMessage = needsTransfer && account ? `取り置きの確保額 ${claimTotals(resource.data.capsules)} を口座「${account.name}」に返金します。` : '返金対象額はありません。';
-        if (!(await confirm(`「${clientName}」のゴール「${goal.name}」を削除します。\n${returnMessage}\n取り置き・規則・マイルストーンも削除します。復元はできません。\n${amounts || '取り置きはありません。'}\n${needsTransfer && account ? `返金先「${account.name}」で` : ''}削除しますか？`, '削除する'))) return;
+        if (!(await confirm(`「${clientName}」のライフイベント「${goal.name}」を削除します。\n${returnMessage}\n取り置き・規則・マイルストーンも削除します。復元はできません。\n${amounts || '取り置きはありません。'}\n${needsTransfer && account ? `返金先「${account.name}」で` : ''}削除しますか？`, '削除する'))) return;
         onDelete(() => deleteGoal(goal.id, needsTransfer ? account?.id : undefined));
     };
     return <form id={formId} onSubmit={submit} className="space-y-4 rounded-lg border border-[var(--studio-danger)] p-5">

@@ -25,7 +25,7 @@ type LinkEdge = Edge<{ link: LifeEventLink }>;
 function LifeEventNode({ data, isConnectable }: NodeProps<EventNode>) {
     return <div className={`life-event-node ${data.included ? '' : 'life-event-node-excluded'}`}>
         <Handle type="target" position={Position.Left} isConnectable={isConnectable} aria-label={`${data.name}への接続`} title="接続先" />
-        <Link to={`/goals/${data.id}`} title={data.name} className="nodrag line-clamp-2 font-medium text-[var(--studio-accent)] hover:underline">{data.name}</Link>
+        <Link to={`/goals/events/${data.id}`} title={data.name} className="nodrag line-clamp-2 font-medium text-[var(--studio-accent)] hover:underline">{data.name}</Link>
         <div className="mt-auto space-y-1 tabular-nums">
             <div>{data.resolved_date ?? '日付未設定'}</div>
             <div>{formatCurrency(data.amount, data.currency)}</div>

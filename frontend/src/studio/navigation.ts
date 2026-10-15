@@ -107,8 +107,9 @@ export const STUDIO_GROUPS: StudioGroup[] = [
             {
                 path: 'goals', label: 'screen.goals', icon: Flag, section: WORKSPACE,
                 tabs: [
-                    { segment: '', label: 'tab.goals' },
-                    { segment: 'scenarios', label: 'tab.scenarios' },
+                    { segment: '', label: 'tab.goal' },
+                    { segment: 'events', label: 'tab.lifeEvents' },
+                    { segment: 'graph', label: 'tab.graph' },
                 ],
             },
         ],
@@ -172,6 +173,6 @@ export const SETTINGS_PATH = 'settings';
 export const STUDIO_EDITOR_PATHS = {
     record: 'record',
     transaction: 'record/:transactionId',
-    newGoal: 'goals/new',
-    editGoal: 'goals/:goalId/edit',
+    newGoal: 'goals/events/new',
+    editGoal: 'goals/events/:goalId/edit',
 } as const;

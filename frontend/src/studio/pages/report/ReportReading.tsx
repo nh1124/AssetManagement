@@ -12,7 +12,7 @@ export interface ProfitLoss {
 }
 
 const KINDS: Record<ActionProposal['kind'], string> = {
-    allocate_to_goal: '余剰をゴールへ配分', transfer_to_capsule: '取り置きへ移動',
+    allocate_to_goal: '余剰をライフイベントへ配分', transfer_to_capsule: '取り置きへ移動',
     increase_savings: '積立額を増やす', review_budget: '予算を見直す', extend_target_date: '目標日を延ばす',
 };
 const STATES = { pending: '未適用', applied: '適用済み', skipped: '見送り', failed: '適用に失敗' };
@@ -34,7 +34,7 @@ export function ReportFigures({ report, profitLoss, currency }: { report: Monthl
 
 export function ReportContext({ report, currency }: { report: MonthlyReport; currency: string }) {
     return <details>
-        <summary className="cursor-pointer text-sm text-[var(--studio-accent)]">支出の注意点・ゴールの進捗</summary>
+        <summary className="cursor-pointer text-sm text-[var(--studio-accent)]">支出の注意点・ライフイベントの進捗</summary>
         <div className="mt-4 grid gap-6 md:grid-cols-2">
         <section className="space-y-3">
             <h3 className="text-sm font-semibold">支出で確認したいこと</h3>
@@ -44,11 +44,11 @@ export function ReportContext({ report, currency }: { report: MonthlyReport; cur
             </li>)}</ul> : <p className="text-sm text-[var(--studio-text-muted)]">レポートが挙げる支出の注意点はありません。</p>}
         </section>
         <section className="space-y-3">
-            <h3 className="text-sm font-semibold">ゴールの進捗</h3>
+            <h3 className="text-sm font-semibold">ライフイベントの進捗</h3>
             {report.goal_progress.length ? <ul className="space-y-3">{report.goal_progress.map((row, index) => <li key={typeof row.id === 'number' ? row.id : index} className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-4 text-sm">
-                <p className="font-medium">{typeof row.name === 'string' ? row.name : 'ゴール'}</p>
+                <p className="font-medium">{typeof row.name === 'string' ? row.name : 'ライフイベント'}</p>
                 <p className="mt-2 text-[var(--studio-text-muted)]">見込み進捗 {typeof row.probability_current === 'number' ? `${row.probability_current}%` : '—'} ／ 期間中の変化 {typeof row.delta === 'number' ? `${row.delta > 0 ? '+' : ''}${row.delta}ポイント` : '—'}</p>
-            </li>)}</ul> : <p className="text-sm text-[var(--studio-text-muted)]">この期間のゴールはありません。</p>}
+            </li>)}</ul> : <p className="text-sm text-[var(--studio-text-muted)]">この期間のライフイベントはありません。</p>}
         </section>
         </div>
     </details>;
@@ -63,7 +63,7 @@ export function ReportProposals({ report, currency, clientName, disabled, apply,
     const effect = (proposal: ActionProposal) => {
         const targetId = proposal.target_life_event_id ?? proposal.target_id;
         const goal = report.goal_progress.find((row) => row.id === targetId);
-        const target = typeof goal?.name === 'string' ? goal.name : `ゴール #${targetId}`;
+        const target = typeof goal?.name === 'string' ? goal.name : `ライフイベント #${targetId}`;
         // This action creates today's journal transfer and assigns the savings leg to the goal's capsule.
         if (proposal.kind === 'allocate_to_goal') return `本日付で「cash」から「savings」へ ${formatCurrency(proposal.amount, currency)}（${currency}）を移し、「${target}」の取り置きへ配分します。必要な口座・取り置きがない場合は作成します。`;
         if (proposal.kind === 'review_budget') {
