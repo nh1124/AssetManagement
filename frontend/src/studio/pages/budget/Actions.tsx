@@ -8,7 +8,7 @@ import type { MonthlyAction, ReviewActionCreate } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import { useResource } from '../../useResource';
 import { DataTable, Feedback } from '../db/Database';
-import { buttonClass, useMutation } from '../db/forms';
+import { buttonClass, primaryClass, useMutation } from '../db/forms';
 import MonthPicker from '../ledger/MonthPicker';
 import ActionEditor from './ActionEditor';
 
@@ -38,6 +38,8 @@ function MonthlyActions({ sourcePeriod, currency, clientName }: { sourcePeriod: 
     const resource = useResource(load);
     const mutation = useMutation();
     const [adding, setAdding] = useState(false);
+    const [selectedId, setSelectedId] = useState<number | null>(null);
+    const selectedAction = resource.data?.find((row) => row.id === selectedId);
     const [processed, setProcessed] = useState<MonthlyAction[] | null>(null);
     const disabled = mutation.busy || resource.loading || Boolean(resource.error) || !clientName;
     const save = (payload: ReviewActionCreate) => {
@@ -51,6 +53,7 @@ function MonthlyActions({ sourcePeriod, currency, clientName }: { sourcePeriod: 
         let updated: MonthlyAction | null = null;
         void mutation.run(async () => { updated = await (apply ? applyReviewAction(action.id) : skipReviewAction(action.id)); }, `行動を${verb}にしました。`, () => {
             const result = updated;
+            setSelectedId(null);
             resource.setData((previous) => result ? previous?.map((row) => row.id === result.id ? result : row) ?? null : previous);
             resource.reload();
         });
@@ -64,7 +67,7 @@ function MonthlyActions({ sourcePeriod, currency, clientName }: { sourcePeriod: 
         <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap gap-2">
                 <button type="button" disabled={disabled || adding} onClick={() => setAdding(true)} className={buttonClass}>行動を追加</button>
-                <button type="button" disabled={disabled || adding} onClick={processDue} className={buttonClass}>期限が到来した行動を処理</button>
+                <button type="button" disabled={disabled || adding} onClick={processDue} className={buttonClass}>すべて実行</button>
             </div>
         </div>
         <Feedback loading={resource.loading} error={resource.error} />
@@ -75,17 +78,25 @@ function MonthlyActions({ sourcePeriod, currency, clientName }: { sourcePeriod: 
             {!processed.length && <p className="text-[var(--studio-text-muted)]">期限が到来した行動はありませんでした。</p>}
         </details>}
         {adding && <Overlay title="行動を追加" onClose={() => setAdding(false)}><Feedback error={mutation.error} /><ActionEditor sourcePeriod={sourcePeriod} currency={currency} busy={disabled} onSave={save} onCancel={() => setAdding(false)} /></Overlay>}
-        {resource.data && <DataTable columns={['行動', '予定', '関連する予算', '状態', '操作']}>
-            {resource.data.length ? resource.data.map((row) => <tr key={row.id}>
-                <th scope="row" className="px-5 py-3 font-medium">{row.description || KINDS[row.kind] || row.kind}<span className="mt-1 block text-xs font-normal text-[var(--studio-text-muted)]">{KINDS[row.kind] || row.kind}・#{row.id}</span></th>
+        {selectedAction && <Overlay title={selectedAction.description || KINDS[selectedAction.kind] || selectedAction.kind} onClose={() => setSelectedId(null)} footer={selectedAction.status === 'pending' ? <>
+            <button type="button" disabled={disabled || adding} onClick={() => decide(selectedAction, false)} className={`${buttonClass} mr-auto text-[var(--studio-danger)]`}>見送り</button>
+            <button type="button" disabled={disabled || adding} onClick={() => decide(selectedAction, true)} className={primaryClass}>実行</button>
+        </> : undefined}>
+            <div className="space-y-4">
+                <Feedback error={mutation.error} />
+                <p className="text-sm text-[var(--studio-text-muted)]">{STATES[selectedAction.status]}</p>
+                {typeof selectedAction.result.error === 'string' && <p className="text-sm text-[var(--studio-danger)]">{selectedAction.result.error}</p>}
+                <p className="text-xs text-[var(--studio-text-muted)]">登録済みの行動の内容は変更できません。</p>
+                <ActionEditor key={selectedAction.id} action={selectedAction} sourcePeriod={sourcePeriod} currency={currency} busy={disabled} />
+            </div>
+        </Overlay>}
+        {resource.data && <DataTable columns={['行動', '予定', '関連する予算', '状態']}>
+            {resource.data.length ? resource.data.map((row) => <tr key={row.id} onClick={() => { if (!disabled && !adding && selectedId === null) setSelectedId(row.id); }} className={disabled || adding || selectedId !== null ? '' : 'cursor-pointer hover:bg-[var(--studio-accent-soft)] focus-within:bg-[var(--studio-accent-soft)]'}>
+                <th scope="row" className="px-5 py-3 font-medium"><button type="button" disabled={disabled || adding || selectedId !== null} onClick={(event) => { event.stopPropagation(); setSelectedId(row.id); }} aria-haspopup="dialog" aria-label={`${row.description || KINDS[row.kind] || row.kind}を開く`} className="rounded text-left hover:text-[var(--studio-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)] disabled:opacity-40">{row.description || KINDS[row.kind] || row.kind}</button><span className="mt-1 block text-xs font-normal text-[var(--studio-text-muted)]">{KINDS[row.kind] || row.kind}・#{row.id}</span></th>
                 <td className="whitespace-nowrap px-5 py-3">{row.target_period || '未設定'}</td>
                 <td className="px-5 py-3"><RelatedBudget action={row} currency={currency} /></td>
                 <td className="px-5 py-3">{STATES[row.status]}{typeof row.result.error === 'string' && <p className="mt-1 text-xs text-[var(--studio-danger)]">{row.result.error}</p>}</td>
-                <td className="px-5 py-3">{row.status === 'pending' ? <div className="flex gap-2">
-                    <button type="button" disabled={disabled || adding} onClick={() => decide(row, true)} aria-label={`${row.description}を実行`} className={buttonClass}>実行</button>
-                    <button type="button" disabled={disabled || adding} onClick={() => decide(row, false)} aria-label={`${row.description}を見送り`} className={buttonClass}>見送り</button>
-                </div> : '—'}</td>
-            </tr>) : <tr><td colSpan={5} className="px-5 py-4 text-[var(--studio-text-muted)]">この月に記録した行動はありません。</td></tr>}
+            </tr>) : <tr><td colSpan={4} className="px-5 py-4 text-[var(--studio-text-muted)]">この月に記録した行動はありません。</td></tr>}
         </DataTable>}
     </div>;
 }

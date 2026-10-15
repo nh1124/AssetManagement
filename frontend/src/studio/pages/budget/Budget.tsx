@@ -39,10 +39,10 @@ function AmountEditor({ line, currency, busy, onSave, onCancel }: {
         if (busy || amount.trim() === '' || !Number.isFinite(Number(amount)) || Number(amount) < 0) return;
         onSave(Number(amount));
     };
-    return <form id={formId} onSubmit={submit} className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
+    return <form id={formId} onSubmit={submit} className="space-y-4">
         {line.target_type === 'capsule' && <p className="text-xs text-[var(--studio-warning)]">取り置きの月額積立計画にも反映されます。</p>}
         <fieldset disabled={busy} className="grid gap-4 md:grid-cols-2">
-            <Field label={`月末計画（${currency}）`}><input required type="number" min="0" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} className={inputClass} /></Field>
+            <Field label={`予算（${currency}）`}><input required type="number" min="0" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} className={inputClass} /></Field>
             <EditorActions form={formId} busy={busy} onCancel={onCancel} />
         </fieldset>
     </form>;
@@ -94,7 +94,7 @@ function MonthlyBudget({ period, currency, clientName, onBusy }: { period: strin
             ? <button type="button" disabled={disabled} onClick={() => remove(editing)} className={`${buttonClass} mr-auto text-[var(--studio-danger)]`}>削除</button>
             : <span className="mr-auto text-xs text-[var(--studio-text-muted)]">未保存のため削除不可</span>}><Feedback error={mutation.error} /><AmountEditor key={editing.id ?? lineName(editing)} line={editing} currency={currency} busy={disabled} onSave={save} onCancel={() => setEditing(null)} /></Overlay>}
         {resource.data && <>
-            <DataTable columns={['計画項目', '種別', '月末計画', '照合済み実績', '月末計画との差', '状態']}>
+            <DataTable columns={['計画項目', '種別', '予算', '支出', '残り予算', '状態']}>
                 {resource.data.plan_lines.length ? BLOCKS.map((block) => {
                     const lines = resource.data?.plan_lines.filter((line) => line.line_type === block.type) ?? [];
                     return lines.map((line, index) => <tr key={line.id ?? `${block.type}:${index}`} onClick={() => { if (!disabled && editing === null) setEditing(line); }} className={disabled || editing !== null ? '' : 'cursor-pointer hover:bg-[var(--studio-accent-soft)] focus-within:bg-[var(--studio-accent-soft)]'}>

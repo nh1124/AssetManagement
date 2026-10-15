@@ -1,6 +1,6 @@
 import { useId, useState, type FormEvent } from 'react';
 import { getCapsules, getLifeEvents, getRecurringTransactions } from '../../../api';
-import type { LifeEvent, ReviewActionCreate, ReviewActionKind } from '../../../types';
+import type { LifeEvent, MonthlyAction, ReviewActionCreate, ReviewActionKind } from '../../../types';
 import { useResource } from '../../useResource';
 import { Choice, EditorActions, Feedback, Field } from '../db/Database';
 import { inputClass, loadAccounts } from '../db/forms';
@@ -19,30 +19,46 @@ async function loadActionLookups() {
     return { accounts, recurring, goals, capsules };
 }
 
-export default function ActionEditor({ sourcePeriod, currency, busy, onSave, onCancel }: {
+type ActionEditorProps = {
     sourcePeriod: string; currency: string; busy: boolean;
+} & ({ action: MonthlyAction; onSave?: never; onCancel?: never } | {
+    action?: undefined;
     onSave: (payload: ReviewActionCreate) => void; onCancel: () => void;
-}) {
+});
+
+function isActionKind(value: string): value is ReviewActionKind {
+    return Object.hasOwn(KINDS, value);
+}
+
+export default function ActionEditor({ sourcePeriod, currency, busy, action, onSave, onCancel }: ActionEditorProps) {
     const formId = useId();
     const lookups = useResource(loadActionLookups);
-    const [kind, setKind] = useState<ReviewActionKind>('set_budget');
-    const [description, setDescription] = useState('');
+    const payload = action?.payload ?? {};
+    const numberValue = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : null;
+    const [kind, setKind] = useState(action?.kind ?? 'set_budget');
+    const [description, setDescription] = useState(action?.description ?? '');
     const [targetPeriod, setTargetPeriod] = useState(() => {
+        if (action) return action.target_period ?? '';
         const [year, month] = sourcePeriod.split('-').map(Number);
         return `${month === 12 ? year + 1 : year}-${String(month === 12 ? 1 : month + 1).padStart(2, '0')}`;
     });
-    const [accountId, setAccountId] = useState<number | null>(null);
-    const [destinationId, setDestinationId] = useState<number | null>(null);
-    const [referenceId, setReferenceId] = useState<number | null>(null);
-    const [amount, setAmount] = useState('');
-    const [name, setName] = useState('');
-    const [day, setDay] = useState('1');
-    const [entryCurrency, setEntryCurrency] = useState(currency);
-    const disabled = busy || lookups.loading || Boolean(lookups.error) || !lookups.data;
-    const accounts = lookups.data?.accounts.filter((row) => row.is_active) ?? [];
+    const [accountId, setAccountId] = useState(numberValue(kind === 'add_recurring' ? payload.from_account_id : payload.account_id));
+    const [destinationId, setDestinationId] = useState(numberValue(payload.to_account_id));
+    const [referenceId, setReferenceId] = useState(numberValue(kind === 'pause_recurring' ? payload.recurring_id ?? action?.target_id
+        : kind === 'boost_allocation' ? payload.life_event_id : payload.capsule_id ?? action?.target_id));
+    const [amount, setAmount] = useState(() => {
+        const value = kind === 'boost_allocation' ? payload.delta_percent ?? payload.percent : payload.amount ?? payload.monthly_contribution ?? action?.amount;
+        return typeof value === 'number' ? String(value) : '';
+    });
+    const [name, setName] = useState(typeof payload.name === 'string' ? payload.name : '');
+    const [day, setDay] = useState(String(numberValue(payload.day_of_month) ?? 1));
+    const [entryCurrency, setEntryCurrency] = useState(typeof payload.currency === 'string' ? payload.currency : currency);
+    // Existing actions are read-only because the API has no update endpoint.
+    const disabled = Boolean(action) || busy || lookups.loading || Boolean(lookups.error) || !lookups.data;
+    const accounts = lookups.data?.accounts.filter((row) => action || row.is_active) ?? [];
     const submit = (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
-        if (disabled || !description.trim() || !targetPeriod) return;
+        if (disabled || !onSave || !isActionKind(kind) || !description.trim() || !targetPeriod) return;
         const numeric = Number(amount);
         if (kind !== 'pause_recurring' && (amount.trim() === '' || !Number.isFinite(numeric))) return;
         let payload: Record<string, unknown>;
@@ -70,12 +86,12 @@ export default function ActionEditor({ sourcePeriod, currency, busy, onSave, onC
         }
         onSave({ source_period: sourcePeriod, target_period: targetPeriod, kind, description: description.trim(), payload });
     };
-    return <form id={formId} onSubmit={submit} className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
-        <p className="text-xs text-[var(--studio-text-muted)]">行動を未実行として記録します。実行するか、予定月になって期限到来の処理をすると反映されます。</p>
+    return <form id={formId} onSubmit={submit} className="space-y-4">
+        {!action && <p className="text-xs text-[var(--studio-text-muted)]">行動を未実行として記録します。実行するか、予定月になって期限到来の処理をすると反映されます。</p>}
         <Feedback loading={lookups.loading} error={lookups.error} />
         <fieldset disabled={disabled} className="grid gap-4 md:grid-cols-2">
             <Field label="行動"><input required value={description} onChange={(event) => setDescription(event.target.value)} className={inputClass} /></Field>
-            <Field label="種類"><select value={kind} onChange={(event) => { setKind(event.target.value as ReviewActionKind); setAccountId(null); setDestinationId(null); setReferenceId(null); setAmount(''); }} className={inputClass}>{Object.entries(KINDS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
+            <Field label="種類"><select value={kind} onChange={(event) => { setKind(event.target.value); setAccountId(null); setDestinationId(null); setReferenceId(null); setAmount(''); }} className={inputClass}>{!isActionKind(kind) && <option value={kind}>未対応の種類（{kind}）</option>}{Object.entries(KINDS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
             <Field label="予定月"><input required type="month" value={targetPeriod} onChange={(event) => setTargetPeriod(event.target.value)} className={inputClass} /></Field>
             {kind === 'set_budget' && <Choice label="支出の勘定科目" value={accountId} required options={accounts.filter((row) => row.account_type === 'expense')} onChange={setAccountId} />}
             {kind === 'add_recurring' && <>
@@ -86,7 +102,7 @@ export default function ActionEditor({ sourcePeriod, currency, busy, onSave, onC
                 <Field label="毎月の予定日"><input required type="number" min="1" max="31" step="1" value={day} onChange={(event) => setDay(event.target.value)} className={inputClass} /></Field>
             </>}
             {kind === 'pause_recurring' && <>
-                <Choice label="停止する定常収支" value={referenceId} required options={lookups.data?.recurring.filter((row) => row.is_active) ?? []} onChange={setReferenceId} />
+                <Choice label="停止する定常収支" value={referenceId} required options={lookups.data?.recurring.filter((row) => action || row.is_active) ?? []} onChange={setReferenceId} />
                 <p className="text-xs text-[var(--studio-warning)] md:col-span-2">実行すると定義を無効にし、自動記帳と予算への反映を停止します。自動で再開する予定は設定されません。</p>
             </>}
             {kind === 'boost_allocation' && <>
@@ -98,7 +114,7 @@ export default function ActionEditor({ sourcePeriod, currency, busy, onSave, onC
             {kind !== 'pause_recurring' && <Field label={kind === 'boost_allocation' ? '確保額の変更割合（%）' : `金額（${kind === 'add_recurring' ? entryCurrency : currency}）`}>
                 <input required type="number" min={kind === 'boost_allocation' ? '-100' : kind === 'add_recurring' ? '0.01' : '0'} max={kind === 'boost_allocation' ? '100' : undefined} step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} className={inputClass} />
             </Field>}
-            <EditorActions form={formId} busy={disabled} onCancel={onCancel} />
+            {!action && <EditorActions form={formId} busy={disabled} onCancel={onCancel} />}
         </fieldset>
     </form>;
 }
