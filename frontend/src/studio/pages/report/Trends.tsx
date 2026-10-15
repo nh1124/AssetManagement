@@ -2,7 +2,7 @@ import Overlay from '../../components/Overlay';
 import { useCallback, useState } from 'react';
 import { getAccountFlows, getAccountFlowTransactions, getNetWorthHistory } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
-import type { AccountFlowGrain, AccountFlowRow } from '../../../types';
+import type { AccountFlowAnalysis, AccountFlowGrain, AccountFlowRow } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import { useResource } from '../../useResource';
 import { DataTable, Feedback, Field } from '../db/Database';
@@ -71,6 +71,13 @@ export function AccountFlows({ startDate, endDate, currency, grain, heading = '�
 }) {
     const load = useCallback(() => getAccountFlows({ startDate, endDate, grain }), [startDate, endDate, grain]);
     const resource = useResource(load);
+    return <AccountFlowsReading resource={resource} startDate={startDate} endDate={endDate} currency={currency} heading={heading} className={className} />;
+}
+
+export function AccountFlowsReading({ resource, startDate, endDate, currency, heading, className, readOnly = false }: {
+    resource: { data: AccountFlowAnalysis | null; loading: boolean; error: string };
+    startDate: string; endDate: string; currency: string; heading: string; className: string; readOnly?: boolean;
+}) {
     const [selectedId, setSelectedId] = useState<number | null>(null);
     const selected = resource.data?.accounts.find((row) => row.account_id === selectedId);
     return <section className={className}>
@@ -78,8 +85,8 @@ export function AccountFlows({ startDate, endDate, currency, grain, heading = '�
         <Feedback loading={resource.loading} error={resource.error} />
         {resource.data && <>
             <DataTable columns={['口座・科目', '種別', '借方', '貸方', '増減', '仕訳数']}>
-                {resource.data.accounts.length ? resource.data.accounts.map((row) => <tr key={row.account_id} onClick={() => setSelectedId(row.account_id)} className={`cursor-pointer hover:bg-[var(--studio-accent-soft)] ${selectedId === row.account_id ? 'bg-[var(--studio-accent-soft)]' : ''}`}>
-                    <th scope="row" className="px-5 py-3 font-medium"><button type="button" aria-haspopup="dialog" onClick={(event) => { event.stopPropagation(); setSelectedId(row.account_id); }} className="rounded text-left text-[var(--studio-accent)] hover:underline focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)]">{row.account_name}</button></th>
+                {resource.data.accounts.length ? resource.data.accounts.map((row) => <tr key={row.account_id} onClick={readOnly ? undefined : () => setSelectedId(row.account_id)} className={`${readOnly ? '' : 'cursor-pointer hover:bg-[var(--studio-accent-soft)]'} ${selectedId === row.account_id ? 'bg-[var(--studio-accent-soft)]' : ''}`}>
+                    <th scope="row" className="px-5 py-3 font-medium">{readOnly ? row.account_name : <button type="button" aria-haspopup="dialog" onClick={(event) => { event.stopPropagation(); setSelectedId(row.account_id); }} className="rounded text-left text-[var(--studio-accent)] hover:underline focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)]">{row.account_name}</button>}</th>
                     <td className="px-5 py-3">{ACCOUNT_TYPES[row.account_type]}</td>
                     <td className="whitespace-nowrap px-5 py-3 tabular-nums">{formatCurrency(row.total_debit, currency)}</td>
                     <td className="whitespace-nowrap px-5 py-3 tabular-nums">{formatCurrency(row.total_credit, currency)}</td>

@@ -32,6 +32,13 @@
     --studio-expense: var(--studio-danger);
 }
 
+/* Height zero keeps charts laid out at their real width; display:none would
+   prevent measurement and leave their print output blank. */
+.studio-print-only {
+    height: 0;
+    overflow: hidden;
+}
+
 @media print {
     @page {
         margin: 14mm;
@@ -81,6 +88,11 @@
         padding: 0;
     }
 
+    .studio-print-only {
+        height: auto;
+        overflow: visible;
+    }
+
     .studio-main > section,
     .studio-report,
     .studio-report * {
@@ -89,7 +101,8 @@
     }
 
     /* The hidden toolbar must not leave a screen-spacing gap above the period. */
-    .studio-main > section > .studio-report {
+    .studio-main > section > .studio-report,
+    .studio-main > section > .studio-print-only {
         margin: 0;
     }
 

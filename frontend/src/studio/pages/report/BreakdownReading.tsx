@@ -1,27 +1,16 @@
-import { useCallback, useState } from 'react';
-import { applyPeriodReportAction, getPeriodReport, getProfitLoss, getVarianceAnalysis } from '../../../api';
+import { useState } from 'react';
+import { applyPeriodReportAction } from '../../../api';
 import { formatCurrency } from '../../../utils/currency';
-import { useResource } from '../../useResource';
 import { DataTable, Feedback } from '../db/Database';
 import { buttonClass } from '../db/forms';
-import { AccountFlows } from './Trends';
+import { AccountFlowsReading } from './Trends';
 import { ComparisonChart } from './Charts';
-import { ReportContext, ReportFigures, ReportProposals, type ProfitLoss } from './ReportReading';
+import { ReportContext, ReportFigures, ReportProposals } from './ReportReading';
+import { useBreakdownData, type BreakdownResource } from './useBreakdownData';
+import { varianceRows } from './reportPresentation';
 
-// The variance endpoint groups saved expense plans by category, including unplanned actuals.
-interface VarianceAnalysis {
-    plan_id: number | null;
-    items: Array<{ category: string; budget: number; actual: number; variance: number; percentage: number }>;
-    total_budget: number;
-    total_actual: number;
-    total_variance: number;
-}
-
-function Variance({ startDate, endDate, currency }: { startDate: string; endDate: string; currency: string }) {
-    const load = useCallback((): Promise<VarianceAnalysis> => getVarianceAnalysis(undefined, undefined, startDate, endDate), [startDate, endDate]);
-    const resource = useResource(load);
-    // Zero-valued items still belong to the period's budget and must remain visible.
-    const rows = resource.data?.items.slice().sort((a, b) => Math.abs(b.variance) - Math.abs(a.variance)) ?? [];
+function Variance({ resource, currency }: { resource: BreakdownResource['variance']; currency: string }) {
+    const rows = resource.data ? varianceRows(resource.data) : [];
     return <section className="space-y-4">
         <h2 className="text-lg font-semibold">予算と実績</h2>
         <Feedback loading={resource.loading} error={resource.error} />
@@ -40,20 +29,25 @@ function Variance({ startDate, endDate, currency }: { startDate: string; endDate
     </section>;
 }
 
-export default function BreakdownReading({ startDate, endDate, months, currency, clientName, onBusy, readOnly = false }: {
-    startDate: string; endDate: string; months: number; currency: string; clientName?: string; onBusy?: (busy: boolean) => void; readOnly?: boolean;
-}) {
-    const loadReport = useCallback(() => getPeriodReport(startDate, endDate), [startDate, endDate]);
-    // Report summaries expose the balance only; the existing P/L endpoint supplies income and expense.
-    const loadProfitLoss = useCallback((): Promise<ProfitLoss> => getProfitLoss(undefined, undefined, false, startDate, endDate), [startDate, endDate]);
-    const report = useResource(loadReport);
-    const profitLoss = useResource(loadProfitLoss);
+interface BreakdownProps {
+    startDate: string; endDate: string; months: number; currency: string; clientName?: string;
+    onBusy?: (busy: boolean) => void; readOnly?: boolean;
+}
+
+function LoadedBreakdownReading(props: BreakdownProps) {
+    const resource = useBreakdownData(props.startDate, props.endDate);
+    return <BreakdownContent {...props} resource={resource} />;
+}
+
+export default function BreakdownReading({ resource, ...props }: BreakdownProps & { resource?: BreakdownResource }) {
+    // Export passes its own snapshot so downloads and print never fetch separate copies.
+    return resource ? <BreakdownContent {...props} resource={resource} /> : <LoadedBreakdownReading {...props} />;
+}
+
+function BreakdownContent({ startDate, endDate, currency, clientName, onBusy, readOnly = false, resource }: BreakdownProps & { resource: BreakdownResource }) {
+    const { report, profitLoss, variance, flows, refresh } = resource;
     const [busy, setBusy] = useState(false);
-    const [varianceRevision, setVarianceRevision] = useState(0);
     const lock = (value: boolean) => { setBusy(value); onBusy?.(value); };
-    const refresh = () => { report.reload(); profitLoss.reload(); setVarianceRevision((value) => value + 1); };
-    // Daily detail fits one month; monthly and quarterly buckets keep longer periods readable.
-    const grain = months === 1 ? 'day' : months === 12 ? 'month' : 'quarter';
     return <div className="studio-report space-y-8">
         <section className="space-y-4">
             <h2 className="text-lg font-semibold">{startDate} 〜 {endDate} の内訳</h2>
@@ -63,11 +57,8 @@ export default function BreakdownReading({ startDate, endDate, months, currency,
             {report.data && <ReportFigures report={report.data} profitLoss={profitLoss.data} currency={currency} />}
         </section>
         {report.data && <ReportContext report={report.data} currency={currency} standalone />}
-        {/* Distinct keys: two siblings sharing one key makes reconciliation mismatch
-            them when the conditional sections above appear, and the period report
-            section ends up rendered twice. */}
-        <Variance key={`variance:${varianceRevision}`} startDate={startDate} endDate={endDate} currency={currency} />
-        <AccountFlows key={`flows:${varianceRevision}`} startDate={startDate} endDate={endDate} currency={currency} grain={grain} heading="口座・科目" className="space-y-4" />
+        <Variance resource={variance} currency={currency} />
+        <AccountFlowsReading resource={flows} startDate={startDate} endDate={endDate} currency={currency} heading="口座・科目" className="space-y-4" readOnly={readOnly} />
         {report.data && <ReportProposals report={report.data} currency={currency} clientName={clientName} disabled={report.loading || Boolean(report.error) || busy} apply={(id) => applyPeriodReportAction(startDate, endDate, id)} onApplied={refresh} onBusy={lock} readOnly={readOnly} standalone />}
     </div>;
 }
