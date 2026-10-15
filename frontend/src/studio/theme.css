@@ -31,3 +31,119 @@
     --studio-budget: #2563eb;
     --studio-expense: var(--studio-danger);
 }
+
+@media print {
+    @page {
+        margin: 14mm;
+    }
+
+    .studio-rail,
+    .studio-header,
+    .studio-screen-tabs,
+    .studio-period-selector,
+    .studio-print-hide,
+    .studio-root [role="dialog"] {
+        display: none !important;
+    }
+
+    /* The document and studio shell constrain scrolling to one screen; leaving
+       those heights or overflows in place would clip the report after page one. */
+    html:has(.studio-root),
+    body:has(.studio-root),
+    #root:has(.studio-root),
+    .studio-root,
+    .studio-content,
+    .studio-main {
+        display: block;
+        width: auto;
+        min-width: 0;
+        height: auto;
+        min-height: 0;
+        max-height: none;
+        overflow: visible !important;
+        background: #fff;
+        color-scheme: light;
+    }
+
+    .studio-root {
+        --studio-text: #000;
+        --studio-text-muted: #000;
+        --studio-text-faint: #000;
+        --studio-accent: #000;
+        --studio-positive: #000;
+        --studio-warning: #000;
+        --studio-danger: #000;
+        /* Budget and expense colours carry meaning even when other text is black. */
+        --studio-expense: #a33a2f;
+    }
+
+    .studio-main {
+        padding: 0;
+    }
+
+    .studio-main > section,
+    .studio-report,
+    .studio-report * {
+        background: #fff !important;
+        color: #000;
+    }
+
+    /* The hidden toolbar must not leave a screen-spacing gap above the period. */
+    .studio-main > section > .studio-report {
+        margin: 0;
+    }
+
+    .studio-report > section {
+        margin: 0;
+    }
+
+    .studio-report > section + section {
+        break-before: page;
+    }
+
+    .studio-report h2,
+    .studio-report h3,
+    .studio-report h4 {
+        break-after: avoid;
+    }
+
+    .studio-report dl > div,
+    .studio-report li,
+    .studio-report [role="img"] {
+        break-inside: avoid;
+    }
+
+    /* Tables and the full, data-sized budget chart must escape their screen
+       scrollports. Keep the chart's own height so every category still appears. */
+    .studio-report .overflow-x-auto,
+    .studio-report .overflow-auto {
+        max-height: none;
+        overflow: visible;
+    }
+
+    .studio-report [role="img"] {
+        min-width: 0;
+    }
+
+    /* The budget chart scrolls on screen; on paper it must show every category
+       at once, so release the scrollport's height. Leave the chart's own width
+       alone: its 36rem floor fits the printable column, and ResponsiveContainer
+       re-measures whatever the print sheet does to it -- overriding the width
+       here made it measure a collapsing parent and draw nothing. */
+    .studio-report .studio-chart-scroll {
+        max-height: none;
+        overflow: visible;
+    }
+
+    .studio-report th,
+    .studio-report td {
+        padding: 2mm;
+        white-space: normal;
+        overflow-wrap: anywhere;
+    }
+
+    .studio-report [role="img"] {
+        print-color-adjust: exact;
+        -webkit-print-color-adjust: exact;
+    }
+}

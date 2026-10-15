@@ -22,7 +22,7 @@ function Rail() {
     const { user } = useAuth();
     const { t } = useLanguage();
     return (
-        <aside className="flex w-60 flex-shrink-0 flex-col bg-[var(--studio-rail)] text-[var(--studio-rail-text)]">
+        <aside className="studio-rail flex w-60 flex-shrink-0 flex-col bg-[var(--studio-rail)] text-[var(--studio-rail-text)]">
             <div className="px-5 pt-5 pb-6">
                 <div className="flex items-center gap-2">
                     <span className="flex h-7 w-7 items-center justify-center rounded bg-[var(--studio-rail-active)] text-sm font-semibold text-[var(--studio-rail-text-strong)]">
@@ -96,8 +96,8 @@ export default function StudioLayout() {
         <div lang={language} className="studio-root flex h-screen min-h-0 overflow-hidden bg-[var(--studio-bg)] text-[var(--studio-text)]">
             <ConfirmProvider>
             <Rail />
-            <div className="flex min-w-0 flex-1 flex-col">
-                <header className="flex h-14 flex-shrink-0 items-center gap-3 border-b border-[var(--studio-border)] bg-[var(--studio-surface)] px-6">
+            <div className="studio-content flex min-w-0 flex-1 flex-col">
+                <header className="studio-header flex h-14 flex-shrink-0 items-center gap-3 border-b border-[var(--studio-border)] bg-[var(--studio-surface)] px-6">
                     <div className="min-w-0">
                         <p className="text-[11px] text-[var(--studio-text-faint)]">
                             {screen ? t(screen.section) : pathname.startsWith('/record') ? t('group.workspace') : ''}
@@ -120,7 +120,7 @@ export default function StudioLayout() {
                         <LogOut size={16} />
                     </button>
                 </header>
-                <main className="min-h-0 flex-1 overflow-auto p-6">
+                <main className="studio-main min-h-0 flex-1 overflow-auto p-6">
                     <Outlet />
                 </main>
             </div>

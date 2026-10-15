@@ -14,6 +14,7 @@ import Actions from './pages/budget/Actions';
 import Trends from './pages/report/Trends';
 import Breakdown from './pages/report/Monthly';
 import Review from './pages/report/Review';
+import Export from './pages/report/Export';
 import LifeEventList from './pages/goals/LifeEventList';
 import GoalSummary from './pages/goals/GoalSummary';
 import GoalPage from './pages/goals/GoalPage';
@@ -43,7 +44,7 @@ const SCREENS: Record<string, { index: ReactElement; tabs?: Record<string, React
     },
     flows: { index: <Flows />, tabs: { accounts: <Flows subjects /> } },
     budget: { index: <Budget />, tabs: { actions: <Actions /> } },
-    report: { index: <Trends />, tabs: { breakdown: <Breakdown />, review: <Review /> } },
+    report: { index: <Trends />, tabs: { breakdown: <Breakdown />, review: <Review />, export: <Export /> } },
     goals: { index: <GoalSummary />, tabs: { events: <LifeEventList />, graph: <LifeEventGraph /> } },
     assets: {
         layout: <Assets />,

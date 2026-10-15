@@ -102,6 +102,7 @@ export const STUDIO_GROUPS: StudioGroup[] = [
                     { segment: '', label: 'tab.trends' },
                     { segment: 'breakdown', label: 'tab.breakdown' },
                     { segment: 'review', label: 'tab.review' },
+                    { segment: 'export', label: 'tab.export' },
                 ],
             },
             {

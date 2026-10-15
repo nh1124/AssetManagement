@@ -7,7 +7,7 @@ export default function ScreenTabs({ screen }: { screen: StudioScreen }) {
     const { t } = useLanguage();
     if (!screen.tabs?.length) return null;
     return (
-        <div className="mb-4 inline-flex gap-1 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-1">
+        <div className="studio-screen-tabs mb-4 inline-flex gap-1 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-1">
             {screen.tabs.map((tab) => (
                 <NavLink
                     key={tab.segment || 'index'}

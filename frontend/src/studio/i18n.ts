@@ -37,6 +37,7 @@ const dictionary = {
     'tab.trends': ['推移', 'Trends'],
     'tab.breakdown': ['内訳', 'Breakdown'],
     'tab.review': ['振り返り', 'Review'],
+    'tab.export': ['出力', 'Export'],
     'tab.services': ['サービス・継続支出', 'Services & recurring expenses'],
     'tab.income': ['収入', 'Income'],
     'tab.repayment': ['返済', 'Repayment'],

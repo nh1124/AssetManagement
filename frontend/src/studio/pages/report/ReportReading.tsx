@@ -56,10 +56,10 @@ export function ReportContext({ report, currency, standalone = false }: { report
     </Container>;
 }
 
-export function ReportProposals({ report, currency, clientName, disabled, apply, onApplied, onBusy, standalone = false }: {
+export function ReportProposals({ report, currency, clientName, disabled, apply, onApplied, onBusy, standalone = false, readOnly = false }: {
     report: MonthlyReport; currency: string; clientName?: string; disabled: boolean;
     apply: (proposalId: string) => Promise<unknown>; onApplied: () => void; onBusy: (busy: boolean) => void;
-    standalone?: boolean;
+    standalone?: boolean; readOnly?: boolean;
 }) {
     const confirm = useConfirm();
     const mutation = useMutation();
@@ -78,7 +78,7 @@ export function ReportProposals({ report, currency, clientName, disabled, apply,
         return proposal.description;
     };
     const run = async (proposal: ActionProposal) => {
-        if (disabled || mutation.busy || !clientName || !proposal.auto_executable || proposal.applied || proposal.action_status === 'applied') return;
+        if (readOnly || disabled || mutation.busy || !clientName || !proposal.auto_executable || proposal.applied || proposal.action_status === 'applied') return;
         if (!(await confirm(`「${clientName}」のレポート（${report.period}）の提案を適用しますか？\n${effect(proposal)}`, "適用する"))) return;
         onBusy(true);
         void mutation.run(() => apply(proposal.id), '提案を適用しました。', onApplied).finally(() => onBusy(false));
@@ -90,8 +90,8 @@ export function ReportProposals({ report, currency, clientName, disabled, apply,
         {report.action_proposals.length ? <ul className="space-y-3">{report.action_proposals.map((proposal) => <li key={proposal.id} className="space-y-3 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
             <div className="flex flex-wrap items-center justify-between gap-3"><h4 className="text-sm font-semibold">{KINDS[proposal.kind]}</h4><span className="text-xs text-[var(--studio-text-muted)]">{proposal.applied ? '適用済み' : STATES[proposal.action_status ?? 'pending']}</span></div>
             <p className="text-sm leading-relaxed text-[var(--studio-text-muted)]">{effect(proposal)}</p>
-            <div className={standalone ? 'flex justify-end' : undefined}>{proposal.auto_executable ? <button type="button" className={standalone ? primaryClass : buttonClass} disabled={disabled || mutation.busy || !clientName || proposal.applied || proposal.action_status === 'applied'} onClick={() => run(proposal)}>この提案を適用</button>
-                : <Link to="/budget" className="text-sm text-[var(--studio-accent)] underline">予算で検討する</Link>}</div>
+            {!readOnly && <div className={`studio-print-hide ${standalone ? 'flex justify-end' : ''}`}>{proposal.auto_executable ? <button type="button" className={standalone ? primaryClass : buttonClass} disabled={disabled || mutation.busy || !clientName || proposal.applied || proposal.action_status === 'applied'} onClick={() => run(proposal)}>この提案を適用</button>
+                : <Link to="/budget" className="text-sm text-[var(--studio-accent)] underline">予算で検討する</Link>}</div>}
         </li>)}</ul> : <p className="text-sm text-[var(--studio-text-muted)]">この期間の提案はありません。</p>}
     </Container>;
 }
