@@ -1,4 +1,3 @@
-import { useReloadAction } from '../../components/useReloadAction';
 import { useCallback, useId, useState, type FormEvent } from 'react';
 import { getAccountEarmarks } from '../../../api';
 import type { AccountEarmark, Capsule } from '../../../types';
@@ -108,7 +107,6 @@ function AttachmentList({ capsules, accountId, accountName, earmarks, onSaved, o
 
 function AttachmentEditor(props: AttachmentEditorProps) {
     const capsules = useResource(loadAllCapsules);
-    useReloadAction(capsules.reload, false, Boolean(capsules.error));
     return <div className="space-y-4">
         <Feedback loading={capsules.loading} error={capsules.error} />
         {!capsules.loading && !capsules.error && capsules.data && <AttachmentList {...props} capsules={capsules.data} />}
@@ -137,7 +135,6 @@ export default function AccountEarmarks({ accountId, accountName, disabled }: { 
         setMessage('');
         await mutation.run(() => saveAttachment(earmark.capsule_id, accountId, false), `「${earmark.capsule_name}」の紐づけを解除しました。`, () => { setSelected(null); earmarks.reload(); });
     };
-    useReloadAction(earmarks.reload, Boolean(busy), Boolean(earmarks.error));
     return <div className="space-y-3">
         <Feedback loading={earmarks.loading} error={earmarks.error || mutation.error} message={message || mutation.message} />
         {earmarks.data && <DataTable columns={['取り置き', '確保額（現在）']}>

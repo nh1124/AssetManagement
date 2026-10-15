@@ -10,7 +10,6 @@ import type { LifeEvent } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import Overlay from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
-import { useReloadAction } from '../../components/useReloadAction';
 import { useResource } from '../../useResource';
 import { Choice, DataTable, EditorActions, Feedback, Field } from '../db/Database';
 import { buttonClass, inputClass, primaryClass, useMutation } from '../db/forms';
@@ -153,7 +152,6 @@ function ScenarioResults({ currency, clientName, parameters, view }: { currency:
     const [nextKind, setNextKind] = useState<LifeEventLinkInput['kind']>('after');
     const disabled = resource.loading || Boolean(resource.error) || mutation.busy || !clientName;
     const selected = resource.data?.comparison.scenarios.find((item) => item.id === resource.data?.comparison.adopted.scenario_id);
-    useReloadAction(resource.reload, resource.loading || mutation.busy || editing || editingLink !== null);
     const adopt = (scenarioId: string) => {
         if (disabled || !scenarioId) return;
         void mutation.run(() => adoptLifeEventScenario(scenarioId), '案を採用しました。', resource.reload);

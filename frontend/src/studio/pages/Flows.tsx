@@ -1,4 +1,3 @@
-import { useReloadAction } from '../components/useReloadAction';
 import { clientToday, useTimezone } from '../datetime';
 import { useCallback, useState } from 'react';
 import { getProfitLoss } from '../../api';
@@ -52,9 +51,8 @@ function MonthlyFlows({ month, currency }: { month: string; currency: string }) 
         const [year, number] = month.split('-').map(Number);
         return getProfitLoss(year, number);
     }, [month]);
-    const { data: report, loading, error, reload } = useResource(load);
+    const { data: report, loading, error } = useResource(load);
 
-    useReloadAction(reload, Boolean(loading));
     return (
         <div className="space-y-4">
             <div className="flex items-center justify-between gap-4">

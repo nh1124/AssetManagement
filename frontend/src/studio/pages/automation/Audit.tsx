@@ -1,4 +1,3 @@
-import { useReloadAction } from '../../components/useReloadAction';
 import { formatDateTime, useTimezone } from '../../datetime';
 import { useRef, useState } from 'react';
 import { getAiAuditLogs } from '../../../api';
@@ -16,7 +15,7 @@ async function loadFirstPage() {
 
 function AuditForClient() {
     const timezone = useTimezone();
-    const { data, setData, loading, error, reload } = useResource(loadFirstPage);
+    const { data, setData, loading, error } = useResource(loadFirstPage);
     const [loadingMore, setLoadingMore] = useState(false);
     const [operationError, setOperationError] = useState('');
     const inFlight = useRef(false);
@@ -38,7 +37,6 @@ function AuditForClient() {
         }
     };
 
-    useReloadAction(() => { setOperationError(''); reload(); }, Boolean(loading || loadingMore));
     return (
         <section className="space-y-4">
             {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">監査ログを読み込んでいます…</p>}

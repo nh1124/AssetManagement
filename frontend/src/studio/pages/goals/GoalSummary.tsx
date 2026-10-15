@@ -6,7 +6,6 @@ import { getLifeEventScenarios, type LifeEventScenario, type ScenarioParameters 
 import { useClient } from '../../../context/ClientContext';
 import type { LifeEvent } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
-import { useReloadAction } from '../../components/useReloadAction';
 import { formatDate } from '../../datetime';
 import { useResource } from '../../useResource';
 import { DataTable, Feedback, Field } from '../db/Database';
@@ -78,7 +77,6 @@ function SummaryResults({ parameters, currency }: { parameters: ScenarioParamete
         return { comparison, events };
     }, [parameters]);
     const resource = useResource(load);
-    useReloadAction(resource.reload, resource.loading);
     const data = resource.data;
     const scenario = data?.comparison.scenarios.find((item) => item.id === data.comparison.adopted.scenario_id);
     // The graph contract expresses every event in one client currency; never combine currencies.

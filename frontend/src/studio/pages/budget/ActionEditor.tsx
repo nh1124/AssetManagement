@@ -1,4 +1,3 @@
-import { useReloadAction } from '../../components/useReloadAction';
 import { useId, useState, type FormEvent } from 'react';
 import { getCapsules, getLifeEvents, getRecurringTransactions } from '../../../api';
 import type { LifeEvent, ReviewActionCreate, ReviewActionKind } from '../../../types';
@@ -71,7 +70,6 @@ export default function ActionEditor({ sourcePeriod, currency, busy, onSave, onC
         }
         onSave({ source_period: sourcePeriod, target_period: targetPeriod, kind, description: description.trim(), payload });
     };
-    useReloadAction(lookups.reload, Boolean(busy || lookups.loading), Boolean(lookups.error));
     return <form id={formId} onSubmit={submit} className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
         <p className="text-xs text-[var(--studio-text-muted)]">行動を未実行として記録します。実行するか、予定月になって期限到来の処理をすると反映されます。</p>
         <Feedback loading={lookups.loading} error={lookups.error} />

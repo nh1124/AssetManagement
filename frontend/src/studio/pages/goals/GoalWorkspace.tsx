@@ -1,4 +1,3 @@
-import { useReloadAction } from '../../components/useReloadAction';
 import { useCallback, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { getGoalCapsules, getRoadmapProjection, unarchiveGoal } from '../../../api';
@@ -44,7 +43,6 @@ function GoalWorkspaceForClient({ goalId, currency, clientName }: { goalId: stri
         void mutation.run(action, message, () => { setDialog(null); if (deleted) navigate('/goals/events', { replace: true }); else refresh(); });
     };
     const goal = resource.data?.goal;
-    useReloadAction(refresh, busy || resource.loading || dialog !== null, Boolean(goal || resource.error));
     return <section className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
             <div><Link to={goal?.archived_at ? '/goals/events?archived=true' : '/goals/events'} className="text-sm text-[var(--studio-accent)] hover:underline">ライフイベント一覧へ</Link><h2 className="mt-2 text-lg font-semibold">{goal?.name ?? 'ライフイベント'}{goal?.archived_at && '（中止・アーカイブ）'}</h2></div>

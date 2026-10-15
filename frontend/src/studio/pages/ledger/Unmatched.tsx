@@ -1,4 +1,3 @@
-import { useReloadAction } from '../../components/useReloadAction';
 import { useEffect, useRef, useState } from 'react';
 import { approveTransactionProposal, getAccounts, rejectTransactionProposal } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
@@ -14,16 +13,15 @@ async function loadAccountNames(): Promise<Map<number, string>> {
     return new Map([...inactive, ...active].map((account) => [account.id, account.name]));
 }
 
-export default function Unmatched({ proposals, loading, error, reload, onDecided }: {
+export default function Unmatched({ proposals, loading, error, onDecided }: {
     proposals: TransactionProposal[] | null;
     loading: boolean;
     error: string;
-    reload: () => void;
     onDecided: (id: number) => void;
 }) {
     const { currentClient } = useClient();
     const currency = currentClient?.general_settings?.currency || 'JPY';
-    const { data: names, loading: namesLoading, error: namesError, reload: reloadNames } = useResource(loadAccountNames);
+    const { data: names, loading: namesLoading, error: namesError } = useResource(loadAccountNames);
     const [decidingId, setDecidingId] = useState<number | null>(null);
     const [operationError, setOperationError] = useState('');
     const [confirmation, setConfirmation] = useState('');
@@ -55,17 +53,10 @@ export default function Unmatched({ proposals, loading, error, reload, onDecided
         }
     };
 
-    const refresh = () => { reload(); reloadNames(); };
     const disabled = loading || Boolean(error) || namesLoading || Boolean(namesError) || decidingId !== null;
 
-    useReloadAction(refresh, Boolean(loading || namesLoading || decidingId !== null));
     return (
         <section className="space-y-4">
-            <div className="flex items-center justify-between gap-4">
-                <div>
-                    <p className="mt-1 text-xs text-[var(--studio-text-muted)]">システムが提案した記録です。承認すると実際の取引として記帳されます。</p>
-                </div>
-            </div>
             {(loading || namesLoading) && <p role="status" className="text-sm text-[var(--studio-text-muted)]">提案と口座名を読み込んでいます…</p>}
             {error && <p role="alert" className="text-sm text-[var(--studio-danger)]">提案を取得できませんでした。{error}</p>}
             {namesError && <p role="alert" className="text-sm text-[var(--studio-danger)]">口座名を取得できませんでした。{namesError}</p>}

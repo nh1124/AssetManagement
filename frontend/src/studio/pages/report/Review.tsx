@@ -1,4 +1,3 @@
-import { useReloadAction } from '../../components/useReloadAction';
 import { useConfirm } from '../../components/useConfirm';
 import Overlay, { OverlayFooter } from '../../components/Overlay';
 import { useCallback, useId, useState, type FormEvent } from 'react';
@@ -64,7 +63,6 @@ function PeriodReading({ period, currency, clientName, onBusy, onDirty }: {
     const [editing, setEditing] = useState(false);
     const lock = (value: boolean) => { setBusy(value); onBusy(value); };
     const refreshReport = () => { report.reload(); profitLoss.reload(); };
-    useReloadAction(refreshReport, Boolean(busy || report.loading || profitLoss.loading));
     return <div className="space-y-4">
         <div className="grid items-start gap-6 xl:grid-cols-2">
             <section className="min-w-0 space-y-3">

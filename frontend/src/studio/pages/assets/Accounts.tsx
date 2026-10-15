@@ -1,4 +1,3 @@
-import { useReloadAction } from '../../components/useReloadAction';
 import Overlay from '../../components/Overlay';
 import Reconciliation from './Reconciliation';
 import AccountEarmarks from './AccountEarmarks';
@@ -84,7 +83,6 @@ function AccountsForClient({ subjects }: { subjects: boolean }) {
         }
     };
 
-    useReloadAction(reload, Boolean(loading || updatingId !== null));
     return (
         <section className="space-y-4">
             {!subjects && <div className="flex items-center justify-between gap-4">

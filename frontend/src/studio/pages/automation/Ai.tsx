@@ -1,6 +1,4 @@
-import { useReloadAction } from '../../components/useReloadAction';
 import Overlay from '../../components/Overlay';
-import { ReloadRegistration } from '../../components/ReloadScope';
 import { DataTable, Feedback } from '../db/Database';
 import { useRef, useState } from 'react';
 import { getAiExecutionSettings, getAiPolicies, updateAiExecutionSettings, updateAiPolicies } from '../../../api';
@@ -23,7 +21,7 @@ function policyPayload(row: AiOperationPolicy): AiOperationPolicyPayload {
 }
 
 function Policies({ currency }: { currency: string }) {
-    const { data, setData, loading, error, reload } = useResource(getAiPolicies);
+    const { data, setData, loading, error } = useResource(getAiPolicies);
     const [editing, setEditing] = useState(false);
     const [edits, setEdits] = useState<Record<number, PolicyEdit>>({});
     const [saving, setSaving] = useState(false);
@@ -60,7 +58,6 @@ function Policies({ currency }: { currency: string }) {
         }
     };
 
-    useReloadAction(reload, Boolean(loading || saving || changed > 0));
     return (
         <section className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -123,7 +120,7 @@ function Policies({ currency }: { currency: string }) {
 }
 
 function ExecutionSettings() {
-    const { data, setData, loading, error, reload } = useResource(getAiExecutionSettings);
+    const { data, setData, loading, error } = useResource(getAiExecutionSettings);
     const [editing, setEditing] = useState(false);
     const [mode, setMode] = useState<AiExecutionSettings['mcp_write_mode'] | null>(null);
     const [saving, setSaving] = useState(false);
@@ -154,7 +151,7 @@ function ExecutionSettings() {
         <>
         <button type="button" disabled={loading || saving} onClick={() => setEditing(true)} className={buttonClass}>AI実行設定</button>
         {!editing && <Feedback error={error || operationError} message={confirmation} />}
-        {editing && <Overlay title="AI実行設定" footer={<button type="button" onClick={() => void save()} disabled={loading || saving || Boolean(error) || !changed} className={primaryClass}>{saving ? '保存中…' : '実行設定を保存'}</button>} onClose={() => { setEditing(false); setMode(null); }}><ReloadRegistration run={reload} disabled={loading || saving || changed} /><section className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
+        {editing && <Overlay title="AI実行設定" footer={<button type="button" onClick={() => void save()} disabled={loading || saving || Boolean(error) || !changed} className={primaryClass}>{saving ? '保存中…' : '実行設定を保存'}</button>} onClose={() => { setEditing(false); setMode(null); }}><section className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
             {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">実行設定を読み込んでいます…</p>}
             {(error || operationError) && <p role="alert" className="text-sm text-[var(--studio-danger)]">{error || operationError}</p>}
             {confirmation && <p role="status" className="text-sm text-[var(--studio-positive)]">{confirmation}</p>}

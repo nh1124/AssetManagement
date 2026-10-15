@@ -1,4 +1,3 @@
-import { useReloadAction } from './useReloadAction';
 import { useCallback } from 'react';
 import { getAccountEarmarks } from '../../api';
 import { formatCurrency } from '../../utils/currency';
@@ -13,7 +12,6 @@ export default function DrawdownClaim({ accountId, accountName, capsuleId, curre
     const claims = useResource(load);
     const claim = claims.data?.find((row) => row.capsule_id === capsuleId && row.currency === currency);
     // Only the server knows the claim; failed or missing reads cannot imply zero.
-    useReloadAction(claims.reload, false, Boolean(claims.error));
     return <div className="mt-2 space-y-1 text-xs text-[var(--studio-text-muted)]">
         {claims.loading ? <p role="status">この口座の確保額を読み込んでいます…</p>
             : claims.error ? <>

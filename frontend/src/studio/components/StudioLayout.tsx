@@ -4,7 +4,6 @@ import { useLanguage } from '../i18n';
 import { useAuth } from '../../context/AuthContext';
 import { SETTINGS_PATH, STUDIO_GROUPS, STUDIO_SCREENS } from '../navigation';
 import ConfirmProvider from './ConfirmProvider';
-import ReloadScope from './ReloadScope';
 
 /** The screen whose path is the longest prefix of the current location.
  *
@@ -122,7 +121,7 @@ export default function StudioLayout() {
                     </button>
                 </header>
                 <main className="min-h-0 flex-1 overflow-auto p-6">
-                    <ReloadScope><Outlet /></ReloadScope>
+                    <Outlet />
                 </main>
             </div>
             </ConfirmProvider>

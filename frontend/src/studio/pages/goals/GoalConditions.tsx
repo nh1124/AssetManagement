@@ -4,7 +4,6 @@ import { addGoalCondition, deleteGoalCondition, getGoalConditions, getHouseholdM
 import { formatCurrency } from '../../../utils/currency';
 import Overlay from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
-import { useReloadAction } from '../../components/useReloadAction';
 import { clientToday, formatDate, useTimezone } from '../../datetime';
 import { useResource } from '../../useResource';
 import { DataTable, EditorActions, Feedback, Field } from '../db/Database';
@@ -75,7 +74,6 @@ export default function GoalConditions({ goalId, currency, clientName, disabled,
         onBusy(true);
         void mutation.run(action, message, () => { if (close) setEditing(false); resource.reload(); }).finally(() => onBusy(false));
     };
-    useReloadAction(resource.reload, locked || editing);
     const evaluation = resource.data?.evaluation;
     return <section className="space-y-4 rounded-lg border border-[var(--studio-border)] p-5">
         <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="font-semibold">条件</h3><span className="text-xs text-[var(--studio-text-muted)]">{evaluation && (evaluation.conditions.length === 0 ? '前提なし' : evaluation.satisfied === null ? '判定不能' : evaluation.satisfied ? '成立' : '未達')}</span><button type="button" disabled={locked || editing} onClick={() => setEditing(true)} className={buttonClass}>条件を追加</button></div>

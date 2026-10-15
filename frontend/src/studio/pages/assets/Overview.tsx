@@ -1,4 +1,3 @@
-import { useReloadAction } from '../../components/useReloadAction';
 import { useCallback } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { formatDate, useTimezone } from '../../datetime';
@@ -39,12 +38,9 @@ function BalanceRows({ rows, currency, emptyLabel }: {
 function OverviewForDate({ asOf }: AssetPeriod) {
     const timezone = useTimezone();
     const loadBalanceSheet = useCallback((): Promise<BalanceSheet> => getBalanceSheet(undefined, undefined, asOf), [asOf]);
-    const { data: sheet, loading, error, reload } = useAssetData(loadBalanceSheet);
+    const { data: sheet, loading, error } = useAssetData(loadBalanceSheet);
     const summary = useAssetData(getAnalysisSummary);
-    const { reload: reloadSummary } = summary;
-    const reloadAll = useCallback(() => { reload(); reloadSummary(); }, [reload, reloadSummary]);
 
-    useReloadAction(reloadAll, Boolean(loading || summary.loading));
     return (
         <section className="space-y-4">
             <div className="flex items-center justify-between gap-4">

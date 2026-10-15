@@ -1,4 +1,3 @@
-import { useReloadAction } from '../../components/useReloadAction';
 import { useCallback } from 'react';
 import { getAccountEarmarks } from '../../../api';
 import type { CapsuleFundingSource } from '../../../types';
@@ -12,7 +11,6 @@ export default function EarmarkAccounts({ capsuleId, sources }: { capsuleId: num
         return { source, earmark: earmarks.find((earmark) => earmark.capsule_id === capsuleId) };
     })), [capsuleId, sources]);
     const claims = useResource(load);
-    useReloadAction(claims.reload, false, Boolean(claims.error));
     return <div className="space-y-3">
         <Feedback loading={claims.loading} error={claims.error} />
         <DataTable columns={['口座', '確保額（現在）']}>

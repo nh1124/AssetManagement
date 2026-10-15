@@ -1,4 +1,3 @@
-import { useReloadAction } from '../../components/useReloadAction';
 import Overlay from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
 import { Fragment, useState } from 'react';
@@ -47,7 +46,6 @@ function EarmarksForClient({ currency, clientName }: { currency: string; clientN
         });
     };
 
-    useReloadAction(() => { reload(); goals.reload(); }, Boolean(loading || mutation.busy || rulesBusy || editor !== null));
     return (
         <section className="space-y-4">
             <div className="flex items-center justify-between gap-4">

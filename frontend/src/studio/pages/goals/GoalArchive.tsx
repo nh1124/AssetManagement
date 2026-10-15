@@ -2,7 +2,6 @@ import { useCallback, useId, useState, type FormEvent } from 'react';
 import { archiveGoal, getGoalCapsules } from '../../../api';
 import type { GoalCapsuleAction, LifeEvent } from '../../../types';
 import Overlay, { OverlayFooter } from '../../components/Overlay';
-import { ReloadRegistration } from '../../components/ReloadScope';
 import { useConfirm } from '../../components/useConfirm';
 import { useResource } from '../../useResource';
 import { Choice, DataTable, Feedback } from '../db/Database';
@@ -41,7 +40,6 @@ export default function GoalArchive({ goal, clientName, busy, error, onArchive, 
         onArchive(() => archiveGoal(goal.id, { capsule_action: decision, transfer_account_id: destination }));
     };
     return <Overlay title={`「${goal.name}」を中止`} onClose={() => { if (!busy) onCancel(); }}>
-        <ReloadRegistration run={resource.reload} active={Boolean(resource.error)} />
         <form id={formId} onSubmit={submit} className="space-y-4">
             <Feedback loading={resource.loading} error={resource.error || error} />
             {resource.data && <DataTable columns={['取り置き', '現在の確保額（通貨別）']}>

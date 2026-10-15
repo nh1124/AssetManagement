@@ -1,4 +1,3 @@
-import { useReloadAction } from '../../components/useReloadAction';
 import Overlay from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
 import { useCallback, useId, useState, type FormEvent } from 'react';
@@ -51,7 +50,6 @@ export default function Milestones({ goalId, currency, disabled, onChanged, onBu
         onBusy(true);
         void mutation.run(action, message, () => { if (close) setEditor(null); resource.reload(); onChanged(); }).finally(() => onBusy(false));
     };
-    useReloadAction(resource.reload, Boolean(disabled || mutation.busy || resource.loading));
     return <section className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex gap-2">
             <button type="button" disabled={locked || editor !== null} onClick={() => setEditor({ row: null })} className={buttonClass}>新しいマイルストーン</button>

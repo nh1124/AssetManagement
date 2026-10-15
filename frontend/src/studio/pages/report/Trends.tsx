@@ -1,4 +1,3 @@
-import { useReloadAction } from '../../components/useReloadAction';
 import Overlay from '../../components/Overlay';
 import { useCallback, useState } from 'react';
 import { getAccountFlows, getAccountFlowTransactions, getNetWorthHistory } from '../../../api';
@@ -19,7 +18,6 @@ function EntryPage({ accountId, startDate, endDate, currency, offset, onOffset }
 }) {
     const load = useCallback(() => getAccountFlowTransactions({ accountId, startDate, endDate, limit: PAGE_SIZE, offset }), [accountId, startDate, endDate, offset]);
     const resource = useResource(load);
-    useReloadAction(resource.reload, Boolean(resource.loading));
     return <div className="space-y-3">
         <div className="flex items-center justify-between gap-3"><p className="text-xs text-[var(--studio-text-muted)]">{startDate} 〜 {endDate}</p></div>
         <Feedback loading={resource.loading} error={resource.error} />
@@ -72,7 +70,6 @@ function AccountFlows({ startDate, endDate, currency, grain }: { startDate: stri
     const resource = useResource(load);
     const [selectedId, setSelectedId] = useState<number | null>(null);
     const selected = resource.data?.accounts.find((row) => row.account_id === selectedId);
-    useReloadAction(resource.reload, Boolean(resource.loading));
     return <section className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
         <h2 className="text-lg font-semibold">資金移動</h2>
         <Feedback loading={resource.loading} error={resource.error} />
@@ -97,7 +94,6 @@ function NetWorth({ months, currency }: { months: number; currency: string }) {
     const resource = useResource(load);
     const first = resource.data?.[0];
     const latest = resource.data?.at(-1);
-    useReloadAction(resource.reload, Boolean(resource.loading));
     return <section className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
         <h2 className="text-lg font-semibold">純資産の推移</h2>
         <p className="text-sm text-[var(--studio-text-muted)]">今月は、登録されている記録までの値です。</p>

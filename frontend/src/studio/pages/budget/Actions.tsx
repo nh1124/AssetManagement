@@ -1,4 +1,3 @@
-import { useReloadAction } from '../../components/useReloadAction';
 import Overlay from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
 import { clientToday, useTimezone } from '../../datetime';
@@ -61,7 +60,6 @@ function MonthlyActions({ sourcePeriod, currency, clientName }: { sourcePeriod: 
         let rows: MonthlyAction[] = [];
         void mutation.run(async () => { rows = (await processDueMonthlyActions()).processed; }, '期限が到来した行動の処理が完了しました。', () => { setProcessed(rows); resource.reload(); });
     };
-    useReloadAction(resource.reload, Boolean(mutation.busy || resource.loading || adding));
     return <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap gap-2">

@@ -197,7 +197,6 @@ function SettingsForClient() {
         </details>
         <details className={sectionClass}>
             <summary className="cursor-pointer text-sm font-semibold">{t('mfa.title')}</summary>
-            <div className="flex justify-end"><button type="button" disabled={mfa.loading || mutation.busy} onClick={mfa.reload} className={buttonClass}>{t('common.reload')}</button></div>
             {mfa.loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">{t('common.loading')}</p>}
             {mfa.error && <p role="alert" className="text-sm text-[var(--studio-danger)]">{t('settings.mfaLoadFailed')}</p>}
             {mfa.data && <dl className="space-y-2 text-sm">

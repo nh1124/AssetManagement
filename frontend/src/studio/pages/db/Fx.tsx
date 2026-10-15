@@ -1,4 +1,3 @@
-import { useReloadAction } from '../../components/useReloadAction';
 import Overlay, { OverlayFooter } from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
 import { useId, useState, type FormEvent } from 'react';
@@ -38,7 +37,6 @@ function FxForClient({ currency }: { currency: string }) {
         let result: ExchangeRateAutoUpdateResult | null = null;
         void mutation.run(async () => { result = await autoUpdateExchangeRates(); }, '自動更新の結果を取得しました。', () => { setFetched(result); resource.reload(); });
     };
-    useReloadAction(resource.reload, Boolean(mutation.busy || resource.loading));
     return <section className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex gap-2"><button type="button" disabled={disabled} onClick={() => setAdding(true)} className={buttonClass}>新規作成</button><button type="button" disabled={disabled} onClick={autoUpdate} className={buttonClass}>自動更新</button></div></div>
         <Feedback loading={resource.loading} error={mutation.error || resource.error} message={mutation.message} />

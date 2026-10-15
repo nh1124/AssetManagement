@@ -1,4 +1,3 @@
-import { useReloadAction } from '../components/useReloadAction';
 import { useClient } from '../../context/ClientContext';
 import { useCallback, useEffect, useRef } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
@@ -23,7 +22,6 @@ function TransactionEditor({ transactionId }: { transactionId: string }) {
     }, [transactionId]);
     const resource = useResource(load);
     const leave = () => navigate(returnTo, { replace: true });
-    useReloadAction(resource.reload, false, Boolean(resource.error));
     return <section className="space-y-4">
         {(resource.loading || resource.error) && <h2 className="text-lg font-semibold">取引 #{transactionId}を編集</h2>}
         <Feedback loading={resource.loading} error={resource.error} />

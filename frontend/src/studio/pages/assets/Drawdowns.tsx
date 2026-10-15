@@ -1,4 +1,3 @@
-import { useReloadAction } from '../../components/useReloadAction';
 import Overlay, { OverlayFooter } from '../../components/Overlay';
 import DrawdownClaim from '../../components/DrawdownClaim';
 import { useCallback, useId, useState, type FormEvent } from 'react';
@@ -37,7 +36,6 @@ function DrawdownForm({ capsule, currency, onRecorded }: {
             confirmation = `${formatCurrency(result.drawdown.amount, result.drawdown.currency)}を取り崩しました（${kindLabel(result.drawdown.kind)}）。取引 #${result.transaction.id}`;
         }, '', () => onRecorded(confirmation));
     };
-    useReloadAction(accounts.reload, false, Boolean(accounts.error));
     return <form id={formId} onSubmit={submit} className="space-y-3 rounded-md border border-[var(--studio-border)] p-4">
         <Feedback loading={accounts.loading} error={mutation.error || accounts.error} />
         <fieldset disabled={mutation.busy || accounts.loading || Boolean(accounts.error)} className="grid gap-3 md:grid-cols-2">
@@ -67,7 +65,6 @@ export default function Drawdowns({ capsule, currency, onRecorded }: { capsule: 
     const history = useResource(load);
     const [open, setOpen] = useState(false);
     const [message, setMessage] = useState('');
-    useReloadAction(history.reload, false, Boolean(history.error));
     return <div className="mt-4 space-y-3 border-t border-[var(--studio-border)] pt-4">
         <Feedback message={message} loading={history.loading} error={history.error} />
         {open ? <Overlay title={`「${capsule.name}」を取り崩す`} onClose={() => setOpen(false)}><DrawdownForm capsule={capsule} currency={currency} onRecorded={(result) => {

@@ -1,4 +1,3 @@
-import { useReloadAction } from '../../components/useReloadAction';
 import Overlay from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
 import { useId, useState, type FormEvent } from 'react';
@@ -128,7 +127,6 @@ function DefinitionsForClient({ tab, currency }: { tab: Tab; currency: string })
         void mutation.run(() => deleteRegistryEntry(entry.id), `「${entry.name}」の削除処理が完了しました。`, resource.reload);
     };
     const accountName = (id: number | null | undefined, name?: string | null) => name || (id == null ? '—' : lookups.data?.accounts.find((row) => row.id === id)?.name ?? `#${id}`);
-    useReloadAction(() => { resource.reload(); lookups.reload(); }, Boolean(resource.loading || lookups.loading || mutation.busy || editor !== null));
     return <section className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex gap-2"><button type="button" disabled={editorDisabled || editor !== null} onClick={() => setEditor({ entry: null })} className={buttonClass}>新規作成</button></div></div>
         <Feedback loading={resource.loading || lookups.loading} error={mutation.error || resource.error || lookups.error} message={mutation.message} />

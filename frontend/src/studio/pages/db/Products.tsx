@@ -1,4 +1,3 @@
-import { useReloadAction } from '../../components/useReloadAction';
 import Overlay from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
 import { useId, useState, type FormEvent } from 'react';
@@ -159,7 +158,6 @@ function ProductsForClient({ assets, currency, timezone }: { assets: boolean; cu
             resource.reload();
         });
     };
-    useReloadAction(() => { resource.reload(); lookups.reload(); }, Boolean(resource.loading || lookups.loading || mutation.busy || editor !== null));
     return <section className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex gap-2">{assets && <button type="button" disabled={editorDisabled || editor !== null} onClick={() => void writeMonth()} className={buttonClass}>{period}分を記帳</button>}<button type="button" disabled={editorDisabled || editor !== null} onClick={() => setEditor({ product: null })} className={buttonClass}>新規作成</button></div></div>
         {assets && <p className="text-xs text-[var(--studio-text-muted)]">更新予定は目安です。</p>}

@@ -1,4 +1,3 @@
-import { useReloadAction } from '../../components/useReloadAction';
 import { useCallback, useRef, useState } from 'react';
 import { applyAiChangeRequest, approveAiChangeRequest, getAiChangeRequests, rejectAiChangeRequest } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
@@ -45,7 +44,6 @@ function RequestList({ status, currency }: { status: StatusFilter; currency: str
         }
     };
 
-    useReloadAction(reload, Boolean(loading || busy !== null));
     return (
         <div className="space-y-4">
             {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">承認リクエストを読み込んでいます…</p>}

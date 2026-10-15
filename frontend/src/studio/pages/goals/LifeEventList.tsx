@@ -1,4 +1,3 @@
-import { useReloadAction } from '../../components/useReloadAction';
 import { useCallback } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { getLifeEventsWithProgress } from '../../../api';
@@ -16,7 +15,6 @@ function LifeEventListForClient({ currency, clientName }: { currency: string; cl
     const includeArchived = search.get('archived') === 'true';
     const load = useCallback(() => getLifeEventsWithProgress(includeArchived), [includeArchived]);
     const resource = useResource(load);
-    useReloadAction(resource.reload, false, Boolean(resource.error));
     return <section className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
             <button type="button" disabled={!clientName} onClick={() => navigate('/goals/events/new', { state: { returnTo: `/goals/events${includeArchived ? '?archived=true' : ''}` } })} className={buttonClass}>新しいライフイベント</button>

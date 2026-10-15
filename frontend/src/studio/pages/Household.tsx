@@ -2,7 +2,6 @@ import { useCallback, useId, useState } from 'react';
 import { deleteHouseholdMember, getHouseholdMembers, saveHouseholdMember, type HouseholdMember, type MemberInput } from '../../api/lifeEventConditions';
 import Overlay from '../components/Overlay';
 import { useConfirm } from '../components/useConfirm';
-import { useReloadAction } from '../components/useReloadAction';
 import { formatDate } from '../datetime';
 import { useResource } from '../useResource';
 import { DataTable, EditorActions, Feedback, Field, RowActions } from './db/Database';
@@ -30,7 +29,6 @@ export default function Household({ disabled, clientName }: { disabled: boolean;
     const confirm = useConfirm();
     const [editor, setEditor] = useState<{ row: HouseholdMember | null } | null>(null);
     const locked = disabled || !clientName || mutation.busy || resource.loading || Boolean(resource.error);
-    useReloadAction(resource.reload, locked || editor !== null);
     return <details className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
         <summary className="cursor-pointer text-sm font-semibold">世帯</summary>
         <button type="button" disabled={locked || editor !== null} onClick={() => setEditor({ row: null })} className={buttonClass}>構成員を追加</button>

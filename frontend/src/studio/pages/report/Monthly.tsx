@@ -1,4 +1,3 @@
-import { useReloadAction } from '../../components/useReloadAction';
 import { useCallback, useState } from 'react';
 import { applyMonthlyReportAction, getMonthlyReport, getProfitLoss, getVarianceAnalysis } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
@@ -55,7 +54,6 @@ function MonthlyReading({ period, currency, clientName, onBusy }: { period: stri
     const [varianceRevision, setVarianceRevision] = useState(0);
     const lock = (value: boolean) => { setBusy(value); onBusy(value); };
     const refresh = () => { report.reload(); profitLoss.reload(); setVarianceRevision((value) => value + 1); };
-    useReloadAction(refresh, Boolean(report.loading || profitLoss.loading || busy));
     return <div className="space-y-8">
         <section className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-lg font-semibold">{period} を読む</h2></div></div>

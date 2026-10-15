@@ -46,7 +46,6 @@ const dictionary = {
     'shell.signOut': ['サインアウト', 'Sign out'],
     'common.loading': ['読み込んでいます…', 'Loading…'],
     'common.busy': ['処理中…', 'Working…'],
-    'common.reload': ['再読み込み', 'Reload'],
     'common.cancel': ['キャンセル', 'Cancel'],
     'settings.title': ['設定', 'Settings'],
     'settings.client': ['クライアント：{name}（#{id}）', 'Client: {name} (#{id})'],

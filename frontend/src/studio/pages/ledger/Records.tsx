@@ -1,13 +1,15 @@
-import { useReloadAction } from '../../components/useReloadAction';
 import { useConfirm } from '../../components/useConfirm';
 import { clientToday, formatDate, useTimezone } from '../../datetime';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { deleteTransaction, getTransactionsPage } from '../../../api';
+import { deleteTransaction, getTransaction, getTransactionsPage } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
 import type { Transaction } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import { assetErrorMessage, useResource } from '../../useResource';
-import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
+import Overlay from '../../components/Overlay';
+import RecordForm from '../RecordForm';
+import { Feedback } from '../db/Database';
 import MonthPicker from './MonthPicker';
 import { monthRange } from './periods';
 
@@ -23,6 +25,24 @@ function accountLabel(transaction: Transaction): string {
     return `${transaction.from_account_name || name('credit')} → ${transaction.to_account_name || name('debit')}`;
 }
 
+function RecordEditor({ transactionId, busy, error, onClose, onSaved, onDelete }: {
+    transactionId: number;
+    busy: boolean;
+    error: string;
+    onClose: () => void;
+    onSaved: () => void;
+    onDelete: (transaction: Transaction) => void;
+}) {
+    // List rows omit journal legs, so editing must start from the full transaction.
+    const load = useCallback(() => getTransaction(transactionId), [transactionId]);
+    const resource = useResource(load);
+    const transaction = resource.data;
+    return <Overlay title={transaction ? `「${transaction.description || '内容未入力'}」を編集` : `取引 #${transactionId}を編集`} onClose={onClose}>
+        <Feedback loading={resource.loading} error={resource.error || error} />
+        {transaction && !resource.loading && !resource.error && <RecordForm existing={transaction} onSaved={onSaved} onCancel={onClose} onDelete={() => onDelete(transaction)} deleting={busy} />}
+    </Overlay>;
+}
+
 function RecordResults({ month, currency, onDeleted, onBusy }: {
     month: string;
     currency: string;
@@ -34,8 +54,7 @@ function RecordResults({ month, currency, onDeleted, onBusy }: {
     const loadPage = useCallback(() => getTransactionsPage({ ...monthRange(month), limit: PAGE_SIZE, offset: 0 }), [month]);
     const { data: page, setData, loading, error, reload } = useResource(loadPage);
     const [busy, setBusy] = useState(false);
-    const navigate = useNavigate();
-    const location = useLocation();
+    const [editingId, setEditingId] = useState<number | null>(null);
     const [operationError, setOperationError] = useState('');
     const [confirmation, setConfirmation] = useState('');
     const inFlight = useRef(false);
@@ -76,6 +95,7 @@ function RecordResults({ month, currency, onDeleted, onBusy }: {
             await deleteTransaction(transaction.id);
             if (!mounted.current) return;
             setData((previous) => previous ? { items: previous.items.filter((row) => row.id !== transaction.id), total: Math.max(0, previous.total - 1) } : null);
+            setEditingId(null);
             setConfirmation(`${transaction.date}「${transaction.description || '内容未入力'}」を削除しました。`);
             // Reload from offset zero because deleting changes every later offset.
             reload();
@@ -88,9 +108,20 @@ function RecordResults({ month, currency, onDeleted, onBusy }: {
         }
     };
 
-    useReloadAction(reload, Boolean(loading || busy));
+    const openEditor = (id: number) => {
+        if (loading || error || busy || editingId !== null) return;
+        setOperationError('');
+        setConfirmation('');
+        setEditingId(id);
+    };
+
     return (
         <div className="space-y-4">
+            {editingId !== null && <RecordEditor key={editingId} transactionId={editingId} busy={busy} error={operationError} onClose={() => setEditingId(null)} onSaved={() => {
+                setEditingId(null);
+                reload();
+                onDeleted();
+            }} onDelete={(transaction) => void remove(transaction)} />}
             {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">記録を読み込んでいます…</p>}
             {error && <p role="alert" className="text-sm text-[var(--studio-danger)]">記録を取得できませんでした。{error}</p>}
             {operationError && <p role="alert" className="text-sm text-[var(--studio-danger)]">{operationError}</p>}
@@ -100,16 +131,15 @@ function RecordResults({ month, currency, onDeleted, onBusy }: {
                     <table className="w-full text-left text-sm" aria-busy={loading || busy}>
                         <caption className="sr-only">{month}の記録（新しい順）</caption>
                         <thead className="border-b border-[var(--studio-border)] text-xs text-[var(--studio-text-muted)]">
-                            <tr><th scope="col" className="px-5 py-3 font-medium">日付</th><th scope="col" className="px-5 py-3 font-medium">内容</th><th scope="col" className="px-5 py-3 text-right font-medium">金額</th><th scope="col" className="px-5 py-3 font-medium">口座</th><th scope="col" className="px-5 py-3 font-medium">操作</th></tr>
+                            <tr><th scope="col" className="px-5 py-3 font-medium">日付</th><th scope="col" className="px-5 py-3 font-medium">内容</th><th scope="col" className="px-5 py-3 text-right font-medium">金額</th><th scope="col" className="px-5 py-3 font-medium">口座</th></tr>
                         </thead>
                         <tbody className="divide-y divide-[var(--studio-border)]">
                             {page.items.map((transaction) => (
-                                <tr key={transaction.id}>
+                                <tr key={transaction.id} onClick={() => openEditor(transaction.id)} className={loading || error || busy || editingId !== null ? '' : 'cursor-pointer hover:bg-[var(--studio-accent-soft)] focus-within:bg-[var(--studio-accent-soft)]'}>
                                     <td className="whitespace-nowrap px-5 py-3 text-[var(--studio-text-muted)]"><time dateTime={transaction.date}>{formatDate(transaction.date, timezone)}</time></td>
-                                    <th scope="row" className="px-5 py-3 font-medium">{transaction.description || '内容未入力'}</th>
+                                    <th scope="row" className="px-5 py-3 font-medium"><button type="button" disabled={loading || Boolean(error) || busy || editingId !== null} aria-label={`${transaction.date} ${transaction.description || '内容未入力'}を編集`} aria-haspopup="dialog" onClick={(event) => { event.stopPropagation(); openEditor(transaction.id); }} className="rounded text-left hover:text-[var(--studio-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)] disabled:opacity-40">{transaction.description || '内容未入力'}</button></th>
                                     <td className="whitespace-nowrap px-5 py-3 text-right tabular-nums">{formatCurrency(transaction.amount, transaction.currency || currency)}<span className="ml-2 text-xs text-[var(--studio-text-muted)]">{transaction.currency || currency}</span></td>
                                     <td className="px-5 py-3 text-[var(--studio-text-muted)]">{accountLabel(transaction)}</td>
-                                    <td className="px-5 py-3"><div className="flex gap-2"><button type="button" disabled={loading || Boolean(error) || busy} onClick={() => navigate(`/record/${transaction.id}`, { state: { returnTo: location.pathname + location.search } })} aria-label={`${transaction.description}を編集`} className={buttonClass}>編集</button><button type="button" onClick={() => void remove(transaction)} disabled={loading || Boolean(error) || busy} aria-label={`${transaction.date} ${transaction.description}を削除`} className="rounded-md border border-[var(--studio-border)] px-3 py-1.5 text-xs text-[var(--studio-danger)] hover:bg-[var(--studio-bg)] disabled:opacity-40">削除</button></div></td>
                                 </tr>
                             ))}
                         </tbody>

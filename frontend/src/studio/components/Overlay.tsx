@@ -2,7 +2,6 @@ import { useContext, useEffect, useId, useRef, useState, type ReactNode } from '
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { OverlayFooterContext } from './overlayContext';
-import ReloadScope from './ReloadScope';
 
 export function OverlayFooter({ children, fallback }: { children: ReactNode; fallback?: ReactNode }) {
     const host = useContext(OverlayFooterContext);
@@ -81,7 +80,7 @@ export default function Overlay({ title, children, footer, describedBy, onClose 
                 <button type="button" aria-label={`${title}を閉じる`} onClick={onClose} className="rounded-md p-2 text-[var(--studio-text-muted)] hover:bg-[var(--studio-accent-soft)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)]"><X size={18} aria-hidden="true" /></button>
             </header>
             <OverlayFooterContext.Provider value={footerHost}>
-                <div className="min-h-0 overflow-y-auto overscroll-contain p-5"><ReloadScope>{children}</ReloadScope></div>
+                <div className="min-h-0 overflow-y-auto overscroll-contain p-5">{children}</div>
             </OverlayFooterContext.Provider>
             <footer ref={setFooterHost} className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-[var(--studio-border)] px-5 py-4 empty:hidden">
                 {footer}

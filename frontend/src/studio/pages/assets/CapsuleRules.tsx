@@ -1,4 +1,3 @@
-import { useReloadAction } from '../../components/useReloadAction';
 import Overlay from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
 import { useId, useState, type FormEvent } from 'react';
@@ -64,7 +63,6 @@ export default function CapsuleRules({ capsule, currency, disabled, onBusy }: { 
     };
     const rows = rules.data?.filter((row) => row.capsule_id === capsule.id);
     const name = (id: number | null | undefined, fallback?: string | null) => accounts.data?.find((row) => row.id === id)?.name || fallback || (id == null ? '未設定' : `口座 #${id}`);
-    useReloadAction(() => { rules.reload(); accounts.reload(); }, Boolean(disabled || mutation.busy || rules.loading));
     return <section className="mt-6 space-y-3 border-t border-[var(--studio-border)] pt-5">
         <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex gap-2"><button type="button" disabled={locked || editing} onClick={() => setEditing(true)} className={buttonClass}>新しい規則</button></div></div>
         <Feedback loading={rules.loading || accounts.loading} error={rules.error || accounts.error} />

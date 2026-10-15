@@ -1,4 +1,3 @@
-import { useReloadAction } from '../../components/useReloadAction';
 import Overlay from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
 import { useId, useState, type FormEvent } from 'react';
@@ -80,7 +79,6 @@ function AccountsForClient({ currency }: { currency: string }) {
             resource.reload();
         });
     };
-    useReloadAction(resource.reload, Boolean(resource.loading || mutation.busy || editor !== null));
     return <section className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="mt-1 text-xs text-[var(--studio-text-muted)]">無効の口座も含みます。</p></div><div className="flex gap-2"><button type="button" disabled={disabled || editor !== null} onClick={() => setEditor({ account: null })} className={buttonClass}>新規作成</button></div></div>
         <Feedback loading={resource.loading} error={mutation.error || resource.error} message={mutation.message} />

@@ -1,8 +1,10 @@
 import { useConfirm } from '../components/useConfirm';
 import ClosedPeriodWarning from '../components/ClosedPeriodWarning';
 import DrawdownClaim from '../components/DrawdownClaim';
+import { OverlayFooter } from '../components/Overlay';
+import { OverlayFooterContext } from '../components/overlayContext';
 import { clientToday, useTimezone } from '../datetime';
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useContext, useEffect, useId, useRef, useState, type FormEvent } from 'react';
 import { isAxiosError } from 'axios';
 import { contributeToCapsule, createTransaction, getAccounts, getCapsules, recordCapsuleDrawdown, updateTransaction, getCapsuleReservations } from '../../api';
 import { useClient } from '../../context/ClientContext';
@@ -79,9 +81,14 @@ function AccountSelect({ label, value, accounts, onChange }: {
     );
 }
 
-export default function RecordForm({ existing, onSaved, onCancel }: {
+export default function RecordForm({ existing, onSaved, onCancel, onDelete, deleting = false }: {
     existing?: Transaction; onSaved?: () => void; onCancel?: () => void;
+    onDelete?: () => void; deleting?: boolean;
 }) {
+    const formId = useId();
+    // The overlay draws the frame and the title, so the standalone card chrome
+    // would nest one box inside another and repeat the heading.
+    const inOverlay = useContext(OverlayFooterContext) !== null;
     const confirm = useConfirm();
     const { clientId, currentClient } = useClient();
     const identified = currentClient?.id === clientId;
@@ -204,7 +211,7 @@ export default function RecordForm({ existing, onSaved, onCancel }: {
 
     const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
-        if (submitInFlight.current) return;
+        if (submitInFlight.current || deleting) return;
         setError('');
         setConfirmation('');
         if (!canSubmit) {
@@ -263,16 +270,21 @@ export default function RecordForm({ existing, onSaved, onCancel }: {
         }
     };
 
+    // Explicit form ownership keeps native validation when actions move into the overlay footer.
+    const saveButton = (fullWidth = false) => <button type="submit" form={formId} disabled={!canSubmit || submitting || deleting} className={`${fullWidth ? 'w-full ' : ''}rounded-md bg-[var(--studio-accent)] px-4 py-2.5 text-sm font-medium text-[var(--studio-accent-text)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40`}>
+        {submitting ? '保存しています…' : existing ? '保存' : '記録する'}
+    </button>;
+
     return (
-        <section className="mx-auto w-full max-w-xl rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-6">
-            {existing && <h2 className="text-lg font-semibold">取引 #{existing.id}「{existing.description || '内容未入力'}」を編集</h2>}
-            <form onSubmit={handleSubmit} className="mt-6 space-y-5">
+        <section className={inOverlay ? 'w-full' : 'mx-auto w-full max-w-xl rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-6'}>
+            {existing && !inOverlay && <h2 className="text-lg font-semibold">取引 #{existing.id}「{existing.description || '内容未入力'}」を編集</h2>}
+            <form id={formId} onSubmit={handleSubmit} className={inOverlay ? 'space-y-5' : 'mt-6 space-y-5'}>
                 {confirmation && <p role="status" className="rounded-md bg-[var(--studio-accent-soft)] p-3 text-sm text-[var(--studio-positive)]">{confirmation}</p>}
                 {(error || accountsError || (kind === 'allocation' && capsulesError)) && (
                     <p role="alert" className="text-sm text-[var(--studio-danger)]">{error || accountsError || capsulesError}</p>
                 )}
                 {accountsLoading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">口座を読み込んでいます…</p>}
-                <fieldset disabled={submitting || accountsLoading || Boolean(accountsError) || !identified} className="space-y-5 disabled:opacity-60">
+                <fieldset disabled={submitting || deleting || accountsLoading || Boolean(accountsError) || !identified} className="space-y-5 disabled:opacity-60">
                     {!existing && <label className="block space-y-2 text-sm">
                         <span className="text-[var(--studio-text-muted)]">記録する内容</span>
                         <select value={kind} onChange={(event) => changeKind(event.target.value as RecordKind)} className={inputClass}>
@@ -397,11 +409,14 @@ export default function RecordForm({ existing, onSaved, onCancel }: {
                         {!editBalanced && <p className="text-xs text-[var(--studio-warning)]">借方・貸方の合計を、それぞれ取引の金額に合わせてください。</p>}
                         {capsulesError && <p role="alert" className="text-xs text-[var(--studio-danger)]">取り置きを取得できませんでした。既存の帰属を保持します。{capsulesError}</p>}
                     </div>}
-                    <button type="submit" disabled={!canSubmit || submitting} className="w-full rounded-md bg-[var(--studio-accent)] px-4 py-2.5 text-sm font-medium text-[var(--studio-accent-text)] transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40">
-                        {submitting ? '保存しています…' : existing ? '保存' : '記録する'}
-                    </button>
                 </fieldset>
-                {onCancel && <button type="button" disabled={submitting} onClick={onCancel} className={secondaryButtonClass}>キャンセル</button>}
+                <OverlayFooter fallback={<>
+                    {saveButton(true)}
+                    {onCancel && <button type="button" disabled={submitting || deleting} onClick={onCancel} className={secondaryButtonClass}>キャンセル</button>}
+                </>}>
+                    {onDelete && <button type="button" disabled={submitting || deleting || !identified} onClick={onDelete} className={`${secondaryButtonClass} mr-auto text-[var(--studio-danger)]`}>{deleting ? '削除中…' : '削除'}</button>}
+                    {saveButton()}
+                </OverlayFooter>
             </form>
         </section>
     );

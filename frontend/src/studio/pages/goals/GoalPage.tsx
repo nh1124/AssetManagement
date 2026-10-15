@@ -1,4 +1,3 @@
-import { useReloadAction } from '../../components/useReloadAction';
 import { useCallback } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { getLifeEvents } from '../../../api';
@@ -24,7 +23,6 @@ function GoalPageForClient({ goalId }: { goalId?: string }) {
     const currency = currentClient?.general_settings?.currency || 'JPY';
     const identified = currentClient?.id === clientId;
     const leave = () => navigate(returnTo, { replace: true });
-    useReloadAction(resource.reload, false, Boolean(resource.error));
     return <section className="mx-auto max-w-3xl space-y-4">
         <h2 className="text-lg font-semibold">{goalId ? `「${resource.data?.name ?? `ライフイベント #${goalId}`}」を編集` : '新しいライフイベント'}</h2>
         <Feedback loading={resource.loading} error={resource.error || mutation.error} />

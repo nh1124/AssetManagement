@@ -1,4 +1,3 @@
-import { useReloadAction } from '../../components/useReloadAction';
 import Overlay from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
 import { clientToday, useTimezone } from '../../datetime';
@@ -87,7 +86,6 @@ function MonthlyBudget({ period, currency, clientName, onBusy }: { period: strin
             resource.reload();
         });
     };
-    useReloadAction(resource.reload, Boolean(resource.loading || mutation.busy || copyBusy || editing !== null));
     return <div className="space-y-4">
         <Feedback loading={resource.loading} error={resource.error} />
         <Feedback error={mutation.error} message={mutation.message} />

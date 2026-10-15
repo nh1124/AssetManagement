@@ -1,4 +1,3 @@
-import { useReloadAction } from '../../components/useReloadAction';
 import { useConfirm } from '../../components/useConfirm';
 import { useCallback, useRef, useState } from 'react';
 import { applyMilestonesFromSimulation, compareSimulationScenarios, getSimulationScenarios, previewMilestonesFromSimulation } from '../../../api';
@@ -109,7 +108,6 @@ export default function Scenarios({ goal, currency, clientName, onAdopted, onBus
             onAdopted();
         });
     };
-    useReloadAction(() => { setPreview(null); setComparison(null); setSelected([]); resource.reload(); }, Boolean(resource.loading || mutation.busy));
     return <section className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3"><h3 className="text-base font-semibold">保存した計画案</h3>
         </div>
