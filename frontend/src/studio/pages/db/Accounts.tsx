@@ -4,11 +4,17 @@ import { useConfirm } from '../../components/useConfirm';
 import { useId, useState, type FormEvent } from 'react';
 import { createAccount, deleteAccount, updateAccount } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
-import type { AccountRole } from '../../../types';
+import type { AccountInstitution, AccountRole } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import { useResource } from '../../useResource';
 import { Choice, DataTable, EditorActions, Feedback, Field, RowActions } from './Database';
 import { ACCOUNT_TYPES, ROLES, buttonClass, inputClass, loadAccounts, useMutation, type DatabaseAccount } from './forms';
+
+const INSTITUTIONS: Record<AccountInstitution, string> = {
+    none: '指定なし', nisa_tsumitate: 'NISA（つみたて投資枠）', nisa_growth: 'NISA（成長投資枠）',
+    ideco: 'iDeCo', dc_corporate: '企業型DC', tokutei_withholding: '特定口座（源泉徴収あり）',
+    tokutei_self: '特定口座（源泉徴収なし）', general: '一般口座',
+};
 
 function AccountEditor({ account, accounts, currency, busy, onSave, onCancel }: {
     account: DatabaseAccount | null; accounts: DatabaseAccount[]; currency: string; busy: boolean;
@@ -19,7 +25,10 @@ function AccountEditor({ account, accounts, currency, busy, onSave, onCancel }: 
     const [type, setType] = useState<DatabaseAccount['account_type']>(account?.account_type ?? 'asset');
     const [role, setRole] = useState<AccountRole>(account?.role ?? 'unassigned');
     const [target, setTarget] = useState(account?.role_target_amount == null ? '' : String(account.role_target_amount));
-    const [expectedReturn, setExpectedReturn] = useState(String(account?.expected_return ?? 0));
+    const [expectedReturn, setExpectedReturn] = useState(account?.expected_return == null ? '' : String(account.expected_return));
+    const [institution, setInstitution] = useState<AccountInstitution>(account?.institution ?? 'none');
+    const [withdrawableAge, setWithdrawableAge] = useState(account?.withdrawable_from_age == null ? '' : String(account.withdrawable_from_age));
+    const offersAge = institution === 'ideco' || institution === 'dc_corporate';
     const [parent, setParent] = useState<number | null>(account?.parent_id ?? null);
     const excluded = new Set<number>(account ? [account.id] : []);
     // Exclude descendants as well as self so the parent picker cannot create a cycle.
@@ -33,7 +42,8 @@ function AccountEditor({ account, accounts, currency, busy, onSave, onCancel }: 
         event.preventDefault();
         if (!name.trim() || !Number.isFinite(Number(expectedReturn))) return;
         // Balances are journal-owned; only these editable attributes are sent.
-        const payload = { name: name.trim(), role, expected_return: Number(expectedReturn), parent_id: parent };
+        const payload = { name: name.trim(), role, expected_return: expectedReturn === '' ? null : Number(expectedReturn), parent_id: parent,
+            institution, withdrawable_from_age: offersAge ? (withdrawableAge === '' ? null : Number(withdrawableAge)) : (account?.withdrawable_from_age ?? null) };
         onSave(() => account
             ? updateAccount(account.id, { ...payload, role_target_amount: target === '' ? null : Number(target) })
             : createAccount({ ...payload, account_type: type }));
@@ -43,7 +53,9 @@ function AccountEditor({ account, accounts, currency, busy, onSave, onCancel }: 
             <Field label="名称"><input required value={name} onChange={(event) => setName(event.target.value)} className={inputClass} /></Field>
             <Field label="種別"><select disabled={Boolean(account)} value={type} onChange={(event) => { setType(event.target.value as DatabaseAccount['account_type']); setParent(null); }} className={inputClass}>{Object.entries(ACCOUNT_TYPES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
             <Field label="役割"><select value={role} onChange={(event) => setRole(event.target.value as AccountRole)} className={inputClass}>{Object.entries(ROLES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
-            <Field label="期待年利（%）"><input required type="number" step="any" value={expectedReturn} onChange={(event) => setExpectedReturn(event.target.value)} className={inputClass} /></Field>
+            <Field label="期待年利（%）"><input type="number" step="any" placeholder="試算の年利" value={expectedReturn} onChange={(event) => setExpectedReturn(event.target.value)} className={inputClass} /></Field>
+            <Field label="制度区分"><select value={institution} onChange={(event) => setInstitution(event.target.value as AccountInstitution)} className={inputClass}>{Object.entries(INSTITUTIONS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
+            {offersAge && <Field label="引き出し可能年齢"><input type="number" min="0" step="1" placeholder="60" value={withdrawableAge} onChange={(event) => setWithdrawableAge(event.target.value)} className={inputClass} /></Field>}
             {account && <Field label={`役割の目標額（${currency}）`}><input type="number" min="0" step="any" value={target} onChange={(event) => setTarget(event.target.value)} className={inputClass} /></Field>}
             <Choice label="親の口座・勘定科目" value={parent} options={parents} onChange={setParent} />
             <EditorActions form={formId} busy={busy} onCancel={onCancel} />
@@ -76,12 +88,13 @@ function AccountsForClient({ currency }: { currency: string }) {
         {resource.data && Object.entries(ACCOUNT_TYPES).map(([type, label]) => {
             const rows = accounts.filter((row) => row.account_type === type);
             return <section key={type} className="space-y-2"><h3 className="text-sm font-semibold">{label} <span className="font-normal text-[var(--studio-text-muted)]">{rows.length}件</span></h3>
-                <DataTable columns={['名称', '役割', '役割の目標額', '期待年利', '親', '操作']}>
+                <DataTable columns={['名称', '制度区分', '役割', '役割の目標額', '期待年利', '親', '操作']}>
                     {rows.length ? rows.map((row) => <tr key={row.id}>
                         <th scope="row" className="px-5 py-3 font-medium">{row.name}{!row.is_active && <span className="ml-2 text-xs text-[var(--studio-text-muted)]">無効</span>}</th>
-                        <td className="px-5 py-3">{ROLES[row.role]}</td><td className="whitespace-nowrap px-5 py-3 tabular-nums">{row.role_target_amount == null ? '—' : formatCurrency(row.role_target_amount, currency)}</td><td className="px-5 py-3 tabular-nums">{row.expected_return}%</td><td className="px-5 py-3">{row.parent_id == null ? '—' : resource.data?.find((parent) => parent.id === row.parent_id)?.name ?? `#${row.parent_id}`}</td>
+                        <td className="px-5 py-3">{INSTITUTIONS[row.institution ?? 'none']}{row.withdrawable_from_age != null && <span className="ml-2 text-xs text-[var(--studio-text-muted)]">{row.withdrawable_from_age}歳から</span>}</td>
+                        <td className="px-5 py-3">{ROLES[row.role]}</td><td className="whitespace-nowrap px-5 py-3 tabular-nums">{row.role_target_amount == null ? '—' : formatCurrency(row.role_target_amount, currency)}</td><td className="px-5 py-3 tabular-nums">{row.expected_return == null ? '試算の年利' : `${row.expected_return}%`}</td><td className="px-5 py-3">{row.parent_id == null ? '—' : resource.data?.find((parent) => parent.id === row.parent_id)?.name ?? `#${row.parent_id}`}</td>
                         <RowActions name={row.name} disabled={disabled || editor !== null} onEdit={() => setEditor({ account: row })} onDelete={() => remove(row)} deleteLabel="無効にする" />
-                    </tr>) : <tr><td colSpan={6} className="px-5 py-4 text-[var(--studio-text-muted)]">登録はありません。</td></tr>}
+                    </tr>) : <tr><td colSpan={7} className="px-5 py-4 text-[var(--studio-text-muted)]">登録はありません。</td></tr>}
                 </DataTable>
             </section>;
         })}

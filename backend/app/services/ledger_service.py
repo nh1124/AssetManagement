@@ -146,6 +146,14 @@ def _normalize_liability_settings(payload: dict, account_type: str) -> None:
             raise Invalid(f"{key} must not be negative")
 
 
+def _validate_institution(payload: dict) -> None:
+    if "institution" in payload and payload["institution"] not in {value.value for value in models.AccountInstitution}:
+        raise Invalid("制度区分が不正です")
+    age = payload.get("withdrawable_from_age")
+    if age is not None and (not isinstance(age, int) or isinstance(age, bool) or age < 0):
+        raise Invalid("引き出し可能年齢は0以上の整数で指定してください")
+
+
 def _convert_account_money(db: Session, client_id: int, payload: dict) -> None:
     client = db.get(models.Client, client_id)
     if client is None:
@@ -165,6 +173,7 @@ def create_account(
         raise Invalid(
             "Journal is the source of truth. Create an opening-balance transaction instead of setting account.balance.",
         )
+    _validate_institution(payload)
     _normalize_liability_settings(payload, payload["account_type"])
     _validate_parent(db, client_id, payload["account_type"], payload.get("parent_id"))
     _convert_account_money(db, client_id, payload)
@@ -196,6 +205,7 @@ def update_account(
         _validate_parent(
             db, client_id, account.account_type, update_data["parent_id"], account_id=account.id,
         )
+    _validate_institution(update_data)
     _normalize_liability_settings(update_data, account.account_type)
     _convert_account_money(db, client_id, update_data)
     for key, value in update_data.items():

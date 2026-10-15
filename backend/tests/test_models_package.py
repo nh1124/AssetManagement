@@ -9,8 +9,8 @@ from app import models
 from app.database import Base
 
 
-# V2 adds household facts and flat assumptions; preserve the remaining schema.
-EXPECTED_METADATA_SHA256 = "f674090bfc5705f8d266fb68449724047c8f237041f88a96b9e75909be5af984"
+# V3 adds account shelter and access assumptions; preserve the remaining schema.
+EXPECTED_METADATA_SHA256 = "01286d0d844bbc8772bd0878a1e25bd4a5103a9508a3e0bec027271c071c5542"
 
 MODEL_NAMES = (
     "Client", "ClientMfaSetting", "ClientRecoveryCode",
@@ -23,7 +23,7 @@ MODEL_NAMES = (
     "Capsule", "CapsuleFundingSource", "CapsuleRule", "CapsuleDrawdown",
     "ProductDepreciation",
 )
-ENUM_NAMES = ("AccountType", "AccountRole")
+ENUM_NAMES = ("AccountType", "AccountRole", "AccountInstitution")
 
 
 def _metadata_snapshot():
@@ -90,7 +90,7 @@ def _metadata_snapshot():
 def test_metadata_matches_the_minor_unit_schema():
     snapshot = _metadata_snapshot()
     assert len(snapshot["table_names"]) == 33
-    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 405
+    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 407
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == EXPECTED_METADATA_SHA256
 

@@ -6,7 +6,7 @@ through Base, and this package registers every model before mapper configuration
 
 from ..database import Base
 from .client import Client, ClientMfaSetting, ClientRecoveryCode
-from .ledger import AccountType, AccountRole, Account, JournalEntry, Transaction, TransactionProposal
+from .ledger import AccountType, AccountRole, AccountInstitution, Account, JournalEntry, Transaction, TransactionProposal
 from .template import QuickTemplate, TransactionBatch
 from .fx import ExchangeRate
 from .product import Product, ProductDepreciation
@@ -25,6 +25,7 @@ __all__ = [
     "ClientRecoveryCode",
     "AccountType",
     "AccountRole",
+    "AccountInstitution",
     "Account",
     "JournalEntry",
     "Transaction",

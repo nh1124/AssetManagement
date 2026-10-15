@@ -14,6 +14,7 @@ import numpy as np
 from .. import models
 from .ledger_valuation import calculate_account_valued_balance
 from .reporting_service import get_balance_sheet, get_net_worth_history
+from .institution_service import blended_after_tax_return
 
 # Every projection draws from this one seed, so a figure does not move when
 # nothing about the plan moved, and two scenarios can be read as differing by
@@ -282,7 +283,10 @@ def get_goal_simulation_context(
     allocation_ratio = 0.0 if event.archived_at else (weight / total_weight if allocation_mode != "direct" else 1.0)
 
     current_funded, weighted_return = calculate_current_funded_and_weighted_return(event, db)
-    effective_return = weighted_return if current_funded > 0 else base_annual_return
+    tax_rate = config.tax_rate if config else 20.0
+    effective_return = blended_after_tax_return(
+        db, client_id, gross_annual_return=base_annual_return, tax_rate=tax_rate,
+    )
     years_remaining = max(0.0, (event.target_date - evaluation_date).days / 365.25)
 
     return {
@@ -290,6 +294,7 @@ def get_goal_simulation_context(
         "weighted_return": weighted_return,
         "annual_return": base_annual_return,
         "effective_return": effective_return,
+        "tax_rate": tax_rate,
         "inflation_rate": base_inflation,
         "monthly_savings": base_monthly_savings,
         "allocated_monthly_savings": base_monthly_savings * allocation_ratio,
@@ -733,6 +738,9 @@ def get_life_events_with_progress(
             "projected_amount": round(projected, 2),
             "gap": round(gap, 2),
             "weighted_return": round(effective_return, 2),
+            "gross_annual_return": context["annual_return"],
+            "blended_after_tax_return": effective_return,
+            "tax_rate": context["tax_rate"],
             "status": status,
             "progress_percentage": round(min(progress_pct, 100), 1),
             "funded_percentage": round(min(funded_pct, 100), 1),
@@ -825,7 +833,10 @@ def simulate_net_worth_forward(
     bs = get_balance_sheet(db, client_id=client_id)
     starting_net_worth = bs.get("net_worth", 0.0) or 0.0
     annual_contribution = (monthly_savings or 0.0) * 12
-    real_return = (annual_return - inflation) / 100.0
+    effective_return = blended_after_tax_return(
+        db, client_id, gross_annual_return=annual_return, tax_rate=config.tax_rate if config else 20.0,
+    )
+    real_return = (effective_return - inflation) / 100.0
     return_std = max(volatility or 0.0, 0.0) / 100.0
     current_year = today.year
 

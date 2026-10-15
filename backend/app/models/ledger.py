@@ -1,7 +1,7 @@
 from datetime import datetime
 import enum
 
-from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, Boolean, DateTime, JSON, UniqueConstraint, select
+from sqlalchemy import Column, Integer, String, Float, Date, ForeignKey, Boolean, DateTime, JSON, UniqueConstraint, CheckConstraint, select
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import relationship
 
@@ -24,16 +24,34 @@ class AccountRole(str, enum.Enum):
     UNASSIGNED = "unassigned"
 
 
+class AccountInstitution(str, enum.Enum):
+    NONE = "none"
+    NISA_TSUMITATE = "nisa_tsumitate"
+    NISA_GROWTH = "nisa_growth"
+    IDECO = "ideco"
+    DC_CORPORATE = "dc_corporate"
+    TOKUTEI_WITHHOLDING = "tokutei_withholding"
+    TOKUTEI_SELF = "tokutei_self"
+    GENERAL = "general"
+
+
 class Account(Base):
     __tablename__ = "accounts"
-    __table_args__ = (UniqueConstraint('client_id', 'name', name='_client_account_uc'),)
+    __table_args__ = (
+        UniqueConstraint('client_id', 'name', name='_client_account_uc'),
+        CheckConstraint("institution IN ('none', 'nisa_tsumitate', 'nisa_growth', 'ideco', 'dc_corporate', 'tokutei_withholding', 'tokutei_self', 'general')", name="ck_accounts_institution"),
+        CheckConstraint("withdrawable_from_age IS NULL OR withdrawable_from_age >= 0", name="ck_accounts_withdrawable_from_age"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
     name = Column(String, index=True)
     account_type = Column(String)  # asset, liability, income, expense
     parent_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
-    expected_return = Column(Float, default=0.0)  # Annual return rate % for asset accounts
+    institution = Column(String, nullable=False, default="none", server_default="none")
+    withdrawable_from_age = Column(Integer, nullable=True)
+    # Preserve explicit null so a projection can distinguish absence from a deliberate zero.
+    expected_return = Column(Float().evaluates_none(), default=0.0)  # Annual return rate % for asset accounts
     role = Column(String, default=AccountRole.UNASSIGNED.value, server_default=AccountRole.UNASSIGNED.value, nullable=False)
     role_target_amount_minor = Column(MinorUnits, nullable=True)
     liability_kind = Column(String, nullable=True)  # card | loan | other; only a card settles monthly

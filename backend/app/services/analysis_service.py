@@ -19,6 +19,7 @@ from .budget_plan_store import find_budget_plan_id
 from .budget_projection import planned_cash_outflow_remaining
 from . import depreciation_service
 from .fx_service import get_client_currency
+from .institution_service import locked_accounts, locked_until_age_minor
 from ..domain.money import Money
 from .periods import current_period_key
 from .journal_legs import legs_in_range
@@ -136,9 +137,19 @@ def calculate_logical_balance(
     client_id: int,
     *,
     ctx: BudgetContext | None = None,
+    as_of: date | None = None,
 ) -> float:
     if ctx is None:
         ctx = BudgetContext(db, client_id)
+    currency = get_client_currency(db, client_id)
+    # Subtract only what the liquid total actually counted. The liquid figure is
+    # a named set of accounts, and a retirement account is not in it, so taking
+    # its balance off as well would remove money this sum never added.
+    liquid_ids = {account.id for account in _cash_accounts(db, client_id)}
+    locked = locked_until_age_minor([
+        row for row in locked_accounts(db, client_id, as_of=as_of)
+        if row["account_id"] in liquid_ids
+    ])
     return (
         _sum_liquid_assets(db, client_id)
         - _sum_unpaid_liabilities(db, client_id)
@@ -146,6 +157,7 @@ def calculate_logical_balance(
         # covered by the whole outstanding liability balance above.
         - planned_cash_outflow_remaining(ctx, current_period_key())
         - _sum_capsule_balance(db, client_id)
+        - Money(locked.get(currency, 0), currency).to_float()
     )
 
 
@@ -197,6 +209,7 @@ def get_summary(db: Session, client_id: int) -> dict:
 
     effective_cash = total_cash - cc_unpaid - next_month_budget - total_capsule_balance
     logical_balance = calculate_logical_balance(db, client_id)
+    locked = locked_accounts(db, client_id, as_of=today)
 
     total_income = pl["total_income"]
     total_expense = pl["total_expenses"]
@@ -252,6 +265,9 @@ def get_summary(db: Session, client_id: int) -> dict:
         "liability_total": bs["total_liabilities"],
         "effective_cash": round(effective_cash, 0),
         "logical_balance": round(logical_balance, 0),
+        "locked_until_age_minor": locked_until_age_minor(locked),
+        "locked_accounts": locked,
+        "locked_as_of": today.isoformat(),
         "goal_probability": goal_data["overall_probability"],
         "total_goal_amount": goal_data["total_target"],
         "total_funded": goal_data["total_projected"],

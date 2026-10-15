@@ -8,7 +8,7 @@ import re
 from datetime import date, datetime
 from typing import Any
 
-EXPORT_VERSION = 17
+EXPORT_VERSION = 18
 
 DATA_COLLECTIONS = [
     "accounts",
@@ -196,6 +196,15 @@ def validate_import_payload(
                     item.get("id"),
                     field,
                 )
+
+    # Validate assumptions before the restore starts replacing the target's facts.
+    institutions = ("none", "nisa_tsumitate", "nisa_growth", "ideco", "dc_corporate", "tokutei_withholding", "tokutei_self", "general")
+    for item in data.get("accounts", []):
+        if item.get("institution", "none") not in institutions:
+            issue("error", "invalid_institution", "Account institution is invalid.", "accounts", item.get("id"), "institution")
+        age = item.get("withdrawable_from_age")
+        if age is not None and (type(age) is not int or age < 0):
+            issue("error", "invalid_withdrawable_age", "Withdrawal age must be a nonnegative integer.", "accounts", item.get("id"), "withdrawable_from_age")
 
     check_ref("accounts", "parent_id", "accounts")
     check_ref("products", "budget_account_id", "accounts")

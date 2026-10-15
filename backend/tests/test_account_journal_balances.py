@@ -84,6 +84,7 @@ def test_multicurrency_exact_holdings_and_valued_http_response(db):
     assert row == {
         "id": wallet.id, "name": "wallet", "account_type": "asset", "balance": expected,
         "balances_minor": {"EUR": 112419, "USD": 23248}, "parent_id": None,
+        "institution": "none", "withdrawable_from_age": None,
         "expected_return": 0.0, "role": "unassigned", "role_target_amount": None,
         "liability_closing_day": None, "liability_payment_day": None,
         "liability_payment_month_offset": 0, "liability_payment_policy": "full",
@@ -168,7 +169,7 @@ def test_export_omits_balance_and_a_v8_cache_still_imports(db):
     document = export_client(db, db.get(models.Client, 1))
     # R3 took the format to 13; what this test is about is that the balance
     # column is absent and that a v8 document carrying one is ignored.
-    assert document["version"] == 17
+    assert document["version"] == 18
     assert all("balance" not in row for row in document["data"]["accounts"])
     data = document["data"]
     for row in data["accounts"]:

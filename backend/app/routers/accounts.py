@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional, Literal
 from .. import models
+from ..schemas import AccountInstitutionLiteral
 from ..database import get_db
 from ..dependencies import get_current_client
 from ..services import capsule_service, ledger_service
@@ -26,7 +27,9 @@ class AccountCreate(BaseModel):
     account_type: str
     balance: float = 0
     parent_id: Optional[int] = None
-    expected_return: float = 0.0
+    institution: AccountInstitutionLiteral = "none"
+    withdrawable_from_age: int | None = Field(default=None, ge=0)
+    expected_return: float | None = 0.0
     role: Literal["defense", "growth", "earmarked", "operating", "unassigned"] = "unassigned"
     role_target_amount: Optional[float] = None
     liability_closing_day: Optional[int] = None
@@ -42,6 +45,8 @@ class AccountUpdate(BaseModel):
     name: Optional[str] = None
     parent_id: Optional[int] = None
     balance: Optional[float] = None
+    institution: AccountInstitutionLiteral | None = None
+    withdrawable_from_age: int | None = Field(default=None, ge=0)
     expected_return: Optional[float] = None
     role: Optional[Literal["defense", "growth", "earmarked", "operating", "unassigned"]] = None
     role_target_amount: Optional[float] = None
@@ -62,7 +67,9 @@ class AccountResponse(BaseModel):
     balance: float
     balances_minor: dict[str, int] = Field(default_factory=dict)
     parent_id: Optional[int] = None
-    expected_return: float = 0.0
+    institution: AccountInstitutionLiteral = "none"
+    withdrawable_from_age: int | None = Field(default=None, ge=0)
+    expected_return: float | None = 0.0
     role: str = "unassigned"
     role_target_amount: Optional[float] = None
     liability_closing_day: Optional[int] = None
@@ -93,7 +100,9 @@ def _serialize_account(
         "balances_minor": balances.balances_minor,
         "rollup_balance": rollup_balance if rollup_balance is not None else account_balance,
         "parent_id": account.parent_id,
-        "expected_return": account.expected_return or 0.0,
+        "institution": account.institution,
+        "withdrawable_from_age": account.withdrawable_from_age,
+        "expected_return": account.expected_return,
         "role": account.role or "unassigned",
         "role_target_amount": account.role_target_amount,
         "liability_closing_day": account.liability_closing_day,
@@ -190,6 +199,8 @@ def get_accounts_grouped_by_type(
                 "name": acc.name,
                 "balance": balances[acc.id].balance,
                 "balances_minor": balances[acc.id].balances_minor,
+                "institution": acc.institution,
+                "withdrawable_from_age": acc.withdrawable_from_age,
                 "role": acc.role,
                 "role_target_amount": acc.role_target_amount,
                 "liability_closing_day": acc.liability_closing_day,

@@ -16,7 +16,7 @@ from app.services.data_transfer_service import export_client
 
 # Freeze the file format independently of both ORM metadata and the exporter.
 FORMAT_FIELDS = {
-    "accounts": ["id","name","account_type","parent_id","expected_return","role","role_target_amount","liability_closing_day","liability_payment_day","liability_payment_month_offset","liability_payment_policy","liability_minimum_payment","liability_fixed_payment_amount","liability_installment_months","liability_revolving_rate","is_active"],
+    "accounts": ["id","name","account_type","parent_id","expected_return","institution","withdrawable_from_age","role","role_target_amount","liability_closing_day","liability_payment_day","liability_payment_month_offset","liability_payment_policy","liability_minimum_payment","liability_fixed_payment_amount","liability_installment_months","liability_revolving_rate","is_active"],
     "products": ["id","name","category","location","last_unit_price","units_per_purchase","frequency_days","last_purchase_date","is_asset","lifespan_months","budget_account_id","funding_capsule_id","budget_treatment","purchase_price","purchase_date","depreciation_method","depreciation_annual_rate","depreciation_interval","depreciation_start_date","depreciation_expense_account_id","depreciation_asset_account_id"],
     "product_depreciations": ["id","product_id","period","transaction_id","amount_minor","created_at"],
     "simulation_configs": ["id","user_id","annual_return","tax_rate","is_nisa","monthly_savings","volatility","inflation_rate"],

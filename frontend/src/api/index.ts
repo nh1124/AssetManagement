@@ -360,7 +360,9 @@ export const createAccount = async (account: {
     account_type: string;
     balance?: number;
     parent_id?: number | null;
-    expected_return?: number;
+    institution?: Account['institution'];
+    withdrawable_from_age?: number | null;
+    expected_return?: number | null;
     role?: AccountRole;
     role_target_amount?: number | null;
     liability_closing_day?: number | null;
@@ -379,7 +381,9 @@ export const createAccount = async (account: {
 export const updateAccount = async (id: number, data: {
     name?: string;
     parent_id?: number | null;
-    expected_return?: number;
+    institution?: Account['institution'];
+    withdrawable_from_age?: number | null;
+    expected_return?: number | null;
     role?: AccountRole;
     role_target_amount?: number | null;
     liability_closing_day?: number | null;

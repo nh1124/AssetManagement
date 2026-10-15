@@ -95,6 +95,8 @@ export interface TransactionBatch {
 export type AccountRole = 'defense' | 'growth' | 'earmarked' | 'operating' | 'unassigned';
 export type LiabilityPaymentPolicy = 'full' | 'minimum' | 'fixed' | 'installment' | 'revolving';
 
+export type AccountInstitution = 'none' | 'nisa_tsumitate' | 'nisa_growth' | 'ideco' | 'dc_corporate' | 'tokutei_withholding' | 'tokutei_self' | 'general';
+
 export interface Account {
     id: number;
     name: string;
@@ -102,7 +104,9 @@ export interface Account {
     balance: number;
     rollup_balance?: number;
     parent_id?: number | null;
-    expected_return: number;
+    institution: AccountInstitution;
+    withdrawable_from_age?: number | null;
+    expected_return: number | null;
     role: AccountRole;
     role_target_amount?: number | null;
     liability_closing_day?: number | null;
@@ -317,6 +321,9 @@ export interface LifeEvent {
     projected_amount?: number;
     gap?: number;
     weighted_return?: number;
+    gross_annual_return?: number;
+    blended_after_tax_return?: number;
+    tax_rate?: number;
     status?: 'On Track' | 'At Risk' | 'Off Track' | 'Achieved' | 'Missed' | 'Not Started';
     progress_percentage?: number;
     funded_percentage?: number;
@@ -517,6 +524,15 @@ export interface AnalysisSummary {
     total_funded: number;
     effective_cash?: number;
     logical_balance?: number;
+    locked_until_age_minor?: Record<string, number>;
+    locked_as_of?: string;
+    locked_accounts?: Array<{
+        account_id: number;
+        name: string;
+        withdrawable_from_age: number;
+        available_on: string;
+        balances_minor: Record<string, number>;
+    }>;
     cfo_briefing?: string;
     savings_rate?: number;
     idle_money_rate?: number;

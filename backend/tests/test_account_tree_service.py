@@ -224,6 +224,7 @@ def test_two_level_tree_preserves_endpoint_structure_and_rollup(db):
         return dict(
             id=account.id, name=account.name, account_type=account.account_type,
             balance=balance, balances_minor={"JPY": balance}, rollup_balance=rollup, parent_id=account.parent_id,
+            institution="none", withdrawable_from_age=None,
             expected_return=0.0, role="unassigned", role_target_amount=None,
             liability_closing_day=None, liability_payment_day=None,
             liability_payment_month_offset=0, liability_payment_policy="full",

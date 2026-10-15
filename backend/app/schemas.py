@@ -24,13 +24,17 @@ AiChangeRequestStatusLiteral = Literal["draft", "pending", "approved", "applied"
 AiDataClassificationLiteral = Literal["normal", "sensitive", "secret"]
 AiMcpWriteModeLiteral = Literal["direct_write", "change_request"]
 
+AccountInstitutionLiteral = Literal["none", "nisa_tsumitate", "nisa_growth", "ideco", "dc_corporate", "tokutei_withholding", "tokutei_self", "general"]
+
 # Account Schemas
 class AccountBase(BaseModel):
     name: str
     account_type: str
     balance: float = 0
     parent_id: Optional[int] = None
-    expected_return: float = 0.0  # Annual return rate %
+    institution: AccountInstitutionLiteral = "none"
+    withdrawable_from_age: int | None = Field(default=None, ge=0)
+    expected_return: float | None = 0.0  # Annual return rate %
     role: Literal["defense", "growth", "earmarked", "operating", "unassigned"] = "unassigned"
     role_target_amount: Optional[float] = None
     liability_closing_day: Optional[int] = Field(default=None, ge=1, le=31)
@@ -48,6 +52,8 @@ class AccountCreate(AccountBase):
 class AccountUpdate(BaseModel):
     name: Optional[str] = None
     parent_id: Optional[int] = None
+    institution: AccountInstitutionLiteral | None = None
+    withdrawable_from_age: int | None = Field(default=None, ge=0)
     expected_return: Optional[float] = None
     role: Optional[Literal["defense", "growth", "earmarked", "operating", "unassigned"]] = None
     role_target_amount: Optional[float] = None
@@ -556,6 +562,14 @@ class SimulationConfig(SimulationConfigBase):
     class Config:
         from_attributes = True
 
+class LockedAccount(BaseModel):
+    account_id: int
+    name: str
+    withdrawable_from_age: int
+    available_on: date
+    balances_minor: dict[str, int]
+
+
 # Analysis Response
 class AnalysisSummary(BaseModel):
     net_worth: float
@@ -566,6 +580,9 @@ class AnalysisSummary(BaseModel):
     total_funded: float
     effective_cash: Optional[float] = None
     logical_balance: Optional[float] = None
+    locked_until_age_minor: dict[str, int] = Field(default_factory=dict)
+    locked_accounts: list[LockedAccount] = Field(default_factory=list)
+    locked_as_of: date | None = None
     cfo_briefing: Optional[str] = None
     savings_rate: Optional[float] = None
     idle_money_rate: Optional[float] = None

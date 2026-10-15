@@ -8,6 +8,7 @@ from .. import models, schemas
 from ..domain.errors import NotFound
 from ..domain.money import Money
 from .analysis_service import calculate_logical_balance, LIQUID_ACCOUNT_NAMES
+from .institution_service import locked_accounts
 from .reporting_service import get_balance_sheet
 from .capsule_service import claimed_minor
 from .fx_service import get_client_currency
@@ -98,6 +99,12 @@ class _Readers:
                 if reason:
                     return reason
         if metric == "free_cash":
+            # Access deductions also include assets outside the legacy cash names.
+            # A foreign locked holding must not sneak into a scalar money condition.
+            for locked in locked_accounts(self.db, self.client_id):
+                reason = self.foreign(locked["balances_minor"])
+                if reason:
+                    return reason
             for capsule in self.db.query(models.Capsule).filter_by(client_id=self.client_id).all():
                 reason = self.foreign(self.claim(capsule.id))
                 if reason:
