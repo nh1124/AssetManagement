@@ -1,0 +1,31 @@
+.life-event-diagram .life-event-node {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 256px;
+    height: 160px;
+    padding: 14px 18px;
+    border: 1px solid var(--studio-border-strong);
+    border-radius: 8px;
+    background: var(--studio-surface);
+    color: var(--studio-text);
+    font-size: 14px;
+    line-height: 1.4;
+}
+
+.life-event-diagram .life-event-node-excluded {
+    opacity: 0.55;
+    border-style: dashed;
+}
+
+.life-event-diagram .react-flow__handle {
+    width: 12px;
+    height: 12px;
+    background: var(--studio-accent);
+    border: 2px solid var(--studio-surface);
+}
+
+.life-event-diagram .react-flow__edge:focus-visible .react-flow__edge-path {
+    stroke: var(--studio-accent);
+    stroke-width: 3px;
+}

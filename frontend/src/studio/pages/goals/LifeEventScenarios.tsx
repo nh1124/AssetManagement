@@ -14,6 +14,8 @@ import { useReloadAction } from '../../components/useReloadAction';
 import { useResource } from '../../useResource';
 import { Choice, DataTable, EditorActions, Feedback, Field } from '../db/Database';
 import { buttonClass, inputClass, useMutation } from '../db/forms';
+import LifeEventDiagram from './LifeEventDiagram';
+import LifeEventLinkDetails from './LifeEventLinkDetails';
 
 const defaults: ScenarioParameters = { years: 30, annual_return: 5, inflation: 2 };
 
@@ -137,7 +139,7 @@ function Comparison({ scenarios, currency }: { scenarios: LifeEventScenario[]; c
     </>;
 }
 
-function ScenarioResults({ currency, clientName, parameters }: { currency: string; clientName?: string; parameters: ScenarioParameters }) {
+function ScenarioResults({ currency, clientName, parameters, view }: { currency: string; clientName?: string; parameters: ScenarioParameters; view: 'diagram' | 'outline' }) {
     const confirm = useConfirm();
     const load = useCallback(async () => {
         // This goal reader exposes major-unit target amounts; raw ORM rows carry minor units.
@@ -147,10 +149,12 @@ function ScenarioResults({ currency, clientName, parameters }: { currency: strin
     const resource = useResource(load);
     const mutation = useMutation();
     const [editing, setEditing] = useState(false);
+    const [editingLink, setEditingLink] = useState<LifeEventLink | null>(null);
+    const [nextKind, setNextKind] = useState<LifeEventLinkInput['kind']>('after');
     const [selectedId, setSelectedId] = useState('');
     const disabled = resource.loading || Boolean(resource.error) || mutation.busy || !clientName;
     const selected = resource.data?.comparison.scenarios.find((item) => item.id === selectedId) ?? resource.data?.comparison.scenarios[0];
-    useReloadAction(resource.reload, resource.loading || mutation.busy || editing);
+    useReloadAction(resource.reload, resource.loading || mutation.busy || editing || editingLink !== null);
     const remove = async (edge: LifeEventLink) => {
         if (disabled) return;
         const source = resource.data?.events.find((event) => event.id === edge.from_event_id)?.name;
@@ -161,15 +165,27 @@ function ScenarioResults({ currency, clientName, parameters }: { currency: strin
     };
     return <div className="space-y-5">
         <div className="flex flex-wrap items-end justify-between gap-3">
-            <button type="button" disabled={disabled || (resource.data?.events.length ?? 0) < 2} onClick={() => setEditing(true)} className={buttonClass}>接続を追加</button>
+            <div className="flex flex-wrap items-end gap-3">
+                <button type="button" disabled={disabled || (resource.data?.events.length ?? 0) < 2} onClick={() => setEditing(true)} className={buttonClass}>接続を追加</button>
+                <div className="space-y-2 text-sm"><span className="block text-[var(--studio-text-muted)]">接続の種類</span><div role="group" aria-label="ドラッグで作る接続の種類" className="flex gap-1">
+                    {(['after', 'alternative'] as const).map((kind) => <button key={kind} type="button" aria-pressed={nextKind === kind} disabled={disabled} onClick={() => setNextKind(kind)} className={`${buttonClass} ${nextKind === kind ? 'bg-[var(--studio-accent-soft)] ring-1 ring-[var(--studio-accent)]' : ''}`}>
+                        {kind === 'after' ? '必ず続く' : 'いずれかを選ぶ'}
+                    </button>)}
+                </div></div>
+            </div>
             {resource.data && <Field label="日付の基準にする案"><select value={selected?.id ?? ''} onChange={(event) => setSelectedId(event.target.value)} disabled={disabled} className={inputClass}>
                 {resource.data.comparison.scenarios.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
             </select></Field>}
         </div>
-        <Feedback loading={resource.loading} error={resource.error || (!editing ? mutation.error : '')} message={mutation.message} />
+        <Feedback loading={resource.loading} error={resource.error || (!editing && !editingLink ? mutation.error : '')} message={mutation.message} />
         {resource.data && !resource.loading && !resource.error && <>
             {resource.data.comparison.truncated && <p role="status" className="text-sm text-[var(--studio-warning)]">{resource.data.comparison.fork_count}か所の分岐で64案を超えたため、先頭64案を表示しています。</p>}
-            <EventOutline evaluations={resource.data.evaluations} events={resource.data.events} links={resource.data.links} scenario={selected} currency={currency} disabled={disabled} onDelete={(edge) => { void remove(edge); }} />
+            {view === 'diagram' ? <LifeEventDiagram evaluations={resource.data.evaluations} events={resource.data.events} links={resource.data.links} scenarios={resource.data.comparison.scenarios} scenario={selected} currency={currency} disabled={disabled}
+                onEdgeClick={setEditingLink} onConnect={(source, target) => {
+                    if (disabled) return;
+                    void mutation.run(() => createLifeEventLink({ from_event_id: source, to_event_id: target, kind: nextKind, offset_months: 0 }), '接続を追加しました。', resource.reload);
+                }} />
+                : <EventOutline evaluations={resource.data.evaluations} events={resource.data.events} links={resource.data.links} scenario={selected} currency={currency} disabled={disabled} onDelete={(edge) => { void remove(edge); }} />}
             <Comparison scenarios={resource.data.comparison.scenarios} currency={currency} />
         </>}
         {editing && resource.data && <Overlay title="接続を追加" onClose={() => { if (!mutation.busy) setEditing(false); }}>
@@ -179,13 +195,20 @@ function ScenarioResults({ currency, clientName, parameters }: { currency: strin
                 void mutation.run(() => createLifeEventLink(input), '接続を追加しました。', () => { setEditing(false); resource.reload(); });
             }} />
         </Overlay>}
+        {editingLink && resource.data && clientName && <LifeEventLinkDetails edge={editingLink} events={resource.data.events} clientName={clientName} onReload={resource.reload} onClose={() => setEditingLink(null)} />}
     </div>;
 }
 
 function ScenariosForClient({ currency, clientName }: { currency: string; clientName?: string }) {
     const [draft, setDraft] = useState(defaults);
     const [parameters, setParameters] = useState(defaults);
+    const [view, setView] = useState<'diagram' | 'outline'>('diagram');
     return <section className="space-y-5">
+        <div role="group" aria-label="イベントの表示" className="flex gap-1">
+            {(['diagram', 'outline'] as const).map((mode) => <button key={mode} type="button" aria-pressed={view === mode} onClick={() => setView(mode)} className={`${buttonClass} ${view === mode ? 'bg-[var(--studio-accent-soft)] ring-1 ring-[var(--studio-accent)]' : ''}`}>
+                {mode === 'diagram' ? '図' : '一覧'}
+            </button>)}
+        </div>
         <form onSubmit={(event) => { event.preventDefault(); setParameters({ ...draft }); }} className="flex flex-wrap items-end gap-4">
             <Field label="期間（年）"><input type="number" min="1" max="60" step="1" required value={draft.years} onChange={(event) => setDraft({ ...draft, years: Number(event.target.value) })} className={inputClass} /></Field>
             <Field label="年利（%）"><input type="number" step="0.1" required value={draft.annual_return} onChange={(event) => setDraft({ ...draft, annual_return: Number(event.target.value) })} className={inputClass} /></Field>
@@ -193,7 +216,7 @@ function ScenariosForClient({ currency, clientName }: { currency: string; client
             <button type="submit" className={buttonClass}>再試算</button>
         </form>
         {/* Parameter changes remount results so dates and paths always use the same assumptions. */}
-        <ScenarioResults key={JSON.stringify(parameters)} currency={currency} clientName={clientName} parameters={parameters} />
+        <ScenarioResults key={JSON.stringify(parameters)} currency={currency} clientName={clientName} parameters={parameters} view={view} />
     </section>;
 }
 
