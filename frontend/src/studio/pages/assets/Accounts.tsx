@@ -1,12 +1,14 @@
 import Overlay from '../../components/Overlay';
 import Reconciliation from './Reconciliation';
 import AccountEarmarks from './AccountEarmarks';
-import { Fragment, useEffect, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { useClient } from '../../../context/ClientContext';
 import { getAccounts, updateAccount } from '../../../api';
 import type { Account, AccountRole } from '../../../types';
 import { assetErrorMessage, useResource as useAssetData } from '../../useResource';
+import AccountEditor from '../db/AccountEditor';
+import { Feedback } from '../db/Database';
+import { buttonClass, useMutation } from '../db/forms';
 
 // Item accounts are returned by the API but omitted by the shared legacy type.
 type AssetAccount = Omit<Account, 'account_type'> & {
@@ -36,14 +38,31 @@ async function loadAccounts(): Promise<AssetAccount[]> {
     return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name, 'ja'));
 }
 
-function AccountsForClient({ subjects }: { subjects: boolean }) {
-    const { data: accounts, setData: setAccounts, loading, error, reload: reloadAccounts } = useAssetData(loadAccounts);
+function AccountDetails({ account, accounts, disabled, onPosted }: {
+    account: AssetAccount; accounts: AssetAccount[]; disabled: boolean; onPosted: () => void;
+}) {
     const [reconciling, setReconciling] = useState(false);
+    const [earmarkRevision, setEarmarkRevision] = useState(0);
+    return <>
+        <AccountEarmarks key={earmarkRevision} accountId={account.id} accountName={account.name} disabled={disabled} onReconcile={() => setReconciling(true)} />
+        {reconciling && <Overlay title={`${account.name}の残高照合`} onClose={() => setReconciling(false)}>
+            <Reconciliation account={account} accounts={accounts} disabled={disabled} onPosted={() => {
+                // Reconciliation changes current claims as well as the account balance.
+                setEarmarkRevision((revision) => revision + 1);
+                onPosted();
+            }} />
+        </Overlay>}
+    </>;
+}
+
+function AccountsForClient({ subjects, currency }: { subjects: boolean; currency: string }) {
+    const { data: accounts, setData: setAccounts, loading, error, reload: reloadAccounts } = useAssetData(loadAccounts);
+    const [selectedAccount, setSelectedAccount] = useState<AssetAccount | null>(null);
+    const [creating, setCreating] = useState(false);
+    const creation = useMutation();
     const [updatingId, setUpdatingId] = useState<number | null>(null);
     const [operationError, setOperationError] = useState('');
     const [confirmation, setConfirmation] = useState('');
-    const [expanded, setExpanded] = useState<Set<number>>(() => new Set());
-    const [earmarkRevision, setEarmarkRevision] = useState(0);
     const updateInFlight = useRef(false);
     const mounted = useRef(false);
     const types = ACCOUNT_TYPES.filter((type) => subjects
@@ -51,11 +70,7 @@ function AccountsForClient({ subjects }: { subjects: boolean }) {
         : ['asset', 'liability', 'item'].includes(type.value));
     const visibleAccounts = accounts?.filter((account) => types.some((type) => type.value === account.account_type));
     const columnCount = subjects ? 3 : 4;
-    const reload = () => {
-        reloadAccounts();
-        // Account refreshes and reconciliation must also refresh expanded claims.
-        setEarmarkRevision((revision) => revision + 1);
-    };
+    const disabled = loading || Boolean(error) || updatingId !== null || creation.busy;
 
     useEffect(() => {
         mounted.current = true;
@@ -74,7 +89,7 @@ function AccountsForClient({ subjects }: { subjects: boolean }) {
             // Preserve the confirmed state if the subsequent list refresh fails.
             setAccounts((rows) => rows?.map((row) => row.id === updated.id ? { ...row, is_active: updated.is_active } : row) ?? null);
             setConfirmation(`${account.name}を${updated.is_active ? '有効' : '無効'}にしました。`);
-            reload();
+            reloadAccounts();
         } catch (failure: unknown) {
             if (mounted.current) setOperationError(`${account.name}の状態を変更できませんでした。${assetErrorMessage(failure)}`);
         } finally {
@@ -86,8 +101,9 @@ function AccountsForClient({ subjects }: { subjects: boolean }) {
     return (
         <section className="space-y-4">
             {!subjects && <div className="flex items-center justify-between gap-4">
-                <div className="flex gap-2"><button type="button" onClick={() => setReconciling(true)} disabled={loading || Boolean(error) || updatingId !== null} className="rounded-md border border-[var(--studio-border)] px-3 py-1.5 text-xs text-[var(--studio-text-muted)] hover:bg-[var(--studio-accent-soft)] disabled:opacity-40">残高照合</button></div>
+                <div className="flex gap-2"><button type="button" onClick={() => setCreating(true)} disabled={disabled} className={buttonClass}>口座を作成</button></div>
             </div>}
+            <Feedback message={creation.message} />
             {confirmation && <p role="status" className="rounded-md bg-[var(--studio-accent-soft)] p-3 text-sm text-[var(--studio-positive)]">{confirmation}</p>}
             {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">口座を読み込んでいます…</p>}
             {error && <p role="alert" className="text-sm text-[var(--studio-danger)]">口座一覧を取得できませんでした。{error}</p>}
@@ -105,27 +121,20 @@ function AccountsForClient({ subjects }: { subjects: boolean }) {
                                 <tbody key={type.value} className="divide-y divide-[var(--studio-border)]">
                                     <tr className="bg-[var(--studio-bg)]"><th scope="rowgroup" colSpan={columnCount} className="px-5 py-2 text-xs font-medium text-[var(--studio-text-muted)]">{type.label}</th></tr>
                                     {rows.map((account) => (
-                                        <Fragment key={account.id}><tr className={account.is_active ? '' : 'opacity-50'}>
-                                            <th scope="row" className="px-5 py-3 font-medium">{account.account_type === 'asset' ? <button type="button" aria-expanded={expanded.has(account.id)} aria-controls={`account-earmarks-${account.id}`} aria-label={`${account.name}の取り置き`} onClick={() => setExpanded((previous) => {
-                                                const next = new Set(previous);
-                                                if (next.has(account.id)) next.delete(account.id);
-                                                else next.add(account.id);
-                                                return next;
-                                            })} className="flex items-center gap-2 rounded text-left hover:text-[var(--studio-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)]">
-                                                {expanded.has(account.id) ? <ChevronDown size={16} aria-hidden="true" /> : <ChevronRight size={16} aria-hidden="true" />}{account.name}
+                                        <tr key={account.id} onClick={() => { if (account.account_type === 'asset' && !disabled) setSelectedAccount(account); }} className={`${account.is_active ? '' : 'opacity-50'} ${account.account_type === 'asset' && !disabled ? 'cursor-pointer hover:bg-[var(--studio-accent-soft)] focus-within:bg-[var(--studio-accent-soft)]' : ''}`}>
+                                            <th scope="row" className="px-5 py-3 font-medium">{account.account_type === 'asset' ? <button type="button" disabled={disabled} aria-haspopup="dialog" aria-label={`${account.name}を開く`} onClick={(event) => { event.stopPropagation(); setSelectedAccount(account); }} className="rounded text-left hover:text-[var(--studio-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)] disabled:opacity-40">
+                                                {account.name}
                                             </button> : account.name}</th>
                                             <td className="whitespace-nowrap px-5 py-3 text-[var(--studio-text-muted)]">{type.label}</td>
                                             {!subjects && <td className="whitespace-nowrap px-5 py-3 text-[var(--studio-text-muted)]">{ROLE_LABELS[account.role] ?? '未設定'}</td>}
                                             <td className="px-5 py-3">
-                                                <button type="button" role="switch" aria-checked={account.is_active} aria-label={`${account.name}の有効状態`} disabled={loading || Boolean(error) || updatingId !== null} onClick={() => void toggleAccount(account)} className="flex items-center gap-2 whitespace-nowrap rounded-md px-1 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)] disabled:cursor-not-allowed">
+                                                <button type="button" role="switch" aria-checked={account.is_active} aria-label={`${account.name}の有効状態`} disabled={disabled} onClick={(event) => { event.stopPropagation(); void toggleAccount(account); }} className="flex items-center gap-2 whitespace-nowrap rounded-md px-1 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)] disabled:cursor-not-allowed">
                                                     <span aria-hidden="true" className={`flex h-5 w-9 items-center rounded-full px-0.5 ${account.is_active ? 'justify-end bg-[var(--studio-accent)]' : 'justify-start bg-[var(--studio-border-strong)]'}`}><span className="h-4 w-4 rounded-full bg-[var(--studio-surface)]" /></span>
                                                     <span>{account.is_active ? '有効' : '無効'}</span>
                                                     {updatingId === account.id && <span className="text-[var(--studio-text-muted)]">更新中…</span>}
                                                 </button>
                                             </td>
                                         </tr>
-                                        {account.account_type === 'asset' && expanded.has(account.id) && <tr id={`account-earmarks-${account.id}`} className="bg-[var(--studio-bg)]"><td colSpan={4} className="px-5 py-4"><AccountEarmarks key={earmarkRevision} accountId={account.id} accountName={account.name} disabled={loading || Boolean(error) || updatingId !== null} /></td></tr>}
-                                        </Fragment>
                                     ))}
                                 </tbody>
                             );
@@ -133,13 +142,19 @@ function AccountsForClient({ subjects }: { subjects: boolean }) {
                     </table>
                 </div>
             ) : <p className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-6 text-sm text-[var(--studio-text-muted)]">{subjects ? '科目' : '口座'}はありません。</p>)}
-            {reconciling && <Overlay title="残高照合" onClose={() => setReconciling(false)}><Reconciliation accounts={accounts ?? []} disabled={loading || Boolean(error) || updatingId !== null} onPosted={reload} /></Overlay>}
+            {selectedAccount && <Overlay title={selectedAccount.name} onClose={() => setSelectedAccount(null)}>
+                <AccountDetails account={selectedAccount} accounts={accounts ?? []} disabled={disabled} onPosted={reloadAccounts} />
+            </Overlay>}
+            {creating && accounts && <Overlay title="口座を作成" onClose={() => setCreating(false)}>
+                <Feedback error={creation.error} />
+                <AccountEditor account={null} accounts={accounts} currency={currency} busy={disabled} onCancel={() => setCreating(false)} onSave={(action) => void creation.run(action, '口座を作成しました。', () => { setCreating(false); reloadAccounts(); })} />
+            </Overlay>}
         </section>
     );
 }
 
 export default function Accounts({ subjects = false }: { subjects?: boolean }) {
-    const { clientId } = useClient();
+    const { clientId, currentClient } = useClient();
     // Client changes must discard pending confirmations and account-specific drafts.
-    return <AccountsForClient key={`${clientId}:${subjects}`} subjects={subjects} />;
+    return <AccountsForClient key={`${clientId}:${subjects}`} subjects={subjects} currency={currentClient?.general_settings?.currency || 'JPY'} />;
 }

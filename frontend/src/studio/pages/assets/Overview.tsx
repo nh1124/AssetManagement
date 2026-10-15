@@ -1,8 +1,7 @@
 import { useCallback } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import { formatDate, useTimezone } from '../../datetime';
 import type { AssetPeriod } from './Assets';
-import { getAnalysisSummary, getBalanceSheet } from '../../../api';
+import { getBalanceSheet } from '../../../api';
 import { formatCurrency } from '../../../utils/currency';
 import { useResource as useAssetData } from '../../useResource';
 
@@ -36,25 +35,13 @@ function BalanceRows({ rows, currency, emptyLabel }: {
 }
 
 function OverviewForDate({ asOf }: AssetPeriod) {
-    const timezone = useTimezone();
     const loadBalanceSheet = useCallback((): Promise<BalanceSheet> => getBalanceSheet(undefined, undefined, asOf), [asOf]);
     const { data: sheet, loading, error } = useAssetData(loadBalanceSheet);
-    const summary = useAssetData(getAnalysisSummary);
 
     return (
         <section className="space-y-4">
-            <div className="flex items-center justify-between gap-4">
-                <div>
-                    <h2 className="text-lg font-semibold">貸借対照表</h2>
-                    {sheet && <p className="mt-1 text-xs text-[var(--studio-text-muted)]">基準日：<time dateTime={sheet.as_of_date}>{formatDate(sheet.as_of_date, timezone)}</time></p>}
-                </div>
-            </div>
             {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">貸借対照表を読み込んでいます…</p>}
             {error && <p role="alert" className="text-sm text-[var(--studio-danger)]">貸借対照表を取得できませんでした。{error}</p>}
-            {summary.error && <p role="alert" className="text-sm text-[var(--studio-danger)]">引き出し制限を取得できませんでした。{summary.error}</p>}
-            {summary.data?.locked_accounts?.map((row) => Object.entries(row.balances_minor).map(([currency, minor]) => (
-                <p key={`${row.account_id}-${currency}`} className="text-sm text-[var(--studio-warning)]">現在の引き出し制限：{row.name} {formatCurrency(minor / (['JPY', 'KRW'].includes(currency) ? 1 : 100), currency)} ／ {row.withdrawable_from_age}歳（{formatDate(row.available_on, timezone)}）から</p>
-            )))}
             {sheet && (
                 <div className="grid gap-4 lg:grid-cols-2" aria-busy={loading}>
                     <section className="flex flex-col overflow-hidden rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)]">

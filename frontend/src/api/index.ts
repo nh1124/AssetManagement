@@ -951,6 +951,14 @@ export const updateCapsuleFundingSources = async (capsuleId: number, sources: Ca
     return response.data;
 };
 
+export const setCapsuleAccountClaim = async (capsuleId: number, payload: {
+    account_id: number;
+    target_amount: number;
+}): Promise<{ status: 'ok' | 'unchanged'; claimed: number; difference: number }> => {
+    const response = await api.post<{ status: 'ok' | 'unchanged'; claimed: number; difference: number }>(`/capsules/${capsuleId}/account-claim`, payload);
+    return response.data;
+};
+
 export const contributeToCapsule = async (id: number, payload: {
     amount: number;
     from_account_id: number;

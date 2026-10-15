@@ -11,8 +11,8 @@ import { useResource } from '../../useResource';
 import { Choice, DataTable, Feedback, Field } from '../db/Database';
 import { buttonClass, inputClass, primaryClass, useMutation, type DatabaseAccount } from '../db/forms';
 
-function ReconciliationForClient({ accounts, disabled, onPosted }: {
-    accounts: DatabaseAccount[]; disabled: boolean; onPosted: () => void;
+function ReconciliationForClient({ account, accounts, disabled, onPosted }: {
+    account: DatabaseAccount; accounts: DatabaseAccount[]; disabled: boolean; onPosted: () => void;
 }) {
     const formId = useId();
     const confirm = useConfirm();
@@ -20,7 +20,7 @@ function ReconciliationForClient({ accounts, disabled, onPosted }: {
     const timezone = useTimezone();
     const capsules = useResource(getCapsules);
     const mutation = useMutation();
-    const [accountId, setAccountId] = useState<number | null>(null);
+    const accountId = account.id;
     const [currency, setCurrency] = useState(currentClient?.general_settings?.currency || 'JPY');
     const [date, setDate] = useState(() => clientToday(timezone));
     const [statement, setStatement] = useState('');
@@ -34,7 +34,7 @@ function ReconciliationForClient({ accounts, disabled, onPosted }: {
     const invalidate = () => { setComparison(null); setPosted(null); };
     const compare = (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
-        if (locked || accountId === null || !statement.trim() || !Number.isFinite(Number(statement))) return;
+        if (locked || !statement.trim() || !Number.isFinite(Number(statement))) return;
         setComparison(null);
         setPosted(null);
         let result: ReconciliationComparison | null = null;
@@ -67,11 +67,10 @@ function ReconciliationForClient({ accounts, disabled, onPosted }: {
         <p className="text-xs text-[var(--studio-text-muted)]">他の通貨は合算しません。</p>
         <form onSubmit={compare} className="space-y-3">
             <fieldset disabled={locked} className="grid gap-3 md:grid-cols-2">
-                <Choice label="照合する口座" value={accountId} options={accounts} required onChange={(id) => { setAccountId(id); setCounterId(null); setCapsuleId(null); invalidate(); }} />
                 <Field label="基準日"><input required type="date" value={date} onChange={(event) => { setDate(event.target.value); invalidate(); }} className={inputClass} /></Field>
                 <Field label="通貨"><select value={currency} onChange={(event) => { setCurrency(event.target.value); invalidate(); }} className={inputClass}>{['JPY', 'USD', 'EUR'].map((code) => <option key={code} value={code}>{code}</option>)}</select></Field>
                 <Field label={`実残高（${currency}）`}><input required type="number" step={['JPY', 'KRW'].includes(currency) ? '1' : '0.01'} value={statement} onChange={(event) => { setStatement(event.target.value); invalidate(); }} className={inputClass} /></Field>
-                <button type="submit" disabled={accountId === null || !statement.trim()} className={buttonClass}>照合する</button>
+                <button type="submit" disabled={!statement.trim()} className={buttonClass}>照合する</button>
             </fieldset>
             <p className="text-xs text-[var(--studio-text-muted)]">帳簿残高は借方 − 貸方です。負債・収入など貸方に残る残高は、マイナスで入力してください。</p>
         </form>
@@ -101,7 +100,7 @@ function ReconciliationForClient({ accounts, disabled, onPosted }: {
     </section>;
 }
 
-export default function Reconciliation(props: { accounts: DatabaseAccount[]; disabled: boolean; onPosted: () => void }) {
+export default function Reconciliation(props: { account: DatabaseAccount; accounts: DatabaseAccount[]; disabled: boolean; onPosted: () => void }) {
     const { clientId, currentClient } = useClient();
-    return <ReconciliationForClient key={`${clientId}:${currentClient?.general_settings?.currency}`} {...props} />;
+    return <ReconciliationForClient key={`${clientId}:${props.account.id}:${currentClient?.general_settings?.currency}`} {...props} />;
 }

@@ -32,7 +32,7 @@ function RuleEditor({ capsule, currency, accounts, busy, onSave, onCancel }: {
         if (busy || (sourceMode === 'fixed_account' && source === null)) return;
         onSave({ capsule_id: capsule.id, trigger_type: trigger, trigger_category: category.trim() || null, trigger_description: description.trim() || null, source_mode: sourceMode, source_account_id: sourceMode === 'fixed_account' ? source : null, destination_account_id: destination, amount_type: amountType, amount_value: Number(amount), is_active: active });
     };
-    return <form id={formId} onSubmit={submit} className="rounded-lg border border-[var(--studio-border)] p-5">
+    return <form id={formId} onSubmit={submit} className="space-y-4">
         <fieldset disabled={busy} className="grid gap-4 md:grid-cols-2">
             <Field label="発火する取引"><select value={trigger} onChange={(event) => setTrigger(event.target.value as CapsuleTriggerKind)} className={inputClass}>{Object.entries(TRIGGERS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
             <Field label="分類の条件（任意）"><input value={category} onChange={(event) => setCategory(event.target.value)} className={inputClass} /></Field>
@@ -63,7 +63,7 @@ export default function CapsuleRules({ capsule, currency, disabled, onBusy }: { 
     };
     const rows = rules.data?.filter((row) => row.capsule_id === capsule.id);
     const name = (id: number | null | undefined, fallback?: string | null) => accounts.data?.find((row) => row.id === id)?.name || fallback || (id == null ? '未設定' : `口座 #${id}`);
-    return <section className="mt-6 space-y-3 border-t border-[var(--studio-border)] pt-5">
+    return <section className="space-y-3">
         <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex gap-2"><button type="button" disabled={locked || editing} onClick={() => setEditing(true)} className={buttonClass}>新しい規則</button></div></div>
         <Feedback loading={rules.loading || accounts.loading} error={rules.error || accounts.error} />
         <Feedback error={mutation.error} message={mutation.message} />

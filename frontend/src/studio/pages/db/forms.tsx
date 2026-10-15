@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { getAccounts, getCapsules } from '../../../api';
-import type { Account, AccountRole } from '../../../types';
+import type { Account, AccountInstitution, AccountRole } from '../../../types';
 import { assetErrorMessage } from '../../useResource';
 
 // The backend supports item accounts, which the shared legacy type omits.
@@ -8,6 +8,12 @@ export type DatabaseAccount = Omit<Account, 'account_type'> & { account_type: Ac
 export const ACCOUNT_TYPES: Record<DatabaseAccount['account_type'], string> = {
     asset: '資産', liability: '負債', income: '収入', expense: '費用', item: '物品',
 };
+export const INSTITUTIONS: Record<AccountInstitution, string> = {
+    none: '指定なし', nisa_tsumitate: 'NISA（つみたて投資枠）', nisa_growth: 'NISA（成長投資枠）',
+    ideco: 'iDeCo', dc_corporate: '企業型DC', tokutei_withholding: '特定口座（源泉徴収あり）',
+    tokutei_self: '特定口座（源泉徴収なし）', general: '一般口座',
+};
+
 export const ROLES: Record<AccountRole, string> = {
     defense: '生活防衛', growth: '資産形成', earmarked: '用途確保', operating: '日常運用', unassigned: '未設定',
 };
