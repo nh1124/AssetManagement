@@ -314,6 +314,15 @@ export const createMonthlyAction = async (payload: ReviewActionCreate): Promise<
     return response.data;
 };
 
+export const updateMonthlyAction = async (id: number, payload: ReviewActionCreate): Promise<MonthlyAction> => {
+    const response = await api.put(`/actions/${id}`, payload);
+    return response.data;
+};
+
+export const deleteMonthlyAction = async (id: number): Promise<void> => {
+    await api.delete(`/actions/${id}`);
+};
+
 export const processDueMonthlyActions = async (): Promise<{ processed: MonthlyAction[] }> => {
     const response = await api.post('/actions/process-due');
     return response.data;

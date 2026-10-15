@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from ..services.money_storage import to_minor, money_client_currency
 
 from .. import models
+from ..domain.errors import NotFound, Refused
 from ..services import monthly_action_store
 from ..services.budget_lines import assign_plan_line_identity
 from ..services.budget_plan_store import create_plan_line, find_expense_plan_line, resolve_budget_plan_id
@@ -79,6 +80,26 @@ def list_actions(
     ]
 
 
+def _action_fields(
+    source_period: str,
+    kind: str,
+    payload: dict,
+    target_period: str | None = None,
+    description: str = "",
+) -> dict:
+    if kind not in ACTION_KINDS:
+        raise ValueError(f"Unsupported action kind: {kind}")
+    return dict(
+        source_period=source_period,
+        target_period=target_period or next_period(source_period),
+        kind=kind,
+        description=description or kind.replace("_", " "),
+        amount=payload.get("amount") or payload.get("monthly_contribution"),
+        target_id=payload.get("account_id") or payload.get("recurring_id") or payload.get("life_event_id") or payload.get("capsule_id"),
+        payload=payload,
+    )
+
+
 def create_action(
     db: Session,
     client_id: int,
@@ -88,17 +109,9 @@ def create_action(
     target_period: str | None = None,
     description: str = "",
 ) -> dict:
-    if kind not in ACTION_KINDS:
-        raise ValueError(f"Unsupported action kind: {kind}")
-    fields = dict(
-        source_period=source_period,
-        target_period=target_period or next_period(source_period),
+    fields = _action_fields(source_period, kind, payload, target_period, description)
+    fields.update(
         proposal_id=f"review_{kind}_{uuid4().hex[:10]}",
-        kind=kind,
-        description=description or kind.replace("_", " "),
-        amount=payload.get("amount") or payload.get("monthly_contribution"),
-        target_id=payload.get("account_id") or payload.get("recurring_id") or payload.get("life_event_id") or payload.get("capsule_id"),
-        payload=payload,
         result={},
         status="pending",
         idempotency_key=f"review:{client_id}:{source_period}:{uuid4().hex}",
@@ -107,6 +120,42 @@ def create_action(
     db.commit()
     db.refresh(action)
     return action_to_dict(action)
+
+
+def _pending_action(db: Session, client_id: int, action_id: int) -> models.MonthlyAction:
+    action = monthly_action_store.get(db, client_id, action_id, for_update=True)
+    if action is None:
+        raise NotFound("行動が見つかりません。")
+    # Applied decisions have already changed other resources; only pending records may be rewritten.
+    if action.status != "pending":
+        state = {"applied": "実行済み", "skipped": "見送り", "failed": "失敗"}.get(action.status, action.status)
+        raise Refused(f"現在の状態は「{state}」のため、変更・削除できません。", status_code=422)
+    return action
+
+
+def update_action(
+    db: Session,
+    client_id: int,
+    action_id: int,
+    source_period: str,
+    kind: str,
+    payload: dict,
+    target_period: str | None = None,
+    description: str = "",
+) -> dict:
+    action = _pending_action(db, client_id, action_id)
+    fields = _action_fields(source_period, kind, payload, target_period, description)
+    monthly_action_store.update(db, client_id, action, fields)
+    db.commit()
+    db.refresh(action)
+    return action_to_dict(action)
+
+
+def delete_action(db: Session, client_id: int, action_id: int) -> dict:
+    action = _pending_action(db, client_id, action_id)
+    monthly_action_store.delete(db, action)
+    db.commit()
+    return {"status": "ok"}
 
 
 def _require_account(db: Session, client_id: int, account_id: int) -> models.Account:
@@ -246,7 +295,7 @@ DISPATCH = {
 
 
 def apply_action(db: Session, client_id: int, action_id: int) -> dict:
-    action = monthly_action_store.get(db, client_id, action_id)
+    action = monthly_action_store.get(db, client_id, action_id, for_update=True)
     if not action:
         raise LookupError("Action not found")
     if action.status == "applied":
@@ -275,7 +324,7 @@ def apply_action(db: Session, client_id: int, action_id: int) -> dict:
 
 
 def skip_action(db: Session, client_id: int, action_id: int) -> dict:
-    action = monthly_action_store.get(db, client_id, action_id)
+    action = monthly_action_store.get(db, client_id, action_id, for_update=True)
     if not action:
         raise LookupError("Action not found")
     action.status = "skipped"

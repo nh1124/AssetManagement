@@ -11,9 +11,11 @@ from ..services.cache_service import invalidate_client
 from ..workflows.monthly_action_workflow import (
     apply_action,
     create_action,
+    delete_action,
     list_actions,
     process_due_actions,
     skip_action,
+    update_action,
 )
 
 router = APIRouter(prefix="/actions", tags=["actions"])
@@ -55,6 +57,32 @@ def create_monthly_action(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.put("/{action_id}")
+def update_monthly_action(
+    action_id: int,
+    payload: ActionCreate,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    try:
+        result = update_action(db, current_client.id, action_id, **payload.model_dump())
+        invalidate_client(current_client.id)
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete("/{action_id}")
+def delete_monthly_action(
+    action_id: int,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    result = delete_action(db, current_client.id, action_id)
+    invalidate_client(current_client.id)
+    return result
 
 
 @router.post("/process-due")

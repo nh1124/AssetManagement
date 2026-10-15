@@ -1,9 +1,10 @@
-import { useId, useState, type FormEvent } from 'react';
+import { useId, useState, type FormEvent, type ReactNode } from 'react';
 import { getCapsules, getLifeEvents, getRecurringTransactions } from '../../../api';
 import type { LifeEvent, MonthlyAction, ReviewActionCreate, ReviewActionKind } from '../../../types';
 import { useResource } from '../../useResource';
-import { Choice, EditorActions, Feedback, Field } from '../db/Database';
-import { inputClass, loadAccounts } from '../db/forms';
+import { Choice, Feedback, Field } from '../db/Database';
+import { buttonClass, inputClass, loadAccounts, primaryClass } from '../db/forms';
+import { OverlayFooter } from '../../components/Overlay';
 
 const KINDS: Record<ReviewActionKind, string> = {
     set_budget: '支出予算を設定', add_recurring: '定常収支を追加', pause_recurring: '定常収支を停止',
@@ -21,16 +22,17 @@ async function loadActionLookups() {
 
 type ActionEditorProps = {
     sourcePeriod: string; currency: string; busy: boolean;
-} & ({ action: MonthlyAction; onSave?: never; onCancel?: never } | {
-    action?: undefined;
-    onSave: (payload: ReviewActionCreate) => void; onCancel: () => void;
-});
+    action?: MonthlyAction;
+    onSave?: (payload: ReviewActionCreate) => void;
+    onCancel: () => void;
+    footerActions?: ReactNode;
+};
 
 function isActionKind(value: string): value is ReviewActionKind {
     return Object.hasOwn(KINDS, value);
 }
 
-export default function ActionEditor({ sourcePeriod, currency, busy, action, onSave, onCancel }: ActionEditorProps) {
+export default function ActionEditor({ sourcePeriod, currency, busy, action, onSave, onCancel, footerActions }: ActionEditorProps) {
     const formId = useId();
     const lookups = useResource(loadActionLookups);
     const payload = action?.payload ?? {};
@@ -53,8 +55,8 @@ export default function ActionEditor({ sourcePeriod, currency, busy, action, onS
     const [name, setName] = useState(typeof payload.name === 'string' ? payload.name : '');
     const [day, setDay] = useState(String(numberValue(payload.day_of_month) ?? 1));
     const [entryCurrency, setEntryCurrency] = useState(typeof payload.currency === 'string' ? payload.currency : currency);
-    // Existing actions are read-only because the API has no update endpoint.
-    const disabled = Boolean(action) || busy || lookups.loading || Boolean(lookups.error) || !lookups.data;
+    const readOnly = action !== undefined && action.status !== 'pending';
+    const disabled = readOnly || busy || lookups.loading || Boolean(lookups.error) || !lookups.data;
     const accounts = lookups.data?.accounts.filter((row) => action || row.is_active) ?? [];
     const submit = (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
@@ -69,7 +71,7 @@ export default function ActionEditor({ sourcePeriod, currency, busy, action, onS
                 break;
             case 'add_recurring':
                 if (!accountId || !destinationId || accountId === destinationId || !name.trim() || numeric <= 0) return;
-                payload = { name: name.trim(), amount: numeric, currency: entryCurrency, from_account_id: accountId, to_account_id: destinationId, frequency: 'Monthly', day_of_month: Number(day) };
+                payload = { name: name.trim(), amount: numeric, currency: entryCurrency, from_account_id: accountId, to_account_id: destinationId, frequency: action?.kind === kind ? action.payload.frequency ?? 'Monthly' : 'Monthly', day_of_month: Number(day) };
                 break;
             case 'pause_recurring':
                 if (!referenceId) return;
@@ -84,7 +86,11 @@ export default function ActionEditor({ sourcePeriod, currency, busy, action, onS
                 payload = { capsule_id: referenceId, monthly_contribution: numeric };
                 break;
         }
-        onSave({ source_period: sourcePeriod, target_period: targetPeriod, kind, description: description.trim(), payload });
+        // Keep fields outside this form, such as plan_id, when correcting the same action kind.
+        const savedPayload = action?.kind === kind ? { ...action.payload, ...payload } : payload;
+        // A legacy percent alias would otherwise override an edited delta of zero during apply.
+        if (kind === 'boost_allocation') delete savedPayload.percent;
+        onSave({ source_period: action?.source_period ?? sourcePeriod, target_period: targetPeriod, kind, description: description.trim(), payload: savedPayload });
     };
     return <form id={formId} onSubmit={submit} className="space-y-4">
         {!action && <p className="text-xs text-[var(--studio-text-muted)]">行動を未実行として記録します。実行するか、予定月になって期限到来の処理をすると反映されます。</p>}
@@ -114,7 +120,13 @@ export default function ActionEditor({ sourcePeriod, currency, busy, action, onS
             {kind !== 'pause_recurring' && <Field label={kind === 'boost_allocation' ? '確保額の変更割合（%）' : `金額（${kind === 'add_recurring' ? entryCurrency : currency}）`}>
                 <input required type="number" min={kind === 'boost_allocation' ? '-100' : kind === 'add_recurring' ? '0.01' : '0'} max={kind === 'boost_allocation' ? '100' : undefined} step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} className={inputClass} />
             </Field>}
-            {!action && <EditorActions form={formId} busy={disabled} onCancel={onCancel} />}
         </fieldset>
+        {!readOnly && onSave && <OverlayFooter fallback={<div className="flex justify-end gap-2">
+            <button type="submit" form={formId} disabled={disabled} className={primaryClass}>保存</button>
+            <button type="button" disabled={busy} onClick={onCancel} className={buttonClass}>キャンセル</button>
+        </div>}>
+            {footerActions}
+            <button type="submit" form={formId} disabled={disabled} className={primaryClass}>保存</button>
+        </OverlayFooter>}
     </form>;
 }

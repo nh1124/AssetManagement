@@ -9,11 +9,17 @@ from .money_storage import minor_fields, money_client_currency
 from .. import models
 
 
-def get(db: Session, client_id: int, action_id: int) -> models.MonthlyAction | None:
-    return db.query(models.MonthlyAction).filter(
+def get(
+    db: Session, client_id: int, action_id: int, *, for_update: bool = False,
+) -> models.MonthlyAction | None:
+    query = db.query(models.MonthlyAction).filter(
         models.MonthlyAction.id == action_id,
         models.MonthlyAction.client_id == client_id,
-    ).first()
+    )
+    if for_update:
+        # Serialize edits/deletes with apply/skip and refresh any previously loaded state.
+        query = query.with_for_update().populate_existing()
+    return query.first()
 
 
 def list_for_client(
@@ -49,3 +55,14 @@ def create(
     else:
         db.flush()
     return row
+
+
+def update(db: Session, client_id: int, row: models.MonthlyAction, fields: dict) -> None:
+    values = minor_fields(fields, money_client_currency(db, client_id), 'amount')
+    for name, value in values.items():
+        setattr(row, name, value)
+    db.flush()
+
+
+def delete(db: Session, row: models.MonthlyAction) -> None:
+    db.delete(row)

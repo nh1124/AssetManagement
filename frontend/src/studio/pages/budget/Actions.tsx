@@ -2,13 +2,13 @@ import Overlay from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
 import { clientToday, useTimezone } from '../../datetime';
 import { useCallback, useState } from 'react';
-import { applyReviewAction, createMonthlyAction, getMonthlyActions, processDueMonthlyActions, skipReviewAction } from '../../../api';
+import { applyReviewAction, createMonthlyAction, deleteMonthlyAction, getMonthlyActions, processDueMonthlyActions, skipReviewAction, updateMonthlyAction } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
 import type { MonthlyAction, ReviewActionCreate } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import { useResource } from '../../useResource';
 import { DataTable, Feedback } from '../db/Database';
-import { buttonClass, primaryClass, useMutation } from '../db/forms';
+import { buttonClass, useMutation } from '../db/forms';
 import MonthPicker from '../ledger/MonthPicker';
 import ActionEditor from './ActionEditor';
 
@@ -46,6 +46,15 @@ function MonthlyActions({ sourcePeriod, currency, clientName }: { sourcePeriod: 
         if (disabled) return;
         void mutation.run(() => createMonthlyAction(payload), '行動を未実行として追加しました。', () => { setAdding(false); resource.reload(); });
     };
+    const update = (action: MonthlyAction, payload: ReviewActionCreate) => {
+        if (disabled || adding || action.status !== 'pending') return;
+        void mutation.run(() => updateMonthlyAction(action.id, payload), '行動を保存しました。', () => { setSelectedId(null); resource.reload(); });
+    };
+    const remove = async (action: MonthlyAction) => {
+        if (disabled || adding || action.status !== 'pending') return;
+        if (!(await confirm(`「${clientName}」の「${action.description || KINDS[action.kind] || action.kind}」を削除しますか？`, '削除する'))) return;
+        void mutation.run(() => deleteMonthlyAction(action.id), '行動を削除しました。', () => { setSelectedId(null); resource.reload(); });
+    };
     const decide = async (action: MonthlyAction, apply: boolean) => {
         if (disabled || adding || action.status !== 'pending') return;
         const verb = apply ? '実行' : '見送り';
@@ -78,16 +87,18 @@ function MonthlyActions({ sourcePeriod, currency, clientName }: { sourcePeriod: 
             {!processed.length && <p className="text-[var(--studio-text-muted)]">期限が到来した行動はありませんでした。</p>}
         </details>}
         {adding && <Overlay title="行動を追加" onClose={() => setAdding(false)}><Feedback error={mutation.error} /><ActionEditor sourcePeriod={sourcePeriod} currency={currency} busy={disabled} onSave={save} onCancel={() => setAdding(false)} /></Overlay>}
-        {selectedAction && <Overlay title={selectedAction.description || KINDS[selectedAction.kind] || selectedAction.kind} onClose={() => setSelectedId(null)} footer={selectedAction.status === 'pending' ? <>
-            <button type="button" disabled={disabled || adding} onClick={() => decide(selectedAction, false)} className={`${buttonClass} mr-auto text-[var(--studio-danger)]`}>見送り</button>
-            <button type="button" disabled={disabled || adding} onClick={() => decide(selectedAction, true)} className={primaryClass}>実行</button>
-        </> : undefined}>
+        {selectedAction && <Overlay title={selectedAction.description || KINDS[selectedAction.kind] || selectedAction.kind} onClose={() => setSelectedId(null)}>
             <div className="space-y-4">
                 <Feedback error={mutation.error} />
                 <p className="text-sm text-[var(--studio-text-muted)]">{STATES[selectedAction.status]}</p>
                 {typeof selectedAction.result.error === 'string' && <p className="text-sm text-[var(--studio-danger)]">{selectedAction.result.error}</p>}
-                <p className="text-xs text-[var(--studio-text-muted)]">登録済みの行動の内容は変更できません。</p>
-                <ActionEditor key={selectedAction.id} action={selectedAction} sourcePeriod={sourcePeriod} currency={currency} busy={disabled} />
+                {selectedAction.status !== 'pending' && <p className="text-xs text-[var(--studio-text-muted)]">{STATES[selectedAction.status]}のため変更できません。</p>}
+                <ActionEditor key={selectedAction.id} action={selectedAction} sourcePeriod={sourcePeriod} currency={currency} busy={disabled}
+                    onSave={(payload) => update(selectedAction, payload)} onCancel={() => setSelectedId(null)} footerActions={<>
+                        <button type="button" disabled={disabled || adding} onClick={() => remove(selectedAction)} className={`${buttonClass} mr-auto text-[var(--studio-danger)]`}>削除</button>
+                        <button type="button" disabled={disabled || adding} onClick={() => decide(selectedAction, false)} className={buttonClass}>見送り</button>
+                        <button type="button" disabled={disabled || adding} onClick={() => decide(selectedAction, true)} className={buttonClass}>実行</button>
+                    </>} />
             </div>
         </Overlay>}
         {resource.data && <DataTable columns={['行動', '予定', '関連する予算', '状態']}>
