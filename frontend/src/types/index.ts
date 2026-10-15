@@ -300,6 +300,7 @@ export interface RoadmapEntry {
 }
 
 export interface LifeEvent {
+    condition_mode?: 'all' | 'any';
     id: number;
     name: string;
     start_date?: string | null;

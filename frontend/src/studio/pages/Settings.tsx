@@ -1,3 +1,4 @@
+import Household from './Household';
 import { useConfirm } from '../components/useConfirm';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import QRCode from 'qrcode';
@@ -69,6 +70,7 @@ function SettingsForClient() {
     const [timezoneEdit, setTimezoneEdit] = useState<string | null>(null);
     const [languageEdit, setLanguageEdit] = useState<Language | null>(null);
     const [file, setFile] = useState<File | null>(null);
+    const [householdRevision, setHouseholdRevision] = useState(0);
     const [setup, setSetup] = useState<MfaSetupStart | null>(null);
     const [password, setPassword] = useState('');
     const [code, setCode] = useState('');
@@ -164,6 +166,7 @@ function SettingsForClient() {
             await importData(payload);
         }, 'settings.imported', () => {
             setFile(null);
+            setHouseholdRevision((value) => value + 1);
             setSavedGeneral(null);
             setCurrencyEdit(null);
             setTimezoneEdit(null);
@@ -231,6 +234,7 @@ function SettingsForClient() {
                 <div className="flex flex-wrap gap-3"><button type="button" disabled={mutation.busy} onClick={() => void mutation.run(() => navigator.clipboard.writeText(recoveryCodes.join('\n')), 'mfa.copied')} className={buttonClass}>{t('mfa.copy')}</button><button type="button" disabled={mutation.busy} onClick={() => setRecoveryCodes([])} className={buttonClass}>{t('mfa.dismiss')}</button></div>
             </div>}
         </details>
+        <Household key={householdRevision} disabled={disabled} clientName={identified ? currentClient.name : undefined} />
         <details className={sectionClass}>
             <summary className="cursor-pointer text-sm font-semibold">{t('settings.transfer')}</summary>
             <button type="button" disabled={disabled} onClick={download} className={buttonClass}>{t('settings.export')}</button>

@@ -1,3 +1,4 @@
+import { getAllConditions, type ConditionEvaluation } from '../../../api/lifeEventConditions';
 import { useCallback, useId, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
@@ -53,8 +54,8 @@ function offsetDate(source: string | null, months: number): string | null {
     return `${String(nextYear).padStart(4, '0')}-${String(nextMonth + 1).padStart(2, '0')}-${String(Math.min(day, lastDay)).padStart(2, '0')}`;
 }
 
-function EventOutline({ events, links, scenario, currency, disabled, onDelete }: {
-    events: LifeEvent[]; links: LifeEventLink[]; scenario?: LifeEventScenario; currency: string;
+function EventOutline({ events, links, scenario, evaluations, currency, disabled, onDelete }: {
+    events: LifeEvent[]; links: LifeEventLink[]; scenario?: LifeEventScenario; evaluations: Record<number, ConditionEvaluation>; currency: string;
     disabled: boolean; onDelete: (link: LifeEventLink) => void;
 }) {
     const byId = new Map(events.map((item) => [item.id, item]));
@@ -88,6 +89,8 @@ function EventOutline({ events, links, scenario, currency, disabled, onDelete }:
                 <div className="flex items-center gap-3 rounded border-l-2 border-[var(--studio-border)] py-2 pl-3 text-sm">
                     {edge && <span className="text-xs text-[var(--studio-text-muted)]">{edge.kind === 'alternative' ? '選択肢' : '必ず続く'}・{edge.offset_months === 0 ? '目標日' : `${edge.offset_months > 0 ? '+' : ''}${edge.offset_months}か月`}</span>}
                     <Link to={`/goals/${event.id}`} className="text-[var(--studio-accent)] hover:underline">{event.name}</Link>
+                    {evaluations[event.id]?.satisfied === false && <span className="text-xs text-[var(--studio-text-muted)]" aria-label="条件未達">○ 条件未達</span>}
+                    {evaluations[event.id]?.conditions.length > 0 && evaluations[event.id]?.satisfied === null && <span className="text-xs text-[var(--studio-text-muted)]">○ 判定不能</span>}
                     <span className="tabular-nums">{date ?? '日付未設定'}</span>
                     <span className="tabular-nums">{formatCurrency(event.target_amount, currency)}</span>
                     {shared && <span className="text-xs text-[var(--studio-text-muted)]">共通イベント</span>}
@@ -138,8 +141,8 @@ function ScenarioResults({ currency, clientName, parameters }: { currency: strin
     const confirm = useConfirm();
     const load = useCallback(async () => {
         // This goal reader exposes major-unit target amounts; raw ORM rows carry minor units.
-        const [events, links, comparison] = await Promise.all([getLifeEventsWithProgress(), getLifeEventLinks(), getLifeEventScenarios(parameters)]);
-        return { events, links, comparison };
+        const [events, links, comparison, evaluations] = await Promise.all([getLifeEventsWithProgress(), getLifeEventLinks(), getLifeEventScenarios(parameters), getAllConditions()]);
+        return { events, links, comparison, evaluations };
     }, [parameters]);
     const resource = useResource(load);
     const mutation = useMutation();
@@ -166,7 +169,7 @@ function ScenarioResults({ currency, clientName, parameters }: { currency: strin
         <Feedback loading={resource.loading} error={resource.error || (!editing ? mutation.error : '')} message={mutation.message} />
         {resource.data && !resource.loading && !resource.error && <>
             {resource.data.comparison.truncated && <p role="status" className="text-sm text-[var(--studio-warning)]">{resource.data.comparison.fork_count}か所の分岐で64案を超えたため、先頭64案を表示しています。</p>}
-            <EventOutline events={resource.data.events} links={resource.data.links} scenario={selected} currency={currency} disabled={disabled} onDelete={(edge) => { void remove(edge); }} />
+            <EventOutline evaluations={resource.data.evaluations} events={resource.data.events} links={resource.data.links} scenario={selected} currency={currency} disabled={disabled} onDelete={(edge) => { void remove(edge); }} />
             <Comparison scenarios={resource.data.comparison.scenarios} currency={currency} />
         </>}
         {editing && resource.data && <Overlay title="接続を追加" onClose={() => { if (!mutation.busy) setEditing(false); }}>

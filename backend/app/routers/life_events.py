@@ -1,3 +1,5 @@
+from datetime import date
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from ..utils.contribution_schedule import parse_contribution_schedule
 from sqlalchemy.orm import Session
@@ -18,9 +20,46 @@ from ..services.goal_service import (
     get_strategy_dashboard,
 )
 from ..workflows.goal_workflow import create_goal
-from ..services import life_event_graph
+from ..services import life_event_graph, life_event_conditions
 
 router = APIRouter(prefix="/life-events", tags=["life_events"])
+
+
+@router.get("/conditions")
+def get_all_conditions(
+    as_of: date | None = None,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    return life_event_conditions.evaluate_all(db, current_client.id, as_of=as_of)
+
+
+@router.get("/{event_id}/conditions")
+def get_conditions(
+    event_id: int, as_of: date | None = None,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    return life_event_conditions.evaluate(db, current_client.id, event_id, as_of=as_of)
+
+
+@router.post("/{event_id}/conditions", response_model=schemas.LifeEventCondition)
+def create_condition(
+    event_id: int, payload: schemas.LifeEventConditionCreate,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    return life_event_conditions.create_condition(db, current_client.id, event_id, payload)
+
+
+@router.delete("/{event_id}/conditions/{condition_id}")
+def delete_condition(
+    event_id: int, condition_id: int,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    life_event_conditions.delete_condition(db, current_client.id, event_id, condition_id)
+    return {"message": "Deleted"}
 
 
 @router.get("/links", response_model=list[schemas.LifeEventLink])

@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Column, Integer, String, Date, ForeignKey, Boolean, DateTime, JSON, CheckConstraint, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Date, ForeignKey, Boolean, DateTime, JSON, BigInteger, Float, CheckConstraint, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -13,6 +13,9 @@ class LifeEvent(Base):
     """Future liabilities/goals for Personal ALM (Asset Liability Management)."""
     __tablename__ = "life_events"
 
+    __table_args__ = (CheckConstraint("condition_mode IN ('all', 'any')", name="ck_life_events_condition_mode"),)
+
+    condition_mode = Column(String, nullable=False, default="all", server_default="all")
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
     name = Column(String, index=True)  # e.g., "Retirement", "House"
@@ -30,6 +33,7 @@ class LifeEvent(Base):
     client = relationship("Client", back_populates="life_events")
     milestones = relationship("Milestone", back_populates="life_event", cascade="all, delete-orphan")
     capsules = relationship("Capsule", back_populates="life_event", cascade="all, delete-orphan")
+    conditions = relationship("LifeEventCondition", cascade="all, delete-orphan")
     outgoing_links = relationship("LifeEventLink", foreign_keys="LifeEventLink.from_event_id", cascade="all, delete-orphan")
     incoming_links = relationship("LifeEventLink", foreign_keys="LifeEventLink.to_event_id", cascade="all, delete-orphan")
 
@@ -87,3 +91,37 @@ class Milestone(Base):
     @target_amount.expression
     def target_amount(cls):
         return major_expression(cls.target_amount_minor, client_currency_expression(cls))
+
+
+class HouseholdMember(Base):
+    __tablename__ = "household_members"
+    __table_args__ = (UniqueConstraint("client_id", "name", name="uq_household_members_name"),)
+
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
+    name = Column(String, nullable=False)
+    relation = Column(String, nullable=True)
+    birth_date = Column(Date, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class LifeEventCondition(Base):
+    __tablename__ = "life_event_conditions"
+    __table_args__ = (
+        CheckConstraint("metric IN ('net_worth', 'free_cash', 'account_balance', 'capsule_claim', 'goal_progress', 'member_age', 'date_reached')", name="ck_life_event_conditions_metric"),
+        CheckConstraint("comparator IN ('gte', 'lte', 'eq')", name="ck_life_event_conditions_comparator"),
+    )
+
+    # A flat all/any list is enough; a tree costs maintenance until a real case needs nesting.
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
+    life_event_id = Column(Integer, ForeignKey("life_events.id", ondelete="CASCADE"), nullable=False, index=True)
+    metric = Column(String, nullable=False)
+    comparator = Column(String, nullable=False)
+    threshold_minor = Column(BigInteger, nullable=True)
+    threshold_number = Column(Float, nullable=True)
+    threshold_date = Column(Date, nullable=True)
+    # References intentionally have no FK: deleted facts remain reportable assumptions.
+    reference_id = Column(Integer, nullable=True)
+    note = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)

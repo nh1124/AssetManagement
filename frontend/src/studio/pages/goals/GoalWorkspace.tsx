@@ -10,6 +10,7 @@ import { useResource } from '../../useResource';
 import { DataTable, Feedback } from '../db/Database';
 import { buttonClass, useMutation } from '../db/forms';
 import GoalArchive from './GoalArchive';
+import GoalConditions from './GoalConditions';
 import GoalDeletion from './GoalDeletion';
 import GoalProjection from './GoalProjection';
 import Milestones from './Milestones';
@@ -65,6 +66,7 @@ function GoalWorkspaceForClient({ goalId, currency, clientName }: { goalId: stri
             <dl className="grid gap-4 sm:grid-cols-3 lg:grid-cols-5">
                 {[['目標額', formatCurrency(goal.target_amount, currency)], ['現在の確保額', formatCurrency(goal.current_funded, currency)], ['進捗', goalPercent(goal.funded_percentage)], ['目標日', formatDate(goal.target_date)], ['計画の状態', goalPlanStatus(goal)]].map(([label, value]) => <div key={label}><dt className="text-xs text-[var(--studio-text-muted)]">{label}</dt><dd className="mt-2 font-semibold tabular-nums">{value}</dd></div>)}
             </dl>
+            <GoalConditions goalId={goal.id} currency={currency} clientName={clientName} disabled={disabled || dialog !== null} onBusy={setDetailBusy} />
             <details className="rounded-lg border border-[var(--studio-border)] p-5"><summary className="cursor-pointer font-semibold">マイルストーン</summary><div className="mt-5">
                 <Milestones key={milestoneRevision} goalId={goal.id} currency={currency} disabled={disabled || dialog !== null || Boolean(goal.archived_at)} onBusy={setDetailBusy} onChanged={() => { setScenarioRevision((value) => value + 1); refresh(); }} />
             </div></details>

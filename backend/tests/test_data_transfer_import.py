@@ -90,6 +90,9 @@ def _seed(db, client_id=101, base=10000):
     add(models.Capsule, 33, name="next", life_event_id=next_goal.id,
         target_amount=500, monthly_contribution=0,
         capsule_type="life_event", target_amount_source="life_event")
+    member = add(models.HouseholdMember, 34, name="子", relation="長女", birth_date=date(2010, 4, 1))
+    add(models.LifeEventCondition, 35, life_event_id=goal.id, metric="member_age", comparator="gte",
+        threshold_number=18, reference_id=member.id, note="入学")
     product = add(models.Product, 6, name="food", category="expense", last_unit_price=100,
                   units_per_purchase=2, frequency_days=30, budget_account_id=expense.id,
                   funding_capsule_id=capsule.id, last_purchase_date=date(2026, 10, 2),
@@ -233,6 +236,8 @@ def test_round_trip_preserves_every_collection_and_document(db):
             for field, referenced_collection in REFERENCES.items():
                 if item.get(field) is not None:
                     item[field] = maps[referenced_collection][item[field]]
+            if collection == "life_event_conditions":
+                item["reference_id"] = maps["household_members"][item["reference_id"]]
             if collection == "monthly_plan_lines":
                 item["target_id"] = maps["accounts"][item["target_id"]]
                 identity = json.loads(item["identity_key"])

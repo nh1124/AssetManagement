@@ -9,14 +9,14 @@ from app import models
 from app.database import Base
 
 
-# V1 adds graph edges; preserve the rest of the schema snapshot.
-EXPECTED_METADATA_SHA256 = "eefa696fa99f9d2b81e4c7e32b6b4cf4fdbe6b5e3163cdec1a18d6ac256836df"
+# V2 adds household facts and flat assumptions; preserve the remaining schema.
+EXPECTED_METADATA_SHA256 = "f674090bfc5705f8d266fb68449724047c8f237041f88a96b9e75909be5af984"
 
 MODEL_NAMES = (
     "Client", "ClientMfaSetting", "ClientRecoveryCode",
     "Account", "JournalEntry", "Transaction", "TransactionProposal",
     "QuickTemplate", "TransactionBatch", "ExchangeRate", "Product",
-    "RecurringTransaction", "RegistryEntry", "LifeEvent", "LifeEventLink", "Milestone",
+    "RecurringTransaction", "RegistryEntry", "LifeEvent", "LifeEventLink", "Milestone", "HouseholdMember", "LifeEventCondition",
     "BudgetPlan", "MonthlyPlanLine", "PeriodReview", "MonthlyAction", "PeriodClose",
     "AiOperationPolicy", "AiAuditLog", "AiChangeRequest",
     "SimulationConfig", "SimulationScenario",
@@ -89,8 +89,8 @@ def _metadata_snapshot():
 
 def test_metadata_matches_the_minor_unit_schema():
     snapshot = _metadata_snapshot()
-    assert len(snapshot["table_names"]) == 31
-    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 387
+    assert len(snapshot["table_names"]) == 33
+    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 405
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == EXPECTED_METADATA_SHA256
 

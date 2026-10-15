@@ -30,6 +30,7 @@ LAYERS: dict[str, int] = {
     "client_service": 0,
     "client_settings_service": 0,
     "fx_service": 0,
+    "household_service": 0,
     "liability_schedule": 0,
     "mfa_service": 0,
     "monthly_action_store": 0,
@@ -72,6 +73,7 @@ LAYERS: dict[str, int] = {
     "data_health_service": 5,
     "data_transfer_service": 5,  # Backup includes L5 health; no service depends on it.
     "goal_service": 5,
+    "life_event_conditions": 5,  # Current assumptions compose existing readers.
     "life_event_graph": 5,  # Resolves graph branches over the shared strategy projector.
     "milestone_service": 5,
     "report_service": 5,

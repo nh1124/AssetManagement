@@ -33,6 +33,8 @@ OWNERS: dict[str, str] = {
     "capsule_rules": "services/capsule_service",
     "capsule_funding_sources": "services/capsule_service",  # The capsule owns its funding plan.
     "life_events": "services/goal_service",
+    "life_event_conditions": "services/life_event_conditions",
+    "household_members": "services/household_service",
     "life_event_links": "services/life_event_graph",
     "milestones": "services/milestone_service",
     "simulation_configs": "services/simulation_config_service",

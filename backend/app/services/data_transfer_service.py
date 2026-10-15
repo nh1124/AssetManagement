@@ -252,6 +252,7 @@ def export_client(db: Session, client: models.Client) -> dict:
                         "target_amount",
                         "priority",
                         "note",
+                        "condition_mode",
                         "active_plan_basis",
                         "active_plan_label",
                         "plan_status_override",
@@ -269,6 +270,14 @@ def export_client(db: Session, client: models.Client) -> dict:
                 for link in db.query(models.LifeEventLink)
                 .filter(models.LifeEventLink.client_id == client.id)
                 .order_by(models.LifeEventLink.id).all()
+            ],
+            "household_members": [
+                row_fields(row, ["id", "name", "relation", "birth_date", "created_at"])
+                for row in db.query(models.HouseholdMember).filter_by(client_id=client.id).order_by(models.HouseholdMember.id).all()
+            ],
+            "life_event_conditions": [
+                row_fields(row, ["id", "life_event_id", "metric", "comparator", "threshold_minor", "threshold_number", "threshold_date", "reference_id", "note", "created_at"])
+                for row in db.query(models.LifeEventCondition).filter_by(client_id=client.id).order_by(models.LifeEventCondition.id).all()
             ],
             "transactions": [
                 row_fields(
@@ -563,6 +572,8 @@ def import_client(
             ).delete(synchronize_session=False)
 
         for model in [
+            models.LifeEventCondition,
+            models.HouseholdMember,
             models.LifeEventLink,
             models.ProductDepreciation,
             models.MonthlyPlanLine,
@@ -838,6 +849,7 @@ def import_client(
                 target_amount_minor=to_minor(item.get("target_amount") or 0, money_client_currency(db, client.id)),
                 priority=item.get("priority") or 2,
                 note=item.get("note"),
+                condition_mode=item.get("condition_mode", "all"),
                 active_plan_basis=item.get("active_plan_basis") or "milestone",
                 active_plan_label=item.get("active_plan_label"),
                 plan_status_override=item.get("plan_status_override"),
@@ -1125,6 +1137,31 @@ def import_client(
                     updated_at=parse_datetime(item.get("updated_at")),
                 )
             )
+
+        member_map: dict[int, int] = {}
+        for item in data.get("household_members", []):
+            member = models.HouseholdMember(
+                client_id=client.id, name=item["name"], relation=item.get("relation"),
+                birth_date=parse_date(item["birth_date"]),
+                created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
+            )
+            db.add(member)
+            db.flush()
+            member_map[int(item["id"])] = member.id
+        condition_reference_maps = {
+            "account_balance": account_map, "capsule_claim": capsule_map,
+            "goal_progress": event_map, "member_age": member_map,
+        }
+        for item in data.get("life_event_conditions", []):
+            # Never keep a dangling source id: it might identify an unrelated restored fact.
+            reference_id = condition_reference_maps.get(item["metric"], {}).get(item.get("reference_id"))
+            db.add(models.LifeEventCondition(
+                client_id=client.id, life_event_id=event_map[int(item["life_event_id"])],
+                metric=item["metric"], comparator=item["comparator"],
+                threshold_minor=item.get("threshold_minor"), threshold_number=item.get("threshold_number"),
+                threshold_date=parse_date(item.get("threshold_date")), reference_id=reference_id,
+                note=item.get("note"), created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
+            ))
 
         action_key_maps = {
             "account_id": account_map,

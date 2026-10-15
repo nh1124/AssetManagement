@@ -722,6 +722,7 @@ def get_life_events_with_progress(
             "priority": event.priority,
             "note": event.note,
             "start_date": event.start_date.isoformat() if event.start_date else None,
+            "condition_mode": event.condition_mode,
             "active_plan_basis": event.active_plan_basis,
             "active_plan_label": event.active_plan_label,
             "plan_status_override": event.plan_status_override,

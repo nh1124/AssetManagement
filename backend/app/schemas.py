@@ -805,6 +805,7 @@ class LifeEventLink(LifeEventLinkCreate):
 
 
 class LifeEventBase(BaseModel):
+    condition_mode: Literal["all", "any"] = "all"
     name: str
     start_date: Optional[date] = None
     target_date: date
@@ -819,6 +820,7 @@ class LifeEventCreate(LifeEventBase):
     pass
 
 class LifeEventUpdate(BaseModel):
+    condition_mode: Literal["all", "any"] = "all"
     name: Optional[str] = None
     start_date: Optional[date] = None
     target_date: Optional[date] = None
@@ -1180,3 +1182,54 @@ class ReconciliationAdjustment(BaseModel):
     note: str | None = None
     currency: str | None = None
     expected_ledger_minor: int | None = None
+
+
+class HouseholdMemberCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1)
+    relation: str | None = None
+    birth_date: date
+
+
+class HouseholdMemberUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str | None = Field(default=None, min_length=1)
+    relation: str | None = None
+    birth_date: date | None = None
+
+
+class HouseholdMember(HouseholdMemberCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    client_id: int
+    created_at: datetime | None = None
+
+
+class LifeEventConditionCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    metric: Literal["net_worth", "free_cash", "account_balance", "capsule_claim", "goal_progress", "member_age", "date_reached"]
+    comparator: Literal["gte", "lte", "eq"] = "gte"
+    threshold_minor: int | None = Field(default=None, strict=True, ge=-(2**63), le=2**63 - 1)
+    threshold_number: float | None = Field(default=None, allow_inf_nan=False)
+    threshold_date: date | None = None
+    reference_id: int | None = Field(default=None, gt=0)
+    note: str | None = None
+
+    @model_validator(mode="after")
+    def check_shape(self):
+        money = self.metric in {"net_worth", "free_cash", "account_balance", "capsule_claim"}
+        numeric = self.metric in {"goal_progress", "member_age"}
+        if (self.threshold_minor is not None) != money or (self.threshold_number is not None) != numeric or (self.threshold_date is not None) != (self.metric == "date_reached"):
+            raise ValueError("指標に合う条件値を一つ指定してください。")
+        referenced = self.metric in {"account_balance", "capsule_claim", "goal_progress", "member_age"}
+        if (self.reference_id is not None) != referenced:
+            raise ValueError("指標に合う対象を指定してください。")
+        return self
+
+
+class LifeEventCondition(LifeEventConditionCreate):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    client_id: int
+    life_event_id: int
+    created_at: datetime | None = None

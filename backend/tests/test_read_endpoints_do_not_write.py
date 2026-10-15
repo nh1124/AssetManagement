@@ -163,6 +163,18 @@ def _seed(db, scenario, today):
         models.AiChangeRequest(client_id=1, source="backend", resource="transactions",
                                action="create", risk="low", idempotency_key="guard"),
     ])
+    member = models.HouseholdMember(client_id=1, name="子", birth_date=date(2010, 4, 1))
+    db.add(member)
+    db.flush()
+    db.add_all([
+        models.LifeEventCondition(client_id=1, life_event_id=goal.id, metric="member_age", comparator="gte", threshold_number=18, reference_id=member.id),
+        models.LifeEventCondition(client_id=1, life_event_id=goal.id, metric="net_worth", comparator="gte", threshold_minor=1),
+        models.LifeEventCondition(client_id=1, life_event_id=goal.id, metric="free_cash", comparator="gte", threshold_minor=1),
+        models.LifeEventCondition(client_id=1, life_event_id=goal.id, metric="account_balance", comparator="gte", threshold_minor=1, reference_id=cash.id),
+        models.LifeEventCondition(client_id=1, life_event_id=goal.id, metric="capsule_claim", comparator="gte", threshold_minor=1, reference_id=capsule.id),
+        models.LifeEventCondition(client_id=1, life_event_id=goal.id, metric="goal_progress", comparator="gte", threshold_number=1, reference_id=goal.id),
+        models.LifeEventCondition(client_id=1, life_event_id=goal.id, metric="date_reached", comparator="gte", threshold_date=today),
+    ])
     db.commit()
     return {"batch_id": batch.id, "account_id": cash.id, "event_id": goal.id, "life_event_id": goal.id,
             # lunch is the trigger a capsule rule would fire on, so the

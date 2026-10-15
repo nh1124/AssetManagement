@@ -8,7 +8,7 @@ import re
 from datetime import date, datetime
 from typing import Any
 
-EXPORT_VERSION = 16
+EXPORT_VERSION = 17
 
 DATA_COLLECTIONS = [
     "accounts",
@@ -21,6 +21,8 @@ DATA_COLLECTIONS = [
     "transaction_batches",
     "life_events",
     "life_event_links",
+    "household_members",
+    "life_event_conditions",
     "transactions",
     "journal_entries",
     "budget_plans",
@@ -217,6 +219,7 @@ def validate_import_payload(
     check_ref("journal_entries", "transaction_id", "transactions", required=True)
     check_ref("journal_entries", "account_id", "accounts", required=True)
     check_ref("journal_entries", "capsule_id", "capsules")
+    check_ref("life_event_conditions", "life_event_id", "life_events", required=True)
     check_ref("milestones", "life_event_id", "life_events")
     check_ref("life_event_links", "from_event_id", "life_events", required=True)
     check_ref("life_event_links", "to_event_id", "life_events", required=True)
@@ -234,6 +237,33 @@ def validate_import_payload(
 
     link_pairs = set()
     graph: dict[int, list[int]] = {}
+    for item in data.get("life_events", []):
+        if item.get("condition_mode", "all") not in {"all", "any"}:
+            issue("error", "invalid_condition_mode", "Condition mode must be all or any.", "life_events", item.get("id"))
+    reference_collections = {"account_balance": "accounts", "capsule_claim": "capsules", "goal_progress": "life_events", "member_age": "household_members"}
+    for item in data.get("life_event_conditions", []):
+        metric = item.get("metric")
+        money = metric in {"net_worth", "free_cash", "account_balance", "capsule_claim"}
+        numeric = metric in {"member_age", "goal_progress"}
+        valid = metric in {*reference_collections, "net_worth", "free_cash", "date_reached"} and item.get("comparator") in {"gte", "lte", "eq"}
+        valid = valid and (item.get("threshold_minor") is not None) == money and (item.get("threshold_number") is not None) == numeric and (item.get("threshold_date") is not None) == (metric == "date_reached")
+        minor, number = item.get("threshold_minor"), item.get("threshold_number")
+        if money:
+            valid = valid and type(minor) is int and -(2**63) <= minor < 2**63
+        if numeric:
+            valid = valid and type(number) in {int, float} and math.isfinite(number)
+        if metric == "date_reached":
+            try:
+                valid = valid and parse_date(item.get("threshold_date")) is not None
+            except (TypeError, ValueError):
+                valid = False
+        reference = item.get("reference_id")
+        # Null is also a dangling reference after restore; it must remain reportable.
+        if reference is not None:
+            valid = valid and metric in reference_collections and type(reference) is int and reference > 0
+        if not valid:
+            issue("error", "invalid_event_condition", "Condition metric, comparison or threshold is invalid.", "life_event_conditions", item.get("id"))
+
     indegree: dict[int, int] = dict.fromkeys(id_sets.get("life_events", set()), 0)
     for item in data.get("life_event_links", []):
         source, target = _as_int(item.get("from_event_id")), _as_int(item.get("to_event_id"))
