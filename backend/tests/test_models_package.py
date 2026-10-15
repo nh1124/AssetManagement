@@ -9,8 +9,8 @@ from app import models
 from app.database import Base
 
 
-# V3 adds account shelter and access assumptions; preserve the remaining schema.
-EXPECTED_METADATA_SHA256 = "01286d0d844bbc8772bd0878a1e25bd4a5103a9508a3e0bec027271c071c5542"
+# X1 adds link adoption; preserve the remaining schema.
+EXPECTED_METADATA_SHA256 = "9640301f1c87425d6dce209fd5c9d4a3f206770e409ddd98816f860c06157117"
 
 MODEL_NAMES = (
     "Client", "ClientMfaSetting", "ClientRecoveryCode",
@@ -90,7 +90,7 @@ def _metadata_snapshot():
 def test_metadata_matches_the_minor_unit_schema():
     snapshot = _metadata_snapshot()
     assert len(snapshot["table_names"]) == 33
-    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 407
+    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 408
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == EXPECTED_METADATA_SHA256
 

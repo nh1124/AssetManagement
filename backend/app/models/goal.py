@@ -60,6 +60,7 @@ class LifeEventLink(Base):
     from_event_id = Column(Integer, ForeignKey("life_events.id", ondelete="CASCADE"), nullable=False)
     to_event_id = Column(Integer, ForeignKey("life_events.id", ondelete="CASCADE"), nullable=False)
     kind = Column(String, nullable=False)
+    adopted = Column(Boolean, nullable=False, default=False, server_default="false")
     offset_months = Column(Integer, nullable=False, default=0, server_default="0")
     note = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)

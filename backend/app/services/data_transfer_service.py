@@ -268,7 +268,7 @@ def export_client(db: Session, client: models.Client) -> dict:
                 .all()
             ],
             "life_event_links": [
-                row_fields(link, ["id", "from_event_id", "to_event_id", "kind", "offset_months", "note", "created_at"])
+                row_fields(link, ["id", "from_event_id", "to_event_id", "kind", "adopted", "offset_months", "note", "created_at"])
                 for link in db.query(models.LifeEventLink)
                 .filter(models.LifeEventLink.client_id == client.id)
                 .order_by(models.LifeEventLink.id).all()
@@ -870,6 +870,7 @@ def import_client(
                 from_event_id=event_map[int(item["from_event_id"])],
                 to_event_id=event_map[int(item["to_event_id"])],
                 kind=item["kind"], offset_months=item.get("offset_months", 0),
+                adopted=bool(item.get("adopted", False)),
                 note=item.get("note"),
                 created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
             ))

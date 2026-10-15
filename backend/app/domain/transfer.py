@@ -8,7 +8,7 @@ import re
 from datetime import date, datetime
 from typing import Any
 
-EXPORT_VERSION = 18
+EXPORT_VERSION = 19
 
 DATA_COLLECTIONS = [
     "accounts",
@@ -282,6 +282,8 @@ def validate_import_payload(
         link_pairs.add(pair)
         if item.get("kind") not in {"after", "alternative"} or type(item.get("offset_months", 0)) is not int:
             issue("error", "invalid_event_link", "Event links require a valid kind and integer month offset.", "life_event_links", item.get("id"))
+        if type(item.get("adopted", False)) is not bool:
+            issue("error", "invalid_event_link", "Event link adoption must be a boolean.", "life_event_links", item.get("id"))
         if source in indegree and target in indegree:
             graph.setdefault(source, []).append(target)
             indegree[target] += 1

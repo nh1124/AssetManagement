@@ -243,7 +243,7 @@ def test_backup_round_trip_carries_shelter_age_and_missing_return(db):
     source = db.get(models.Client, 1)
     target = db.get(models.Client, 2)
     document = export_client(db, source)
-    assert document["version"] == EXPORT_VERSION == 18
+    assert document["version"] == EXPORT_VERSION == 19
     import_client(db, target, data=document["data"], version=document["version"], manifest=document["manifest"])
     restored = db.query(models.Account).filter_by(client_id=2, name="cash").one()
     assert (restored.institution, restored.withdrawable_from_age, restored.expected_return) == ("ideco", 63, None)

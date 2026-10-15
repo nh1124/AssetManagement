@@ -102,6 +102,17 @@ def get_scenarios(
     )
 
 
+@router.post("/scenarios/adopt")
+def adopt_scenario(
+    payload: schemas.LifeEventScenarioAdopt,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    return life_event_graph.adoption_payload(
+        life_event_graph.adopt_scenario(db, current_client.id, payload.scenario_id),
+    )
+
+
 
 @router.get("/")
 def get_life_events(

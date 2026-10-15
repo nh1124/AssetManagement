@@ -25,7 +25,7 @@ FORMAT_FIELDS = {
     "quick_templates": ["id","tray","name","template_kind","description","category","default_currency","default_from_account_id","default_to_account_id","config","sort_order","is_active","created_at","updated_at"],
     "transaction_batches": ["id","quick_template_id","label","source","input_payload","created_at"],
     "life_events": ["id","name","start_date","target_date","target_amount","priority","note","condition_mode","active_plan_basis","active_plan_label","plan_status_override","archived_at","created_at"],
-    "life_event_links": ["id","from_event_id","to_event_id","kind","offset_months","note","created_at"],
+    "life_event_links": ["id","from_event_id","to_event_id","kind","adopted","offset_months","note","created_at"],
     "household_members": ["id","name","relation","birth_date","created_at"],
     "life_event_conditions": ["id","life_event_id","metric","comparator","threshold_minor","threshold_number","threshold_date","reference_id","note","created_at"],
     "transactions": ["id","date","description","amount","currency","batch_id","recurring_transaction_id","created_at"],

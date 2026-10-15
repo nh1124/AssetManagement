@@ -803,6 +803,10 @@ class PeriodReview(PeriodReviewBase):
     class Config:
         from_attributes = True
 
+class LifeEventScenarioAdopt(BaseModel):
+    scenario_id: str
+
+
 class LifeEventLinkCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

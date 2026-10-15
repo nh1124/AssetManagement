@@ -35,6 +35,12 @@ class Scenario:
     events: list[ScenarioEvent]
 
 
+@dataclass(frozen=True)
+class Adoption:
+    scenario: Scenario | None
+    exact: bool
+
+
 class ScenarioList(list[Scenario]):
     # Keep the public list contract while carrying the reason a walk stopped.
     truncated: bool = False
@@ -188,6 +194,38 @@ def enumerate_scenarios(db: Session, client_id: int) -> list[Scenario]:
     return result
 
 
+def adoption_payload(adoption: Adoption) -> dict:
+    return {"scenario_id": adoption.scenario.id if adoption.scenario else None, "exact": adoption.exact}
+
+
+def adopted_scenario(db: Session, client_id: int, scenarios: list[Scenario]) -> Adoption:
+    chosen = {link_id for (link_id,) in db.query(models.LifeEventLink.id).filter(
+        models.LifeEventLink.client_id == client_id,
+        models.LifeEventLink.kind == "alternative",
+        models.LifeEventLink.adopted.is_(True),
+    ).all()}
+    # New forks complete a stored partial choice in the enumeration's stable order.
+    for scenario in scenarios:
+        scenario_choices = set(scenario.chosen_link_ids)
+        if scenario_choices.issuperset(chosen):
+            return Adoption(scenario, scenario_choices == chosen)
+    return Adoption(None, False)
+
+
+def adopt_scenario(db: Session, client_id: int, scenario_id: str) -> Adoption:
+    scenarios = enumerate_scenarios(db, client_id)
+    scenario = next((item for item in scenarios if item.id == scenario_id), None)
+    if scenario is None:
+        raise Refused("選択したシナリオが見つかりません。再読み込みして選び直してください。", status_code=422)
+    # One update replaces the whole choice without exposing a half-adopted graph.
+    db.query(models.LifeEventLink).filter(
+        models.LifeEventLink.client_id == client_id,
+        models.LifeEventLink.kind == "alternative",
+    ).update({models.LifeEventLink.adopted: models.LifeEventLink.id.in_(scenario.chosen_link_ids)}, synchronize_session="fetch")
+    db.commit()
+    return adopted_scenario(db, client_id, scenarios)
+
+
 def _subtract_demand(scenario: Scenario, projection: list[dict], years: int) -> list[dict]:
     demand = aggregate_event_demand_by_year(
         [(event.resolved_date, event.target_amount) for event in scenario.events], years,
@@ -212,6 +250,7 @@ def compare_scenarios(
     db: Session, client_id: int, *, years: int, annual_return: float, inflation: float,
 ) -> dict:
     scenarios = enumerate_scenarios(db, client_id)
+    adoption = adopted_scenario(db, client_id, scenarios)
     # All branches share one seeded baseline, so comparison costs one simulation.
     projection = simulate_net_worth_forward(
         db, client_id, years=years, annual_return=annual_return, inflation=inflation,
@@ -220,4 +259,5 @@ def compare_scenarios(
         "scenarios": [{**asdict(scenario), "projection": _subtract_demand(scenario, projection, years)} for scenario in scenarios],
         "truncated": scenarios.truncated,
         "fork_count": scenarios.fork_count,
+        "adopted": adoption_payload(adoption),
     }
