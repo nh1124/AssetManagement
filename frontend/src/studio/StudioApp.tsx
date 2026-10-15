@@ -12,7 +12,7 @@ import Flows from './pages/Flows';
 import Budget from './pages/budget/Budget';
 import Actions from './pages/budget/Actions';
 import Trends from './pages/report/Trends';
-import Monthly from './pages/report/Monthly';
+import Breakdown from './pages/report/Monthly';
 import Review from './pages/report/Review';
 import LifeEventList from './pages/goals/LifeEventList';
 import GoalSummary from './pages/goals/GoalSummary';
@@ -43,7 +43,7 @@ const SCREENS: Record<string, { index: ReactElement; tabs?: Record<string, React
     },
     flows: { index: <Flows />, tabs: { accounts: <Flows subjects /> } },
     budget: { index: <Budget />, tabs: { actions: <Actions /> } },
-    report: { index: <Trends />, tabs: { monthly: <Monthly />, review: <Review /> } },
+    report: { index: <Trends />, tabs: { breakdown: <Breakdown />, review: <Review /> } },
     goals: { index: <GoalSummary />, tabs: { events: <LifeEventList />, graph: <LifeEventGraph /> } },
     assets: {
         layout: <Assets />,

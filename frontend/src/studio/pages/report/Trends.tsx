@@ -7,8 +7,9 @@ import { formatCurrency } from '../../../utils/currency';
 import { useResource } from '../../useResource';
 import { DataTable, Feedback, Field } from '../db/Database';
 import { ACCOUNT_TYPES, buttonClass, inputClass } from '../db/forms';
-import { currentMonth, monthRange } from '../ledger/periods';
+import { lastMonthsRange } from '../ledger/periods';
 import { MoneyLineChart } from './Charts';
+import PeriodSelector from './PeriodSelector';
 
 const GRAINS: Record<AccountFlowGrain, string> = { day: '日別', week: '週別', month: '月別', quarter: '四半期別' };
 const PAGE_SIZE = 50;
@@ -65,13 +66,15 @@ function AccountDetail({ account, startDate, endDate, currency, grain, buckets }
     </section>;
 }
 
-function AccountFlows({ startDate, endDate, currency, grain }: { startDate: string; endDate: string; currency: string; grain: AccountFlowGrain }) {
+export function AccountFlows({ startDate, endDate, currency, grain, heading = '資金移動', className = 'space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5' }: {
+    startDate: string; endDate: string; currency: string; grain: AccountFlowGrain; heading?: string; className?: string;
+}) {
     const load = useCallback(() => getAccountFlows({ startDate, endDate, grain }), [startDate, endDate, grain]);
     const resource = useResource(load);
     const [selectedId, setSelectedId] = useState<number | null>(null);
     const selected = resource.data?.accounts.find((row) => row.account_id === selectedId);
-    return <section className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
-        <h2 className="text-lg font-semibold">資金移動</h2>
+    return <section className={className}>
+        <h2 className="text-lg font-semibold">{heading}</h2>
         <Feedback loading={resource.loading} error={resource.error} />
         {resource.data && <>
             <DataTable columns={['口座・科目', '種別', '借方', '貸方', '増減', '仕訳数']}>
@@ -96,7 +99,6 @@ function NetWorth({ months, currency }: { months: number; currency: string }) {
     const latest = resource.data?.at(-1);
     return <section className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
         <h2 className="text-lg font-semibold">純資産の推移</h2>
-        <p className="text-sm text-[var(--studio-text-muted)]">今月は、登録されている記録までの値です。</p>
         <Feedback loading={resource.loading} error={resource.error} />
         {resource.data && (first && latest ? <>
             <dl className="flex flex-wrap gap-x-10 gap-y-4"><div><dt className="text-xs text-[var(--studio-text-muted)]">{latest.period} の純資産</dt><dd className="mt-2 text-2xl font-semibold tabular-nums">{formatCurrency(latest.net_worth, currency)}</dd></div><div><dt className="text-xs text-[var(--studio-text-muted)]">{first.period} からの増減</dt><dd className="mt-2 text-xl tabular-nums">{formatCurrency(latest.net_worth - first.net_worth, currency)}</dd></div></dl>
@@ -108,13 +110,10 @@ function NetWorth({ months, currency }: { months: number; currency: string }) {
 function TrendsForClient({ currency }: { currency: string }) {
     const [months, setMonths] = useState(12);
     const [grain, setGrain] = useState<AccountFlowGrain>('month');
-    const [year, month] = currentMonth().split('-').map(Number);
-    const first = new Date(year, month - months, 1);
-    const startDate = `${first.getFullYear()}-${String(first.getMonth() + 1).padStart(2, '0')}-01`;
-    const endDate = monthRange(currentMonth()).endDate;
+    const { startDate, endDate } = lastMonthsRange(months);
     return <section className="space-y-8">
         <div className="flex flex-wrap items-end gap-4">
-            <Field label="表示期間"><select value={months} onChange={(event) => setMonths(Number(event.target.value))} className={inputClass}>{[12, 36, 60].map((value) => <option key={value} value={value}>{value}か月</option>)}</select></Field>
+            <PeriodSelector months={months} onChange={setMonths} />
             <Field label="口座の集計単位"><select value={grain} onChange={(event) => { const value = event.target.value; if (value === 'day' || value === 'week' || value === 'month' || value === 'quarter') setGrain(value); }} className={inputClass}>{Object.entries(GRAINS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
         </div>
         <NetWorth key={months} months={months} currency={currency} />

@@ -35,7 +35,7 @@ const dictionary = {
     'tab.budget': ['予算と実績', 'Budget & actuals'],
     'tab.actions': ['行動', 'Actions'],
     'tab.trends': ['推移', 'Trends'],
-    'tab.monthly': ['月次', 'Monthly'],
+    'tab.breakdown': ['内訳', 'Breakdown'],
     'tab.review': ['振り返り', 'Review'],
     'tab.services': ['サービス・継続支出', 'Services & recurring expenses'],
     'tab.income': ['収入', 'Income'],

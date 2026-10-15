@@ -27,4 +27,7 @@
     --studio-positive: #2f7d5c;
     --studio-warning: #9a6b1f;
     --studio-danger: #a33a2f;
+
+    --studio-budget: #2563eb;
+    --studio-expense: var(--studio-danger);
 }

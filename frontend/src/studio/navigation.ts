@@ -100,7 +100,7 @@ export const STUDIO_GROUPS: StudioGroup[] = [
                 section: WORKSPACE,
                 tabs: [
                     { segment: '', label: 'tab.trends' },
-                    { segment: 'monthly', label: 'tab.monthly' },
+                    { segment: 'breakdown', label: 'tab.breakdown' },
                     { segment: 'review', label: 'tab.review' },
                 ],
             },
