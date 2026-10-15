@@ -11,6 +11,7 @@ from dataclasses import asdict, replace
 from datetime import date, datetime
 from typing import Any, Optional, Sequence
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
 from .. import models
@@ -67,10 +68,27 @@ def get_expense_account(db: Session, client_id: int, account_id: int) -> models.
     ).first()
 
 
-def get_account(db: Session, client_id: int, account_id: int) -> models.Account | None:
+def get_account(
+    db: Session, client_id: int, account_id: int, *, for_update: bool = False,
+) -> models.Account | None:
     # Product categories and capsule contributions need the client's account;
     # each workflow decides what that account means for its request.
+    if for_update:
+        return db.query(models.Account).filter(
+            models.Account.client_id == client_id, models.Account.id == account_id,
+        ).with_for_update().first()
     return _get_account_by_id(db, account_id, client_id)
+
+
+def account_balances_minor(db: Session, client_id: int, account_id: int) -> dict[str, int]:
+    """Debit-net journal balances by denomination, without an FX valuation."""
+    rows = db.query(
+        models.Transaction.currency,
+        func.sum(models.JournalEntry.debit_minor - models.JournalEntry.credit_minor),
+    ).join(models.Transaction, models.Transaction.id == models.JournalEntry.transaction_id).filter(
+        models.Transaction.client_id == client_id, models.JournalEntry.account_id == account_id,
+    ).group_by(models.Transaction.currency).all()
+    return {currency: int(total) for currency, total in rows if total}
 
 
 def _validate_parent(

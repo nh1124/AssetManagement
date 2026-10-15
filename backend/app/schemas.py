@@ -1052,6 +1052,14 @@ class Capsule(CapsuleBase):
         from_attributes = True
 
 
+class CapsuleAccountClaimRequest(BaseModel):
+    account_id: int
+    target_amount: float = Field(allow_inf_nan=False)
+
+    class Config:
+        extra = "forbid"
+
+
 class CapsuleDrawdownRequest(BaseModel):
     amount: float = Field(gt=0, allow_inf_nan=False)
     from_account_id: int

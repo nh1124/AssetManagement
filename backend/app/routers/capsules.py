@@ -168,6 +168,17 @@ def read_capsule_drawdowns(
             for row in capsule_service.list_drawdowns(db, current_client.id, capsule_id)]
 
 
+@router.post("/{capsule_id}/account-claim")
+def set_capsule_account_claim(
+    capsule_id: int, payload: schemas.CapsuleAccountClaimRequest,
+    db: Session = Depends(database.get_db),
+    current_client: models.Client = Depends(dependencies.get_current_client),
+):
+    return capsule_workflow.set_account_claim(
+        db, current_client.id, capsule_id, **payload.model_dump(),
+    )
+
+
 @router.post("/{capsule_id}/contribute")
 def contribute_to_capsule(
     capsule_id: int,

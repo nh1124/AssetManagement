@@ -30,11 +30,16 @@ def remaining_target(db: Session, capsule: models.Capsule) -> float:
     return max(0.0, (capsule.target_amount or 0.0) - capsule_balance(db, capsule))
 
 
-def get_capsule(db: Session, client_id: int, capsule_id: int) -> models.Capsule | None:
-    return db.query(models.Capsule).filter(
+def get_capsule(
+    db: Session, client_id: int, capsule_id: int, *, for_update: bool = False,
+) -> models.Capsule | None:
+    query = db.query(models.Capsule).filter(
         models.Capsule.id == capsule_id,
         models.Capsule.client_id == client_id,
-    ).first()
+    )
+    if for_update:
+        query = query.with_for_update()
+    return query.first()
 
 
 def get_product_funding_capsule(db: Session, client_id: int, capsule_id: int) -> models.Capsule | None:
