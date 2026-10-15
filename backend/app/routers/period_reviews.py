@@ -8,9 +8,18 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
-from ..services.period_review_service import default_range, get_review, period_label, upsert_review
+from ..services.period_review_service import default_range, get_review, list_reviews, period_label, upsert_review
 
 router = APIRouter(prefix="/period-reviews", tags=["period-reviews"])
+
+
+@router.get("/list", response_model=list[schemas.PeriodReview])
+def list_period_reviews(
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    return list_reviews(db, current_client.id, limit=limit)
 
 
 @router.get("/", response_model=schemas.PeriodReview)

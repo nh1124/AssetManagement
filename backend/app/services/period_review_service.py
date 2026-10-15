@@ -25,6 +25,19 @@ def period_label(start_date: date, end_date: date, label: str | None = None) -> 
     return f"{start_date.isoformat()} - {end_date.isoformat()}"
 
 
+def list_reviews(
+    db: Session, client_id: int, *, limit: int = 50,
+) -> list[models.PeriodReview]:
+    # Saved rows distinguish review history from an unsaved range's empty form.
+    return db.query(models.PeriodReview).filter(
+        models.PeriodReview.client_id == client_id,
+    ).order_by(
+        models.PeriodReview.start_date.desc(),
+        models.PeriodReview.end_date.desc(),
+        models.PeriodReview.id.desc(),
+    ).limit(limit).all()
+
+
 def get_review(
     db: Session, client_id: int, start_date: date, end_date: date,
 ) -> models.PeriodReview | None:
