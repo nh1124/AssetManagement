@@ -293,6 +293,11 @@ export const getPeriodReview = async (startDate: string, endDate: string): Promi
     return response.data;
 };
 
+export const listPeriodReviews = async (limit: number = 50): Promise<PeriodReview[]> => {
+    const response = await api.get('/period-reviews/list', { params: { limit } });
+    return response.data;
+};
+
 export const savePeriodReview = async (review: {
     start_date: string;
     end_date: string;
