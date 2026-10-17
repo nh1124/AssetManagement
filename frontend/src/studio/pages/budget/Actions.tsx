@@ -11,11 +11,9 @@ import { DataTable, Feedback } from '../db/Database';
 import { buttonClass, useMutation } from '../db/forms';
 import MonthPicker from '../ledger/MonthPicker';
 import ActionEditor from './ActionEditor';
-import GoalBudgetReflection from '../goals/GoalBudgetReflection';
-import { syncGoalReflectionAction } from '../../../api/goalBudget';
 
 const STATES: Record<MonthlyAction['status'], string> = { pending: '未実行', applied: '実行済み', skipped: '見送り', failed: '失敗' };
-const KINDS: Record<string, string> = { goal_reflection: 'ゴールから予算を更新（確認が必要）', set_budget: '支出予算を設定', add_recurring: '定常収支を追加', pause_recurring: '定常収支を停止', boost_allocation: 'ライフイベントへの確保額を変更', change_capsule_contribution: '取り置きの月額積立を変更' };
+const KINDS: Record<string, string> = { set_budget: '支出予算を設定', add_recurring: '定常収支を追加', pause_recurring: '定常収支を停止', boost_allocation: 'ライフイベントへの確保額を変更', change_capsule_contribution: '取り置きの月額積立を変更' };
 
 function RelatedBudget({ action, currency }: { action: MonthlyAction; currency: string }) {
     const payload = action.payload;
@@ -26,10 +24,6 @@ function RelatedBudget({ action, currency }: { action: MonthlyAction; currency: 
             : action.kind === 'change_capsule_contribution' ? `取り置き #${String(action.target_id ?? '—')}`
                 : action.kind === 'pause_recurring' ? `定常収支 #${String(payload.recurring_id ?? action.target_id ?? '—')}`
                     : action.kind === 'add_recurring' ? `${String(payload.name ?? '定常収支')}・${String(payload.from_account_id ?? '—')} → ${String(payload.to_account_id ?? '—')}` : '—';
-    if (action.kind === 'goal_reflection') {
-        const reminders = Array.isArray(payload.reminders) ? payload.reminders : [];
-        return <p className="text-xs"><span className="mr-2 rounded bg-[var(--studio-accent-soft)] px-1.5 py-0.5 text-[var(--studio-accent)]">確認が必要</span>お知らせ {reminders.length}件</p>;
-    }
     const amount = payload.amount ?? payload.monthly_contribution ?? action.amount;
     return <div className="space-y-1 text-xs"><p>{label}</p>
         {typeof amount === 'number' && <p className="tabular-nums">{formatCurrency(amount, code)}（{code}）</p>}
@@ -40,14 +34,7 @@ function RelatedBudget({ action, currency }: { action: MonthlyAction; currency: 
 
 function MonthlyActions({ sourcePeriod, currency, clientName }: { sourcePeriod: string; currency: string; clientName?: string }) {
     const confirm = useConfirm();
-    const timezone = useTimezone();
-    const currentPeriod = clientToday(timezone).slice(0, 7);
-    // Opening this month brings the goal's reminders in as an action; failure only leaves it out.
-    const load = useCallback(async () => {
-        if (sourcePeriod === currentPeriod) await syncGoalReflectionAction(currentPeriod).catch(() => undefined);
-        return getMonthlyActions(sourcePeriod);
-    }, [sourcePeriod, currentPeriod]);
-    const [reflecting, setReflecting] = useState<MonthlyAction | null>(null);
+    const load = useCallback(() => getMonthlyActions(sourcePeriod), [sourcePeriod]);
     const resource = useResource(load);
     const mutation = useMutation();
     const [adding, setAdding] = useState(false);
@@ -81,7 +68,7 @@ function MonthlyActions({ sourcePeriod, currency, clientName }: { sourcePeriod: 
         });
     };
     const processDue = async () => {
-        if (disabled || adding || !(await confirm(`「${clientName}」の期限が到来した行動を実行しますか？\n表示中の記録月にかかわらず、全期間の未実行・失敗した行動を対象に、関連する予算・定義・確保額へ反映します（確認が必要な行動は含みません）。`, '実行する'))) return;
+        if (disabled || adding || !(await confirm(`「${clientName}」の期限が到来した行動を実行しますか？\n表示中の記録月にかかわらず、全期間の未実行・失敗した行動を対象に、関連する予算・定義・確保額へ反映します。`, '実行する'))) return;
         let rows: MonthlyAction[] = [];
         void mutation.run(async () => { rows = (await processDueMonthlyActions()).processed; }, '期限が到来した行動の処理が完了しました。', () => { setProcessed(rows); resource.reload(); });
     };
@@ -100,22 +87,7 @@ function MonthlyActions({ sourcePeriod, currency, clientName }: { sourcePeriod: 
             {!processed.length && <p className="text-[var(--studio-text-muted)]">期限が到来した行動はありませんでした。</p>}
         </details>}
         {adding && <Overlay title="行動を追加" onClose={() => setAdding(false)}><Feedback error={mutation.error} /><ActionEditor sourcePeriod={sourcePeriod} currency={currency} busy={disabled} onSave={save} onCancel={() => setAdding(false)} /></Overlay>}
-        {reflecting && <GoalBudgetReflection title="ゴールから予算を更新" initialPeriod={String(reflecting.payload.period ?? reflecting.target_period ?? sourcePeriod)}
-            intro="この行動は確認が必要です。内容を確かめて反映すると、行動は実行済みになります。" onClose={() => { setReflecting(null); resource.reload(); }} />}
-        {selectedAction?.requires_confirmation && <Overlay title={selectedAction.description || KINDS[selectedAction.kind] || selectedAction.kind} onClose={() => setSelectedId(null)}
-            footer={selectedAction.status === 'pending' ? <>
-                <button type="button" disabled={disabled} onClick={() => decide(selectedAction, false)} className={`${buttonClass} mr-auto`}>見送り</button>
-                <button type="button" disabled={disabled} onClick={() => { setReflecting(selectedAction); setSelectedId(null); }} className={buttonClass}>確認して反映</button>
-            </> : undefined}>
-            <div className="space-y-3 text-sm">
-                <p className="text-[var(--studio-text-muted)]">{STATES[selectedAction.status]}・ワンクリックでは実行できない行動です。反映する前に、積立の配り方と変わる予算行を確認します。</p>
-                <ul className="list-disc space-y-1 pl-5">
-                    {(Array.isArray(selectedAction.payload.reminders) ? selectedAction.payload.reminders : []).map((row, index) => <li key={index}>{typeof row === 'object' && row !== null && 'message' in row ? String(row.message) : ''}</li>)}
-                </ul>
-                {typeof selectedAction.result.reason === 'string' && <p className="text-xs text-[var(--studio-text-muted)]">{selectedAction.result.reason}</p>}
-            </div>
-        </Overlay>}
-        {selectedAction && !selectedAction.requires_confirmation && <Overlay title={selectedAction.description || KINDS[selectedAction.kind] || selectedAction.kind} onClose={() => setSelectedId(null)}>
+        {selectedAction && <Overlay title={selectedAction.description || KINDS[selectedAction.kind] || selectedAction.kind} onClose={() => setSelectedId(null)}>
             <div className="space-y-4">
                 <Feedback error={mutation.error} />
                 <p className="text-sm text-[var(--studio-text-muted)]">{STATES[selectedAction.status]}</p>

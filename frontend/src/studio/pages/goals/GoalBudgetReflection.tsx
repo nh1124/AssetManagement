@@ -10,6 +10,7 @@ import { clientToday, formatDate, useTimezone } from '../../datetime';
 import { assetErrorMessage } from '../../useResource';
 import { DataTable, Feedback, Field } from '../db/Database';
 import { inputClass, primaryClass } from '../db/forms';
+import { useNotifications } from '../../notificationContext';
 import GoalHandovers from './GoalHandovers';
 import { REFLECTIONS } from './presentation';
 
@@ -44,6 +45,7 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
     onClose: () => void; onApplied?: (result: GoalBudgetResult) => void;
 }) {
     const timezone = useTimezone();
+    const notifications = useNotifications();
     const { currentClient } = useClient();
     const currency = currentClient?.general_settings?.currency || 'JPY';
     const [options, setOptions] = useState<GoalBudgetOptions>(() => ({
@@ -140,6 +142,7 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
             // Handed-over amounts are now claimed; the next preview must not offer them again.
             setOptions((previous) => ({ ...previous, handovers: [] }));
             setRefresh((value) => value + 1);
+            notifications.refresh();
             onApplied?.(result);
         } catch (failure: unknown) {
             setError(assetErrorMessage(failure));

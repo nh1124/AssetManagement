@@ -13,7 +13,7 @@ import { useResource } from '../../useResource';
 import { DataTable, Feedback } from '../db/Database';
 import { buttonClass, primaryClass } from '../db/forms';
 import GoalBaselinePanel from './GoalBaselinePanel';
-import GoalReminders from './GoalReminders';
+import GoalReflectionNotice from './GoalReflectionNotice';
 import GoalSavingsBreakdown from './GoalSavingsBreakdown';
 import GoalBudgetReflection from './GoalBudgetReflection';
 import NoLifeEvents from './NoLifeEvents';
@@ -59,8 +59,8 @@ function ScenarioSummary({ scenario, events, currency }: { scenario: ProjectedLi
     const [version, setVersion] = useState(0);
     const timezone = useTimezone();
     const period = clientToday(timezone).slice(0, 7);
-    // The page reads the status once, for the reminders under the button and the breakdown.
-    const loadStatus = useCallback(() => getGoalBudgetStatus(period, { syncAction: true }), [period]);
+    // The status feeds the breakdown; the reminders are the goal-reflection notification.
+    const loadStatus = useCallback(() => getGoalBudgetStatus(period), [period]);
     const status = useResource(loadStatus);
     const progress = new Map(events.map((event) => [event.id, event]));
     const rows = [...scenario.events].sort((a, b) => (a.resolved_date ?? '\uffff').localeCompare(b.resolved_date ?? '\uffff') || a.id - b.id);
@@ -78,7 +78,7 @@ function ScenarioSummary({ scenario, events, currency }: { scenario: ProjectedLi
                 <button type="button" onClick={() => setReflecting(true)} className={`inline-flex items-center gap-2 ${buttonClass}`}><Wallet size={14} aria-hidden="true" />予算に反映</button>
             </div>
         </div>
-        {status.data?.goal && <GoalReminders reminders={status.data.reminders} />}
+        <GoalReflectionNotice />
         {reflecting && <GoalBudgetReflection onClose={() => { setReflecting(false); setVersion((value) => value + 1); status.reload(); }} />}
         <dl className="grid gap-4 sm:grid-cols-3 lg:grid-cols-5">
             {[

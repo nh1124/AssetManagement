@@ -89,6 +89,8 @@ def _seed(db, client_id=101, base=10000):
     add(models.GoalBaseline, 40, scenario_id=scenario.id, scenario_name="保存案", reason="adopted",
         anchor_date=date(2026, 10, 1), is_current=True, assumptions={"annual_return": 7.0},
         projection=[{"offset": 0, "year": 2026, "p10": 1, "p50": 2, "p90": 3}], events=[{"name": "基準"}])
+    # Not in the backup, but present so rollback is proven to leave it alone too.
+    add(models.Notification, 42, kind="goal_reflection", dedupe_key=f"goal_reflection:{base}", title="t", body="", payload={}, status="open")
     add(models.GoalBudgetReflection, 41, scenario_id=scenario.id, applied_at=STAMP, start_period="2026-10",
         end_period="2026-10", options={"months": 1}, summary={"chosen_amount": 5}, events=[{"lineage": "x", "allocation": 5}])
     capsule = add(models.Capsule, 5, name="goal", life_event_id=goal.id,

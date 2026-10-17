@@ -76,6 +76,7 @@ LAYERS: dict[str, int] = {
     "goal_budget_inputs": 5,  # Reads what the goal asks of the budget; only its workflow uses it.
     "goal_baseline_service": 5,  # Freezes the goal projection and reads month-end net worth.
     "goal_budget_record": 0,  # The applied reflections; models only.
+    "notification_service": 0,  # Notification rows and the user's decisions; models only.
     "goal_service": 5,
     "life_event_conditions": 5,  # Current assumptions compose existing readers.
     "life_event_walk": 5,  # Shared graph resolution and event cash-flow application.
@@ -98,6 +99,7 @@ LAYERS: dict[str, int] = {
     "goal_workflow": 6,
     "goal_budget_workflow": 6,
     "scenario_goal_workflow": 6,
+    "notification_workflow": 6,
     "capsule_workflow": 6,
     "simulation_workflow": 6,
 }

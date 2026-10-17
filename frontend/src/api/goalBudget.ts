@@ -175,17 +175,8 @@ export interface GoalBudgetOverview {
     reminders: GoalBudgetReminder[];
 }
 
-/** The savings breakdown for a month and the reasons to reflect again.
- *
- * With syncAction, the reasons also wait on the actions page as a confirmation-required
- * action; that write is best effort and never fails the read. */
-export async function getGoalBudgetStatus(period: string, { syncAction = false } = {}): Promise<GoalBudgetOverview> {
-    const result = (await api.get<GoalBudgetOverview>('/goal-budget/status', { params: { period } })).data;
-    if (syncAction) void syncGoalReflectionAction(period).catch(() => undefined);
-    return result;
+/** The savings breakdown for a month and the reasons to reflect again; read-only. */
+export async function getGoalBudgetStatus(period: string): Promise<GoalBudgetOverview> {
+    return (await api.get<GoalBudgetOverview>('/goal-budget/status', { params: { period } })).data;
 }
 
-/** Create, refresh or set aside this month's confirmation-required "update from the goal" action. */
-export async function syncGoalReflectionAction(period: string): Promise<{ action_id: number | null; reminders: number }> {
-    return (await api.post<{ action_id: number | null; reminders: number }>('/goal-budget/sync-action', null, { params: { period } })).data;
-}

@@ -26,6 +26,7 @@ from .routers import (
     exchange_rates,
     goal_baselines,
     goal_budget,
+    notifications,
     life_events,
     life_scenarios,
     household_members,
@@ -295,6 +296,7 @@ app.include_router(life_events.router)
 app.include_router(life_scenarios.router)
 app.include_router(goal_budget.router)
 app.include_router(goal_baselines.router)
+app.include_router(notifications.router)
 app.include_router(household_members.router)
 app.include_router(budget_plans.router, dependencies=[Depends(get_current_client)])
 app.include_router(period_reviews.router)

@@ -1,5 +1,8 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { LogOut, Settings as SettingsIcon } from 'lucide-react';
+import { useClient } from '../../context/ClientContext';
+import NotificationBell from './NotificationBell';
+import NotificationsProvider from './NotificationsProvider';
 import { useLanguage } from '../i18n';
 import { useAuth } from '../../context/AuthContext';
 import { SETTINGS_PATH, STUDIO_GROUPS, STUDIO_SCREENS } from '../navigation';
@@ -91,10 +94,13 @@ export default function StudioLayout() {
     const { pathname } = useLocation();
     const { t, language } = useLanguage();
     const { logout } = useAuth();
+    const { clientId } = useClient();
 
     return (
         <div lang={language} className="studio-root flex h-screen min-h-0 overflow-hidden bg-[var(--studio-bg)] text-[var(--studio-text)]">
             <ConfirmProvider>
+            {/* Keyed by client: notifications belong to one client and must not carry over. */}
+            <NotificationsProvider key={clientId ?? 'none'}>
             <Rail />
             <div className="studio-content flex min-w-0 flex-1 flex-col">
                 <header className="studio-header flex h-14 flex-shrink-0 items-center gap-3 border-b border-[var(--studio-border)] bg-[var(--studio-surface)] px-6">
@@ -105,6 +111,7 @@ export default function StudioLayout() {
                         <h1 className="truncate text-sm font-semibold">{pathname.startsWith('/record/') ? '取引を編集' : t(screen?.label ?? (pathname === '/record' ? 'shell.record' : 'settings.title'))}</h1>
                     </div>
                     <div className="flex-1" />
+                    <NotificationBell />
                     <NavLink
                         to="/record"
                         className="rounded-md bg-[var(--studio-accent)] px-3 py-2 text-xs font-medium text-[var(--studio-accent-text)] transition-opacity hover:opacity-90"
@@ -124,6 +131,7 @@ export default function StudioLayout() {
                     <Outlet />
                 </main>
             </div>
+            </NotificationsProvider>
             </ConfirmProvider>
         </div>
     );

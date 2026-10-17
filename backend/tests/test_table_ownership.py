@@ -39,6 +39,7 @@ OWNERS: dict[str, str] = {
     "life_scenario_account_returns": "services/life_scenario_service",
     "goal_baselines": "services/goal_baseline_service",
     "goal_budget_reflections": "services/goal_budget_record",
+    "notifications": "services/notification_service",
     "life_event_links": "services/life_event_graph",
     "milestones": "services/milestone_service",
     "simulation_configs": "services/simulation_config_service",

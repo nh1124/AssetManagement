@@ -54,6 +54,11 @@ EXCLUDED: dict[str, str] = {
         "the restored triggers. Importing them would duplicate what the rules "
         "propose and would carry trigger ids the import has reassigned."
     ),
+    "notifications": (
+        "Reminders are recomputed from the data, and 後で確認 / 見送り are decisions about "
+        "this installation at a moment in time; restoring them would hide or revive "
+        "reminders for reasons that no longer match the restored data."
+    ),
     "alembic_version": (
         "The schema's own version, recorded in the manifest instead; a restore "
         "must not move the database to another revision."

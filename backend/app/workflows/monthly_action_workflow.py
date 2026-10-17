@@ -41,12 +41,6 @@ ACTION_KINDS = {
 }
 
 
-# Actions that cannot be applied in one click: the user reviews choices and a
-# preview first, on the screen that owns them. Apply and process-due refuse or skip
-# them; the owning workflow completes them when its own confirmed write happens.
-CONFIRMATION_KINDS = {"goal_reflection"}
-
-
 def next_period(period: str) -> str:
     year, month = [int(part) for part in period.split("-")]
     if month == 12:
@@ -67,7 +61,6 @@ def action_to_dict(action: models.MonthlyAction) -> dict:
         "payload": action.payload or {},
         "result": action.result or {},
         "status": action.status,
-        "requires_confirmation": action.kind in CONFIRMATION_KINDS,
         "applied_at": action.applied_at.isoformat() if action.applied_at else None,
         "created_at": action.created_at.isoformat() if action.created_at else None,
     }
@@ -307,8 +300,6 @@ def apply_action(db: Session, client_id: int, action_id: int) -> dict:
         raise LookupError("Action not found")
     if action.status == "applied":
         return action_to_dict(action)
-    if action.kind in CONFIRMATION_KINDS:
-        raise Refused("この行動は確認が必要です。内容を確認する画面から反映してください。", status_code=409)
     if action.kind not in DISPATCH:
         raise ValueError(f"Unsupported action kind: {action.kind}")
 
@@ -346,8 +337,6 @@ def process_due_actions(db: Session, client_id: int, today: date | None = None) 
     actions = monthly_action_store.list_due(db, client_id, today or date.today())
     processed = []
     for action in actions:
-        if action.kind in CONFIRMATION_KINDS:
-            continue  # never applied without the user's review
         try:
             processed.append(apply_action(db, client_id, action.id))
         except Exception:

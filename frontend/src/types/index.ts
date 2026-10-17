@@ -574,8 +574,6 @@ export interface MonthlyAction {
     payload: Record<string, unknown>;
     result: Record<string, unknown>;
     status: 'pending' | 'applied' | 'skipped' | 'failed';
-    /** Cannot be applied in one click; the owning screen reviews and confirms it. */
-    requires_confirmation?: boolean;
     applied_at?: string | null;
     created_at?: string | null;
 }
