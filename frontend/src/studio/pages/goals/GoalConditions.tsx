@@ -93,6 +93,6 @@ export default function GoalConditions({ goalId, currency, clientName, disabled,
                 {evaluation.conditions.length === 0 && <tr><td colSpan={3} className="px-5 py-4 text-[var(--studio-text-muted)]">前提なし</td></tr>}
             </DataTable>
         </>}
-        {editing && resource.data && <Overlay title="条件を追加" onClose={() => { if (!mutation.busy) setEditing(false); }}><Feedback error={mutation.error} /><ConditionEditor currency={currency} lookups={resource.data.lookups} busy={locked} onCancel={() => setEditing(false)} onSave={(input) => run(() => addGoalCondition(goalId, input), '条件を追加しました。', true)} /></Overlay>}
+        {editing && resource.data && <Overlay title="条件を追加" busy={mutation.busy} onClose={() => setEditing(false)}><Feedback error={mutation.error} /><ConditionEditor currency={currency} lookups={resource.data.lookups} busy={locked} onCancel={() => setEditing(false)} onSave={(input) => run(() => addGoalCondition(goalId, input), '条件を追加しました。', true)} /></Overlay>}
     </section>;
 }

@@ -42,7 +42,7 @@ export default function Household({ disabled, clientName }: { disabled: boolean;
             </tr>)}
             {resource.data.length === 0 && <tr><td colSpan={4} className="px-5 py-4 text-[var(--studio-text-muted)]">構成員はありません。</td></tr>}
         </DataTable>}
-        {editor && <Overlay title={editor.row ? '構成員を編集' : '構成員を追加'} onClose={() => { if (!mutation.busy) setEditor(null); }}><Feedback error={mutation.error} /><MemberEditor row={editor.row} busy={locked} onCancel={() => setEditor(null)} onSave={(input) => {
+        {editor && <Overlay title={editor.row ? '構成員を編集' : '構成員を追加'} busy={mutation.busy} onClose={() => setEditor(null)}><Feedback error={mutation.error} /><MemberEditor row={editor.row} busy={locked} onCancel={() => setEditor(null)} onSave={(input) => {
             if (!locked) void mutation.run(() => saveHouseholdMember(input, editor.row?.id), '構成員を保存しました。', () => { setEditor(null); resource.reload(); });
         }} /></Overlay>}
     </details>;

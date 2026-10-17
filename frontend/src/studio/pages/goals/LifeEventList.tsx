@@ -23,7 +23,7 @@ function LifeEventListForClient({ currency, clientName }: { currency: string; cl
     const resource = useResource(load);
     const mutation = useMutation();
     const [editing, setEditing] = useState(false);
-    const closeEditor = () => { if (!mutation.busy) setEditing(false); };
+    const closeEditor = () => setEditing(false);
     return <section className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
             <button type="button" disabled={!clientName || editing} onClick={() => setEditing(true)} className={buttonClass}>新しいライフイベント</button>
@@ -34,12 +34,12 @@ function LifeEventListForClient({ currency, clientName }: { currency: string; cl
             }} className={`${buttonClass} aria-pressed:bg-[var(--studio-accent-soft)] aria-pressed:text-[var(--studio-accent)]`}><Archive size={18} aria-hidden="true" /></button>
         </div>
         <Feedback loading={resource.loading} error={resource.error} />
-        {editing && <Overlay title="新しいライフイベント" onClose={closeEditor}>
+        {editing && <Overlay title="新しいライフイベント" busy={mutation.busy} onClose={closeEditor}>
             <Feedback error={mutation.error} />
             <GoalEditor goal={null} scenarioId={scenario.id} currency={currency} embedded busy={mutation.busy || !clientName} onCancel={closeEditor}
                 onSave={(action) => { if (clientName) void mutation.run(action, 'ライフイベントを保存しました。', () => { setEditing(false); resource.reload(); }); }} />
         </Overlay>}
-        {resource.data && <DataTable columns={['名称', '種別', '目標額', '目標日', '現在の確保額', '進捗', '計画の状態']}>
+        {resource.data && <DataTable columns={['名称', '種別', '目標額', '目標日', '確保額', '進捗', '計画の状態']}>
             {resource.data.length ? resource.data.map((goal) => <tr key={goal.id} className="cursor-pointer hover:bg-[var(--studio-accent-soft)]" onClick={() => navigate(`${eventBase}/${goal.id}`)}>
                 <th scope="row" className="px-5 py-3 font-medium"><Link to={`${eventBase}/${goal.id}`} onClick={(event) => event.stopPropagation()} className="rounded text-[var(--studio-accent)] hover:underline focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)]">{goal.name}</Link></th>
                 <td className="whitespace-nowrap px-5 py-3">{goal.direction === 'income' ? '収入' : '支出'}</td>

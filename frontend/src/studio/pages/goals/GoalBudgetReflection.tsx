@@ -155,7 +155,7 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
         }
     };
     const savings = preview?.savings;
-    return <Overlay title={title} onClose={() => { if (!busy) onClose(); }}
+    return <Overlay title={title} busy={busy} onClose={onClose}
         footer={<button type="button" disabled={busy || loading || !preview || Boolean(error)} onClick={() => void apply()} className={primaryClass}>{busy ? '反映中…' : changed.length ? '予算に反映する' : '反映を記録する'}</button>}>
         <div className="space-y-5">
             {intro && <p className="text-sm">{intro}</p>}

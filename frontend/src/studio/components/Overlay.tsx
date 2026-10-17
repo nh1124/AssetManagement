@@ -28,8 +28,8 @@ function lockPage() {
     };
 }
 
-export default function Overlay({ title, children, footer, describedBy, onClose }: {
-    title: string; children: ReactNode; footer?: ReactNode; describedBy?: string; onClose: () => void;
+export default function Overlay({ title, children, footer, describedBy, busy = false, onClose }: {
+    title: string; children: ReactNode; footer?: ReactNode; describedBy?: string; busy?: boolean; onClose: () => void;
 }) {
     const titleId = useId();
     const panel = useRef<HTMLDialogElement>(null);
@@ -54,9 +54,9 @@ export default function Overlay({ title, children, footer, describedBy, onClose 
     const host = document.querySelector('.studio-root') ?? document.body;
     return createPortal(<dialog ref={panel} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={describedBy}
         className="fixed inset-0 m-auto max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-3xl overflow-hidden rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-0 text-[var(--studio-text)] shadow-xl backdrop:bg-black/40"
-        onCancel={(event) => { event.preventDefault(); event.stopPropagation(); onClose(); }}
+        onCancel={(event) => { event.preventDefault(); event.stopPropagation(); if (!busy) onClose(); }}
         onClick={(event) => {
-            if (event.target !== event.currentTarget) return;
+            if (busy || event.target !== event.currentTarget) return;
             const rect = event.currentTarget.getBoundingClientRect();
             if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) onClose();
         }}
@@ -77,7 +77,7 @@ export default function Overlay({ title, children, footer, describedBy, onClose 
         <div className="flex max-h-[calc(100dvh-2rem)] flex-col">
             <header className="flex shrink-0 items-center justify-between gap-4 border-b border-[var(--studio-border)] px-5 py-4">
                 <h2 id={titleId} className="text-base font-semibold">{title}</h2>
-                <button type="button" aria-label={`${title}を閉じる`} onClick={onClose} className="rounded-md p-2 text-[var(--studio-text-muted)] hover:bg-[var(--studio-accent-soft)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)]"><X size={18} aria-hidden="true" /></button>
+                <button type="button" aria-label={`${title}を閉じる`} disabled={busy} onClick={() => { if (!busy) onClose(); }} className="rounded-md p-2 text-[var(--studio-text-muted)] hover:bg-[var(--studio-accent-soft)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)] disabled:opacity-40"><X size={18} aria-hidden="true" /></button>
             </header>
             <OverlayFooterContext.Provider value={footerHost}>
                 <div className="min-h-0 overflow-y-auto overscroll-contain p-5">{children}</div>

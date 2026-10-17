@@ -46,7 +46,7 @@ function ScenariosForClient({ currency, clientName }: { currency: string; client
         const bounds = event.currentTarget.getBoundingClientRect();
         setMenu({ scenario, x: atButton ? bounds.left : event.clientX, y: atButton ? bounds.bottom : event.clientY });
     };
-    const closeDialog = () => { if (!busy) setDialog(null); };
+    const closeDialog = () => setDialog(null);
     const saveName = (name: string) => {
         if (!dialog || disabled) return;
         let saved: LifeScenario | undefined;
@@ -68,7 +68,7 @@ function ScenariosForClient({ currency, clientName }: { currency: string; client
         </div>
         <Feedback loading={resource.loading} error={resource.error || mutation.error || goal.error} message={goal.message} />
         {goal.dialog}
-        {resource.data && <DataTable columns={['比較', '名称', 'イベント数', '最終純資産（中央値）', '前提条件', '']}>
+        {resource.data && <DataTable columns={['比較', '名称', 'イベント数', '最終純資産（中央値）', '条件の達成確率', '']}>
             {scenarios.map((scenario) => {
                 const projected = figures.get(scenario.id);
                 const lowest = projected ? lowestProbability(projected) : null;
@@ -98,7 +98,7 @@ function ScenariosForClient({ currency, clientName }: { currency: string; client
                 })();
             } },
         ]} />}
-        {dialog && <Overlay title={dialog.mode === 'create' ? '新しいシナリオ' : dialog.mode === 'rename' ? '名前を変更' : 'シナリオを複製'} onClose={closeDialog}>
+        {dialog && <Overlay title={dialog.mode === 'create' ? '新しいシナリオ' : dialog.mode === 'rename' ? '名前を変更' : 'シナリオを複製'} busy={busy} onClose={closeDialog}>
             <Feedback error={mutation.error} />
             <ScenarioNameEditor initialName={dialog.mode === 'create' ? '' : dialog.mode === 'rename' ? dialog.scenario.name : `${dialog.scenario.name}のコピー`} busy={disabled} onSave={saveName} onCancel={closeDialog} />
         </Overlay>}

@@ -54,12 +54,21 @@ function PeriodReading({ period, clientName, onBusy, onDirty, onSaved }: {
     period: Period; clientName?: string; onBusy: (busy: boolean) => void; onDirty: (dirty: boolean) => void;
     onSaved: () => void;
 }) {
+    const confirm = useConfirm();
     const { startDate, endDate } = period;
     const loadReview = useCallback(() => getPeriodReview(startDate, endDate), [startDate, endDate]);
     const review = useResource(loadReview);
     const [busy, setBusy] = useState(false);
     const [editing, setEditing] = useState(false);
+    const [dirty, setDirty] = useState(false);
     const lock = (value: boolean) => { setBusy(value); onBusy(value); };
+    // Keep the period-change warning in sync with the draft's close warning.
+    const markDirty = (value: boolean) => { setDirty(value); onDirty(value); };
+    const closeEditor = async () => {
+        if (dirty && !(await confirm('未保存の振り返りがあります。変更を破棄して閉じますか？', '破棄して閉じる'))) return;
+        setEditing(false);
+        markDirty(false);
+    };
     return <section className="min-w-0 space-y-3">
         <h2 className="text-lg font-semibold">{startDate} 〜 {endDate}</h2>
         <Feedback loading={review.loading} error={review.error} />
@@ -69,8 +78,8 @@ function PeriodReading({ period, clientName, onBusy, onDirty, onSaved }: {
                 <dl className="space-y-4 text-sm"><div><dt className="text-[var(--studio-text-muted)]">振り返り</dt><dd className="mt-2 whitespace-pre-wrap">{review.data.reflection || 'まだ記入されていません'}</dd></div><div><dt className="text-[var(--studio-text-muted)]">次の行動</dt><dd className="mt-2 whitespace-pre-wrap">{review.data.next_actions || 'まだ記入されていません'}</dd></div></dl>
                 <div className="flex justify-end"><button type="button" disabled={busy || review.loading || Boolean(review.error) || !clientName} onClick={() => setEditing(true)} className={buttonClass}>振り返りを編集</button></div>
             </div>
-            {editing && <Overlay title="振り返りを編集" onClose={() => { if (!busy) { setEditing(false); onDirty(false); } }}>
-                <ReviewEditor initial={review.data} clientName={clientName} disabled={busy || review.loading || Boolean(review.error)} onBusy={lock} onDirty={onDirty} onSaved={(saved) => { review.setData(saved); setEditing(false); onSaved(); }} />
+            {editing && <Overlay title="振り返りを編集" busy={busy} onClose={() => { void closeEditor(); }}>
+                <ReviewEditor initial={review.data} clientName={clientName} disabled={busy || review.loading || Boolean(review.error)} onBusy={lock} onDirty={markDirty} onSaved={(saved) => { review.setData(saved); setEditing(false); onSaved(); }} />
             </Overlay>}
         </>}
     </section>;

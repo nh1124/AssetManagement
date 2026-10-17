@@ -47,7 +47,7 @@ function EarmarksForClient({ currency, clientName }: { currency: string; clientN
             <Feedback error={goals.error || mutation.error} message={mutation.message} />
             {deleteResult && <Feedback message={`「${deleteResult.capsule_name || '取り置き'}」と規則${deleteResult.rules_deleted}件を削除しました。${deleteResult.retained_account_id !== null ? `口座「${deleteResult.retained_account_name || '名称未設定'}」（#${deleteResult.retained_account_id}）の残高・履歴は残っています。` : '応答に保持した口座の指定はありません。口座の残高・履歴は変更していません。'}`} />}
             {capsules && (capsules.length ? (
-                <DataTable columns={['用途', '現在確保している額', '目標', '進捗']}>
+                <DataTable columns={['用途', '確保額', '目標', '進捗']}>
                 {capsules.map((capsule) => {
                     const progress = capsule.target_amount > 0 ? capsule.current_balance / capsule.target_amount * 100 : null;
                     return (

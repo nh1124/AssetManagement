@@ -74,7 +74,7 @@ function GoalWorkspaceForClient({ goalId, currency, clientName }: { goalId: stri
                 {[
                     ['種別', income ? '収入' : '支出'], ['口座・科目', accountLabel],
                     [income ? '金額' : '目標額', formatCurrency(goal.target_amount, currency)], ['目標日', formatDate(goal.target_date)],
-                    ...(!income && isGoal ? [['現在の確保額', formatCurrency(goal.current_funded, currency)], ['進捗', goalPercent(goal.funded_percentage)], ['計画の状態', goalPlanStatus(goal)]] : []),
+                    ...(!income && isGoal ? [['確保額', formatCurrency(goal.current_funded, currency)], ['進捗', goalPercent(goal.funded_percentage)], ['計画の状態', goalPlanStatus(goal)]] : []),
                     ...(!income ? [
                         ['予算への反映', REFLECTIONS[goal.budget_reflection_effective ?? 'firm']],
                         ['毎月の積立（このイベント分）', `${formatCurrency(goal.monthly_allocation ?? 0, currency)}${goal.allocation_source === 'reflection' ? '（予算の反映どおり）' : goal.allocation_source === 'rule' ? '（計算上の配分）' : ''}`],
@@ -88,17 +88,17 @@ function GoalWorkspaceForClient({ goalId, currency, clientName }: { goalId: stri
             {!income && !isGoal && <p className="text-sm text-[var(--studio-text-muted)]">取り置きはゴールのシナリオで紐づけます</p>}
             {!income && isGoal && <details className="rounded-lg border border-[var(--studio-border)] p-5"><summary className="cursor-pointer font-semibold">取り置き</summary><div className="mt-5 space-y-4">
                 <button type="button" disabled={disabled || dialog !== null} onClick={() => setDialog('capsules')} className={buttonClass}>取り置きを紐づける</button>
-                <DataTable columns={['取り置き', '現在の確保額（通貨別）']}>
+                <DataTable columns={['取り置き', '確保額（通貨別）']}>
                     {resource.data.capsules.length ? resource.data.capsules.map((row) => <tr key={row.id}><th scope="row" className="px-5 py-3 font-medium">{row.name}</th><td className="px-5 py-3 tabular-nums">{capsuleClaims(row)}</td></tr>) : <tr><td colSpan={2} className="px-5 py-4 text-[var(--studio-text-muted)]">このライフイベントの取り置きはありません。</td></tr>}
                 </DataTable>
             </div></details>}
-            {dialog === 'edit' && <Overlay title={`「${goal.name}」を編集`} onClose={() => { if (!busy) setDialog(null); }}>
+            {dialog === 'edit' && <Overlay title={`「${goal.name}」を編集`} busy={busy} onClose={() => setDialog(null)}>
                 <Feedback error={mutation.error} />
-                <GoalEditor goal={goal} currency={currency} embedded busy={disabled} onCancel={() => { if (!busy) setDialog(null); }} onSave={(action) => run(action, 'ライフイベントを保存しました。')} />
+                <GoalEditor goal={goal} currency={currency} embedded busy={disabled} onCancel={() => setDialog(null)} onSave={(action) => run(action, 'ライフイベントを保存しました。')} />
             </Overlay>}
             {dialog === 'capsules' && !income && isGoal && <GoalCapsuleLinks goal={goal} busy={busy} onClose={() => setDialog(null)} onChanged={refresh} onBusy={setDetailBusy} />}
             {dialog === 'archive' && clientName && <GoalArchive goal={goal} clientName={clientName} busy={busy} error={mutation.error} onCancel={() => setDialog(null)} onArchive={(action) => run(action, 'ライフイベントをアーカイブしました。取り置きには選択した処理を適用しました。')} />}
-            {dialog === 'delete' && clientName && <Overlay title={`「${goal.name}」を削除`} onClose={() => { if (!busy) setDialog(null); }}><Feedback error={mutation.error} /><GoalDeletion goal={goal} clientName={clientName} busy={disabled} onDelete={(action) => run(action, 'ライフイベントを削除しました。', true)} /></Overlay>}
+            {dialog === 'delete' && clientName && <Overlay title={`「${goal.name}」を削除`} busy={busy} onClose={() => setDialog(null)}><Feedback error={mutation.error} /><GoalDeletion goal={goal} clientName={clientName} busy={disabled} onDelete={(action) => run(action, 'ライフイベントを削除しました。', true)} /></Overlay>}
         </>}
     </section>;
 }

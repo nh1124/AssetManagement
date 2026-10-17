@@ -169,14 +169,14 @@ function GraphEditor({ currency, clientName, view }: { currency: string; clientN
                 }} />
                 : <EventOutline conditionEventIds={resource.data.conditionEventIds} events={resource.data.events} links={resource.data.links} scenario={resource.data.projected} currency={currency} disabled={disabled} onDelete={(edge) => { void remove(edge); }} />}
         </>}
-        {addingLink && resource.data && <Overlay title="接続を追加" onClose={() => { if (!mutation.busy) setAddingLink(false); }}>
+        {addingLink && resource.data && <Overlay title="接続を追加" busy={mutation.busy} onClose={() => setAddingLink(false)}>
             <Feedback error={mutation.error} />
             <LinkEditor events={resource.data.events} busy={disabled} onCancel={() => setAddingLink(false)} onSave={(input) => {
                 if (disabled) return;
                 void mutation.run(() => createLifeEventLink(input), '接続を追加しました。', () => { setAddingLink(false); resource.reload(); });
             }} />
         </Overlay>}
-        {editingGoal && clientName && <Overlay title={`「${editingGoal.goal.name}」を${editingGoal.mode === 'edit' ? '編集' : '削除'}`} onClose={() => { if (!mutation.busy) setEditingGoal(null); }}>
+        {editingGoal && clientName && <Overlay title={`「${editingGoal.goal.name}」を${editingGoal.mode === 'edit' ? '編集' : '削除'}`} busy={mutation.busy} onClose={() => setEditingGoal(null)}>
             <Feedback error={mutation.error} />
             {editingGoal.mode === 'edit'
                 ? <GoalEditor goal={editingGoal.goal} currency={currency} busy={mutation.busy} embedded onCancel={() => setEditingGoal(null)} onSave={(action) => {
@@ -189,7 +189,7 @@ function GraphEditor({ currency, clientName, view }: { currency: string; clientN
                 }} />}
         </Overlay>}
         {editingLink && resource.data && clientName && <LifeEventLinkDetails edge={editingLink} events={resource.data.events} clientName={clientName} onReload={resource.reload} onClose={() => setEditingLink(null)} />}
-        {conditionsEvent && <Overlay title={`「${conditionsEvent.name}」の前提条件`} onClose={() => { if (!conditionsBusy) { setConditionsEvent(null); resource.reload(); } }}>
+        {conditionsEvent && <Overlay title={`「${conditionsEvent.name}」の前提条件`} busy={conditionsBusy} onClose={() => { setConditionsEvent(null); resource.reload(); }}>
             <GoalConditions goalId={conditionsEvent.id} currency={currency} clientName={clientName} disabled={mutation.busy} onBusy={setConditionsBusy} embedded onChanged={resource.reload} />
         </Overlay>}
     </div>;

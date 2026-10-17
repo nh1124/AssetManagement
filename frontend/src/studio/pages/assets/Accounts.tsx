@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useClient } from '../../../context/ClientContext';
 import { getAccounts, updateAccount } from '../../../api';
 import type { Account, AccountRole } from '../../../types';
+import { formatCurrency } from '../../../utils/currency';
 import { assetErrorMessage, useResource as useAssetData } from '../../useResource';
 import AccountEditor from '../db/AccountEditor';
 import { Feedback } from '../db/Database';
@@ -69,7 +70,7 @@ function AccountsForClient({ subjects, currency }: { subjects: boolean; currency
         ? ['income', 'expense'].includes(type.value)
         : ['asset', 'liability', 'item'].includes(type.value));
     const visibleAccounts = accounts?.filter((account) => types.some((type) => type.value === account.account_type));
-    const columnCount = subjects ? 3 : 4;
+    const columnCount = subjects ? 2 : 4;
     const disabled = loading || Boolean(error) || updatingId !== null || creation.busy;
 
     useEffect(() => {
@@ -112,7 +113,7 @@ function AccountsForClient({ subjects, currency }: { subjects: boolean; currency
                 <div className="overflow-x-auto rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)]">
                     <table className="w-full text-left text-sm" aria-busy={loading || updatingId !== null}>
                         <thead className="border-b border-[var(--studio-border)] text-xs text-[var(--studio-text-muted)]">
-                            <tr><th scope="col" className="px-5 py-3 font-medium">名称</th><th scope="col" className="px-5 py-3 font-medium">種別</th>{!subjects && <th scope="col" className="px-5 py-3 font-medium">役割</th>}<th scope="col" className="px-5 py-3 font-medium">状態</th></tr>
+                            <tr><th scope="col" className="px-5 py-3 font-medium">名称</th>{!subjects && <th scope="col" className="px-5 py-3 text-right font-medium">残高</th>}{!subjects && <th scope="col" className="px-5 py-3 font-medium">役割</th>}<th scope="col" className="px-5 py-3 font-medium">状態</th></tr>
                         </thead>
                         {types.map((type) => {
                             const rows = visibleAccounts.filter((account) => account.account_type === type.value);
@@ -125,7 +126,8 @@ function AccountsForClient({ subjects, currency }: { subjects: boolean; currency
                                             <th scope="row" className="px-5 py-3 font-medium">{account.account_type === 'asset' ? <button type="button" disabled={disabled} aria-haspopup="dialog" aria-label={`${account.name}を開く`} onClick={(event) => { event.stopPropagation(); setSelectedAccount(account); }} className="rounded text-left hover:text-[var(--studio-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)] disabled:opacity-40">
                                                 {account.name}
                                             </button> : account.name}</th>
-                                            <td className="whitespace-nowrap px-5 py-3 text-[var(--studio-text-muted)]">{type.label}</td>
+                                            {/* A subject's total since its first entry is not a balance to reconcile. */}
+                                            {!subjects && <td className="whitespace-nowrap px-5 py-3 text-right tabular-nums">{formatCurrency(account.balance, currency)}</td>}
                                             {!subjects && <td className="whitespace-nowrap px-5 py-3 text-[var(--studio-text-muted)]">{ROLE_LABELS[account.role] ?? '未設定'}</td>}
                                             <td className="px-5 py-3">
                                                 <button type="button" role="switch" aria-checked={account.is_active} aria-label={`${account.name}の有効状態`} disabled={disabled} onClick={(event) => { event.stopPropagation(); void toggleAccount(account); }} className="flex items-center gap-2 whitespace-nowrap rounded-md px-1 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)] disabled:cursor-not-allowed">

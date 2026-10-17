@@ -20,7 +20,7 @@ export default function LifeEventLinkDetails({ edge, events, clientName, onReloa
     const changed = offset !== edge.offset_months;
     const done = () => { onClose(); onReload(); };
 
-    return <Overlay title="接続" onClose={() => { if (!mutation.busy) onClose(); }} footer={<>
+    return <Overlay title="接続" busy={mutation.busy} onClose={onClose} footer={<>
         {!deleted && <button type="button" disabled={mutation.busy} className={`${buttonClass} mr-auto text-[var(--studio-danger)]`} onClick={() => {
             void (async () => {
                 if (await confirm(`「${clientName}」の「${source}」から「${target}」への接続を削除します。`, '削除')) {

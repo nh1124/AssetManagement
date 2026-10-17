@@ -138,7 +138,7 @@ function AttachmentList({ capsules, accountId, accountName, earmarks, claimsPend
                         {saved.has(capsule.id) ? <button type="button" disabled={!editable} aria-label={`${capsule.name}の確保額を変更`} onClick={(event) => { event.stopPropagation(); if (editable) setEditingClaim(earmark); }} className="rounded text-left hover:text-[var(--studio-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)] disabled:opacity-40">{capsule.name}</button> : <span>{capsule.name}</span>}
                     </div></th>
                     {/* The existing endpoint only reports attached capsules; a missing claim is not zero. */}
-                    <td className="whitespace-nowrap px-5 py-3 tabular-nums">{earmark ? formatCurrency(earmark.claimed, earmark.currency) : <span aria-label="現在の確保額は確認できません">—</span>}</td>
+                    <td className="whitespace-nowrap px-5 py-3 tabular-nums">{earmark ? formatCurrency(earmark.claimed, earmark.currency) : <span aria-label="確保額は確認できません">—</span>}</td>
                 </tr>;
             }) : <tr><td colSpan={2} className="px-5 py-4 text-[var(--studio-text-muted)]">取り置きはありません。</td></tr>}
         </DataTable>

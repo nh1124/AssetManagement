@@ -6,7 +6,7 @@ import { useClient } from '../../../context/ClientContext';
 import type { Transaction } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import { assetErrorMessage, useResource } from '../../useResource';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import Overlay from '../../components/Overlay';
 import RecordForm from '../RecordForm';
 import { Feedback } from '../db/Database';
@@ -145,7 +145,7 @@ function RecordResults({ month, currency, onDeleted, onBusy }: {
                         </tbody>
                     </table>
                 </div>
-            ) : !loading && !error && <p className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-6 text-sm text-[var(--studio-text-muted)]">この月の記録はありません。</p>)}
+            ) : !loading && !error && <div className="space-y-3 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-6 text-sm text-[var(--studio-text-muted)]"><p>この月の記録はありません。</p><Link to="/record" className={`inline-block ${buttonClass}`}>取引を記録</Link></div>)}
             {page && page.items.length < page.total && <button type="button" onClick={() => void loadMore()} disabled={loading || Boolean(error) || busy} className={buttonClass}>{busy ? '処理中…' : '次を読み込む'}（{page.items.length} / {page.total}件）</button>}
         </div>
     );

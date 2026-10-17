@@ -101,7 +101,7 @@ export default function Unmatched({ proposals, loading, error, onDecided }: {
                         </tbody>
                     </table>
                 </div>
-            ) : !loading && !error && <p className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-6 text-sm text-[var(--studio-text-muted)]">判断を待っている記録はありません。</p>)}
+            ) : !loading && !error && <p className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-6 text-sm text-[var(--studio-text-muted)]">未照合の明細はありません。</p>)}
         </section>
     );
 }

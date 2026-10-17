@@ -39,10 +39,10 @@ export default function GoalArchive({ goal, clientName, busy, error, onArchive, 
         if (!(await confirm(`「${clientName}」のライフイベント「${goal.name}」をアーカイブします。\n${detail}\nライフイベントを戻しても、解除した紐づけは戻らず、停止した規則は停止したまま、戻したお金は戻したままです。`, 'アーカイブする'))) return;
         onArchive(() => archiveGoal(goal.id, { capsule_action: decision, transfer_account_id: destination }));
     };
-    return <Overlay title={`「${goal.name}」をアーカイブ`} onClose={() => { if (!busy) onCancel(); }}>
+    return <Overlay title={`「${goal.name}」をアーカイブ`} busy={busy} onClose={onCancel}>
         <form id={formId} onSubmit={submit} className="space-y-4">
             <Feedback loading={resource.loading} error={resource.error || error} />
-            {resource.data && <DataTable columns={['取り置き', '現在の確保額（通貨別）']}>
+            {resource.data && <DataTable columns={['取り置き', '確保額（通貨別）']}>
                 {resource.data.capsules.length ? resource.data.capsules.map((capsule) => <tr key={capsule.id}><th scope="row" className="px-5 py-3 font-medium">{capsule.name}</th><td className="px-5 py-3 tabular-nums">{capsuleClaims(capsule)}</td></tr>) : <tr><td colSpan={2} className="px-5 py-4 text-[var(--studio-text-muted)]">取り置きはありません。</td></tr>}
             </DataTable>}
             <fieldset disabled={locked} className="space-y-3">

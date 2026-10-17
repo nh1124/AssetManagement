@@ -13,7 +13,7 @@ export default function GoalSwitchOverlay({ pending, busy, currency, onToggle, o
 }) {
     const { preview, create } = pending;
     const nothing = !preview.moves.length && !preview.detach.length && !preview.missing.length;
-    return <Overlay title={`「${preview.scenario_name}」をゴールにする`} onClose={() => { if (!busy) onClose(); }}
+    return <Overlay title={`「${preview.scenario_name}」をゴールにする`} busy={busy} onClose={onClose}
         footer={<button type="button" disabled={busy} onClick={onConfirm} className={primaryClass}>{busy ? '処理中…' : 'ゴールにする'}</button>}>
         <div className="space-y-5">
             {nothing && <p className="text-sm text-[var(--studio-text-muted)]">取り置きの変更はありません。</p>}

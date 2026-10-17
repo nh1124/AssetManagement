@@ -71,7 +71,7 @@ function MilestoneAutoCreate({ goalId, currency, existingCount, onClose, onCreat
             <input type="radio" name={name} checked={value === key} onChange={() => onChange(key)} />{label}
         </label>)}</div>
     </fieldset>;
-    return <Overlay title="マイルストーンを自動で作成" onClose={() => { if (!mutation.busy) onClose(); }}
+    return <Overlay title="マイルストーンを自動で作成" busy={mutation.busy} onClose={onClose}
         footer={<>
             <button type="button" disabled={mutation.busy} onClick={runPreview} className={buttonClass}>プレビュー</button>
             <button type="button" disabled={mutation.busy || !preview} onClick={apply} className={primaryClass}>作成する</button>

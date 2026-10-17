@@ -145,7 +145,7 @@ export default function GoalCapsuleLinks({ goal, busy, onClose, onChanged, onBus
         return { capsules, goals };
     }, []);
     const resource = useResource(load);
-    return <Overlay title="取り置きを紐づける" onClose={() => { if (!busy) onClose(); }}>
+    return <Overlay title="取り置きを紐づける" busy={busy} onClose={onClose}>
         <Feedback loading={resource.loading} error={resource.error} />
         {!resource.loading && !resource.error && resource.data && <CapsuleLinkEditor goal={goal} {...resource.data} onClose={onClose} onChanged={onChanged} onBusy={onBusy} />}
     </Overlay>;
