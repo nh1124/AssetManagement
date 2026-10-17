@@ -844,6 +844,7 @@ class LifeEventBase(BaseModel):
     active_plan_basis: str = "milestone"
     active_plan_label: Optional[str] = None
     plan_status_override: Optional[str] = None
+    budget_reflection: Optional[Literal["firm", "conditional", "simulation_only"]] = None
 
 class LifeEventCreate(LifeEventBase):
     model_config = ConfigDict(extra="forbid")
@@ -863,6 +864,7 @@ class LifeEventUpdate(BaseModel):
     active_plan_basis: Optional[str] = None
     active_plan_label: Optional[str] = None
     plan_status_override: Optional[str] = None
+    budget_reflection: Optional[Literal["firm", "conditional", "simulation_only"]] = None
 
 class GoalArchiveRequest(BaseModel):
     capsule_action: Literal["keep", "stop_rules", "release", "detach"] = "keep"
@@ -874,6 +876,7 @@ class LifeEvent(LifeEventBase):
     lineage: str
     archived_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
+    budget_reflection_effective: Literal["firm", "conditional", "simulation_only"] = "firm"
 
     class Config:
         from_attributes = True
@@ -1296,6 +1299,8 @@ class LifeScenarioUpdate(BaseModel):
     annual_return: float | None = None
     inflation: float | None = None
     horizon_years: int | None = None
+    # null returns the scenario to the client-wide simulation setting.
+    monthly_savings: float | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -1310,6 +1315,9 @@ class LifeScenarioUpdate(BaseModel):
                 raise ValueError("利率は有限の数値で指定してください。")
         if "horizon_years" in values and (type(values["horizon_years"]) is not int or not 1 <= values["horizon_years"] <= 60):
             raise ValueError("試算期間は1〜60年で指定してください。")
+        savings = values.get("monthly_savings")
+        if savings is not None and (type(savings) not in (int, float) or not math.isfinite(savings) or savings < 0):
+            raise ValueError("月の積立額は0以上の数値で指定してください。")
         return values
 
 

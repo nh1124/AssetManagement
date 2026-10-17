@@ -12,6 +12,8 @@ export interface LifeScenarioUpdate {
     annual_return?: number;
     inflation?: number;
     horizon_years?: number;
+    /** null returns the scenario to the client-wide simulation setting. */
+    monthly_savings?: number | null;
 }
 
 export interface LifeScenario {
@@ -21,6 +23,9 @@ export interface LifeScenario {
     annual_return: number;
     inflation: number;
     horizon_years: number;
+    /** The scenario's own amount, or the client-wide setting when monthly_savings_is_default. */
+    monthly_savings: number;
+    monthly_savings_is_default: boolean;
     is_goal: boolean;
     created_at: string | null;
     updated_at: string | null;

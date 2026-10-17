@@ -1,18 +1,28 @@
 import * as api from '../../../api/lifeScenarios';
 import type { LifeScenario, LifeScenarioAccountReturn, ProjectedLifeScenario } from '../../../api/lifeScenarios';
 
-export type Parameters = Pick<LifeScenario, 'horizon_years' | 'annual_return' | 'inflation'>;
+export type Parameters = Pick<LifeScenario, 'horizon_years' | 'annual_return' | 'inflation'> & { monthly_savings: number | null };
 export type ParameterDraft = Record<keyof Parameters, string>;
 export type ReturnDraft = Record<number, string>;
 type Pending = { parameters?: Parameters; returns?: LifeScenarioAccountReturn[] };
 
 export function parseParameters(draft: ParameterDraft): Parameters | null {
-    if (Object.values(draft).some((value) => !value.trim())) return null;
+    if ([draft.horizon_years, draft.annual_return, draft.inflation].some((value) => !value.trim())) return null;
     const horizon_years = Number(draft.horizon_years);
     const annual_return = Number(draft.annual_return);
     const inflation = Number(draft.inflation);
+    // Empty savings hands the scenario back to the client-wide setting.
+    const monthly_savings = draft.monthly_savings.trim() ? Number(draft.monthly_savings) : null;
     if (!Number.isInteger(horizon_years) || horizon_years < 1 || horizon_years > 60 || !Number.isFinite(annual_return) || !Number.isFinite(inflation)) return null;
-    return { horizon_years, annual_return, inflation };
+    if (monthly_savings !== null && (!Number.isFinite(monthly_savings) || monthly_savings < 0)) return null;
+    return { horizon_years, annual_return, inflation, monthly_savings };
+}
+
+export function parameterDraft(scenario: LifeScenario): ParameterDraft {
+    return {
+        horizon_years: String(scenario.horizon_years), annual_return: String(scenario.annual_return), inflation: String(scenario.inflation),
+        monthly_savings: scenario.monthly_savings_is_default ? '' : String(scenario.monthly_savings),
+    };
 }
 
 export function parseReturns(draft: ReturnDraft): LifeScenarioAccountReturn[] | null {

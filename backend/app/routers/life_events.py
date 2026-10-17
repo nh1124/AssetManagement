@@ -92,7 +92,7 @@ def delete_link(
     return {"message": "Deleted"}
 
 
-@router.get("/")
+@router.get("/", response_model=list[schemas.LifeEvent])
 def get_life_events(
     include_archived: bool = False,
     scenario_id: int | None = None,
@@ -143,7 +143,7 @@ def get_dashboard(
         roadmap_interval=roadmap_interval,
     )
 
-@router.post("/")
+@router.post("/", response_model=schemas.LifeEvent)
 def create_life_event(
     life_event: schemas.LifeEventCreate, 
     db: Session = Depends(get_db),
@@ -152,7 +152,7 @@ def create_life_event(
     """Create a new life event for current client."""
     return create_goal(db, current_client.id, life_event)
 
-@router.put("/{event_id}")
+@router.put("/{event_id}", response_model=schemas.LifeEvent)
 def update_life_event(
     event_id: int, 
     life_event: schemas.LifeEventUpdate, 

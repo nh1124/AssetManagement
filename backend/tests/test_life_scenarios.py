@@ -635,3 +635,49 @@ def test_goal_preview_skips_income_and_archived_events(db):
     db.commit()
     preview = service.goal_preview(db, 1, original.id)
     assert [row["event_id"] for row in preview["missing"]] == [root.id]
+
+
+def test_monthly_savings_defaults_to_config_then_belongs_to_the_scenario(db, api):
+    config(db, monthly_savings_minor=40000)
+    goal = service.get(db, 1, goal_scenario_id(db, 1))
+    described = service.describe(db, 1, goal)
+    assert (described["monthly_savings"], described["monthly_savings_is_default"]) == (40000, True)
+    response = request(api, "PUT", f"/life-scenarios/{goal.id}", json={"monthly_savings": 65000})
+    assert response.status_code == 200
+    assert (response.json()["monthly_savings"], response.json()["monthly_savings_is_default"]) == (65000, False)
+    # A new story starts from the goal's assumptions, savings included; the copy is independent.
+    draft = service.create(db, 1, "別案")
+    assert service.describe(db, 1, draft)["monthly_savings"] == 65000
+    service.update(db, 1, draft.id, {"monthly_savings": 10000})
+    assert service.describe(db, 1, goal)["monthly_savings"] == 65000
+    # null hands the scenario back to the client-wide setting.
+    response = request(api, "PUT", f"/life-scenarios/{goal.id}", json={"monthly_savings": None})
+    assert (response.json()["monthly_savings"], response.json()["monthly_savings_is_default"]) == (40000, True)
+    assert request(api, "PUT", f"/life-scenarios/{goal.id}", json={"monthly_savings": -1}).status_code == 422
+
+
+def test_projection_and_event_context_use_the_scenario_savings(db):
+    from app.services.strategy_service import get_goal_simulation_context
+    config(db, monthly_savings_minor=0, volatility=0)
+    goal = service.get(db, 1, goal_scenario_id(db, 1))
+    event = node(db, "家", amount=1_000_000, scenario_id=goal.id)
+    before = service.project(db, 1, goal)["projection"][-1]["p50"]
+    service.update(db, 1, goal.id, {"monthly_savings": 30000})
+    after = service.project(db, 1, goal)["projection"][-1]["p50"]
+    assert after > before
+    assert get_goal_simulation_context(db, 1, event)["monthly_savings"] == 30000
+
+
+def test_budget_reflection_follows_preconditions_until_chosen(db, api):
+    _, root, children, _ = story(db)
+    assert root.budget_reflection_effective == "firm"
+    # children[0] carries a precondition from story().
+    assert children[0].budget_reflection_effective == "conditional"
+    response = request(api, "PUT", f"/life-events/{children[0].id}", json={"budget_reflection": "simulation_only"})
+    assert response.status_code == 200
+    assert response.json()["budget_reflection_effective"] == "simulation_only"
+    assert request(api, "PUT", f"/life-events/{root.id}", json={"budget_reflection": "maybe"}).status_code == 422
+    # Duplicating a story keeps each event's choice.
+    clone = service.duplicate(db, 1, service.get_goal(db, 1).id, "複製")
+    copied = db.query(models.LifeEvent).filter_by(scenario_id=clone.id, lineage=children[0].lineage).one()
+    assert copied.budget_reflection == "simulation_only"

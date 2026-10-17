@@ -17,6 +17,8 @@ class LifeEvent(Base):
     __table_args__ = (
         CheckConstraint("condition_mode IN ('all', 'any')", name="ck_life_events_condition_mode"),
         CheckConstraint("direction IN ('expense', 'income')", name="ck_life_events_direction"),
+        CheckConstraint("budget_reflection IN ('firm', 'conditional', 'simulation_only')",
+                        name="ck_life_events_budget_reflection"),
     )
 
     condition_mode = Column(String, nullable=False, default="all", server_default="all")
@@ -37,6 +39,10 @@ class LifeEvent(Base):
     plan_status_override = Column(String, nullable=True)
     archived_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # How the goal reaches the budget: firm (always), conditional (once its
+    # preconditions hold) or simulation_only (never). NULL follows the event:
+    # conditional when it has preconditions, firm otherwise.
+    budget_reflection = Column(String, nullable=True)
 
     client = relationship("Client", back_populates="life_events")
     milestones = relationship("Milestone", back_populates="life_event", cascade="all, delete-orphan")
@@ -54,6 +60,12 @@ class LifeEvent(Base):
     @target_amount.expression
     def target_amount(cls):
         return major_expression(cls.target_amount_minor, client_currency_expression(cls))
+
+    @property
+    def budget_reflection_effective(self) -> str:
+        if self.budget_reflection:
+            return self.budget_reflection
+        return "conditional" if self.conditions else "firm"
 
 
 class LifeEventLink(Base):
@@ -150,12 +162,25 @@ class LifeScenario(Base):
     annual_return = Column(Float, nullable=False, default=5.0, server_default="5.0")
     inflation = Column(Float, nullable=False, default=2.0, server_default="2.0")
     horizon_years = Column(Integer, nullable=False, default=30, server_default="30")
+    # NULL keeps the client-wide simulation setting as this scenario's monthly savings.
+    monthly_savings_minor = Column(MinorUnits, nullable=True)
     is_goal = Column(Boolean, nullable=False, default=False, server_default="false")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    client = relationship("Client")
     events = relationship("LifeEvent", cascade="all, delete-orphan", passive_deletes=True)
     account_returns = relationship("LifeScenarioAccountReturn", cascade="all, delete-orphan")
+
+    @hybrid_property
+    def monthly_savings(self) -> float | None:
+        if self.monthly_savings_minor is None:
+            return None
+        return Money(self.monthly_savings_minor, client_currency(self)).to_float()
+
+    @monthly_savings.expression
+    def monthly_savings(cls):
+        return major_expression(cls.monthly_savings_minor, client_currency_expression(cls))
 
 
 class LifeScenarioAccountReturn(Base):

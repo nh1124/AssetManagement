@@ -303,6 +303,8 @@ export interface RoadmapEntry {
     goal_coverage: number;
 }
 
+export type BudgetReflection = 'firm' | 'conditional' | 'simulation_only';
+
 export interface LifeEvent {
     direction?: 'expense' | 'income';
     account_id?: number | null;
@@ -317,6 +319,9 @@ export interface LifeEvent {
     active_plan_basis?: string;
     active_plan_label?: string | null;
     plan_status_override?: string | null;
+    /** The user's choice; null follows the event (conditional with preconditions, else firm). */
+    budget_reflection?: BudgetReflection | null;
+    budget_reflection_effective?: BudgetReflection;
     archived_at?: string | null;
     created_at?: string;
     current_funded?: number;

@@ -43,7 +43,7 @@ function Projection({ scenario, currency }: { scenario: ProjectedLifeScenario; c
                 </ComposedChart>
             </ResponsiveContainer>
         </div>
-        <p className="mt-3 text-xs text-[var(--studio-text-muted)]">期間 {scenario.horizon_years}年 ／ 年利 {scenario.annual_return}% ／ インフレ {scenario.inflation}%</p>
+        <p className="mt-3 text-xs text-[var(--studio-text-muted)]">期間 {scenario.horizon_years}年 ／ 年利 {scenario.annual_return}% ／ インフレ {scenario.inflation}% ／ 月の積立 {formatCurrency(scenario.monthly_savings, currency)}</p>
     </div>;
 }
 

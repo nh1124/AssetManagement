@@ -10,7 +10,7 @@ from app.database import Base
 
 
 # N1a owns events per story and removes branch-choice rows.
-EXPECTED_METADATA_SHA256 = "5b71097dbeb21174c6288dd4ef65339ca4406c6149a12c0689b794587c02257a"
+EXPECTED_METADATA_SHA256 = "1fbcc98b9a1597b917989f471da5571dc4b8246f339970a91fccc0439b06bfcf"
 
 MODEL_NAMES = (
     "Client", "ClientMfaSetting", "ClientRecoveryCode",
@@ -91,7 +91,7 @@ def _metadata_snapshot():
 def test_metadata_matches_the_minor_unit_schema():
     snapshot = _metadata_snapshot()
     assert len(snapshot["table_names"]) == 35
-    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 425
+    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 427
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == EXPECTED_METADATA_SHA256
 

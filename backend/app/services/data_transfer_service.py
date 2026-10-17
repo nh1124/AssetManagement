@@ -266,6 +266,7 @@ def export_client(db: Session, client: models.Client) -> dict:
                         "active_plan_basis",
                         "active_plan_label",
                         "plan_status_override",
+                        "budget_reflection",
                         "archived_at",
                         "created_at",
                     ],
@@ -282,7 +283,7 @@ def export_client(db: Session, client: models.Client) -> dict:
                 .order_by(models.LifeEventLink.id).all()
             ],
             "life_scenarios": [
-                row_fields(row, ["id", "name", "annual_return", "inflation", "horizon_years", "is_goal", "created_at", "updated_at"])
+                row_fields(row, ["id", "name", "annual_return", "inflation", "horizon_years", "monthly_savings", "is_goal", "created_at", "updated_at"])
                 for row in db.query(models.LifeScenario).filter_by(client_id=client.id).order_by(models.LifeScenario.id).all()
             ],
             "life_scenario_account_returns": [
@@ -874,6 +875,8 @@ def import_client(
                 scenario = models.LifeScenario(
                     client_id=client.id, name=item["name"], annual_return=item.get("annual_return", 5.0),
                     inflation=item.get("inflation", 2.0), horizon_years=item.get("horizon_years", 30),
+                    monthly_savings_minor=None if item.get("monthly_savings") is None
+                    else to_minor(item["monthly_savings"], money_client_currency(db, client.id)),
                     is_goal=item.get("is_goal", False),
                     created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
                     updated_at=parse_datetime(item.get("updated_at")) or datetime.utcnow(),
@@ -908,6 +911,7 @@ def import_client(
                 active_plan_basis=item.get("active_plan_basis") or "milestone",
                 active_plan_label=item.get("active_plan_label"),
                 plan_status_override=item.get("plan_status_override"),
+                budget_reflection=item.get("budget_reflection"),
                 archived_at=parse_datetime(item.get("archived_at")),
                 created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
             )

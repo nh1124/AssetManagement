@@ -272,7 +272,12 @@ def get_goal_simulation_context(
 
     base_monthly_savings = monthly_savings
     if base_monthly_savings is None:
-        base_monthly_savings = config.monthly_savings if config else 50000.0
+        # The event's own scenario carries its savings; the client setting is the default.
+        scenario = db.get(models.LifeScenario, event.scenario_id) if event.scenario_id else None
+        if scenario is not None and scenario.monthly_savings is not None:
+            base_monthly_savings = scenario.monthly_savings
+        else:
+            base_monthly_savings = config.monthly_savings if config else 50000.0
 
     evaluation_date = reference_date or date.today()
     schedule_monthly = monthly_equivalent_from_contribution_schedule(
@@ -793,6 +798,8 @@ def _life_event_fields(event: models.LifeEvent) -> dict:
         "active_plan_basis": event.active_plan_basis,
         "active_plan_label": event.active_plan_label,
         "plan_status_override": event.plan_status_override,
+        "budget_reflection": event.budget_reflection,
+        "budget_reflection_effective": event.budget_reflection_effective,
         "archived_at": event.archived_at.isoformat() if event.archived_at else None,
         "created_at": event.created_at.isoformat() if event.created_at else None,
     }

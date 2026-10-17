@@ -17,6 +17,7 @@ from .goal_service import copy_events
 from .life_event_graph import copy_links
 from .milestone_service import copy_milestones
 from .cache_service import invalidate_client
+from .money_storage import money_client_currency, to_minor
 from .strategy_service import simulate_net_worth_forward_with_paths
 
 
@@ -46,11 +47,21 @@ def resolve(db: Session, client_id: int, scenario: models.LifeScenario | None) -
     return ResolvedScenario(walk(db, client_id, scenario.id) if scenario else [])
 
 
+def monthly_savings(db: Session, scenario: models.LifeScenario) -> float:
+    """The scenario's own monthly savings, or the client-wide setting it defaults to."""
+    if scenario.monthly_savings is not None:
+        return scenario.monthly_savings
+    config = db.query(models.SimulationConfig).filter_by(client_id=scenario.client_id).first()
+    return config.monthly_savings if config and config.monthly_savings is not None else 50000.0
+
+
 def _payload(db: Session, scenario: models.LifeScenario, resolved: ResolvedScenario) -> dict:
     return {
         **{field: getattr(scenario, field) for field in (
             "id", "client_id", "name", "annual_return", "inflation", "horizon_years", "is_goal", "created_at", "updated_at",
         )},
+        "monthly_savings": monthly_savings(db, scenario),
+        "monthly_savings_is_default": scenario.monthly_savings_minor is None,
         "account_returns": account_returns(db, scenario),
         "events": [asdict(event) for event in resolved.events],
     }
@@ -71,7 +82,7 @@ def project(db: Session, client_id: int, scenario: models.LifeScenario) -> dict:
     payload = _payload(db, scenario, resolved)
     projection, paths = simulate_net_worth_forward_with_paths(
         db, client_id, years=scenario.horizon_years, annual_return=scenario.annual_return,
-        inflation=scenario.inflation, include_event_income=False,
+        inflation=scenario.inflation, include_event_income=False, monthly_savings=payload["monthly_savings"],
         account_returns={row["account_id"]: row["annual_return"] for row in payload["account_returns"]},
     )
     projection = _subtract_demand(resolved, projection, scenario.horizon_years)
@@ -109,7 +120,9 @@ def _rate(rate):
 
 
 def _assumptions(scenario):
-    return {field: getattr(scenario, field) for field in ("annual_return", "inflation", "horizon_years")} if scenario else {}
+    return {field: getattr(scenario, field) for field in (
+        "annual_return", "inflation", "horizon_years", "monthly_savings_minor",
+    )} if scenario else {}
 
 
 def _copy_returns(db, scenario, source):
@@ -159,6 +172,12 @@ def update(db: Session, client_id: int, scenario_id: int, values: dict) -> model
     for field in ("name", "annual_return", "inflation", "horizon_years"):
         if field in values:
             setattr(scenario, field, values[field])
+    if "monthly_savings" in values:
+        savings = values["monthly_savings"]
+        if savings is not None and (isinstance(savings, bool) or not isinstance(savings, (int, float))
+                                    or not math.isfinite(savings) or savings < 0):
+            _refuse("月の積立額は0以上の数値で指定してください。")
+        scenario.monthly_savings_minor = None if savings is None else to_minor(savings, money_client_currency(db, client_id))
     db.commit()
     return scenario
 

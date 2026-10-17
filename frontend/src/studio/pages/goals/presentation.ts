@@ -1,4 +1,4 @@
-import type { GoalCapsule, LifeEvent } from '../../../types';
+import type { BudgetReflection, GoalCapsule, LifeEvent } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 
 const PLAN_STATES: Record<string, string> = { Ahead: '計画より先行', 'On Track': '計画どおり', Watch: '要注意', Behind: '計画より遅れ', 'No Plan': '計画なし' };
@@ -14,3 +14,11 @@ export function claimTotals(capsules: GoalCapsule[]): string {
     }
     return totals.size ? [...totals].map(([currency, amount]) => `${formatCurrency(amount, currency)}（${currency}）`).join(' ／ ') : '返金対象額なし';
 }
+
+/** How an event reaches the budget; the same words everywhere the choice appears. */
+export const REFLECTIONS: Record<BudgetReflection, string> = { firm: '確定', conditional: '条件つき', simulation_only: '試算のみ' };
+export const REFLECTION_HINTS: Record<BudgetReflection, string> = {
+    firm: '予算に反映するときに、常に含めます。',
+    conditional: '予算に反映する時点で前提条件を満たしていれば含め、満たさなければ見込みとして表示します。',
+    simulation_only: '予算には含めず、シミュレーションだけで使います。',
+};

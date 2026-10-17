@@ -24,9 +24,9 @@ FORMAT_FIELDS = {
     "registry_entries": ["id","name","entry_type","category","amount","currency","frequency","frequency_days","day_of_month","month_of_year","line_type","budget_account_id","source_account_id","destination_account_id","funding_capsule_id","budget_treatment","generate_recurring","budget_active","is_active","source_product_id","source_recurring_transaction_id","note","start_period","end_period","created_at","updated_at"],
     "quick_templates": ["id","tray","name","template_kind","description","category","default_currency","default_from_account_id","default_to_account_id","config","sort_order","is_active","created_at","updated_at"],
     "transaction_batches": ["id","quick_template_id","label","source","input_payload","created_at"],
-    "life_events": ["id","scenario_id","lineage","name","start_date","target_date","target_amount","priority","note","condition_mode","direction","account_id","active_plan_basis","active_plan_label","plan_status_override","archived_at","created_at"],
+    "life_events": ["id","scenario_id","lineage","name","start_date","target_date","target_amount","priority","note","condition_mode","direction","account_id","active_plan_basis","active_plan_label","plan_status_override","budget_reflection","archived_at","created_at"],
     "life_event_links": ["id","from_event_id","to_event_id","kind","offset_months","note","created_at"],
-    "life_scenarios": ["id","name","annual_return","inflation","horizon_years","is_goal","created_at","updated_at"],
+    "life_scenarios": ["id","name","annual_return","inflation","horizon_years","monthly_savings","is_goal","created_at","updated_at"],
     "life_scenario_account_returns": ["id","scenario_id","account_id","annual_return"],
     "household_members": ["id","name","relation","birth_date","created_at"],
     "life_event_conditions": ["id","life_event_id","metric","comparator","threshold_minor","threshold_number","threshold_date","reference_id","note","created_at"],
@@ -66,7 +66,7 @@ def _seed_client(db, client_id, base, marker):
             "monthly_actions": ("amount",),
             "capsule_funding_sources": ("target_amount",),
             "products": ("last_unit_price", "purchase_price"), "simulation_configs": ("monthly_savings",),
-            "simulation_scenarios": ("monthly_savings",), "registry_entries": ("amount",),
+            "simulation_scenarios": ("monthly_savings",), "life_scenarios": ("monthly_savings",), "registry_entries": ("amount",),
             "recurring_transactions": ("amount",),
         }
         if model.__tablename__ == "capsule_rules":
@@ -86,7 +86,7 @@ def _seed_client(db, client_id, base, marker):
     db.add(client)
     cash = add(models.Account, 1, name=f"{marker}-cash", account_type="asset")
     expense = add(models.Account, 2, name=f"{marker}-expense", account_type="expense")
-    scenario = add(models.LifeScenario, 36, name="保存案", annual_return=7.0, inflation=1.0, horizon_years=12, is_goal=True)
+    scenario = add(models.LifeScenario, 36, name="保存案", annual_return=7.0, inflation=1.0, horizon_years=12, monthly_savings=30000, is_goal=True)
     db.flush()
     goal = add(models.LifeEvent, 3, scenario_id=scenario.id, name=marker, target_date=date(2027, 1, 1), target_amount=1000)
     next_goal = add(models.LifeEvent, 31, scenario_id=scenario.id, name=f"{marker}-next", target_date=date(2028, 1, 1), target_amount=500)

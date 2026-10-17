@@ -13,13 +13,13 @@ import ScenarioProjectionChart from './ScenarioProjectionChart';
 import ScenarioPreconditions from './ScenarioPreconditions';
 import { useScenario } from './scenarioContext';
 import { useMakeScenarioGoal } from './useMakeScenarioGoal';
-import { parseParameters, parseReturns, ScenarioSaveQueue, type ParameterDraft, type ReturnDraft } from './scenarioSimulation';
+import { parameterDraft, parseParameters, parseReturns, ScenarioSaveQueue, type ParameterDraft, type ReturnDraft } from './scenarioSimulation';
 
 type Draft = { parameters: ParameterDraft; returns: ReturnDraft };
 
 function SimulationEditor({ initial, accounts, currency, clientName }: { initial: LifeScenario[]; accounts: Account[]; currency: string; clientName?: string }) {
     const [drafts, setDrafts] = useState<Record<number, Draft>>(() => Object.fromEntries(initial.map((scenario) => [scenario.id, {
-        parameters: { horizon_years: String(scenario.horizon_years), annual_return: String(scenario.annual_return), inflation: String(scenario.inflation) },
+        parameters: parameterDraft(scenario),
         returns: Object.fromEntries(scenario.account_returns.map((row) => [row.account_id, String(row.annual_return)])),
     }])));
     const [comparison, setComparison] = useState<ProjectedLifeScenario[]>([]);
@@ -37,7 +37,7 @@ function SimulationEditor({ initial, accounts, currency, clientName }: { initial
     const checkedKey = String(focusedId);
     const draft = focused ? drafts[focused.id] : undefined;
     const projected = comparison.find((scenario) => scenario.id === focusedId);
-    const validation = draft && (!parseParameters(draft.parameters) ? '期間は1〜60の整数、年利・インフレは有限の数値で入力してください。' : !parseReturns(draft.returns) ? '口座の利回りは有限の数値で入力してください。' : '');
+    const validation = draft && (!parseParameters(draft.parameters) ? '期間は1〜60の整数、年利・インフレは有限の数値、月の積立は0以上で入力してください。' : !parseReturns(draft.returns) ? '口座の利回りは有限の数値で入力してください。' : '');
     const locked = !clientName;
 
     useEffect(() => {
@@ -111,10 +111,12 @@ function SimulationEditor({ initial, accounts, currency, clientName }: { initial
         {focused && draft && <>
             <section className="space-y-4">
                 <h2 className="font-semibold">{focused.name}の前提</h2>
-                <fieldset disabled={locked} className="grid gap-4 sm:grid-cols-3">
+                <fieldset disabled={locked} className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                     <Field label="期間（年）"><input type="number" min="1" max="60" step="1" required value={draft.parameters.horizon_years} onChange={(event) => changeParameter('horizon_years', event.target.value)} className={inputClass} /></Field>
                     <Field label="年利（%）"><input type="number" step="any" required value={draft.parameters.annual_return} onChange={(event) => changeParameter('annual_return', event.target.value)} className={inputClass} /></Field>
                     <Field label="インフレ（%）"><input type="number" step="any" required value={draft.parameters.inflation} onChange={(event) => changeParameter('inflation', event.target.value)} className={inputClass} /></Field>
+                    {/* Empty follows the client-wide setting, shown as the placeholder. */}
+                    <Field label={`月の積立（${currency}）`}><input type="number" min="0" step="any" value={draft.parameters.monthly_savings} placeholder={focused.monthly_savings_is_default ? `全体設定 ${formatCurrency(focused.monthly_savings, currency)}` : '空欄で全体設定'} onChange={(event) => changeParameter('monthly_savings', event.target.value)} className={inputClass} /></Field>
                 </fieldset>
                 <Feedback error={validation} />
                 {message && <p role="status" className="text-xs text-[var(--studio-text-muted)]">{message}</p>}

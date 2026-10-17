@@ -62,7 +62,7 @@ def _seed(db, client_id=101, base=10000):
             "monthly_actions": ("amount",),
             "capsule_funding_sources": ("target_amount",),
             "products": ("last_unit_price", "purchase_price"), "simulation_configs": ("monthly_savings",),
-            "simulation_scenarios": ("monthly_savings",), "registry_entries": ("amount",),
+            "simulation_scenarios": ("monthly_savings",), "life_scenarios": ("monthly_savings",), "registry_entries": ("amount",),
             "recurring_transactions": ("amount",),
         }
         if model.__tablename__ == "capsule_rules":
@@ -79,7 +79,7 @@ def _seed(db, client_id=101, base=10000):
     parent = add(models.Account, 1, name="assets", account_type="asset")
     cash = add(models.Account, 2, name="cash", account_type="asset",  parent_id=parent.id)
     expense = add(models.Account, 3, name="food", account_type="expense")
-    scenario = add(models.LifeScenario, 36, name="保存案", annual_return=7.0, inflation=1.0, horizon_years=12, is_goal=True)
+    scenario = add(models.LifeScenario, 36, name="保存案", annual_return=7.0, inflation=1.0, horizon_years=12, monthly_savings=30000, is_goal=True)
     db.flush()
     goal = add(models.LifeEvent, 4, scenario_id=scenario.id, name="goal", start_date=date(2026, 10, 1),
                target_date=date(2027, 1, 1), target_amount=1000, note="goal note", archived_at=STAMP)

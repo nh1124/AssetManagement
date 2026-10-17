@@ -576,7 +576,7 @@ export const getGoalDashboard = async (
 };
 
 // A new event belongs to the scenario it is created in; an update never moves it.
-export type GoalPayload = Pick<LifeEvent, 'direction' | 'account_id' | 'name' | 'target_amount' | 'target_date' | 'start_date' | 'priority' | 'note' | 'condition_mode' | 'active_plan_basis' | 'active_plan_label' | 'plan_status_override'> & { scenario_id?: number };
+export type GoalPayload = Pick<LifeEvent, 'direction' | 'account_id' | 'name' | 'target_amount' | 'target_date' | 'start_date' | 'priority' | 'note' | 'condition_mode' | 'active_plan_basis' | 'active_plan_label' | 'plan_status_override' | 'budget_reflection'> & { scenario_id?: number };
 
 export const createGoal = async (event: GoalPayload): Promise<LifeEvent> => {
     const response = await api.post('/life-events/', event);
