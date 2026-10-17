@@ -10,7 +10,9 @@ depends_on = None
 
 def upgrade():
     # The column held only (encrypted) AI API keys; dropping it removes them.
-    op.drop_column("clients", "ai_config")
+    # IF EXISTS: older backups were scrubbed of the column, and restoring one
+    # must still upgrade cleanly.
+    op.execute("ALTER TABLE clients DROP COLUMN IF EXISTS ai_config")
 
 
 def downgrade():

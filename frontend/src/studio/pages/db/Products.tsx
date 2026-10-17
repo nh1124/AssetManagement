@@ -16,6 +16,9 @@ type Lookups = Awaited<ReturnType<typeof loadLookups>>;
 type Treatment = NonNullable<Product['budget_treatment']>;
 type Position = Awaited<ReturnType<typeof getDepreciationSummary>>['items'][number];
 const loadPositions = () => getDepreciationSummary().then((summary) => summary.items);
+// Module-level so the loader is stable: an inline one reloads on every render and,
+// by re-rendering forever, keeps a route transition from ever committing.
+const noPositions = async (): Promise<Position[]> => [];
 const METHODS: Record<DepreciationMethod, string> = {
     none: '記帳しない', straight_line: '定額法', declining_balance: '定率法',
 };
@@ -115,7 +118,7 @@ function ProductsForClient({ assets, currency, timezone }: { assets: boolean; cu
     const confirm = useConfirm();
     const resource = useResource(loadProducts);
     const lookups = useResource(loadLookups);
-    const positions = useResource(assets ? loadPositions : async () => [] as Position[]);
+    const positions = useResource(assets ? loadPositions : noPositions);
     const byProduct = new Map((positions.data ?? []).map((row) => [row.product_id, row]));
     const period = clientToday(timezone).slice(0, 7);
     const mutation = useMutation();
