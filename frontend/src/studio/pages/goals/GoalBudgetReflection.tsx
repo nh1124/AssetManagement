@@ -13,6 +13,7 @@ import { inputClass, primaryClass } from '../db/forms';
 import { REFLECTIONS } from './presentation';
 
 const NEAR_YEARS = [1, 3, 5, 10];
+const EXISTING_KINDS = { definition: '定義', manual: '手入力', capsule: '取り置き' };
 const sectionClass = 'space-y-3 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-bg)] p-4';
 
 function Heading({ step, title, note }: { step: number; title: string; note?: string }) {
@@ -46,7 +47,7 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
     const currency = currentClient?.general_settings?.currency || 'JPY';
     const [options, setOptions] = useState<GoalBudgetOptions>(() => ({
         savings_source: 'scenario', near_years: 5, start_period: initialPeriod ?? clientToday(timezone).slice(0, 7),
-        months: 1, savings_account_id: null, create_capsules: [],
+        months: 1, savings_account_id: null, savings_definition_id: null, uncounted: [], create_capsules: [],
     }));
     const [accounts, setAccounts] = useState<Account[]>([]);
     const [preview, setPreview] = useState<GoalBudgetPreview | null>(null);
@@ -100,6 +101,16 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
     };
     const toggleCapsule = (eventId: number, checked: boolean) => choose('create_capsules', checked
         ? [...options.create_capsules, eventId] : options.create_capsules.filter((id) => id !== eventId));
+    const toggleCounted = (key: string, counted: boolean) => choose('uncounted', counted
+        ? options.uncounted.filter((value) => value !== key) : [...options.uncounted, key]);
+    // One destination: an account gets a goal row, a definition has its monthly amount rewritten.
+    const destination = options.savings_definition_id !== null ? `d:${options.savings_definition_id}` : options.savings_account_id !== null ? `a:${options.savings_account_id}` : '';
+    const chooseDestination = (value: string) => {
+        setMessage('');
+        const id = value ? Number(value.slice(2)) : null;
+        setOptions((previous) => ({ ...previous, savings_account_id: value.startsWith('a:') ? id : null, savings_definition_id: value.startsWith('d:') ? id : null }));
+    };
+    const definitions = preview?.existing.filter((row) => row.kind === 'definition' && row.updatable) ?? [];
     const changed = preview?.changes.filter((row) => row.changed) ?? [];
     const accountName = (id: number | null) => (id === null ? '—' : accounts.find((row) => row.id === id)?.name ?? `口座 ${id}`);
     const apply = async () => {
@@ -140,9 +151,14 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
                         {NEAR_YEARS.map((years) => <option key={years} value={years}>{years}年以内のライフイベント</option>)}
                         <option value="all">すべてのライフイベント</option>
                     </select></Field>
-                    <Field label="積立先の口座"><select value={options.savings_account_id ?? ''} onChange={(event) => choose('savings_account_id', event.target.value ? Number(event.target.value) : null)} className={inputClass}>
+                    <Field label="残りの積立先"><select value={destination} onChange={(event) => chooseDestination(event.target.value)} className={inputClass}>
                         <option value="">選ばない（取り置きだけ反映）</option>
-                        {accounts.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}
+                        <optgroup label="口座（ゴールの積立として予算に入れる）">
+                            {accounts.map((row) => <option key={`a-${row.id}`} value={`a:${row.id}`}>{row.name}</option>)}
+                        </optgroup>
+                        {definitions.length > 0 && <optgroup label="定義（毎月の金額を書き換える）">
+                            {definitions.map((row) => <option key={`d-${row.id}`} value={`d:${row.id}`}>{row.name}</option>)}
+                        </optgroup>}
                     </select></Field>
                     <Field label="反映する最初の月"><input type="month" required value={options.start_period} onChange={(event) => { if (/^\d{4}-(0[1-9]|1[0-2])$/.test(event.target.value)) choose('start_period', event.target.value); }} className={inputClass} /></Field>
                     <Field label="反映する期間"><select value={options.months} onChange={(event) => choose('months', Number(event.target.value))} className={inputClass}>
@@ -154,9 +170,21 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
             {preview && savings && <>
                 <section className={sectionClass}>
                     <Heading step={2} title="毎月の積立" note={`ゴール：${preview.scenario.name}`} />
-                    <p className="text-sm tabular-nums">{formatCurrency(savings.chosen_amount, currency)} ＝ 取り置き {formatCurrency(savings.capsule_amount, currency)} ＋ 積立先 {formatCurrency(savings.account_amount, currency)}</p>
-                    {savings.shortfall > 0 && <p role="alert" className="text-sm text-[var(--studio-warning)]">近いライフイベントの取り置きだけで、毎月の積立額を {formatCurrency(savings.shortfall, currency)} 超えています。</p>}
-                    {savings.account_required && <p className="text-xs text-[var(--studio-text-muted)]">積立先の口座を選ぶと、残りの {formatCurrency(savings.account_amount, currency)} も予算に入ります。</p>}
+                    <p className="text-sm tabular-nums">{formatCurrency(savings.chosen_amount, currency)} ＝ 予算にある積立 {formatCurrency(savings.existing_amount, currency)} ＋ 取り置き {formatCurrency(savings.capsule_amount, currency)} ＋ 残りの積立先 {formatCurrency(savings.account_amount, currency)}</p>
+                    {savings.shortfall > 0 && <p role="alert" className="text-sm text-[var(--studio-warning)]">予算にある積立と近いライフイベントの取り置きだけで、毎月の積立額を {formatCurrency(savings.shortfall, currency)} 超えています。</p>}
+                    {savings.account_required && <p className="text-xs text-[var(--studio-text-muted)]">残りの積立先を選ぶと、残りの {formatCurrency(savings.account_amount, currency)} も予算に入ります。</p>}
+                    {preview.existing.length > 0 && <>
+                        <p className="text-xs text-[var(--studio-text-muted)]">予算に既にある積立は、毎月の積立額の一部として先に差し引きます（同じお金を二重に計画しないため）。積立ではない移動は外してください。</p>
+                        <DataTable columns={['積立に数える', '種類', '名称', '口座', `月額（${preview.periods[0]}）`]}>
+                            {preview.existing.map((row) => <tr key={row.key}>
+                                <td className="px-5 py-3">{row.destination ? <span className="text-xs text-[var(--studio-accent)]">残りの積立先</span> : <input type="checkbox" aria-label={`${row.name}を積立に数える`} disabled={busy} checked={row.counted} onChange={(event) => toggleCounted(row.key, event.target.checked)} />}</td>
+                                <td className="whitespace-nowrap px-5 py-3">{EXISTING_KINDS[row.kind]}</td>
+                                <th scope="row" className="px-5 py-3 font-medium">{row.name || '名称未設定'}</th>
+                                <td className="px-5 py-3">{row.kind === 'capsule' ? '—' : accountName(row.account_id)}</td>
+                                <td className="whitespace-nowrap px-5 py-3 tabular-nums">{formatCurrency(row.amount, currency)}</td>
+                            </tr>)}
+                        </DataTable>
+                    </>}
                     <p className="text-xs text-[var(--studio-text-muted)]">遠いライフイベントの必要額は、税引後の年利 {preview.scenario.after_tax_return.toFixed(1)}% で運用する前提で計算しています。</p>
                 </section>
                 <section className={sectionClass}>
@@ -181,13 +209,14 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
                     <Heading step={4} title="予算の変更" note="「予算に反映する」でこの内容が保存されます" />
                     {changed.length ? <DataTable columns={['月', '項目', '口座', '現在', '反映後']}>
                         {changed.map((row, index) => <tr key={`change-${row.period}-${row.kind}-${row.line_id ?? index}`}>
-                            <td className="whitespace-nowrap px-5 py-3">{row.period}</td>
-                            <th scope="row" className="px-5 py-3 font-medium">{row.kind === 'retire' ? `${row.name}（以前の反映を取り消す）` : row.kind === 'savings' ? '積立' : `取り置き：${row.name}`}</th>
+                            <td className="whitespace-nowrap px-5 py-3">{row.kind === 'definition' ? `${row.period}以降の毎月` : row.period}</td>
+                            <th scope="row" className="px-5 py-3 font-medium">{row.kind === 'retire' ? `${row.name}（以前の反映を取り消す）` : row.kind === 'savings' ? 'ゴールの積立' : row.kind === 'definition' ? `定義：${row.name}` : `取り置き：${row.name}`}</th>
                             <td className="px-5 py-3">{row.kind === 'capsule' && row.account_id === null ? '口座の指定なし' : accountName(row.account_id)}</td>
                             <td className="whitespace-nowrap px-5 py-3 tabular-nums">{row.current_amount === null ? '未設定' : formatCurrency(row.current_amount, currency)}</td>
                             <td className="whitespace-nowrap px-5 py-3 tabular-nums">{row.kind === 'retire' ? '削除' : formatCurrency(row.new_amount, currency)}</td>
                         </tr>)}
                     </DataTable> : <p className="text-sm text-[var(--studio-text-muted)]">予算は今の内容のままで、変更はありません。</p>}
+                    {changed.some((row) => row.kind === 'definition') && <p role="note" className="text-xs text-[var(--studio-warning)]">定義の金額を書き換えると、反映する期間に関係なく以後の毎月の予算に使われ、定義から自動作成される取引の金額も変わります。</p>}
                 </section>
             </>}
         </div>

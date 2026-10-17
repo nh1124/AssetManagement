@@ -9,7 +9,24 @@ export interface GoalBudgetOptions {
     start_period: string;
     months: number;
     savings_account_id: number | null;
+    /** Or a monthly allocation definition whose amount carries the rest of the savings. */
+    savings_definition_id: number | null;
+    /** Keys of existing savings the user does not count as saving. */
+    uncounted: string[];
     create_capsules: number[];
+}
+
+/** Savings the budget already plans: a definition, a hand-entered row, or a capsule's monthly amount. */
+export interface GoalBudgetExisting {
+    key: string;
+    kind: 'definition' | 'manual' | 'capsule';
+    id: number | null;
+    name: string;
+    account_id: number | null;
+    updatable: boolean;
+    counted: boolean;
+    destination: boolean;
+    amount: number;
 }
 
 export type GoalBudgetStatus = 'reflected' | 'condition_unmet' | 'condition_unknown' | 'simulation_only' | 'income' | 'past_due' | 'no_capsule';
@@ -36,7 +53,8 @@ export interface GoalBudgetEvent {
 
 export interface GoalBudgetChange {
     period: string;
-    kind: 'capsule' | 'savings' | 'retire';
+    kind: 'capsule' | 'savings' | 'retire' | 'definition';
+    definition_id?: number;
     event_id: number | null;
     capsule_id: number | null;
     name: string;
@@ -55,6 +73,7 @@ export interface GoalBudgetPreview {
         scenario_amount: number;
         required_amount: number;
         chosen_amount: number;
+        existing_amount: number;
         capsule_amount: number;
         account_amount: number;
         shortfall: number;
@@ -62,6 +81,7 @@ export interface GoalBudgetPreview {
         suggested_account_id: number | null;
     };
     events: GoalBudgetEvent[];
+    existing: GoalBudgetExisting[];
     changes: GoalBudgetChange[];
     fingerprint: string;
 }

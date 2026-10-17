@@ -15,7 +15,7 @@ from app.database import Base, get_db
 from app.dependencies import get_current_client
 from app.domain.errors import Conflict, DomainError, NotFound, Refused, detail_for, status_for
 from app.routers.goal_budget import router
-from app.services import capsule_service
+from app.services import capsule_service, registry_service
 from app.services.ledger_service import create_account
 from app.workflows import goal_budget_workflow as workflow
 from scenario_fixtures import goal_scenario_id
@@ -232,3 +232,76 @@ def test_every_range_funds_far_events_through_capsules_too(db, story):
     # In cash, without the after-tax return: 10,000,000 over 240 months.
     assert rows["住宅"]["monthly_required"] == 41667
     assert result["options"]["near_years"] is None
+
+
+
+def existing_savings(db, story):
+    bank = create_account(db, 1, {"name": "給与口座", "account_type": "asset"})
+    db.commit()
+    definition = registry_service.create_entry(db, 1, {
+        "name": "投資積立", "amount": 20000, "currency": "JPY", "frequency": "Monthly",
+        "line_type": "allocation", "source_account_id": bank.id, "destination_account_id": story["savings"].id,
+    })
+    yearly = registry_service.create_entry(db, 1, {
+        "name": "年払いの積立", "amount": 12000, "currency": "JPY", "frequency": "Yearly", "month_of_year": 11,
+        "line_type": "allocation", "source_account_id": bank.id, "destination_account_id": story["other"].id,
+    })
+    loose = capsule_service.create_capsule(db, 1, schemas.CapsuleCreate(name="予備費", target_amount=100000, monthly_contribution=5000))
+    return definition, yearly, loose
+
+
+def test_existing_savings_count_toward_the_total_so_nothing_is_planned_twice(db, story):
+    definition, yearly, loose = existing_savings(db, story)
+    result = workflow.preview(db, 1, options(savings_account_id=story["savings"].id))
+    rows = {row["name"]: row for row in result["existing"]}
+    assert (rows["投資積立"]["kind"], rows["投資積立"]["amount"], rows["投資積立"]["updatable"]) == ("definition", 20000, True)
+    # November is the yearly entry's month; it counts, but only a monthly amount can be rewritten.
+    assert (rows["年払いの積立"]["amount"], rows["年払いの積立"]["updatable"]) == (12000, False)
+    assert (rows["予備費"]["kind"], rows["予備費"]["amount"]) == ("capsule", 5000)
+    # The goal's own capsule is written by the reflection, never counted as existing.
+    assert "車の取り置き" not in rows
+    savings = result["savings"]
+    assert (savings["existing_amount"], savings["capsule_amount"], savings["account_amount"]) == (37000, 10000, 3000)
+    # Leaving a transfer out gives its amount back to the goal row.
+    fewer = workflow.preview(db, 1, options(savings_account_id=story["savings"].id, uncounted=[f"definition:{definition.id}"]))
+    assert fewer["savings"]["account_amount"] == 23000
+    assert next(row for row in fewer["existing"] if row["name"] == "投資積立")["counted"] is False
+
+
+def test_hand_entered_allocations_count_per_month(db, story):
+    chosen = options(savings_account_id=story["savings"].id, months=2)
+    workflow.apply(db, 1, chosen, workflow.preview(db, 1, chosen)["fingerprint"])
+    from app.services.budget_plan_store import create_plan_lines
+    create_plan_lines(db, 1, [{"target_period": "2026-12", "line_type": "allocation", "target_type": "account",
+                               "account_id": story["other"].id, "name": "手入力の積立", "amount": 15000}])
+    result = workflow.preview(db, 1, chosen)
+    manual = next(row for row in result["existing"] if row["kind"] == "manual")
+    assert (manual["name"], manual["amount"]) == ("手入力の積立", 0)  # nothing in November
+    by_period = {row["period"]: row["new_amount"] for row in result["changes"] if row["kind"] == "savings"}
+    assert by_period == {"2026-11": 40000, "2026-12": 25000}
+
+
+def test_a_monthly_definition_can_carry_the_goal_savings(db, story):
+    definition, _, _ = existing_savings(db, story)
+    first = options(savings_account_id=story["other"].id)
+    workflow.apply(db, 1, first, workflow.preview(db, 1, first)["fingerprint"])
+    chosen = options(savings_definition_id=definition.id)
+    preview = workflow.preview(db, 1, chosen)
+    assert next(row for row in preview["existing"] if row["id"] == definition.id and row["kind"] == "definition")["destination"] is True
+    # 50,000 - 10,000 car - 12,000 yearly - 5,000 reserve, now carried by the definition.
+    change = next(row for row in preview["changes"] if row["kind"] == "definition")
+    assert (change["current_amount"], change["new_amount"]) == (20000, 23000)
+    # The earlier goal row would double it, so it is retired.
+    assert [row["kind"] for row in preview["changes"]] == ["capsule", "retire", "definition"]
+    workflow.apply(db, 1, chosen, preview["fingerprint"])
+    db.refresh(definition)
+    assert definition.amount == 23000
+    assert db.query(models.MonthlyPlanLine).filter_by(source_kind="goal", is_active=True).count() == 0
+
+
+def test_destination_must_be_one_updatable_definition_or_one_account(db, story):
+    definition, yearly, _ = existing_savings(db, story)
+    with pytest.raises(NotFound):
+        workflow.preview(db, 1, options(savings_definition_id=yearly.id))
+    with pytest.raises(Refused):
+        workflow.preview(db, 1, options(savings_definition_id=definition.id, savings_account_id=story["savings"].id))

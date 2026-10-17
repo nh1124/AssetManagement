@@ -1332,6 +1332,10 @@ class GoalBudgetOptions(BaseModel):
     start_period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
     months: int = Field(default=1, ge=1, le=12)
     savings_account_id: Optional[int] = None
+    # Or a monthly allocation definition whose amount carries the rest of the savings.
+    savings_definition_id: Optional[int] = None
+    # Existing savings (keys from the preview) the user does not count as saving.
+    uncounted: list[str] = Field(default_factory=list)
     create_capsules: list[int] = Field(default_factory=list)
 
 
