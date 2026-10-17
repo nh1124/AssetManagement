@@ -572,3 +572,38 @@ def test_reasons_become_one_notification_and_the_reflection_answers_it(db, story
     assert db.get(models.Notification, note["id"]).status == "done"
     assert notification_service.visible(db, 1) == []
 
+
+def consumable(db, story):
+    """A consumable reserving 6,000 every 180 days (1,000 a month) into its own capsule."""
+    from app.workflows import product_workflow
+    pool = capsule_service.create_capsule(db, 1, schemas.CapsuleCreate(name="日用品", target_amount=0, monthly_contribution=0,
+                                                                        account_id=story["other"].id))
+    product_workflow.create_product(db, 1, schemas.ProductCreate(
+        name="浄水フィルター", last_unit_price=6000, frequency_days=180, funding_capsule_id=pool.id,
+        budget_treatment="reserve_allocation"))
+    return pool
+
+
+def test_product_reserves_are_part_of_the_reflection(db, story):
+    pool = consumable(db, story)
+    preview = workflow.preview(db, 1, options(savings_account_id=story["savings"].id))
+    assert preview["products"] == [{"capsule_id": pool.id, "name": "日用品", "products": 1, "monthly": 1000}]
+    savings = preview["savings"]
+    assert (savings["product_amount"], savings["account_amount"]) == (1000, 39000)
+    # Written as the capsule's row, and not also counted as existing savings.
+    rows = [(row["kind"], row["name"], row["new_amount"]) for row in preview["changes"]]
+    assert ("capsule", "日用品", 1000) in rows
+    assert all(row["key"] != f"capsule:{pool.id}" for row in preview["existing"])
+    status = workflow.status(db, 1, START)
+    product = next(row for row in status["events"] if row["kind"] == "product")
+    assert (product["name"], product["allocation"]) == ("日用品", 1000)
+
+
+def test_progress_shares_what_is_left_after_product_reserves(db, story):
+    from app.services.strategy_service import event_monthly_allocation
+    home = story["home"]
+    before, _ = event_monthly_allocation(db, 1, home, 50000, date(2026, 11, 1))
+    consumable(db, story)
+    after, _ = event_monthly_allocation(db, 1, home, 50000, date(2026, 11, 1))
+    assert before - after == pytest.approx(1000)
+

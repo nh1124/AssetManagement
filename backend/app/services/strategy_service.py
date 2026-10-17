@@ -17,6 +17,7 @@ from .reporting_service import get_balance_sheet, get_net_worth_history
 from .institution_service import blended_after_tax_return, positive_asset_balance
 from .goal_service import goal_events_query, list_goals, story_events_query
 from . import goal_budget_record
+from .product_reserve_service import reserve_totals_by_capsule
 
 PRIORITY_WEIGHTS = {1: 3, 2: 2, 3: 1}
 DEFAULT_NEAR_YEARS = 5
@@ -303,11 +304,14 @@ def event_monthly_allocation(
         funded = calculate_current_funded_and_weighted_return(item, db)[0]
         return max(0.0, (item.target_amount or 0.0) - funded) / max(1, months)
 
+    # Consumables and fixed assets set aside their reserve first, as the reflection does.
+    reserves = sum(row["monthly"] for row in reserve_totals_by_capsule(db, client_id, evaluation_date).values())
+    available = max(0.0, total - reserves)
     near_total = sum(required(item) for item in story if near(item))
     if near(event):
         own = required(event)
-        return (own if near_total <= total else total * own / near_total), "rule"
-    pool = max(0.0, total - near_total)
+        return (own if near_total <= available else available * own / near_total), "rule"
+    pool = max(0.0, available - near_total)
     far = [item for item in story if not near(item)]
     weights = sum(PRIORITY_WEIGHTS.get(item.priority, 1) for item in far) or 1
     return pool * PRIORITY_WEIGHTS.get(event.priority, 1) / weights, "rule"

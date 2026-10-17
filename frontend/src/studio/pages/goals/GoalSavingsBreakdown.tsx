@@ -9,6 +9,7 @@ function kindLabel(row: GoalBudgetStatusEvent, nearYears: number | null): string
         case 'far': return '毎月の積立に含む';
         case 'simulation_only': return '試算のみ（予算に入れない）';
         case 'income': return '収入（予算に入れない）';
+        case 'product': return `消耗品・固定資産の積立（${row.products ?? 0}件）`;
     }
 }
 
@@ -33,9 +34,9 @@ export default function GoalSavingsBreakdown({ data, currency }: { data: GoalBud
                 </div>)}
             </dl>
             <DataTable columns={['ライフイベント', '目標日', '扱い', '毎月の積立', '根拠']}>
-                {data.events.map((row) => <tr key={`breakdown-${row.event_id}`}>
+                {data.events.map((row) => <tr key={`breakdown-${row.event_id ?? `capsule-${row.capsule_id}`}`}>
                     <th scope="row" className="px-5 py-3 font-medium">{row.name}</th>
-                    <td className="whitespace-nowrap px-5 py-3">{formatDate(row.target_date)}</td>
+                    <td className="whitespace-nowrap px-5 py-3">{row.target_date ? formatDate(row.target_date) : '—'}</td>
                     <td className="px-5 py-3">{kindLabel(row, data.near_years)}</td>
                     <td className="whitespace-nowrap px-5 py-3 tabular-nums">{row.kind === 'income' ? '—' : formatCurrency(row.allocation, currency)}</td>
                     <td className="px-5 py-3 text-xs text-[var(--studio-text-muted)]">{row.source === 'reflection' ? '予算の反映どおり' : row.source === 'rule' ? '計算上の配分' : '—'}</td>

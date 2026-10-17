@@ -139,3 +139,23 @@ def ensure_default_product_reserve_pools(db: Session, client_id: int) -> list[mo
     return pools
 
 
+
+
+def reserve_totals_by_capsule(db: Session, client_id: int, reference_date: date | None = None) -> dict[int, dict]:
+    """Monthly reserve each capsule's products need now: {capsule_id: {monthly, target, products}}.
+
+    Read live rather than from the capsule, because a fixed asset's monthly amount
+    grows as its replacement date nears.
+    """
+    totals: dict[int, dict] = {}
+    for product in db.query(models.Product).filter(
+        models.Product.client_id == client_id, models.Product.funding_capsule_id.isnot(None),
+    ).all():
+        if not should_use_reserve(product):
+            continue
+        values = product_reserve_values(product, reference_date)
+        row = totals.setdefault(product.funding_capsule_id, {"monthly": 0.0, "target": 0.0, "products": 0})
+        row["monthly"] += values["recommended_monthly_reserve"]
+        row["target"] += values["reserve_target_amount"]
+        row["products"] += 1
+    return totals

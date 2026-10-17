@@ -191,7 +191,7 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
             {preview && savings && <>
                 <section className={sectionClass}>
                     <Heading step={2} title="毎月の積立" note={`ゴール：${preview.scenario.name}`} />
-                    <p className="text-sm tabular-nums">{formatCurrency(savings.chosen_amount, currency)} ＝ 予算にある積立 {formatCurrency(savings.existing_amount, currency)} ＋ 取り置き {formatCurrency(savings.capsule_amount, currency)} ＋ 残りの積立先 {formatCurrency(savings.account_amount, currency)}</p>
+                    <p className="text-sm tabular-nums">{formatCurrency(savings.chosen_amount, currency)} ＝ 予算にある積立 {formatCurrency(savings.existing_amount, currency)}{savings.product_amount > 0 && <> ＋ 消耗品・固定資産 {formatCurrency(savings.product_amount, currency)}</>} ＋ 取り置き {formatCurrency(savings.capsule_amount, currency)} ＋ 残りの積立先 {formatCurrency(savings.account_amount, currency)}</p>
                     {savings.shortfall > 0 && <p role="alert" className="text-sm text-[var(--studio-warning)]">予算にある積立と近いライフイベントの取り置きだけで、毎月の積立額を {formatCurrency(savings.shortfall, currency)} 超えています。</p>}
                     {savings.account_required && <p className="text-xs text-[var(--studio-text-muted)]">残りの積立先を選ぶと、残りの {formatCurrency(savings.account_amount, currency)} も予算に入ります。</p>}
                     {preview.existing.length > 0 && <>
@@ -203,6 +203,16 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
                                 <th scope="row" className="px-5 py-3 font-medium">{row.name || '名称未設定'}</th>
                                 <td className="px-5 py-3">{row.kind === 'capsule' ? '—' : accountName(row.account_id)}</td>
                                 <td className="whitespace-nowrap px-5 py-3 tabular-nums">{formatCurrency(row.amount, currency)}</td>
+                            </tr>)}
+                        </DataTable>
+                    </>}
+                    {preview.products.length > 0 && <>
+                        <p className="text-xs text-[var(--studio-text-muted)]">消耗品・固定資産の取り置きには、紐づく物品の推奨月額を毎月入れます（物品ごとの積立先は消耗品・固定資産の画面で設定します）。</p>
+                        <DataTable columns={['取り置き', '物品', `月額（${preview.periods[0]}）`]}>
+                            {preview.products.map((row) => <tr key={`product-${row.capsule_id}`}>
+                                <th scope="row" className="px-5 py-3 font-medium">{row.name}</th>
+                                <td className="px-5 py-3">{row.products}件</td>
+                                <td className="whitespace-nowrap px-5 py-3 tabular-nums">{formatCurrency(row.monthly, currency)}</td>
                             </tr>)}
                         </DataTable>
                     </>}

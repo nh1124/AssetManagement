@@ -113,6 +113,8 @@ export interface GoalBudgetPreview {
         required_amount: number;
         chosen_amount: number;
         existing_amount: number;
+        /** Consumables and fixed assets: their capsules' recommended monthly reserve. */
+        product_amount: number;
         capsule_amount: number;
         account_amount: number;
         shortfall: number;
@@ -121,6 +123,7 @@ export interface GoalBudgetPreview {
     };
     events: GoalBudgetEvent[];
     existing: GoalBudgetExisting[];
+    products: Array<{ capsule_id: number; name: string; products: number; monthly: number }>;
     handover_suggestions: GoalBudgetHandoverSuggestion[];
     handovers: GoalBudgetHandover[];
     changes: GoalBudgetChange[];
@@ -154,14 +157,17 @@ export interface GoalBudgetReminder {
 }
 
 export interface GoalBudgetStatusEvent {
-    event_id: number;
+    /** null for a consumables / fixed-assets capsule row. */
+    event_id: number | null;
+    capsule_id?: number;
+    products?: number;
     name: string;
     direction: 'expense' | 'income';
-    kind: 'near' | 'far' | 'simulation_only' | 'income';
+    kind: 'near' | 'far' | 'simulation_only' | 'income' | 'product';
     reflection?: BudgetReflection;
     allocation: number;
     source: 'reflection' | 'rule' | null;
-    target_date: string;
+    target_date: string | null;
 }
 
 export interface GoalBudgetOverview {
