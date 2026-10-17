@@ -1,11 +1,7 @@
-import { useCallback } from 'react';
-import { getGoalBudgetStatus, syncGoalReflectionAction, type GoalBudgetStatusEvent } from '../../../api/goalBudget';
+import { type GoalBudgetOverview, type GoalBudgetStatusEvent } from '../../../api/goalBudget';
 import { formatCurrency } from '../../../utils/currency';
-import { clientToday, formatDate, useTimezone } from '../../datetime';
-import { useResource } from '../../useResource';
-import { DataTable, Feedback } from '../db/Database';
-import { primaryClass } from '../db/forms';
-import GoalReminders from './GoalReminders';
+import { formatDate } from '../../datetime';
+import { DataTable } from '../db/Database';
 
 function kindLabel(row: GoalBudgetStatusEvent, nearYears: number | null): string {
     switch (row.kind) {
@@ -17,27 +13,15 @@ function kindLabel(row: GoalBudgetStatusEvent, nearYears: number | null): string
 }
 
 /** One monthly savings total, divided among the goal's events, against this month's budget. */
-export default function GoalSavingsBreakdown({ currency, onReflect }: { currency: string; onReflect: () => void }) {
-    const timezone = useTimezone();
-    const period = clientToday(timezone).slice(0, 7);
-    const load = useCallback(async () => {
-        const result = await getGoalBudgetStatus(period);
-        // Reminders also wait on the actions page, as an action that needs confirmation.
-        void syncGoalReflectionAction(period).catch(() => undefined);
-        return result;
-    }, [period]);
-    const resource = useResource(load);
-    const data = resource.data;
+export default function GoalSavingsBreakdown({ data, currency }: { data: GoalBudgetOverview; currency: string }) {
     return <section className="space-y-3 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
             <div>
                 <h3 className="font-semibold">積立の内訳</h3>
-                {data?.reflection && <p className="text-xs text-[var(--studio-text-muted)]">前回の予算反映：{formatDate(data.reflection.applied_at)}（{data.reflection.start_period}〜{data.reflection.end_period}）</p>}
+                {data.reflection && <p className="text-xs text-[var(--studio-text-muted)]">前回の予算反映：{formatDate(data.reflection.applied_at)}（{data.reflection.start_period}〜{data.reflection.end_period}）</p>}
             </div>
-            <button type="button" onClick={onReflect} className={primaryClass}>予算に反映</button>
         </div>
-        <Feedback loading={resource.loading} error={resource.error} />
-        {data?.goal && data.budget && <>
+        {data.goal && data.budget && <>
             <dl className="grid gap-3 sm:grid-cols-3">
                 {[
                     ['月の積立（シナリオ）', formatCurrency(data.goal.monthly_savings, currency) + (data.goal.monthly_savings_is_default ? '（全体設定）' : '')],
@@ -48,7 +32,6 @@ export default function GoalSavingsBreakdown({ currency, onReflect }: { currency
                     <dd className="mt-1 font-semibold tabular-nums">{value}</dd>
                 </div>)}
             </dl>
-            <GoalReminders reminders={data.reminders} />
             <DataTable columns={['ライフイベント', '目標日', '扱い', '毎月の積立', '根拠']}>
                 {data.events.map((row) => <tr key={`breakdown-${row.event_id}`}>
                     <th scope="row" className="px-5 py-3 font-medium">{row.name}</th>

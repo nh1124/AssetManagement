@@ -3,15 +3,17 @@ import { Pencil, Wallet } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Area, CartesianGrid, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { getLifeEventsWithProgress } from '../../../api';
+import { getGoalBudgetStatus } from '../../../api/goalBudget';
 import { compare, list, type ProjectedLifeScenario } from '../../../api/lifeScenarios';
 import { useClient } from '../../../context/ClientContext';
 import type { LifeEvent } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
-import { formatDate } from '../../datetime';
+import { clientToday, formatDate, useTimezone } from '../../datetime';
 import { useResource } from '../../useResource';
 import { DataTable, Feedback } from '../db/Database';
 import { buttonClass, primaryClass } from '../db/forms';
 import GoalBaselinePanel from './GoalBaselinePanel';
+import GoalReminders from './GoalReminders';
 import GoalSavingsBreakdown from './GoalSavingsBreakdown';
 import GoalBudgetReflection from './GoalBudgetReflection';
 import NoLifeEvents from './NoLifeEvents';
@@ -55,6 +57,11 @@ function ScenarioSummary({ scenario, events, currency }: { scenario: ProjectedLi
     const [reflecting, setReflecting] = useState(false);
     // A reflection changes the breakdown and may move the baseline; reload both after it.
     const [version, setVersion] = useState(0);
+    const timezone = useTimezone();
+    const period = clientToday(timezone).slice(0, 7);
+    // The page reads the status once, for the reminders under the button and the breakdown.
+    const loadStatus = useCallback(() => getGoalBudgetStatus(period, { syncAction: true }), [period]);
+    const status = useResource(loadStatus);
     const progress = new Map(events.map((event) => [event.id, event]));
     const rows = [...scenario.events].sort((a, b) => (a.resolved_date ?? '\uffff').localeCompare(b.resolved_date ?? '\uffff') || a.id - b.id);
     // Income events are inflows, not funding needs; keep them in the chart and table only.
@@ -71,7 +78,8 @@ function ScenarioSummary({ scenario, events, currency }: { scenario: ProjectedLi
                 <button type="button" onClick={() => setReflecting(true)} className={`inline-flex items-center gap-2 ${buttonClass}`}><Wallet size={14} aria-hidden="true" />予算に反映</button>
             </div>
         </div>
-        {reflecting && <GoalBudgetReflection onClose={() => { setReflecting(false); setVersion((value) => value + 1); }} />}
+        {status.data?.goal && <GoalReminders reminders={status.data.reminders} />}
+        {reflecting && <GoalBudgetReflection onClose={() => { setReflecting(false); setVersion((value) => value + 1); status.reload(); }} />}
         <dl className="grid gap-4 sm:grid-cols-3 lg:grid-cols-5">
             {[
                 ['合計金額', formatCurrency(required, currency)],
@@ -82,7 +90,8 @@ function ScenarioSummary({ scenario, events, currency }: { scenario: ProjectedLi
             ].map(([label, value]) => <div key={label} className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-4"><dt className="text-xs text-[var(--studio-text-muted)]">{label}</dt><dd className="mt-2 font-semibold tabular-nums">{value}</dd></div>)}
         </dl>
         <Projection scenario={scenario} currency={currency} />
-        <GoalSavingsBreakdown key={`breakdown-${version}`} currency={currency} onReflect={() => setReflecting(true)} />
+        <Feedback error={status.error} />
+        {status.data?.goal && <GoalSavingsBreakdown data={status.data} currency={currency} />}
         <GoalBaselinePanel key={`baseline-${version}`} currency={currency} />
         <section className="space-y-3">
             <h3 className="font-semibold">ライフイベント</h3>

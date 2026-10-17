@@ -12,7 +12,7 @@ import { buttonClass, inputClass, useMutation } from '../db/forms';
 import MonthCopy from './MonthCopy';
 import GoalBudgetReflection from '../goals/GoalBudgetReflection';
 import GoalReminders from '../goals/GoalReminders';
-import { getGoalBudgetStatus, syncGoalReflectionAction } from '../../../api/goalBudget';
+import { getGoalBudgetStatus } from '../../../api/goalBudget';
 import MonthPicker from '../ledger/MonthPicker';
 
 // budget_plan_service returns plan_lines and plan_id, not the legacy budget model.
@@ -60,11 +60,7 @@ function MonthlyBudget({ period, currency, clientName, onBusy }: { period: strin
     const [editing, setEditing] = useState<MonthlyPlanLine | null>(null);
     const [reflecting, setReflecting] = useState(false);
     const timezone = useTimezone();
-    const loadStatus = useCallback(async () => {
-        const result = await getGoalBudgetStatus(period);
-        if (period === clientToday(timezone).slice(0, 7)) void syncGoalReflectionAction(period).catch(() => undefined);
-        return result;
-    }, [period, timezone]);
+    const loadStatus = useCallback(() => getGoalBudgetStatus(period, { syncAction: period === clientToday(timezone).slice(0, 7) }), [period, timezone]);
     const goalStatus = useResource(loadStatus);
     const disabled = resource.loading || Boolean(resource.error) || mutation.busy || copyBusy || !clientName;
     const save = async (amount: number) => {
