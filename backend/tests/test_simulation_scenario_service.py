@@ -224,7 +224,7 @@ def test_compare_scenarios_keeps_parameter_delegation_request_order_and_response
 # Existing milestone tests cover simulation math; CRUD lives here to keep the
 # wave within its permitted file scope.
 @pytest.mark.parametrize("life_event_id", [2, 999])
-def test_create_and_reset_milestones_reuse_event_check_and_preserve_404(db, life_event_id):
+def test_create_milestone_reuses_event_check_and_preserves_404(db, life_event_id):
     client = db.get(models.Client, 1)
     with pytest.raises(LookupError, match="^Life event not found$"):
         milestone_service.create_milestone(db, 1, _milestone(life_event_id))
@@ -232,8 +232,6 @@ def test_create_and_reset_milestones_reuse_event_check_and_preserve_404(db, life
     with pytest.raises(HTTPException) as error:
         roadmap.create_milestone(_milestone(life_event_id), db, client)
     assert (error.value.status_code, error.value.detail) == (404, "Life event not found")
-    with pytest.raises(LookupError, match="^Life event not found$"):
-        milestone_service.reset_milestones_from_annual_plan(db, 1, life_event_id)
     assert db.query(models.Milestone).count() == 0
 
 

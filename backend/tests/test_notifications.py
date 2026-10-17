@@ -71,3 +71,16 @@ def test_resolve_kind_and_clients_are_separate(db):
     service.sync(db, 2, "k", wanted(), now=NOW)
     service.resolve_kind(db, 1, "k", now=NOW)
     assert keys(db, 1) == [] and keys(db, 2) == ["a"]
+
+
+def test_a_dismissal_ends_with_its_reasons(db):
+    service.sync(db, 1, "k", wanted(), now=NOW)
+    (row,) = service.visible(db, 1, now=NOW)
+    service.decide(db, row, "dismiss", now=NOW)
+    service.sync(db, 1, "k", wanted(), now=NOW)
+    assert row.status == "dismissed"
+    # The reasons went away and came back: that is a new occasion, shown again.
+    service.sync(db, 1, "k", [], now=NOW)
+    assert row.status == "done"
+    service.sync(db, 1, "k", wanted(), now=NOW)
+    assert keys(db) == ["a"]

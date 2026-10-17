@@ -7,20 +7,30 @@ import { NotificationContext, type NotificationState } from '../notificationCont
 // Recomputing reads the goal and the budget; moving between screens should not
 // redo it more often than this.
 const SYNC_INTERVAL_MS = 30_000;
+// A screen left open still sees snoozed notifications come back and months turn.
+const IDLE_SYNC_MS = 5 * 60_000;
 
 /** Keeps the client's notifications current while the studio is open. Mount once per client. */
 export default function NotificationsProvider({ children }: { children: ReactNode }) {
     const timezone = useTimezone();
     const { pathname } = useLocation();
     const [listing, setListing] = useState<NotificationListing>({ items: [], hidden_count: 0 });
-    const lastSync = useRef(0);
+    const lastSync = useRef({ at: 0, period: '' });
     const sync = useCallback((force: boolean) => {
-        if (!force && Date.now() - lastSync.current < SYNC_INTERVAL_MS) return;
-        lastSync.current = Date.now();
+        const period = clientToday(timezone).slice(0, 7);
+        // A new month, or the client's time zone arriving after a first sync in UTC, is never throttled.
+        if (!force && period === lastSync.current.period && Date.now() - lastSync.current.at < SYNC_INTERVAL_MS) return;
+        lastSync.current = { at: Date.now(), period };
         // A failed sync leaves the last list in place; notifications never block a screen.
-        void syncNotifications(clientToday(timezone).slice(0, 7)).then(setListing).catch(() => undefined);
+        void syncNotifications(period).then(setListing).catch(() => undefined);
     }, [timezone]);
     useEffect(() => { sync(false); }, [pathname, sync]);
+    useEffect(() => {
+        const onFocus = () => sync(false);
+        const timer = window.setInterval(onFocus, IDLE_SYNC_MS);
+        window.addEventListener('focus', onFocus);
+        return () => { window.clearInterval(timer); window.removeEventListener('focus', onFocus); };
+    }, [sync]);
     const decide = useCallback((id: number, action: 'snooze' | 'dismiss', until?: Date) => {
         void decideNotification(id, action, until).then(listNotifications).then(setListing).catch(() => undefined);
     }, []);

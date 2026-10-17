@@ -901,14 +901,6 @@ class LifeEventWithProgress(LifeEvent):
     monthly_allocation: float = 0.0
     allocation_source: Optional[str] = None
 
-class StrategyDashboard(BaseModel):
-    events: list[LifeEventWithProgress]
-    unallocated_assets: list[dict]
-    total_allocated: float
-    total_unallocated: float
-    simulation_params: dict
-
-
 class MonteCarloPercentiles(BaseModel):
     p10: float
     p50: float

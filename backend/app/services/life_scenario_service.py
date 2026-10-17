@@ -289,16 +289,6 @@ def delete(db: Session, client_id: int, scenario_id: int) -> None:
     db.commit()
 
 
-def legacy_parameters(db: Session, client_id: int) -> dict:
-    goal = get_goal(db, client_id)
-    config = db.query(models.SimulationConfig).filter_by(client_id=client_id).order_by(models.SimulationConfig.id).first()
-    return {
-        "years": goal.horizon_years if goal else (config.horizon_years if config else 30),
-        "annual_return": goal.annual_return if goal else (config.annual_return if config and config.annual_return is not None else 5.0),
-        "inflation": goal.inflation if goal else (config.inflation_rate if config and config.inflation_rate is not None else 2.0),
-    }
-
-
 def seed_legacy_goal(db: Session, client_id: int) -> models.LifeScenario:
     """Give a restored shared graph a goal before its events are inserted."""
     existing = get_goal(db, client_id)

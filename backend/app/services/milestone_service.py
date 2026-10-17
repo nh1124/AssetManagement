@@ -281,30 +281,6 @@ def build_default_milestone_rows(
     return rows
 
 
-def reset_milestones_from_annual_plan(
-    db: Session,
-    client_id: int,
-    life_event_id: int,
-) -> list[models.Milestone]:
-    """Replace a goal's milestones with defaults derived from Annual Roadmap."""
-    _get_event(db, client_id, life_event_id)
-    db.query(models.Milestone).filter(
-        models.Milestone.client_id == client_id,
-        models.Milestone.life_event_id == life_event_id,
-    ).delete(synchronize_session=False)
-
-    created: list[models.Milestone] = []
-    for row in build_default_milestone_rows(db, client_id, life_event_id):
-        milestone = models.Milestone(client_id=client_id, **minor_fields(row, money_client_currency(db, client_id), 'target_amount'))
-        db.add(milestone)
-        created.append(milestone)
-
-    db.commit()
-    for milestone in created:
-        db.refresh(milestone)
-    return created
-
-
 def preview_milestones_from_simulation(
     db: Session,
     client_id: int,

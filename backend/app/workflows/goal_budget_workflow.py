@@ -68,6 +68,11 @@ def _periods(start: str, months: int) -> list[str]:
     return result
 
 
+def _first_day(period: str) -> date:
+    year, month = (int(part) for part in period.split("-"))
+    return date(year, month, 1)
+
+
 def _major(minor: int, currency: str) -> float:
     return Money(minor, currency).to_float()
 
@@ -213,13 +218,17 @@ def _plan(db: Session, client_id: int, options: dict, plan_id: int | None) -> di
     funded_capsules = [(row, capsule, Money(row["monthly_required_minor"], currency)) for row, capsule in funded_rows]
     # Consumables and fixed assets fund their capsules every month with their
     # recommended reserve; that is saving too, so it comes out of the same total.
+    # A fixed asset's reserve grows as its replacement nears, so each month reads its own.
     goal_capsules = {capsule.id for _, capsule, _ in funded_capsules if capsule is not None}
-    product_capsules = []
-    for capsule_id, totals in sorted(reserve_totals_by_capsule(db, client_id).items()):
+    reserves = {period: reserve_totals_by_capsule(db, client_id, _first_day(period)) for period in periods}
+    product_capsules = []  # (capsule, {period: Money}, the first month's totals)
+    for capsule_id in sorted(reserves[start]):
         capsule = capsule_service.get_capsule(db, client_id, capsule_id)
         if capsule is None or capsule.id in goal_capsules:
             continue
-        product_capsules.append((capsule, Money.from_float(float(round(totals["monthly"], 6)), currency), totals))
+        amounts = {period: Money.from_float(float(round(reserves[period].get(capsule_id, {}).get("monthly", 0.0), 6)), currency)
+                   for period in periods}
+        product_capsules.append((capsule, amounts, reserves[start][capsule_id]))
     target_dates = {row["event_id"]: date.fromisoformat(row["target_date"]) for row in events}
 
     def contribution(row: dict, amount: Money, period: str) -> Money:
@@ -230,7 +239,7 @@ def _plan(db: Session, client_id: int, options: dict, plan_id: int | None) -> di
     # A capsule is funded only until its target month; later months go to the rest.
     capsule_minor = {period: sum(contribution(row, amount, period).minor for row, _, amount in funded_capsules)
                      for period in periods}
-    product_minor = sum(amount.minor for _, amount, _ in product_capsules)
+    product_minor = {period: sum(amounts[period].minor for _, amounts, _ in product_capsules) for period in periods}
 
     account = None
     if options.get("savings_account_id") is not None:
@@ -254,7 +263,7 @@ def _plan(db: Session, client_id: int, options: dict, plan_id: int | None) -> di
         # The destination definition is rewritten below, so it is not also counted.
         row["counted"] = row["key"] not in uncounted and not row["destination"]
     counted = {period: sum(row["amounts"][period] for row in existing if row["counted"]) for period in periods}
-    residual = {period: max(0, chosen_minor - capsule_minor[period] - product_minor - counted[period]) for period in periods}
+    residual = {period: max(0, chosen_minor - capsule_minor[period] - product_minor[period] - counted[period]) for period in periods}
     if definition is not None and len(set(residual.values())) > 1:
         # A definition holds one amount for every month; it cannot follow a changing rest.
         raise Refused("反映する期間の中で残りの積立額が月ごとに変わるため、定義を積立先にできません。"
@@ -265,7 +274,7 @@ def _plan(db: Session, client_id: int, options: dict, plan_id: int | None) -> di
     # saved (existing savings and the goal row alike), in the first month.
     funded_events = {row["event_id"] for row, _, _ in funded_capsules}
     far = [row for row in events if row["direction"] == "expense" and row["status"] == "reflected" and not row["near"]]
-    far_pool = max(0, chosen_minor - capsule_minor[start] - product_minor)
+    far_pool = max(0, chosen_minor - capsule_minor[start] - product_minor[start])
     weights = [PRIORITY_WEIGHTS.get(row["priority"], 1) for row in far]
     shares = Money(far_pool, currency).allocate(weights) if far and sum(weights) else []
     far_share = {row["event_id"]: share.minor for row, share in zip(far, shares)}
@@ -297,8 +306,8 @@ def _plan(db: Session, client_id: int, options: dict, plan_id: int | None) -> di
                     "current_amount": line.amount if line is not None else None,
                     "new_amount": _major(item["amount"].minor, currency),
                 })
-        for capsule, amount, _ in product_capsules:
-            for item in _capsule_rows(lines, period, capsule, 0, amount):
+        for capsule, amounts, _ in product_capsules:
+            for item in _capsule_rows(lines, period, capsule, 0, amounts[period]):
                 line = item["line"]
                 if item["amount"] is None:
                     changes.append(retire(period, line))
@@ -374,7 +383,8 @@ def _plan(db: Session, client_id: int, options: dict, plan_id: int | None) -> di
         {key: row.get(key) for key in ("event_id", "status", "monthly_required_minor", "allocation_minor", "priority",
                                        "capsule_id", "target_amount", "target_date")} for row in events
     ], "existing": existing, "changes": changes, "handovers": handovers,
-        "products": [(capsule.id, amount.minor) for capsule, amount, _ in product_capsules],
+        "products": [(capsule.id, {period: amount.minor for period, amount in amounts.items()})
+                     for capsule, amounts, _ in product_capsules],
         "suggestions": suggestions}, sort_keys=True, default=str).encode()).hexdigest()
     existing_out = [{**{key: row[key] for key in ("key", "kind", "id", "name", "account_id", "updatable", "counted", "destination")},
                      "amount": _major(row["amounts"][start], currency)} for row in existing
@@ -391,18 +401,18 @@ def _plan(db: Session, client_id: int, options: dict, plan_id: int | None) -> di
             "required_amount": _major(required_minor, currency),
             "chosen_amount": _major(chosen_minor, currency),
             "existing_amount": _major(counted[start], currency),
-            "product_amount": _major(product_minor, currency),
+            "product_amount": _major(product_minor[start], currency),
             "capsule_amount": _major(capsule_minor[start], currency),
             "account_amount": _major(account_minor, currency),
             # Existing savings, product reserves and near capsules already exceed the monthly savings chosen.
-            "shortfall": _major(max(0, capsule_minor[start] + product_minor + counted[start] - chosen_minor), currency),
+            "shortfall": _major(max(0, capsule_minor[start] + product_minor[start] + counted[start] - chosen_minor), currency),
             "account_required": account is None and definition is None and account_minor > 0,
             "suggested_account_id": previous_account,
         },
         "events": events,
         "existing": existing_out,
         "products": [{"capsule_id": capsule.id, "name": capsule.name, "products": totals["products"],
-                      "monthly": _major(amount.minor, currency)} for capsule, amount, totals in product_capsules],
+                      "monthly": _major(amounts[start].minor, currency)} for capsule, amounts, totals in product_capsules],
         "handover_suggestions": [_handover_out(item, currency) for item in suggestions],
         "handovers": [_handover_out(item, currency) for item in handovers],
         "changes": changes,
@@ -449,18 +459,22 @@ def _handovers(db: Session, client_id: int, options: dict, funded_rows, currency
     def need_minor(row: dict) -> int:
         return max(0, Money.from_float(float(row["target_amount"]) - float(row["funded"]), currency).minor)
 
-    suggestions = []
+    suggestions, suggested = [], 0
     for event_id, (row, capsule) in rows.items():
         handed = sum(float(item.get("handover") or 0.0) for record in records for item in record.events or []
                      if item.get("lineage") == row["lineage"])
         planned = Money.from_float(max(0.0, _planned_far_savings(records, row["lineage"], period) - handed), currency).minor
         if planned <= 0:
             continue
-        cap = min(planned, need_minor(row), free(default_account) if default_account else planned)
+        cap = max(0, min(planned, need_minor(row), free(default_account) - suggested if default_account else planned))
+        suggested += cap
         suggestions.append({"event_id": event_id, "name": row["name"], "account_id": default_account,
-                            "planned_minor": planned, "suggested_minor": max(0, cap)})
+                            "planned_minor": planned, "suggested_minor": cap})
 
     chosen, used = [], {}
+    events = [item["event_id"] for item in options.get("handovers") or []]
+    if len(events) != len(set(events)):
+        raise Refused("引き継ぎは、1つのライフイベントにつき1件で指定してください。", status_code=422)
     for item in options.get("handovers") or []:
         if item["event_id"] not in rows:
             raise Refused("引き継ぎは、取り置きで積み立てる近いライフイベントにだけ指定できます。", status_code=422)
@@ -720,8 +734,7 @@ def status(db: Session, client_id: int, period: str) -> dict:
     if goal is None:
         return {"goal": None, "events": [], "budget": None, "reflection": None, "reminders": []}
     total = life_scenario_service.monthly_savings(db, goal)
-    year, month = (int(part) for part in period.split("-"))
-    today = date(year, month, 1)
+    today = _first_day(period)
     records = goal_budget_record.history(db, client_id)
     record = records[-1] if records else None
     near_years = (record.options or {}).get("near_years", DEFAULT_NEAR_YEARS) if record is not None and record.scenario_id == goal.id else DEFAULT_NEAR_YEARS

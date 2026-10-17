@@ -94,6 +94,8 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
                     const picks = result.handover_suggestions.filter((row) => row.suggested > 0 && row.account_id !== null)
                         .map((row) => ({ event_id: row.event_id, account_id: row.account_id as number, amount: row.suggested }));
                     if (picks.length) {
+                        // Shown already, so the handover editor stays reachable if the picks are refused.
+                        setPreview(result);
                         setOptions((previous) => ({ ...previous, handovers: picks }));
                         return;
                     }
@@ -103,7 +105,7 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
                 setLoading(false);
             }).catch((failure: unknown) => {
                 if (request !== revision.current) return;
-                setPreview(null);
+                // The last preview stays so its choices can be corrected; applying waits for a valid one.
                 setError(assetErrorMessage(failure));
                 setLoading(false);
             });
@@ -154,7 +156,7 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
     };
     const savings = preview?.savings;
     return <Overlay title={title} onClose={() => { if (!busy) onClose(); }}
-        footer={<button type="button" disabled={busy || loading || !preview} onClick={() => void apply()} className={primaryClass}>{busy ? '反映中…' : changed.length ? '予算に反映する' : '反映を記録する'}</button>}>
+        footer={<button type="button" disabled={busy || loading || !preview || Boolean(error)} onClick={() => void apply()} className={primaryClass}>{busy ? '反映中…' : changed.length ? '予算に反映する' : '反映を記録する'}</button>}>
         <div className="space-y-5">
             {intro && <p className="text-sm">{intro}</p>}
             <section className={sectionClass}>

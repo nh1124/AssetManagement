@@ -14,7 +14,7 @@ from sqlalchemy.orm import sessionmaker
 from backend.app import models
 from backend.app.database import Base
 from backend.app.routers import auth
-from backend.app.services import budget_plan_store, client_service, goal_service, ledger_service
+from backend.app.services import budget_plan_store, client_service, goal_service
 from backend.app.utils.password import hash_password, verify_password
 
 
@@ -195,20 +195,6 @@ def test_profile_email_already_used_is_a_conflict(db):
     _client(db, username="other")
     with pytest.raises(Conflict):
         auth.update_profile(auth.ProfileUpdate(email="other@example.com", current_password="current-pass"), db, client)
-
-
-def test_list_asset_accounts_filters_type_and_client_but_keeps_inactive_assets(db):
-    client = _client(db)
-    other = _client(db, username="other")
-    active = models.Account(client_id=client.id, name="Active", account_type="asset")
-    inactive = models.Account(client_id=client.id, name="Inactive", account_type="asset", is_active=False)
-    expense = models.Account(client_id=client.id, name="Expense", account_type="expense")
-    foreign = models.Account(client_id=other.id, name="Foreign", account_type="asset")
-    db.add_all([active, inactive, expense, foreign])
-    db.commit()
-    assert ledger_service.list_asset_accounts(db, client.id) == [active, inactive]
-    assert ledger_service.list_asset_accounts(db, other.id) == [foreign]
-    assert ledger_service.list_asset_accounts(db, 999999) == []
 
 
 def test_get_plan_is_client_scoped_and_never_creates_a_default(db):

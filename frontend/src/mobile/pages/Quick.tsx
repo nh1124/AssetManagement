@@ -166,7 +166,7 @@ export default function MobileQuickPage() {
                     </div>
                 )}
                 {templates.length === 0 ? (
-                    <EmptyState text="No quick templates yet. Create them from the desktop Journal screen." />
+                    <EmptyState text="No quick templates yet. Create them through the MCP tool quick_templates_create." />
                 ) : !activeTray ? (
                     trayTiles.length === 0 ? (
                         <EmptyState text={mobileQuickText.noCategories(activeGroup)} />

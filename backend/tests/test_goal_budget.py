@@ -607,3 +607,72 @@ def test_progress_shares_what_is_left_after_product_reserves(db, story):
     after, _ = event_monthly_allocation(db, 1, home, 50000, date(2026, 11, 1))
     assert before - after == pytest.approx(1000)
 
+
+def test_one_handover_per_event(db, story):
+    fund(db, story["savings"], 5_000_000)
+    _, near = far_then_near(db, story)
+    line = {"event_id": story["home"].id, "account_id": story["savings"].id, "amount": 100_000}
+    # Each line alone fits the shortfall; together they would claim twice.
+    with pytest.raises(Refused, match="1件"):
+        workflow.preview(db, 1, near | {"handovers": [line, line]})
+
+
+def test_handover_suggestions_share_the_account_balance(db, story):
+    school = add_event(db, "教育", date(2045, 4, 1), 8_000_000)
+    fund(db, story["savings"], 10_000)
+    _, near = far_then_near(db, story)
+    preview = workflow.preview(db, 1, near | {"create_capsules": [story["home"].id, school.id]})
+    suggested = [row["suggested"] for row in preview["handover_suggestions"]]
+    assert len(suggested) == 2 and sum(suggested) == 10_000
+    # Taking every suggestion is therefore a valid choice.
+    picks = [{"event_id": row["event_id"], "account_id": row["account_id"], "amount": row["suggested"]}
+             for row in preview["handover_suggestions"] if row["suggested"] > 0]
+    workflow.preview(db, 1, near | {"create_capsules": [story["home"].id, school.id], "handovers": picks})
+
+
+def test_a_fixed_asset_reserve_is_read_for_each_month(db, story):
+    from app.services.product_reserve_service import product_reserve_values
+    from app.workflows import product_workflow
+    pool = capsule_service.create_capsule(db, 1, schemas.CapsuleCreate(name="家電", target_amount=0, monthly_contribution=0,
+                                                                        account_id=story["other"].id))
+    product = product_workflow.create_product(db, 1, schemas.ProductCreate(
+        name="冷蔵庫", last_unit_price=120000, purchase_price=120000, is_asset=True, purchase_date=date(2026, 10, 1),
+        lifespan_months=24, funding_capsule_id=pool.id))
+    preview = workflow.preview(db, 1, options(savings_account_id=story["savings"].id, months=2))
+    rows = {row["period"]: row["new_amount"] for row in preview["changes"] if row["capsule_id"] == pool.id}
+    expected = {period: product_reserve_values(product, date(int(period[:4]), int(period[5:]), 1), "JPY")["recommended_monthly_reserve"]
+                for period in ("2026-11", "2026-12")}
+    assert rows == expected and expected["2026-11"] < expected["2026-12"]
+
+
+def test_a_budget_row_does_not_overwrite_what_products_set(db, story):
+    from types import SimpleNamespace
+    from app.services import budget_plan_store
+    pool = consumable(db, story)
+    line = SimpleNamespace(target_type="capsule", target_id=pool.id, plan_id=None, target_period=START, line_type="allocation")
+    budget_plan_store.sync_capsule_monthly_contributions(db, 1, [line])
+    db.refresh(pool)
+    assert (pool.monthly_contribution_source, pool.monthly_contribution) == ("linked_products", 1000)
+
+
+@pytest.mark.parametrize("currency, monthly", [("USD", 0.2), ("JPY", 0.0)])
+def test_reserves_round_to_the_currency_minor_unit(currency, monthly):
+    from types import SimpleNamespace
+    from app.services.product_reserve_service import product_reserve_values
+    product = SimpleNamespace(budget_treatment="reserve_allocation", is_asset=False, units_per_purchase=1,
+                              last_unit_price=0.4, frequency_days=60)
+    assert product_reserve_values(product, currency=currency)["recommended_monthly_reserve"] == monthly
+
+
+def test_a_goal_that_fails_part_way_is_not_saved(db, monkeypatch):
+    from app.workflows import goal_workflow
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("milestones failed")
+    monkeypatch.setattr(goal_workflow, "build_default_milestone_rows", broken)
+    payload = schemas.LifeEventCreate(scenario_id=goal_scenario_id(db, 1), name="途中で失敗", target_date=date(2030, 1, 1),
+                                      target_amount=100000)
+    with pytest.raises(RuntimeError):
+        goal_workflow.create_goal(db, 1, payload)
+    db.rollback()
+    assert db.query(models.LifeEvent).filter_by(name="途中で失敗").count() == 0

@@ -481,7 +481,8 @@ def sync_capsule_monthly_contributions(
         capsule = db.query(models.Capsule).filter_by(
             id=capsule_id, client_id=client_id,
         ).first()
-        if capsule is None:
+        if capsule is None or capsule.monthly_contribution_source == "linked_products":
+            # Products own that capsule's monthly amount (refresh_product_capsules).
             continue
         capsule.monthly_contribution_minor = int(db.query(
             func.coalesce(func.sum(models.MonthlyPlanLine.amount_minor), 0),

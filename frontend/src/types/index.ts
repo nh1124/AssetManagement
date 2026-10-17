@@ -205,45 +205,6 @@ export interface AiAuditLog {
     created_at: string;
 }
 
-export interface AiOperationEvaluatePayload {
-    source?: AiOperationSource;
-    tool_name?: string | null;
-    resource: string;
-    action: string;
-    risk?: AiOperationRisk;
-    ai_client_id?: number | null;
-    mcp_client_id?: string | null;
-    request_summary?: Record<string, unknown>;
-    diff_summary?: Record<string, unknown>;
-    mfa_verified?: boolean;
-}
-
-export interface AiOperationEvaluateResult {
-    decision: string;
-    mode: AiOperationMode;
-    resource: string;
-    action: string;
-    risk: AiOperationRisk;
-    require_mfa: boolean;
-    reason: string;
-}
-
-export interface AiChangeRequestPayload {
-    source?: AiOperationSource;
-    tool_name?: string | null;
-    resource: string;
-    action: string;
-    risk?: AiOperationRisk;
-    ai_client_id?: number | null;
-    mcp_client_id?: string | null;
-    target_ref?: Record<string, unknown>;
-    input_payload?: Record<string, unknown>;
-    idempotency_key?: string | null;
-    expires_at?: string | null;
-    mfa_verified?: boolean;
-    status?: 'draft' | 'pending';
-}
-
 export interface AiChangeRequestPreview {
     resource: string;
     action: string;

@@ -6,7 +6,8 @@ right now (sync). This module owns the rows and the user's decisions on them:
 - open: shown;
 - snoozed: 後で確認, hidden until snoozed_until, then shown again;
 - dismissed: 見送り, hidden while the same reasons hold (a change of reasons is a
-  new dedupe_key, so a new notification);
+  new dedupe_key, so a new notification; reasons that go away and come back are
+  shown again);
 - done: resolved by the action itself or because the reasons went away; a done
   notification whose reasons come back is reopened.
 """
@@ -20,6 +21,8 @@ from sqlalchemy.orm import Session
 from .. import models
 
 ACTIVE = ("open", "snoozed")
+# Everything that is not done yet; a dismissal is a decision about the current reasons only.
+UNRESOLVED = (*ACTIVE, "dismissed")
 
 
 def _now(now: datetime | None) -> datetime:
@@ -45,16 +48,16 @@ def sync(db: Session, client_id: int, kind: str, desired: list[dict], *, now: da
         if row.status == "done":
             row.status, row.resolved_at, row.snoozed_until = "open", None, None
     for key, row in rows.items():
-        if key not in wanted and row.status in ACTIVE:
+        if key not in wanted and row.status in UNRESOLVED:
             row.status, row.resolved_at = "done", now
     db.flush()
 
 
 def resolve_kind(db: Session, client_id: int, kind: str, *, now: datetime | None = None) -> None:
-    """The action a kind asks for was taken: close its open and snoozed notifications; flushes only."""
+    """The action a kind asks for was taken: close its notifications that are not done; flushes only."""
     db.query(models.Notification).filter(
         models.Notification.client_id == client_id, models.Notification.kind == kind,
-        models.Notification.status.in_(ACTIVE),
+        models.Notification.status.in_(UNRESOLVED),
     ).update({"status": "done", "resolved_at": _now(now)}, synchronize_session="fetch")
     db.flush()
 

@@ -38,9 +38,3 @@ export const transactionDirection = (tx: Pick<Transaction, 'legs'>): Direction =
     if (sawLiabilityDebit) return 'out';
     return 'move';
 };
-
-export const directionSign = (direction: Direction): string =>
-    direction === 'in' ? '+' : direction === 'out' ? '-' : '';
-
-export const directionClass = (direction: Direction): string =>
-    direction === 'in' ? 'text-emerald-500' : direction === 'out' ? 'text-rose-500' : 'text-cyan-500';

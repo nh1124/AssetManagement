@@ -169,7 +169,8 @@ def test_create_goal_writes_one_goal_annual_milestones_and_one_capsule_without_a
     for model in (models.Account, models.Transaction, models.JournalEntry, models.CapsuleRule):
         assert db.query(model).count() == 0
     if commit:
-        assert commits == [(1, 0, 0), (1, len(milestones), 0), (1, len(milestones), 1)]
+        # One commit with the goal, its milestones and its capsule together.
+        assert commits == [(1, len(milestones), 1)]
     else:
         assert commits == []
         db.rollback()

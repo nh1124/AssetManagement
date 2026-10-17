@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 from .money_storage import to_minor, money_client_currency
 
 from .. import models
+from ..domain.money import CURRENCY_EXPONENTS
+from ..models.money import client_currency
 
 
 DEFAULT_PRODUCT_RESERVE_POOLS = (
@@ -33,7 +35,14 @@ def _months_until(target: date, reference_date: date) -> int:
     return max(1, months)
 
 
-def product_reserve_values(product: models.Product, reference_date: date | None = None) -> dict:
+def product_reserve_values(product: models.Product, reference_date: date | None = None,
+                           currency: str | None = None) -> dict:
+    """A product's reserve target and recommended monthly reserve, in the client's currency.
+
+    Rounded to the currency's minor unit: whole yen, but cents for USD, so a small
+    dollar price does not round to nothing.
+    """
+    places = CURRENCY_EXPONENTS[currency or client_currency(product)]
     if effective_budget_treatment(product) not in RESERVE_TREATMENTS:
         return {
             "reserve_target_amount": 0.0,
@@ -50,16 +59,16 @@ def product_reserve_values(product: models.Product, reference_date: date | None 
             months = max(1, int(product.lifespan_months or 0))
         monthly = target_amount / months if target_amount > 0 and months > 0 else 0.0
         return {
-            "reserve_target_amount": round(target_amount, 0),
-            "recommended_monthly_reserve": round(monthly, 0),
+            "reserve_target_amount": round(target_amount, places),
+            "recommended_monthly_reserve": round(monthly, places),
         }
 
     units = product.units_per_purchase or 1
     unit_cost = (product.last_unit_price or 0.0) / units if units else (product.last_unit_price or 0.0)
     monthly = unit_cost * (30 / product.frequency_days) if product.frequency_days and product.frequency_days > 0 else 0.0
     return {
-        "reserve_target_amount": round(product.last_unit_price or 0.0, 0),
-        "recommended_monthly_reserve": round(monthly, 0),
+        "reserve_target_amount": round(product.last_unit_price or 0.0, places),
+        "recommended_monthly_reserve": round(monthly, places),
     }
 
 
@@ -82,10 +91,13 @@ def refresh_product_capsules(
     db: Session, client_id: int, capsule_ids: Iterable[int | None],
 ) -> list[dict]:
     db.flush()
+    # Locked in id order before the products are read, so two saves into one capsule
+    # cannot each write a total that misses the other's product.
     capsules = db.query(models.Capsule).filter(
         models.Capsule.client_id == client_id,
         models.Capsule.id.in_({capsule_id for capsule_id in capsule_ids if capsule_id is not None}),
-    ).all()
+    ).order_by(models.Capsule.id).with_for_update().all()
+    currency = money_client_currency(db, client_id)
     refreshed = []
     for capsule in capsules:
         products = [product for product in db.query(models.Product).filter(
@@ -94,7 +106,6 @@ def refresh_product_capsules(
         ).all() if should_use_reserve(product)]
         if products:
             reserves = [product_reserve_values(product) for product in products]
-            currency = money_client_currency(db, client_id)
             capsule.capsule_type = "product_pool"
             capsule.target_amount_source = capsule.monthly_contribution_source = "linked_products"
             capsule.target_amount_minor = to_minor(sum(value["reserve_target_amount"] for value in reserves), currency)
@@ -137,8 +148,6 @@ def ensure_default_product_reserve_pools(db: Session, client_id: int) -> list[mo
                 capsule.capsule_type = "product_pool"
         pools.append(capsule)
     return pools
-
-
 
 
 def reserve_totals_by_capsule(db: Session, client_id: int, reference_date: date | None = None) -> dict[int, dict]:

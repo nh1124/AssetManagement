@@ -184,16 +184,6 @@ def _cash_flow_projection(
     return rows
 
 
-def get_balance_projection(
-    db: Session,
-    client_id: int,
-    start_period: str,
-    months: int = 12,
-    plan_id: int | None = None,
-) -> list[dict]:
-    return _balance_projection(BudgetContext(db, client_id), start_period, months=months, plan_id=plan_id)
-
-
 def _balance_projection(
     ctx: BudgetContext,
     start_period: str,

@@ -30,29 +30,6 @@ export type AccountItem = {
     parent_id?: number | null;
 };
 
-/** The asset accounts that hold what someone else owes you.
- *
- *  A split entry debits one of these for the part fronted, so the balance is
- *  the outstanding loan. They are found by name -- 立替 / advance /
- *  receivable -- and anything parented under one of them counts too, which is
- *  how one account per person is meant to be organised.
- */
-export const receivableAccounts = (accounts: AccountItem[]): AccountItem[] => {
-    const named = accounts.filter(
-        (account) =>
-            account.account_type === 'asset' && /立替|receivable|advance/i.test(account.name)
-    );
-    const roots = new Set(named.map((account) => account.id));
-    const children = accounts.filter(
-        (account) =>
-            account.account_type === 'asset' &&
-            account.parent_id != null &&
-            roots.has(account.parent_id) &&
-            !roots.has(account.id)
-    );
-    return [...named, ...children];
-};
-
 export type QuickTemplateKind =
     | 'simple_expense'
     | 'credit_expense'
@@ -63,18 +40,6 @@ export type QuickTemplateKind =
     | 'debt_payment';
 
 export type QuickTemplateGroup = 'expense' | 'income' | 'transfer';
-
-export type QuickTemplateDraft = {
-    tray: string;
-    name: string;
-    template_kind: QuickTemplateKind;
-    category: string;
-    default_currency: string;
-    default_from_account_id: string;
-    default_to_account_id: string;
-    receivable_account_id: string;
-    reimbursement_account_id: string;
-};
 
 export type QuickEntry = {
     date: string;
