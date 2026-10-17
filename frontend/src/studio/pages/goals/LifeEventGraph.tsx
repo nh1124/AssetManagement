@@ -1,22 +1,19 @@
 import { getAllConditions, type ConditionEvaluation } from '../../../api/lifeEventConditions';
 import { useCallback, useId, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { getLifeEventsWithProgress } from '../../../api';
-import { adoptLifeEventScenario, createLifeEventLink, deleteLifeEventLink, getLifeEventLinks, getLifeEventScenarios } from '../../../api/lifeEventGraph';
-import type { LifeEventLink, LifeEventLinkInput, LifeEventScenario, ScenarioParameters } from '../../../api/lifeEventGraph';
+import { createLifeEventLink, deleteLifeEventLink, getLifeEventLinks, getLifeEventScenarios } from '../../../api/lifeEventGraph';
+import type { LifeEventLink, LifeEventLinkInput, LifeEventScenario } from '../../../api/lifeEventGraph';
 import { useClient } from '../../../context/ClientContext';
 import type { LifeEvent } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import Overlay from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
 import { useResource } from '../../useResource';
-import { Choice, DataTable, EditorActions, Feedback, Field } from '../db/Database';
-import { buttonClass, inputClass, primaryClass, useMutation } from '../db/forms';
+import { Choice, EditorActions, Feedback, Field } from '../db/Database';
+import { buttonClass, inputClass, useMutation } from '../db/forms';
 import LifeEventDiagram from './LifeEventDiagram';
 import LifeEventLinkDetails from './LifeEventLinkDetails';
-
-const defaults: ScenarioParameters = { years: 30, annual_return: 5, inflation: 2 };
 
 function LinkEditor({ events, busy, onSave, onCancel }: {
     events: LifeEvent[]; busy: boolean; onSave: (input: LifeEventLinkInput) => void; onCancel: () => void;
@@ -103,48 +100,13 @@ function EventOutline({ events, links, scenario, evaluations, currency, disabled
     </div>;
 }
 
-function Comparison({ scenarios, currency }: { scenarios: LifeEventScenario[]; currency: string }) {
-    const rows = scenarios[0]?.projection.map((row, index) => {
-        const point: Record<string, number> = { year: row.year };
-        for (const scenario of scenarios) point[`scenario-${scenario.id}`] = scenario.projection[index].p50;
-        return point;
-    }) ?? [];
-    const axisStyle = { fill: 'var(--studio-text-muted)', fontSize: 11 };
-    return <>
-        <div role="img" aria-label={`シナリオ別の純資産推移（中央値）。横軸：年、縦軸：金額（${currency}）`} className="h-96 min-w-0">
-            <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={rows} margin={{ top: 20, right: 20, bottom: 28, left: 20 }} accessibilityLayer>
-                    <CartesianGrid stroke="var(--studio-border)" vertical={false} />
-                    <XAxis dataKey="year" tick={axisStyle} minTickGap={30} label={{ value: '年', position: 'bottom', ...axisStyle }} />
-                    <YAxis width={105} tick={axisStyle} tickFormatter={(value: number) => formatCurrency(value, currency)} label={{ value: `金額（${currency}）`, position: 'top', ...axisStyle }} />
-                    <Tooltip contentStyle={{ background: 'var(--studio-surface)', border: '1px solid var(--studio-border)', color: 'var(--studio-text)' }} formatter={(value, name) => [formatCurrency(Number(value), currency), name]} />
-                    {scenarios.map((scenario, index) => <Line key={scenario.id} type="linear" dataKey={`scenario-${scenario.id}`} name={scenario.label} stroke={`hsl(${(index * 137.508 + 210) % 360} 50% 48%)`} strokeWidth={2} dot={false} isAnimationActive={false} />)}
-                    <Legend verticalAlign="top" wrapperStyle={{ maxHeight: 96, overflowY: 'auto' }} />
-                </LineChart>
-            </ResponsiveContainer>
-        </div>
-        <DataTable columns={['シナリオ', `最終純資産・中央値（${currency}）`, 'イベント総額（通貨別）']}>
-            {scenarios.map((scenario) => {
-                // Even if a later format supports foreign events, never collapse their currencies.
-                const totals = new Map<string, number>();
-                for (const event of scenario.events) totals.set(event.currency, (totals.get(event.currency) ?? 0) + event.target_amount);
-                return <tr key={scenario.id}>
-                    <th scope="row" className="px-5 py-3 font-medium">{scenario.label}</th>
-                    <td className="whitespace-nowrap px-5 py-3 tabular-nums">{formatCurrency(scenario.projection.at(-1)?.p50, currency)}</td>
-                    <td className="px-5 py-3 tabular-nums">{[...totals].map(([code, amount]) => <span key={code} className="block whitespace-nowrap">{formatCurrency(amount, code)}（{code}）</span>)}</td>
-                </tr>;
-            })}
-        </DataTable>
-    </>;
-}
-
-function ScenarioResults({ currency, clientName, parameters, view }: { currency: string; clientName?: string; parameters: ScenarioParameters; view: 'diagram' | 'outline' }) {
+function ScenarioResults({ currency, clientName, view }: { currency: string; clientName?: string; view: 'diagram' | 'outline' }) {
     const confirm = useConfirm();
     const load = useCallback(async () => {
         // This goal reader exposes major-unit target amounts; raw ORM rows carry minor units.
-        const [events, links, comparison, evaluations] = await Promise.all([getLifeEventsWithProgress(), getLifeEventLinks(), getLifeEventScenarios(parameters), getAllConditions()]);
+        const [events, links, comparison, evaluations] = await Promise.all([getLifeEventsWithProgress(), getLifeEventLinks(), getLifeEventScenarios(), getAllConditions()]);
         return { events, links, comparison, evaluations };
-    }, [parameters]);
+    }, []);
     const resource = useResource(load);
     const mutation = useMutation();
     const [editing, setEditing] = useState(false);
@@ -152,10 +114,6 @@ function ScenarioResults({ currency, clientName, parameters, view }: { currency:
     const [nextKind, setNextKind] = useState<LifeEventLinkInput['kind']>('after');
     const disabled = resource.loading || Boolean(resource.error) || mutation.busy || !clientName;
     const selected = resource.data?.comparison.scenarios.find((item) => item.id === resource.data?.comparison.adopted.scenario_id);
-    const adopt = (scenarioId: string) => {
-        if (disabled || !scenarioId) return;
-        void mutation.run(() => adoptLifeEventScenario(scenarioId), '案を採用しました。', resource.reload);
-    };
     const remove = async (edge: LifeEventLink) => {
         if (disabled) return;
         const source = resource.data?.events.find((event) => event.id === edge.from_event_id)?.name;
@@ -174,10 +132,6 @@ function ScenarioResults({ currency, clientName, parameters, view }: { currency:
                     </button>)}
                 </div></div>
             </div>
-            {resource.data && <Field label="採用する案"><select value={resource.data.comparison.adopted.scenario_id ?? ''} onChange={(event) => adopt(event.target.value)} disabled={disabled} className={inputClass}>
-                {resource.data.comparison.adopted.scenario_id === null && <option value="" disabled>未採用</option>}
-                {resource.data.comparison.scenarios.map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
-            </select></Field>}
         </div>
         <Feedback loading={resource.loading} error={resource.error || (!editing && !editingLink ? mutation.error : '')} message={mutation.message} />
         {resource.data && !resource.loading && !resource.error && <>
@@ -189,9 +143,6 @@ function ScenarioResults({ currency, clientName, parameters, view }: { currency:
                     void mutation.run(() => createLifeEventLink({ from_event_id: source, to_event_id: target, kind: nextKind, offset_months: 0 }), '接続を追加しました。', resource.reload);
                 }} />
                 : <EventOutline evaluations={resource.data.evaluations} events={resource.data.events} links={resource.data.links} scenario={selected} currency={currency} disabled={disabled} onDelete={(edge) => { void remove(edge); }} />}
-            <Comparison scenarios={resource.data.comparison.scenarios} currency={currency} />
-            {/* A provisional scenario is already selected, so onChange cannot confirm it unchanged. */}
-            {!resource.data.comparison.adopted.exact && selected && <div className="flex justify-end"><button type="button" disabled={disabled} onClick={() => adopt(selected.id)} className={primaryClass}>この案を採用</button></div>}
         </>}
         {editing && resource.data && <Overlay title="接続を追加" onClose={() => { if (!mutation.busy) setEditing(false); }}>
             <Feedback error={mutation.error} />
@@ -205,8 +156,6 @@ function ScenarioResults({ currency, clientName, parameters, view }: { currency:
 }
 
 function LifeEventGraphForClient({ currency, clientName }: { currency: string; clientName?: string }) {
-    const [draft, setDraft] = useState(defaults);
-    const [parameters, setParameters] = useState(defaults);
     const [view, setView] = useState<'diagram' | 'outline'>('diagram');
     return <section className="space-y-5">
         <div role="group" aria-label="イベントの表示" className="flex gap-1">
@@ -214,14 +163,7 @@ function LifeEventGraphForClient({ currency, clientName }: { currency: string; c
                 {mode === 'diagram' ? '図' : '接続の一覧'}
             </button>)}
         </div>
-        <form onSubmit={(event) => { event.preventDefault(); setParameters({ ...draft }); }} className="flex flex-wrap items-end gap-4">
-            <Field label="期間（年）"><input type="number" min="1" max="60" step="1" required value={draft.years} onChange={(event) => setDraft({ ...draft, years: Number(event.target.value) })} className={inputClass} /></Field>
-            <Field label="年利（%）"><input type="number" step="0.1" required value={draft.annual_return} onChange={(event) => setDraft({ ...draft, annual_return: Number(event.target.value) })} className={inputClass} /></Field>
-            <Field label="インフレ（%）"><input type="number" step="0.1" required value={draft.inflation} onChange={(event) => setDraft({ ...draft, inflation: Number(event.target.value) })} className={inputClass} /></Field>
-            <button type="submit" className={buttonClass}>再試算</button>
-        </form>
-        {/* Parameter changes remount results so dates and paths always use the same assumptions. */}
-        <ScenarioResults key={JSON.stringify(parameters)} currency={currency} clientName={clientName} parameters={parameters} view={view} />
+        <ScenarioResults currency={currency} clientName={clientName} view={view} />
     </section>;
 }
 

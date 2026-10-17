@@ -20,6 +20,8 @@ import GoalSummary from './pages/goals/GoalSummary';
 import GoalPage from './pages/goals/GoalPage';
 import GoalWorkspace from './pages/goals/GoalWorkspace';
 import LifeEventGraph from './pages/goals/LifeEventGraph';
+import GoalEditingLayout from './pages/goals/GoalEditingLayout';
+import Simulation from './pages/goals/Simulation';
 import Ai from './pages/automation/Ai';
 import Approvals from './pages/automation/Approvals';
 import Audit from './pages/automation/Audit';
@@ -45,7 +47,7 @@ const SCREENS: Record<string, { index: ReactElement; tabs?: Record<string, React
     flows: { index: <Flows />, tabs: { accounts: <Flows subjects /> } },
     budget: { index: <Budget />, tabs: { actions: <Actions /> } },
     report: { index: <Trends />, tabs: { breakdown: <Breakdown />, review: <Review />, export: <Export /> } },
-    goals: { index: <GoalSummary />, tabs: { events: <LifeEventList />, graph: <LifeEventGraph /> } },
+    goals: { index: <GoalSummary /> },
     assets: {
         layout: <Assets />,
         index: <Overview />,
@@ -76,9 +78,14 @@ export default function StudioApp() {
                     <Route path={STUDIO_EDITOR_PATHS.record} element={<Record />} />
                     {/* Editors have URLs without becoming destinations in the rail. */}
                     <Route path={STUDIO_EDITOR_PATHS.transaction} element={<Record />} />
-                    <Route path={STUDIO_EDITOR_PATHS.newGoal} element={<GoalPage />} />
-                    <Route path={STUDIO_EDITOR_PATHS.editGoal} element={<GoalPage />} />
-                    <Route path="goals/events/:goalId" element={<GoalWorkspace />} />
+                    <Route element={<GoalEditingLayout />}>
+                        <Route path="goals/events" element={<LifeEventList />} />
+                        <Route path="goals/graph" element={<LifeEventGraph />} />
+                        <Route path="goals/simulation" element={<Simulation />} />
+                        <Route path={STUDIO_EDITOR_PATHS.newGoal} element={<GoalPage />} />
+                        <Route path={STUDIO_EDITOR_PATHS.editGoal} element={<GoalPage />} />
+                        <Route path="goals/events/:goalId" element={<GoalWorkspace />} />
+                    </Route>
                     {STUDIO_SCREENS.map((screen) => {
                         const screenRoutes = SCREENS[screen.path];
                         return (
