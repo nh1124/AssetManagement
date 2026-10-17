@@ -23,7 +23,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import date
+from datetime import date, datetime
+from uuid import uuid4
 
 from sqlalchemy.orm import Session
 
@@ -40,7 +41,7 @@ from ..services.budget_plan_store import (
     update_plan_lines,
 )
 from ..services.cache_service import invalidate_client
-from ..services import goal_baseline_service, goal_budget_record, life_scenario_service
+from ..services import goal_baseline_service, goal_budget_record, life_scenario_service, monthly_action_store
 from ..services.budget_plan_service import get_budget_summary
 from ..services.goal_service import list_goals
 from ..services.life_scenario_scope import get_goal
@@ -53,6 +54,7 @@ from ..services.life_scenario_scope import lock_client
 from ..services.money_storage import money_client_currency
 
 GOAL_SOURCE = "goal"
+REFLECTION_ACTION = "goal_reflection"
 GOAL_LINE_NAME = "ゴールの積立"
 PRIORITY_WEIGHTS = {1: 3, 2: 2, 3: 1}
 
@@ -573,7 +575,7 @@ def apply(db: Session, client_id: int, options: dict, fingerprint: str, *, updat
                 create_plan_lines(db, client_id, creates, commit=False)
             for change in definitions:
                 registry_service.update_entry(db, client_id, change["definition_id"], {"amount": change["new_amount"]}, commit=False)
-            goal_budget_record.record(
+            record = goal_budget_record.record(
                 db, client_id, scenario_id=planned["scenario"]["id"], start_period=planned["periods"][0],
                 end_period=planned["periods"][-1], options=planned["options"], summary=planned["savings"],
                 events=[{key: row.get(key) for key in (
@@ -584,6 +586,12 @@ def apply(db: Session, client_id: int, options: dict, fingerprint: str, *, updat
             if update_baseline:
                 # Q4: the user may move the baseline to the plan the budget now follows.
                 goal_baseline_service.capture(db, client_id, "reflection")
+            # A confirmed reflection completes the actions that asked for it.
+            for action in monthly_action_store.pending_of_kind(db, client_id, REFLECTION_ACTION):
+                monthly_action_store.update(db, client_id, action, {
+                    "status": "applied", "applied_at": datetime.utcnow(),
+                    "result": {"reflection_id": record.id, "periods": planned["periods"]},
+                })
         except ValueError as exc:
             raise Conflict(f"予算行を書き込めませんでした：{exc}") from exc
         db.commit()
@@ -727,3 +735,44 @@ def status(db: Session, client_id: int, period: str) -> dict:
         },
         "reminders": _reminders(goal, total, events, records, period, budget_total),
     }
+
+
+def sync_reflection_action(db: Session, client_id: int, period: str) -> dict:
+    """Keep one pending "update the budget from the goal" action while reasons exist.
+
+    Called when the user opens the actions, goal or budget screen for the month, so
+    a reminder becomes an action without a background job writing to clients
+    nobody is using. The action needs confirmation: it opens the reflection preview
+    and is completed by apply(); when the reasons go away it is set aside.
+    """
+    reminders = status(db, client_id, period)["reminders"]
+    pending = monthly_action_store.pending_of_kind(db, client_id, REFLECTION_ACTION)
+    try:
+        if reminders:
+            description = "ゴールから予算を更新（確認が必要）"
+            payload = {"period": period, "reminders": reminders}
+            if pending:
+                monthly_action_store.update(db, client_id, pending[0], {
+                    "description": description, "payload": payload, "target_period": period,
+                })
+                action = pending[0]
+            else:
+                action = monthly_action_store.create(db, client_id, {
+                    "source_period": period, "target_period": period, "kind": REFLECTION_ACTION,
+                    "description": description, "payload": payload, "result": {}, "status": "pending",
+                    "proposal_id": f"goal_reflection_{uuid4().hex[:10]}",
+                    "idempotency_key": f"goal_reflection:{client_id}:{period}:{uuid4().hex}",
+                })
+            for extra in pending[1:]:
+                monthly_action_store.update(db, client_id, extra, {"status": "skipped", "result": {"reason": "重複"}})
+        else:
+            action = None
+            for row in pending:
+                monthly_action_store.update(db, client_id, row, {
+                    "status": "skipped", "result": {"reason": "お知らせが解消されたため"},
+                })
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    return {"action_id": action.id if action is not None else None, "reminders": len(reminders)}

@@ -1,5 +1,5 @@
 import { useCallback } from 'react';
-import { getGoalBudgetStatus, type GoalBudgetStatusEvent } from '../../../api/goalBudget';
+import { getGoalBudgetStatus, syncGoalReflectionAction, type GoalBudgetStatusEvent } from '../../../api/goalBudget';
 import { formatCurrency } from '../../../utils/currency';
 import { clientToday, formatDate, useTimezone } from '../../datetime';
 import { useResource } from '../../useResource';
@@ -20,7 +20,12 @@ function kindLabel(row: GoalBudgetStatusEvent, nearYears: number | null): string
 export default function GoalSavingsBreakdown({ currency, onReflect }: { currency: string; onReflect: () => void }) {
     const timezone = useTimezone();
     const period = clientToday(timezone).slice(0, 7);
-    const load = useCallback(() => getGoalBudgetStatus(period), [period]);
+    const load = useCallback(async () => {
+        const result = await getGoalBudgetStatus(period);
+        // Reminders also wait on the actions page, as an action that needs confirmation.
+        void syncGoalReflectionAction(period).catch(() => undefined);
+        return result;
+    }, [period]);
     const resource = useResource(load);
     const data = resource.data;
     return <section className="space-y-3 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">

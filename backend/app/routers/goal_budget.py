@@ -20,6 +20,16 @@ def status(
     return workflow.status(db, current_client.id, period)
 
 
+@router.post("/sync-action")
+def sync_action(
+    period: str = Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$"),
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    """Create, refresh or set aside the confirmation-required reflection action for the month."""
+    return workflow.sync_reflection_action(db, current_client.id, period)
+
+
 @router.post("/preview")
 def preview(
     payload: schemas.GoalBudgetOptions,

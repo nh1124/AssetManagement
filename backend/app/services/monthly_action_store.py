@@ -36,6 +36,15 @@ def list_for_client(
     return query.order_by(models.MonthlyAction.created_at.desc(), models.MonthlyAction.id.desc()).all()
 
 
+def pending_of_kind(db: Session, client_id: int, kind: str) -> list[models.MonthlyAction]:
+    """Pending actions of one kind, newest first."""
+    return db.query(models.MonthlyAction).filter(
+        models.MonthlyAction.client_id == client_id,
+        models.MonthlyAction.kind == kind,
+        models.MonthlyAction.status == "pending",
+    ).order_by(models.MonthlyAction.created_at.desc(), models.MonthlyAction.id.desc()).all()
+
+
 def list_due(db: Session, client_id: int, today: date) -> list[models.MonthlyAction]:
     return db.query(models.MonthlyAction).filter(
         models.MonthlyAction.client_id == client_id,

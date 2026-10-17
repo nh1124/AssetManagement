@@ -179,3 +179,8 @@ export interface GoalBudgetOverview {
 export async function getGoalBudgetStatus(period: string): Promise<GoalBudgetOverview> {
     return (await api.get<GoalBudgetOverview>('/goal-budget/status', { params: { period } })).data;
 }
+
+/** Create, refresh or set aside this month's confirmation-required "update from the goal" action. */
+export async function syncGoalReflectionAction(period: string): Promise<{ action_id: number | null; reminders: number }> {
+    return (await api.post<{ action_id: number | null; reminders: number }>('/goal-budget/sync-action', null, { params: { period } })).data;
+}

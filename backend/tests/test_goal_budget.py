@@ -556,3 +556,32 @@ def test_a_handover_cannot_exceed_the_unclaimed_balance_or_the_need(db, story, a
     chosen = near | {"handovers": [{"event_id": story["home"].id, "account_id": story["savings"].id, "amount": amount}]}
     with pytest.raises(Refused, match=message):
         workflow.preview(db, 1, chosen)
+
+
+
+def test_reminders_become_one_action_that_needs_confirmation(db, story):
+    from app.workflows import monthly_action_workflow as actions
+    first = workflow.sync_reflection_action(db, 1, START)
+    again = workflow.sync_reflection_action(db, 1, START)
+    assert first["action_id"] == again["action_id"] and first["reminders"] >= 1
+    rows = actions.list_actions(db, 1)
+    assert [(row["kind"], row["status"], row["requires_confirmation"]) for row in rows] == [("goal_reflection", "pending", True)]
+    assert rows[0]["payload"]["reminders"][0]["code"] == "never"
+    # It cannot be applied in one click, and processing due actions leaves it alone.
+    with pytest.raises(Refused, match="確認が必要") as refused:
+        actions.apply_action(db, 1, rows[0]["id"])
+    assert refused.value.status_code == 409
+    assert actions.process_due_actions(db, 1, date(2027, 1, 1)) == []
+    # The confirmed reflection completes it.
+    chosen = options(savings_account_id=story["savings"].id)
+    workflow.apply(db, 1, chosen, workflow.preview(db, 1, chosen)["fingerprint"])
+    done = actions.list_actions(db, 1)[0]
+    assert done["status"] == "applied" and done["result"]["periods"] == [START]
+
+
+def test_an_action_whose_reasons_went_away_is_set_aside(db, story, monkeypatch):
+    from app.workflows import monthly_action_workflow as actions
+    workflow.sync_reflection_action(db, 1, START)
+    monkeypatch.setattr(workflow, "status", lambda *args, **kwargs: {"reminders": []})
+    assert workflow.sync_reflection_action(db, 1, START)["action_id"] is None
+    assert actions.list_actions(db, 1)[0]["status"] == "skipped"
