@@ -246,7 +246,9 @@ def existing_savings(db, story):
         "name": "年払いの積立", "amount": 12000, "currency": "JPY", "frequency": "Yearly", "month_of_year": 11,
         "line_type": "allocation", "source_account_id": bank.id, "destination_account_id": story["other"].id,
     })
-    loose = capsule_service.create_capsule(db, 1, schemas.CapsuleCreate(name="予備費", target_amount=100000, monthly_contribution=5000))
+    # A capsule funded from an account shows in the budget, so it counts.
+    loose = capsule_service.create_capsule(db, 1, schemas.CapsuleCreate(name="予備費", target_amount=100000, monthly_contribution=5000,
+                                                                         account_id=story["other"].id))
     return definition, yearly, loose
 
 
@@ -352,3 +354,140 @@ def test_a_far_event_entering_the_range_suggests_a_handover(db, story):
     assert near["event_id"] == story["home"].id
     # Three reflected months of its far share were planned into the savings.
     assert near["handover_amount"] == pytest.approx(home["allocation"] * 3)
+
+
+
+# --- Review fixes (R1): each test names the defect it guards against. ---
+
+def plan_lines(db, **filters):
+    return db.query(models.MonthlyPlanLine).filter_by(is_active=True, **filters).order_by(
+        models.MonthlyPlanLine.target_period, models.MonthlyPlanLine.id).all()
+
+
+def test_a_definition_saved_for_the_month_counts_once(db, story):
+    from app.services.budget_plan_store import create_plan_lines
+    definition, _, _ = existing_savings(db, story)
+    # The user saved the definition's month at its own amount; the budget merges the two.
+    create_plan_lines(db, 1, [{"target_period": START, "line_type": "allocation", "target_type": "account",
+                               "account_id": story["savings"].id, "amount": 20000}])
+    rows = [row for row in workflow.preview(db, 1, options())["existing"] if row["amount"]]
+    assert sorted((row["kind"], row["amount"]) for row in rows) == [("capsule", 5000), ("definition", 12000), ("definition", 20000)]
+
+
+def test_a_capsule_absent_from_the_budget_does_not_count(db, story):
+    capsule_service.create_capsule(db, 1, schemas.CapsuleCreate(name="口座なし", target_amount=1000, monthly_contribution=5000))
+    assert workflow.preview(db, 1, options())["existing"] == []
+
+
+def test_a_near_capsule_stops_at_its_target_month(db, story):
+    story["trip"].target_date = date(2026, 12, 15)
+    db.commit()
+    chosen = options(savings_account_id=story["savings"].id, months=3, create_capsules=[story["trip"].id])
+    preview = workflow.preview(db, 1, chosen)
+    trip = [(row["period"], row["new_amount"]) for row in preview["changes"] if row["kind"] == "capsule" and row["name"] == "旅行"]
+    # Funded in November only (one month before December); later months write nothing.
+    assert trip[0] == ("2026-11", 60000) and all(amount == 0 for _, amount in trip[1:])
+    savings = {row["period"]: row["new_amount"] for row in preview["changes"] if row["kind"] == "savings"}
+    assert savings == {"2026-11": 0, "2026-12": 40000, "2027-01": 40000}
+
+
+def test_a_legacy_life_event_row_is_updated_not_duplicated(db, story):
+    from app.services.budget_plan_store import create_plan_lines, get_or_create_default_plan
+    plan = get_or_create_default_plan(db, 1)
+    legacy = models.MonthlyPlanLine(client_id=1, plan_id=plan.id, target_period=START, line_type="allocation",
+                                    target_type="life_event", target_id=story["car"].id, amount_minor=777)
+    db.add(legacy)
+    db.commit()
+    chosen = options()
+    preview = workflow.preview(db, 1, chosen)
+    car = [row for row in preview["changes"] if row["kind"] == "capsule"]
+    assert [(row["line_id"], row["current_amount"], row["new_amount"]) for row in car] == [(legacy.id, 777, 10000)]
+    workflow.apply(db, 1, chosen, preview["fingerprint"])
+    assert [line.amount for line in plan_lines(db, target_period=START, line_type="allocation")] == [10000]
+
+
+def test_an_accountless_row_is_split_when_the_capsule_has_several_accounts(db, story):
+    from app.services.budget_plan_store import get_or_create_default_plan
+    car_capsule = db.query(models.Capsule).filter_by(life_event_id=story["car"].id).one()
+    plan = get_or_create_default_plan(db, 1)
+    legacy = models.MonthlyPlanLine(client_id=1, plan_id=plan.id, target_period=START, line_type="allocation",
+                                    target_type="capsule", target_id=car_capsule.id, amount_minor=500)
+    db.add(legacy)
+    db.commit()
+    capsule_service.set_funding_sources(db, 1, car_capsule.id, [
+        schemas.CapsuleFundingSourceInput(account_id=story["savings"].id, target_amount=1),
+        schemas.CapsuleFundingSourceInput(account_id=story["other"].id, target_amount=1, sort_order=1),
+    ])
+    chosen = options()
+    preview = workflow.preview(db, 1, chosen)
+    workflow.apply(db, 1, chosen, preview["fingerprint"])
+    rows = plan_lines(db, target_period=START, target_type="capsule")
+    assert sorted((line.account_id, line.amount) for line in rows) == [(story["savings"].id, 5000), (story["other"].id, 5000)]
+    db.refresh(legacy)
+    assert legacy.is_active is False
+
+
+def test_a_definition_destination_also_updates_saved_months_and_needs_one_amount(db, story):
+    from app.services.budget_plan_store import create_plan_lines
+    definition, yearly, _ = existing_savings(db, story)
+    create_plan_lines(db, 1, [{"target_period": START, "line_type": "allocation", "target_type": "account",
+                               "account_id": story["savings"].id, "amount": 20000}])
+    chosen = options(savings_definition_id=definition.id)
+    preview = workflow.preview(db, 1, chosen)
+    saved = next(row for row in preview["changes"] if row["kind"] == "definition_row")
+    assert (saved["current_amount"], saved["new_amount"]) == (20000, 23000)
+    workflow.apply(db, 1, chosen, preview["fingerprint"])
+    assert [line.amount for line in plan_lines(db, target_period=START, account_id=story["savings"].id)] == [23000]
+    # The yearly definition makes November differ from December: one amount cannot follow.
+    with pytest.raises(Refused):
+        workflow.preview(db, 1, options(savings_definition_id=definition.id, months=2))
+
+
+def test_a_zero_definition_destination_stays_selectable(db, story):
+    definition, _, _ = existing_savings(db, story)
+    definition.amount_minor = 0
+    db.commit()
+    preview = workflow.preview(db, 1, options(savings_definition_id=definition.id))
+    assert next(row for row in preview["existing"] if row["kind"] == "definition" and row["id"] == definition.id)["destination"]
+
+
+def test_apply_writes_into_the_plan_the_preview_read(db, story):
+    from app.services.budget_plan_store import create_plan
+    only = create_plan(db, 1, {"name": "家計"})
+    chosen = options(savings_account_id=story["savings"].id)
+    workflow.apply(db, 1, chosen, workflow.preview(db, 1, chosen)["fingerprint"])
+    assert db.query(models.BudgetPlan).count() == 1
+    assert {line.plan_id for line in plan_lines(db)} == {only.id}
+
+
+def test_changing_priorities_changes_the_fingerprint(db, story):
+    second = add_event(db, "老後", date(2050, 1, 1), 5_000_000, priority=3)
+    chosen = options()
+    before = workflow.preview(db, 1, chosen)
+    story["home"].priority, second.priority = 3, 1
+    db.commit()
+    with pytest.raises(Conflict):
+        workflow.apply(db, 1, chosen, before["fingerprint"])
+
+
+def test_overlapping_reflections_count_each_month_once_for_the_handover(db, story):
+    chosen = options(savings_account_id=story["savings"].id, months=3)
+    for _ in range(2):
+        workflow.apply(db, 1, chosen, workflow.preview(db, 1, chosen)["fingerprint"])
+    home = next(row for row in workflow.preview(db, 1, chosen)["events"] if row["name"] == "住宅")
+    near = next(row for row in workflow.status(db, 1, "2042-01")["reminders"] if row["code"] == "event_near")
+    assert near["handover_amount"] == pytest.approx(home["allocation"] * 3)
+
+
+def test_progress_uses_the_reflection_of_its_own_month_and_never_funds_archived_events(db, story):
+    from datetime import datetime
+    from app.services.strategy_service import event_monthly_allocation
+    chosen = options(savings_account_id=story["savings"].id)
+    workflow.apply(db, 1, chosen, workflow.preview(db, 1, chosen)["fingerprint"])
+    car = story["car"]
+    assert event_monthly_allocation(db, 1, car, 50000, date(2026, 11, 1)) == (10000, "reflection")
+    # A month the reflection does not cover is divided by the rule.
+    assert event_monthly_allocation(db, 1, car, 50000, date(2027, 3, 1))[1] == "rule"
+    car.archived_at = datetime(2026, 11, 2)
+    db.commit()
+    assert event_monthly_allocation(db, 1, car, 50000, date(2026, 11, 1)) == (0.0, "rule")

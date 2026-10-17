@@ -262,8 +262,8 @@ def event_monthly_allocation(
 
     The same breakdown the budget reflection writes, so event progress, milestones
     and the budget describe one plan:
-    - a goal event in the latest applied reflection receives exactly what the
-      budget was told ("reflection");
+    - a goal event in the applied reflection covering this month receives exactly
+      what the budget was told for it ("reflection");
     - otherwise ("rule"), a near event (within the reflection's range, five years by
       default) receives its shortfall over the remaining months, as cash in its
       capsule, and a far event a priority share of what remains; an event left to
@@ -272,14 +272,20 @@ def event_monthly_allocation(
       nothing, so progress shows the shortfall instead of a plan nobody can fund.
     The rule does not judge preconditions; the reflection does, when it is applied.
     """
+    if (event.archived_at is not None or event.direction != "expense"
+            or event.budget_reflection_effective == "simulation_only"):
+        # A called-off, income or simulation-only event receives nothing, whatever was recorded.
+        return 0.0, "rule"
     near_years: int | None = DEFAULT_NEAR_YEARS
-    record = goal_budget_record.latest(db, client_id)
-    if record is not None and record.scenario_id == event.scenario_id:
+    latest = goal_budget_record.latest(db, client_id)
+    if latest is not None and latest.scenario_id == event.scenario_id:
+        near_years = (latest.options or {}).get("near_years", DEFAULT_NEAR_YEARS)
+    record = goal_budget_record.covering(db, client_id, evaluation_date.strftime("%Y-%m"))
+    if use_record and record is not None and record.scenario_id == event.scenario_id:
         near_years = (record.options or {}).get("near_years", DEFAULT_NEAR_YEARS)
-        if use_record:
-            for row in record.events or []:
-                if row.get("lineage") == event.lineage:
-                    return float(row.get("allocation") or 0.0), "reflection"
+        for row in record.events or []:
+            if row.get("lineage") == event.lineage:
+                return float(row.get("allocation") or 0.0), "reflection"
     story = [item for item in story_events_query(db, client_id, event).filter(
         models.LifeEvent.direction == "expense",
     ).all() if item.budget_reflection_effective != "simulation_only"]

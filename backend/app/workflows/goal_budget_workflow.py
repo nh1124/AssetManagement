@@ -36,6 +36,7 @@ from ..services.budget_plan_store import (
     create_plan_lines,
     find_budget_plan_id,
     resolve_budget_plan_id,
+    retire_plan_lines,
     update_plan_lines,
 )
 from ..services.cache_service import invalidate_client
@@ -67,69 +68,117 @@ def _major(minor: int, currency: str) -> float:
     return Money(minor, currency).to_float()
 
 
-def _capsule_rows(lines, period: str, capsule, amount: Money) -> list[tuple]:
-    """(account, stored row or None, amount) for each plan row this capsule needs in the month."""
+def _contributes(period: str, start: str, target) -> bool:
+    """A near event is funded in each month before its target month (or only the first, if due then)."""
+    return _months_between(period, target.strftime("%Y-%m")) >= 1 or period == start
+
+
+def _capsule_rows(lines, period: str, capsule, event_id: int, amount: Money) -> list[dict]:
+    """The plan rows this capsule needs in the month: update, create, or retire.
+
+    Stored rows may target the capsule (one per funding account, or one without an
+    account from before funding plans) or, in the oldest form, the life event itself.
+    """
     if capsule is None:
         # Created on apply: no funding plan yet, so one row for the whole amount.
-        return [(None, None, amount)]
+        return [{"account_id": None, "line": None, "amount": amount}]
     stored = [line for line in lines if line.target_period == period and line.line_type == "allocation"
-              and line.target_type == "capsule" and line.target_id == capsule.id]
-    shares = capsule_shares(capsule, amount)
+              and ((line.target_type == "capsule" and line.target_id == capsule.id)
+                   or (line.target_type == "life_event" and line.target_id == event_id))]
     by_account = {line.account_id: line for line in stored if line.account_id is not None}
-    legacy = next((line for line in stored if line.account_id is None), None)
-    if legacy is not None and not by_account:
-        # A row predating the funding plan names no account and stands for the whole capsule.
-        return [(None, legacy, amount)]
-    return [(account_id, by_account.get(account_id) if account_id is not None else legacy, part)
-            for account_id, part in shares]
+    legacy = [line for line in stored if line.account_id is None]
+    retire = [{"account_id": None, "line": line, "amount": None} for line in legacy]
+    if legacy and not by_account and len(capsule.funding_sources) <= 1:
+        # The account-less row stands for the whole capsule; keep the first, retire duplicates.
+        return [{"account_id": None, "line": legacy[0], "amount": amount}, *retire[1:]]
+    # With account rows, or several funding accounts, an account-less row cannot be
+    # updated; it is retired and the capsule gets one row per account instead.
+    rows = [{"account_id": account_id, "line": by_account.get(account_id) if account_id is not None else None, "amount": part}
+            for account_id, part in capsule_shares(capsule, amount)]
+    return [*rows, *retire]
 
 
-def _existing_savings(db: Session, client_id: int, periods: list[str], lines, skip_capsules: set[int], currency: str) -> list[dict]:
-    """Savings the budget already plans in these months, outside what this reflection writes."""
+def _budget_rows(db: Session, client_id: int, period: str, plan_id: int | None) -> list[dict]:
+    """The month's savings as the budget shows it: allocation rows into capsules or asset accounts.
+
+    Read through the budget summary so stored rows, definitions merged into them and
+    capsules' own amounts are each counted once, exactly as the budget page lists them.
+    A definition not yet saved for the month runs at its own amount.
+    """
+    if plan_id is None:
+        return []
+    summary = get_budget_summary(db, client_id, period, plan_id=plan_id, cash_flow_months=1)
     rows = []
-    for entry in registry_service.list_entries(db, client_id):
-        if entry.line_type != "allocation" or not entry.is_active or not entry.budget_active:
+    for line in summary.get("plan_lines", []):
+        if line.get("line_type") != "allocation":
+            continue
+        if line.get("target_type") != "capsule":
+            account = ledger_service.get_account(db, client_id, line["account_id"]) if line.get("account_id") else None
+            if account is None or account.account_type != "asset":
+                continue
+        amount = float(line.get("amount") or 0.0)
+        if line.get("id") is None and not amount:
+            amount = float(line.get("recurring_amount") or 0.0)
+        rows.append({**line, "resolved_amount": amount})
+    return rows
+
+
+def _existing_savings(db: Session, client_id: int, periods: list[str], plan_id: int | None,
+                      skip_capsules: set[int], currency: str) -> list[dict]:
+    """Savings the budget already plans in these months, outside what this reflection writes.
+
+    The budget keeps one row per account for definitions: a definition into an
+    account merges with the row stored for it, and the stored amount stands. A goal
+    row on such an account therefore carries the definition too; its definition part
+    is still existing savings, read from the merged row's definition amount.
+    """
+    groups: dict[str, dict] = {}
+    entries = registry_service.list_entries(db, client_id)
+    entry_names = {entry.id: entry.name for entry in entries}
+
+    def group(key: str, **fields) -> dict:
+        return groups.setdefault(key, {"key": key, "amounts": dict.fromkeys(periods, 0), "line_ids": {},
+                                       "updatable": False, "current_amount": None, **fields})
+
+    for period in periods:
+        for line in _budget_rows(db, client_id, period, plan_id):
+            target_type, target_id = line.get("target_type"), line.get("target_id")
+            ids = sorted(line.get("registry_entry_ids") or [])
+            amount = line["resolved_amount"]
+            if line.get("source_kind") == GOAL_SOURCE:
+                if not ids:
+                    continue
+                # Only the definition part of a merged goal row is existing savings.
+                amount = float(line.get("registry_amount") or line.get("recurring_amount") or 0.0)
+            if target_type == "capsule" and target_id in skip_capsules:
+                continue
+            name = line.get("target_name") or line.get("name") or ""
+            if ids:
+                row = group("definition:" + ",".join(str(value) for value in ids), kind="definition",
+                            id=ids[0] if len(ids) == 1 else None, account_id=line.get("account_id"),
+                            name="、".join(entry_names.get(value, name) for value in ids))
+            elif target_type == "capsule":
+                row = group(f"capsule:{target_id}", kind="capsule", id=target_id, name=name, account_id=None)
+            else:
+                row = group(f"manual:{line.get('account_id')}:{(line.get('name') or '').strip()}", kind="manual",
+                            id=None, name=name, account_id=line.get("account_id"))
+            row["amounts"][period] += Money.from_float(float(amount), currency).minor
+            if line.get("id") is not None:
+                row["line_ids"].setdefault(period, []).append(line["id"])
+    # A plain monthly definition into an asset account can carry the goal savings,
+    # including one the goal set to zero last time.
+    for entry in entries:
+        if (entry.line_type != "allocation" or not entry.is_active or not entry.budget_active
+                or (entry.frequency or "Monthly") != "Monthly" or entry.currency != currency):
             continue
         account_id = registry_service.registry_target_account_id(entry)
         account = ledger_service.get_account(db, client_id, account_id) if account_id else None
         if account is None or account.account_type != "asset":
             continue
-        amounts = {}
-        for period in periods:
-            year, month = (int(part) for part in period.split("-"))
-            amount = registry_service.registry_entry_amount_for_period(db, entry, period, date(year, month, 1), client_id)
-            amounts[period] = Money.from_float(float(amount), currency).minor
-        if not any(amounts.values()):
-            continue
-        rows.append({"key": f"definition:{entry.id}", "kind": "definition", "id": entry.id, "name": entry.name,
-                     "account_id": account_id, "amounts": amounts,
-                     # Only a plain monthly amount in the client currency can be set from the goal.
-                     "updatable": (entry.frequency or "Monthly") == "Monthly" and entry.currency == currency,
-                     "current_amount": entry.amount})
-    manual: dict[str, dict] = {}
-    for line in lines:
-        if (line.line_type == "allocation" and line.target_type == "account" and line.account_id
-                and line.source_kind == "manual"):
-            key = f"manual:{line.account_id}:{(line.name or '').strip()}"
-            row = manual.setdefault(key, {"key": key, "kind": "manual", "id": None, "name": line.name or "",
-                                          "account_id": line.account_id, "amounts": dict.fromkeys(periods, 0),
-                                          "updatable": False, "current_amount": None})
-            row["amounts"][line.target_period] += line.amount_minor or 0
-    rows.extend(manual.values())
-    for capsule in capsule_service.list_capsules(db, client_id, limit=10000):
-        if capsule.id in skip_capsules:
-            continue
-        amounts = {}
-        for period in periods:
-            stored = [line for line in lines if line.target_period == period and line.line_type == "allocation"
-                      and line.target_type == "capsule" and line.target_id == capsule.id]
-            # Stored rows are the month's plan; without them the budget shows the capsule's own amount.
-            amounts[period] = sum(line.amount_minor or 0 for line in stored) if stored else (capsule.monthly_contribution_minor or 0)
-        if not any(amounts.values()):
-            continue
-        rows.append({"key": f"capsule:{capsule.id}", "kind": "capsule", "id": capsule.id, "name": capsule.name,
-                     "account_id": None, "amounts": amounts, "updatable": False, "current_amount": None})
-    return rows
+        row = group(f"definition:{entry.id}", kind="definition", id=entry.id, name=entry.name, account_id=account_id)
+        row["updatable"] = True
+        row["current_amount"] = entry.amount
+    return list(groups.values())
 
 
 def _plan(db: Session, client_id: int, options: dict, plan_id: int | None) -> dict:
@@ -138,6 +187,7 @@ def _plan(db: Session, client_id: int, options: dict, plan_id: int | None) -> di
     if inputs["scenario"] is None:
         raise Refused("ゴールのシナリオがありません。シナリオ一覧でゴールを選んでください。", status_code=422)
     periods = _periods(options["start_period"], options["months"])
+    start = periods[0]
     lines = active_lines_for_periods(db, client_id, plan_id, periods)
     create_for = set(options.get("create_capsules") or [])
     events = inputs["events"]
@@ -154,10 +204,16 @@ def _plan(db: Session, client_id: int, options: dict, plan_id: int | None) -> di
         capsule = capsule_service.get_capsule(db, client_id, row["capsule_id"]) if row["capsule_id"] else None
         row["create_capsule"] = capsule is None
         funded_capsules.append((row, capsule, Money(row["monthly_required_minor"], currency)))
+    target_dates = {row["event_id"]: date.fromisoformat(row["target_date"]) for row in events}
+
+    def contribution(row: dict, amount: Money, period: str) -> Money:
+        return amount if _contributes(period, start, target_dates[row["event_id"]]) else Money(0, currency)
 
     scenario_minor = Money.from_float(float(inputs["scenario"]["monthly_savings"]), currency).minor
     chosen_minor = scenario_minor if options["savings_source"] == "scenario" else required_minor
-    capsule_minor = sum(amount.minor for _, _, amount in funded_capsules)
+    # A capsule is funded only until its target month; later months go to the rest.
+    capsule_minor = {period: sum(contribution(row, amount, period).minor for row, _, amount in funded_capsules)
+                     for period in periods}
 
     account = None
     if options.get("savings_account_id") is not None:
@@ -168,12 +224,12 @@ def _plan(db: Session, client_id: int, options: dict, plan_id: int | None) -> di
             raise NotFound("積立先には有効な資産口座を選んでください。")
 
     funded_ids = {capsule.id for _, capsule, _ in funded_capsules if capsule is not None}
-    existing = _existing_savings(db, client_id, periods, lines, funded_ids, currency)
+    existing = _existing_savings(db, client_id, periods, plan_id, funded_ids, currency)
     definition = None
     if options.get("savings_definition_id") is not None:
-        definition = next((row for row in existing if row["kind"] == "definition"
+        definition = next((row for row in existing if row["kind"] == "definition" and row["updatable"]
                            and row["id"] == options["savings_definition_id"]), None)
-        if definition is None or not definition["updatable"]:
+        if definition is None:
             raise NotFound("積立先の定義は、資産口座への毎月の配分の定義から選んでください。")
     uncounted = set(options.get("uncounted") or [])
     for row in existing:
@@ -181,14 +237,18 @@ def _plan(db: Session, client_id: int, options: dict, plan_id: int | None) -> di
         # The destination definition is rewritten below, so it is not also counted.
         row["counted"] = row["key"] not in uncounted and not row["destination"]
     counted = {period: sum(row["amounts"][period] for row in existing if row["counted"]) for period in periods}
-    residual = {period: max(0, chosen_minor - capsule_minor - counted[period]) for period in periods}
-    account_minor = residual[periods[0]]
+    residual = {period: max(0, chosen_minor - capsule_minor[period] - counted[period]) for period in periods}
+    if definition is not None and len(set(residual.values())) > 1:
+        # A definition holds one amount for every month; it cannot follow a changing rest.
+        raise Refused("反映する期間の中で残りの積立額が月ごとに変わるため、定義を積立先にできません。"
+                      "反映する期間を1か月にするか、口座を積立先にしてください。", status_code=422)
+    account_minor = residual[start]
     # How each event is funded each month, as event progress will read it: a near
     # event by its capsule, a far one by its priority share of everything else
-    # saved (existing savings and the goal row alike).
+    # saved (existing savings and the goal row alike), in the first month.
     funded_events = {row["event_id"] for row, _, _ in funded_capsules}
     far = [row for row in events if row["direction"] == "expense" and row["status"] == "reflected" and not row["near"]]
-    far_pool = max(0, chosen_minor - capsule_minor)
+    far_pool = max(0, chosen_minor - capsule_minor[start])
     weights = [PRIORITY_WEIGHTS.get(row["priority"], 1) for row in far]
     shares = Money(far_pool, currency).allocate(weights) if far and sum(weights) else []
     far_share = {row["event_id"]: share.minor for row, share in zip(far, shares)}
@@ -198,52 +258,62 @@ def _plan(db: Session, client_id: int, options: dict, plan_id: int | None) -> di
         else:
             row["allocation_minor"] = far_share.get(row["event_id"], 0)
 
+    def retire(period: str, line) -> dict:
+        return {"period": period, "kind": "retire", "event_id": None, "capsule_id": None,
+                "name": line.name, "account_id": line.account_id, "line_id": line.id,
+                "current_amount": line.amount, "new_amount": 0.0}
+
     changes = []
     for period in periods:
         for row, capsule, amount in funded_capsules:
-            rows = _capsule_rows(lines, period, capsule, amount)
-            for account_id, line, part in rows:
+            for item in _capsule_rows(lines, period, capsule, row["event_id"], contribution(row, amount, period)):
+                line = item["line"]
+                if item["amount"] is None:
+                    changes.append(retire(period, line))
+                    continue
                 changes.append({
                     "period": period, "kind": "capsule", "event_id": row["event_id"],
                     "capsule_id": capsule.id if capsule else None,
                     "name": capsule.name if capsule else row["name"],
-                    "account_id": account_id,
+                    "account_id": item["account_id"] if line is None else line.account_id,
                     "line_id": line.id if line is not None else None,
                     "current_amount": line.amount if line is not None else None,
-                    "new_amount": _major(part.minor, currency),
+                    "new_amount": _major(item["amount"].minor, currency),
                 })
         goal_lines = [line for line in lines if line.target_period == period and line.source_kind == GOAL_SOURCE]
         if definition is not None:
             # The definition now carries the goal savings; an earlier goal row would double it.
-            for old in goal_lines:
+            changes.extend(retire(period, old) for old in goal_lines)
+            # Months already saved with the definition's old amount follow the new one.
+            for line_id in definition["line_ids"].get(period, []):
+                line = next((item for item in lines if item.id == line_id), None)
                 changes.append({
-                    "period": period, "kind": "retire", "event_id": None, "capsule_id": None,
-                    "name": old.name, "account_id": old.account_id, "line_id": old.id,
-                    "current_amount": old.amount, "new_amount": 0.0,
+                    "period": period, "kind": "definition_row", "event_id": None, "capsule_id": None,
+                    "definition_id": definition["id"], "name": definition["name"], "account_id": definition["account_id"],
+                    "line_id": line_id, "current_amount": line.amount if line is not None else None,
+                    "new_amount": _major(residual[period], currency),
                 })
         if account is not None:
             line = next((line for line in goal_lines if line.account_id == account.id), None)
+            # The budget shows one row for this account, so definitions into it ride along.
+            merged = sum(row["amounts"][period] for row in existing
+                         if row["kind"] == "definition" and row["counted"] and row["account_id"] == account.id)
             changes.append({
                 "period": period, "kind": "savings", "event_id": None, "capsule_id": None,
                 "name": GOAL_LINE_NAME, "account_id": account.id,
                 "line_id": line.id if line is not None else None,
                 "current_amount": line.amount if line is not None else None,
-                "new_amount": _major(residual[period], currency),
+                "new_amount": _major(residual[period] + merged, currency),
+                "includes_definitions": _major(merged, currency),
             })
             # An earlier reflection to another account is replaced, not added to.
-            for old in goal_lines:
-                if old.account_id != account.id:
-                    changes.append({
-                        "period": period, "kind": "retire", "event_id": None, "capsule_id": None,
-                        "name": old.name, "account_id": old.account_id, "line_id": old.id,
-                        "current_amount": old.amount, "new_amount": 0.0,
-                    })
+            changes.extend(retire(period, old) for old in goal_lines if old.account_id != account.id)
     if definition is not None:
         changes.append({
-            "period": periods[0], "kind": "definition", "event_id": None, "capsule_id": None,
+            "period": start, "kind": "definition", "event_id": None, "capsule_id": None,
             "definition_id": definition["id"], "name": definition["name"], "account_id": definition["account_id"],
             "line_id": None, "current_amount": definition["current_amount"],
-            "new_amount": _major(residual[periods[0]], currency),
+            "new_amount": _major(residual[start], currency),
         })
     for change in changes:
         # A missing row that would be written as zero is left missing.
@@ -259,12 +329,14 @@ def _plan(db: Session, client_id: int, options: dict, plan_id: int | None) -> di
         "uncounted": sorted(uncounted),
         "create_capsules": sorted(row["event_id"] for row, capsule, _ in funded_capsules if capsule is None),
     }
+    # Everything that decides what is written or recorded, so apply can refuse a changed plan.
     fingerprint = hashlib.sha256(json.dumps({"options": normalized, "events": [
-        {key: row.get(key) for key in ("event_id", "status", "monthly_required_minor", "capsule_id")} for row in events
+        {key: row.get(key) for key in ("event_id", "status", "monthly_required_minor", "allocation_minor", "priority",
+                                       "capsule_id", "target_amount", "target_date")} for row in events
     ], "existing": existing, "changes": changes}, sort_keys=True, default=str).encode()).hexdigest()
-    start = periods[0]
     existing_out = [{**{key: row[key] for key in ("key", "kind", "id", "name", "account_id", "updatable", "counted", "destination")},
-                     "amount": _major(row["amounts"][start], currency)} for row in existing]
+                     "amount": _major(row["amounts"][start], currency)} for row in existing
+                    if row["destination"] or row["updatable"] or any(row["amounts"].values())]
     for row in events:
         row["monthly_required"] = _major(row.pop("monthly_required_minor"), currency)
         row["allocation"] = _major(row.pop("allocation_minor"), currency)
@@ -277,10 +349,10 @@ def _plan(db: Session, client_id: int, options: dict, plan_id: int | None) -> di
             "required_amount": _major(required_minor, currency),
             "chosen_amount": _major(chosen_minor, currency),
             "existing_amount": _major(counted[start], currency),
-            "capsule_amount": _major(capsule_minor, currency),
+            "capsule_amount": _major(capsule_minor[start], currency),
             "account_amount": _major(account_minor, currency),
             # Existing savings and near capsules already exceed the monthly savings chosen.
-            "shortfall": _major(max(0, capsule_minor + counted[start] - chosen_minor), currency),
+            "shortfall": _major(max(0, capsule_minor[start] + counted[start] - chosen_minor), currency),
             "account_required": account is None and definition is None and account_minor > 0,
             "suggested_account_id": previous_account,
         },
@@ -293,8 +365,21 @@ def _plan(db: Session, client_id: int, options: dict, plan_id: int | None) -> di
 
 
 def preview(db: Session, client_id: int, options: dict) -> dict:
-    """Everything a reflection would do, computed against the plan without writing."""
-    result = _plan(db, client_id, options, find_budget_plan_id(db, client_id))
+    """Everything a reflection would do, computed against the plan without writing.
+
+    A client without a budget plan gets one when the reflection is applied, and
+    the budget then lists its definitions and capsules. The preview sees the same
+    by creating that plan inside a savepoint it always rolls back.
+    """
+    plan_id = find_budget_plan_id(db, client_id)
+    if plan_id is not None:
+        result = _plan(db, client_id, options, plan_id)
+    else:
+        nested = db.begin_nested()
+        try:
+            result = _plan(db, client_id, options, resolve_budget_plan_id(db, client_id, commit=False))
+        finally:
+            nested.rollback()
     result.pop("_funded_capsules")
     return result
 
@@ -302,11 +387,14 @@ def preview(db: Session, client_id: int, options: dict) -> dict:
 def apply(db: Session, client_id: int, options: dict, fingerprint: str, *, update_baseline: bool = False) -> dict:
     lock_client(db, client_id)
     try:
-        planned = _plan(db, client_id, options, find_budget_plan_id(db, client_id))
+        # The plan the preview read is the plan written; only a client without any
+        # plan gets its first one, inside this transaction, as the preview assumed.
+        plan_id = find_budget_plan_id(db, client_id)
+        if plan_id is None:
+            plan_id = resolve_budget_plan_id(db, client_id, commit=False)
+        planned = _plan(db, client_id, options, plan_id)
         if planned["fingerprint"] != fingerprint:
             raise Conflict("ゴールか予算の内容が確認後に変わりました。もう一度確認してください。")
-        # Only a confirmed reflection may create the client's first budget plan.
-        plan_id = resolve_budget_plan_id(db, client_id)
         currency = money_client_currency(db, client_id)
         created_capsules = {}
         for row, capsule, _ in planned["_funded_capsules"]:
@@ -342,8 +430,13 @@ def apply(db: Session, client_id: int, options: dict, fingerprint: str, *, updat
                     "cash_treatment": "auto",
                 })
         try:
-            if updates:
-                update_plan_lines(db, client_id, updates, commit=False)
+            # Retire first so a replacement row never meets the row it replaces.
+            retires = [item["id"] for item in updates if item.get("is_active") is False]
+            if retires:
+                retire_plan_lines(db, client_id, retires, commit=False)
+            amounts = [item for item in updates if item.get("is_active") is not False]
+            if amounts:
+                update_plan_lines(db, client_id, amounts, commit=False)
             if creates:
                 create_plan_lines(db, client_id, creates, commit=False)
             for change in definitions:
@@ -382,16 +475,24 @@ def _months_between(start: str, end: str) -> int:
 
 
 def _planned_far_savings(records, lineage: str, period: str) -> float:
-    """What the reflections so far set aside each month for an event while it was far."""
+    """What earlier reflections set aside for an event while it was far, month by month.
+
+    A month is counted once, from the latest reflection covering it, and only months
+    before the given one -- those have already been saved.
+    """
+    by_month: dict[str, object] = {}
+    for row in records:  # oldest first, so a later reflection replaces an earlier one
+        month = row.start_period
+        while month <= row.end_period:
+            by_month[month] = row
+            month = _periods(month, 2)[1]
     total = 0.0
-    for row in records:
-        entry = next((item for item in row.events or [] if item.get("lineage") == lineage), None)
-        if entry is None or entry.get("near") or entry.get("status") != "reflected":
+    for month, row in by_month.items():
+        if month >= period:
             continue
-        last = min(row.end_period, period)
-        months = _months_between(row.start_period, last) + 1
-        if months > 0:
-            total += float(entry.get("allocation") or 0.0) * months
+        entry = next((item for item in row.events or [] if item.get("lineage") == lineage), None)
+        if entry is not None and not entry.get("near") and entry.get("status") == "reflected":
+            total += float(entry.get("allocation") or 0.0)
     return total
 
 
@@ -472,23 +573,11 @@ def status(db: Session, client_id: int, period: str) -> dict:
         rows.append({"event_id": event.id, "name": event.name, "direction": "expense", "kind": kind,
                      "reflection": event.budget_reflection_effective, "allocation": round(allocation, 2),
                      "source": source, "target_date": event.target_date.isoformat()})
-    summary = get_budget_summary(db, client_id, period)
-    budget_total = 0.0
-    lines = []
-    for line in summary.get("plan_lines", []):
-        if line.get("line_type") != "allocation":
-            continue
-        if line.get("target_type") != "capsule":
-            account = ledger_service.get_account(db, client_id, line["account_id"]) if line.get("account_id") else None
-            if account is None or account.account_type != "asset":
-                continue
-        amount = float(line.get("amount") or 0.0)
-        if line.get("id") is None and not amount:
-            # A definition not yet saved for the month still runs at its own amount.
-            amount = float(line.get("recurring_amount") or 0.0)
-        budget_total += amount
-        lines.append({"name": line.get("target_name") or line.get("name"), "account_name": line.get("account_name"),
-                      "amount": amount, "actual": float(line.get("actual") or 0.0), "source_kind": line.get("source_kind")})
+    budget_rows = _budget_rows(db, client_id, period, find_budget_plan_id(db, client_id))
+    budget_total = sum(line["resolved_amount"] for line in budget_rows)
+    lines = [{"name": line.get("target_name") or line.get("name"), "account_name": line.get("account_name"),
+              "amount": line["resolved_amount"], "actual": float(line.get("actual") or 0.0),
+              "source_kind": line.get("source_kind")} for line in budget_rows]
     return {
         "goal": {"id": goal.id, "name": goal.name, "monthly_savings": total,
                  "monthly_savings_is_default": goal.monthly_savings_minor is None},

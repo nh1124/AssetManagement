@@ -206,7 +206,8 @@ def test_event_progress_divides_savings_like_the_reflection(db):
 def test_an_applied_reflection_is_what_progress_reads(db):
     from app.services.strategy_service import get_goal_simulation_context
     goal, rows = far_story(db)
-    db.add(models.GoalBudgetReflection(client_id=1, scenario_id=goal.id, start_period="2026-11", end_period="2026-11",
+    month = date.today().strftime("%Y-%m")
+    db.add(models.GoalBudgetReflection(client_id=1, scenario_id=goal.id, start_period=month, end_period=month,
                                        options={"near_years": 5}, summary={}, events=[
                                            {"lineage": "near", "allocation": 12_345}, {"lineage": "far1", "allocation": 1_000}]))
     db.commit()

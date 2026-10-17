@@ -184,7 +184,7 @@ def delete_plan_line(
     return True
 
 
-def get_or_create_default_plan(db: Session, client_id: int) -> models.BudgetPlan:
+def get_or_create_default_plan(db: Session, client_id: int, *, commit: bool = True) -> models.BudgetPlan:
     # Write path only: it creates the default plan and repairs a client that
     # somehow has two. It no longer adopts orphan plan lines: X5 removed the
     # only thing that produced them, and data_health_service's repair -- the
@@ -204,8 +204,11 @@ def get_or_create_default_plan(db: Session, client_id: int) -> models.BudgetPlan
         else:
             plan = models.BudgetPlan(client_id=client_id, name="Baseline", is_default=True, sort_order=0)
             db.add(plan)
-        db.commit()
-        db.refresh(plan)
+        if commit:
+            db.commit()
+            db.refresh(plan)
+        else:
+            db.flush()
     elif len(defaults) > 1:
         for extra in defaults[1:]:
             extra.is_default = False
@@ -332,10 +335,10 @@ def find_budget_plan_id(db: Session, client_id: int, plan_id: int | None = None)
     return plan.id if plan is not None else None
 
 
-def resolve_budget_plan_id(db: Session, client_id: int, plan_id: int | None = None) -> int:
+def resolve_budget_plan_id(db: Session, client_id: int, plan_id: int | None = None, *, commit: bool = True) -> int:
     """Write-path resolver: may create the default plan the caller will write into."""
     if plan_id is None:
-        return get_or_create_default_plan(db, client_id).id
+        return get_or_create_default_plan(db, client_id, commit=commit).id
     find_budget_plan_id(db, client_id, plan_id)
     return plan_id
 
@@ -515,6 +518,28 @@ def active_lines_for_periods(
         models.MonthlyPlanLine.target_period.in_(list(periods)),
         models.MonthlyPlanLine.is_active.is_(True),
     ).order_by(models.MonthlyPlanLine.target_period, models.MonthlyPlanLine.id).all()
+
+
+def retire_plan_lines(db: Session, client_id: int, line_ids: Sequence[int], *, commit: bool = True) -> int:
+    """Mark rows superseded (is_active false) without revalidating them.
+
+    A row being replaced may no longer satisfy today's rules -- an account-less
+    capsule row whose capsule now has several funding accounts -- and retiring
+    it must not depend on that. Capsule contributions are re-summed afterwards.
+    """
+    rows = db.query(models.MonthlyPlanLine).filter(
+        models.MonthlyPlanLine.client_id == client_id,
+        models.MonthlyPlanLine.id.in_(list(line_ids)),
+        models.MonthlyPlanLine.is_active.is_(True),
+    ).all()
+    for row in rows:
+        row.is_active = False
+    sync_capsule_monthly_contributions(db, client_id, rows)
+    if commit:
+        db.commit()
+    else:
+        db.flush()
+    return len(rows)
 
 
 def create_plan_lines(

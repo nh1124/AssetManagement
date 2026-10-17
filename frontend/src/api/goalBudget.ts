@@ -55,8 +55,10 @@ export interface GoalBudgetEvent {
 
 export interface GoalBudgetChange {
     period: string;
-    kind: 'capsule' | 'savings' | 'retire' | 'definition';
+    kind: 'capsule' | 'savings' | 'retire' | 'definition' | 'definition_row';
     definition_id?: number;
+    /** For savings: the part that is the account's definitions, kept in the one budget row. */
+    includes_definitions?: number;
     event_id: number | null;
     capsule_id: number | null;
     name: string;

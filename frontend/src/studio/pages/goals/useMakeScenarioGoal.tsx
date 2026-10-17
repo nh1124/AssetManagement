@@ -53,14 +53,14 @@ export function useMakeScenarioGoal(onSuccess: () => void): ReturnType<typeof us
                 partial = true;
                 throw new Error(`ゴールにしましたが、取り置きを作成できなかったライフイベントがあります：${failed.join('、')}。ライフイベントの画面から作成できます。`);
             }
-        }, 'ゴールにしました。', () => { setPending(null); onSuccess(); setReflect(true); }).finally(() => {
-            // The goal changed even though a capsule failed; refresh and close anyway.
-            if (partial && mounted.current) { setPending(null); onSuccess(); setReflect(true); }
+        }, 'ゴールにしました。', () => { setPending(null); setReflect(true); }).finally(() => {
+            // The goal changed even though a capsule failed; offer the reflection anyway.
+            if (partial && mounted.current) { setPending(null); setReflect(true); }
         });
     };
     const dialog = reflect && !pending ? <GoalBudgetReflection title="予算にも反映しますか？"
         intro="ゴールを変更しました。予算は前のゴールのままです。内容を確認して反映できます。反映しない場合は閉じてください（ゴールのページや予算のページから後で反映できます）。"
-        onClose={() => setReflect(false)} /> : pending && <GoalSwitchOverlay pending={pending} busy={mutation.busy} currency={currency}
+        onClose={() => { setReflect(false); onSuccess(); }} /> : pending && <GoalSwitchOverlay pending={pending} busy={mutation.busy} currency={currency}
         onClose={() => setPending(null)} onConfirm={confirmGoal}
         onToggle={(eventId, checked) => setPending((previous) => {
             if (!previous) return previous;

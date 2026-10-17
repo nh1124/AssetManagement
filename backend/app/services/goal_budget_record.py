@@ -16,6 +16,15 @@ def latest(db: Session, client_id: int) -> models.GoalBudgetReflection | None:
     ).first()
 
 
+def covering(db: Session, client_id: int, period: str) -> models.GoalBudgetReflection | None:
+    """The latest applied reflection whose months include this one."""
+    return db.query(models.GoalBudgetReflection).filter(
+        models.GoalBudgetReflection.client_id == client_id,
+        models.GoalBudgetReflection.start_period <= period,
+        models.GoalBudgetReflection.end_period >= period,
+    ).order_by(models.GoalBudgetReflection.applied_at.desc(), models.GoalBudgetReflection.id.desc()).first()
+
+
 def history(db: Session, client_id: int) -> list[models.GoalBudgetReflection]:
     """Every applied reflection, oldest first."""
     return db.query(models.GoalBudgetReflection).filter_by(client_id=client_id).order_by(

@@ -116,7 +116,7 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
     const changed = preview?.changes.filter((row) => row.changed) ?? [];
     const accountName = (id: number | null) => (id === null ? '—' : accounts.find((row) => row.id === id)?.name ?? `口座 ${id}`);
     const apply = async () => {
-        if (!preview || busy || loading || !changed.length) return;
+        if (!preview || busy || loading) return;
         setBusy(true);
         setError('');
         try {
@@ -136,7 +136,7 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
     };
     const savings = preview?.savings;
     return <Overlay title={title} onClose={() => { if (!busy) onClose(); }}
-        footer={<button type="button" disabled={busy || loading || !preview || !changed.length} onClick={() => void apply()} className={primaryClass}>{busy ? '反映中…' : '予算に反映する'}</button>}>
+        footer={<button type="button" disabled={busy || loading || !preview} onClick={() => void apply()} className={primaryClass}>{busy ? '反映中…' : changed.length ? '予算に反映する' : '反映を記録する'}</button>}>
         <div className="space-y-5">
             {intro && <p className="text-sm">{intro}</p>}
             <section className={sectionClass}>
@@ -213,12 +213,13 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
                     {changed.length ? <DataTable columns={['月', '項目', '口座', '現在', '反映後']}>
                         {changed.map((row, index) => <tr key={`change-${row.period}-${row.kind}-${row.line_id ?? index}`}>
                             <td className="whitespace-nowrap px-5 py-3">{row.kind === 'definition' ? `${row.period}以降の毎月` : row.period}</td>
-                            <th scope="row" className="px-5 py-3 font-medium">{row.kind === 'retire' ? `${row.name}（以前の反映を取り消す）` : row.kind === 'savings' ? 'ゴールの積立' : row.kind === 'definition' ? `定義：${row.name}` : `取り置き：${row.name}`}</th>
+                            <th scope="row" className="px-5 py-3 font-medium">{row.kind === 'retire' ? `${row.name}（以前の行を取り消す）` : row.kind === 'savings' ? 'ゴールの積立' : row.kind === 'definition' ? `定義：${row.name}` : row.kind === 'definition_row' ? `定義：${row.name}（保存済みの月）` : `取り置き：${row.name}`}
+                                {row.kind === 'savings' && (row.includes_definitions ?? 0) > 0 && <span className="block text-xs font-normal text-[var(--studio-text-muted)]">この口座への定義 {formatCurrency(row.includes_definitions ?? 0, currency)} を含みます（予算では1行にまとまるため）</span>}</th>
                             <td className="px-5 py-3">{row.kind === 'capsule' && row.account_id === null ? '口座の指定なし' : accountName(row.account_id)}</td>
                             <td className="whitespace-nowrap px-5 py-3 tabular-nums">{row.current_amount === null ? '未設定' : formatCurrency(row.current_amount, currency)}</td>
                             <td className="whitespace-nowrap px-5 py-3 tabular-nums">{row.kind === 'retire' ? '削除' : formatCurrency(row.new_amount, currency)}</td>
                         </tr>)}
-                    </DataTable> : <p className="text-sm text-[var(--studio-text-muted)]">予算は今の内容のままで、変更はありません。</p>}
+                    </DataTable> : <p className="text-sm text-[var(--studio-text-muted)]">予算は今の内容のままで、変更はありません。「反映を記録する」で、この内容に沿っていることを記録できます（お知らせと各ライフイベントの月額に使われます）。</p>}
                     <label className="flex items-start gap-2 border-t border-[var(--studio-border)] pt-3 text-sm">
                         <input type="checkbox" className="mt-1" disabled={busy} checked={updateBaseline} onChange={(event) => setUpdateBaseline(event.target.checked)} />
                         <span>基準線も今のゴールの予測で作り直す<span className="block text-xs text-[var(--studio-text-muted)]">実績と比べる基準線は、ゴールに採用したときのままです。計画を見直した場合に選んでください（以前の基準線は履歴に残ります）。</span></span>

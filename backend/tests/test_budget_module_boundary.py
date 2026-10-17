@@ -35,6 +35,8 @@ PUBLIC: dict[str, set[str]] = {
     "budget_plan_store": {
         # The goal reflection reads the rows it may replace before it confirms.
         "active_lines_for_periods",
+        # It also retires the rows a reflection replaces, without revalidating them.
+        "retire_plan_lines",
         "create_plan",
         "create_plan_line",
         "create_plan_lines",
