@@ -10,8 +10,9 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from ..domain.errors import Conflict, NotFound, Refused
+from .life_event_conditions import evaluate_projection
 from .life_event_walk import Scenario, ScenarioEvent, walk_scenarios, _subtract_demand
-from .strategy_service import simulate_net_worth_forward
+from .strategy_service import simulate_net_worth_forward_with_paths
 
 
 @dataclass(frozen=True)
@@ -91,12 +92,14 @@ def list_scenarios(db: Session, client_id: int) -> list[dict]:
 def project(db: Session, client_id: int, scenario: models.LifeScenario) -> dict:
     resolved = resolve(db, client_id, scenario)
     payload = _payload(db, scenario, resolved)
-    projection = simulate_net_worth_forward(
+    projection, paths = simulate_net_worth_forward_with_paths(
         db, client_id, years=scenario.horizon_years, annual_return=scenario.annual_return,
         inflation=scenario.inflation, include_event_income=False,
         account_returns={row["account_id"]: row["annual_return"] for row in payload["account_returns"]},
     )
-    return {**payload, "projection": _subtract_demand(resolved, projection, scenario.horizon_years)}
+    projection = _subtract_demand(resolved, projection, scenario.horizon_years)
+    return {**payload, "projection": projection,
+            "conditions": evaluate_projection(db, client_id, resolved.events, projection, paths)}
 
 
 def compare(db: Session, client_id: int, ids: str) -> dict:

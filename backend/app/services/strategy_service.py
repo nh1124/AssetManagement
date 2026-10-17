@@ -876,6 +876,26 @@ def simulate_net_worth_forward(
     account_returns: dict[int, float] | None = None,
 ) -> list[dict]:
     """Simulate total net worth forward as yearly P10/P50/P90 bands."""
+    projection, _ = simulate_net_worth_forward_with_paths(
+        db, client_id, years, annual_return, inflation, monthly_savings,
+        contribution_schedule, include_event_income=include_event_income,
+        account_returns=account_returns,
+    )
+    return projection
+
+
+def simulate_net_worth_forward_with_paths(
+    db: Session,
+    client_id: int,
+    years: int = 30,
+    annual_return: float = 5.0,
+    inflation: float = 2.0,
+    monthly_savings: float | None = None,
+    contribution_schedule: list[dict[str, Any]] | None = None,
+    *, include_event_income: bool = True,
+    account_returns: dict[int, float] | None = None,
+) -> tuple[list[dict], np.ndarray]:
+    """Return bands and their paths x (years + 1) values from one seeded run."""
 
     years = max(1, min(years, 60))
     config = db.query(models.SimulationConfig).filter(
@@ -912,6 +932,8 @@ def simulate_net_worth_forward(
     # already have their own account rates, including cash held at zero percent.
     held = np.full(n_simulations, starting_net_worth, dtype=float)
     invested = np.zeros(n_simulations)
+    paths = np.empty((n_simulations, years + 1))
+    paths[:, 0] = held
     projection = [
         {
             "year": current_year,
@@ -925,7 +947,8 @@ def simulate_net_worth_forward(
         shock = rng.normal(0, return_std, n_simulations)
         held *= 1 + blended_real + shock
         invested = (invested + annual_contribution) * (1 + contribution_real + shock)
-        p10, p50, p90 = np.percentile(held + invested, [10, 50, 90])
+        paths[:, offset] = held + invested
+        p10, p50, p90 = np.percentile(paths[:, offset], [10, 50, 90])
         projection.append(
             {
                 "year": current_year + offset,
@@ -938,10 +961,11 @@ def simulate_net_worth_forward(
     if include_event_income:
         # Scenario walks supply resolved dates themselves, so they opt out of stored dates.
         demand = aggregate_life_event_demand_by_year(db, client_id, years)
-        return [{**row, "cumulative_income": due["cumulative_income"],
-                 **{band: row[band] + due["cumulative_income"] for band in ("p10", "p50", "p90")}}
-                for row, due in zip(projection, demand)]
-    return projection
+        paths += np.array([due["cumulative_income"] for due in demand])
+        projection = [{**row, "cumulative_income": due["cumulative_income"],
+                       **{band: row[band] + due["cumulative_income"] for band in ("p10", "p50", "p90")}}
+                      for row, due in zip(projection, demand)]
+    return projection, paths
 
 
 def aggregate_life_event_demand_by_year(
