@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Column, Integer, String, Date, ForeignKey, Boolean, DateTime, JSON, BigInteger, Float, CheckConstraint, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Date, ForeignKey, Boolean, DateTime, JSON, BigInteger, Float, CheckConstraint, UniqueConstraint, Index, text
 from sqlalchemy.orm import relationship
 
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -65,7 +65,6 @@ class LifeEventLink(Base):
     from_event_id = Column(Integer, ForeignKey("life_events.id", ondelete="CASCADE"), nullable=False)
     to_event_id = Column(Integer, ForeignKey("life_events.id", ondelete="CASCADE"), nullable=False)
     kind = Column(String, nullable=False)
-    adopted = Column(Boolean, nullable=False, default=False, server_default="false")
     offset_months = Column(Integer, nullable=False, default=0, server_default="0")
     note = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -131,3 +130,45 @@ class LifeEventCondition(Base):
     reference_id = Column(Integer, nullable=True)
     note = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class LifeScenario(Base):
+    __tablename__ = "life_scenarios"
+    __table_args__ = (
+        UniqueConstraint("client_id", "name", name="uq_life_scenarios_name"),
+        CheckConstraint("horizon_years BETWEEN 1 AND 60", name="ck_life_scenarios_horizon_years"),
+        Index("uq_life_scenarios_goal", "client_id", unique=True,
+              postgresql_where=text("is_goal"), sqlite_where=text("is_goal")),
+    )
+
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
+    name = Column(String, nullable=False)
+    annual_return = Column(Float, nullable=False, default=5.0, server_default="5.0")
+    inflation = Column(Float, nullable=False, default=2.0, server_default="2.0")
+    horizon_years = Column(Integer, nullable=False, default=30, server_default="30")
+    is_goal = Column(Boolean, nullable=False, default=False, server_default="false")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    choices = relationship("LifeScenarioChoice", cascade="all, delete-orphan")
+    account_returns = relationship("LifeScenarioAccountReturn", cascade="all, delete-orphan")
+
+
+class LifeScenarioChoice(Base):
+    __tablename__ = "life_scenario_choices"
+    __table_args__ = (UniqueConstraint("scenario_id", "link_id", name="uq_life_scenario_choices_link"),)
+
+    id = Column(Integer, primary_key=True)
+    scenario_id = Column(Integer, ForeignKey("life_scenarios.id", ondelete="CASCADE"), nullable=False)
+    link_id = Column(Integer, ForeignKey("life_event_links.id", ondelete="CASCADE"), nullable=False)
+
+
+class LifeScenarioAccountReturn(Base):
+    __tablename__ = "life_scenario_account_returns"
+    __table_args__ = (UniqueConstraint("scenario_id", "account_id", name="uq_life_scenario_account_returns_account"),)
+
+    id = Column(Integer, primary_key=True)
+    scenario_id = Column(Integer, ForeignKey("life_scenarios.id", ondelete="CASCADE"), nullable=False)
+    account_id = Column(Integer, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
+    annual_return = Column(Float, nullable=False)

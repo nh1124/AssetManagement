@@ -873,6 +873,7 @@ def simulate_net_worth_forward(
     monthly_savings: float | None = None,
     contribution_schedule: list[dict[str, Any]] | None = None,
     *, include_event_income: bool = True,
+    account_returns: dict[int, float] | None = None,
 ) -> list[dict]:
     """Simulate total net worth forward as yearly P10/P50/P90 bands."""
 
@@ -898,6 +899,7 @@ def simulate_net_worth_forward(
     tax_rate = config.tax_rate if config else 20.0
     effective_return = blended_after_tax_return(
         db, client_id, gross_annual_return=annual_return, tax_rate=tax_rate,
+        account_returns=account_returns,
     )
     blended_real = (effective_return - inflation) / 100.0
     contribution_real = (annual_return * (1 - tax_rate / 100.0) - inflation) / 100.0

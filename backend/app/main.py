@@ -26,6 +26,7 @@ from .routers import (
     data_transfer,
     exchange_rates,
     life_events,
+    life_scenarios,
     household_members,
     period_reviews,
     period_closes,
@@ -291,6 +292,7 @@ app.include_router(quick_templates.batch_router)
 app.include_router(products.router)
 app.include_router(registry_entries.router, dependencies=[Depends(get_current_client)])
 app.include_router(life_events.router)
+app.include_router(life_scenarios.router)
 app.include_router(household_members.router)
 app.include_router(budget_plans.router, dependencies=[Depends(get_current_client)])
 app.include_router(period_reviews.router)

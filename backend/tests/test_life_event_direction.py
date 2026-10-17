@@ -434,17 +434,17 @@ def test_simulation_config_rejects_invalid_horizon(db, api, method, horizon):
     assert db.query(models.SimulationConfig).count() == 0
 
 
-def test_v20_backup_round_trips_income_account_and_horizon_without_auto_capsules(db):
+def test_v21_backup_round_trips_income_account_and_horizon_without_auto_capsules(db):
     linked = account(db)
     receipt = node(db, "income", account_id=linked.id)
     db.add(models.SimulationConfig(client_id=1, horizon_years=17))
     db.commit()
     document = export_client(db, db.get(models.Client, 1))
-    assert document["version"] == EXPORT_VERSION == 20
+    assert document["version"] == EXPORT_VERSION == 21
     assert document["data"]["life_events"][0]["direction"] == "income"
     assert document["data"]["life_events"][0]["account_id"] == linked.id
     assert document["data"]["simulation_configs"][0]["horizon_years"] == 17
-    import_client(db, db.get(models.Client, 2), data=document["data"], version=20, manifest=document["manifest"])
+    import_client(db, db.get(models.Client, 2), data=document["data"], version=EXPORT_VERSION, manifest=document["manifest"])
     restored = db.query(models.LifeEvent).filter_by(client_id=2).one()
     assert restored.id != receipt.id and restored.account_id != linked.id
     assert restored.direction == "income" and db.get(models.Account, restored.account_id).client_id == 2

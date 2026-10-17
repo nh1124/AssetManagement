@@ -101,6 +101,14 @@ def _seed(db, scenario, today):
                             priority=1)
     db.add(goal)
     db.flush()
+    # Drive saved scenario reads with real assumptions, without granting a GET exception.
+    life_scenario = models.LifeScenario(
+        client_id=1, name="Guard life scenario", is_goal=True,
+        account_returns=[models.LifeScenarioAccountReturn(account_id=cash.id, annual_return=3.0)],
+    )
+    alternate_scenario = models.LifeScenario(client_id=1, name="Guard alternate", annual_return=7.0)
+    db.add_all([life_scenario, alternate_scenario])
+    db.flush()
     capsule = models.Capsule(client_id=1, life_event_id=goal.id, name="Guard capsule",
                              target_amount_minor=to_minor(200000, "JPY"), monthly_contribution_minor=to_minor(10000, "JPY"),
                              funding_sources=[models.CapsuleFundingSource(client_id=1, account_id=cash.id, target_amount_minor=to_minor(200000, "JPY"))])
@@ -181,6 +189,7 @@ def _seed(db, scenario, today):
             # reservation read is driven against an entry that has legs.
             "capsule_id": capsule.id, "product_id": product.id, "transaction_id": lunch.id, "month": today.strftime("%Y-%m"),
             "plan_ids": str(plan.id) if plan else None,
+            "ids": f"{life_scenario.id},{alternate_scenario.id}",
             "start_date": start.isoformat(), "end_date": end.isoformat(),
             # Statement reconciliation is a pure read, including its historical claims.
             "as_of": today.isoformat(), "statement": "98800",

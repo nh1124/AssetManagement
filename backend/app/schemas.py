@@ -1267,3 +1267,59 @@ class LifeEventCondition(LifeEventConditionCreate):
     client_id: int
     life_event_id: int
     created_at: datetime | None = None
+
+
+class LifeScenarioName(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_name(cls, values):
+        if isinstance(values, dict) and (not isinstance(values.get("name"), str) or not values["name"].strip()):
+            raise ValueError("シナリオ名を入力してください。")
+        return values
+
+
+class LifeScenarioUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str | None = None
+    annual_return: float | None = None
+    inflation: float | None = None
+    horizon_years: int | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_assumptions(cls, values):
+        import math
+        if not isinstance(values, dict):
+            return values
+        if "name" in values and (not isinstance(values["name"], str) or not values["name"].strip()):
+            raise ValueError("シナリオ名を入力してください。")
+        for field in ("annual_return", "inflation"):
+            if field in values and (type(values[field]) not in (int, float) or not math.isfinite(values[field])):
+                raise ValueError("利率は有限の数値で指定してください。")
+        if "horizon_years" in values and (type(values["horizon_years"]) is not int or not 1 <= values["horizon_years"] <= 60):
+            raise ValueError("試算期間は1〜60年で指定してください。")
+        return values
+
+
+class LifeScenarioChoices(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    link_ids: list[int]
+
+
+class LifeScenarioAccountReturn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    account_id: int
+    annual_return: float
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_rate(cls, values):
+        return LifeScenarioUpdate.validate_assumptions(values)
+
+
+class LifeScenarioAccountReturns(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    returns: list[LifeScenarioAccountReturn]

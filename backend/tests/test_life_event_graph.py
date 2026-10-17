@@ -16,6 +16,7 @@ from app.dependencies import get_current_client
 from app.domain.errors import Conflict, Invalid, NotFound, Refused
 from app.domain.transfer import EXPORT_VERSION, validate_import_payload
 from app.services import life_event_graph as graph
+from app.services import life_scenario_service as saved
 from app.services.data_transfer_service import export_client, import_client
 from app.services.goal_service import delete_goal
 from app.services.strategy_service import aggregate_life_event_demand_by_year
@@ -62,6 +63,10 @@ def fork(db, name):
     return root, a, b, edges
 
 
+def adopted_ids(db, client_id=1):
+    return set(saved.choice_ids(db, saved.get_goal(db, client_id)))
+
+
 @pytest.mark.parametrize("with_event", [False, True])
 def test_no_links_adopts_the_only_scenario_without_confirmation(db, with_event):
     if with_event:
@@ -80,7 +85,7 @@ def test_unadopted_fork_defaults_to_first_scenario_and_needs_confirmation(db):
     fork(db, "住居")
     scenarios = graph.enumerate_scenarios(db, 1)
     assert graph.adopted_scenario(db, 1, scenarios) == graph.Adoption(scenarios[0], False)
-    assert all(edge.adopted is False for edge in graph.list_links(db, 1))
+    assert not adopted_ids(db)
 
 
 def test_adopting_second_branch_survives_a_new_session_and_commits_once(db):
@@ -94,8 +99,8 @@ def test_adopting_second_branch_survives_a_new_session_and_commits_once(db):
     with sessionmaker(bind=db.get_bind())() as reread:
         scenarios = graph.enumerate_scenarios(reread, 1)
         assert graph.adopted_scenario(reread, 1, scenarios) == graph.Adoption(scenarios[1], True)
-        assert {edge.id for edge in graph.list_links(reread, 1) if edge.adopted} == {edges[1].id}
-        assert reread.get(models.LifeEventLink, after.id).adopted is False
+        assert adopted_ids(reread) == {edges[1].id}
+        assert after.id not in adopted_ids(reread)
 
 
 def test_new_fork_completes_existing_choice_with_first_matching_scenario(db):
@@ -106,7 +111,7 @@ def test_new_fork_completes_existing_choice_with_first_matching_scenario(db):
     adoption = graph.adopted_scenario(db, 1, scenarios)
     assert adoption == graph.Adoption(scenarios[2], False)
     assert edges[1].id in adoption.scenario.chosen_link_ids
-    assert {edge.id for edge in graph.list_links(db, 1) if edge.adopted} == {edges[1].id}
+    assert adopted_ids(db) == {edges[1].id}
 
 
 @pytest.mark.parametrize("removal", ["link", "event", "database_cascade"])
@@ -122,7 +127,7 @@ def test_deleting_adopted_link_shrinks_choice_and_keeps_other_fork(db, removal):
     else:
         db.execute(delete(models.LifeEvent).where(models.LifeEvent.id == child.id))
         db.commit()
-    remaining = {edge.id for edge in graph.list_links(db, 1) if edge.adopted}
+    remaining = adopted_ids(db)
     assert remaining == {other_edges[1].id}
     scenarios = graph.enumerate_scenarios(db, 1)
     adoption = graph.adopted_scenario(db, 1, scenarios)
@@ -144,7 +149,7 @@ def test_unknown_scenario_is_refused_with_422_without_changing_adoption(db, inva
         graph.adopt_scenario(db, client_id, scenario_id)
     assert error.value.status_code == 422
     assert "選び直してください" in str(error.value)
-    assert {edge.id for edge in graph.list_links(db, 1) if edge.adopted} == {edges[0].id}
+    assert adopted_ids(db) == {edges[0].id}
 
 
 def test_switching_branch_replaces_previous_adoption_and_preserves_other_client(db):
@@ -155,26 +160,25 @@ def test_switching_branch_replaces_previous_adoption_and_preserves_other_client(
     for edge in edges:
         adoption = graph.adopt_scenario(db, 1, str(edge.id))
         assert adoption.exact and adoption.scenario.chosen_link_ids == [edge.id]
-        assert {item.id for item in graph.list_links(db, 1) if item.adopted} == {edge.id}
-        assert graph.list_links(db, 2)[0].adopted is True
+        assert adopted_ids(db) == {edge.id}
+        assert adopted_ids(db, 2) == {foreign.id}
 
 
 def test_after_links_do_not_contribute_to_adopted_choice(db):
     a, b = node(db, "始点"), node(db, "終点")
     edge = link(db, a, b)
-    # Ignore a malformed mark: after links never represent a choice.
-    edge.adopted = True
-    db.commit()
+    # Only alternative edges contribute to a resolved branch.
     scenarios = graph.enumerate_scenarios(db, 1)
     assert graph.adopted_scenario(db, 1, scenarios) == graph.Adoption(scenarios[0], True)
 
 
-def test_unmatched_adoption_has_no_resolved_scenario(db):
+def test_archived_choice_resolves_the_remaining_active_branch(db):
     _, _, child, edges = fork(db, "住居")
     graph.adopt_scenario(db, 1, str(edges[1].id))
     child.archived_at = datetime.utcnow()
     db.commit()
-    assert graph.adopted_scenario(db, 1, graph.enumerate_scenarios(db, 1)) == graph.Adoption(None, False)
+    scenarios = graph.enumerate_scenarios(db, 1)
+    assert graph.adopted_scenario(db, 1, scenarios) == graph.Adoption(scenarios[0], False)
 
 
 def test_backup_preserves_adopted_branch_after_link_ids_are_remapped(db):
@@ -183,24 +187,24 @@ def test_backup_preserves_adopted_branch_after_link_ids_are_remapped(db):
     chosen = graph.enumerate_scenarios(db, 1)[-1]
     graph.adopt_scenario(db, 1, chosen.id)
     document = export_client(db, db.get(models.Client, 1))
-    assert {edge["id"] for edge in document["data"]["life_event_links"] if edge["adopted"]} == set(chosen.chosen_link_ids)
+    assert {row["link_id"] for row in document["data"]["life_scenario_choices"]} == set(chosen.chosen_link_ids)
     import_client(db, db.get(models.Client, 2), data=document["data"], version=document["version"], manifest=document["manifest"])
     scenarios = graph.enumerate_scenarios(db, 2)
     adoption = graph.adopted_scenario(db, 2, scenarios)
     assert adoption == graph.Adoption(scenarios[-1], True)
     assert adoption.scenario.label == chosen.label
     assert set(adoption.scenario.chosen_link_ids).isdisjoint(chosen.chosen_link_ids)
-    assert {edge.id for edge in graph.list_links(db, 2) if edge.adopted} == set(adoption.scenario.chosen_link_ids)
+    assert adopted_ids(db, 2) == set(adoption.scenario.chosen_link_ids)
 
 
 def test_older_backup_defaults_to_no_adopted_links(db):
     fork(db, "住居")
     document = export_client(db, db.get(models.Client, 1))
     for edge in document["data"]["life_event_links"]:
-        del edge["adopted"]
+        edge.pop("adopted", None)
     import_client(db, db.get(models.Client, 2), data=document["data"], version=18, manifest=None)
     scenarios = graph.enumerate_scenarios(db, 2)
-    assert all(edge.adopted is False for edge in graph.list_links(db, 2))
+    assert not adopted_ids(db, 2)
     assert graph.adopted_scenario(db, 2, scenarios) == graph.Adoption(scenarios[0], False)
 
 
@@ -450,7 +454,7 @@ def test_backup_carries_links_restore_remaps_both_ends_and_keeps_other_client(db
     db.commit()
     source, target = db.get(models.Client, 1), db.get(models.Client, 2)
     backup = export_client(db, source)
-    assert backup["version"] == EXPORT_VERSION == 20
+    assert backup["version"] == EXPORT_VERSION == 21
     assert backup["data"]["life_event_links"][0]["note"] == "判断"
     import_client(db, target, data=backup["data"], version=backup["version"], manifest=backup["manifest"])
     restored = graph.list_links(db, 2)[0]

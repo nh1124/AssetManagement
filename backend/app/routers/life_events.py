@@ -21,7 +21,6 @@ from ..services.goal_service import (
 )
 from ..workflows.goal_workflow import create_goal
 from ..services import life_event_graph, life_event_conditions
-from ..services.simulation_config_service import get_config
 
 router = APIRouter(prefix="/life-events", tags=["life_events"])
 
@@ -98,12 +97,9 @@ def get_scenarios(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    config = get_config(db, current_client.id)
+    # Deprecated: retained until the frontend switches to saved life scenarios.
     return life_event_graph.compare_scenarios(
-        db, current_client.id,
-        years=years if years is not None else (config.horizon_years if config else 30),
-        annual_return=annual_return if annual_return is not None else (config.annual_return if config else 5.0),
-        inflation=inflation if inflation is not None else (config.inflation_rate if config else 2.0),
+        db, current_client.id, years=years, annual_return=annual_return, inflation=inflation,
     )
 
 
@@ -113,6 +109,7 @@ def adopt_scenario(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
+    # Deprecated: retained until the frontend switches to saved life scenarios.
     return life_event_graph.adoption_payload(
         life_event_graph.adopt_scenario(db, current_client.id, payload.scenario_id),
     )

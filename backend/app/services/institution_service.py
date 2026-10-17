@@ -39,6 +39,7 @@ def _assets(db: Session, client_id: int) -> list[models.Account]:
 
 def blended_after_tax_return(
     db: Session, client_id: int, *, gross_annual_return: float, tax_rate: float,
+    account_returns: dict[int, float] | None = None,
 ) -> float:
     """Rates use percent units, like the projection settings they replace."""
     accounts = _assets(db, client_id)
@@ -51,7 +52,9 @@ def blended_after_tax_return(
         balance = Money(balances[account.id].balances_minor.get(currency, 0), currency).to_float()
         if balance == 0:
             continue
-        rate = account.expected_return if account.expected_return is not None else gross_annual_return
+        rate = (account_returns or {}).get(account.id, account.expected_return)
+        if rate is None:
+            rate = gross_annual_return
         tax = 0.0 if account.institution in UNTAXED_INSTITUTIONS else tax_rate / 100.0
         weighted += balance * rate * (1 - tax)
         total += balance

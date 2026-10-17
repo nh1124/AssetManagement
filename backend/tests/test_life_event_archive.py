@@ -136,7 +136,7 @@ def test_backup_round_trip_preserves_archive_and_v12_defaults_to_active(workspac
     db, _, client, goal, *_ = workspace
     goal_service.archive_goal(db, client.id, goal.id)
     document = export_client(db, client)
-    assert document['version'] == EXPORT_VERSION == 20
+    assert document['version'] == EXPORT_VERSION == 21
     assert document['data']['life_events'][0]['archived_at'] == goal.archived_at.isoformat()
     target = models.Client(name='Restore', general_settings={'currency': 'JPY'}, ai_config={})
     db.add(target)

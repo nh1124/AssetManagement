@@ -8,7 +8,7 @@ import re
 from datetime import date, datetime
 from typing import Any
 
-EXPORT_VERSION = 20
+EXPORT_VERSION = 21
 
 DATA_COLLECTIONS = [
     "accounts",
@@ -21,6 +21,9 @@ DATA_COLLECTIONS = [
     "transaction_batches",
     "life_events",
     "life_event_links",
+    "life_scenarios",
+    "life_scenario_choices",
+    "life_scenario_account_returns",
     "household_members",
     "life_event_conditions",
     "transactions",
@@ -233,6 +236,10 @@ def validate_import_payload(
     check_ref("milestones", "life_event_id", "life_events")
     check_ref("life_event_links", "from_event_id", "life_events", required=True)
     check_ref("life_event_links", "to_event_id", "life_events", required=True)
+    check_ref("life_scenario_choices", "scenario_id", "life_scenarios", required=True)
+    check_ref("life_scenario_choices", "link_id", "life_event_links", required=True)
+    check_ref("life_scenario_account_returns", "scenario_id", "life_scenarios", required=True)
+    check_ref("life_scenario_account_returns", "account_id", "accounts", required=True)
     check_ref("capsules", "life_event_id", "life_events")
     check_ref("capsule_funding_sources", "capsule_id", "capsules", required=True)
     check_ref("capsule_funding_sources", "account_id", "accounts", required=True)
@@ -244,6 +251,43 @@ def validate_import_payload(
     check_ref("monthly_plan_lines", "account_id", "accounts")
     check_ref("monthly_plan_lines", "source_account_id", "accounts")
     check_ref("monthly_plan_lines", "plan_id", "budget_plans")
+
+    scenario_names, goal_count = set(), 0
+    for item in data.get("life_scenarios", []):
+        name = item.get("name")
+        if not isinstance(name, str) or not name.strip() or name != name.strip() or name in scenario_names:
+            issue("error", "invalid_scenario_name", "シナリオ名は空白を除いた重複のない名前にしてください。", "life_scenarios", item.get("id"))
+        if isinstance(name, str):
+            scenario_names.add(name)
+        if type(item.get("is_goal", False)) is not bool:
+            issue("error", "invalid_scenario_goal", "ゴールの指定が不正です。", "life_scenarios", item.get("id"))
+        goal_count += item.get("is_goal") is True
+        horizon = item.get("horizon_years", 30)
+        if type(horizon) is not int or not 1 <= horizon <= 60:
+            issue("error", "invalid_horizon_years", "試算期間は1〜60年で指定してください。", "life_scenarios", item.get("id"))
+    if goal_count > 1:
+        issue("error", "multiple_scenario_goals", "ゴールのシナリオは1つだけ指定してください。", "life_scenarios")
+    for collection, fields in (("life_scenarios", ("annual_return", "inflation")), ("life_scenario_account_returns", ("annual_return",))):
+        for item in data.get(collection, []):
+            for field in fields:
+                default = {"annual_return": 5.0, "inflation": 2.0}[field] if collection == "life_scenarios" else None
+                value = item.get(field, default)
+                if type(value) not in (int, float) or not math.isfinite(value):
+                    issue("error", "invalid_scenario_rate", "利率は有限の数値で指定してください。", collection, item.get("id"), field)
+    links_by_id = {_as_int(row.get("id")): row for row in data.get("life_event_links", [])}
+    forks, pairs = set(), set()
+    for item in data.get("life_scenario_choices", []):
+        link = links_by_id.get(_as_int(item.get("link_id")), {})
+        fork = (_as_int(item.get("scenario_id")), _as_int(link.get("from_event_id")))
+        if link.get("kind") != "alternative" or fork in forks:
+            issue("error", "invalid_scenario_choice", "同じ分岐の接続を1つだけ選択してください。", "life_scenario_choices", item.get("id"))
+        forks.add(fork)
+    accounts_by_id = {_as_int(row.get("id")): row for row in data.get("accounts", [])}
+    for item in data.get("life_scenario_account_returns", []):
+        pair = (_as_int(item.get("scenario_id")), _as_int(item.get("account_id")))
+        if accounts_by_id.get(pair[1], {}).get("account_type") != "asset" or pair in pairs:
+            issue("error", "invalid_scenario_account", "資産口座を重複なく選択してください。", "life_scenario_account_returns", item.get("id"))
+        pairs.add(pair)
 
     link_pairs = set()
     graph: dict[int, list[int]] = {}

@@ -28,6 +28,7 @@ from .budget_lines import assign_plan_line_identity
 from .cache_service import invalidate_client
 from .capsule_service import create_capsule_for_goal
 from .registry_service import account_entry_type, account_line_type
+from .life_scenario_service import seed_legacy_goal
 
 
 def _db_revision(db: Session) -> str | None:
@@ -271,10 +272,24 @@ def export_client(db: Session, client: models.Client) -> dict:
                 .all()
             ],
             "life_event_links": [
-                row_fields(link, ["id", "from_event_id", "to_event_id", "kind", "adopted", "offset_months", "note", "created_at"])
+                row_fields(link, ["id", "from_event_id", "to_event_id", "kind", "offset_months", "note", "created_at"])
                 for link in db.query(models.LifeEventLink)
                 .filter(models.LifeEventLink.client_id == client.id)
                 .order_by(models.LifeEventLink.id).all()
+            ],
+            "life_scenarios": [
+                row_fields(row, ["id", "name", "annual_return", "inflation", "horizon_years", "is_goal", "created_at", "updated_at"])
+                for row in db.query(models.LifeScenario).filter_by(client_id=client.id).order_by(models.LifeScenario.id).all()
+            ],
+            "life_scenario_choices": [
+                row_fields(row, ["id", "scenario_id", "link_id"])
+                for row in db.query(models.LifeScenarioChoice).join(models.LifeScenario, models.LifeScenario.id == models.LifeScenarioChoice.scenario_id)
+                .filter(models.LifeScenario.client_id == client.id).order_by(models.LifeScenarioChoice.id).all()
+            ],
+            "life_scenario_account_returns": [
+                row_fields(row, ["id", "scenario_id", "account_id", "annual_return"])
+                for row in db.query(models.LifeScenarioAccountReturn).join(models.LifeScenario, models.LifeScenario.id == models.LifeScenarioAccountReturn.scenario_id)
+                .filter(models.LifeScenario.client_id == client.id).order_by(models.LifeScenarioAccountReturn.id).all()
             ],
             "household_members": [
                 row_fields(row, ["id", "name", "relation", "birth_date", "created_at"])
@@ -554,6 +569,8 @@ def import_client(
             },
         )
 
+    link_map: dict[int, int] = {}
+    scenario_map: dict[int, int] = {}
     account_map: dict[int, int] = {}
     transaction_map: dict[int, int] = {}
     batch_map: dict[int, int] = {}
@@ -575,6 +592,11 @@ def import_client(
             db.query(models.JournalEntry).filter(
                 models.JournalEntry.transaction_id.in_(tx_ids)
             ).delete(synchronize_session=False)
+
+        scenario_ids = db.query(models.LifeScenario.id).filter_by(client_id=client.id)
+        for model in (models.LifeScenarioChoice, models.LifeScenarioAccountReturn):
+            db.query(model).filter(model.scenario_id.in_(scenario_ids)).delete(synchronize_session=False)
+        db.query(models.LifeScenario).filter_by(client_id=client.id).delete(synchronize_session=False)
 
         for model in [
             models.LifeEventCondition,
@@ -871,15 +893,39 @@ def import_client(
             event_map[old_id] = event.id
 
         for item in data.get("life_event_links", []):
-            db.add(models.LifeEventLink(
+            link = models.LifeEventLink(
                 client_id=client.id,
                 from_event_id=event_map[int(item["from_event_id"])],
                 to_event_id=event_map[int(item["to_event_id"])],
                 kind=item["kind"], offset_months=item.get("offset_months", 0),
-                adopted=bool(item.get("adopted", False)),
                 note=item.get("note"),
                 created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
-            ))
+            )
+            db.add(link)
+            db.flush()
+            link_map[int(item["id"])] = link.id
+
+        if version is not None and version >= 21:
+            for item in data.get("life_scenarios", []):
+                scenario = models.LifeScenario(
+                    client_id=client.id, name=item["name"], annual_return=item.get("annual_return", 5.0),
+                    inflation=item.get("inflation", 2.0), horizon_years=item.get("horizon_years", 30),
+                    is_goal=item.get("is_goal", False),
+                    created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
+                    updated_at=parse_datetime(item.get("updated_at")) or datetime.utcnow(),
+                )
+                db.add(scenario)
+                db.flush()
+                scenario_map[int(item["id"])] = scenario.id
+            for item in data.get("life_scenario_choices", []):
+                db.add(models.LifeScenarioChoice(scenario_id=scenario_map[int(item["scenario_id"])], link_id=link_map[int(item["link_id"])]))
+            for item in data.get("life_scenario_account_returns", []):
+                db.add(models.LifeScenarioAccountReturn(
+                    scenario_id=scenario_map[int(item["scenario_id"])], account_id=account_map[int(item["account_id"])], annual_return=item["annual_return"],
+                ))
+        else:
+            # Pre-LS1 documents carry their goal on the links and assumptions on the config.
+            seed_legacy_goal(db, client.id, [link_map[int(item["id"])] for item in data.get("life_event_links", []) if item.get("adopted") is True])
 
         for item in data.get("transactions", []):
             old_id = int(item["id"])

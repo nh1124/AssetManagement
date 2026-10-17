@@ -9,8 +9,8 @@ from app import models
 from app.database import Base
 
 
-# G2a adds event direction/account and stored scenario horizon.
-EXPECTED_METADATA_SHA256 = "d740e1b7fe8abbed85f6ff87cbaa1519ea05306ace64452fff005ac1e9eab69f"
+# LS1 persists user-authored scenario assumptions and replaces link adoption.
+EXPECTED_METADATA_SHA256 = "54c1b99ebf1095325b3fd586bffaf8bad6f4e14ba10dddc6c288f05a6f296677"
 
 MODEL_NAMES = (
     "Client", "ClientMfaSetting", "ClientRecoveryCode",
@@ -20,6 +20,7 @@ MODEL_NAMES = (
     "BudgetPlan", "MonthlyPlanLine", "PeriodReview", "MonthlyAction", "PeriodClose",
     "AiOperationPolicy", "AiAuditLog", "AiChangeRequest",
     "SimulationConfig", "SimulationScenario",
+    "LifeScenario", "LifeScenarioChoice", "LifeScenarioAccountReturn",
     "Capsule", "CapsuleFundingSource", "CapsuleRule", "CapsuleDrawdown",
     "ProductDepreciation",
 )
@@ -89,8 +90,8 @@ def _metadata_snapshot():
 
 def test_metadata_matches_the_minor_unit_schema():
     snapshot = _metadata_snapshot()
-    assert len(snapshot["table_names"]) == 33
-    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 411
+    assert len(snapshot["table_names"]) == 36
+    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 426
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == EXPECTED_METADATA_SHA256
 

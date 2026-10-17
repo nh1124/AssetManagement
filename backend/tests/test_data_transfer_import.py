@@ -84,6 +84,9 @@ def _seed(db, client_id=101, base=10000):
     next_goal = add(models.LifeEvent, 31, name="next", target_date=date(2028, 1, 1), target_amount=500)
     add(models.LifeEventLink, 32, from_event_id=goal.id, to_event_id=next_goal.id,
         kind="alternative", offset_months=12, note="graph note")
+    scenario = add(models.LifeScenario, 36, name="保存案", annual_return=7.0, inflation=1.0, horizon_years=12, is_goal=True)
+    add(models.LifeScenarioChoice, 37, scenario_id=scenario.id, link_id=base + 32)
+    add(models.LifeScenarioAccountReturn, 38, scenario_id=scenario.id, account_id=cash.id, annual_return=3.0)
     capsule = add(models.Capsule, 5, name="goal", life_event_id=goal.id,
                   target_amount=1000, monthly_contribution=10,
                   capsule_type="life_event", target_amount_source="life_event")
@@ -184,6 +187,7 @@ def _restore(db, client, document):
 
 
 REFERENCES = {
+    "scenario_id": "life_scenarios", "link_id": "life_event_links",
     "parent_id": "accounts", "account_id": "accounts", "from_account_id": "accounts",
     "to_account_id": "accounts", "source_account_id": "accounts", "destination_account_id": "accounts",
     "budget_account_id": "accounts", "default_from_account_id": "accounts", "default_to_account_id": "accounts",
