@@ -9,8 +9,8 @@ from app import models
 from app.database import Base
 
 
-# X1 adds link adoption; preserve the remaining schema.
-EXPECTED_METADATA_SHA256 = "9640301f1c87425d6dce209fd5c9d4a3f206770e409ddd98816f860c06157117"
+# G2a adds event direction/account and stored scenario horizon.
+EXPECTED_METADATA_SHA256 = "d740e1b7fe8abbed85f6ff87cbaa1519ea05306ace64452fff005ac1e9eab69f"
 
 MODEL_NAMES = (
     "Client", "ClientMfaSetting", "ClientRecoveryCode",
@@ -90,7 +90,7 @@ def _metadata_snapshot():
 def test_metadata_matches_the_minor_unit_schema():
     snapshot = _metadata_snapshot()
     assert len(snapshot["table_names"]) == 33
-    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 408
+    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 411
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == EXPECTED_METADATA_SHA256
 

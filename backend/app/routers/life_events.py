@@ -21,6 +21,7 @@ from ..services.goal_service import (
 )
 from ..workflows.goal_workflow import create_goal
 from ..services import life_event_graph, life_event_conditions
+from ..services.simulation_config_service import get_config
 
 router = APIRouter(prefix="/life-events", tags=["life_events"])
 
@@ -91,14 +92,18 @@ def delete_link(
 
 @router.get("/scenarios")
 def get_scenarios(
-    years: int = Query(30, ge=1, le=60),
-    annual_return: float = Query(5.0, allow_inf_nan=False),
-    inflation: float = Query(2.0, allow_inf_nan=False),
+    years: int | None = Query(None, ge=1, le=60),
+    annual_return: float | None = Query(None, allow_inf_nan=False),
+    inflation: float | None = Query(None, allow_inf_nan=False),
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
+    config = get_config(db, current_client.id)
     return life_event_graph.compare_scenarios(
-        db, current_client.id, years=years, annual_return=annual_return, inflation=inflation,
+        db, current_client.id,
+        years=years if years is not None else (config.horizon_years if config else 30),
+        annual_return=annual_return if annual_return is not None else (config.annual_return if config else 5.0),
+        inflation=inflation if inflation is not None else (config.inflation_rate if config else 2.0),
     )
 
 

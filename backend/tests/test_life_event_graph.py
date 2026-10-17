@@ -435,7 +435,7 @@ def test_projection_only_subtracts_resolved_scenario_events_and_shares_demand_ma
     rows = graph.project_scenario(db, 1, scenarios[0], years=2, annual_return=4, inflation=1)
     assert [row["p50"] for row in rows] == [900, 700, 700]
     assert rows[1]["p10"] == 600 and rows[1]["p90"] == 800
-    assert calls == [{"years": 2, "annual_return": 4, "inflation": 1}]
+    assert calls == [{"years": 2, "annual_return": 4, "inflation": 1, "include_event_income": False}]
     assert [row["cumulative_target"] for row in aggregate_life_event_demand_by_year(db, 1, 2)] == [100, 100, 100]
     result = graph.compare_scenarios(db, 1, years=2, annual_return=4, inflation=1)
     assert len(calls) == 2
@@ -450,7 +450,7 @@ def test_backup_carries_links_restore_remaps_both_ends_and_keeps_other_client(db
     db.commit()
     source, target = db.get(models.Client, 1), db.get(models.Client, 2)
     backup = export_client(db, source)
-    assert backup["version"] == EXPORT_VERSION == 19
+    assert backup["version"] == EXPORT_VERSION == 20
     assert backup["data"]["life_event_links"][0]["note"] == "判断"
     import_client(db, target, data=backup["data"], version=backup["version"], manifest=backup["manifest"])
     restored = graph.list_links(db, 2)[0]

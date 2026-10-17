@@ -8,7 +8,7 @@ import re
 from datetime import date, datetime
 from typing import Any
 
-EXPORT_VERSION = 19
+EXPORT_VERSION = 20
 
 DATA_COLLECTIONS = [
     "accounts",
@@ -229,6 +229,7 @@ def validate_import_payload(
     check_ref("journal_entries", "account_id", "accounts", required=True)
     check_ref("journal_entries", "capsule_id", "capsules")
     check_ref("life_event_conditions", "life_event_id", "life_events", required=True)
+    check_ref("life_events", "account_id", "accounts", required=False)
     check_ref("milestones", "life_event_id", "life_events")
     check_ref("life_event_links", "from_event_id", "life_events", required=True)
     check_ref("life_event_links", "to_event_id", "life_events", required=True)
@@ -246,7 +247,13 @@ def validate_import_payload(
 
     link_pairs = set()
     graph: dict[int, list[int]] = {}
+    for item in data.get("simulation_configs", []):
+        horizon = item.get("horizon_years", 30)
+        if type(horizon) is not int or not 1 <= horizon <= 60:
+            issue("error", "invalid_horizon_years", "試算期間は1〜60年で指定してください。", "simulation_configs", item.get("id"))
     for item in data.get("life_events", []):
+        if item.get("direction", "expense") not in {"expense", "income"}:
+            issue("error", "invalid_direction", "収支の種類は expense または income を指定してください。", "life_events", item.get("id"))
         if item.get("condition_mode", "all") not in {"all", "any"}:
             issue("error", "invalid_condition_mode", "Condition mode must be all or any.", "life_events", item.get("id"))
     reference_collections = {"account_balance": "accounts", "capsule_claim": "capsules", "goal_progress": "life_events", "member_age": "household_members"}

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 
-from ..domain.errors import NotFound
+from ..domain.errors import NotFound, Refused
 from ..utils.contribution_schedule import parse_contribution_schedule
 from sqlalchemy.orm import Session
 
@@ -28,6 +28,8 @@ def monte_carlo_for_goal(
     # event has always returned 404, and callers may rely on that precedence.
     if not event:
         raise NotFound("Life event not found")
+    if event.direction == "income":
+        raise Refused("収入イベントには積立達成率を計算できません。", status_code=422)
 
     config = get_config(db, client_id)
     volatility = config.volatility if config else 15.0

@@ -132,6 +132,7 @@ def unarchive_goal(
 def create_goal_record(
     db: Session, client_id: int, payload: schemas.LifeEventCreate, *, commit: bool = True,
 ) -> models.LifeEvent:
+    _validate_event_account(db, client_id, payload.account_id)
     db_event = models.LifeEvent(**minor_fields(payload.model_dump(), money_client_currency(db, client_id), 'target_amount'), client_id=client_id)
     db.add(db_event)
     if commit:
@@ -142,6 +143,13 @@ def create_goal_record(
     return db_event
 
 
+def _validate_event_account(db: Session, client_id: int, account_id: int | None) -> None:
+    if account_id is not None:
+        account = db.get(models.Account, account_id)
+        if account is None or account.client_id != client_id:
+            raise NotFound("同じクライアントの口座・科目が見つかりません。")
+
+
 def update_goal(
     db: Session, client_id: int, life_event_id: int, patch: schemas.LifeEventUpdate,
     *, commit: bool = True,
@@ -149,6 +157,7 @@ def update_goal(
     db_event = get_life_event(db, client_id, life_event_id)
     if db_event is None:
         return None
+    _validate_event_account(db, client_id, patch.account_id)
     for key, value in minor_fields(patch.model_dump(exclude_unset=True), money_client_currency(db, client_id), "target_amount").items():
         setattr(db_event, key, value)
     if commit:

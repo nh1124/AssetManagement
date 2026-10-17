@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from .money_storage import to_minor, money_client_currency, rule_amount_fields, rule_data
 
 from .. import models, schemas
-from ..domain.errors import Invalid, NotFound
+from ..domain.errors import Invalid, NotFound, Refused
 from ..domain.money import Money
 from ..domain.journal import Leg
 from . import ledger_service
@@ -76,6 +76,7 @@ def _finish_write(db: Session, client_id: int, record=None, *, commit: bool) -> 
 def create_capsule(
     db: Session, client_id: int, payload: schemas.CapsuleCreate, *, commit: bool = True,
 ) -> models.Capsule:
+    _validate_goal_link(db, client_id, payload.life_event_id)
     if payload.account_id is not None and ledger_service.get_account(db, client_id, payload.account_id) is None:
         raise NotFound("Account not found")
     capsule = models.Capsule(
@@ -106,6 +107,8 @@ def update_capsule(
     capsule = get_capsule(db, client_id, capsule_id)
     if capsule is None:
         return None
+    if "life_event_id" in patch.model_fields_set:
+        _validate_goal_link(db, client_id, patch.life_event_id)
     for key, value in patch.model_dump(exclude_unset=True).items():
         if key == "target_amount":
             capsule.target_amount_minor = to_minor(max(0.0, value or 0.0), money_client_currency(db, client_id))
@@ -117,6 +120,16 @@ def update_capsule(
             setattr(capsule, key, value)
     _finish_write(db, client_id, capsule, commit=commit)
     return capsule
+
+
+def _validate_goal_link(db: Session, client_id: int, life_event_id: int | None) -> None:
+    if life_event_id is None:
+        return
+    event = db.query(models.LifeEvent).filter_by(client_id=client_id, id=life_event_id).first()
+    if event is None:
+        raise NotFound("同じクライアントのイベントが見つかりません。")
+    if event.direction == "income":
+        raise Refused("収入イベントには積立用の取り置きを紐づけできません。", status_code=422)
 
 
 def funding_source_to_dict(source: models.CapsuleFundingSource) -> dict:
@@ -490,6 +503,8 @@ def capsule_to_dict(db: Session, capsule: models.Capsule) -> dict:
 
 
 def create_capsule_for_goal(db: Session, client_id: int, goal: models.LifeEvent) -> models.Capsule:
+    if goal.direction == "income":
+        raise Refused("収入イベントには積立用の取り置きを作成できません。", status_code=422)
     existing = db.query(models.Capsule).filter(
         models.Capsule.client_id == client_id,
         models.Capsule.life_event_id == goal.id,

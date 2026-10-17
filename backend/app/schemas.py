@@ -546,6 +546,7 @@ class RegistryEntry(RegistryEntryBase):
 
 # Simulation Config
 class SimulationConfigBase(BaseModel):
+    horizon_years: int = Field(default=30, ge=1, le=60)
     annual_return: float = 5.0
     tax_rate: float = 20.0
     is_nisa: bool = True
@@ -826,6 +827,8 @@ class LifeEventLink(LifeEventLinkCreate):
 
 
 class LifeEventBase(BaseModel):
+    direction: Literal["expense", "income"] = "expense"
+    account_id: Optional[int] = None
     condition_mode: Literal["all", "any"] = "all"
     name: str
     start_date: Optional[date] = None
@@ -841,6 +844,8 @@ class LifeEventCreate(LifeEventBase):
     pass
 
 class LifeEventUpdate(BaseModel):
+    direction: Literal["expense", "income"] = "expense"
+    account_id: Optional[int] = None
     condition_mode: Literal["all", "any"] = "all"
     name: Optional[str] = None
     start_date: Optional[date] = None

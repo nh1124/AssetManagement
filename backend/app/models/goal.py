@@ -10,12 +10,17 @@ from .money import MinorUnits, major_expression, client_currency, client_currenc
 from ..database import Base
 
 class LifeEvent(Base):
-    """Future liabilities/goals for Personal ALM (Asset Liability Management)."""
+    """Planned expenses and inflows for Personal ALM."""
     __tablename__ = "life_events"
 
-    __table_args__ = (CheckConstraint("condition_mode IN ('all', 'any')", name="ck_life_events_condition_mode"),)
+    __table_args__ = (
+        CheckConstraint("condition_mode IN ('all', 'any')", name="ck_life_events_condition_mode"),
+        CheckConstraint("direction IN ('expense', 'income')", name="ck_life_events_direction"),
+    )
 
     condition_mode = Column(String, nullable=False, default="all", server_default="all")
+    direction = Column(String, nullable=False, default="expense", server_default="expense")
+    account_id = Column(Integer, ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True)
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
     name = Column(String, index=True)  # e.g., "Retirement", "House"

@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from .money_storage import minor_fields, money_client_currency
 
 from .. import models, schemas
-from ..domain.errors import Conflict, Invalid
+from ..domain.errors import Conflict, Invalid, Refused
 from .strategy_service import (
     calculate_goal_probability_monte_carlo,
     calculate_projection,
@@ -114,6 +114,8 @@ def compare_scenarios(
     db: Session, client_id: int, payload: schemas.SimulationScenarioCompareRequest,
 ) -> list[dict]:
     event = _ensure_life_event(db, client_id, payload.life_event_id)
+    if event.direction == "income":
+        raise Refused("収入イベントには積立達成率を比較できません。", status_code=422)
 
     config = db.query(models.SimulationConfig).filter(
         models.SimulationConfig.client_id == client_id

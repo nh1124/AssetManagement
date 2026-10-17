@@ -146,6 +146,8 @@ class _Readers:
                 self.actual_minor[key] = figures.get(self.currency, 0)
                 actual = Money(self.actual_minor[key], self.currency).to_float()
         elif row.metric == "goal_progress":
+            if reference.direction == "income":
+                return None, "収入イベントには積立進捗がありません。"
             for capsule in self.db.query(models.Capsule).filter_by(client_id=self.client_id, life_event_id=reference.id).all():
                 reason = self.foreign(self.claim(capsule.id))
                 if reason:

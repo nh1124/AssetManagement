@@ -25,6 +25,8 @@ class ScenarioEvent:
     target_amount: float
     currency: str
     incoming_link_id: int | None
+    direction: str = "expense"
+    account_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -171,6 +173,7 @@ def enumerate_scenarios(db: Session, client_id: int) -> list[Scenario]:
             resolved[event_id] = ScenarioEvent(
                 event.id, event.name, resolved_date, event.target_amount or 0.0, currency,
                 link.id if link else None,
+                event.direction, event.account_id,
             )
             alternatives = []
             for edge in outgoing[event_id]:
@@ -228,11 +231,13 @@ def adopt_scenario(db: Session, client_id: int, scenario_id: str) -> Adoption:
 
 def _subtract_demand(scenario: Scenario, projection: list[dict], years: int) -> list[dict]:
     demand = aggregate_event_demand_by_year(
-        [(event.resolved_date, event.target_amount) for event in scenario.events], years,
+        [(event.resolved_date, event.target_amount) for event in scenario.events if event.direction == "expense"], years,
+        income_events=[(event.resolved_date, event.target_amount) for event in scenario.events if event.direction == "income"],
     )
     return [
         {**row, "cumulative_target": due["cumulative_target"],
-         **{band: row[band] - due["cumulative_target"] for band in ("p10", "p50", "p90")}}
+         "cumulative_income": due["cumulative_income"],
+         **{band: row[band] - due["cumulative_target"] + due["cumulative_income"] for band in ("p10", "p50", "p90")}}
         for row, due in zip(projection, demand)
     ]
 
@@ -243,6 +248,7 @@ def project_scenario(
 ) -> list[dict]:
     return _subtract_demand(scenario, simulate_net_worth_forward(
         db, client_id, years=years, annual_return=annual_return, inflation=inflation,
+        include_event_income=False,
     ), years)
 
 
@@ -254,8 +260,10 @@ def compare_scenarios(
     # All branches share one seeded baseline, so comparison costs one simulation.
     projection = simulate_net_worth_forward(
         db, client_id, years=years, annual_return=annual_return, inflation=inflation,
+        include_event_income=False,
     )
     return {
+        "parameters": {"years": years, "annual_return": annual_return, "inflation": inflation},
         "scenarios": [{**asdict(scenario), "projection": _subtract_demand(scenario, projection, years)} for scenario in scenarios],
         "truncated": scenarios.truncated,
         "fork_count": scenarios.fork_count,

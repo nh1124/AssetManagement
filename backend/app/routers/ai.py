@@ -184,8 +184,9 @@ async def optimize_allocations(
     # 1. Fetch Goals
     goals = list_goals(db, current_client.id)
     goals_data = [{
-        "id": g.id, "name": g.name, "target": g.target_amount, "date": str(g.target_date), "priority": g.priority
-    } for g in goals]
+        "id": g.id, "name": g.name, "target": g.target_amount, "date": str(g.target_date), "priority": g.priority,
+        "direction": g.direction, "account_id": g.account_id,
+    } for g in goals if g.direction == "expense"]
     
     # 2. Fetch Assets
     assets = list_asset_accounts(db, current_client.id)

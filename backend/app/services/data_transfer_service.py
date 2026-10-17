@@ -130,6 +130,7 @@ def export_client(db: Session, client: models.Client) -> dict:
                         "monthly_savings",
                         "volatility",
                         "inflation_rate",
+                        "horizon_years",
                     ],
                 )
                 for config in db.query(models.SimulationConfig)
@@ -255,6 +256,8 @@ def export_client(db: Session, client: models.Client) -> dict:
                         "priority",
                         "note",
                         "condition_mode",
+                        "direction",
+                        "account_id",
                         "active_plan_basis",
                         "active_plan_label",
                         "plan_status_override",
@@ -695,6 +698,7 @@ def import_client(
                     monthly_savings_minor=to_minor(item.get("monthly_savings", 100000), money_client_currency(db, client.id)),
                     volatility=item.get("volatility", 15.0),
                     inflation_rate=item.get("inflation_rate", 2.0),
+                    horizon_years=item.get("horizon_years", 30),
                 )
             )
 
@@ -854,6 +858,8 @@ def import_client(
                 priority=item.get("priority") or 2,
                 note=item.get("note"),
                 condition_mode=item.get("condition_mode", "all"),
+                direction=item.get("direction", "expense"),
+                account_id=account_map.get(item.get("account_id")),
                 active_plan_basis=item.get("active_plan_basis") or "milestone",
                 active_plan_label=item.get("active_plan_label"),
                 plan_status_override=item.get("plan_status_override"),
@@ -1023,10 +1029,10 @@ def import_client(
         for registry_entry, old_capsule_id in registry_funding_updates:
             registry_entry.funding_capsule_id = capsule_map.get(old_capsule_id)
 
-        # Recreate missing goal capsules so older exports behave like normal goal creation.
+        # Recreate expense capsules only; an expected receipt needs no savings reserve.
         for event in (
             db.query(models.LifeEvent)
-            .filter(models.LifeEvent.client_id == client.id)
+            .filter(models.LifeEvent.client_id == client.id, models.LifeEvent.direction == "expense")
             .all()
         ):
             create_capsule_for_goal(db, client.id, event)

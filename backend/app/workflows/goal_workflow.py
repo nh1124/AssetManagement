@@ -15,6 +15,11 @@ def create_goal(
     db: Session, client_id: int, payload: schemas.LifeEventCreate, *, commit: bool = True,
 ) -> models.LifeEvent:
     db_event = create_goal_record(db, client_id, payload, commit=commit)
+    if db_event.direction == "income":
+        # Receipts belong to projections, not to savings capsules or savings milestones.
+        if commit:
+            invalidate_client(client_id)
+        return db_event
     if commit:
         reset_milestones_from_annual_plan(db, client_id, db_event.id)
     else:

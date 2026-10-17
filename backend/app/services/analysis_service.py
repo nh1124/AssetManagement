@@ -246,7 +246,8 @@ def get_summary(db: Session, client_id: int) -> dict:
     ).scalar() or 0
 
     goal_count = db.query(func.count(models.LifeEvent.id)).filter(
-        models.LifeEvent.client_id == client_id
+        models.LifeEvent.client_id == client_id,
+        models.LifeEvent.direction == "expense",
     ).scalar() or 0
 
     runway_text = (

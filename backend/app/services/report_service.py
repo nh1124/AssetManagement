@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from .money_storage import to_minor, money_client_currency
 
 from .. import models
+from ..domain.errors import Refused
 from ..domain.money import Money
 from ..domain.journal import Leg
 from .ledger_service import get_or_create_account, create_transaction
@@ -123,7 +124,8 @@ def generate_monthly_report(db: Session, client_id: int, year: int, month: int) 
         client_id,
         reference_date=previous_period_end,
     )
-    previous_by_id = {event["id"]: event for event in previous_events}
+    current_events = [event for event in current_events if event.get("direction", "expense") == "expense"]
+    previous_by_id = {event["id"]: event for event in previous_events if event.get("direction", "expense") == "expense"}
 
     goal_progress = []
     for event in current_events:
@@ -238,7 +240,8 @@ def generate_period_report(db: Session, client_id: int, start_date: date, end_da
 
     current_events = get_life_events_with_progress(db, client_id, reference_date=end_date)
     previous_events = get_life_events_with_progress(db, client_id, reference_date=previous_period_end)
-    previous_by_id = {event["id"]: event for event in previous_events}
+    current_events = [event for event in current_events if event.get("direction", "expense") == "expense"]
+    previous_by_id = {event["id"]: event for event in previous_events if event.get("direction", "expense") == "expense"}
 
     goal_progress = []
     for event in current_events:
@@ -335,6 +338,8 @@ def _apply_allocate_to_goal(
     ).first()
     if not goal:
         raise LookupError("Target goal not found")
+    if goal.direction == "income":
+        raise Refused("収入イベントには積立を配分できません。", status_code=422)
 
     cash_account = get_or_create_account(db, "cash", client_id, "asset", commit=False)
     savings_account = get_or_create_account(db, "savings", client_id, "asset", commit=False)

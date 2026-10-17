@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from .money_storage import minor_fields, money_client_currency
 
 from .. import models, schemas
+from ..domain.errors import Refused
 from .goal_service import get_life_events_with_progress
 from .strategy_service import (
     _period_contribution_from_schedule,
@@ -208,7 +209,7 @@ def build_default_milestone_rows(
         allocation_mode=allocation_mode,
     )
     event = next((item for item in events if item["id"] == life_event_id), None)
-    if not event:
+    if not event or event.get("direction", "expense") == "income":
         return []
 
     today = date.today()
@@ -293,6 +294,8 @@ def preview_milestones_from_simulation(
 ) -> dict:
     """Build milestone candidates from the same normalized inputs as goal simulation."""
     event = _get_event(db, client_id, life_event_id)
+    if event.direction == "income":
+        raise Refused("収入イベントには積立計画を生成できません。", status_code=422)
     if basis == "annual_plan":
         existing_count = db.query(models.Milestone).filter(
             models.Milestone.client_id == client_id,

@@ -28,6 +28,9 @@ def calculate_current_funded_and_weighted_return(event: models.LifeEvent, db: Op
     from .capsule_service import claimed_minor
     from .fx_service import get_client_currency
     from ..domain.money import Money
+    # An expected receipt has no savings requirement, even if old claims remain linked.
+    if event.direction == "income":
+        return 0.0, 5.0
     db = db or object_session(event)
     if db is None:
         return 0.0, 5.0
@@ -275,12 +278,13 @@ def get_goal_simulation_context(
     life_events = db.query(models.LifeEvent).filter(
         models.LifeEvent.client_id == client_id,
         models.LifeEvent.archived_at.is_(None),
+        models.LifeEvent.direction == "expense",
     ).all()
     priority_weight_map = {1: 3, 2: 2, 3: 1}
     total_weight = sum(priority_weight_map.get(item.priority, 1) for item in life_events) or 1
     weight = priority_weight_map.get(event.priority, 1)
     # A called-off goal keeps its saved money but no longer competes for future savings.
-    allocation_ratio = 0.0 if event.archived_at else (weight / total_weight if allocation_mode != "direct" else 1.0)
+    allocation_ratio = 0.0 if event.archived_at or event.direction == "income" else (weight / total_weight if allocation_mode != "direct" else 1.0)
 
     current_funded, weighted_return = calculate_current_funded_and_weighted_return(event, db)
     tax_rate = config.tax_rate if config else 20.0
@@ -567,12 +571,12 @@ def calculate_milestone_plan_progress(
     active_milestones = sorted(
         [m for m in (event.milestones or []) if getattr(m, "is_active_plan", True)],
         key=lambda m: (m.date, m.id),
-    )
+    ) if event.direction != "income" else []
     if not active_milestones:
         return {
             "plan_expected_amount": 0.0,
             "plan_gap": 0.0,
-            "plan_status": event.plan_status_override or "No Plan",
+            "plan_status": "No Plan" if event.direction == "income" else (event.plan_status_override or "No Plan"),
             "plan_progress_percentage": 0.0,
             "plan_previous_milestone": None,
             "plan_next_milestone": None,
@@ -669,6 +673,13 @@ def get_life_events_with_progress(
     result = []
     
     for event in life_events:
+        # Keep receipts visible, but never describe them as underfunded goals.
+        if event.direction == "income":
+            result.append({
+                **_income_event_with_progress(event, evaluation_date),
+                **calculate_milestone_plan_progress(event, 0.0, evaluation_date),
+            })
+            continue
         context = get_goal_simulation_context(
             db=db,
             client_id=client_id,
@@ -720,19 +731,7 @@ def get_life_events_with_progress(
         )
         
         result.append({
-            "id": event.id,
-            "name": event.name,
-            "target_date": event.target_date.isoformat(),
-            "target_amount": event.target_amount,
-            "priority": event.priority,
-            "note": event.note,
-            "start_date": event.start_date.isoformat() if event.start_date else None,
-            "condition_mode": event.condition_mode,
-            "active_plan_basis": event.active_plan_basis,
-            "active_plan_label": event.active_plan_label,
-            "plan_status_override": event.plan_status_override,
-            "archived_at": event.archived_at.isoformat() if event.archived_at else None,
-            "created_at": event.created_at.isoformat() if event.created_at else None,
+            **_life_event_fields(event),
             "allocations": [],
             "current_funded": round(current_funded, 2),
             "projected_amount": round(projected, 2),
@@ -752,9 +751,45 @@ def get_life_events_with_progress(
     return result
 
 
+def _life_event_fields(event: models.LifeEvent) -> dict:
+    return {
+        "id": event.id,
+        "name": event.name,
+        "target_date": event.target_date.isoformat(),
+        "target_amount": event.target_amount,
+        "direction": event.direction,
+        "account_id": event.account_id,
+        "priority": event.priority,
+        "note": event.note,
+        "start_date": event.start_date.isoformat() if event.start_date else None,
+        "condition_mode": event.condition_mode,
+        "active_plan_basis": event.active_plan_basis,
+        "active_plan_label": event.active_plan_label,
+        "plan_status_override": event.plan_status_override,
+        "archived_at": event.archived_at.isoformat() if event.archived_at else None,
+        "created_at": event.created_at.isoformat() if event.created_at else None,
+    }
+
+
+def _income_event_with_progress(event: models.LifeEvent, evaluation_date: date) -> dict:
+    return {
+        **_life_event_fields(event),
+        "current_funded": 0.0,
+        "projected_amount": 0.0,
+        "gap": 0.0,
+        "progress_percentage": 0.0,
+        "funded_percentage": 0.0,
+        "status": "Not Applicable",
+        "years_remaining": round(max(0.0, (event.target_date - evaluation_date).days / 365.25), 1),
+        "allocations": [],
+        "roadmap": [],
+    }
+
+
 def calculate_overall_goal_probability(db: Session, client_id: int) -> dict:
     """Calculate overall probability of achieving all goals for current client."""
-    events_with_progress = get_life_events_with_progress(db, client_id=client_id)
+    events_with_progress = [event for event in get_life_events_with_progress(db, client_id=client_id)
+                            if event.get("direction", "expense") == "expense"]
     
     if not events_with_progress:
         return {
@@ -785,6 +820,7 @@ def calculate_overall_goal_probability(db: Session, client_id: int) -> dict:
 
 def calculate_roadmap_progression(events: list[dict]) -> dict:
     """Return weighted goal progression and status across all future liabilities."""
+    events = [event for event in events if event.get("direction", "expense") == "expense"]
     total_target = sum((event.get("target_amount") or 0.0) for event in events)
     if not events or total_target <= 0:
         return {"progression": 100.0, "status": "On Track"}
@@ -811,6 +847,7 @@ def simulate_net_worth_forward(
     inflation: float = 2.0,
     monthly_savings: float | None = None,
     contribution_schedule: list[dict[str, Any]] | None = None,
+    *, include_event_income: bool = True,
 ) -> list[dict]:
     """Simulate total net worth forward as yearly P10/P50/P90 bands."""
 
@@ -865,6 +902,12 @@ def simulate_net_worth_forward(
             }
         )
 
+    if include_event_income:
+        # Scenario walks supply resolved dates themselves, so they opt out of stored dates.
+        demand = aggregate_life_event_demand_by_year(db, client_id, years)
+        return [{**row, "cumulative_income": due["cumulative_income"],
+                 **{band: row[band] + due["cumulative_income"] for band in ("p10", "p50", "p90")}}
+                for row, due in zip(projection, demand)]
     return projection
 
 
@@ -881,12 +924,14 @@ def aggregate_life_event_demand_by_year(
     ).order_by(models.LifeEvent.target_date, models.LifeEvent.id).all()
 
     return aggregate_event_demand_by_year(
-        [(event.target_date, event.target_amount or 0.0) for event in life_events], years,
+        [(event.target_date, event.target_amount or 0.0) for event in life_events if event.direction == "expense"], years,
+        income_events=[(event.target_date, event.target_amount or 0.0) for event in life_events if event.direction == "income"],
     )
 
 
 def aggregate_event_demand_by_year(
     events: list[tuple[date | None, float]], years: int = 30,
+    *, income_events: list[tuple[date | None, float]] | None = None,
 ) -> list[dict]:
     """Share calendar-year demand math between stored goals and resolved scenarios."""
     years = max(1, min(years, 60))
@@ -897,6 +942,7 @@ def aggregate_event_demand_by_year(
         rows.append({
             "year": year,
             "cumulative_target": round(sum(due), 0),
+            "cumulative_income": round(sum(amount for target_date, amount in (income_events or []) if target_date and target_date.year <= year), 0),
             "event_count": len(due),
         })
     return rows
@@ -932,23 +978,18 @@ def get_roadmap_projection(
         models.Milestone.client_id == client_id
     ).order_by(models.Milestone.date, models.Milestone.id).all()
     event_name_by_id = {event["id"]: event["name"] for event in events}
+    demand = aggregate_life_event_demand_by_year(db, client_id, years)
+    # This chart presents liabilities separately; the forward simulation includes receipts.
+    projection = simulate_net_worth_forward(
+        db=db, client_id=client_id, years=years, annual_return=annual_return,
+        inflation=inflation, monthly_savings=monthly_savings,
+        contribution_schedule=contribution_schedule,
+    )
 
     return {
         "history": get_net_worth_history(db, client_id=client_id, months=24),
-        "projection": simulate_net_worth_forward(
-            db=db,
-            client_id=client_id,
-            years=years,
-            annual_return=annual_return,
-            inflation=inflation,
-            monthly_savings=monthly_savings,
-            contribution_schedule=contribution_schedule,
-        ),
-        "liability_demand": aggregate_life_event_demand_by_year(
-            db=db,
-            client_id=client_id,
-            years=years,
-        ),
+        "projection": projection,
+        "liability_demand": demand,
         "milestones": [
             {
                 "id": milestone.id,
@@ -1019,6 +1060,7 @@ def generate_budget_from_goals(db: Session, month: str, client_id: int) -> List[
     life_events = db.query(models.LifeEvent).filter(
         models.LifeEvent.client_id == client_id,
         models.LifeEvent.archived_at.is_(None),
+        models.LifeEvent.direction == "expense",
     ).all()
     
     # Get simulation config for monthly savings
@@ -1053,7 +1095,8 @@ def summarize_goal_funding_gap(db: Session, client_id: int) -> dict:
     Lives here rather than in budget_plan_service so that planning never has to
     import the goal domain; the caller composes the two.
     """
-    events = get_life_events_with_progress(db, client_id=client_id)
+    events = [event for event in get_life_events_with_progress(db, client_id=client_id)
+              if event.get("direction", "expense") == "expense"]
     total_gap = sum(max(0, e["gap"]) for e in events)
     avg_years = (
         sum(e["years_remaining"] for e in events) / len(events)
