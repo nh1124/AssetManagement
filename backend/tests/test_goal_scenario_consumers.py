@@ -94,13 +94,11 @@ def snapshot(app, *, fresh=True):
         "events": "/life-events/",
         "progress": "/life-events/with-progress",
         "archived_progress": "/life-events/with-progress?include_archived=true",
-        "probability": "/life-events/goal-probability",
         "dashboard": "/life-events/dashboard",
         "roadmap": "/roadmap/projection?years=5",
         "milestones": "/roadmap/milestones",
         "monthly": f"/reports/monthly?year={today.year}&month={today.month}",
         "period": f"/reports/period?start_date={today.replace(day=1)}&end_date={today}",
-        "budget": f"/life-events/generate-budget/{period}",
         "funding": f"/budget-plans/summary?period={period}",
         "ai": "/ai/context/resource/goals",
         "analysis": "/analysis/summary",
@@ -120,6 +118,8 @@ def snapshot(app, *, fresh=True):
                 assert response.status_code == 200, (url, response.text)
                 result[name] = response.json()
         result["ai"].pop("generated_at")
+        session = app.dependency_overrides[get_db]()
+        result["probability"] = strategy_service.calculate_overall_goal_probability(session, client_id=1)
         return result
 
     return asyncio.run(run())
@@ -166,7 +166,6 @@ def test_duplicate_and_draft_only_events_leave_every_goal_endpoint_unchanged_the
     assert after["roadmap"]["liability_demand"][-1]["cumulative_target"] == 50_000_000
     assert after["roadmap"]["liability_demand"][-1]["cumulative_income"] == 7_300_000
     assert after["roadmap"]["projection"] != before["roadmap"]["projection"]
-    assert {row["derived_from"] for row in after["budget"]} == {row.name for row in active if row.direction == "expense"}
     assert after["funding"]["goals_count"] == 3
     assert after["funding"]["total_goal_gap"] != before["funding"]["total_goal_gap"]
     assert {row["id"] for row in after["ai"]["data"]["goals"]} == ids
@@ -186,7 +185,7 @@ def test_missing_goal_never_falls_back_to_draft_or_another_clients_goal(db):
     db.commit()
     assert goal_service.goal_events_query(db, 1, include_archived=True).all() == []
     result = snapshot(application(db))
-    for key in ("events", "progress", "archived_progress", "budget"):
+    for key in ("events", "progress", "archived_progress"):
         assert result[key] == []
     assert result["probability"]["total_goals"] == 0
     assert result["monthly"]["goal_progress"] == result["period"]["goal_progress"] == []

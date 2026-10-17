@@ -1194,38 +1194,6 @@ def get_strategy_dashboard(
     }
 
 
-def generate_budget_from_goals(db: Session, month: str, client_id: int) -> List[dict]:
-    """Generate a budget template derived from life event goals for current client."""
-    life_events = goal_events_query(db, client_id).filter(
-        models.LifeEvent.direction == "expense",
-    ).all()
-    
-    # Get simulation config for monthly savings
-    config = db.query(models.SimulationConfig).filter(
-        models.SimulationConfig.client_id == client_id
-    ).first()
-    total_monthly_savings = config.monthly_savings if config else 100000
-    
-    budget_items = []
-    
-    # Allocate savings across goals based on priority
-    priority_weights = {1: 3, 2: 2, 3: 1}
-    total_weight = sum(priority_weights.get(e.priority, 1) for e in life_events) or 1
-    
-    for event in life_events:
-        weight = priority_weights.get(event.priority, 1)
-        allocation = (weight / total_weight) * total_monthly_savings
-        
-        budget_items.append({
-            "category": f"Savings: {event.name}",
-            "proposed_amount": allocation,
-            "derived_from": event.name,
-            "month": month
-        })
-    
-    return budget_items
-
-
 def summarize_goal_funding_gap(db: Session, client_id: int) -> dict:
     """Goal-side inputs for the budget summary.
 

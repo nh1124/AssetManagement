@@ -17,8 +17,6 @@ from ..services.goal_service import (
 )
 from ..services.strategy_service import (
     get_life_events_with_progress,
-    calculate_overall_goal_probability,
-    generate_budget_from_goals,
     get_strategy_dashboard,
 )
 from ..workflows.goal_workflow import create_goal
@@ -111,14 +109,6 @@ def get_life_events_progress(
 ):
     """Get all life events with calculated progress for current client."""
     return get_life_events_with_progress(db, client_id=current_client.id, include_archived=include_archived, scenario_id=scenario_id)
-
-@router.get("/goal-probability")
-def get_goal_probability(
-    db: Session = Depends(get_db),
-    current_client: models.Client = Depends(get_current_client)
-):
-    """Get overall goal probability calculation for current client."""
-    return calculate_overall_goal_probability(db, client_id=current_client.id)
 
 @router.get("/dashboard")
 def get_dashboard(
@@ -215,13 +205,5 @@ def delete_life_event(
         raise HTTPException(status_code=404, detail="Life event not found")
     return {"message": "Deleted"}
 
-@router.get("/generate-budget/{month}")
-def generate_budget(
-    month: str, 
-    db: Session = Depends(get_db),
-    current_client: models.Client = Depends(get_current_client)
-):
-    """Generate budget template from life event goals for current client."""
-    return generate_budget_from_goals(db, month, client_id=current_client.id)
 
 

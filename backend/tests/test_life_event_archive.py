@@ -182,4 +182,3 @@ def test_called_off_goal_is_excluded_from_savings_allocation_and_future_demand(w
     archived_context = strategy_service.get_goal_simulation_context(db, client.id, goal, monthly_savings=100)
     assert archived_context['allocated_monthly_savings'] == 0
     assert strategy_service.aggregate_life_event_demand_by_year(db, client.id, years=2)[-1]['event_count'] == 1
-    assert len(strategy_service.generate_budget_from_goals(db, '2026-10', client.id)) == 1

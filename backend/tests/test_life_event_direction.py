@@ -226,14 +226,6 @@ def test_income_is_excluded_from_roadmap_progression():
     ]) == {"progression": 100, "status": "On Track"}
 
 
-def test_income_is_excluded_from_generated_savings_budget(db):
-    node(db, priority=3)
-    node(db, "income", priority=1)
-    budget = strategy_service.generate_budget_from_goals(db, "2026-10", 1)
-    assert len(budget) == 1 and budget[0]["derived_from"] == "expense"
-    assert budget[0]["proposed_amount"] == 100000
-
-
 def test_income_is_excluded_from_funding_gap_and_required_monthly_savings(db):
     node(db)
     baseline = strategy_service.summarize_goal_funding_gap(db, 1)

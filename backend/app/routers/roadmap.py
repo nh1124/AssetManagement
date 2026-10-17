@@ -10,7 +10,6 @@ from ..services.milestone_service import (
     delete_milestone as delete_milestone_row,
     list_milestones,
     preview_milestones_from_simulation,
-    reset_milestones_from_annual_plan,
     update_milestone as update_milestone_row,
 )
 from ..services.cache_service import get_or_set, invalidate_client
@@ -83,20 +82,6 @@ def create_milestone(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     invalidate_client(current_client.id)
     return db_milestone
-
-@router.post("/life-events/{life_event_id}/milestones/reset-from-annual", response_model=List[schemas.Milestone])
-def reset_life_event_milestones_from_annual(
-    life_event_id: int,
-    db: Session = Depends(database.get_db),
-    current_client: models.Client = Depends(dependencies.get_current_client)
-):
-    try:
-        result = reset_milestones_from_annual_plan(db, current_client.id, life_event_id)
-    except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    invalidate_client(current_client.id)
-    return result
-
 
 @router.post("/life-events/{life_event_id}/milestones/from-simulation/preview", response_model=schemas.MilestoneSimulationPreview)
 def preview_life_event_milestones_from_simulation(

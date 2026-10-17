@@ -228,13 +228,12 @@ def test_create_and_reset_milestones_reuse_event_check_and_preserve_404(db, life
     client = db.get(models.Client, 1)
     with pytest.raises(LookupError, match="^Life event not found$"):
         milestone_service.create_milestone(db, 1, _milestone(life_event_id))
-    for endpoint, argument in (
-        (roadmap.create_milestone, _milestone(life_event_id)),
-        (roadmap.reset_life_event_milestones_from_annual, life_event_id),
-    ):
-        with pytest.raises(HTTPException) as error:
-            endpoint(argument, db, client)
-        assert (error.value.status_code, error.value.detail) == (404, "Life event not found")
+    # The reset-from-annual route was removed with the old goal UI; creation keeps the 404.
+    with pytest.raises(HTTPException) as error:
+        roadmap.create_milestone(_milestone(life_event_id), db, client)
+    assert (error.value.status_code, error.value.detail) == (404, "Life event not found")
+    with pytest.raises(LookupError, match="^Life event not found$"):
+        milestone_service.reset_milestones_from_annual_plan(db, 1, life_event_id)
     assert db.query(models.Milestone).count() == 0
 
 

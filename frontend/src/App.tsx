@@ -1,18 +1,22 @@
 import './index.css';
+import { useEffect } from 'react';
 import { ToastProvider } from './components/Toast';
 import { ClientProvider } from './context/ClientContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import LoginPage from './pages/Login';
-import DesktopApp from './desktop/DesktopApp';
 import MobileApp from './mobile/MobileApp';
 import StudioApp from './studio/StudioApp';
 import { useShellMode } from './shared/useShellMode';
 
-/* The rebuilt desktop UI runs alongside the old one under /studio until its
- * core screens are done. Nothing else changes until the default moves, so the
- * stack keeps working through the rebuild. The mobile shell is out of scope and
- * keeps its own path. */
+/* The desktop web UI is the rebuilt studio under /studio; the old desktop UI is
+ * gone. The mobile shell keeps its own path until a new one is built on the
+ * studio's screens. */
 const isStudio = () => window.location.pathname.startsWith('/studio');
+
+function ToStudio() {
+  useEffect(() => { window.location.replace('/studio'); }, []);
+  return null;
+}
 
 function AppContent() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -43,7 +47,7 @@ function AppContent() {
   return (
     <ClientProvider>
       <ToastProvider>
-        {shellMode === 'mobile' ? <MobileApp /> : <DesktopApp />}
+        {shellMode === 'mobile' ? <MobileApp /> : <ToStudio />}
       </ToastProvider>
     </ClientProvider>
   );

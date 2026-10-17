@@ -7,7 +7,6 @@ import type {
     AccountFlowGrain,
     AccountFlowTransactionPage,
     AccountRole,
-    AccountTreeNode,
     AiChangeRequest,
     AiAuditLog,
     AiExecutionSettings,
@@ -22,7 +21,6 @@ import type {
     CapsuleRule,
     CapsuleFundingSource,
     CapsuleFundingSourceInput,
-    CapsuleTransferPreview,
     DataHealthResult,
     DepreciationMethod,
     DepreciationRunResult,
@@ -50,12 +48,8 @@ import type {
     RegistryEntry,
     ReviewActionCreate,
     RoadmapProjection,
-    SimulationScenario,
-    SimulationScenarioCompareItem,
-    SimulationScenarioCreatePayload,
     Transaction,
     TransactionBatch,
-    TransactionLeg,
     TransactionProposal,
 } from '../types';
 
@@ -91,7 +85,6 @@ api.interceptors.response.use(
     }
 );
 
-
 // Auth endpoints
 export const login = async (credentials: any): Promise<LoginResult> => {
     const response = await api.post('/auth/login', credentials);
@@ -105,12 +98,6 @@ export const verifyMfaLogin = async (payload: { mfa_token: string; code?: string
 
 export const register = async (userData: any) => {
     const response = await api.post('/auth/register', userData);
-    return response.data;
-};
-
-export const updateProfile = async (profileData: any) => {
-
-    const response = await api.patch('/auth/me', profileData);
     return response.data;
 };
 
@@ -207,7 +194,6 @@ export const refreshAiChangeRequestPreview = async (id: number): Promise<AiChang
     const response = await api.post(`/ai/change-requests/${id}/refresh-preview`);
     return response.data;
 };
-
 
 // Analysis endpoints
 
@@ -359,16 +345,6 @@ export const getAccountEarmarks = async (accountId: number): Promise<AccountEarm
     return response.data;
 };
 
-export const getAccountsByType = async () => {
-    const response = await api.get('/accounts/by-type');
-    return response.data;
-};
-
-export const getAccountTree = async (): Promise<Record<string, AccountTreeNode[]>> => {
-    const response = await api.get('/accounts/tree');
-    return response.data;
-};
-
 export const createAccount = async (account: {
     name: string;
     account_type: string;
@@ -416,11 +392,6 @@ export const updateAccount = async (id: number, data: {
 
 export const deleteAccount = async (id: number) => {
     const response = await api.delete(`/accounts/${id}`);
-    return response.data;
-};
-
-export const seedDefaultAccounts = async () => {
-    const response = await api.post('/accounts/seed-defaults');
     return response.data;
 };
 
@@ -513,24 +484,6 @@ export const getQuickTemplates = async (params?: { tray?: string; includeInactiv
     return response.data;
 };
 
-export const createQuickTemplate = async (template: QuickTemplatePayload): Promise<QuickTemplate> => {
-    const response = await api.post('/quick-templates/', template);
-    return response.data;
-};
-
-export const updateQuickTemplate = async (
-    id: number,
-    template: Partial<QuickTemplatePayload>
-): Promise<QuickTemplate> => {
-    const response = await api.put(`/quick-templates/${id}`, template);
-    return response.data;
-};
-
-export const deleteQuickTemplate = async (id: number) => {
-    const response = await api.delete(`/quick-templates/${id}`);
-    return response.data;
-};
-
 export const createTransactionBatch = async (payload: {
     quick_template_id?: number | null;
     label?: string | null;
@@ -559,20 +512,6 @@ const appendContributionSchedule = (params: Record<string, unknown>, contributio
         params.contribution_schedule = JSON.stringify(contribution_schedule);
     }
     return params;
-};
-
-export const getGoalDashboard = async (
-    annual_return: number = 5.0,
-    inflation: number = 2.0,
-    monthly_savings: number = 50000,
-    contribution_schedule?: ContributionScheduleItem[],
-    allocation_mode: 'weighted' | 'direct' = 'weighted',
-    roadmap_interval: 'auto' | 'monthly' | 'quarterly' | 'annual' = 'auto',
-) => {
-    const response = await api.get('/life-events/dashboard', {
-        params: appendContributionSchedule({ annual_return, inflation, monthly_savings, allocation_mode, roadmap_interval }, contribution_schedule)
-    });
-    return response.data;
 };
 
 // A new event belongs to the scenario it is created in; an update never moves it.
@@ -608,7 +547,6 @@ export const getGoalCapsules = async (goalId: number): Promise<GoalCapsule[]> =>
     const response = await api.get(`/life-events/${goalId}/capsules`);
     return response.data;
 };
-
 
 // Budget Builder
 export const getBudgetSummary = async (
@@ -710,11 +648,6 @@ export const getDepreciationSummary = async (): Promise<{
     return response.data;
 };
 
-export const getDepreciationSchedule = async (productId: number): Promise<DepreciationSchedule> => {
-    const response = await api.get(`/products/${productId}/depreciation`);
-    return response.data;
-};
-
 export const postDepreciation = async (productId: number, period: string) => {
     const response = await api.post(`/products/${productId}/depreciation`, { period });
     return response.data as { transaction_id: number; period: string; amount_minor: number; schedule: DepreciationSchedule };
@@ -749,20 +682,9 @@ export const deleteRegistryEntry = async (id: number) => {
     await api.delete(`/registry-entries/${id}`);
 };
 
-// AI/Analysis backend-side
-export const analyzeWithBackend = async (payload: { parts: any[] }) => {
-    const response = await api.post('/api/analyze/', payload);
-    return response.data;
-};
-
 // Client management
 export const getClients = async () => {
     const response = await api.get('/clients/');
-    return response.data;
-};
-
-export const updateClientKey = async (clientId: number, gemini_api_key: string) => {
-    const response = await api.put(`/clients/${clientId}/key`, { gemini_api_key });
     return response.data;
 };
 
@@ -816,21 +738,6 @@ export const autoUpdateExchangeRates = async (): Promise<ExchangeRateAutoUpdateR
 // Recurring Transactions endpoints
 export const getRecurringTransactions = async (): Promise<RecurringTransaction[]> => {
     const response = await api.get('/recurring/');
-    return response.data;
-};
-
-export const createRecurringTransaction = async (recurring: any) => {
-    const response = await api.post('/recurring/', recurring);
-    return response.data;
-};
-
-export const updateRecurringTransaction = async (id: number, data: any) => {
-    const response = await api.put(`/recurring/${id}`, data);
-    return response.data;
-};
-
-export const deleteRecurringTransaction = async (id: number) => {
-    const response = await api.delete(`/recurring/${id}`);
     return response.data;
 };
 
@@ -898,34 +805,6 @@ export const applyMilestonesFromSimulation = async (
     return response.data;
 };
 
-export const getSimulationScenarios = async (lifeEventId: number): Promise<SimulationScenario[]> => {
-    const response = await api.get('/simulation/scenarios', { params: { life_event_id: lifeEventId } });
-    return response.data;
-};
-
-export const createSimulationScenario = async (
-    payload: SimulationScenarioCreatePayload,
-): Promise<SimulationScenario> => {
-    const response = await api.post('/simulation/scenarios', payload);
-    return response.data;
-};
-
-export const deleteSimulationScenario = async (id: number): Promise<SimulationScenario> => {
-    const response = await api.delete(`/simulation/scenarios/${id}`);
-    return response.data;
-};
-
-export const compareSimulationScenarios = async (
-    lifeEventId: number,
-    scenarioIds: [number, number],
-): Promise<SimulationScenarioCompareItem[]> => {
-    const response = await api.post('/simulation/scenarios/compare', {
-        life_event_id: lifeEventId,
-        scenario_ids: scenarioIds,
-    });
-    return response.data;
-};
-
 // Capsules endpoints
 export const recordCapsuleDrawdown = async (capsuleId: number, payload: CapsuleDrawdownInput): Promise<CapsuleDrawdownResult> => {
     const response = await api.post<CapsuleDrawdownResult>(`/capsules/${capsuleId}/drawdown`, payload);
@@ -934,16 +813,6 @@ export const recordCapsuleDrawdown = async (capsuleId: number, payload: CapsuleD
 
 export const getCapsuleDrawdowns = async (capsuleId: number): Promise<CapsuleDrawdown[]> => {
     const response = await api.get<CapsuleDrawdown[]>(`/capsules/${capsuleId}/drawdowns`);
-    return response.data;
-};
-
-export const previewCapsuleTransfersForTransaction = async (draft: {
-    description: string;
-    amount: number;
-    date: string;
-    legs: TransactionLeg[];
-}): Promise<CapsuleTransferPreview[]> => {
-    const response = await api.post('/capsules/preview-for-transaction', draft);
     return response.data;
 };
 
@@ -1014,16 +883,6 @@ export const deleteCapsule = async (id: number): Promise<{
     return response.data;
 };
 
-export const createProductReservePools = async () => {
-    const response = await api.post('/capsules/product-reserve-pools');
-    return response.data;
-};
-
-export const syncProductReserves = async () => {
-    const response = await api.post('/capsules/sync-product-reserves');
-    return response.data;
-};
-
 export const getCapsuleRules = async (): Promise<CapsuleRule[]> => {
     const response = await api.get('/capsules/rules');
     return response.data;
@@ -1086,37 +945,6 @@ export const applyPeriodReportAction = async (
 };
 
 // Budget Plans
-import type { BudgetPlan, BudgetPlanCompareResult } from '../types';
-
-export const getBudgetPlans = async (): Promise<BudgetPlan[]> => {
-    const response = await api.get('/budget-plans');
-    return response.data;
-};
-
-export const createBudgetPlan = async (payload: { name: string; description?: string }): Promise<BudgetPlan> => {
-    const response = await api.post('/budget-plans', payload);
-    return response.data;
-};
-
-export const updateBudgetPlan = async (id: number, payload: { name?: string; sort_order?: number }): Promise<BudgetPlan> => {
-    const response = await api.put(`/budget-plans/${id}`, payload);
-    return response.data;
-};
-
-export const deleteBudgetPlan = async (id: number): Promise<void> => {
-    await api.delete(`/budget-plans/${id}`);
-};
-
-export const copyBudgetPlanFrom = async (targetPlanId: number, sourcePlanId: number): Promise<void> => {
-    await api.post(`/budget-plans/${targetPlanId}/copy-from`, null, {
-        params: { source_plan_id: sourcePlanId },
-    });
-};
-
-export const adoptBudgetPlan = async (planId: number): Promise<BudgetPlan> => {
-    const response = await api.post(`/budget-plans/${planId}/adopt`);
-    return response.data;
-};
 
 export const copyPeriodFullReplace = async (payload: {
     source_period: string;
@@ -1124,21 +952,6 @@ export const copyPeriodFullReplace = async (payload: {
     plan_id?: number;
 }): Promise<void> => {
     await api.post('/budget-plans/copy-period', payload);
-};
-
-export const compareBudgetPlans = async (
-    planIds: number[],
-    startPeriod: string,
-    months?: number,
-): Promise<BudgetPlanCompareResult[]> => {
-    const response = await api.get('/budget-plans/compare', {
-        params: {
-            plan_ids: planIds.join(','),
-            start_period: startPeriod,
-            months,
-        },
-    });
-    return response.data;
 };
 
 export default api;
