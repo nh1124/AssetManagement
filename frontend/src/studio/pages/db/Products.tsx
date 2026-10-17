@@ -13,6 +13,7 @@ import { buttonClass, inputClass, loadLookups, useMutation } from './forms';
 
 const loadProducts = (): Promise<Product[]> => getProducts();
 type Lookups = Awaited<ReturnType<typeof loadLookups>>;
+type FundingCapsule = Lookups['capsules'][number] & { life_event_id?: number | null };
 type Treatment = NonNullable<Product['budget_treatment']>;
 type Position = Awaited<ReturnType<typeof getDepreciationSummary>>['items'][number];
 const loadPositions = () => getDepreciationSummary().then((summary) => summary.items);
@@ -38,6 +39,7 @@ function ProductEditor({ product, assets, currency, lookups, busy, onSave, onCan
     onSave: (action: () => Promise<unknown>) => void; onCancel: () => void;
 }) {
     const formId = useId();
+    const fundingCapsules = (lookups.capsules as FundingCapsule[]).filter((capsule) => capsule.life_event_id == null);
     const [name, setName] = useState(product?.name ?? '');
     const [category, setCategory] = useState(product?.category ?? '');
     const [location, setLocation] = useState(product?.location ?? '');
@@ -107,7 +109,7 @@ function ProductEditor({ product, assets, currency, lookups, busy, onSave, onCan
                 <p className="text-xs text-[var(--studio-text-muted)] md:col-span-2">単価：{formatCurrency(Number(purchaseUnitPrice) / (Number(units) || 1), currency)}</p>
             </>}
             <Choice label="予算口座" value={budget} options={lookups.accounts} onChange={setBudget} />
-            <Choice label="積立先の取り置き" value={funding} options={lookups.capsules} onChange={setFunding} />
+            <Choice label="積立先の取り置き" value={funding} options={fundingCapsules} onChange={setFunding} />
             <Field label="予算での扱い"><select value={treatment} onChange={(event) => setTreatment(event.target.value as Treatment)} className={inputClass}>{Object.entries(TREATMENTS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
             <EditorActions form={formId} busy={busy} onCancel={onCancel} />
         </fieldset>
@@ -166,7 +168,7 @@ function ProductsForClient({ assets, currency, timezone }: { assets: boolean; cu
         {assets && <p className="text-xs text-[var(--studio-text-muted)]">更新予定は目安です。</p>}
         <Feedback loading={resource.loading || lookups.loading || positions.loading} error={mutation.error || resource.error || lookups.error || positions.error} message={mutation.message} />
         {editor && lookups.data && <Overlay title={editor.product ? `${editor.product.name}を編集` : `${assets ? '固定資産' : '消耗品'}の新規作成`} onClose={() => setEditor(null)}><Feedback error={mutation.error} /><ProductEditor key={editor.product?.id ?? 'new'} product={editor.product} assets={assets} currency={currency} lookups={lookups.data} busy={editorDisabled} onCancel={() => setEditor(null)} onSave={(action) => void mutation.run(action, '物品を保存しました。', () => { setEditor(null); resource.reload(); positions.reload(); })} /></Overlay>}
-        {resource.data && <DataTable columns={assets ? ['物品', '取得額', '帳簿価額', '減価の方法', '次回の記帳', '更新予定', '操作'] : ['物品', '単価', '購入単位', '購入周期', '予算口座', '操作']}>
+        {resource.data && <DataTable columns={assets ? ['物品', '取得額', '帳簿価額', '減価の方法', '次回の記帳', '更新予定', '記帳', '積立先', '推奨月額', '操作'] : ['物品', '単価', '購入単位', '購入周期', '予算口座', '積立先', '推奨月額', '操作']}>
             {rows.length ? rows.map((row) => <tr key={row.id}>
                 <th scope="row" className="px-5 py-3 font-medium">{row.name}<span className="mt-1 block text-xs font-normal text-[var(--studio-text-muted)]">{row.category === 'Uncategorized' ? '未分類' : row.category}</span></th>
                 {assets ? <>
@@ -187,9 +189,12 @@ function ProductsForClient({ assets, currency, timezone }: { assets: boolean; cu
                 {assets && <td className="px-5 py-3"><button type="button"
                     disabled={disabled || editor !== null || !byProduct.get(row.id)?.next_period || Boolean(byProduct.get(row.id)?.blocked_reason)}
                     onClick={() => void write(row)} className={buttonClass}>記帳する</button></td>}
+                <td className="px-5 py-3">{row.funding_capsule_name || '—'}</td>
+                <td className="whitespace-nowrap px-5 py-3 tabular-nums">{row.recommended_monthly_reserve ? formatCurrency(row.recommended_monthly_reserve, currency) : '—'}</td>
                 <RowActions name={row.name} disabled={editorDisabled || editor !== null} onEdit={() => setEditor({ product: row })} onDelete={() => remove(row)} />
-            </tr>) : <tr><td colSpan={assets ? 8 : 6} className="px-5 py-4 text-[var(--studio-text-muted)]">登録された{assets ? '固定資産' : '消耗品'}はありません。</td></tr>}
+            </tr>) : <tr><td colSpan={assets ? 10 : 8} className="px-5 py-4 text-[var(--studio-text-muted)]">登録された{assets ? '固定資産' : '消耗品'}はありません。</td></tr>}
         </DataTable>}
+        <p className="text-xs text-[var(--studio-text-muted)]">積立先の取り置きの目標額と月額は、紐づく物品の合計で自動更新されます。</p>
     </section>;
 }
 
