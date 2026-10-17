@@ -45,7 +45,9 @@ from ..services.budget_plan_service import get_budget_summary
 from ..services.goal_service import list_goals
 from ..services.life_scenario_scope import get_goal
 from ..services.strategy_service import DEFAULT_NEAR_YEARS, event_monthly_allocation
-from ..services.goal_budget_inputs import goal_budget_inputs
+from .. import schemas
+from ..services.goal_budget_inputs import goal_budget_inputs, near_monthly_minor
+from .capsule_workflow import set_account_claim
 from ..services.goal_service import get_life_event
 from ..services.life_scenario_scope import lock_client
 from ..services.money_storage import money_client_currency
@@ -192,9 +194,7 @@ def _plan(db: Session, client_id: int, options: dict, plan_id: int | None) -> di
     create_for = set(options.get("create_capsules") or [])
     events = inputs["events"]
 
-    required_minor = sum(row["monthly_required_minor"] for row in events
-                         if row["direction"] == "expense" and row["status"] == "reflected")
-    funded_capsules = []  # (event row, capsule or None, Money)
+    funded_rows = []  # (event row, capsule or None)
     for row in events:
         if row["direction"] != "expense" or row["status"] != "reflected" or not row["near"]:
             continue
@@ -203,7 +203,12 @@ def _plan(db: Session, client_id: int, options: dict, plan_id: int | None) -> di
             continue
         capsule = capsule_service.get_capsule(db, client_id, row["capsule_id"]) if row["capsule_id"] else None
         row["create_capsule"] = capsule is None
-        funded_capsules.append((row, capsule, Money(row["monthly_required_minor"], currency)))
+        funded_rows.append((row, capsule))
+    suggestions, handovers = _handovers(db, client_id, options, funded_rows, currency)
+    # An event left without a capsule still needs its money; the total counts it.
+    required_minor = sum(row["monthly_required_minor"] for row in events
+                         if row["direction"] == "expense" and row["status"] in {"reflected", "no_capsule"})
+    funded_capsules = [(row, capsule, Money(row["monthly_required_minor"], currency)) for row, capsule in funded_rows]
     target_dates = {row["event_id"]: date.fromisoformat(row["target_date"]) for row in events}
 
     def contribution(row: dict, amount: Money, period: str) -> Money:
@@ -308,6 +313,13 @@ def _plan(db: Session, client_id: int, options: dict, plan_id: int | None) -> di
             })
             # An earlier reflection to another account is replaced, not added to.
             changes.extend(retire(period, old) for old in goal_lines if old.account_id != account.id)
+    for item in handovers:
+        changes.append({
+            "period": start, "kind": "claim", "event_id": item["event_id"], "capsule_id": item["capsule_id"],
+            "name": item["name"], "account_id": item["account_id"], "line_id": None,
+            "current_amount": _major(item["claimed_minor"], currency),
+            "new_amount": _major(item["claimed_minor"] + item["amount_minor"], currency),
+        })
     if definition is not None:
         changes.append({
             "period": start, "kind": "definition", "event_id": None, "capsule_id": None,
@@ -327,13 +339,17 @@ def _plan(db: Session, client_id: int, options: dict, plan_id: int | None) -> di
         "savings_account_id": options.get("savings_account_id"),
         "savings_definition_id": options.get("savings_definition_id"),
         "uncounted": sorted(uncounted),
+        "handovers": sorted(({"event_id": item["event_id"], "account_id": item["account_id"],
+                              "amount": _major(item["amount_minor"], currency)} for item in handovers),
+                            key=lambda item: item["event_id"]),
         "create_capsules": sorted(row["event_id"] for row, capsule, _ in funded_capsules if capsule is None),
     }
     # Everything that decides what is written or recorded, so apply can refuse a changed plan.
     fingerprint = hashlib.sha256(json.dumps({"options": normalized, "events": [
         {key: row.get(key) for key in ("event_id", "status", "monthly_required_minor", "allocation_minor", "priority",
                                        "capsule_id", "target_amount", "target_date")} for row in events
-    ], "existing": existing, "changes": changes}, sort_keys=True, default=str).encode()).hexdigest()
+    ], "existing": existing, "changes": changes, "handovers": handovers,
+        "suggestions": suggestions}, sort_keys=True, default=str).encode()).hexdigest()
     existing_out = [{**{key: row[key] for key in ("key", "kind", "id", "name", "account_id", "updatable", "counted", "destination")},
                      "amount": _major(row["amounts"][start], currency)} for row in existing
                     if row["destination"] or row["updatable"] or any(row["amounts"].values())]
@@ -358,10 +374,118 @@ def _plan(db: Session, client_id: int, options: dict, plan_id: int | None) -> di
         },
         "events": events,
         "existing": existing_out,
+        "handover_suggestions": [_handover_out(item, currency) for item in suggestions],
+        "handovers": [_handover_out(item, currency) for item in handovers],
         "changes": changes,
         "fingerprint": fingerprint,
         "_funded_capsules": funded_capsules,
+        "_handovers": handovers,
     }
+
+
+def _available_minor(db: Session, client_id: int, account_id: int, currency: str) -> int:
+    """What an account holds that no capsule has claimed yet."""
+    balance = ledger_service.account_balances_minor(db, client_id, account_id).get(currency, 0)
+    claimed = capsule_service.account_claimed_minor(db, client_id, account_id).get(currency, 0)
+    return max(0, balance - claimed)
+
+
+def _handover_out(item: dict, currency: str) -> dict:
+    major = {key[:-6]: _major(value, currency) for key, value in item.items() if key.endswith("_minor")}
+    return {key: value for key, value in item.items() if not key.endswith("_minor")} | major
+
+
+def _handovers(db: Session, client_id: int, options: dict, funded_rows, currency: str) -> tuple[list[dict], list[dict]]:
+    """Suggested and chosen handovers into near capsules, and their effect on each monthly amount.
+
+    When an event leaves the far range, the money earlier reflections planned for it
+    sits in the savings, not in its capsule. The suggestion is to claim that much of
+    the savings account for the capsule (no money moves), capped by what the account
+    holds unclaimed and by what the event still needs. The user confirms or edits each
+    one; a chosen handover counts as funded, so the event's monthly amount drops.
+    """
+    records = goal_budget_record.history(db, client_id)
+    period = options["start_period"]
+    last = records[-1] if records else None
+    default_account = (options.get("savings_account_id")
+                       or ((last.options or {}).get("savings_account_id") if last is not None else None))
+    rows = {row["event_id"]: (row, capsule) for row, capsule in funded_rows}
+    available: dict[int, int] = {}
+
+    def free(account_id: int) -> int:
+        if account_id not in available:
+            available[account_id] = _available_minor(db, client_id, account_id, currency)
+        return available[account_id]
+
+    def need_minor(row: dict) -> int:
+        return max(0, Money.from_float(float(row["target_amount"]) - float(row["funded"]), currency).minor)
+
+    suggestions = []
+    for event_id, (row, capsule) in rows.items():
+        handed = sum(float(item.get("handover") or 0.0) for record in records for item in record.events or []
+                     if item.get("lineage") == row["lineage"])
+        planned = Money.from_float(max(0.0, _planned_far_savings(records, row["lineage"], period) - handed), currency).minor
+        if planned <= 0:
+            continue
+        cap = min(planned, need_minor(row), free(default_account) if default_account else planned)
+        suggestions.append({"event_id": event_id, "name": row["name"], "account_id": default_account,
+                            "planned_minor": planned, "suggested_minor": max(0, cap)})
+
+    chosen, used = [], {}
+    for item in options.get("handovers") or []:
+        if item["event_id"] not in rows:
+            raise Refused("引き継ぎは、取り置きで積み立てる近いライフイベントにだけ指定できます。", status_code=422)
+        row, capsule = rows[item["event_id"]]
+        account = ledger_service.get_account(db, client_id, item["account_id"])
+        if account is None or account.account_type != "asset" or not account.is_active:
+            raise NotFound("引き継ぎ元には有効な資産口座を選んでください。")
+        amount = Money.from_float(float(item["amount"]), currency).minor
+        if amount <= 0:
+            continue
+        if amount > need_minor(row):
+            raise Refused(f"「{row['name']}」の引き継ぎ額が目標額までの不足を超えています。", status_code=422)
+        used[account.id] = used.get(account.id, 0) + amount
+        if used[account.id] > free(account.id):
+            raise Refused(f"「{account.name}」で確保できる残高（{_major(free(account.id), currency):,.0f}）を超えています。", status_code=422)
+        sources = list(capsule.funding_sources) if capsule is not None else []
+        adds_source = all(source.account_id != account.id for source in sources)
+        if adds_source and sources and not any(source.target_amount_minor for source in sources):
+            # Equal shares would start including the new account and change the capsule's plan rows.
+            raise Refused(f"「{row['name']}」の取り置きは資金源の配分が未設定のため、別の口座から引き継げません。"
+                          "取り置きの画面で資金源を設定してください。", status_code=422)
+        claimed = capsule_service.claimed_minor(db, client_id, capsule.id, account.id).get(currency, 0) if capsule else 0
+        before = row["monthly_required_minor"]
+        after = near_monthly_minor(_major(need_minor(row) - amount, currency), row["months"], currency)
+        row["monthly_required_minor"] = after
+        row["handover"] = _major(amount, currency)
+        chosen.append({"event_id": row["event_id"], "name": row["name"], "capsule_id": capsule.id if capsule else None,
+                       "account_id": account.id, "account_name": account.name, "adds_funding_source": adds_source,
+                       "amount_minor": amount, "claimed_minor": claimed,
+                       "available_before_minor": free(account.id) - used[account.id] + amount,
+                       "available_after_minor": free(account.id) - used[account.id],
+                       "funded_before_minor": Money.from_float(float(row["funded"]), currency).minor,
+                       "funded_after_minor": Money.from_float(float(row["funded"]), currency).minor + amount,
+                       "monthly_before_minor": before, "monthly_after_minor": after})
+    return suggestions, chosen
+
+
+def _claim(db: Session, client_id: int, item: dict, capsule, currency: str) -> None:
+    """Claim part of an account for a capsule, adding the account as a zero-share funding source if needed."""
+    if all(source.account_id != item["account_id"] for source in capsule.funding_sources):
+        sources = [schemas.CapsuleFundingSourceInput(
+            account_id=source.account_id, target_amount=source.target_amount or 0.0,
+            max_share_bp=source.max_share_bp, sort_order=source.sort_order,
+        ) for source in sorted(capsule.funding_sources, key=lambda source: (source.sort_order, source.id))]
+        # A zero target keeps the capsule's monthly rows on the accounts that fund it.
+        sources.append(schemas.CapsuleFundingSourceInput(
+            account_id=item["account_id"], target_amount=0.0,
+            sort_order=max((source.sort_order for source in sources), default=-1) + 1,
+        ))
+        capsule_service.set_funding_sources(db, client_id, capsule.id, sources, commit=False)
+        db.refresh(capsule)
+    current = capsule_service.claimed_minor(db, client_id, capsule.id, item["account_id"]).get(currency, 0)
+    set_account_claim(db, client_id, capsule.id, account_id=item["account_id"],
+                      target_amount=_major(current + item["amount_minor"], currency), commit=False)
 
 
 def preview(db: Session, client_id: int, options: dict) -> dict:
@@ -381,6 +505,7 @@ def preview(db: Session, client_id: int, options: dict) -> dict:
         finally:
             nested.rollback()
     result.pop("_funded_capsules")
+    result.pop("_handovers")
     return result
 
 
@@ -401,12 +526,19 @@ def apply(db: Session, client_id: int, options: dict, fingerprint: str, *, updat
             if capsule is None:
                 event = get_life_event(db, client_id, row["event_id"])
                 created_capsules[row["event_id"]] = capsule_service.create_capsule_for_goal(db, client_id, event)
+        # Claims first: a capsule may gain the account as a funding source before its rows are written.
+        for item in planned["_handovers"]:
+            capsule = (capsule_service.get_capsule(db, client_id, item["capsule_id"]) if item["capsule_id"]
+                       else created_capsules[item["event_id"]])
+            _claim(db, client_id, item, capsule, currency)
         creates, updates, definitions = [], [], []
         for change in planned["changes"]:
             if not change["changed"]:
                 continue
             if change["kind"] == "definition":
                 definitions.append(change)
+                continue
+            if change["kind"] == "claim":
                 continue
             if change["kind"] == "retire":
                 updates.append({"id": change["line_id"], "is_active": False})
@@ -446,7 +578,7 @@ def apply(db: Session, client_id: int, options: dict, fingerprint: str, *, updat
                 end_period=planned["periods"][-1], options=planned["options"], summary=planned["savings"],
                 events=[{key: row.get(key) for key in (
                     "event_id", "lineage", "name", "direction", "status", "near", "monthly_required", "allocation",
-                    "target_amount", "target_date",
+                    "target_amount", "target_date", "handover",
                 )} for row in planned["events"]],
             )
             if update_baseline:
@@ -462,6 +594,7 @@ def apply(db: Session, client_id: int, options: dict, fingerprint: str, *, updat
     return {
         "applied": len(creates) + len(updates) + len(definitions),
         "baseline_updated": update_baseline,
+        "handovers": len(planned["_handovers"]),
         "created_capsules": [{"event_id": event_id, "capsule_id": capsule.id, "name": capsule.name}
                              for event_id, capsule in created_capsules.items()],
         "periods": planned["periods"],
@@ -529,7 +662,9 @@ def _reminders(goal, total: float, events, records, period: str, budget_total: f
                 changed = True
             months = _months_between(period, event.target_date.strftime("%Y-%m"))
             if row.get("status") == "reflected" and not row.get("near") and near_years is not None and months < near_years * 12:
-                handover = _planned_far_savings(records, event.lineage, period)
+                handed = sum(float(item.get("handover") or 0.0) for record in records for item in record.events or []
+                             if item.get("lineage") == event.lineage)
+                handover = max(0.0, _planned_far_savings(records, event.lineage, period) - handed)
                 reminders.append({
                     "code": "event_near", "event_id": event.id,
                     "message": f"「{event.name}」が取り置きで積み立てる範囲に入りました。取り置きの月額を予算に入れてください。"

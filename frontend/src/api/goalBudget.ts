@@ -14,6 +14,41 @@ export interface GoalBudgetOptions {
     /** Keys of existing savings the user does not count as saving. */
     uncounted: string[];
     create_capsules: number[];
+    /** Confirmed handovers: claim this much of an account for a near event's capsule. */
+    handovers: GoalBudgetHandoverChoice[];
+}
+
+export interface GoalBudgetHandoverChoice {
+    event_id: number;
+    account_id: number;
+    amount: number;
+}
+
+/** An earlier reflection's planned savings for an event that is now near, offered for its capsule. */
+export interface GoalBudgetHandoverSuggestion {
+    event_id: number;
+    name: string;
+    account_id: number | null;
+    planned: number;
+    suggested: number;
+}
+
+/** A chosen handover and what it changes. */
+export interface GoalBudgetHandover {
+    event_id: number;
+    name: string;
+    capsule_id: number | null;
+    account_id: number;
+    account_name: string;
+    adds_funding_source: boolean;
+    amount: number;
+    claimed: number;
+    available_before: number;
+    available_after: number;
+    funded_before: number;
+    funded_after: number;
+    monthly_before: number;
+    monthly_after: number;
 }
 
 /** Savings the budget already plans: a definition, a hand-entered row, or a capsule's monthly amount. */
@@ -55,7 +90,7 @@ export interface GoalBudgetEvent {
 
 export interface GoalBudgetChange {
     period: string;
-    kind: 'capsule' | 'savings' | 'retire' | 'definition' | 'definition_row';
+    kind: 'capsule' | 'savings' | 'retire' | 'definition' | 'definition_row' | 'claim';
     definition_id?: number;
     /** For savings: the part that is the account's definitions, kept in the one budget row. */
     includes_definitions?: number;
@@ -86,6 +121,8 @@ export interface GoalBudgetPreview {
     };
     events: GoalBudgetEvent[];
     existing: GoalBudgetExisting[];
+    handover_suggestions: GoalBudgetHandoverSuggestion[];
+    handovers: GoalBudgetHandover[];
     changes: GoalBudgetChange[];
     fingerprint: string;
 }
@@ -93,6 +130,7 @@ export interface GoalBudgetPreview {
 export interface GoalBudgetResult {
     applied: number;
     baseline_updated: boolean;
+    handovers: number;
     created_capsules: Array<{ event_id: number; capsule_id: number; name: string }>;
     periods: string[];
 }

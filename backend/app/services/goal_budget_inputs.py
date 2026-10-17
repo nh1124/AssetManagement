@@ -32,6 +32,11 @@ def months_until(start_period: str, target) -> int:
     return (target.year - year) * 12 + (target.month - month)
 
 
+def near_monthly_minor(need: float, months: int, currency: str) -> int:
+    """A near event's monthly amount: its shortfall in cash over the contributions left."""
+    return _monthly_minor(need, max(1, months), 0.0, currency)
+
+
 def _monthly_minor(need: float, months: int, monthly_rate: float, currency: str) -> int:
     if need <= 0:
         return 0

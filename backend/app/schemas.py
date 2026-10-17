@@ -1323,6 +1323,14 @@ class LifeScenarioUpdate(BaseModel):
         return values
 
 
+class GoalBudgetHandover(BaseModel):
+    """Claim this much of an account for a near event's capsule (no money moves)."""
+    model_config = ConfigDict(extra="forbid")
+    event_id: int
+    account_id: int
+    amount: float = Field(ge=0, allow_inf_nan=False)
+
+
 class GoalBudgetOptions(BaseModel):
     """The user's choices for reflecting the goal into the budget (Q1 and Q2)."""
     model_config = ConfigDict(extra="forbid")
@@ -1339,6 +1347,8 @@ class GoalBudgetOptions(BaseModel):
     # Existing savings (keys from the preview) the user does not count as saving.
     uncounted: list[str] = Field(default_factory=list)
     create_capsules: list[int] = Field(default_factory=list)
+    # Confirmed handovers: claim part of an account for a near event's capsule.
+    handovers: list[GoalBudgetHandover] = Field(default_factory=list)
 
 
 class GoalBudgetApply(GoalBudgetOptions):

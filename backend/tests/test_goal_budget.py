@@ -491,3 +491,68 @@ def test_progress_uses_the_reflection_of_its_own_month_and_never_funds_archived_
     car.archived_at = datetime(2026, 11, 2)
     db.commit()
     assert event_monthly_allocation(db, 1, car, 50000, date(2026, 11, 1)) == (0.0, "rule")
+
+
+
+def fund(db, account, amount):
+    from app.services.ledger_service import create_transaction
+    salary = create_account(db, 1, {"name": f"給与{account.id}", "account_type": "income"})
+    create_transaction(db, client_id=1, date=date(2026, 10, 1), description="入金", amount_minor=amount,
+                       currency="JPY", from_account_id=salary.id, to_account_id=account.id)
+    db.commit()
+
+
+def far_then_near(db, story):
+    """Three months reflected while the home was far, then a reflection after it becomes near."""
+    first = options(savings_account_id=story["savings"].id, months=3)
+    preview = workflow.preview(db, 1, first)
+    home_far = next(row for row in preview["events"] if row["name"] == "住宅")["allocation"]
+    workflow.apply(db, 1, first, preview["fingerprint"])
+    near = options(savings_account_id=story["savings"].id, start_period="2042-01", create_capsules=[story["home"].id])
+    return home_far, near
+
+
+def test_a_handover_is_suggested_when_a_far_event_becomes_near(db, story):
+    fund(db, story["savings"], 5_000_000)
+    home_far, near = far_then_near(db, story)
+    preview = workflow.preview(db, 1, near)
+    suggestion = next(row for row in preview["handover_suggestions"] if row["name"] == "住宅")
+    # Three months of its far share, from the savings account of the earlier reflection.
+    assert suggestion["planned"] == pytest.approx(home_far * 3)
+    assert suggestion["suggested"] == pytest.approx(home_far * 3)
+    assert suggestion["account_id"] == story["savings"].id
+    assert preview["handovers"] == []  # nothing is claimed until the user confirms it
+
+
+def test_a_confirmed_handover_claims_savings_and_lowers_the_monthly_amount(db, story):
+    fund(db, story["savings"], 5_000_000)
+    _, near = far_then_near(db, story)
+    without = next(row for row in workflow.preview(db, 1, near)["events"] if row["name"] == "住宅")
+    chosen = near | {"handovers": [{"event_id": story["home"].id, "account_id": story["savings"].id, "amount": 600_000}]}
+    preview = workflow.preview(db, 1, chosen)
+    handover = preview["handovers"][0]
+    assert (handover["funded_before"], handover["funded_after"]) == (0, 600_000)
+    assert handover["available_before"] - handover["available_after"] == 600_000
+    assert handover["adds_funding_source"] is True
+    assert handover["monthly_after"] < handover["monthly_before"] == without["monthly_required"]
+    home = next(row for row in preview["events"] if row["name"] == "住宅")
+    assert home["monthly_required"] == handover["monthly_after"]
+    claim = next(row for row in preview["changes"] if row["kind"] == "claim")
+    assert (claim["current_amount"], claim["new_amount"]) == (0, 600_000)
+    workflow.apply(db, 1, chosen, preview["fingerprint"])
+    capsule = db.query(models.Capsule).filter_by(life_event_id=story["home"].id).one()
+    assert capsule_service.claimed_minor(db, 1, capsule.id, story["savings"].id) == {"JPY": 600_000}
+    assert [source.account_id for source in capsule.funding_sources] == [story["savings"].id]
+    # Handed-over savings are not suggested again.
+    again = workflow.preview(db, 1, near | {"create_capsules": []})
+    remaining = next((row for row in again["handover_suggestions"] if row["name"] == "住宅"), None)
+    assert remaining is None or remaining["planned"] < 600_000
+
+
+@pytest.mark.parametrize("amount, message", [(6_000_000, "確保できる残高"), (20_000_000, "不足を超えて")])
+def test_a_handover_cannot_exceed_the_unclaimed_balance_or_the_need(db, story, amount, message):
+    fund(db, story["savings"], 5_000_000)
+    _, near = far_then_near(db, story)
+    chosen = near | {"handovers": [{"event_id": story["home"].id, "account_id": story["savings"].id, "amount": amount}]}
+    with pytest.raises(Refused, match=message):
+        workflow.preview(db, 1, chosen)

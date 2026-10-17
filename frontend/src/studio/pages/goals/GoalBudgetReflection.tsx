@@ -10,6 +10,7 @@ import { clientToday, formatDate, useTimezone } from '../../datetime';
 import { assetErrorMessage } from '../../useResource';
 import { DataTable, Feedback, Field } from '../db/Database';
 import { inputClass, primaryClass } from '../db/forms';
+import GoalHandovers from './GoalHandovers';
 import { REFLECTIONS } from './presentation';
 
 const NEAR_YEARS = [1, 3, 5, 10];
@@ -47,7 +48,7 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
     const currency = currentClient?.general_settings?.currency || 'JPY';
     const [options, setOptions] = useState<GoalBudgetOptions>(() => ({
         savings_source: 'scenario', near_years: 5, start_period: initialPeriod ?? clientToday(timezone).slice(0, 7),
-        months: 1, savings_account_id: null, savings_definition_id: null, uncounted: [], create_capsules: [],
+        months: 1, savings_account_id: null, savings_definition_id: null, uncounted: [], create_capsules: [], handovers: [],
     }));
     const [accounts, setAccounts] = useState<Account[]>([]);
     const [preview, setPreview] = useState<GoalBudgetPreview | null>(null);
@@ -60,6 +61,8 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
     const [updateBaseline, setUpdateBaseline] = useState(false);
     // Suggestions fill the first preview only; afterwards every choice is the user's.
     const defaulted = useRef(false);
+    // Handover suggestions are taken once, after capsule defaults settle; then they are the user's.
+    const handoversDefaulted = useRef(false);
     const revision = useRef(0);
 
     useEffect(() => {
@@ -81,6 +84,15 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
                     if (missing.length || account !== null) {
                         // Creating capsules is the default answer, as when choosing a goal.
                         setOptions((previous) => ({ ...previous, create_capsules: missing, savings_account_id: previous.savings_account_id ?? account }));
+                        return;
+                    }
+                }
+                if (!handoversDefaulted.current) {
+                    handoversDefaulted.current = true;
+                    const picks = result.handover_suggestions.filter((row) => row.suggested > 0 && row.account_id !== null)
+                        .map((row) => ({ event_id: row.event_id, account_id: row.account_id as number, amount: row.suggested }));
+                    if (picks.length) {
+                        setOptions((previous) => ({ ...previous, handovers: picks }));
                         return;
                     }
                 }
@@ -122,8 +134,11 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
         try {
             const result = await applyGoalBudget(options, preview.fingerprint, updateBaseline);
             const created = result.created_capsules.length ? `取り置きを${result.created_capsules.length}件作成しました。` : '';
-            setMessage(`予算に${result.applied}件反映しました。${created}${result.baseline_updated ? '基準線も更新しました。' : ''}`);
+            const handed = result.handovers ? `取り置きへの引き継ぎを${result.handovers}件確保しました。` : '';
+            setMessage(`予算に${result.applied}件反映しました。${created}${handed}${result.baseline_updated ? '基準線も更新しました。' : ''}`);
             setUpdateBaseline(false);
+            // Handed-over amounts are now claimed; the next preview must not offer them again.
+            setOptions((previous) => ({ ...previous, handovers: [] }));
             setRefresh((value) => value + 1);
             onApplied?.(result);
         } catch (failure: unknown) {
@@ -208,12 +223,16 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
                     </DataTable>
                     <p className="text-xs text-[var(--studio-text-muted)]">予算への反映（確定・条件つき・試算のみ）は、各ライフイベントの編集で変えられます。</p>
                 </section>
+                {(preview.handover_suggestions.length > 0 || preview.handovers.length > 0) && <section className={sectionClass}>
+                    <Heading step={4} title="取り置きへの引き継ぎ" note="自動の提案です。確認して必要なら直してください" />
+                    <GoalHandovers preview={preview} chosen={options.handovers} accounts={accounts} currency={currency} busy={busy} onChange={(next) => choose('handovers', next)} />
+                </section>}
                 <section className={`${sectionClass} border-[var(--studio-accent)]`}>
-                    <Heading step={4} title="予算の変更" note="「予算に反映する」でこの内容が保存されます" />
+                    <Heading step={preview.handover_suggestions.length > 0 || preview.handovers.length > 0 ? 5 : 4} title="予算の変更" note="「予算に反映する」でこの内容が保存されます" />
                     {changed.length ? <DataTable columns={['月', '項目', '口座', '現在', '反映後']}>
                         {changed.map((row, index) => <tr key={`change-${row.period}-${row.kind}-${row.line_id ?? index}`}>
                             <td className="whitespace-nowrap px-5 py-3">{row.kind === 'definition' ? `${row.period}以降の毎月` : row.period}</td>
-                            <th scope="row" className="px-5 py-3 font-medium">{row.kind === 'retire' ? `${row.name}（以前の行を取り消す）` : row.kind === 'savings' ? 'ゴールの積立' : row.kind === 'definition' ? `定義：${row.name}` : row.kind === 'definition_row' ? `定義：${row.name}（保存済みの月）` : `取り置き：${row.name}`}
+                            <th scope="row" className="px-5 py-3 font-medium">{row.kind === 'retire' ? `${row.name}（以前の行を取り消す）` : row.kind === 'savings' ? 'ゴールの積立' : row.kind === 'definition' ? `定義：${row.name}` : row.kind === 'definition_row' ? `定義：${row.name}（保存済みの月）` : row.kind === 'claim' ? `確保：${row.name}（引き継ぎ）` : `取り置き：${row.name}`}
                                 {row.kind === 'savings' && (row.includes_definitions ?? 0) > 0 && <span className="block text-xs font-normal text-[var(--studio-text-muted)]">この口座への定義 {formatCurrency(row.includes_definitions ?? 0, currency)} を含みます（予算では1行にまとまるため）</span>}</th>
                             <td className="px-5 py-3">{row.kind === 'capsule' && row.account_id === null ? '口座の指定なし' : accountName(row.account_id)}</td>
                             <td className="whitespace-nowrap px-5 py-3 tabular-nums">{row.current_amount === null ? '未設定' : formatCurrency(row.current_amount, currency)}</td>
