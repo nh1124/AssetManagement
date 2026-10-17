@@ -11,6 +11,8 @@ import httpx
 import pytest
 import sqlalchemy as sa
 
+from scenario_fixtures import goal_scenario_id
+
 from app import dependencies, models, schemas
 from app.database import Base
 from app.routers import capsules as router
@@ -177,7 +179,7 @@ def test_v10_legacy_collection_warns_and_retired_capsule_fields_are_ignored(db, 
     _, one, _ = seed_accounts(db)
     owner = service.create_capsule(db, 1, schemas.CapsuleCreate(name="PC", target_amount=1001, monthly_contribution=10, account_id=one.id))
     document = json.loads(json.dumps(export_client(db, db.get(models.Client, 1))))
-    assert document["version"] == 21
+    assert document["version"] == 22
     assert "capsule_holdings" not in document["data"]
     row = document["data"]["capsules"][0]
     assert "current_balance" not in row and "account_id" not in row
@@ -205,7 +207,7 @@ def test_strategy_uses_account_claims_for_funding_and_weighted_return(db):
     from app.services.strategy_service import calculate_current_funded_and_weighted_return
     cash, one, two = seed_accounts(db)
     one.expected_return, two.expected_return = 2, 8
-    goal = models.LifeEvent(client_id=1, name="PC", target_amount_minor=1000, target_date=date(2027, 1, 1))
+    goal = models.LifeEvent(scenario_id=goal_scenario_id(db, 1), client_id=1, name="PC", target_amount_minor=1000, target_date=date(2027, 1, 1))
     db.add(goal)
     db.flush()
     owner = service.create_capsule_for_goal(db, 1, goal)

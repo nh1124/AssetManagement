@@ -1,3 +1,5 @@
+from scenario_fixtures import goal_scenario_id
+
 from app.services.money_storage import to_minor, rule_amount_fields
 from backend.app.domain.journal import Leg
 
@@ -227,7 +229,7 @@ def test_capsule_preview_uses_currency_precision_and_required_helper_argument(po
 
 def test_goal_return_transfer_uses_client_minor_units(posting):
     db, client, (cash, _, reserve, _), _ = posting
-    goal = models.LifeEvent(client_id=client.id, name="Savings", target_amount_minor=to_minor(100, "USD"))
+    goal = models.LifeEvent(scenario_id=goal_scenario_id(db, client.id), client_id=client.id, name="Savings", target_amount_minor=to_minor(100, "USD"))
     db.add(goal)
     db.flush()
     capsule = models.Capsule(client_id=client.id, name="Savings", life_event_id=goal.id,
@@ -245,7 +247,7 @@ def test_goal_return_transfer_uses_client_minor_units(posting):
 
 def test_report_allocation_uses_client_minor_units(posting):
     db, client, _, _ = posting
-    goal = models.LifeEvent(client_id=client.id, name="Savings", target_amount_minor=to_minor(100, "USD"))
+    goal = models.LifeEvent(scenario_id=goal_scenario_id(db, client.id), client_id=client.id, name="Savings", target_amount_minor=to_minor(100, "USD"))
     db.add(goal)
     db.flush()
     result = report_service._apply_allocate_to_goal(

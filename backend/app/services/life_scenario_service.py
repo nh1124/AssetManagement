@@ -1,4 +1,4 @@
-"""Own saved branches, projection assumptions and the client's chosen goal."""
+"""Own complete stories, projection assumptions and the client's chosen goal."""
 from __future__ import annotations
 
 import math
@@ -10,48 +10,28 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from ..domain.errors import Conflict, NotFound, Refused
-from .life_event_conditions import evaluate_projection
-from .life_event_walk import ScenarioEvent, walk_scenarios, _subtract_demand
+from .life_event_conditions import copy_conditions, evaluate_projection
+from .life_event_walk import ScenarioEvent, walk, _subtract_demand
+from .life_scenario_scope import get, get_goal, lock_client as _lock
+from .goal_service import copy_events
+from .life_event_graph import copy_links
+from .milestone_service import copy_milestones
+from .cache_service import invalidate_client
 from .strategy_service import simulate_net_worth_forward_with_paths
 
 
 @dataclass(frozen=True)
 class ResolvedScenario:
     events: list[ScenarioEvent]
-    missing_forks: list[int]
-    chosen_link_ids: list[int]
 
 
 def _refuse(message: str) -> NoReturn:
     raise Refused(message, status_code=422)
 
 
-def _lock(db: Session, client_id: int):
-    # The client lock serializes name checks and goal switching, even with no goal yet.
-    if db.query(models.Client).filter_by(id=client_id).with_for_update().first() is None:
-        raise NotFound("クライアントが見つかりません。")
-
-
-def get(db: Session, client_id: int, scenario_id: int) -> models.LifeScenario:
-    scenario = db.query(models.LifeScenario).filter_by(id=scenario_id, client_id=client_id).first()
-    if scenario is None:
-        raise NotFound("シナリオが見つかりません。")
-    return scenario
-
-
-def get_goal(db: Session, client_id: int) -> models.LifeScenario | None:
-    return db.query(models.LifeScenario).filter_by(client_id=client_id, is_goal=True).first()
-
-
 def _owned(client_id: int, scenario: models.LifeScenario | None) -> None:
     if scenario is not None and scenario.client_id != client_id:
         raise NotFound("シナリオが見つかりません。")
-
-
-def choice_ids(db: Session, scenario: models.LifeScenario | None) -> list[int]:
-    return [link_id for (link_id,) in db.query(models.LifeScenarioChoice.link_id).filter_by(
-        scenario_id=scenario.id,
-    ).order_by(models.LifeScenarioChoice.link_id).all()] if scenario else []
 
 
 def account_returns(db: Session, scenario: models.LifeScenario | None) -> list[dict]:
@@ -62,9 +42,8 @@ def account_returns(db: Session, scenario: models.LifeScenario | None) -> list[d
 
 def resolve(db: Session, client_id: int, scenario: models.LifeScenario | None) -> ResolvedScenario:
     _owned(client_id, scenario)
-    walks, missing = walk_scenarios(db, client_id, set(choice_ids(db, scenario)))
-    walk = walks[0]
-    return ResolvedScenario(walk.events, missing, walk.chosen_link_ids)
+    scenario = scenario or get_goal(db, client_id)
+    return ResolvedScenario(walk(db, client_id, scenario.id) if scenario else [])
 
 
 def _payload(db: Session, scenario: models.LifeScenario, resolved: ResolvedScenario) -> dict:
@@ -72,10 +51,8 @@ def _payload(db: Session, scenario: models.LifeScenario, resolved: ResolvedScena
         **{field: getattr(scenario, field) for field in (
             "id", "client_id", "name", "annual_return", "inflation", "horizon_years", "is_goal", "created_at", "updated_at",
         )},
-        "choices": choice_ids(db, scenario),
         "account_returns": account_returns(db, scenario),
         "events": [asdict(event) for event in resolved.events],
-        "missing_forks": resolved.missing_forks,
     }
 
 
@@ -155,12 +132,15 @@ def duplicate(db: Session, client_id: int, scenario_id: int, name: str) -> model
     _lock(db, client_id)
     source = get(db, client_id, scenario_id)
     scenario = models.LifeScenario(client_id=client_id, name=_name(db, client_id, name), **_assumptions(source))
-    db.add(scenario)
-    db.flush()
-    for link_id in choice_ids(db, source):
-        db.add(models.LifeScenarioChoice(scenario_id=scenario.id, link_id=link_id))
-    _copy_returns(db, scenario, source)
-    db.commit()
+    try:
+        db.add(scenario)
+        db.flush()
+        copy_graph(db, client_id, source.id, scenario.id)
+        _copy_returns(db, scenario, source)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     return scenario
 
 
@@ -183,29 +163,6 @@ def update(db: Session, client_id: int, scenario_id: int, values: dict) -> model
     return scenario
 
 
-def _replace_choices(db, client_id, scenario, link_ids):
-    ids = set(link_ids)
-    links = db.query(models.LifeEventLink).filter(
-        models.LifeEventLink.client_id == client_id, models.LifeEventLink.id.in_(ids),
-    ).all()
-    if len(links) != len(ids) or any(link.kind != "alternative" for link in links):
-        _refuse("同じクライアントの分岐の接続を選択してください。")
-    if len({link.from_event_id for link in links}) != len(links):
-        _refuse("同じ分岐では接続を1つだけ選択してください。")
-    db.query(models.LifeScenarioChoice).filter_by(scenario_id=scenario.id).delete(synchronize_session="fetch")
-    for link_id in sorted(ids):
-        db.add(models.LifeScenarioChoice(scenario_id=scenario.id, link_id=link_id))
-    scenario.updated_at = datetime.utcnow()
-
-
-def replace_choices(db: Session, client_id: int, scenario_id: int, link_ids: list[int]) -> models.LifeScenario:
-    _lock(db, client_id)
-    scenario = get(db, client_id, scenario_id)
-    _replace_choices(db, client_id, scenario, link_ids)
-    db.commit()
-    return scenario
-
-
 def replace_account_returns(db: Session, client_id: int, scenario_id: int, returns: list[dict]) -> models.LifeScenario:
     _lock(db, client_id)
     scenario = get(db, client_id, scenario_id)
@@ -224,16 +181,40 @@ def replace_account_returns(db: Session, client_id: int, scenario_id: int, retur
     return scenario
 
 
-def make_goal(db: Session, client_id: int, scenario_id: int) -> models.LifeScenario:
+def make_goal(db: Session, client_id: int, scenario_id: int, confirm_detach: bool = False) -> models.LifeScenario:
     _lock(db, client_id)
     scenario = get(db, client_id, scenario_id)
-    # Flush the previous goal first: the partial unique index applies per statement.
     previous = get_goal(db, client_id)
+    moves, detach = [], []
     if previous is not None and previous.id != scenario.id:
-        previous.is_goal = False
-        db.flush()
-    scenario.is_goal = True
-    db.commit()
+        targets = {event.lineage: event.id for event in db.query(models.LifeEvent).filter_by(
+            client_id=client_id, scenario_id=scenario.id,
+        ).all()}
+        linked = db.query(models.Capsule, models.LifeEvent).join(
+            models.LifeEvent, models.LifeEvent.id == models.Capsule.life_event_id,
+        ).filter(models.Capsule.client_id == client_id, models.LifeEvent.client_id == client_id,
+                 models.LifeEvent.scenario_id == previous.id).order_by(models.Capsule.id).all()
+        for capsule, event in linked:
+            target_id = targets.get(event.lineage)
+            moves.append((capsule, target_id))
+            if target_id is None:
+                detach.append({"capsule_id": capsule.id, "capsule_name": capsule.name, "event_name": event.name})
+        # Inspect the entire move before mutating anything so a 409 needs no repair.
+        if detach and not confirm_detach:
+            raise Conflict("紐づけ先のない取り置きの解除を確認してください。", payload={"detach": detach})
+    try:
+        for capsule, target_id in moves:
+            # Only the FK changes; relationship removal would trigger delete-orphan.
+            capsule.life_event_id = target_id
+        if previous is not None and previous.id != scenario.id:
+            previous.is_goal = False
+            db.flush()
+        scenario.is_goal = True
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    invalidate_client(client_id)
     return scenario
 
 
@@ -256,33 +237,33 @@ def legacy_parameters(db: Session, client_id: int) -> dict:
     }
 
 
-def seed_legacy_goal(db: Session, client_id: int, adopted_link_ids: list[int]) -> models.LifeScenario | None:
-    """Convert pre-LS1 facts without committing; the importer owns its transaction."""
-    if not db.query(models.LifeEvent.id).filter_by(client_id=client_id).first():
-        return None
-    parameters = legacy_parameters(db, client_id)
-    links = db.query(models.LifeEventLink).filter(
-        models.LifeEventLink.client_id == client_id, models.LifeEventLink.kind == "alternative",
-        models.LifeEventLink.id.in_(adopted_link_ids),
-    ).order_by(models.LifeEventLink.id).all()
-    names = {event.id: event.name for event in db.query(models.LifeEvent).filter_by(client_id=client_id).all()}
-    name = " ／ ".join(names[link.to_event_id] for link in links) or "基本シナリオ"
-    # Imported legacy goals may collide with scenario names already in the backup.
-    base_name, suffix = name, 2
+def seed_legacy_goal(db: Session, client_id: int) -> models.LifeScenario:
+    """Give a restored shared graph a goal before its events are inserted."""
+    existing = get_goal(db, client_id)
+    if existing is not None:
+        return existing
+    name, suffix = "基本シナリオ", 2
     while db.query(models.LifeScenario.id).filter_by(client_id=client_id, name=name).first():
-        name = f"{base_name} ({suffix})"
+        name = f"基本シナリオ ({suffix})"
         suffix += 1
-    scenario = models.LifeScenario(
-        client_id=client_id, name=name,
-        annual_return=parameters["annual_return"], inflation=parameters["inflation"],
-        horizon_years=parameters["years"], is_goal=True,
-    )
+    scenario = models.LifeScenario(client_id=client_id, name=name, is_goal=True,
+                                   annual_return=5.0, inflation=2.0, horizon_years=30)
     db.add(scenario)
     db.flush()
-    for link in links:
-        db.add(models.LifeScenarioChoice(scenario_id=scenario.id, link_id=link.id))
     for account in db.query(models.Account).filter(
         models.Account.client_id == client_id, models.Account.account_type == "asset", models.Account.expected_return.isnot(None),
     ).all():
         db.add(models.LifeScenarioAccountReturn(scenario_id=scenario.id, account_id=account.id, annual_return=account.expected_return))
+    db.flush()
     return scenario
+
+
+def copy_graph(db: Session, client_id: int, source_id: int, target_id: int) -> dict[int, int]:
+    """Copy story facts through their owners; real-money capsules stay put."""
+    get(db, client_id, source_id)
+    get(db, client_id, target_id)
+    event_map = copy_events(db, client_id, source_id, target_id)
+    link_map = copy_links(db, client_id, event_map)
+    copy_conditions(db, client_id, event_map)
+    copy_milestones(db, client_id, event_map, link_map)
+    return event_map

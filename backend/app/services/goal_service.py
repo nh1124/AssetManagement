@@ -19,6 +19,7 @@ from ..domain.journal import Leg
 from ..domain.money import Money
 from .cache_service import invalidate_client
 from .capsule_service import capsule_balance, claimed_minor
+from .life_scenario_scope import get as get_scenario, selected as selected_scenario
 from .ledger_service import create_transaction
 from .strategy_service import (
     calculate_overall_goal_probability,
@@ -30,6 +31,8 @@ from .strategy_service import (
 
 __all__ = [
     "list_goals",
+    "list_goals_with_progress",
+    "copy_events",
     "create_goal_record",
     "update_goal",
     "archive_goal",
@@ -52,11 +55,37 @@ def get_life_event(db: Session, client_id: int, life_event_id: int) -> models.Li
     ).first()
 
 
-def list_goals(db: Session, client_id: int, include_archived: bool = False) -> list[models.LifeEvent]:
-    query = db.query(models.LifeEvent).filter(models.LifeEvent.client_id == client_id)
+def list_goals(db: Session, client_id: int, include_archived: bool = False,
+               scenario_id: int | None = None) -> list[models.LifeEvent]:
+    scenario = selected_scenario(db, client_id, scenario_id)
+    if scenario is None:
+        return []
+    query = db.query(models.LifeEvent).filter_by(client_id=client_id, scenario_id=scenario.id)
     if not include_archived:
         query = query.filter(models.LifeEvent.archived_at.is_(None))
     return query.all()
+
+
+def list_goals_with_progress(db: Session, client_id: int, include_archived: bool = False,
+                             scenario_id: int | None = None) -> list[dict]:
+    scenario = selected_scenario(db, client_id, scenario_id)
+    if scenario is None:
+        return []
+    return get_life_events_with_progress(db, client_id, include_archived=include_archived, scenario_id=scenario.id)
+
+
+def copy_events(db: Session, client_id: int, source_id: int, target_id: int) -> dict[int, int]:
+    from copy import deepcopy
+
+    event_map = {}
+    for source in db.query(models.LifeEvent).filter_by(client_id=client_id, scenario_id=source_id).order_by(models.LifeEvent.id):
+        values = {column.name: deepcopy(getattr(source, column.name))
+                  for column in models.LifeEvent.__table__.columns if column.name not in {"id", "scenario_id"}}
+        row = models.LifeEvent(**values, scenario_id=target_id)
+        db.add(row)
+        db.flush()
+        event_map[source.id] = row.id
+    return event_map
 
 
 def _set_archived(
@@ -132,6 +161,7 @@ def unarchive_goal(
 def create_goal_record(
     db: Session, client_id: int, payload: schemas.LifeEventCreate, *, commit: bool = True,
 ) -> models.LifeEvent:
+    get_scenario(db, client_id, payload.scenario_id)
     _validate_event_account(db, client_id, payload.account_id)
     db_event = models.LifeEvent(**minor_fields(payload.model_dump(), money_client_currency(db, client_id), 'target_amount'), client_id=client_id)
     db.add(db_event)

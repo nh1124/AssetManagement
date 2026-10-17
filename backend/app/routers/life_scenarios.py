@@ -59,17 +59,6 @@ def update(
     return service.describe(db, current_client.id, scenario)
 
 
-@router.put("/{scenario_id}/choices")
-def choices(
-    scenario_id: int,
-    payload: schemas.LifeScenarioChoices,
-    db: Session = Depends(get_db),
-    current_client: models.Client = Depends(get_current_client),
-):
-    scenario = service.replace_choices(db, current_client.id, scenario_id, payload.link_ids)
-    return service.describe(db, current_client.id, scenario)
-
-
 @router.put("/{scenario_id}/account-returns")
 def account_returns(
     scenario_id: int,
@@ -86,10 +75,11 @@ def account_returns(
 @router.post("/{scenario_id}/goal")
 def goal(
     scenario_id: int,
+    payload: schemas.LifeScenarioGoal = schemas.LifeScenarioGoal(),
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    scenario = service.make_goal(db, current_client.id, scenario_id)
+    scenario = service.make_goal(db, current_client.id, scenario_id, confirm_detach=payload.confirm_detach)
     return service.describe(db, current_client.id, scenario)
 
 

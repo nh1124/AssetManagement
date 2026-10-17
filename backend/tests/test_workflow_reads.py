@@ -1,3 +1,5 @@
+from scenario_fixtures import goal_scenario_id
+
 from app.services.ledger_valuation import calculate_account_valued_balance
 from backend.app.domain.money import Money
 from datetime import date
@@ -59,7 +61,7 @@ def test_product_account_reads_preserve_type_scope_and_inactive_account_acceptan
 
 
 def test_product_funding_reads_refuse_goal_other_client_and_missing_capsules(db):
-    goal = models.LifeEvent(client_id=1, name="Goal")
+    goal = models.LifeEvent(scenario_id=goal_scenario_id(db, 1), client_id=1, name="Goal")
     db.add(goal)
     db.flush()
     reserve = models.Capsule(client_id=1, name="Reserve")

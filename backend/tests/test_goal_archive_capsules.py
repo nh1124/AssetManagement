@@ -6,6 +6,8 @@ from pydantic import ValidationError
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
+from scenario_fixtures import goal_scenario_id
+
 from app import models, schemas
 from app.database import Base
 from app.domain.errors import NotFound, Refused
@@ -28,7 +30,7 @@ def workspace():
         other = models.Client(name='Other', general_settings={'currency': 'JPY'}, ai_config={})
         db.add_all([client, other])
         db.flush()
-        goal = models.LifeEvent(client_id=client.id, name='Home', target_date=date(2028, 12, 31), target_amount_minor=2000)
+        goal = models.LifeEvent(scenario_id=goal_scenario_id(db, client.id), client_id=client.id, name='Home', target_date=date(2028, 12, 31), target_amount_minor=2000)
         source = models.Account(client_id=client.id, name='Savings', account_type='asset', is_active=True)
         old_source = models.Account(client_id=client.id, name='Former source', account_type='asset', is_active=True)
         destination = models.Account(client_id=client.id, name='Cash', account_type='asset', is_active=True)
@@ -126,7 +128,7 @@ def test_release_repeated_without_new_claims_moves_nothing(workspace):
 def test_release_refuses_without_destination_even_if_empty(workspace, empty):
     db, client, _, goal, *_ = workspace
     if empty:
-        goal = models.LifeEvent(client_id=client.id, name='Empty goal', target_date=date(2028, 1, 1), target_amount_minor=0)
+        goal = models.LifeEvent(scenario_id=goal_scenario_id(db, client.id), client_id=client.id, name='Empty goal', target_date=date(2028, 1, 1), target_amount_minor=0)
         db.add(goal)
         db.commit()
     before = journal_rows(db)

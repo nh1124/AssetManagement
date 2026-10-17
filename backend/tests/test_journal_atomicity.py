@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from scenario_fixtures import goal_scenario_id
+
 from app.services import capsule_service
 from app.services.ledger_valuation import calculate_account_valued_balance
 
@@ -90,7 +92,7 @@ def test_report_goal_allocation_rolls_back_when_journal_posting_fails(monkeypatc
     db = _session()
     try:
         client = _client(db)
-        goal = models.LifeEvent(
+        goal = models.LifeEvent(scenario_id=goal_scenario_id(db, client.id),
             client_id=client.id,
             name="Emergency fund",
             target_date=date(2027, 12, 31),
@@ -151,7 +153,7 @@ def test_report_goal_allocation_commits_journal_and_capsule(monkeypatch) -> None
     db = _session()
     try:
         client = _client(db)
-        goal = models.LifeEvent(
+        goal = models.LifeEvent(scenario_id=goal_scenario_id(db, client.id),
             client_id=client.id,
             name="Emergency fund",
             target_date=date(2027, 12, 31),

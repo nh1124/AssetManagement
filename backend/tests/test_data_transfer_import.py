@@ -79,13 +79,13 @@ def _seed(db, client_id=101, base=10000):
     parent = add(models.Account, 1, name="assets", account_type="asset")
     cash = add(models.Account, 2, name="cash", account_type="asset",  parent_id=parent.id)
     expense = add(models.Account, 3, name="food", account_type="expense")
-    goal = add(models.LifeEvent, 4, name="goal", start_date=date(2026, 10, 1),
-               target_date=date(2027, 1, 1), target_amount=1000, note="goal note", archived_at=STAMP)
-    next_goal = add(models.LifeEvent, 31, name="next", target_date=date(2028, 1, 1), target_amount=500)
-    add(models.LifeEventLink, 32, from_event_id=goal.id, to_event_id=next_goal.id,
-        kind="alternative", offset_months=12, note="graph note")
     scenario = add(models.LifeScenario, 36, name="保存案", annual_return=7.0, inflation=1.0, horizon_years=12, is_goal=True)
-    add(models.LifeScenarioChoice, 37, scenario_id=scenario.id, link_id=base + 32)
+    db.flush()
+    goal = add(models.LifeEvent, 4, scenario_id=scenario.id, name="goal", start_date=date(2026, 10, 1),
+               target_date=date(2027, 1, 1), target_amount=1000, note="goal note", archived_at=STAMP)
+    next_goal = add(models.LifeEvent, 31, scenario_id=scenario.id, name="next", target_date=date(2028, 1, 1), target_amount=500)
+    add(models.LifeEventLink, 32, from_event_id=goal.id, to_event_id=next_goal.id,
+        kind="after", offset_months=12, note="graph note")
     add(models.LifeScenarioAccountReturn, 38, scenario_id=scenario.id, account_id=cash.id, annual_return=3.0)
     capsule = add(models.Capsule, 5, name="goal", life_event_id=goal.id,
                   target_amount=1000, monthly_contribution=10,

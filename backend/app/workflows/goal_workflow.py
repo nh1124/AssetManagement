@@ -9,6 +9,7 @@ from ..services.milestone_service import (
 )
 from ..services.capsule_service import create_capsule_for_goal
 from ..services.cache_service import invalidate_client
+from ..services.life_scenario_scope import get_goal
 
 
 def create_goal(
@@ -27,7 +28,10 @@ def create_goal(
         # so use the milestone owner's primitives to keep the caller's transaction open.
         for row in build_default_milestone_rows(db, client_id, db_event.id):
             create_milestone(db, client_id, schemas.MilestoneCreate(**row), commit=False)
-    create_capsule_for_goal(db, client_id, db_event)
+    goal = get_goal(db, client_id)
+    # A draft story has no real-money earmarks until it becomes the goal.
+    if goal is not None and goal.id == db_event.scenario_id:
+        create_capsule_for_goal(db, client_id, db_event)
     if commit:
         db.commit()
         db.refresh(db_event)

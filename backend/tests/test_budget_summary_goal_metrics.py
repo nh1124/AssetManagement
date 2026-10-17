@@ -7,6 +7,8 @@ Strategy.tsx and mobile/pages/Plan.tsx read these keys.
 """
 from __future__ import annotations
 
+from scenario_fixtures import goal_scenario_id
+
 from app.services.money_storage import to_minor
 
 
@@ -46,7 +48,7 @@ def _seed(db, client_id: int):
     db.add_all([client, cash])
     db.flush()
     db.add(
-        models.LifeEvent(
+        models.LifeEvent(scenario_id=goal_scenario_id(db, client_id),
             client_id=client_id,
             name="house",
             target_date=date.today() + timedelta(days=365 * 5),

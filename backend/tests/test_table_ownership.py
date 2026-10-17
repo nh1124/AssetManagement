@@ -36,7 +36,6 @@ OWNERS: dict[str, str] = {
     "life_event_conditions": "services/life_event_conditions",
     "household_members": "services/household_service",
     "life_scenarios": "services/life_scenario_service",
-    "life_scenario_choices": "services/life_scenario_service",
     "life_scenario_account_returns": "services/life_scenario_service",
     "life_event_links": "services/life_event_graph",
     "milestones": "services/milestone_service",

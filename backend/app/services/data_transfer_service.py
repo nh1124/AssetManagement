@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from uuid import uuid4
+import logging
 from typing import Any
 
 from sqlalchemy import text
@@ -28,7 +30,7 @@ from .budget_lines import assign_plan_line_identity
 from .cache_service import invalidate_client
 from .capsule_service import create_capsule_for_goal
 from .registry_service import account_entry_type, account_line_type
-from .life_scenario_service import seed_legacy_goal
+from .life_scenario_service import seed_legacy_goal, copy_graph, get_goal
 
 
 def _db_revision(db: Session) -> str | None:
@@ -250,6 +252,8 @@ def export_client(db: Session, client: models.Client) -> dict:
                     event,
                     [
                         "id",
+                        "scenario_id",
+                        "lineage",
                         "name",
                         "start_date",
                         "target_date",
@@ -280,11 +284,6 @@ def export_client(db: Session, client: models.Client) -> dict:
             "life_scenarios": [
                 row_fields(row, ["id", "name", "annual_return", "inflation", "horizon_years", "is_goal", "created_at", "updated_at"])
                 for row in db.query(models.LifeScenario).filter_by(client_id=client.id).order_by(models.LifeScenario.id).all()
-            ],
-            "life_scenario_choices": [
-                row_fields(row, ["id", "scenario_id", "link_id"])
-                for row in db.query(models.LifeScenarioChoice).join(models.LifeScenario, models.LifeScenario.id == models.LifeScenarioChoice.scenario_id)
-                .filter(models.LifeScenario.client_id == client.id).order_by(models.LifeScenarioChoice.id).all()
             ],
             "life_scenario_account_returns": [
                 row_fields(row, ["id", "scenario_id", "account_id", "annual_return"])
@@ -594,9 +593,9 @@ def import_client(
             ).delete(synchronize_session=False)
 
         scenario_ids = db.query(models.LifeScenario.id).filter_by(client_id=client.id)
-        for model in (models.LifeScenarioChoice, models.LifeScenarioAccountReturn):
-            db.query(model).filter(model.scenario_id.in_(scenario_ids)).delete(synchronize_session=False)
-        db.query(models.LifeScenario).filter_by(client_id=client.id).delete(synchronize_session=False)
+        db.query(models.LifeScenarioAccountReturn).filter(
+            models.LifeScenarioAccountReturn.scenario_id.in_(scenario_ids),
+        ).delete(synchronize_session=False)
 
         for model in [
             models.LifeEventCondition,
@@ -622,6 +621,7 @@ def import_client(
             models.QuickTemplate,
             models.BudgetPlan,
             models.LifeEvent,
+            models.LifeScenario,
             models.Account,
         ]:
             db.query(model).filter(model.client_id == client.id).delete(
@@ -869,10 +869,33 @@ def import_client(
             db.flush()
             batch_map[old_id] = batch.id
 
+        if version is not None and version >= 21:
+            for item in data.get("life_scenarios", []):
+                scenario = models.LifeScenario(
+                    client_id=client.id, name=item["name"], annual_return=item.get("annual_return", 5.0),
+                    inflation=item.get("inflation", 2.0), horizon_years=item.get("horizon_years", 30),
+                    is_goal=item.get("is_goal", False),
+                    created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
+                    updated_at=parse_datetime(item.get("updated_at")) or datetime.utcnow(),
+                )
+                db.add(scenario)
+                db.flush()
+                scenario_map[int(item["id"])] = scenario.id
+            for item in data.get("life_scenario_account_returns", []):
+                db.add(models.LifeScenarioAccountReturn(
+                    scenario_id=scenario_map[int(item["scenario_id"])], account_id=account_map[int(item["account_id"])], annual_return=item["annual_return"],
+                ))
+        legacy_graph = version is None or version < 22
+        restored_goal = get_goal(db, client.id)
+        if legacy_graph and data.get("life_events") and restored_goal is None:
+            restored_goal = seed_legacy_goal(db, client.id)
+
         for item in data.get("life_events", []):
             old_id = int(item["id"])
             event = models.LifeEvent(
                 client_id=client.id,
+                scenario_id=restored_goal.id if legacy_graph else scenario_map[int(item["scenario_id"])],
+                lineage=str(uuid4()) if legacy_graph else item["lineage"],
                 name=item["name"],
                 start_date=parse_date(item.get("start_date")),
                 target_date=parse_date(item.get("target_date")),
@@ -893,39 +916,19 @@ def import_client(
             event_map[old_id] = event.id
 
         for item in data.get("life_event_links", []):
+            if legacy_graph and item["kind"] == "alternative":
+                logging.getLogger(__name__).warning("Converting restored alternative life-event link to after: %s", item["id"])
             link = models.LifeEventLink(
                 client_id=client.id,
                 from_event_id=event_map[int(item["from_event_id"])],
                 to_event_id=event_map[int(item["to_event_id"])],
-                kind=item["kind"], offset_months=item.get("offset_months", 0),
+                kind="after" if legacy_graph else item["kind"], offset_months=item.get("offset_months", 0),
                 note=item.get("note"),
                 created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
             )
             db.add(link)
             db.flush()
             link_map[int(item["id"])] = link.id
-
-        if version is not None and version >= 21:
-            for item in data.get("life_scenarios", []):
-                scenario = models.LifeScenario(
-                    client_id=client.id, name=item["name"], annual_return=item.get("annual_return", 5.0),
-                    inflation=item.get("inflation", 2.0), horizon_years=item.get("horizon_years", 30),
-                    is_goal=item.get("is_goal", False),
-                    created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
-                    updated_at=parse_datetime(item.get("updated_at")) or datetime.utcnow(),
-                )
-                db.add(scenario)
-                db.flush()
-                scenario_map[int(item["id"])] = scenario.id
-            for item in data.get("life_scenario_choices", []):
-                db.add(models.LifeScenarioChoice(scenario_id=scenario_map[int(item["scenario_id"])], link_id=link_map[int(item["link_id"])]))
-            for item in data.get("life_scenario_account_returns", []):
-                db.add(models.LifeScenarioAccountReturn(
-                    scenario_id=scenario_map[int(item["scenario_id"])], account_id=account_map[int(item["account_id"])], annual_return=item["annual_return"],
-                ))
-        else:
-            # Pre-LS1 documents carry their goal on the links and assumptions on the config.
-            seed_legacy_goal(db, client.id, [link_map[int(item["id"])] for item in data.get("life_event_links", []) if item.get("adopted") is True])
 
         for item in data.get("transactions", []):
             old_id = int(item["id"])
@@ -1075,13 +1078,16 @@ def import_client(
         for registry_entry, old_capsule_id in registry_funding_updates:
             registry_entry.funding_capsule_id = capsule_map.get(old_capsule_id)
 
-        # Recreate expense capsules only; an expected receipt needs no savings reserve.
-        for event in (
-            db.query(models.LifeEvent)
-            .filter(models.LifeEvent.client_id == client.id, models.LifeEvent.direction == "expense")
-            .all()
-        ):
-            create_capsule_for_goal(db, client.id, event)
+        if version is None or version < 21:
+            # Only older formats need capsule repair. V21+ restores the exact
+            # capsule collection, including stories with no real-money earmarks.
+            for event in (
+                db.query(models.LifeEvent)
+                .filter(models.LifeEvent.client_id == client.id, models.LifeEvent.direction == "expense",
+                        models.LifeEvent.scenario_id == (restored_goal.id if restored_goal else -1))
+                .all()
+            ):
+                create_capsule_for_goal(db, client.id, event)
 
         for item in data.get("capsule_drawdowns", []):
             db.add(models.CapsuleDrawdown(
@@ -1219,6 +1225,14 @@ def import_client(
                 threshold_date=parse_date(item.get("threshold_date")), reference_id=reference_id,
                 note=item.get("note"), created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
             ))
+
+        if legacy_graph and restored_goal is not None:
+            # A shared graph was every story; copies are made after all children exist.
+            db.flush()
+            for story in db.query(models.LifeScenario).filter(
+                models.LifeScenario.client_id == client.id, models.LifeScenario.id != restored_goal.id,
+            ).all():
+                copy_graph(db, client.id, restored_goal.id, story.id)
 
         action_key_maps = {
             "account_id": account_map,

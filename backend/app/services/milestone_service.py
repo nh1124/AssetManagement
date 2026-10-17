@@ -11,6 +11,7 @@ from .money_storage import minor_fields, money_client_currency
 
 from .. import models, schemas
 from ..domain.errors import Refused
+from ..domain.transfer import remap_nested_ids
 from .goal_service import get_life_events_with_progress
 from .strategy_service import (
     _period_contribution_from_schedule,
@@ -26,6 +27,19 @@ INTERVAL_MONTHS = {
     "semiannual": 6,
     "quarterly": 3,
 }
+
+
+def copy_milestones(db: Session, client_id: int, event_map: dict[int, int], link_map: dict[int, int]) -> None:
+    for source in db.query(models.Milestone).filter(
+        models.Milestone.client_id == client_id, models.Milestone.life_event_id.in_(event_map),
+    ).order_by(models.Milestone.id):
+        values = {column.name: getattr(source, column.name) for column in models.Milestone.__table__.columns
+                  if column.name not in {"id", "life_event_id"}}
+        values["source_snapshot"] = remap_nested_ids(source.source_snapshot, {
+            "life_event_id": event_map, "event_id": event_map, "link_id": link_map,
+        })
+        db.add(models.Milestone(**values, life_event_id=event_map[source.life_event_id]))
+    db.flush()
 
 
 def _deterministic_balance_with_schedule(

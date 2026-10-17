@@ -9,6 +9,8 @@ Covers:
 """
 from __future__ import annotations
 
+from scenario_fixtures import goal_scenario_id
+
 from app.services.money_storage import to_minor
 
 
@@ -51,7 +53,7 @@ def _session():
 def _client_and_goal(db, target_date: date, target_amount: float = 1_500_000, priority: int = 2):
     client = models.Client(id=1, name="test", general_settings={}, ai_config={})
     db.add(client)
-    goal = models.LifeEvent(
+    goal = models.LifeEvent(scenario_id=goal_scenario_id(db, 1),
         client_id=1,
         name="Test Goal",
         target_date=target_date,

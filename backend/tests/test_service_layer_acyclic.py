@@ -76,6 +76,7 @@ LAYERS: dict[str, int] = {
     "goal_service": 5,
     "life_event_conditions": 5,  # Current assumptions compose existing readers.
     "life_event_walk": 5,  # Shared graph resolution and event cash-flow application.
+    "life_scenario_scope": 0,  # Ownership reads and the shared client lock.
     "life_scenario_service": 5,  # Owns user-authored scenario assumptions and choices.
     "life_event_graph": 5,  # Resolves graph branches over the shared strategy projector.
     "milestone_service": 5,

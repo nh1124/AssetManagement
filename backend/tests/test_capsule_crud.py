@@ -1,3 +1,5 @@
+from scenario_fixtures import goal_scenario_id
+
 from app.services.ledger_valuation import calculate_account_valued_balance
 from app.services.money_storage import to_minor
 
@@ -236,7 +238,7 @@ def test_commit_false_leaves_every_new_writing_function_rollbackable(db, monkeyp
     capsule, cash, _ = _capsule(db)
     capsule_id, cash_id = capsule.id, cash.id
     rule_id = capsule_service.create_rule(db, 1, _rule_payload(capsule_id)).id
-    goal = models.LifeEvent(client_id=1, name="Goal", target_date=date(2027, 12, 31), target_amount_minor=to_minor(200, "JPY"))
+    goal = models.LifeEvent(scenario_id=goal_scenario_id(db, 1), client_id=1, name="Goal", target_date=date(2027, 12, 31), target_amount_minor=to_minor(200, "JPY"))
     product = models.Product(
         client_id=1, name="Item", funding_capsule_id=capsule_id,
         budget_treatment="reserve_allocation", is_asset=False,

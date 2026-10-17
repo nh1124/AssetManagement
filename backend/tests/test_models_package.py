@@ -9,8 +9,8 @@ from app import models
 from app.database import Base
 
 
-# LS1 persists user-authored scenario assumptions and replaces link adoption.
-EXPECTED_METADATA_SHA256 = "54c1b99ebf1095325b3fd586bffaf8bad6f4e14ba10dddc6c288f05a6f296677"
+# N1a owns events per story and removes branch-choice rows.
+EXPECTED_METADATA_SHA256 = "5b71097dbeb21174c6288dd4ef65339ca4406c6149a12c0689b794587c02257a"
 
 MODEL_NAMES = (
     "Client", "ClientMfaSetting", "ClientRecoveryCode",
@@ -20,7 +20,7 @@ MODEL_NAMES = (
     "BudgetPlan", "MonthlyPlanLine", "PeriodReview", "MonthlyAction", "PeriodClose",
     "AiOperationPolicy", "AiAuditLog", "AiChangeRequest",
     "SimulationConfig", "SimulationScenario",
-    "LifeScenario", "LifeScenarioChoice", "LifeScenarioAccountReturn",
+    "LifeScenario", "LifeScenarioAccountReturn",
     "Capsule", "CapsuleFundingSource", "CapsuleRule", "CapsuleDrawdown",
     "ProductDepreciation",
 )
@@ -90,8 +90,8 @@ def _metadata_snapshot():
 
 def test_metadata_matches_the_minor_unit_schema():
     snapshot = _metadata_snapshot()
-    assert len(snapshot["table_names"]) == 36
-    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 426
+    assert len(snapshot["table_names"]) == 35
+    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 425
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == EXPECTED_METADATA_SHA256
 

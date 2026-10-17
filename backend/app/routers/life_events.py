@@ -8,7 +8,7 @@ from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.goal_service import (
-    get_life_events_with_progress,
+    list_goals_with_progress,
     list_goals,
     update_goal,
     archive_goal,
@@ -64,10 +64,11 @@ def delete_condition(
 
 @router.get("/links", response_model=list[schemas.LifeEventLink])
 def get_links(
+    scenario_id: int | None = None,
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    return life_event_graph.list_links(db, current_client.id)
+    return life_event_graph.list_links(db, current_client.id, scenario_id=scenario_id)
 
 
 @router.post("/links", response_model=schemas.LifeEventLink)
@@ -92,20 +93,22 @@ def delete_link(
 @router.get("/")
 def get_life_events(
     include_archived: bool = False,
+    scenario_id: int | None = None,
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
     """Get all life events for current client."""
-    return list_goals(db, current_client.id, include_archived=include_archived)
+    return list_goals(db, current_client.id, include_archived=include_archived, scenario_id=scenario_id)
 
 @router.get("/with-progress")
 def get_life_events_progress(
     include_archived: bool = False,
+    scenario_id: int | None = None,
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
     """Get all life events with calculated progress for current client."""
-    return get_life_events_with_progress(db, client_id=current_client.id, include_archived=include_archived)
+    return list_goals_with_progress(db, client_id=current_client.id, include_archived=include_archived, scenario_id=scenario_id)
 
 @router.get("/goal-probability")
 def get_goal_probability(

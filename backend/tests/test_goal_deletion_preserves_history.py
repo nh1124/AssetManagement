@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from scenario_fixtures import goal_scenario_id
+
 from app.services.money_storage import to_minor
 
 
@@ -60,7 +62,7 @@ def _setup(db, *, claimed_amount=0):
         name="Cash",
         account_type="asset",
     )
-    goal = models.LifeEvent(
+    goal = models.LifeEvent(scenario_id=goal_scenario_id(db, client.id),
         client_id=client.id,
         name="Emergency fund",
         target_date=date(2027, 12, 31),

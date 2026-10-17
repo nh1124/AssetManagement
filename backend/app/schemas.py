@@ -1,5 +1,5 @@
 from decimal import Decimal
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator, field_validator
 from datetime import date, datetime
 from datetime import date as DateType
 from typing import Any, List, Optional, Literal
@@ -810,7 +810,15 @@ class LifeEventLinkCreate(BaseModel):
 
     from_event_id: int
     to_event_id: int
-    kind: Literal["after", "alternative"]
+    kind: Literal["after"]
+
+    @field_validator("kind", mode="before")
+    @classmethod
+    def validate_kind(cls, value):
+        if value != "after":
+            raise ValueError("接続は「必ず続く」のみです。")
+        return value
+
     offset_months: int = 0
     note: str | None = None
 
@@ -838,9 +846,11 @@ class LifeEventBase(BaseModel):
     plan_status_override: Optional[str] = None
 
 class LifeEventCreate(LifeEventBase):
-    pass
+    model_config = ConfigDict(extra="forbid")
+    scenario_id: int
 
 class LifeEventUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     direction: Literal["expense", "income"] = "expense"
     account_id: Optional[int] = None
     condition_mode: Literal["all", "any"] = "all"
@@ -860,6 +870,8 @@ class GoalArchiveRequest(BaseModel):
 
 class LifeEvent(LifeEventBase):
     id: int
+    scenario_id: int
+    lineage: str
     archived_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
 
@@ -1301,9 +1313,9 @@ class LifeScenarioUpdate(BaseModel):
         return values
 
 
-class LifeScenarioChoices(BaseModel):
+class LifeScenarioGoal(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    link_ids: list[int]
+    confirm_detach: bool = False
 
 
 class LifeScenarioAccountReturn(BaseModel):

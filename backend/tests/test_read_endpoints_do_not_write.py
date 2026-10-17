@@ -96,11 +96,6 @@ def _seed(db, scenario, today):
     db.add(batch)
     db.flush()
     lunch.batch_id = batch.id
-    goal = models.LifeEvent(client_id=1, name="Guard goal", start_date=today,
-                            target_date=today + timedelta(days=365), target_amount_minor=to_minor(200000, "JPY"),
-                            priority=1)
-    db.add(goal)
-    db.flush()
     # Drive saved scenario reads with real assumptions, without granting a GET exception.
     life_scenario = models.LifeScenario(
         client_id=1, name="Guard life scenario", is_goal=True,
@@ -108,6 +103,11 @@ def _seed(db, scenario, today):
     )
     alternate_scenario = models.LifeScenario(client_id=1, name="Guard alternate", annual_return=7.0)
     db.add_all([life_scenario, alternate_scenario])
+    db.flush()
+    goal = models.LifeEvent(scenario_id=life_scenario.id, client_id=1, name="Guard goal", start_date=today,
+                            target_date=today + timedelta(days=365), target_amount_minor=to_minor(200000, "JPY"),
+                            priority=1)
+    db.add(goal)
     db.flush()
     capsule = models.Capsule(client_id=1, life_event_id=goal.id, name="Guard capsule",
                              target_amount_minor=to_minor(200000, "JPY"), monthly_contribution_minor=to_minor(10000, "JPY"),

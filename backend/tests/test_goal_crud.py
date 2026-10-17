@@ -1,3 +1,5 @@
+from scenario_fixtures import goal_scenario_id
+
 from app.services.money_storage import to_minor, rule_amount_fields
 
 from backend.app.domain.money import Money
@@ -31,7 +33,7 @@ def db():
 
 
 def _goal_with_capsule_account(db):
-    goal = models.LifeEvent(
+    goal = models.LifeEvent(scenario_id=goal_scenario_id(db, 1),
         client_id=1, name="Emergency fund", target_date=date(2027, 12, 31),
         target_amount_minor=to_minor(500, "JPY"), priority=1,
     )
@@ -147,7 +149,7 @@ def test_create_goal_writes_one_goal_annual_milestones_and_one_capsule_without_a
         )))
 
     monkeypatch.setattr(db, "commit", record_commit)
-    payload = schemas.LifeEventCreate(
+    payload = schemas.LifeEventCreate(scenario_id=goal_scenario_id(db, 1),
         name="Emergency fund", target_date=date(2027, 12, 31), target_amount=500, priority=1,
     )
     goal = create_goal(db, 1, payload, commit=commit)

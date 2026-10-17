@@ -9,6 +9,8 @@ from typing import Protocol, Sequence
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from .life_scenario_scope import get_goal, lock_client
+
 from .money_storage import to_minor, money_client_currency, rule_amount_fields, rule_data
 
 from .. import models, schemas
@@ -125,9 +127,13 @@ def update_capsule(
 def _validate_goal_link(db: Session, client_id: int, life_event_id: int | None) -> None:
     if life_event_id is None:
         return
+    lock_client(db, client_id)
     event = db.query(models.LifeEvent).filter_by(client_id=client_id, id=life_event_id).first()
     if event is None:
         raise NotFound("同じクライアントのイベントが見つかりません。")
+    scenario = get_goal(db, client_id)
+    if scenario is None or event.scenario_id != scenario.id:
+        raise Refused("取り置きはゴールのシナリオのライフイベントにだけ紐づけられます。", status_code=422)
     if event.direction == "income":
         raise Refused("収入イベントには積立用の取り置きを紐づけできません。", status_code=422)
 
@@ -503,6 +509,7 @@ def capsule_to_dict(db: Session, capsule: models.Capsule) -> dict:
 
 
 def create_capsule_for_goal(db: Session, client_id: int, goal: models.LifeEvent) -> models.Capsule:
+    _validate_goal_link(db, client_id, goal.id)
     if goal.direction == "income":
         raise Refused("収入イベントには積立用の取り置きを作成できません。", status_code=422)
     existing = db.query(models.Capsule).filter(

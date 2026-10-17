@@ -12,6 +12,7 @@ from fastapi import HTTPException
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
 
+from scenario_fixtures import goal_scenario_id
 from backend.app import models, schemas
 from backend.app.database import Base
 from backend.app.domain.errors import Conflict, Invalid
@@ -27,9 +28,12 @@ def db():
     session.add_all([
         models.Client(id=1, name="first", ai_config={}, general_settings={}),
         models.Client(id=2, name="second", ai_config={}, general_settings={}),
-        models.LifeEvent(id=1, client_id=1, name="first goal", target_date=date(2030, 1, 1), target_amount_minor=to_minor(1000, "JPY")),
-        models.LifeEvent(id=2, client_id=2, name="foreign goal", target_date=date(2030, 1, 1), target_amount_minor=to_minor(1000, "JPY")),
-        models.LifeEvent(id=3, client_id=1, name="other goal", target_date=date(2030, 1, 1), target_amount_minor=to_minor(1000, "JPY")),
+    ])
+    session.flush()
+    session.add_all([
+        models.LifeEvent(scenario_id=goal_scenario_id(session, 1), id=1, client_id=1, name="first goal", target_date=date(2030, 1, 1), target_amount_minor=to_minor(1000, "JPY")),
+        models.LifeEvent(scenario_id=goal_scenario_id(session, 2), id=2, client_id=2, name="foreign goal", target_date=date(2030, 1, 1), target_amount_minor=to_minor(1000, "JPY")),
+        models.LifeEvent(scenario_id=goal_scenario_id(session, 1), id=3, client_id=1, name="other goal", target_date=date(2030, 1, 1), target_amount_minor=to_minor(1000, "JPY")),
     ])
     session.commit()
     try:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from scenario_fixtures import goal_scenario_id
+
 from app.services.money_storage import to_minor
 from app.domain.journal import Leg
 from app.services.ledger_service import create_transaction
@@ -182,7 +184,7 @@ def test_data_export_manifest_and_validate_include_monthly_actions() -> None:
         payload = ImportPayload(**snapshot)
         validation = validate_import_client_data(payload=payload, current_client=client)
 
-        assert snapshot["version"] == 21
+        assert snapshot["version"] == 22
         assert snapshot["manifest"]["counts"]["monthly_actions"] == 1
         assert snapshot["data"]["monthly_actions"][0]["kind"] == "set_budget"
         assert validation["status"] == "valid"
@@ -966,7 +968,7 @@ def test_life_event_allocation_is_presented_as_capsule() -> None:
         account = models.Account(client_id=1, name="event capsule account", account_type="asset")
         db.add_all([client, account])
         db.flush()
-        event = models.LifeEvent(
+        event = models.LifeEvent(scenario_id=goal_scenario_id(db, 1),
             client_id=1,
             name="Move",
             target_date=date(2027, 4, 1),

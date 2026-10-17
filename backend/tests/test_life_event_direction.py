@@ -13,6 +13,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from scenario_fixtures import goal_scenario_id
+
 from app import models, schemas
 from app.database import Base, get_db
 from app.dependencies import get_current_client
@@ -84,7 +86,7 @@ def account(db, client_id=1):
 
 
 def node(db, direction="expense", amount=1200, offset=2, **kwargs):
-    row = models.LifeEvent(client_id=1, name=direction, direction=direction,
+    row = models.LifeEvent(scenario_id=goal_scenario_id(db, 1), client_id=1, name=direction, direction=direction,
                            target_date=date(date.today().year + offset, 1, 1),
                            target_amount_minor=amount, **kwargs)
     db.add(row)
@@ -111,7 +113,7 @@ def reserve(db, owner):
 
 def test_http_income_create_update_and_all_event_serializers_round_trip(db, api):
     linked = account(db)
-    payload = {"name": "退職金", "target_date": "2040-03-31", "target_amount": 2000,
+    payload = {"scenario_id": goal_scenario_id(db, 1), "name": "退職金", "target_date": "2040-03-31", "target_amount": 2000,
                "direction": "income", "account_id": linked.id}
     response = request(api, "POST", "/life-events/", json=payload)
     assert response.status_code == 200
@@ -133,7 +135,7 @@ def test_http_income_create_update_and_all_event_serializers_round_trip(db, api)
 def test_account_ownership_refused_on_create_and_update_before_any_mutation(db, api, missing):
     foreign_id = 9999 if missing else account(db, 2).id
     expense = node(db)
-    payload = {"name": "相続", "target_date": "2040-01-01", "target_amount": 100,
+    payload = {"scenario_id": goal_scenario_id(db, 1), "name": "相続", "target_date": "2040-01-01", "target_amount": 100,
                "direction": "income", "account_id": foreign_id}
     assert request(api, "POST", "/life-events/", json=payload).status_code == 404
     assert request(api, "PUT", f"/life-events/{expense.id}", json={"name": "変更", "account_id": foreign_id}).status_code == 404
@@ -163,7 +165,7 @@ def test_deleting_linked_account_sets_event_reference_to_null(db):
 
 @pytest.mark.parametrize("commit", [False, True])
 def test_income_goal_workflow_creates_no_capsule_or_milestone(db, commit):
-    receipt = create_goal(db, 1, schemas.LifeEventCreate(
+    receipt = create_goal(db, 1, schemas.LifeEventCreate(scenario_id=goal_scenario_id(db, 1),
         name="相続", target_date=date(2040, 1, 1), target_amount=500, direction="income"), commit=commit)
     assert receipt.direction == "income"
     assert db.query(models.Capsule).count() == db.query(models.Milestone).count() == 0
@@ -352,7 +354,7 @@ def test_scenario_adds_resolved_income_and_subtracts_expense_in_their_years(db, 
     baseline = [{"year": year+i, "p10": 900, "p50": 1000, "p90": 1100} for i in range(4)]
     monkeypatch.setattr(life_scenario_service, "simulate_net_worth_forward_with_paths",
                         lambda *a, **k: (baseline, np.full((1200, 4), 1000.)))
-    saved = life_scenario_service.create(db, 1, "保存")
+    saved = life_scenario_service.get_goal(db, 1)
     life_scenario_service.update(db, 1, saved.id, {"horizon_years": 3, "annual_return": 0, "inflation": 0})
     result = request(api, "GET", f"/life-scenarios/compare?ids={saved.id}").json()
     scenario = result["scenarios"][0]
@@ -366,23 +368,23 @@ def test_scenario_adds_resolved_income_and_subtracts_expense_in_their_years(db, 
     assert [row["p50"] for row in baseline] == [1000]*4
 
 
-def test_scenario_receipts_are_counted_only_on_the_selected_branch(db, api, monkeypatch):
+def test_scenario_receipts_are_counted_only_in_their_own_story(db, api, monkeypatch):
     root = node(db, amount=0)
     a, b = node(db, "income", amount=100), node(db, "income", amount=300)
-    archived = node(db, "income", amount=999, archived_at=datetime.utcnow())
-    for child in (a, b, archived):
-        if child is not archived:
-            life_event_graph.create_link(db, 1, from_event_id=root.id, to_event_id=child.id, kind="alternative")
+    node(db, "income", amount=999, archived_at=datetime.utcnow())
+    for child in (a, b):
+        life_event_graph.create_link(db, 1, from_event_id=root.id, to_event_id=child.id, kind="after")
     year = date.today().year
     baseline = [{"year": year+i, "p10": 1000, "p50": 1000, "p90": 1000} for i in range(4)]
     monkeypatch.setattr(life_scenario_service, "simulate_net_worth_forward_with_paths",
                         lambda *a, **k: (baseline, np.full((1200, 4), 1000.)))
-    saved = life_scenario_service.create(db, 1, "保存")
+    saved = life_scenario_service.get_goal(db, 1)
     life_scenario_service.update(db, 1, saved.id, {"horizon_years": 3, "annual_return": 0, "inflation": 0})
-    rows = []
-    for edge in life_event_graph.list_links(db, 1):
-        assert request(api, "PUT", f"/life-scenarios/{saved.id}/choices", json={"link_ids": [edge.id]}).status_code == 200
-        rows.append(request(api, "GET", f"/life-scenarios/compare?ids={saved.id}").json()["scenarios"][0]["projection"])
+    clone = life_scenario_service.duplicate(db, 1, saved.id, "別案")
+    copied_a = db.query(models.LifeEvent).filter_by(scenario_id=clone.id, lineage=a.lineage).one()
+    goal_service.delete_goal(db, 1, b.id)
+    goal_service.delete_goal(db, 1, copied_a.id)
+    rows = [request(api, "GET", f"/life-scenarios/compare?ids={story.id}").json()["scenarios"][0]["projection"] for story in (saved, clone)]
     assert [item[-1]["p50"] for item in rows] == [1100, 1300]
     assert [item[-1]["cumulative_income"] for item in rows] == [100, 300]
 
@@ -444,7 +446,7 @@ def test_v21_backup_round_trips_income_account_and_horizon_without_auto_capsules
     db.add(models.SimulationConfig(client_id=1, horizon_years=17))
     db.commit()
     document = export_client(db, db.get(models.Client, 1))
-    assert document["version"] == EXPORT_VERSION == 21
+    assert document["version"] == EXPORT_VERSION == 22
     assert document["data"]["life_events"][0]["direction"] == "income"
     assert document["data"]["life_events"][0]["account_id"] == linked.id
     assert document["data"]["simulation_configs"][0]["horizon_years"] == 17

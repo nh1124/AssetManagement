@@ -1,4 +1,5 @@
 from datetime import datetime
+from uuid import uuid4
 
 from sqlalchemy import Column, Integer, String, Date, ForeignKey, Boolean, DateTime, JSON, BigInteger, Float, CheckConstraint, UniqueConstraint, Index, text
 from sqlalchemy.orm import relationship
@@ -23,6 +24,8 @@ class LifeEvent(Base):
     account_id = Column(Integer, ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True)
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
+    scenario_id = Column(Integer, ForeignKey("life_scenarios.id", ondelete="CASCADE"), nullable=False, index=True)
+    lineage = Column(String(36), nullable=False, index=True, default=lambda: str(uuid4()))
     name = Column(String, index=True)  # e.g., "Retirement", "House"
     start_date = Column(Date, nullable=True)
     target_date = Column(Date)
@@ -57,7 +60,7 @@ class LifeEventLink(Base):
     __tablename__ = "life_event_links"
     __table_args__ = (
         UniqueConstraint("client_id", "from_event_id", "to_event_id", name="uq_life_event_links_pair"),
-        CheckConstraint("kind IN ('after', 'alternative')", name="ck_life_event_links_kind"),
+        CheckConstraint("kind = 'after'", name="ck_life_event_links_kind"),
     )
 
     id = Column(Integer, primary_key=True)
@@ -151,17 +154,8 @@ class LifeScenario(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    choices = relationship("LifeScenarioChoice", cascade="all, delete-orphan")
+    events = relationship("LifeEvent", cascade="all, delete-orphan", passive_deletes=True)
     account_returns = relationship("LifeScenarioAccountReturn", cascade="all, delete-orphan")
-
-
-class LifeScenarioChoice(Base):
-    __tablename__ = "life_scenario_choices"
-    __table_args__ = (UniqueConstraint("scenario_id", "link_id", name="uq_life_scenario_choices_link"),)
-
-    id = Column(Integer, primary_key=True)
-    scenario_id = Column(Integer, ForeignKey("life_scenarios.id", ondelete="CASCADE"), nullable=False)
-    link_id = Column(Integer, ForeignKey("life_event_links.id", ondelete="CASCADE"), nullable=False)
 
 
 class LifeScenarioAccountReturn(Base):

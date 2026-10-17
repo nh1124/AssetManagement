@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from scenario_fixtures import goal_scenario_id
+
 from app.services.money_storage import to_minor
 from app.services.ledger_service import create_transaction
 from app.domain.journal import Leg
@@ -298,7 +300,7 @@ def test_roadmap_projection_returns_projection_and_liability_demand() -> None:
                 models.JournalEntry(transaction_id=opening.id, account_id=credit.id, debit_minor=Money.from_major(str(0), opening.currency).minor, credit_minor=Money.from_major(str(100000), opening.currency).minor),
             ]
         )
-        goal = models.LifeEvent(
+        goal = models.LifeEvent(scenario_id=goal_scenario_id(db, 1),
             client_id=1,
             name="House",
             target_date=date(today.year + 2, 12, 31),
@@ -582,7 +584,7 @@ def test_simulation_milestones_preview_and_apply_persist_source_snapshot() -> No
         )
         db.flush()
         _post_opening_balances(db, [(cash, 100000)])
-        goal = models.LifeEvent(
+        goal = models.LifeEvent(scenario_id=goal_scenario_id(db, 1),
             client_id=1,
             name="House",
             target_date=date(today.year + 2, today.month, min(today.day, 28)),

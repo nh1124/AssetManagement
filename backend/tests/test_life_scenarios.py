@@ -1,33 +1,32 @@
-"""Saved scenarios keep branch decisions and financial assumptions together."""
+"""Scenario-owned stories keep simulations independent and earmarks on the goal."""
 import asyncio
-import importlib.util
-from datetime import date
-from pathlib import Path
+from datetime import date, datetime
 
 import httpx
 import pytest
-from alembic.migration import MigrationContext
-from alembic.operations import Operations
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
-from sqlalchemy import create_engine, delete, event, inspect, text
+from sqlalchemy import create_engine, delete, event
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app import models
+from app import models, schemas
+from scenario_fixtures import goal_scenario_id
+from app.services import capsule_service, goal_service
+from app.workflows.goal_workflow import create_goal
 from app.database import Base, get_db
 from app.dependencies import get_current_client
 from app.domain.errors import Conflict, DomainError, Invalid, NotFound, Refused, detail_for, status_for
-from app.domain.transfer import EXPORT_VERSION, validate_import_payload
+from app.domain.transfer import EXPORT_VERSION, validate_import_payload, _sha256
 from app.routers.life_scenarios import router
 from app.routers.life_events import router as events_router
 from app.services import life_scenario_service as service, life_event_graph as graph
 from app.services.data_transfer_service import export_client, import_client
-from app.services.life_event_walk import walk_scenarios, _subtract_demand
-from app.services.strategy_service import simulate_net_worth_forward
 from app.services.institution_service import blended_after_tax_return
 from app.services.ledger_service import create_account, create_transaction
+
+
 
 
 @pytest.fixture
@@ -48,26 +47,10 @@ def db():
     engine.dispose()
 
 
-def node(db, name="予定", client_id=1, **kwargs):
-    row = models.LifeEvent(client_id=client_id, name=name, target_date=date(date.today().year + 1, 1, 31),
-                           target_amount_minor=kwargs.pop("amount", 0), **kwargs)
-    db.add(row)
-    db.commit()
-    return row
-
-
-def fork(db, name="進路", source=None, client_id=1):
-    source = source or node(db, name, client_id=client_id)
-    children = [node(db, name + suffix, client_id=client_id) for suffix in ("甲", "乙")]
-    edges = [graph.create_link(db, client_id, from_event_id=source.id, to_event_id=child.id,
-                               kind="alternative", offset_months=1) for child in children]
-    return source, children, edges
-
-
 def account(db, name="口座", client_id=1, kind="asset", rate=None, balance=0, institution="none"):
     row = create_account(db, client_id, {"name": name, "account_type": kind, "expected_return": rate, "institution": institution})
     if balance:
-        income = create_account(db, client_id, {"name": "給与", "account_type": "income"})
+        income = create_account(db, client_id, {"name": name + "給与", "account_type": "income"})
         create_transaction(db, client_id=client_id, date=date(2020, 1, 1), description="開始残高",
                            amount_minor=balance, currency="JPY", from_account_id=income.id, to_account_id=row.id)
         db.commit()
@@ -80,75 +63,6 @@ def config(db, **values):
     db.add(row)
     db.commit()
     return row
-
-
-def test_resolve_uses_selected_branch_and_later_fork_defaults_without_persisting(db):
-    root, children, edges = fork(db)
-    scenario = service.create(db, 1, "進学")
-    service.replace_choices(db, 1, scenario.id, [edges[1].id])
-    resolved = service.resolve(db, 1, scenario)
-    assert resolved.missing_forks == []
-    assert [event.id for event in resolved.events] == [root.id, children[1].id]
-    assert resolved.events[-1].resolved_date.month == 2
-    later, later_children, later_edges = fork(db, "住居")
-    resolved = service.resolve(db, 1, scenario)
-    assert resolved.missing_forks == [later.id]
-    assert {event.id for event in resolved.events} == {root.id, children[1].id, later.id, later_children[0].id}
-    assert resolved.chosen_link_ids == [edges[1].id, later_edges[0].id]
-    assert service.choice_ids(db, scenario) == [edges[1].id]
-
-
-def test_resolve_does_not_enumerate_or_stop_at_legacy_cap(db):
-    edges = [fork(db, str(index))[2] for index in range(8)]
-    scenario = service.create(db, 1, "すべて乙")
-    service.replace_choices(db, 1, scenario.id, [pair[1].id for pair in edges])
-    service.make_goal(db, 1, scenario.id)
-    resolved = service.resolve(db, 1, scenario)
-    assert resolved.chosen_link_ids == [pair[1].id for pair in edges]
-    assert len(resolved.events) == 16 and resolved.missing_forks == []
-    enumerated = walk_scenarios(db, 1)[0]
-    assert enumerated.truncated
-    assert resolved.chosen_link_ids not in [item.chosen_link_ids for item in enumerated]
-
-
-@pytest.mark.parametrize("removal", ["service", "sql", "event"])
-def test_deleted_choice_cascades_and_reports_missing_fork(db, removal):
-    root, children, edges = fork(db)
-    scenario = service.create(db, 1, "保存")
-    service.replace_choices(db, 1, scenario.id, [edges[1].id])
-    if removal == "service":
-        graph.delete_link(db, 1, edges[1].id)
-    elif removal == "sql":
-        db.execute(delete(models.LifeEventLink).where(models.LifeEventLink.id == edges[1].id))
-        db.commit()
-    else:
-        db.execute(delete(models.LifeEvent).where(models.LifeEvent.id == children[1].id))
-        db.commit()
-    assert service.choice_ids(db, scenario) == []
-    assert service.resolve(db, 1, scenario).missing_forks == [root.id]
-    assert db.query(models.LifeScenarioChoice).count() == 0
-
-
-@pytest.mark.parametrize("invalid", ["after", "same_fork", "foreign", "missing"])
-def test_choice_validation_leaves_previous_choices_intact(db, invalid):
-    root, children, edges = fork(db)
-    scenario = service.create(db, 1, "保存")
-    service.replace_choices(db, 1, scenario.id, [edges[1].id])
-    if invalid == "after":
-        bad = graph.create_link(db, 1, from_event_id=root.id, to_event_id=node(db, "共通").id, kind="after")
-        ids = [bad.id]
-    elif invalid == "same_fork":
-        ids = [edge.id for edge in edges]
-    elif invalid == "foreign":
-        ids = [fork(db, client_id=2)[2][0].id]
-    else:
-        ids = [99999]
-    with pytest.raises(Refused) as error:
-        service.replace_choices(db, 1, scenario.id, ids)
-    assert error.value.status_code == 422
-    assert service.choice_ids(db, scenario) == [edges[1].id]
-    service.replace_choices(db, 1, scenario.id, [])
-    assert service.choice_ids(db, scenario) == []
 
 
 def test_override_expected_and_gross_precedence_including_zero_and_tax(db):
@@ -183,28 +97,6 @@ def test_account_returns_validate_before_replacing(db, invalid):
     assert service.account_returns(db, scenario) == [{"account_id": row.id, "annual_return": 3}]
 
 
-def test_projections_use_individual_assumptions_and_resolved_cash_flows(db):
-    config(db, volatility=0)
-    asset = account(db, rate=0, balance=100000)
-    root, children, edges = fork(db)
-    root.target_amount_minor = 100
-    children[1].target_amount_minor = 900
-    children[1].direction = "income"
-    db.commit()
-    lower = service.create(db, 1, "低め")
-    service.update(db, 1, lower.id, {"annual_return": 1, "inflation": 0, "horizon_years": 3})
-    service.replace_choices(db, 1, lower.id, [edges[1].id])
-    higher = service.duplicate(db, 1, lower.id, "高め")
-    assert service.project(db, 1, lower)["projection"] == service.project(db, 1, higher)["projection"]
-    service.update(db, 1, higher.id, {"annual_return": 9})
-    low, high = [service.project(db, 1, item)["projection"] for item in (lower, higher)]
-    assert high[-1]["p50"] > low[-1]["p50"]
-    assert low[-1]["cumulative_target"] == 100 and low[-1]["cumulative_income"] == 900
-    service.replace_account_returns(db, 1, lower.id, [{"account_id": asset.id, "annual_return": 10}])
-    assert service.project(db, 1, lower)["projection"][-1]["p50"] > low[-1]["p50"]
-    assert asset.expected_return == 0
-
-
 def test_goal_switch_commits_once_and_goal_delete_is_refused(db):
     first, second = [service.create(db, 1, name) for name in ("第一", "第二")]
     service.make_goal(db, 1, first.id)
@@ -234,29 +126,6 @@ def test_database_enforces_goal_uniqueness_per_client_and_horizon(db):
         db.rollback()
 
 
-def test_duplicate_and_create_copy_correct_parts_and_delete_cascades(db):
-    edges = fork(db)[2]
-    asset = account(db)
-    goal = service.create(db, 1, "保存")
-    service.update(db, 1, goal.id, {"annual_return": 8, "inflation": 1, "horizon_years": 11})
-    service.replace_choices(db, 1, goal.id, [edges[1].id])
-    service.replace_account_returns(db, 1, goal.id, [{"account_id": asset.id, "annual_return": 4}])
-    service.make_goal(db, 1, goal.id)
-    new = service.create(db, 1, "新規")
-    clone = service.duplicate(db, 1, goal.id, "複製")
-    for item in (new, clone):
-        assert (item.annual_return, item.inflation, item.horizon_years, item.is_goal) == (8, 1, 11, False)
-        assert service.account_returns(db, item) == service.account_returns(db, goal)
-    assert service.choice_ids(db, new) == []
-    assert service.choice_ids(db, clone) == [edges[1].id]
-    service.delete(db, 1, clone.id)
-    assert not db.query(models.LifeScenarioChoice).filter_by(scenario_id=clone.id).count()
-    assert not db.query(models.LifeScenarioAccountReturn).filter_by(scenario_id=clone.id).count()
-    db.execute(delete(models.Account).where(models.Account.id == asset.id))
-    db.commit()
-    assert service.account_returns(db, goal) == []
-
-
 def test_defaults_do_not_use_config_or_account_rates_for_new_scenarios_without_goal(db):
     config(db)
     account(db, rate=9)
@@ -270,136 +139,6 @@ def test_defaults_do_not_use_config_or_account_rates_for_new_scenarios_without_g
         with pytest.raises(Refused):
             service.create(db, 1, name)
     assert service.create(db, 2, "新規").name == "新規"
-
-
-def test_v21_roundtrip_remaps_all_refs_and_replaces_old_goal(db):
-    root, _, edges = fork(db)
-    asset = account(db, rate=3)
-    scenario = service.create(db, 1, "保存")
-    service.replace_choices(db, 1, scenario.id, [edges[1].id])
-    service.replace_account_returns(db, 1, scenario.id, [{"account_id": asset.id, "annual_return": 7}])
-    service.make_goal(db, 1, scenario.id)
-    service.duplicate(db, 1, scenario.id, "別案")
-    target_goal = service.create(db, 2, "既存")
-    service.make_goal(db, 2, target_goal.id)
-    document = export_client(db, db.get(models.Client, 1))
-    assert EXPORT_VERSION == document["version"] == 21
-    assert all("adopted" not in link for link in document["data"]["life_event_links"])
-    source_projection = service.project(db, 1, scenario)["projection"]
-    for _ in range(2):
-        import_client(db, db.get(models.Client, 2), data=document["data"], version=21, manifest=document["manifest"])
-        restored = service.get_goal(db, 2)
-        assert restored.id != scenario.id
-        assert restored.name == scenario.name
-        assert service.project(db, 2, restored)["projection"] == source_projection
-        assert set(service.choice_ids(db, restored)).isdisjoint(service.choice_ids(db, scenario))
-        rates = service.account_returns(db, restored)
-        assert rates[0]["account_id"] != asset.id and rates[0]["annual_return"] == 7
-    assert len(service.list_scenarios(db, 2)) == 2
-    assert service.get_goal(db, 1).id == scenario.id
-
-
-def test_v20_import_creates_goal_using_config_and_legacy_asset_returns(db):
-    edges = fork(db)[2]
-    asset = account(db, rate=3.5, balance=10000)
-    account(db, name="未設定", rate=None)
-    account(db, name="収入", kind="income", rate=99)
-    config(db)
-    baseline = simulate_net_worth_forward(
-        db, 1, years=8, annual_return=7.5, inflation=1.5, include_event_income=False,
-    )
-    before = _subtract_demand(walk_scenarios(db, 1)[0][1], baseline, 8)
-    document = export_client(db, db.get(models.Client, 1))
-    data = document["data"]
-    for key in ("life_scenarios", "life_scenario_choices", "life_scenario_account_returns"):
-        del data[key]
-    for link in data["life_event_links"]:
-        link["adopted"] = link["id"] == edges[1].id
-    import_client(db, db.get(models.Client, 2), data=data, version=20, manifest=None)
-    scenario = service.get_goal(db, 2)
-    assert scenario.name == "進路乙"
-    assert (scenario.annual_return, scenario.inflation, scenario.horizon_years) == (7.5, 1.5, 8)
-    assert len(service.choice_ids(db, scenario)) == 1
-    assert [row["annual_return"] for row in service.account_returns(db, scenario)] == [3.5]
-    assert service.project(db, 2, scenario)["projection"] == before
-
-
-def test_seed_legacy_goal_defaults_and_no_events(db):
-    assert service.seed_legacy_goal(db, 1, []) is None
-    node(db)
-    scenario = service.seed_legacy_goal(db, 1, [])
-    db.commit()
-    assert (scenario.name, scenario.is_goal, scenario.annual_return, scenario.inflation, scenario.horizon_years) == ("基本シナリオ", True, 5, 2, 30)
-
-
-def test_migration_both_directions_preserve_branch_assumptions_and_projection(db):
-    root, _, edges = fork(db)
-    second_edges = fork(db, "住居")[2]
-    asset = account(db, rate=3.5, balance=10000)
-    account(db, name="未設定", rate=None)
-    account(db, name="費用", kind="expense", rate=99)
-    config(db)
-    node(db, "既定", client_id=2)
-    chosen = walk_scenarios(db, 1)[0][-1]
-    baseline = simulate_net_worth_forward(
-        db, 1, years=8, annual_return=7.5, inflation=1.5, include_event_income=False,
-    )
-    before = _subtract_demand(chosen, baseline, 8)
-    db.commit()
-    spec = importlib.util.spec_from_file_location("ls1_migration", Path(__file__).parents[1] / "alembic/versions/20261017_0067_life_scenarios.py")
-    migration = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration)
-    engine = db.get_bind()
-    with engine.begin() as connection:
-        for table in (models.LifeScenarioAccountReturn.__table__, models.LifeScenarioChoice.__table__, models.LifeScenario.__table__):
-            table.drop(connection)
-        connection.execute(text("ALTER TABLE life_event_links ADD COLUMN adopted BOOLEAN NOT NULL DEFAULT false"))
-        for link_id in chosen.chosen_link_ids:
-            connection.execute(text("UPDATE life_event_links SET adopted = true WHERE id = :id"), {"id": link_id})
-        with Operations.context(MigrationContext.configure(connection)):
-            migration.upgrade()
-    db.expire_all()
-    scenario = service.get_goal(db, 1)
-    assert scenario.name == chosen.label
-    assert service.choice_ids(db, scenario) == chosen.chosen_link_ids
-    assert (scenario.annual_return, scenario.inflation, scenario.horizon_years) == (7.5, 1.5, 8)
-    assert service.account_returns(db, scenario) == [{"account_id": asset.id, "annual_return": 3.5}]
-    assert service.project(db, 1, scenario)["projection"] == before
-    assert service.get_goal(db, 2).name == "基本シナリオ"
-    assert service.get_goal(db, 3) is None
-    assert "adopted" not in {col["name"] for col in inspect(engine).get_columns("life_event_links")}
-    # Downgrade must restore the current goal, including a switch made after upgrade.
-    replacement = service.duplicate(db, 1, scenario.id, "変更後")
-    service.replace_choices(db, 1, replacement.id, [edges[0].id, second_edges[1].id])
-    service.make_goal(db, 1, replacement.id)
-    db.commit()
-    with engine.begin() as connection:
-        with Operations.context(MigrationContext.configure(connection)):
-            migration.downgrade()
-        marked = connection.execute(text("SELECT id FROM life_event_links WHERE adopted ORDER BY id")).scalars().all()
-        assert marked == [edges[0].id, second_edges[1].id]
-        assert not {"life_scenarios", "life_scenario_choices", "life_scenario_account_returns"} & set(inspect(connection).get_table_names())
-        with Operations.context(MigrationContext.configure(connection)):
-            migration.upgrade()
-    db.expire_all()
-    assert service.choice_ids(db, service.get_goal(db, 1)) == marked
-
-
-@pytest.mark.parametrize("collection, field", [("life_scenario_choices", "scenario_id"), ("life_scenario_choices", "link_id"),
-    ("life_scenario_account_returns", "scenario_id"), ("life_scenario_account_returns", "account_id")])
-def test_backup_validates_new_references_before_replace(db, collection, field):
-    edges = fork(db)[2]
-    asset = account(db)
-    scenario = service.create(db, 1, "保存")
-    service.replace_choices(db, 1, scenario.id, [edges[1].id])
-    service.replace_account_returns(db, 1, scenario.id, [{"account_id": asset.id, "annual_return": 3}])
-    data = export_client(db, db.get(models.Client, 1))["data"]
-    data[collection][0][field] = 99999
-    validation = validate_import_payload(data, 21)
-    assert any(row["code"] == "missing_reference" and row.get("field") == field for row in validation["issues"])
-    with pytest.raises(Invalid):
-        import_client(db, db.get(models.Client, 1), data=data, version=21, manifest=None)
-    assert service.get(db, 1, scenario.id).name == "保存"
 
 
 @pytest.fixture
@@ -430,33 +169,6 @@ def request(app, method, url, **kwargs):
     return asyncio.run(run())
 
 
-def test_http_crud_compare_and_goal_assumptions(db, api):
-    edges = fork(db)[2]
-    asset = account(db, rate=3)
-    config(db)
-    create = request(api, "POST", "/life-scenarios", json={"name": "  新規  "})
-    assert create.status_code == 200
-    scenario_id = create.json()["id"]
-    base = f"/life-scenarios/{scenario_id}"
-    assert request(api, "PUT", base, json={"annual_return": 9, "inflation": 0, "horizon_years": 2}).status_code == 200
-    assert request(api, "PUT", base + "/choices", json={"link_ids": [edges[1].id]}).json()["choices"] == [edges[1].id]
-    assert request(api, "PUT", base + "/account-returns", json={"returns": [{"account_id": asset.id, "annual_return": 10}]}).status_code == 200
-    assert request(api, "POST", base + "/goal").json()["is_goal"] is True
-    assert request(api, "DELETE", base).status_code == 422
-    clone = request(api, "POST", base + "/duplicate", json={"name": "複製"}).json()
-    assert not clone["is_goal"] and clone["choices"] == [edges[1].id]
-    assert request(api, "PUT", f'/life-scenarios/{clone["id"]}', json={"annual_return": 0}).status_code == 200
-    compare = request(api, "GET", f'/life-scenarios/compare?ids={scenario_id},{clone["id"]}')
-    assert compare.status_code == 200
-    assert [row["annual_return"] for row in compare.json()["scenarios"]] == [9, 0]
-    assert compare.json()["scenarios"][0]["projection"] != compare.json()["scenarios"][1]["projection"]
-    assert request(api, "PUT", base + "/choices", json={"link_ids": [edges[0].id]}).json()["missing_forks"] == []
-    assert service.choice_ids(db, service.get_goal(db, 1)) == [edges[0].id]
-    assert request(api, "GET", "/life-scenarios").json()[0]["name"] == "新規"
-    assert request(api, "POST", f'/life-scenarios/{clone["id"]}/goal').status_code == 200
-    assert request(api, "DELETE", base).status_code == 200
-
-
 @pytest.mark.parametrize("patch", [{"name": " "}, {"annual_return": "nan"}, {"annual_return": None},
     {"inflation": "Infinity"}, {"horizon_years": 0}, {"horizon_years": 61}, {"horizon_years": 1.5}, {"horizon_years": None}])
 def test_http_rejects_invalid_assumptions_in_japanese(db, api, patch):
@@ -464,21 +176,6 @@ def test_http_rejects_invalid_assumptions_in_japanese(db, api, patch):
     response = request(api, "PUT", f"/life-scenarios/{scenario.id}", json=patch)
     assert response.status_code == 422
     assert any("指定してください" in row["msg"] or "入力してください" in row["msg"] for row in response.json()["detail"])
-
-
-def test_http_names_and_client_isolation(db, api):
-    scenario = service.create(db, 1, "保存")
-    other = service.create(db, 1, "別案")
-    foreign = service.create(db, 2, "外部")
-    assert request(api, "POST", "/life-scenarios", json={"name": "保存"}).status_code == 409
-    assert request(api, "POST", "/life-scenarios", json={"name": " "}).status_code == 422
-    assert request(api, "POST", f"/life-scenarios/{scenario.id}/duplicate", json={"name": "別案"}).status_code == 409
-    assert request(api, "PUT", f"/life-scenarios/{scenario.id}", json={"name": "別案"}).status_code == 409
-    for method, suffix, payload in [("PUT", "", {}), ("PUT", "/choices", {"link_ids": []}),
-        ("PUT", "/account-returns", {"returns": []}), ("POST", "/goal", None), ("POST", "/duplicate", {"name": "複製"}), ("DELETE", "", None)]:
-        assert request(api, method, f"/life-scenarios/{foreign.id}{suffix}", **({"json": payload} if payload is not None else {})).status_code == 404
-    assert request(api, "GET", f"/life-scenarios/compare?ids={scenario.id},{foreign.id}").status_code == 404
-    assert request(api, "GET", "/life-scenarios/compare?ids=bad").status_code == 422
 
 
 def test_deprecated_scenario_routes_are_absent(api):
@@ -490,45 +187,412 @@ def test_deprecated_scenario_routes_are_absent(api):
     assert request(api, "POST", "/life-events/scenarios/adopt", json={"scenario_id": "base"}).status_code == 404
 
 
-@pytest.mark.parametrize("defect", ["name", "duplicate_name", "goals", "horizon", "rate", "missing_rate", "same_fork", "after", "non_asset", "duplicate_account"])
-def test_backup_rejects_invalid_scenario_semantics_before_replace(db, defect):
-    root, _, edges = fork(db)
-    asset = account(db)
-    scenario = service.create(db, 1, "保存")
-    service.replace_choices(db, 1, scenario.id, [edges[1].id])
-    service.replace_account_returns(db, 1, scenario.id, [{"account_id": asset.id, "annual_return": 3}])
-    service.make_goal(db, 1, scenario.id)
-    data = export_client(db, db.get(models.Client, 1))["data"]
-    if defect == "name":
-        data["life_scenarios"][0]["name"] = " "
-    elif defect in {"duplicate_name", "goals"}:
-        data["life_scenarios"].append({**data["life_scenarios"][0], "id": 900,
-            "name": "保存" if defect == "duplicate_name" else "追加", "is_goal": defect == "goals"})
-    elif defect == "horizon":
-        data["life_scenarios"][0]["horizon_years"] = 61
-    elif defect == "rate":
-        data["life_scenarios"][0]["inflation"] = float("inf")
-    elif defect == "missing_rate":
-        del data["life_scenario_account_returns"][0]["annual_return"]
-    elif defect == "same_fork":
-        data["life_scenario_choices"].append({"id": 900, "scenario_id": scenario.id, "link_id": edges[0].id})
-    elif defect == "after":
-        data["life_event_links"][1]["kind"] = "after"
-    elif defect == "non_asset":
-        data["accounts"][0]["account_type"] = "income"
-    else:
-        data["life_scenario_account_returns"].append({**data["life_scenario_account_returns"][0], "id": 900})
-    assert validate_import_payload(data, 21)["error_count"] > 0
-    with pytest.raises(Invalid):
-        import_client(db, db.get(models.Client, 1), data=data, version=21, manifest=None)
-    assert service.get_goal(db, 1).id == scenario.id
+def node(db, name="予定", client_id=1, **kwargs):
+    scenario_id = kwargs.pop("scenario_id", None)
+    if scenario_id is None:
+        scenario_id = goal_scenario_id(db, client_id)
+    row = models.LifeEvent(client_id=client_id, scenario_id=scenario_id, name=name,
+                           target_date=kwargs.pop("target_date", date(date.today().year + 1, 1, 31)),
+                           target_amount_minor=kwargs.pop("amount", 0), **kwargs)
+    db.add(row)
+    db.commit()
+    return row
 
 
-def test_unreached_forks_do_not_require_choices(db):
+def fork(db, name="進路", source=None, client_id=1):
+    source = source or node(db, name, client_id=client_id)
+    children = [node(db, name + suffix, client_id=client_id, scenario_id=source.scenario_id) for suffix in ("甲", "乙")]
+    edges = [graph.create_link(db, client_id, from_event_id=source.id, to_event_id=child.id,
+                               kind="after", offset_months=1) for child in children]
+    return source, children, edges
+
+
+def story(db):
     root, children, edges = fork(db)
-    nested, _, _ = fork(db, "未選択の先", source=children[1])
-    scenario = service.create(db, 1, "甲")
-    service.replace_choices(db, 1, scenario.id, [edges[0].id])
-    resolved = service.resolve(db, 1, scenario)
-    assert resolved.missing_forks == []
-    assert nested.id not in {event.id for event in resolved.events}
+    # Include a condition referring to another copied event and a JSON plan snapshot.
+    db.add_all([
+        models.LifeEventCondition(client_id=1, life_event_id=children[0].id, metric="goal_progress",
+                                  comparator="gte", threshold_number=50, reference_id=root.id),
+        models.Milestone(client_id=1, life_event_id=children[0].id, date=date(2030, 1, 1),
+                         target_amount_minor=123, note="checkpoint", source="simulation", is_active_plan=False,
+                         source_snapshot={"nested": [{"life_event_id": root.id, "link_id": edges[0].id}]}),
+    ])
+    db.commit()
+    return service.get_goal(db, 1), root, children, edges
+
+
+def earmark(db, owner, name="取り置き", claim=0):
+    cap = capsule_service.create_capsule(db, 1, schemas.CapsuleCreate(name=name, life_event_id=owner.id, target_amount=1000, monthly_contribution=0))
+    if claim:
+        cash = account(db, name=f"{name}口座", balance=claim)
+        entry = db.query(models.JournalEntry).filter_by(account_id=cash.id).one()
+        entry.capsule_id = cap.id
+        db.commit()
+    return cap
+
+
+def journal_snapshot(db):
+    return [tuple(getattr(row, col.name) for col in models.JournalEntry.__table__.columns)
+            for row in db.query(models.JournalEntry).order_by(models.JournalEntry.id)]
+
+
+def test_duplicate_copies_whole_story_and_create_is_empty(db):
+    original, root, children, edges = story(db)
+    cash = account(db)
+    service.update(db, 1, original.id, {"annual_return": 8, "inflation": 1, "horizon_years": 11})
+    service.replace_account_returns(db, 1, original.id, [{"account_id": cash.id, "annual_return": 4}])
+    cap = earmark(db, root, claim=700)
+    claims = capsule_service.claimed_minor(db, 1, cap.id)
+    original_projection = service.project(db, 1, original)["projection"]
+    empty = service.create(db, 1, "空")
+    commits = []
+    event.listen(db, "after_commit", lambda _: commits.append(True))
+    clone = service.duplicate(db, 1, original.id, "複製")
+    assert commits == [True]
+    for item in (empty, clone):
+        assert (item.annual_return, item.inflation, item.horizon_years, item.is_goal) == (8, 1, 11, False)
+        assert service.account_returns(db, item) == service.account_returns(db, original)
+    assert service.resolve(db, 1, empty).events == []
+    originals = db.query(models.LifeEvent).filter_by(scenario_id=original.id).order_by(models.LifeEvent.id).all()
+    copies = db.query(models.LifeEvent).filter_by(scenario_id=clone.id).order_by(models.LifeEvent.id).all()
+    assert len(copies) == 3
+    assert {e.id for e in originals}.isdisjoint(e.id for e in copies)
+    assert [e.lineage for e in originals] == [e.lineage for e in copies]
+    for before, after in zip(originals, copies):
+        assert {c.name: getattr(before, c.name) for c in models.LifeEvent.__table__.columns if c.name not in {"id", "scenario_id"}} == {
+            c.name: getattr(after, c.name) for c in models.LifeEvent.__table__.columns if c.name not in {"id", "scenario_id"}}
+    copied_edges = db.query(models.LifeEventLink).filter(models.LifeEventLink.from_event_id == copies[0].id).order_by(models.LifeEventLink.id).all()
+    assert [e.to_event_id for e in copied_edges] == [e.id for e in copies[1:]]
+    condition = db.query(models.LifeEventCondition).filter_by(life_event_id=copies[1].id).one()
+    assert condition.reference_id == copies[0].id
+    milestone = db.query(models.Milestone).filter_by(life_event_id=copies[1].id).one()
+    assert (milestone.note, milestone.target_amount_minor, milestone.source, milestone.is_active_plan) == ("checkpoint", 123, "simulation", False)
+    assert milestone.source_snapshot == {"nested": [{"life_event_id": copies[0].id, "link_id": copied_edges[0].id}]}
+    assert all(e.capsules == [] for e in copies)
+    assert cap.life_event_id == root.id and capsule_service.claimed_minor(db, 1, cap.id) == claims
+    assert service.project(db, 1, original)["projection"] == service.project(db, 1, clone)["projection"] == original_projection
+    goal_service.update_goal(db, 1, copies[0].id, schemas.LifeEventUpdate(name="変更", target_amount=900))
+    assert db.get(models.LifeEvent, root.id).name == root.name == "進路"
+    assert db.get(models.LifeEvent, root.id).target_amount_minor == 0
+
+
+def test_goal_switch_moves_all_capsules_by_lineage_in_one_commit(db):
+    original, root, children, _ = story(db)
+    caps = [earmark(db, root, "A", 500), earmark(db, children[0], "B", 600), earmark(db, root, "C")]
+    clone = service.duplicate(db, 1, original.id, "複製")
+    before = journal_snapshot(db)
+    claims = {cap.id: capsule_service.claimed_minor(db, 1, cap.id) for cap in caps}
+    expected = {cap.id: db.get(models.LifeEvent, cap.life_event_id).lineage for cap in caps}
+    # Loaded relationship collections must not cause orphan deletion during reassignment.
+    assert len(root.capsules) == 2
+    commits = []
+    event.listen(db, "after_commit", lambda _: commits.append(True))
+    service.make_goal(db, 1, clone.id)
+    assert commits == [True]
+    for cap in caps:
+        target = db.get(models.LifeEvent, cap.life_event_id)
+        assert target.scenario_id == clone.id and target.lineage == expected[cap.id]
+        assert capsule_service.claimed_minor(db, 1, cap.id) == claims[cap.id]
+    assert journal_snapshot(db) == before
+    assert not original.is_goal and clone.is_goal
+
+
+def test_missing_lineage_conflict_changes_nothing_then_confirmation_detaches(db, api):
+    original, root, children, _ = story(db)
+    moving = earmark(db, root, "残る", 400)
+    missing = earmark(db, children[0], "解除される", 300)
+    clone = service.duplicate(db, 1, original.id, "別案")
+    copied = db.query(models.LifeEvent).filter_by(scenario_id=clone.id, lineage=children[0].lineage).one()
+    db.delete(copied)
+    db.commit()
+    before = journal_snapshot(db)
+    prior_links = (moving.life_event_id, missing.life_event_id)
+    claims = capsule_service.claimed_minor(db, 1, missing.id)
+    commits = []
+    event.listen(db, "after_commit", lambda _: commits.append(True))
+    response = request(api, "POST", f"/life-scenarios/{clone.id}/goal", json={})
+    assert response.status_code == 409
+    assert response.json()["detail"] == {"detach": [{"capsule_id": missing.id, "capsule_name": missing.name, "event_name": children[0].name}]}
+    assert commits == []
+    assert (moving.life_event_id, missing.life_event_id) == prior_links
+    assert service.get_goal(db, 1).id == original.id
+    assert journal_snapshot(db) == before
+    response = request(api, "POST", f"/life-scenarios/{clone.id}/goal", json={"confirm_detach": True})
+    assert response.status_code == 200 and response.json()["is_goal"] is True
+    assert commits == [True]
+    assert missing.life_event_id is None
+    assert db.get(models.LifeEvent, moving.life_event_id).scenario_id == clone.id
+    assert capsule_service.claimed_minor(db, 1, missing.id) == claims
+    assert journal_snapshot(db) == before
+
+
+def test_goal_switch_rolls_back_links_and_flags_on_commit_failure(db, monkeypatch):
+    original, root, _, _ = story(db)
+    cap = earmark(db, root, claim=700)
+    clone = service.duplicate(db, 1, original.id, "複製")
+    before = journal_snapshot(db)
+    original_id, root_id, cap_id = original.id, root.id, cap.id
+    def fail():
+        db.flush()
+        raise RuntimeError("commit failed")
+    monkeypatch.setattr(db, "commit", fail)
+    with pytest.raises(RuntimeError, match="commit failed"):
+        service.make_goal(db, 1, clone.id)
+    assert service.get_goal(db, 1).id == original_id
+    assert db.get(models.Capsule, cap_id).life_event_id == root_id
+    assert journal_snapshot(db) == before
+
+
+def test_capsules_can_only_attach_to_goal_events(db):
+    original, root, _, _ = story(db)
+    cap = earmark(db, root)
+    clone = service.duplicate(db, 1, original.id, "複製")
+    target = db.query(models.LifeEvent).filter_by(scenario_id=clone.id, lineage=root.lineage).one()
+    message = "取り置きはゴールのシナリオのライフイベントにだけ紐づけられます。"
+    for operation in (
+        lambda: capsule_service.update_capsule(db, 1, cap.id, schemas.CapsuleUpdate(life_event_id=target.id)),
+        lambda: capsule_service.create_capsule_for_goal(db, 1, target),
+        lambda: capsule_service.create_capsule(db, 1, schemas.CapsuleCreate(name="不正", life_event_id=target.id, target_amount=0, monthly_contribution=0)),
+    ):
+        with pytest.raises(Refused, match=message):
+            operation()
+    assert cap.life_event_id == root.id
+
+
+def test_deleting_draft_cascades_events_and_never_affects_capsules(db):
+    original, root, _, _ = story(db)
+    cap = earmark(db, root, claim=500)
+    clone = service.duplicate(db, 1, original.id, "複製")
+    event_ids = [e.id for e in db.query(models.LifeEvent).filter_by(scenario_id=clone.id)]
+    before = journal_snapshot(db)
+    claim = capsule_service.claimed_minor(db, 1, cap.id)
+    service.delete(db, 1, clone.id)
+    assert not db.query(models.LifeEvent).filter(models.LifeEvent.id.in_(event_ids)).count()
+    assert not db.query(models.LifeEventCondition).filter(models.LifeEventCondition.life_event_id.in_(event_ids)).count()
+    assert not db.query(models.Milestone).filter(models.Milestone.life_event_id.in_(event_ids)).count()
+    assert db.get(models.Capsule, cap.id).life_event_id == root.id
+    assert capsule_service.claimed_minor(db, 1, cap.id) == claim
+    assert journal_snapshot(db) == before
+
+
+def test_event_creation_requires_owned_scenario_and_updates_cannot_move(db, api):
+    goal = service.create(db, 1, "本案")
+    service.make_goal(db, 1, goal.id)
+    draft = service.create(db, 1, "別案")
+    foreign = service.create(db, 2, "外部")
+    payload = {"name": "新規", "target_date": "2030-01-01", "target_amount": 100}
+    assert request(api, "POST", "/life-events/", json=payload).status_code == 422
+    assert request(api, "POST", "/life-events/", json={**payload, "scenario_id": foreign.id}).status_code == 404
+    made = request(api, "POST", "/life-events/", json={**payload, "scenario_id": draft.id})
+    assert made.status_code == 200
+    owner = made.json()
+    assert owner["scenario_id"] == draft.id and len(owner["lineage"]) == 36
+    assert db.query(models.Capsule).count() == 0
+    assert request(api, "PUT", f'/life-events/{owner["id"]}', json={"scenario_id": goal.id}).status_code == 422
+    assert request(api, "PUT", f'/life-events/{owner["id"]}', json={"lineage": "other"}).status_code == 422
+    made_goal = request(api, "POST", "/life-events/", json={**payload, "scenario_id": goal.id})
+    assert made_goal.status_code == 200
+    assert made_goal.json()["lineage"] != owner["lineage"]
+    assert db.query(models.Capsule).one().life_event_id == made_goal.json()["id"]
+
+
+@pytest.mark.parametrize("suffix", ["/", "/with-progress"])
+def test_event_lists_default_to_goal_and_validate_explicit_scenario(db, api, suffix):
+    original, root, _, _ = story(db)
+    clone = service.duplicate(db, 1, original.id, "複製")
+    foreign = service.create(db, 2, "外部")
+    expected = {e.id for e in db.query(models.LifeEvent).filter_by(scenario_id=original.id)}
+    copies = {e.id for e in db.query(models.LifeEvent).filter_by(scenario_id=clone.id)}
+    assert {row["id"] for row in request(api, "GET", "/life-events" + suffix).json()} == expected
+    response = request(api, "GET", f"/life-events{suffix}?scenario_id={clone.id}")
+    assert response.status_code == 200 and {row["id"] for row in response.json()} == copies
+    assert request(api, "GET", f"/life-events{suffix}?scenario_id={foreign.id}").status_code == 404
+    assert request(api, "GET", f"/life-events{suffix}?scenario_id=99999").status_code == 404
+    assert "choices" not in service.describe(db, 1, clone)
+    assert "missing_forks" not in service.describe(db, 1, clone)
+    assert request(api, "PUT", f"/life-scenarios/{clone.id}/choices", json={"link_ids": []}).status_code == 404
+
+
+def test_v22_roundtrip_preserves_independent_graphs_and_remaps_scenario_ids(db):
+    original, root, _, _ = story(db)
+    cash = account(db, balance=10000)
+    service.replace_account_returns(db, 1, original.id, [{"account_id": cash.id, "annual_return": 7}])
+    cap = earmark(db, root, claim=500)
+    clone = service.duplicate(db, 1, original.id, "複製")
+    copied = db.query(models.LifeEvent).filter_by(scenario_id=clone.id, lineage=root.lineage).one()
+    copied.target_amount_minor = 200
+    db.commit()
+    document = export_client(db, db.get(models.Client, 1))
+    assert document["version"] == EXPORT_VERSION == 22
+    assert "life_scenario_choices" not in document["data"]
+    projections = {s.name: service.project(db, 1, s)["projection"] for s in (original, clone)}
+    for _ in range(2):
+        import_client(db, db.get(models.Client, 2), data=document["data"], version=22, manifest=document["manifest"])
+        stories = db.query(models.LifeScenario).filter_by(client_id=2).all()
+        assert len(stories) == 2
+        restored_capsules = db.query(models.Capsule).filter_by(client_id=2).all()
+        assert len(restored_capsules) == len(document["data"]["capsules"]) == 1
+        assert restored_capsules[0].capsule_type == cap.capsule_type == "manual"
+        for restored in stories:
+            assert restored.id not in {original.id, clone.id}
+            assert service.project(db, 2, restored)["projection"] == projections[restored.name]
+        goal = service.get_goal(db, 2)
+        assert all(e.scenario_id == goal.id for cap in db.query(models.Capsule).filter_by(client_id=2) if cap.life_event_id for e in [db.get(models.LifeEvent, cap.life_event_id)])
+        assert {e.lineage for e in db.query(models.LifeEvent).filter_by(client_id=2)} == {e.lineage for e in db.query(models.LifeEvent).filter_by(client_id=1)}
+    assert db.get(models.Capsule, cap.id).life_event_id == root.id
+
+
+def test_v21_import_assigns_shared_graph_to_goal_and_copies_for_every_draft(db, caplog):
+    original, root, _, _ = story(db)
+    account(db, balance=10000)
+    cap = earmark(db, root, claim=600)
+    other = service.create(db, 1, "旧別案")
+    before = service.project(db, 1, original)["projection"]
+    document = export_client(db, db.get(models.Client, 1))
+    data = document["data"]
+    for row in data["life_events"]:
+        row.pop("scenario_id")
+        row.pop("lineage")
+    data["life_event_links"][0]["kind"] = "alternative"
+    data["life_scenario_choices"] = [{"id": 1, "scenario_id": other.id, "link_id": data["life_event_links"][0]["id"]}]
+    checksums = {key: _sha256(rows) for key, rows in data.items()}
+    legacy_manifest = {"counts": {key: len(rows) for key, rows in data.items()}, "checksums": checksums,
+                       "payload_checksum": _sha256({"data": data, "checksums": checksums})}
+    assert [issue["code"] for issue in validate_import_payload(data, 21, legacy_manifest)["issues"]] == ["older_version"]
+    import_client(db, db.get(models.Client, 2), data=data, version=21, manifest=legacy_manifest)
+    goal = service.get_goal(db, 2)
+    draft = db.query(models.LifeScenario).filter_by(client_id=2, is_goal=False).one()
+    goal_events = db.query(models.LifeEvent).filter_by(scenario_id=goal.id).order_by(models.LifeEvent.id).all()
+    draft_events = db.query(models.LifeEvent).filter_by(scenario_id=draft.id).order_by(models.LifeEvent.id).all()
+    assert len(goal_events) == len(draft_events) == 3
+    assert [e.lineage for e in goal_events] == [e.lineage for e in draft_events]
+    assert all(not e.capsules for e in draft_events)
+    assert db.query(models.Capsule).filter_by(client_id=2).count() == len(data["capsules"]) == 1
+    assert len(db.query(models.LifeEventCondition).filter_by(client_id=2).all()) == 2
+    assert len(db.query(models.Milestone).filter_by(client_id=2).all()) == 2
+    assert service.project(db, 2, goal)["projection"] == service.project(db, 2, draft)["projection"] == before
+    assert "Converting restored alternative" in caplog.text
+    assert all(e.kind == "after" for e in graph.list_links(db, 2))
+    assert db.get(models.Capsule, cap.id).life_event_id == root.id
+
+
+def test_legacy_graph_without_scenarios_gets_default_goal_and_expected_returns(db):
+    node(db)
+    cash = account(db, rate=3.5)
+    config(db)
+    data = export_client(db, db.get(models.Client, 1))["data"]
+    for key in ("life_scenarios", "life_scenario_account_returns"):
+        data.pop(key)
+    import_client(db, db.get(models.Client, 2), data=data, version=20, manifest=None)
+    goal = service.get_goal(db, 2)
+    assert (goal.name, goal.annual_return, goal.inflation, goal.horizon_years) == ("基本シナリオ", 5, 2, 30)
+    assert [row["annual_return"] for row in service.account_returns(db, goal)] == [3.5]
+
+
+@pytest.mark.parametrize("defect", ["scenario_id", "lineage", "duplicate_lineage", "cross_link", "capsule", "alternative"])
+def test_v22_invalid_ownership_rejected_before_replace(db, defect):
+    original, root, _, _ = story(db)
+    cap = earmark(db, root)
+    draft = service.duplicate(db, 1, original.id, "別案")
+    data = export_client(db, db.get(models.Client, 1))["data"]
+    if defect == "scenario_id":
+        data["life_events"][0]["scenario_id"] = 99999
+    elif defect == "lineage":
+        data["life_events"][0]["lineage"] = "bad"
+    elif defect == "duplicate_lineage":
+        data["life_events"][1]["lineage"] = data["life_events"][0]["lineage"]
+    elif defect == "cross_link":
+        data["life_event_links"][0]["to_event_id"] = next(e["id"] for e in data["life_events"] if e["scenario_id"] == draft.id)
+    elif defect == "capsule":
+        data["capsules"][0]["life_event_id"] = next(e["id"] for e in data["life_events"] if e["scenario_id"] == draft.id)
+    else:
+        data["life_event_links"][0]["kind"] = "alternative"
+    assert validate_import_payload(data, 22)["error_count"] > 0
+    with pytest.raises(Invalid):
+        import_client(db, db.get(models.Client, 1), data=data, version=22, manifest=None)
+    assert service.get_goal(db, 1).id == original.id
+    assert db.get(models.Capsule, cap.id).life_event_id == root.id
+
+
+def test_cross_scenario_links_and_alternative_are_refused_in_service_and_http(db, api):
+    original, root, children, _ = story(db)
+    clone = service.duplicate(db, 1, original.id, "別案")
+    target = db.query(models.LifeEvent).filter_by(scenario_id=clone.id, lineage=children[0].lineage).one()
+    for kind, target_id, message in [("after", target.id, "同じシナリオ"),
+                                     ("alternative", children[0].id, "接続は「必ず続く」のみです。")]:
+        payload = {"from_event_id": root.id, "to_event_id": target_id, "kind": kind}
+        with pytest.raises(Refused, match=message):
+            graph.create_link(db, 1, **payload)
+        response = request(api, "POST", "/life-events/links", json=payload)
+        assert response.status_code == 422 and message in response.text
+    assert len(graph.list_links(db, 1)) == 2
+    response = request(api, "GET", f"/life-events/links?scenario_id={clone.id}")
+    assert response.status_code == 200 and len(response.json()) == 2
+    assert {e["from_event_id"] for e in response.json()} == {db.query(models.LifeEvent).filter_by(scenario_id=clone.id, lineage=root.lineage).one().id}
+
+
+def test_empty_client_gets_empty_event_lists_and_story_comparison(db, api):
+    assert request(api, "GET", "/life-events/").json() == []
+    assert request(api, "GET", "/life-events/with-progress").json() == []
+    first = request(api, "POST", "/life-scenarios", json={"name": "保存"}).json()
+    assert first["events"] == [] and not first["is_goal"]
+    assert request(api, "POST", f'/life-scenarios/{first["id"]}/goal').status_code == 200
+    assert request(api, "POST", "/life-scenarios", json={"name": "保存"}).status_code == 409
+    assert request(api, "PUT", f'/life-scenarios/{first["id"]}', json={"name": "改名"}).json()["name"] == "改名"
+    foreign = service.create(db, 2, "外部")
+    for method, suffix, payload in [("PUT", "", {}), ("PUT", "/account-returns", {"returns": []}),
+                                    ("POST", "/goal", {}), ("POST", "/duplicate", {"name": "複製"}), ("DELETE", "", None)]:
+        assert request(api, method, f"/life-scenarios/{foreign.id}{suffix}", **({"json": payload} if payload is not None else {})).status_code == 404
+    assert request(api, "GET", f'/life-scenarios/compare?ids={first["id"]},{foreign.id}').status_code == 404
+    assert request(api, "GET", "/life-scenarios/compare?ids=bad").status_code == 422
+
+
+def test_duplicate_preserves_archived_facts_and_returns_independent_json(db):
+    original, _, children, _ = story(db)
+    children[0].archived_at = datetime(2026, 1, 1)
+    db.commit()
+    clone = service.duplicate(db, 1, original.id, "複製")
+    copied = db.query(models.LifeEvent).filter_by(scenario_id=clone.id, lineage=children[0].lineage).one()
+    assert copied.archived_at == children[0].archived_at
+    assert copied.id not in {e.id for e in service.resolve(db, 1, clone).events}
+    first = db.query(models.Milestone).filter_by(life_event_id=children[0].id).one()
+    second = db.query(models.Milestone).filter_by(life_event_id=copied.id).one()
+    second.source_snapshot["nested"].append({"extra": True})
+    assert first.source_snapshot["nested"] != second.source_snapshot["nested"]
+
+
+def test_duplicate_rolls_back_partial_graph_on_failure(db, monkeypatch):
+    original, _, _, _ = story(db)
+    counts = [db.query(model).count() for model in (models.LifeScenario, models.LifeEvent, models.LifeEventLink, models.Milestone)]
+    def fail(*args):
+        raise RuntimeError("copy failed")
+    monkeypatch.setattr(service, "copy_conditions", fail)
+    with pytest.raises(RuntimeError, match="copy failed"):
+        service.duplicate(db, 1, original.id, "失敗")
+    assert [db.query(model).count() for model in (models.LifeScenario, models.LifeEvent, models.LifeEventLink, models.Milestone)] == counts
+
+
+def test_database_cascade_deletes_draft_story_without_touching_real_money(db):
+    original, root, _, _ = story(db)
+    cap = earmark(db, root, claim=500)
+    clone = service.duplicate(db, 1, original.id, "複製")
+    ids = [e.id for e in db.query(models.LifeEvent).filter_by(scenario_id=clone.id)]
+    before = journal_snapshot(db)
+    claim = capsule_service.claimed_minor(db, 1, cap.id)
+    db.execute(delete(models.LifeScenario).where(models.LifeScenario.id == clone.id))
+    db.commit()
+    assert not db.query(models.LifeEvent).filter(models.LifeEvent.id.in_(ids)).count()
+    assert not db.query(models.LifeEventCondition).filter(models.LifeEventCondition.life_event_id.in_(ids)).count()
+    assert not db.query(models.Milestone).filter(models.Milestone.life_event_id.in_(ids)).count()
+    assert cap.life_event_id == root.id and capsule_service.claimed_minor(db, 1, cap.id) == claim
+    assert journal_snapshot(db) == before
+
+
+def test_a_story_resolves_more_than_64_events_without_a_branch_cap(db):
+    scenario_id = goal_scenario_id(db, 1)
+    db.add_all(models.LifeEvent(client_id=1, scenario_id=scenario_id, name=str(index),
+                               target_date=date(2030, 1, 1), target_amount_minor=1) for index in range(80))
+    db.commit()
+    draft = service.create(db, 1, "空")
+    assert len(service.resolve(db, 1, service.get_goal(db, 1)).events) == 80
+    assert service.resolve(db, 1, draft).events == []

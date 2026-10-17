@@ -17,10 +17,13 @@ from app.domain.errors import Conflict, Invalid, NotFound, Refused
 from app.domain.transfer import EXPORT_VERSION, validate_import_payload
 from app.services import life_event_graph as graph
 from app.services import life_scenario_service as saved, life_event_walk as walk
-from app.services.life_event_walk import walk_scenarios
+from scenario_fixtures import goal_scenario_id
 from app.services.data_transfer_service import export_client, import_client
 from app.services.goal_service import delete_goal
 from app.services.strategy_service import aggregate_life_event_demand_by_year
+
+
+
 
 
 @pytest.fixture
@@ -44,7 +47,7 @@ def db():
 
 def node(db, name, *, target_date=date(2030, 1, 31), amount=0, client_id=1, archived=False):
     value = models.LifeEvent(
-        client_id=client_id, name=name, target_date=target_date,
+        scenario_id=goal_scenario_id(db, client_id), client_id=client_id, name=name, target_date=target_date,
         target_amount_minor=amount, archived_at=datetime(2026, 1, 1) if archived else None,
     )
     db.add(value)
@@ -58,211 +61,24 @@ def link(db, source, target, kind="after", offset=0):
     )
 
 
-def fork(db, name):
-    root, a, b = [node(db, f"{name}{suffix}") for suffix in ("", "甲", "乙")]
-    edges = [link(db, root, child, "alternative") for child in (a, b)]
-    return root, a, b, edges
-
-
-def adopted_ids(db, client_id=1):
-    return set(saved.choice_ids(db, saved.get_goal(db, client_id)))
-
-
-def save_goal(db, link_ids, client_id=1):
-    scenario = saved.create(db, client_id, "保存")
-    saved.replace_choices(db, client_id, scenario.id, link_ids)
-    return saved.make_goal(db, client_id, scenario.id)
-
-
-def test_selected_branch_survives_a_new_session(db):
-    root, _, _, edges = fork(db, "住居")
-    after = link(db, root, node(db, "共通"))
-    scenario = save_goal(db, [edges[1].id])
-    with sessionmaker(bind=db.get_bind())() as reread:
-        resolved = saved.resolve(reread, 1, saved.get(reread, 1, scenario.id))
-        assert resolved.chosen_link_ids == [edges[1].id]
-        assert not resolved.missing_forks
-        assert adopted_ids(reread) == {edges[1].id}
-        assert after.id not in adopted_ids(reread)
-
-
-def test_new_fork_preserves_existing_choice_and_reports_missing_choice(db):
-    _, _, _, edges = fork(db, "住居")
-    scenario = save_goal(db, [edges[1].id])
-    root, _, _, other_edges = fork(db, "仕事")
-    resolved = saved.resolve(db, 1, scenario)
-    assert resolved.missing_forks == [root.id]
-    assert resolved.chosen_link_ids == [edges[1].id, other_edges[0].id]
-    assert adopted_ids(db) == {edges[1].id}
-
-
-@pytest.mark.parametrize("removal", ["link", "event", "database_cascade"])
-def test_deleting_selected_link_shrinks_choice_and_keeps_other_fork(db, removal):
-    root, _, child, edges = fork(db, "住居")
-    _, _, _, other_edges = fork(db, "仕事")
-    scenario = save_goal(db, [edges[1].id, other_edges[1].id])
-    if removal == "link":
-        graph.delete_link(db, 1, edges[1].id)
-    elif removal == "event":
-        assert delete_goal(db, 1, child.id)
-    else:
-        db.execute(delete(models.LifeEvent).where(models.LifeEvent.id == child.id))
-        db.commit()
-    resolved = saved.resolve(db, 1, scenario)
-    assert adopted_ids(db) == {other_edges[1].id}
-    assert resolved.missing_forks == [root.id]
-    assert resolved.chosen_link_ids == [edges[0].id, other_edges[1].id]
-
-
-def test_switching_branch_preserves_other_client(db):
-    _, _, _, edges = fork(db, "住居")
-    foreign_a, foreign_b = [node(db, name, client_id=2) for name in ("別の始点", "別の終点")]
-    foreign = graph.create_link(db, 2, from_event_id=foreign_a.id, to_event_id=foreign_b.id, kind="alternative")
-    save_goal(db, [foreign.id], 2)
-    scenario = save_goal(db, [edges[0].id])
-    for edge in edges:
-        saved.replace_choices(db, 1, scenario.id, [edge.id])
-        assert saved.resolve(db, 1, scenario).chosen_link_ids == [edge.id]
-        assert adopted_ids(db) == {edge.id}
-        assert adopted_ids(db, 2) == {foreign.id}
-
-
-def test_archived_choice_resolves_remaining_active_branch(db):
-    root, _, child, edges = fork(db, "住居")
-    scenario = save_goal(db, [edges[1].id])
-    child.archived_at = datetime.utcnow()
-    db.commit()
-    resolved = saved.resolve(db, 1, scenario)
-    assert resolved.missing_forks == [root.id]
-    assert resolved.chosen_link_ids == [edges[0].id]
-
-
-def test_backup_preserves_selected_branch_after_link_ids_are_remapped(db):
-    first = fork(db, "住居")[3]
-    second = fork(db, "仕事")[3]
-    scenario = save_goal(db, [first[1].id, second[1].id])
-    chosen = saved.resolve(db, 1, scenario)
-    document = export_client(db, db.get(models.Client, 1))
-    assert {row["link_id"] for row in document["data"]["life_scenario_choices"]} == set(chosen.chosen_link_ids)
-    import_client(db, db.get(models.Client, 2), data=document["data"], version=document["version"], manifest=document["manifest"])
-    resolved = saved.resolve(db, 2, saved.get_goal(db, 2))
-    assert not resolved.missing_forks
-    assert [item.name for item in resolved.events] == [item.name for item in chosen.events]
-    assert set(resolved.chosen_link_ids).isdisjoint(chosen.chosen_link_ids)
-    assert adopted_ids(db, 2) == set(resolved.chosen_link_ids)
-
-
-def test_older_backup_defaults_to_no_selected_links(db):
-    fork(db, "住居")
-    document = export_client(db, db.get(models.Client, 1))
-    for edge in document["data"]["life_event_links"]:
-        edge.pop("adopted", None)
-    import_client(db, db.get(models.Client, 2), data=document["data"], version=18, manifest=None)
-    assert not adopted_ids(db, 2)
-    assert len(saved.resolve(db, 2, saved.get_goal(db, 2)).missing_forks) == 1
-
-
 def test_after_chain_composes_month_offsets_and_keeps_stored_dates(db):
     a, b, c, d = [node(db, name) for name in "ABCD"]
     link(db, a, b, offset=1)
     link(db, b, c, offset=2)
     link(db, c, d, offset=0)
-    scenarios = walk_scenarios(db, 1)[0]
+    scenarios = [saved.resolve(db, 1, saved.get_goal(db, 1))]
     assert len(scenarios) == 1
     assert [item.resolved_date for item in scenarios[0].events] == [
         date(2030, 1, 31), date(2030, 2, 28), date(2030, 4, 28), date(2030, 1, 31),
     ]
     assert b.target_date == c.target_date == date(2030, 1, 31)
-    assert scenarios[0].id == "base"
-
-
-def test_fork_includes_one_alternative_plus_all_after_children_and_roots(db):
-    root, a, b, edges = fork(db, "開業")
-    always, independent, leaf = [node(db, name) for name in ("準備", "退職", "子孫")]
-    link(db, root, always)
-    link(db, a, leaf)
-    scenarios = walk_scenarios(db, 1)[0]
-    assert len(scenarios) == 2 and scenarios.fork_count == 1
-    assert {item.id for item in scenarios[0].events} == {root.id, a.id, always.id, independent.id, leaf.id}
-    assert {item.id for item in scenarios[1].events} == {root.id, b.id, always.id, independent.id}
-    assert [scenario.id for scenario in scenarios] == [str(edge.id) for edge in edges]
-    assert [scenario.label for scenario in scenarios] == [a.name, b.name]
-    assert [asdict(item) for item in scenarios] == [asdict(item) for item in walk_scenarios(db, 1)[0]]
-
-
-def test_two_independent_forks_produce_four(db):
-    fork(db, "住居")
-    fork(db, "仕事")
-    scenarios = walk_scenarios(db, 1)[0]
-    assert len(scenarios) == 4 and scenarios.fork_count == 2
-    assert len({scenario.id for scenario in scenarios}) == 4
-    assert all(len(scenario.chosen_link_ids) == 2 for scenario in scenarios)
-
-
-def test_nested_fork_only_counts_choices_when_reached(db):
-    root, a, b, edges = fork(db, "進路")
-    c, d = node(db, "進学"), node(db, "留学")
-    link(db, a, c, "alternative")
-    link(db, a, d, "alternative")
-    scenarios = walk_scenarios(db, 1)[0]
-    assert len(scenarios) == 3
-    assert scenarios[-1].chosen_link_ids == [edges[-1].id]
-    assert {item.id for item in scenarios[-1].events} == {root.id, b.id}
-
-
-def test_cap_is_exact_and_seventh_binary_fork_truncates(db):
-    for index in range(6):
-        fork(db, str(index))
-    scenarios = walk_scenarios(db, 1)[0]
-    assert len(scenarios) == 64 and not scenarios.truncated and scenarios.fork_count == 6
-    fork(db, "追加")
-    scenarios = walk_scenarios(db, 1)[0]
-    assert len(scenarios) == 64 and scenarios.truncated and scenarios.fork_count == 7
-
-
-def test_third_large_fork_stops_at_64(db):
-    for name in ("住居", "仕事"):
-        fork(db, name)
-    root = node(db, "第三分岐")
-    for index in range(20):
-        link(db, root, node(db, f"選択{index}"), "alternative")
-    scenarios = walk_scenarios(db, 1)[0]
-    assert len(scenarios) == 64 and scenarios.truncated and scenarios.fork_count == 3
-
-
-def test_cap_stops_resolving_after_the_first_excess_scenario(db, monkeypatch):
-    root = node(db, "起点")
-    children = [node(db, str(index)) for index in range(80)]
-    for child in children:
-        link(db, root, child, "alternative", 12)
-    original = walk._offset_date
-    calls = []
-
-    def resolve(source, months):
-        calls.append((source, months))
-        return original(source, months)
-
-    monkeypatch.setattr(walk, "_offset_date", resolve)
-    scenarios = walk_scenarios(db, 1)[0]
-    assert len(scenarios) == 64 and scenarios.truncated
-    assert len(calls) == 65
-
-
-def test_stable_ids_do_not_depend_on_event_names(db):
-    _, a, _, _ = fork(db, "住居")
-    original = walk_scenarios(db, 1)[0]
-    a.name = "改名"
-    db.commit()
-    renamed = walk_scenarios(db, 1)[0]
-    assert [item.id for item in original] == [item.id for item in renamed]
-    assert renamed[0].label == "改名"
 
 
 def test_missing_source_date_stays_unresolved_and_negative_offsets_are_calendar_months(db):
     a = node(db, "未定", target_date=None)
     b = node(db, "翌月")
     link(db, a, b, offset=1)
-    assert [item.resolved_date for item in walk_scenarios(db, 1)[0][0].events] == [None, None]
+    assert [item.resolved_date for item in saved.resolve(db, 1, saved.get_goal(db, 1)).events] == [None, None]
     assert walk._offset_date(date(2032, 3, 31), -1) == date(2032, 2, 29)
     with pytest.raises(Refused):
         walk._offset_date(date(2030, 1, 1), 120000)
@@ -271,7 +87,7 @@ def test_missing_source_date_stays_unresolved_and_negative_offsets_are_calendar_
 def test_cycle_is_refused_before_writing_and_names_both_events(db):
     a, b, c = [node(db, name) for name in ("開業", "引越", "退職")]
     link(db, a, b)
-    link(db, b, c, "alternative")
+    link(db, b, c, "after")
     with pytest.raises(Refused) as error:
         link(db, c, a)
     assert a.name in str(error.value) and c.name in str(error.value)
@@ -304,7 +120,7 @@ def test_self_duplicate_and_invalid_kind_are_refused(db):
         link(db, a, b, "unknown")
     link(db, a, b)
     with pytest.raises(Conflict):
-        link(db, a, b, "alternative")
+        link(db, a, b, "after")
     assert len(graph.list_links(db, 1)) == 1
 
 
@@ -315,7 +131,7 @@ def test_archived_nodes_and_incident_edges_are_excluded(db):
     node(db, "独立した中止", archived=True)
     node(db, "別人", client_id=2)
     db.commit()
-    scenarios = walk_scenarios(db, 1)[0]
+    scenarios = [saved.resolve(db, 1, saved.get_goal(db, 1))]
     assert [item.id for item in scenarios[0].events] == [b.id]
     assert scenarios[0].events[0].incoming_link_id is None
     assert scenarios[0].events[0].resolved_date == b.target_date
@@ -358,7 +174,7 @@ def test_deleting_link_is_client_scoped_and_restores_root(db):
     assert graph.list_links(db, 2) == []
     graph.delete_link(db, 1, edge.id)
     assert not graph.list_links(db, 1)
-    assert [item.resolved_date for item in walk_scenarios(db, 1)[0][0].events] == [a.target_date, b.target_date]
+    assert [item.resolved_date for item in saved.resolve(db, 1, saved.get_goal(db, 1)).events] == [a.target_date, b.target_date]
 
 
 def test_merge_is_counted_once_resolved_after_sources_and_uses_lowest_active_link(db):
@@ -367,50 +183,21 @@ def test_merge_is_counted_once_resolved_after_sources_and_uses_lowest_active_lin
     b = node(db, "B", target_date=date(2040, 1, 1))
     first = link(db, b, shared, offset=12)
     link(db, a, shared, offset=12)
-    scenario = walk_scenarios(db, 1)[0][0]
+    scenario = saved.resolve(db, 1, saved.get_goal(db, 1))
     assert len(scenario.events) == 3
     assert scenario.events[-1].id == shared.id
     assert scenario.events[-1].resolved_date == date(2041, 1, 1)
     assert scenario.events[-1].incoming_link_id == first.id
 
 
-def test_projection_only_subtracts_resolved_scenario_events_and_shares_demand_math(db, monkeypatch):
-    import numpy as np
-    year = date.today().year
-    a = node(db, "共通", target_date=date(year, 1, 1), amount=100)
-    b = node(db, "来年", target_date=date(year + 10, 1, 1), amount=200)
-    c = node(db, "再来年", target_date=date(year + 10, 1, 1), amount=500)
-    edges = [link(db, a, b, "alternative", 12), link(db, a, c, "alternative", 24)]
-    baseline = [{"year": year + i, "p10": 900, "p50": 1000, "p90": 1100} for i in range(3)]
-    calls = []
-
-    def simulate(*args, **kwargs):
-        calls.append(kwargs)
-        return baseline, np.full((1200, 3), 1000.)
-
-    monkeypatch.setattr(saved, "simulate_net_worth_forward_with_paths", simulate)
-    scenario = saved.create(db, 1, "保存")
-    saved.update(db, 1, scenario.id, {"horizon_years": 2, "annual_return": 4, "inflation": 1})
-    saved.replace_choices(db, 1, scenario.id, [edges[0].id])
-    rows = saved.compare(db, 1, str(scenario.id))["scenarios"][0]["projection"]
-    assert [row["p50"] for row in rows] == [900, 700, 700]
-    assert rows[1]["p10"] == 600 and rows[1]["p90"] == 800
-    assert calls == [{"years": 2, "annual_return": 4, "inflation": 1, "include_event_income": False, "account_returns": {}}]
-    assert [row["cumulative_target"] for row in aggregate_life_event_demand_by_year(db, 1, 2)] == [100, 100, 100]
-    saved.replace_choices(db, 1, scenario.id, [edges[1].id])
-    rows = saved.compare(db, 1, str(scenario.id))["scenarios"][0]["projection"]
-    assert [row["p50"] for row in rows] == [900, 900, 400]
-    assert baseline[0]["p50"] == 1000
-
-
 def test_backup_carries_links_restore_remaps_both_ends_and_keeps_other_client(db):
     a, b = node(db, "A"), node(db, "B")
-    edge = link(db, a, b, "alternative", 18)
+    edge = link(db, a, b, "after", 18)
     edge.note = "判断"
     db.commit()
     source, target = db.get(models.Client, 1), db.get(models.Client, 2)
     backup = export_client(db, source)
-    assert backup["version"] == EXPORT_VERSION == 21
+    assert backup["version"] == EXPORT_VERSION == 22
     assert backup["data"]["life_event_links"][0]["note"] == "判断"
     import_client(db, target, data=backup["data"], version=backup["version"], manifest=backup["manifest"])
     restored = graph.list_links(db, 2)[0]
@@ -451,64 +238,3 @@ def test_restore_rejects_invalid_graph_before_replacing_any_data(db, defect):
         import_client(db, db.get(models.Client, 1), data=data, version=16, manifest=None)
     assert len(graph.list_links(db, 1)) == 1
     assert db.query(models.LifeEvent).count() == 2
-
-
-def test_http_links_and_saved_scenarios_are_client_scoped(db):
-    from fastapi import FastAPI
-    from app.routers.life_events import router
-    from app.domain.errors import DomainError, detail_for, status_for
-    from fastapi.responses import JSONResponse
-
-    app = FastAPI()
-    app.include_router(router)
-    from app.routers.life_scenarios import router as scenario_router
-    app.include_router(scenario_router)
-    app.dependency_overrides[get_db] = lambda: db
-    app.dependency_overrides[get_current_client] = lambda: db.get(models.Client, 1)
-
-    @app.exception_handler(DomainError)
-    async def domain_error(_, error):
-        return JSONResponse(status_code=status_for(error), content={"detail": detail_for(error)})
-
-    a, b, c = [node(db, name) for name in "ABC"]
-
-    async def exercise():
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
-            payload = {"from_event_id": a.id, "to_event_id": b.id, "kind": "alternative", "offset_months": 1}
-            response = await client.post("/life-events/links", json=payload)
-            assert response.status_code == 200
-            edge_id = response.json()["id"]
-            assert (await client.get("/life-events/links")).json()[0]["id"] == edge_id
-            assert (await client.post("/life-events/links", json={**payload, "to_event_id": c.id})).status_code == 200
-            scenario = (await client.post("/life-scenarios", json={"name": "保存"})).json()
-            base = f'/life-scenarios/{scenario["id"]}'
-            assert len(scenario["missing_forks"]) == 1
-            assert (await client.put(base, json={"horizon_years": 2, "annual_return": 0, "inflation": 0})).status_code == 200
-            assert (await client.put(base + "/choices", json={"link_ids": [edge_id]})).json()["missing_forks"] == []
-            assert (await client.post(base + "/goal")).json()["is_goal"]
-            result = (await client.get(f'/life-scenarios/compare?ids={scenario["id"]}')).json()
-            assert len(result["scenarios"][0]["projection"]) == 3
-            assert "resolved_date" in result["scenarios"][0]["events"][0]
-            assert (await client.put(base, json={"horizon_years": 0})).status_code == 422
-            assert (await client.put(base + "/choices", json={"link_ids": [99999]})).status_code == 422
-            assert (await client.post("/life-events/links", json={**payload, "kind": "bad"})).status_code == 422
-            assert (await client.delete(f"/life-events/links/{edge_id}")).status_code == 200
-            app.dependency_overrides[get_current_client] = lambda: db.get(models.Client, 2)
-            assert (await client.post(base + "/goal")).status_code == 404
-            assert (await client.get(f'/life-scenarios/compare?ids={scenario["id"]}')).status_code == 404
-            assert (await client.get("/life-scenarios")).json() == []
-            assert (await client.get("/life-events/links")).json() == []
-            assert (await client.post("/life-events/links", json=payload)).status_code == 404
-
-    async def run_with_wakeups():
-        pending = asyncio.create_task(exercise())
-        # Sync HTTP handlers need timer wakeups in this sandbox's selector.
-        deadline = asyncio.get_running_loop().time() + 30
-        while not pending.done() and asyncio.get_running_loop().time() < deadline:
-            await asyncio.sleep(0.01)
-        if not pending.done():
-            pending.cancel()
-            pytest.fail("HTTP graph exercise exceeded 30 seconds")
-        await pending
-
-    asyncio.run(run_with_wakeups())

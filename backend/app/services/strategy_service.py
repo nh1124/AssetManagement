@@ -683,11 +683,15 @@ def get_life_events_with_progress(
     allocation_mode: str = "weighted",
     roadmap_interval: str = 'auto',
     include_archived: bool = False,
+    scenario_id: int | None = None,
 ) -> List[dict]:
     """Get all life events with calculated progress for current client."""
     query = db.query(models.LifeEvent).filter(
         models.LifeEvent.client_id == client_id
     )
+    # N1a scopes the event-list endpoint; other consumers are migrated in N1b.
+    if scenario_id is not None:
+        query = query.filter(models.LifeEvent.scenario_id == scenario_id)
     if not include_archived:
         query = query.filter(models.LifeEvent.archived_at.is_(None))
     life_events = query.all()
@@ -779,6 +783,8 @@ def get_life_events_with_progress(
 def _life_event_fields(event: models.LifeEvent) -> dict:
     return {
         "id": event.id,
+        "scenario_id": event.scenario_id,
+        "lineage": event.lineage,
         "name": event.name,
         "target_date": event.target_date.isoformat(),
         "target_amount": event.target_amount,

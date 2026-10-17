@@ -8,6 +8,8 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from scenario_fixtures import goal_scenario_id
+
 from app import models
 from app.database import Base, get_db
 from app.dependencies import get_current_client
@@ -31,7 +33,7 @@ def workspace():
         client = models.Client(name='Archive test', general_settings={'currency': 'JPY'}, ai_config={})
         db.add(client)
         db.flush()
-        goal = models.LifeEvent(client_id=client.id, name='House', target_date=date(2027, 12, 31), target_amount_minor=1000)
+        goal = models.LifeEvent(scenario_id=goal_scenario_id(db, client.id), client_id=client.id, name='House', target_date=date(2027, 12, 31), target_amount_minor=1000)
         account = models.Account(client_id=client.id, name='Savings', account_type='asset')
         income = models.Account(client_id=client.id, name='Income', account_type='income')
         dest = models.Account(client_id=client.id, name='Cash', account_type='asset')
@@ -136,7 +138,7 @@ def test_backup_round_trip_preserves_archive_and_v12_defaults_to_active(workspac
     db, _, client, goal, *_ = workspace
     goal_service.archive_goal(db, client.id, goal.id)
     document = export_client(db, client)
-    assert document['version'] == EXPORT_VERSION == 21
+    assert document['version'] == EXPORT_VERSION == 22
     assert document['data']['life_events'][0]['archived_at'] == goal.archived_at.isoformat()
     target = models.Client(name='Restore', general_settings={'currency': 'JPY'}, ai_config={})
     db.add(target)
@@ -168,7 +170,7 @@ def test_called_off_goal_is_excluded_from_savings_allocation_and_future_demand(w
     from app.services import strategy_service
 
     db, _, client, goal, *_ = workspace
-    active = models.LifeEvent(client_id=client.id, name='Active', priority=2, target_date=goal.target_date, target_amount_minor=2000)
+    active = models.LifeEvent(scenario_id=goal_scenario_id(db, client.id), client_id=client.id, name='Active', priority=2, target_date=goal.target_date, target_amount_minor=2000)
     db.add(active)
     db.commit()
     goal_service.archive_goal(db, client.id, goal.id)

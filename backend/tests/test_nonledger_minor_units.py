@@ -9,6 +9,8 @@ from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, aliased
 
+from scenario_fixtures import goal_scenario_id
+
 from app import models, schemas
 from app.database import Base
 from app.domain.errors import Refused
@@ -265,7 +267,7 @@ def _money_rows(db):
     db.add(models.Account(id=1, client_id=1, name="cash", account_type="asset"))
     db.flush()
     rows = [
-        models.LifeEvent(id=1, client_id=1, target_amount_minor=1234),
+        models.LifeEvent(scenario_id=goal_scenario_id(db, 1), id=1, client_id=1, target_amount_minor=1234),
         models.Milestone(id=1, client_id=1, life_event_id=1, target_amount_minor=1234),
         models.Capsule(id=1, client_id=1, target_amount_minor=1234,
                        monthly_contribution_minor=1234),
@@ -334,8 +336,9 @@ def test_missing_owner_is_refused_for_runtime_reads_and_writes():
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     with Session(engine) as db:
-        with pytest.raises(ValueError, match="Cannot resolve client currency"):
-            create_goal_record(db, 999, schemas.LifeEventCreate(name="orphan", target_amount=100, target_date="2027-01-01"))
+        from app.domain.errors import NotFound
+        with pytest.raises(NotFound, match="シナリオが見つかりません"):
+            create_goal_record(db, 999, schemas.LifeEventCreate(scenario_id=999, name="orphan", target_amount=100, target_date="2027-01-01"))
         with pytest.raises(ValueError, match="Cannot resolve client currency"):
             _ = models.Capsule(client_id=None, target_amount_minor=100).target_amount
 

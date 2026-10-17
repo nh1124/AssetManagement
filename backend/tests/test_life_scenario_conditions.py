@@ -1,6 +1,6 @@
 """Scenario preconditions describe the same paths, before the resolved event."""
 import json
-from datetime import date
+from datetime import date, datetime
 
 import numpy as np
 import pytest
@@ -43,7 +43,8 @@ def condition(db, owner, metric="net_worth", comparator="gte", **values):
 
 
 def scenario(db, **values):
-    saved = service.create(db, 1, "試算")
+    from scenario_fixtures import goal_scenario_id
+    saved = service.get(db, 1, goal_scenario_id(db, 1))
     return service.update(db, 1, saved.id, {"horizon_years": 8, "inflation": 0, **values})
 
 
@@ -227,20 +228,22 @@ def test_net_worth_equality_broadcasts_the_p50_judgement(db):
     assert result["probability"] == 0 and result["conditions"][0]["satisfied"] is False
 
 
-def test_branch_choices_judge_shared_event_at_different_dates(db):
-    root, children, edges = fork(db)
-    root.target_date = date(2031, 1, 1)
-    shared = at(db, date(2031, 1, 1))
-    db.add_all([models.LifeEventLink(client_id=1, from_event_id=child.id, to_event_id=shared.id,
-                                   kind="after", offset_months=offset) for child, offset in zip(children, [12, 36])])
+def test_independent_stories_judge_copied_event_at_different_dates(db):
+    root = at(db, date(2031, 1, 1), name="起点")
+    shared = at(db, date(2031, 1, 1), name="判定")
+    edge = models.LifeEventLink(client_id=1, from_event_id=root.id, to_event_id=shared.id,
+                                kind="after", offset_months=12)
+    db.add(edge)
     db.commit()
     condition(db, shared, "date_reached", threshold_date=date(2033, 1, 1))
     first = scenario(db)
     second = service.duplicate(db, 1, first.id, "別案")
-    service.replace_choices(db, 1, first.id, [edges[0].id])
-    service.replace_choices(db, 1, second.id, [edges[1].id])
+    copied_root = db.query(models.LifeEvent).filter_by(scenario_id=second.id, lineage=root.lineage).one()
+    copied_edge = db.query(models.LifeEventLink).filter_by(from_event_id=copied_root.id).one()
+    copied_edge.offset_months = 36
+    db.commit()
     earlier, later = [service.project(db, 1, item)["conditions"][0] for item in (first, second)]
-    assert earlier["event_id"] == later["event_id"] == shared.id
+    assert earlier["event_id"] == shared.id and later["event_id"] != shared.id
     assert (earlier["judged_at"], earlier["probability"]) == ("2031-06-15", 0)
     assert (later["judged_at"], later["probability"]) == ("2033-06-15", 1)
 
@@ -252,7 +255,8 @@ def test_only_resolved_events_with_conditions_are_reported_and_serialized(db, ap
     for owner in [*children, foreign]:
         condition(db, owner, "date_reached", threshold_date=date(2032, 1, 1))
     saved = scenario(db)
-    service.replace_choices(db, 1, saved.id, [edges[0].id])
+    children[1].archived_at = datetime(2030, 1, 1)
+    db.commit()
     response = request(api, "GET", f"/life-scenarios/compare?ids={saved.id}")
     assert response.status_code == 200
     results = response.json()["scenarios"][0]["conditions"]

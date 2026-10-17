@@ -26,6 +26,19 @@ COMPARATORS = {"gte": ge, "lte": le, "eq": eq}
 MONEY_METRICS = {"net_worth", "free_cash", "account_balance", "capsule_claim"}
 
 
+def copy_conditions(db: Session, client_id: int, event_map: dict[int, int]) -> None:
+    for source in db.query(models.LifeEventCondition).filter(
+        models.LifeEventCondition.client_id == client_id, models.LifeEventCondition.life_event_id.in_(event_map),
+    ).order_by(models.LifeEventCondition.id):
+        values = {column.name: getattr(source, column.name) for column in models.LifeEventCondition.__table__.columns
+                  if column.name not in {"id", "life_event_id"}}
+        # A condition referring to another copied event follows that story's event.
+        if source.metric == "goal_progress":
+            values["reference_id"] = event_map.get(source.reference_id, source.reference_id)
+        db.add(models.LifeEventCondition(**values, life_event_id=event_map[source.life_event_id]))
+    db.flush()
+
+
 def _event(db: Session, client_id: int, event_id: int) -> models.LifeEvent:
     value = db.query(models.LifeEvent).filter_by(client_id=client_id, id=event_id).first()
     if value is None:

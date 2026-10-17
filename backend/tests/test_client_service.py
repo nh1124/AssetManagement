@@ -1,5 +1,7 @@
 from unittest.mock import patch
 
+from scenario_fixtures import goal_scenario_id
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
@@ -197,8 +199,8 @@ def test_get_plan_is_client_scoped_and_never_creates_a_default(db):
 def test_existing_goal_list_excludes_another_clients_rows(db):
     client = _client(db)
     other = _client(db, username="other")
-    own = models.LifeEvent(client_id=client.id, name="Own")
-    foreign = models.LifeEvent(client_id=other.id, name="Foreign")
+    own = models.LifeEvent(scenario_id=goal_scenario_id(db, client.id), client_id=client.id, name="Own")
+    foreign = models.LifeEvent(scenario_id=goal_scenario_id(db, other.id), client_id=other.id, name="Foreign")
     db.add_all([own, foreign])
     db.commit()
     assert goal_service.list_goals(db, client.id) == [own]

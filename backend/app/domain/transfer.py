@@ -8,7 +8,7 @@ import re
 from datetime import date, datetime
 from typing import Any
 
-EXPORT_VERSION = 21
+EXPORT_VERSION = 22
 
 DATA_COLLECTIONS = [
     "accounts",
@@ -22,7 +22,6 @@ DATA_COLLECTIONS = [
     "life_events",
     "life_event_links",
     "life_scenarios",
-    "life_scenario_choices",
     "life_scenario_account_returns",
     "household_members",
     "life_event_conditions",
@@ -149,7 +148,8 @@ def validate_import_payload(
             row["field"] = field
         issues.append(row)
 
-    unknown_collections = sorted(set(data.keys()) - set(DATA_COLLECTIONS))
+    legacy = version is None or version < 22
+    unknown_collections = sorted(set(data.keys()) - set(DATA_COLLECTIONS) - ({"life_scenario_choices"} if legacy else set()))
     for collection in unknown_collections:
         issue("warning", "unknown_collection", "This collection is not imported by this application version.", collection)
 
@@ -236,8 +236,8 @@ def validate_import_payload(
     check_ref("milestones", "life_event_id", "life_events")
     check_ref("life_event_links", "from_event_id", "life_events", required=True)
     check_ref("life_event_links", "to_event_id", "life_events", required=True)
-    check_ref("life_scenario_choices", "scenario_id", "life_scenarios", required=True)
-    check_ref("life_scenario_choices", "link_id", "life_event_links", required=True)
+    if not legacy:
+        check_ref("life_events", "scenario_id", "life_scenarios", required=True)
     check_ref("life_scenario_account_returns", "scenario_id", "life_scenarios", required=True)
     check_ref("life_scenario_account_returns", "account_id", "accounts", required=True)
     check_ref("capsules", "life_event_id", "life_events")
@@ -274,20 +274,34 @@ def validate_import_payload(
                 value = item.get(field, default)
                 if type(value) not in (int, float) or not math.isfinite(value):
                     issue("error", "invalid_scenario_rate", "利率は有限の数値で指定してください。", collection, item.get("id"), field)
-    links_by_id = {_as_int(row.get("id")): row for row in data.get("life_event_links", [])}
-    forks, pairs = set(), set()
-    for item in data.get("life_scenario_choices", []):
-        link = links_by_id.get(_as_int(item.get("link_id")), {})
-        fork = (_as_int(item.get("scenario_id")), _as_int(link.get("from_event_id")))
-        if link.get("kind") != "alternative" or fork in forks:
-            issue("error", "invalid_scenario_choice", "同じ分岐の接続を1つだけ選択してください。", "life_scenario_choices", item.get("id"))
-        forks.add(fork)
+    pairs = set()
     accounts_by_id = {_as_int(row.get("id")): row for row in data.get("accounts", [])}
     for item in data.get("life_scenario_account_returns", []):
         pair = (_as_int(item.get("scenario_id")), _as_int(item.get("account_id")))
         if accounts_by_id.get(pair[1], {}).get("account_type") != "asset" or pair in pairs:
             issue("error", "invalid_scenario_account", "資産口座を重複なく選択してください。", "life_scenario_account_returns", item.get("id"))
         pairs.add(pair)
+
+    events_by_id = {_as_int(row.get("id")): row for row in data.get("life_events", [])}
+    if not legacy:
+        from uuid import UUID
+        lineages = set()
+        for item in data.get("life_events", []):
+            lineage = item.get("lineage")
+            pair = (_as_int(item.get("scenario_id")), lineage)
+            try:
+                valid = isinstance(lineage, str) and len(lineage) == 36 and str(UUID(lineage)) == lineage
+            except (ValueError, TypeError):
+                valid = False
+            if not valid or pair in lineages:
+                issue("error", "invalid_event_lineage", "イベントの系統はシナリオ内で重複しないUUIDで指定してください。", "life_events", item.get("id"), "lineage")
+            if valid:
+                lineages.add(pair)
+        goal_ids = {_as_int(row.get("id")) for row in data.get("life_scenarios", []) if row.get("is_goal") is True}
+        for item in data.get("capsules", []):
+            event = events_by_id.get(_as_int(item.get("life_event_id")))
+            if event is not None and _as_int(event.get("scenario_id")) not in goal_ids:
+                issue("error", "capsule_outside_goal", "取り置きはゴールのシナリオのライフイベントにだけ紐づけられます。", "capsules", item.get("id"), "life_event_id")
 
     link_pairs = set()
     graph: dict[int, list[int]] = {}
@@ -331,10 +345,12 @@ def validate_import_payload(
         if source == target or pair in link_pairs:
             issue("error", "invalid_event_link", "Event links must be distinct non-self pairs.", "life_event_links", item.get("id"))
         link_pairs.add(pair)
-        if item.get("kind") not in {"after", "alternative"} or type(item.get("offset_months", 0)) is not int:
+        if item.get("kind") not in ({"after", "alternative"} if legacy else {"after"}) or type(item.get("offset_months", 0)) is not int:
             issue("error", "invalid_event_link", "Event links require a valid kind and integer month offset.", "life_event_links", item.get("id"))
         if type(item.get("adopted", False)) is not bool:
             issue("error", "invalid_event_link", "Event link adoption must be a boolean.", "life_event_links", item.get("id"))
+        if not legacy and events_by_id.get(source, {}).get("scenario_id") != events_by_id.get(target, {}).get("scenario_id"):
+            issue("error", "cross_scenario_link", "同じシナリオのイベントを選択してください。", "life_event_links", item.get("id"))
         if source in indegree and target in indegree:
             graph.setdefault(source, []).append(target)
             indegree[target] += 1
@@ -463,6 +479,8 @@ def validate_import_payload(
 
     expected_checksums = manifest.get("checksums") or {}
     actual_checksums = _table_checksums(data)
+    if legacy and "life_scenario_choices" in expected_checksums:
+        actual_checksums["life_scenario_choices"] = _sha256(data.get("life_scenario_choices", []))
     for collection, expected in expected_checksums.items():
         actual = actual_checksums.get(collection)
         if actual and expected != actual:

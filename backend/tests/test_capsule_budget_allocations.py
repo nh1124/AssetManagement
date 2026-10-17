@@ -6,6 +6,8 @@ import pytest
 import sqlalchemy as sa
 from sqlalchemy.orm import sessionmaker
 
+from scenario_fixtures import goal_scenario_id
+
 from app import models, schemas
 from app.database import Base
 from app.domain.errors import Invalid, Refused
@@ -292,7 +294,7 @@ def test_product_pool_warnings_name_each_plan_account_and_its_share(db):
 
 
 def test_report_creates_one_funding_source_and_reports_claim(db):
-    goal = models.LifeEvent(client_id=1, name="Goal", target_amount_minor=30000,
+    goal = models.LifeEvent(scenario_id=goal_scenario_id(db, 1), client_id=1, name="Goal", target_amount_minor=30000,
                             target_date=date(2027, 10, 12), priority=1)
     db.add(goal)
     db.commit()
@@ -318,7 +320,7 @@ def test_report_preserves_existing_funding(db, has_plan):
 
 
 def goal_for_capsule(db):
-    goal = models.LifeEvent(client_id=1, name="Goal", target_amount_minor=30000,
+    goal = models.LifeEvent(scenario_id=goal_scenario_id(db, 1), client_id=1, name="Goal", target_amount_minor=30000,
                             target_date=date(2027, 10, 12), priority=1)
     db.add(goal)
     db.flush()

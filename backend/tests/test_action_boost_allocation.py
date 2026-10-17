@@ -1,6 +1,8 @@
 """boost_allocation earmarks cash with attributed, balanced journal entries."""
 from __future__ import annotations
 
+from scenario_fixtures import goal_scenario_id
+
 from app.services.money_storage import to_minor
 from app.services.ledger_service import create_transaction
 from app.services.capsule_service import claimed_minor
@@ -32,7 +34,7 @@ def _session():
 def _seed(db, *, balance: float = 1_000_000.0):
     client = models.Client(id=1, name="test", general_settings={}, ai_config={})
     savings = models.Account(client_id=1, name="savings", account_type="asset")
-    goal = models.LifeEvent(
+    goal = models.LifeEvent(scenario_id=goal_scenario_id(db, 1),
         client_id=1,
         name="house",
         target_date=date.today() + timedelta(days=365 * 5),
@@ -102,7 +104,7 @@ def test_boost_allocation_cannot_earmark_more_than_the_account_holds():
     try:
         savings, goal = _seed(db, balance=100_000.0)
         # A second goal already claims most of the account.
-        other = models.LifeEvent(
+        other = models.LifeEvent(scenario_id=goal_scenario_id(db, 1),
             client_id=1,
             name="car",
             target_date=date.today() + timedelta(days=365),

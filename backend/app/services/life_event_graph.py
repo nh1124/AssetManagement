@@ -5,11 +5,18 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from ..domain.errors import Conflict, NotFound, Refused
+from .life_scenario_scope import selected
 
 
-def list_links(db: Session, client_id: int) -> list[models.LifeEventLink]:
+def list_links(db: Session, client_id: int, scenario_id: int | None = None) -> list[models.LifeEventLink]:
+    scenario = selected(db, client_id, scenario_id)
+    if scenario is None:
+        return []
     return db.query(models.LifeEventLink).filter(
         models.LifeEventLink.client_id == client_id,
+        models.LifeEventLink.from_event_id.in_(db.query(models.LifeEvent.id).filter_by(
+            client_id=client_id, scenario_id=scenario.id,
+        )),
     ).order_by(models.LifeEventLink.id).all()
 
 
@@ -28,14 +35,18 @@ def create_link(
     if len(events) != len({from_event_id, to_event_id}):
         raise NotFound("同じクライアントのイベントを選択してください。")
     source, target = events[from_event_id], events[to_event_id]
+    if source.scenario_id != target.scenario_id:
+        raise Refused("同じシナリオのイベントを選択してください。", status_code=422)
     if source.archived_at or target.archived_at:
         raise Refused("中止・アーカイブしたイベントは接続できません。", status_code=422)
     if from_event_id == to_event_id:
         raise Refused(f"「{source.name}」自身には接続できません。", status_code=422)
-    if kind not in {"after", "alternative"} or type(offset_months) is not int:
-        raise Refused("接続の種類または月数が不正です。", status_code=422)
+    if kind != "after":
+        raise Refused("接続は「必ず続く」のみです。", status_code=422)
+    if type(offset_months) is not int:
+        raise Refused("接続の月数が不正です。", status_code=422)
     adjacency: dict[int, list[int]] = {}
-    for link in list_links(db, client_id):
+    for link in list_links(db, client_id, source.scenario_id):
         if (link.from_event_id, link.to_event_id) == (from_event_id, to_event_id):
             raise Conflict("このイベント間の接続は登録済みです。")
         adjacency.setdefault(link.from_event_id, []).append(link.to_event_id)
@@ -55,6 +66,24 @@ def create_link(
     db.commit()
     db.refresh(link)
     return link
+
+
+def copy_links(db: Session, client_id: int, event_map: dict[int, int]) -> dict[int, int]:
+    link_map = {}
+    for source in db.query(models.LifeEventLink).filter(
+        models.LifeEventLink.client_id == client_id,
+        models.LifeEventLink.from_event_id.in_(event_map),
+        models.LifeEventLink.to_event_id.in_(event_map),
+    ).order_by(models.LifeEventLink.id):
+        row = models.LifeEventLink(
+            client_id=client_id, from_event_id=event_map[source.from_event_id],
+            to_event_id=event_map[source.to_event_id], kind="after",
+            offset_months=source.offset_months, note=source.note, created_at=source.created_at,
+        )
+        db.add(row)
+        db.flush()
+        link_map[source.id] = row.id
+    return link_map
 
 
 def delete_link(db: Session, client_id: int, link_id: int) -> None:

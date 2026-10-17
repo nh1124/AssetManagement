@@ -10,6 +10,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from scenario_fixtures import goal_scenario_id
+
 from app import models, schemas
 from app.database import Base, get_db
 from app.dependencies import get_current_client
@@ -45,7 +47,7 @@ def db():
 
 
 def goal(db, name="進学", client_id=1, mode="all"):
-    row = models.LifeEvent(client_id=client_id, name=name, target_date=date.today().replace(year=date.today().year + 2), target_amount_minor=1000, condition_mode=mode)
+    row = models.LifeEvent(scenario_id=goal_scenario_id(db, client_id), client_id=client_id, name=name, target_date=date.today().replace(year=date.today().year + 2), target_amount_minor=1000, condition_mode=mode)
     db.add(row)
     db.commit()
     return row
@@ -209,7 +211,7 @@ def test_bulk_evaluation_is_scoped_and_financial_reader_runs_once(db, monkeypatc
 def test_evaluation_does_not_flush_pending_changes_or_modify_projection(db):
     owner = goal(db)
     add(db, owner, "date_reached", threshold_date=date(2099, 1, 1))
-    scenario = saved.create(db, 1, "試算")
+    scenario = saved.get_goal(db, 1)
     saved.update(db, 1, scenario.id, {"horizon_years": 2, "annual_return": 0, "inflation": 0})
     before = saved.compare(db, 1, str(scenario.id))
     owner.note = "未保存"
@@ -237,7 +239,7 @@ def test_backup_remaps_every_reference_and_preserves_dangling_without_id_collisi
     db.commit()
     source, target = db.get(models.Client, 1), db.get(models.Client, 2)
     document = export_client(db, source)
-    assert document["version"] == EXPORT_VERSION == 21
+    assert document["version"] == EXPORT_VERSION == 22
     for _ in range(2):
         import_client(db, target, data=document["data"], version=17, manifest=document["manifest"])
         restored = db.query(models.LifeEvent).filter_by(client_id=2).one()

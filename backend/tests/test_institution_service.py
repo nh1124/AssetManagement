@@ -8,6 +8,8 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
+from scenario_fixtures import goal_scenario_id
+
 from app import models, schemas
 from app.database import Base
 from app.domain.errors import Invalid
@@ -63,7 +65,7 @@ def member(db, born=date(1970, 10, 15), relation="本人", name="本人", client
 
 
 def goal(db):
-    row = models.LifeEvent(client_id=1, name="目標", target_date=date.today().replace(year=date.today().year + 2),
+    row = models.LifeEvent(scenario_id=goal_scenario_id(db, 1), client_id=1, name="目標", target_date=date.today().replace(year=date.today().year + 2),
                            target_amount_minor=1000)
     config = models.SimulationConfig(client_id=1, annual_return=10, tax_rate=25, volatility=0,
                                      inflation_rate=0, monthly_savings_minor=0, is_nisa=True)
@@ -334,7 +336,7 @@ def test_backup_round_trip_carries_shelter_age_and_missing_return(db):
     source = db.get(models.Client, 1)
     target = db.get(models.Client, 2)
     document = export_client(db, source)
-    assert document["version"] == EXPORT_VERSION == 21
+    assert document["version"] == EXPORT_VERSION == 22
     import_client(db, target, data=document["data"], version=document["version"], manifest=document["manifest"])
     restored = db.query(models.Account).filter_by(client_id=2, name="cash").one()
     assert (restored.institution, restored.withdrawable_from_age, restored.expected_return) == ("ideco", 63, None)
