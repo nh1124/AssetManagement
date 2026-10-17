@@ -173,7 +173,7 @@ def test_update_plan_changes_supplied_fields_but_preserves_explicit_null_behavio
     )
 
 
-@pytest.mark.parametrize("operation", ["create", "update", "delete", "line_delete", "adopt"])
+@pytest.mark.parametrize("operation", ["create", "update", "delete", "line_delete"])
 def test_commit_false_leaves_changes_rollbackable_by_caller(planning, operation):
     db, client = planning
     plan = _plan(db, description="Original")
@@ -186,10 +186,8 @@ def test_commit_false_leaves_changes_rollbackable_by_caller(planning, operation)
         store.update_plan(db, client.id, plan_id, {"description": "Changed"}, commit=False)
     elif operation == "delete":
         store.delete_plan(db, client.id, plan_id, commit=False)
-    elif operation == "line_delete":
-        store.delete_plan_line(db, client.id, line_id, commit=False)
     else:
-        store.set_default_budget_plan(db, client.id, plan_id, commit=False)
+        store.delete_plan_line(db, client.id, line_id, commit=False)
     db.rollback()
     assert db.query(models.BudgetPlan).count() == 2
     assert db.get(models.BudgetPlan, plan_id).description == "Original"
@@ -254,10 +252,9 @@ def test_missing_plan_and_line_keep_http_404_details(planning):
     calls = [
         lambda: router.update_budget_plan(foreign_plan.id, schemas.BudgetPlanUpdate(name="New"), db, client),
         lambda: router.delete_budget_plan(foreign_plan.id, db, client),
-        lambda: router.adopt_budget_plan(foreign_plan.id, db, client),
         lambda: router.delete_plan_line(foreign_line.id, db, client),
     ]
-    for call, detail in zip(calls, ["Budget plan not found"] * 3 + ["Monthly plan line not found"]):
+    for call, detail in zip(calls, ["Budget plan not found"] * 2 + ["Monthly plan line not found"]):
         with pytest.raises(HTTPException) as caught:
             call()
         assert (caught.value.status_code, caught.value.detail) == (404, detail)

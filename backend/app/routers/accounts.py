@@ -117,28 +117,6 @@ def _serialize_account(
     }
 
 
-def _build_tree(accounts: list[models.Account], balances: dict[int, AccountBalances]) -> dict:
-    by_id = {account.id: account for account in accounts}
-    children_by_parent: dict[int | None, list[models.Account]] = {}
-    for account in accounts:
-        parent_id = account.parent_id if account.parent_id in by_id else None
-        children_by_parent.setdefault(parent_id, []).append(account)
-
-    def rollup(account: models.Account) -> float:
-        return balances[account.id].balance + sum(rollup(child) for child in children_by_parent.get(account.id, []))
-
-    def node(account: models.Account) -> dict:
-        return {
-            **_serialize_account(account, balances=balances[account.id], rollup_balance=rollup(account)),
-            "children": [node(child) for child in sorted(children_by_parent.get(account.id, []), key=lambda item: item.name)],
-        }
-
-    grouped = {"asset": [], "liability": [], "income": [], "expense": []}
-    for account in sorted(children_by_parent.get(None, []), key=lambda item: (item.account_type, item.name)):
-        if account.account_type in grouped:
-            grouped[account.account_type].append(node(account))
-    return grouped
-
 @router.get("/", response_model=List[AccountResponse])
 def get_accounts(
     account_type: Optional[str] = Query(None),
@@ -156,15 +134,6 @@ def get_accounts(
         for account in accounts
     ]
 
-
-@router.get("/tree")
-def get_account_tree(
-    db: Session = Depends(get_db),
-    current_client: models.Client = Depends(get_current_client),
-):
-    accounts = ledger_service.list_accounts(db, current_client.id, ordered=False)
-    balances = calculate_account_balances(db, accounts)
-    return _build_tree(accounts, balances)
 
 @router.get("/{account_id}/earmarks", response_model=List[AccountEarmarkResponse])
 def get_account_earmarks(

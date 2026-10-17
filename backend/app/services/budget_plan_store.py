@@ -289,20 +289,6 @@ def replace_plan_lines_from_plan(
     return len(source_lines)
 
 
-def set_default_budget_plan(
-    db: Session, client_id: int, plan_id: int, *, commit: bool = True,
-) -> models.BudgetPlan:
-    plan = db.query(models.BudgetPlan).filter_by(id=plan_id, client_id=client_id).first()
-    if not plan:
-        raise ValueError("Budget plan not found")
-    for item in db.query(models.BudgetPlan).filter_by(client_id=client_id).all():
-        item.is_default = item.id == plan.id
-    if commit:
-        db.commit()
-        db.refresh(plan)
-    else:
-        db.flush()
-    return plan
 
 
 def find_budget_plan_id(db: Session, client_id: int, plan_id: int | None = None) -> int | None:

@@ -101,6 +101,14 @@ export const register = async (userData: any) => {
     return response.data;
 };
 
+// Changing the email or the password requires current_password.
+export interface ProfileUpdate { name?: string; email?: string; password?: string; current_password?: string }
+
+export const updateProfile = async (payload: ProfileUpdate) => (await api.patch('/auth/me', payload)).data;
+
+/** Store (encrypted) the client's AI API key; it is never returned. */
+export const updateAiKey = async (clientId: number, key: string) => (await api.put(`/clients/${clientId}/key`, { gemini_api_key: key })).data;
+
 export const getMe = async () => {
     const response = await api.get('/me');
     return response.data;

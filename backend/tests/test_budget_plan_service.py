@@ -28,7 +28,7 @@ try:
     from backend.app.workflows.monthly_action_workflow import apply_action, create_action
     from backend.app.services.budget_lines import assign_plan_line_identity
     from backend.app.services.budget_plan_service import get_budget_summary
-    from backend.app.services.budget_plan_store import create_plan_lines, resolve_budget_plan_id, set_default_budget_plan, update_plan_lines
+    from backend.app.services.budget_plan_store import create_plan_lines, resolve_budget_plan_id, update_plan_lines
     from backend.app.services.periods import add_months, current_period_key, period_to_range
     from backend.app.services.data_health_service import check_data_health, repair_data_health
 except ModuleNotFoundError:
@@ -42,7 +42,7 @@ except ModuleNotFoundError:
     from app.workflows.monthly_action_workflow import apply_action, create_action  # type: ignore[no-redef]
     from app.services.budget_lines import assign_plan_line_identity  # type: ignore[no-redef]
     from app.services.budget_plan_service import get_budget_summary  # type: ignore[no-redef]
-    from app.services.budget_plan_store import create_plan_lines, resolve_budget_plan_id, set_default_budget_plan, update_plan_lines  # type: ignore[no-redef]
+    from app.services.budget_plan_store import create_plan_lines, resolve_budget_plan_id, update_plan_lines  # type: ignore[no-redef]
     from app.services.periods import add_months, current_period_key, period_to_range  # type: ignore[no-redef]
     from app.services.data_health_service import check_data_health, repair_data_health  # type: ignore[no-redef]
 
@@ -452,63 +452,6 @@ def test_budget_summary_combines_income_spending_allocations_and_debt() -> None:
         db.close()
 
 
-def test_set_default_budget_plan_switches_default_without_copying_lines() -> None:
-    db = _session()
-    try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
-        food = models.Account(client_id=1, name="food", account_type="expense")
-        baseline = models.BudgetPlan(client_id=1, name="Baseline", is_default=True, sort_order=0)
-        lean = models.BudgetPlan(client_id=1, name="Lean", is_default=False, sort_order=1)
-        db.add_all([client, food, baseline, lean])
-        db.flush()
-        baseline_line = models.MonthlyPlanLine(
-            client_id=1,
-            plan_id=baseline.id,
-            target_period="2026-05",
-            line_type="expense",
-            target_type="account",
-            account_id=food.id,
-            name="food",
-            amount_minor=to_minor(10000, "JPY"),
-        )
-        lean_line = models.MonthlyPlanLine(
-            client_id=1,
-            plan_id=lean.id,
-            target_period="2026-05",
-            line_type="expense",
-            target_type="account",
-            account_id=food.id,
-            name="food",
-            amount_minor=to_minor(25000, "JPY"),
-        )
-        assign_plan_line_identity(baseline_line)
-        assign_plan_line_identity(lean_line)
-        db.add_all([baseline_line, lean_line])
-        db.commit()
-
-        adopted = set_default_budget_plan(db, client_id=1, plan_id=lean.id)
-
-        assert adopted.id == lean.id
-        db.refresh(baseline)
-        db.refresh(lean)
-        assert baseline.is_default is False
-        assert lean.is_default is True
-        default_lines = db.query(models.MonthlyPlanLine).filter_by(
-            client_id=1,
-            plan_id=baseline.id,
-            target_period="2026-05",
-            is_active=True,
-        ).all()
-        source_lines = db.query(models.MonthlyPlanLine).filter_by(
-            client_id=1,
-            plan_id=lean.id,
-            target_period="2026-05",
-            is_active=True,
-        ).all()
-        assert [line.amount for line in default_lines] == [10000]
-        assert [line.amount for line in source_lines] == [25000]
-    finally:
-        db.close()
 
 
 def test_set_budget_action_updates_specified_plan_only() -> None:

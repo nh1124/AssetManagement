@@ -4,6 +4,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..domain.errors import Conflict
 
 
 def get_by_username(
@@ -66,8 +67,13 @@ def update_profile(
     for key in ("name", "email", "password_hash"):
         if key in fields:
             setattr(client, key, fields[key])
-    if commit:
-        db.commit()
-    else:
-        db.flush()
+    try:
+        if commit:
+            db.commit()
+        else:
+            db.flush()
+    except IntegrityError as exc:
+        # Names and emails are unique across clients.
+        db.rollback()
+        raise Conflict("この名前またはメールアドレスは使われています。") from exc
     return client

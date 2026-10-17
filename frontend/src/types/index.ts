@@ -6,16 +6,6 @@ export interface TransactionLeg {
     capsule_id?: number | null;
 }
 
-export interface CapsuleTransferPreview {
-    capsule_id: number;
-    rule_id: number;
-    capsule_name: string;
-    source_account_id: number;
-    destination_account_id: number;
-    amount: number;
-    auto_post: boolean;
-}
-
 export interface TransactionLegRead extends TransactionLeg {
     id: number;
     account_name?: string | null;
@@ -118,11 +108,6 @@ export interface Account {
     liability_installment_months?: number | null;
     liability_revolving_rate?: number | null;
     is_active: boolean;
-}
-
-export interface AccountTreeNode extends Account {
-    rollup_balance: number;
-    children: AccountTreeNode[];
 }
 
 export interface ExchangeRate {

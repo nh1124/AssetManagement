@@ -28,6 +28,8 @@ class ProfileUpdate(BaseModel):
     name: Optional[str] = None
     email: Optional[str] = None
     password: Optional[str] = None
+    # Required to change the email or the password: a stolen session alone must not take the account.
+    current_password: Optional[str] = None
 
 class AuthResponse(BaseModel):
     access_token: Optional[str] = None
@@ -329,18 +331,26 @@ def verify_step_up(
 
 @router.patch("/me")
 def update_profile(
-    req: ProfileUpdate, 
+    req: ProfileUpdate,
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
-    """Update user profile information. Pattern from VisionArk Settings."""
-    fields = {}
-    if req.name:
-        fields["name"] = req.name
-    if req.email:
-        fields["email"] = req.email
-    if req.password:
-        fields["password_hash"] = hash_password(req.password)
+    """Update the account's name, email or password.
 
+    Blank fields are left unchanged. The email and the password change only with the
+    current password, so a session token alone cannot take over the account.
+    """
+    fields = {}
+    if req.name and req.name.strip():
+        fields["name"] = req.name.strip()
+    if req.email and req.email.strip():
+        fields["email"] = req.email.strip().lower()
+    if req.password:
+        if len(req.password) < 8:
+            raise HTTPException(status_code=422, detail="パスワードは8文字以上にしてください。")
+        fields["password_hash"] = hash_password(req.password)
+    if ("email" in fields or "password_hash" in fields) and not (
+            req.current_password and verify_password(req.current_password, current_client.password_hash or "")):
+        raise HTTPException(status_code=403, detail="現在のパスワードが正しくありません。")
     client_service.update_profile(db, current_client, fields)
     return {"message": "Profile updated successfully"}

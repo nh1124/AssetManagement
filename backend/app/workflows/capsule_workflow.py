@@ -13,10 +13,6 @@ from ..services import capsule_service, ledger_service
 from ..services.cache_service import invalidate_client
 from ..services.goal_service import get_life_event
 from ..services.fx_service import get_client_currency
-from ..services.product_reserve_service import (
-    ensure_default_product_reserve_pools,
-    sync_product_reserve_capsules,
-)
 
 
 def set_account_claim(
@@ -136,24 +132,6 @@ def contribute(
     }
 
 
-def create_product_reserve_pools(
-    db: Session, client_id: int, *, commit: bool = True,
-) -> list[models.Capsule]:
-    capsules = ensure_default_product_reserve_pools(db, client_id)
-    if commit:
-        db.commit()
-        invalidate_client(client_id)
-    return capsules
-
-
-def sync_product_reserves(db: Session, client_id: int, *, commit: bool = True) -> dict:
-    result = sync_product_reserve_capsules(db, client_id)
-    if commit:
-        db.commit()
-        invalidate_client(client_id)
-    else:
-        db.flush()
-    return result
 
 
 def create_goal_capsule(

@@ -1,3 +1,4 @@
+import AccountSettings from './AccountSettings';
 import Household from './Household';
 import { useConfirm } from '../components/useConfirm';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
@@ -195,6 +196,7 @@ function SettingsForClient() {
             </fieldset>
             </form>
         </details>
+        <AccountSettings sectionClass={sectionClass} />
         <details className={sectionClass}>
             <summary className="cursor-pointer text-sm font-semibold">{t('mfa.title')}</summary>
             {mfa.loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">{t('common.loading')}</p>}

@@ -231,8 +231,7 @@ def test_unknown_foreign_and_mismatched_ids_return_none_or_false_and_write_nothi
 @pytest.mark.parametrize("operation", [
     "create_capsule", "update_capsule", "delete_capsule",
     "create_rule", "update_rule", "delete_rule",
-    "contribute", "create_product_reserve_pools",
-    "sync_product_reserves", "create_goal_capsule",
+    "contribute", "create_goal_capsule",
 ])
 def test_commit_false_leaves_every_new_writing_function_rollbackable(db, monkeypatch, operation):
     capsule, cash, _ = _capsule(db)
@@ -263,8 +262,6 @@ def test_commit_false_leaves_every_new_writing_function_rollbackable(db, monkeyp
         "update_rule": lambda: capsule_service.update_rule(db, 1, rule_id, schemas.CapsuleRuleUpdate(amount_value=25), commit=False),
         "delete_rule": lambda: capsule_service.delete_rule(db, 1, rule_id, commit=False),
         "contribute": lambda: capsule_workflow.contribute(db, 1, capsule_id, amount=25, from_account_id=cash_id, commit=False),
-        "create_product_reserve_pools": lambda: capsule_workflow.create_product_reserve_pools(db, 1, commit=False),
-        "sync_product_reserves": lambda: capsule_workflow.sync_product_reserves(db, 1, commit=False),
         "create_goal_capsule": lambda: capsule_workflow.create_goal_capsule(db, 1, goal_id, commit=False),
     }
     if operation == "delete_capsule":

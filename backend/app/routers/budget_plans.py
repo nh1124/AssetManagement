@@ -18,7 +18,6 @@ from ..services.budget_plan_store import (
     list_plans,
     replace_plan_lines_from_plan,
     resolve_budget_plan_id,
-    set_default_budget_plan,
     update_plan,
     update_plan_lines,
 )
@@ -219,20 +218,6 @@ def copy_plan_from(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     invalidate_client(current_client.id)
     return {"status": "success", "copied": copied}
-
-
-@router.post("/{plan_id}/adopt", response_model=schemas.BudgetPlan)
-def adopt_budget_plan(
-    plan_id: int,
-    db: Session = Depends(get_db),
-    current_client: models.Client = Depends(get_current_client),
-):
-    try:
-        default_plan = set_default_budget_plan(db, current_client.id, plan_id)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    invalidate_client(current_client.id)
-    return default_plan
 
 
 @router.put("/{plan_id}", response_model=schemas.BudgetPlan)

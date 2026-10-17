@@ -55,7 +55,6 @@ PUBLIC: dict[str, set[str]] = {
         "list_plans",
         "replace_plan_lines_from_plan",
         "resolve_budget_plan_id",
-        "set_default_budget_plan",
         "update_plan",
         "update_plan_lines",
     },

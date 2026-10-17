@@ -10,7 +10,6 @@ from backend.app.database import Base
 from backend.app.domain.errors import Invalid, NotFound
 from backend.app.routers import accounts as router
 from backend.app.services import ledger_service as ledger
-from backend.app.services.ledger_valuation import calculate_account_balances
 from backend.app.workflows.ledger_entry_workflow import record_entry
 
 
@@ -204,40 +203,6 @@ def test_update_and_delete_return_missing_without_modifying_other_clients(db, mi
     assert account.is_active is True
 
 
-def test_two_level_tree_preserves_endpoint_structure_and_rollup(db):
-    root = _account(db, name="bank")
-    child = _account(db, name="wallet", parent_id=root.id)
-    income = _account(db, name="salary", account_type="income")
-    for source, target, amount in [(income, root, 1000), (root, child, 300)]:
-        record_entry(db, 1, schemas.TransactionCreate(
-            date=date(2026, 10, 11), description="tree balances", amount=amount,
-            from_account_id=source.id, to_account_id=target.id,
-        ))
-    # Keep the assertion focused on this tree while default seeding retains its behavior.
-    for account in db.query(models.Account).filter(models.Account.id.notin_([root.id, child.id, income.id])):
-        account.is_active = False
-    db.commit()
-    rows = ledger.list_accounts(db, 1, ordered=False)
-    tree = router._build_tree(rows, calculate_account_balances(db, rows))
-
-    def expected(account, balance, rollup, children):
-        return dict(
-            id=account.id, name=account.name, account_type=account.account_type,
-            balance=balance, balances_minor={"JPY": balance}, rollup_balance=rollup, parent_id=account.parent_id,
-            institution="none", withdrawable_from_age=None,
-            expected_return=0.0, role="unassigned", role_target_amount=None,
-            liability_closing_day=None, liability_payment_day=None,
-            liability_payment_month_offset=0, liability_payment_policy="full",
-            liability_minimum_payment=None, liability_fixed_payment_amount=None,
-            liability_installment_months=None, liability_revolving_rate=None,
-            is_active=True, children=children,
-        )
-
-    assert tree == {
-        "asset": [expected(root, 700, 1000, [expected(child, 300, 300, [])])],
-        "liability": [], "income": [expected(income, 1000, 1000, [])], "expense": [],
-    }
-    assert router.get_account_tree(db=db, current_client=db.get(models.Client, 1)) == tree
 
 
 @pytest.mark.parametrize("field,value,detail", [

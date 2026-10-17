@@ -1183,21 +1183,6 @@ class MilestoneSimulationPreview(BaseModel):
     items: list[MilestoneCreate]
 
 
-class CapsuleTransactionPreviewRequest(BaseModel):
-    description: Optional[str] = ""
-    amount: float
-    date: date
-    legs: List[TransactionLeg]
-
-
-class CapsuleTransferPreview(BaseModel):
-    capsule_id: int
-    rule_id: int
-    capsule_name: str
-    source_account_id: int
-    destination_account_id: int
-    amount: float
-    auto_post: bool
 
 
 class ReconciliationAccount(BaseModel):

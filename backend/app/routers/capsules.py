@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 from .. import database, dependencies, models, schemas
 from ..services import capsule_service
 from ..services.capsule_service import (
-    capsule_transfer_specs,
     capsule_to_dict,
     funding_source_to_dict,
 )
@@ -97,21 +96,6 @@ def set_capsule_funding_sources(
             db, current_client.id, capsule_id, payloads,
         )
     ]
-
-
-@router.post("/preview-for-transaction", response_model=List[schemas.CapsuleTransferPreview])
-def preview_for_transaction(
-    draft: schemas.CapsuleTransactionPreviewRequest,
-    db: Session = Depends(database.get_db),
-    current_client: models.Client = Depends(dependencies.get_current_client),
-):
-    return [schemas.CapsuleTransferPreview.model_validate(spec, from_attributes=True).model_dump() for spec in capsule_transfer_specs(
-        db,
-        current_client.id,
-        entries=draft.legs,
-        description=draft.description,
-        amount=draft.amount,
-    )]
 
 
 @router.put("/{capsule_id}", response_model=schemas.Capsule)
@@ -202,23 +186,6 @@ def process_monthly_contributions(
         "updated_capsules": 0,
         "total_added": 0.0,
     }
-
-
-@router.post("/product-reserve-pools", response_model=List[schemas.Capsule])
-def create_product_reserve_pools(
-    db: Session = Depends(database.get_db),
-    current_client: models.Client = Depends(dependencies.get_current_client),
-):
-    capsules = capsule_workflow.create_product_reserve_pools(db, current_client.id)
-    return [capsule_to_dict(db, capsule) for capsule in capsules]
-
-
-@router.post("/sync-product-reserves")
-def sync_product_reserves(
-    db: Session = Depends(database.get_db),
-    current_client: models.Client = Depends(dependencies.get_current_client),
-):
-    return capsule_workflow.sync_product_reserves(db, current_client.id)
 
 
 @router.post("/life-events/{life_event_id}", response_model=schemas.Capsule)

@@ -326,6 +326,8 @@ def get_me(current_client: models.Client = Depends(get_current_client)):
         "username": current_client.username,
         "email": current_client.email,
         "general_settings": current_client.general_settings or {},
+        # Whether an AI API key is stored; the key itself never leaves the server.
+        "has_ai_key": bool((current_client.ai_config or {}).get("gemini_api_key")),
     }
 
 @app.get("/")

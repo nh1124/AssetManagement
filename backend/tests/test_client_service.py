@@ -1,5 +1,9 @@
 from unittest.mock import patch
 
+from fastapi import HTTPException
+
+from backend.app.domain.errors import Conflict
+
 from scenario_fixtures import goal_scenario_id
 
 import pytest
@@ -154,17 +158,44 @@ def test_registration_keeps_password_hashing_in_the_router(db):
 
 
 def test_profile_router_keeps_truthy_field_selection_and_password_hashing(db):
-    client = _client(db)
+    client = _client(db, password_hash=hash_password("current-pass"))
     original = (client.name, client.email, client.password_hash)
     assert auth.update_profile(auth.ProfileUpdate(name="", email="", password=""), db, client) == {
         "message": "Profile updated successfully",
     }
     assert (client.name, client.email, client.password_hash) == original
     with patch.object(auth, "hash_password", wraps=hash_password) as hashing:
-        auth.update_profile(auth.ProfileUpdate(password="changed123"), db, client)
+        auth.update_profile(auth.ProfileUpdate(password="changed123", current_password="current-pass"), db, client)
     hashing.assert_called_once_with("changed123")
     assert (client.name, client.email) == original[:2]
     assert verify_password("changed123", client.password_hash)
+
+
+@pytest.mark.parametrize("change", [{"password": "another-pass"}, {"email": "new@example.com"}])
+@pytest.mark.parametrize("current", [None, "wrong-pass"])
+def test_profile_email_and_password_need_the_current_password(db, change, current):
+    client = _client(db, password_hash=hash_password("current-pass"))
+    before = (client.email, client.password_hash)
+    with pytest.raises(HTTPException) as refused:
+        auth.update_profile(auth.ProfileUpdate(**change, current_password=current), db, client)
+    assert refused.value.status_code == 403
+    assert (client.email, client.password_hash) == before
+
+
+def test_profile_name_changes_without_a_password_and_short_passwords_are_refused(db):
+    client = _client(db, password_hash=hash_password("current-pass"))
+    auth.update_profile(auth.ProfileUpdate(name=" 新しい名前 "), db, client)
+    assert client.name == "新しい名前"
+    with pytest.raises(HTTPException) as refused:
+        auth.update_profile(auth.ProfileUpdate(password="short", current_password="current-pass"), db, client)
+    assert refused.value.status_code == 422
+
+
+def test_profile_email_already_used_is_a_conflict(db):
+    client = _client(db, password_hash=hash_password("current-pass"))
+    _client(db, username="other")
+    with pytest.raises(Conflict):
+        auth.update_profile(auth.ProfileUpdate(email="other@example.com", current_password="current-pass"), db, client)
 
 
 def test_list_asset_accounts_filters_type_and_client_but_keeps_inactive_assets(db):

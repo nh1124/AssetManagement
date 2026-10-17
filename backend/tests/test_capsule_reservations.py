@@ -14,7 +14,6 @@ try:
     from backend.app.services import capsule_service as capsule, ledger_service as ledger
     from backend.app.services.data_health_service import check_data_health
     from backend.app.services.fx_service import get_client_currency
-    from backend.app.routers.capsules import preview_for_transaction
     from backend.app.workflows import ledger_entry_workflow as workflow
 except ModuleNotFoundError:
     from app import models, schemas
@@ -22,7 +21,6 @@ except ModuleNotFoundError:
     from app.services import capsule_service as capsule, ledger_service as ledger
     from app.services.data_health_service import check_data_health
     from app.services.fx_service import get_client_currency
-    from app.routers.capsules import preview_for_transaction
     from app.workflows import ledger_entry_workflow as workflow
 
 WHEN = date(2026, 10, 11)
@@ -271,17 +269,6 @@ def test_detached_preview_writes_nothing(posting):
     assert specs[0].destination_account_id == reserve.id
     assert specs[0].amount == 3000
     assert specs[0].auto_post is False
-    response = preview_for_transaction(
-        schemas.CapsuleTransactionPreviewRequest(
-            description="Lunch",
-            amount=10000,
-            date=WHEN,
-            legs=entries,
-        ),
-        db=db,
-        current_client=client,
-    )
-    assert response[0]["capsule_name"] == "Savings"
     assert not db.new and not db.dirty
     assert db.query(models.TransactionProposal).count() == 0
     assert db.query(models.Transaction).count() == 0
