@@ -596,3 +596,42 @@ def test_a_story_resolves_more_than_64_events_without_a_branch_cap(db):
     draft = service.create(db, 1, "空")
     assert len(service.resolve(db, 1, service.get_goal(db, 1)).events) == 80
     assert service.resolve(db, 1, draft).events == []
+
+
+def test_goal_preview_lists_moves_detachments_and_missing_capsules_without_writing(db):
+    original, root, children, _ = story(db)
+    moved = earmark(db, root, "移る")
+    lost = earmark(db, children[0], "外れる")
+    clone = service.duplicate(db, 1, original.id, "複製")
+    # The clone drops the event that carried "外れる", so its lineage has no target.
+    dropped = db.query(models.LifeEvent).filter_by(scenario_id=clone.id, lineage=children[0].lineage).one()
+    db.delete(dropped)
+    db.commit()
+    before = journal_snapshot(db)
+    preview = service.goal_preview(db, 1, clone.id)
+    assert preview["already_goal"] is False
+    assert [(row["capsule_name"], row["to_event_name"]) for row in preview["moves"]] == [("移る", root.name)]
+    assert [row["capsule_name"] for row in preview["detach"]] == ["外れる"]
+    # children[1] has no capsule anywhere, so it would start the goal without one.
+    assert [row["event_name"] for row in preview["missing"]] == [children[1].name]
+    assert journal_snapshot(db) == before
+    assert original.is_goal and not clone.is_goal
+    assert db.get(models.Capsule, moved.id).life_event_id == root.id
+    assert db.get(models.Capsule, lost.id).life_event_id == children[0].id
+
+
+def test_goal_preview_for_the_current_goal_reports_only_events_without_capsules(db):
+    original, root, children, _ = story(db)
+    earmark(db, root, "あり")
+    preview = service.goal_preview(db, 1, original.id)
+    assert preview["already_goal"] is True and preview["moves"] == [] and preview["detach"] == []
+    assert {row["event_id"] for row in preview["missing"]} == {child.id for child in children}
+
+
+def test_goal_preview_skips_income_and_archived_events(db):
+    original, root, children, _ = story(db)
+    children[0].direction = "income"
+    children[1].archived_at = datetime.utcnow()
+    db.commit()
+    preview = service.goal_preview(db, 1, original.id)
+    assert [row["event_id"] for row in preview["missing"]] == [root.id]

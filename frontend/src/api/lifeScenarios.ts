@@ -84,6 +84,20 @@ export async function setAccountReturns(id: number, returns: LifeScenarioAccount
     return (await api.put<LifeScenario>(`/life-scenarios/${id}/account-returns`, { returns })).data;
 }
 
+export interface GoalPreview {
+    scenario_id: number;
+    scenario_name: string;
+    already_goal: boolean;
+    moves: Array<{ capsule_id: number; capsule_name: string; from_event_name: string; to_event_id: number; to_event_name: string }>;
+    detach: Array<{ capsule_id: number; capsule_name: string; event_name: string }>;
+    missing: Array<{ event_id: number; event_name: string; target_amount: number }>;
+}
+
+/** What making this scenario the goal would do to capsules, without doing it. */
+export async function goalPreview(id: number): Promise<GoalPreview> {
+    return (await api.get<GoalPreview>(`/life-scenarios/${id}/goal-preview`)).data;
+}
+
 export async function makeGoal(id: number, confirm_detach = false): Promise<LifeScenario> {
     return (await api.post<LifeScenario>(`/life-scenarios/${id}/goal`, { confirm_detach })).data;
 }

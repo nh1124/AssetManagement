@@ -66,7 +66,8 @@ function ScenariosForClient({ currency, clientName }: { currency: string; client
             <h2 className="font-semibold">シナリオ一覧</h2>
             <button type="button" disabled={disabled} onClick={() => setDialog({ mode: 'create' })} className={buttonClass}>新しいシナリオ</button>
         </div>
-        <Feedback loading={resource.loading} error={resource.error || mutation.error || goal.error} />
+        <Feedback loading={resource.loading} error={resource.error || mutation.error || goal.error} message={goal.message} />
+        {goal.dialog}
         {resource.data && <DataTable columns={['比較', '名称', 'イベント数', '最終純資産（中央値）', '前提条件', '']}>
             {scenarios.map((scenario) => {
                 const projected = figures.get(scenario.id);

@@ -190,6 +190,8 @@ def _seed(db, scenario, today):
             "capsule_id": capsule.id, "product_id": product.id, "transaction_id": lunch.id, "month": today.strftime("%Y-%m"),
             "plan_ids": str(plan.id) if plan else None,
             "ids": f"{life_scenario.id},{alternate_scenario.id}",
+            # Preview switching the goal to the other story, the case that reads the most.
+            "scenario_id": alternate_scenario.id,
             "start_date": start.isoformat(), "end_date": end.isoformat(),
             # Statement reconciliation is a pure read, including its historical claims.
             "as_of": today.isoformat(), "statement": "98800",

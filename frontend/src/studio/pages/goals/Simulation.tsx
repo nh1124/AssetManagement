@@ -103,6 +103,7 @@ function SimulationEditor({ initial, accounts, currency, clientName }: { initial
             <button type="button" disabled={goal.busy || locked} onClick={() => goal.chooseGoal(current.id)} className={buttonClass}>このシナリオをゴールにする</button>
         </div>}
         <Feedback error={error || goal.error} message={goal.message} />
+        {goal.dialog}
         {pending && <p role="status" className="text-xs text-[var(--studio-text-muted)]">試算・保存中…</p>}
         <div aria-busy={pending} className="space-y-5 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
             <ScenarioProjectionChart scenarios={comparison} focusedId={focusedId} currency={currency} colourIds={initial.map((scenario) => scenario.id)} />

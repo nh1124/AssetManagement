@@ -58,7 +58,8 @@ function ComparisonResults({ scenarios, currency, disabled, onChanged }: { scena
                 </button>
             </div>)}
         </div>
-        <Feedback error={goal.error} />
+        <Feedback error={goal.error} message={goal.message} />
+        {goal.dialog}
         {ids.length === 0 ? <p className="text-sm text-[var(--studio-text-muted)]">比較するシナリオを選んでください。</p>
             // Remount on selection so stale projections and errors cannot describe a new set.
             : <ComparisonPlot key={`${checkedKey}:${revision}`} ids={checkedKey} scenarios={scenarios} focusedId={focusedId} currency={currency} busy={disabled || goal.busy} onMakeGoal={goal.chooseGoal} />}

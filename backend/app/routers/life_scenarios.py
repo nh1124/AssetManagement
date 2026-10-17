@@ -72,6 +72,15 @@ def account_returns(
     return service.describe(db, current_client.id, scenario)
 
 
+@router.get("/{scenario_id}/goal-preview")
+def goal_preview(
+    scenario_id: int,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    return service.goal_preview(db, current_client.id, scenario_id)
+
+
 @router.post("/{scenario_id}/goal")
 def goal(
     scenario_id: int,

@@ -181,6 +181,49 @@ def replace_account_returns(db: Session, client_id: int, scenario_id: int, retur
     return scenario
 
 
+def goal_preview(db: Session, client_id: int, scenario_id: int) -> dict:
+    """What making this scenario the goal would do to real money, before doing it.
+
+    The same lineage rule as make_goal, read-only, so the user can confirm every
+    capsule that moves, every one that would be detached, and which of the new
+    goal's spending events would be left without a capsule.
+    """
+    scenario = get(db, client_id, scenario_id)
+    previous = get_goal(db, client_id)
+    events = db.query(models.LifeEvent).filter_by(client_id=client_id, scenario_id=scenario.id).order_by(
+        models.LifeEvent.target_date, models.LifeEvent.id,
+    ).all()
+    by_lineage = {event.lineage: event for event in events}
+    moves, detach = [], []
+    if previous is not None and previous.id != scenario.id:
+        receiving: set[int] = set()
+        linked = db.query(models.Capsule, models.LifeEvent).join(
+            models.LifeEvent, models.LifeEvent.id == models.Capsule.life_event_id,
+        ).filter(models.Capsule.client_id == client_id, models.LifeEvent.client_id == client_id,
+                 models.LifeEvent.scenario_id == previous.id).order_by(models.Capsule.id).all()
+        for capsule, event in linked:
+            target = by_lineage.get(event.lineage)
+            if target is None:
+                detach.append({"capsule_id": capsule.id, "capsule_name": capsule.name, "event_name": event.name})
+            else:
+                receiving.add(target.id)
+                moves.append({"capsule_id": capsule.id, "capsule_name": capsule.name,
+                              "from_event_name": event.name, "to_event_id": target.id, "to_event_name": target.name})
+    else:
+        # Already the goal, or the first goal: only capsules already on these events count.
+        receiving = {event_id for (event_id,) in db.query(models.Capsule.life_event_id).filter(
+            models.Capsule.client_id == client_id,
+            models.Capsule.life_event_id.in_([event.id for event in events]),
+        ).all()}
+    # Income events never take a capsule, and archived ones no longer need funding.
+    missing = [{"event_id": event.id, "event_name": event.name, "target_amount": event.target_amount}
+               for event in events
+               if event.direction == "expense" and event.archived_at is None and event.id not in receiving]
+    return {"scenario_id": scenario.id, "scenario_name": scenario.name,
+            "already_goal": previous is not None and previous.id == scenario.id,
+            "moves": moves, "detach": detach, "missing": missing}
+
+
 def make_goal(db: Session, client_id: int, scenario_id: int, confirm_detach: bool = False) -> models.LifeScenario:
     _lock(db, client_id)
     scenario = get(db, client_id, scenario_id)
