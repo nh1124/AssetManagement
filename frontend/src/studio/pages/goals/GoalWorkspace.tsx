@@ -53,10 +53,10 @@ function GoalWorkspaceForClient({ goalId, currency, clientName }: { goalId: stri
     const accountLabel = account ? `${account.name}（${ACCOUNT_TYPES[account.account_type]}）` : goal?.account_id != null ? `#${goal.account_id}（一覧にありません）` : '未設定';
     return <section className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
-            <div><Link to={goal?.archived_at ? `${eventBase}?archived=true` : eventBase} className="text-sm text-[var(--studio-accent)] hover:underline">ライフイベント一覧へ</Link><h2 className="mt-2 text-lg font-semibold">{goal?.name ?? 'ライフイベント'}{goal?.archived_at && '（中止・アーカイブ）'}</h2></div>
+            <div><Link to={goal?.archived_at ? `${eventBase}?archived=true` : eventBase} className="text-sm text-[var(--studio-accent)] hover:underline">ライフイベント一覧へ</Link><h2 className="mt-2 text-lg font-semibold">{goal?.name ?? 'ライフイベント'}{goal?.archived_at && '（アーカイブ済み）'}</h2></div>
             {goal && <div className="flex flex-wrap gap-2">
                 <button type="button" disabled={disabled || dialog !== null} onClick={() => setDialog('edit')} className={buttonClass}>編集</button>
-                {goal.archived_at ? <button type="button" disabled={disabled || dialog !== null} onClick={() => run(() => unarchiveGoal(goal.id), 'ライフイベントを戻しました。停止した規則と戻したお金は、そのままです。')} className={buttonClass}>戻す</button> : <button type="button" disabled={disabled || dialog !== null} onClick={() => setDialog('archive')} className={buttonClass}>中止する</button>}
+                {goal.archived_at ? <button type="button" disabled={disabled || dialog !== null} onClick={() => run(() => unarchiveGoal(goal.id), 'ライフイベントを戻しました。停止した規則と戻したお金は、そのままです。')} className={buttonClass}>戻す</button> : <button type="button" disabled={disabled || dialog !== null} onClick={() => setDialog('archive')} className={buttonClass}>アーカイブする</button>}
                 <button type="button" disabled={disabled || dialog !== null} onClick={() => setDialog('delete')} className={`${buttonClass} text-[var(--studio-danger)]`}>削除</button>
             </div>}
         </div>
@@ -93,7 +93,7 @@ function GoalWorkspaceForClient({ goalId, currency, clientName }: { goalId: stri
                 <GoalEditor goal={goal} currency={currency} embedded busy={disabled} onCancel={() => { if (!busy) setDialog(null); }} onSave={(action) => run(action, 'ライフイベントを保存しました。')} />
             </Overlay>}
             {dialog === 'capsules' && !income && isGoal && <GoalCapsuleLinks goal={goal} busy={busy} onClose={() => setDialog(null)} onChanged={refresh} onBusy={setDetailBusy} />}
-            {dialog === 'archive' && clientName && <GoalArchive goal={goal} clientName={clientName} busy={busy} error={mutation.error} onCancel={() => setDialog(null)} onArchive={(action) => run(action, 'ライフイベントを中止しました。取り置きには選択した処理を適用しました。')} />}
+            {dialog === 'archive' && clientName && <GoalArchive goal={goal} clientName={clientName} busy={busy} error={mutation.error} onCancel={() => setDialog(null)} onArchive={(action) => run(action, 'ライフイベントをアーカイブしました。取り置きには選択した処理を適用しました。')} />}
             {dialog === 'delete' && clientName && <Overlay title={`「${goal.name}」を削除`} onClose={() => { if (!busy) setDialog(null); }}><Feedback error={mutation.error} /><GoalDeletion goal={goal} clientName={clientName} busy={disabled} onDelete={(action) => run(action, 'ライフイベントを削除しました。', true)} /></Overlay>}
         </>}
     </section>;

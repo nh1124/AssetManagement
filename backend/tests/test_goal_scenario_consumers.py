@@ -213,8 +213,11 @@ def test_scope_preserves_archive_option_scenario_editor_and_record_name_resoluti
     context = strategy_service.get_goal_simulation_context(db, 1, original)
     assert context["total_priority_weight"] == 4
     assert context["allocated_monthly_savings"] == 22_500
+    # Savings are shared within one story, so a draft event competes only with its
+    # own scenario's events: an exact copy of the goal gets the original's share,
+    # and the goal's own figures above stay as they were.
     draft_context = strategy_service.get_goal_simulation_context(db, 1, draft_events[0])
-    assert draft_context["allocated_monthly_savings"] == 0
+    assert draft_context["allocated_monthly_savings"] == 22_500
 
 
 def test_current_progress_conditions_treat_a_draft_reference_as_unknown_until_adopted(db):

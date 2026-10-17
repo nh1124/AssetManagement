@@ -47,7 +47,7 @@ function LifeEventListForClient({ currency, clientName }: { currency: string; cl
                 <td className="whitespace-nowrap px-5 py-3">{formatDate(goal.target_date)}</td>
                 <td className="whitespace-nowrap px-5 py-3 tabular-nums">{goal.direction === 'income' || goal.current_funded == null ? '—' : formatCurrency(goal.current_funded, currency)}</td>
                 <td className="whitespace-nowrap px-5 py-3 tabular-nums">{goal.direction === 'income' ? '—' : goalPercent(goal.funded_percentage)}</td>
-                <td className="whitespace-nowrap px-5 py-3">{goal.direction === 'income' ? '—' : goal.archived_at ? '中止・アーカイブ' : goalPlanStatus(goal)}</td>
+                <td className="whitespace-nowrap px-5 py-3">{goal.direction === 'income' ? '—' : goal.archived_at ? 'アーカイブ済み' : goalPlanStatus(goal)}</td>
             </tr>) : <tr><td colSpan={7} className="px-5 py-4 text-[var(--studio-text-muted)]">ライフイベントはありません。</td></tr>}
         </DataTable>}
     </section>;

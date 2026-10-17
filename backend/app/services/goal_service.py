@@ -31,6 +31,7 @@ __all__ = [
     "delete_goal",
     "list_goal_capsules",
     "get_life_event",
+    "story_events_query",
 ]
 
 
@@ -45,6 +46,15 @@ def goal_events_query(db: Session, client_id: int, *, include_archived: bool = F
     if not include_archived:
         query = query.filter(models.LifeEvent.archived_at.is_(None))
     return query
+
+
+def story_events_query(db: Session, client_id: int, event: models.LifeEvent) -> Query:
+    """The active events of the scenario this event belongs to -- its own story."""
+    return db.query(models.LifeEvent).filter(
+        models.LifeEvent.client_id == client_id,
+        models.LifeEvent.scenario_id == event.scenario_id,
+        models.LifeEvent.archived_at.is_(None),
+    )
 
 
 def get_life_event(db: Session, client_id: int, life_event_id: int) -> models.LifeEvent | None:

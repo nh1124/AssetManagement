@@ -15,7 +15,7 @@ from .. import models
 from .ledger_valuation import calculate_account_valued_balance
 from .reporting_service import get_balance_sheet, get_net_worth_history
 from .institution_service import blended_after_tax_return, positive_asset_balance
-from .goal_service import goal_events_query, list_goals
+from .goal_service import goal_events_query, list_goals, story_events_query
 
 # Every projection draws from this one seed, so a figure does not move when
 # nothing about the plan moved, and two scenarios can be read as differing by
@@ -283,16 +283,19 @@ def get_goal_simulation_context(
     if schedule_monthly is not None:
         base_monthly_savings = schedule_monthly
 
-    life_events = goal_events_query(db, client_id).filter(
+    # Savings are shared within one story: a goal event competes with the goal's
+    # events, a draft event with its own scenario's events. A goal event's figures
+    # are therefore unchanged, and a draft scenario's milestones describe that
+    # story instead of reading zero.
+    life_events = story_events_query(db, client_id, event).filter(
         models.LifeEvent.direction == "expense",
     ).all()
     priority_weight_map = {1: 3, 2: 2, 3: 1}
     total_weight = sum(priority_weight_map.get(item.priority, 1) for item in life_events) or 1
     weight = priority_weight_map.get(event.priority, 1)
     # A called-off goal keeps its saved money but no longer competes for future savings.
-    # Draft events can be inspected by ID but cannot claim the real plan's savings.
-    is_goal_event = any(item.id == event.id for item in life_events)
-    allocation_ratio = (weight / total_weight if allocation_mode != "direct" else 1.0) if is_goal_event else 0.0
+    in_story = any(item.id == event.id for item in life_events)
+    allocation_ratio = (weight / total_weight if allocation_mode != "direct" else 1.0) if in_story else 0.0
 
     current_funded, weighted_return = calculate_current_funded_and_weighted_return(event, db)
     tax_rate = config.tax_rate if config else 20.0

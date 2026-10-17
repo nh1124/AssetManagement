@@ -36,10 +36,10 @@ export default function GoalArchive({ goal, clientName, busy, error, onArchive, 
         const decision = action;
         const destination = decision === 'release' ? accountId : null;
         const detail = decision === 'release' ? `口座「${account?.name}」へ ${claimTotals(resource.data.capsules)} を戻します。` : ACTIONS.find((row) => row.value === decision)?.label;
-        if (!(await confirm(`「${clientName}」のライフイベント「${goal.name}」を中止します。\n${detail}\nライフイベントを戻しても、解除した紐づけは戻らず、停止した規則は停止したまま、戻したお金は戻したままです。`, '中止する'))) return;
+        if (!(await confirm(`「${clientName}」のライフイベント「${goal.name}」をアーカイブします。\n${detail}\nライフイベントを戻しても、解除した紐づけは戻らず、停止した規則は停止したまま、戻したお金は戻したままです。`, 'アーカイブする'))) return;
         onArchive(() => archiveGoal(goal.id, { capsule_action: decision, transfer_account_id: destination }));
     };
-    return <Overlay title={`「${goal.name}」を中止`} onClose={() => { if (!busy) onCancel(); }}>
+    return <Overlay title={`「${goal.name}」をアーカイブ`} onClose={() => { if (!busy) onCancel(); }}>
         <form id={formId} onSubmit={submit} className="space-y-4">
             <Feedback loading={resource.loading} error={resource.error || error} />
             {resource.data && <DataTable columns={['取り置き', '現在の確保額（通貨別）']}>
@@ -58,7 +58,7 @@ export default function GoalArchive({ goal, clientName, busy, error, onArchive, 
                     {resource.data && !resource.data.accounts.length && <p className="text-sm text-[var(--studio-danger)]">有効な資産口座を先に作成してください。</p>}
                 </>}
                 <p className="text-sm text-[var(--studio-text-muted)]">ライフイベントの復元は、取り置きの判断を取り消しません。解除した紐づけは戻らず、停止した規則は停止したまま、口座へ戻したお金は戻したままです。</p>
-                <div className="flex gap-2"><OverlayFooter><button type="submit" form={formId} disabled={locked || (action === 'release' && !account)} className={buttonClass}>中止を確認</button></OverlayFooter></div>
+                <div className="flex gap-2"><OverlayFooter><button type="submit" form={formId} disabled={locked || (action === 'release' && !account)} className={buttonClass}>アーカイブを確認</button></OverlayFooter></div>
             </fieldset>
         </form>
     </Overlay>;

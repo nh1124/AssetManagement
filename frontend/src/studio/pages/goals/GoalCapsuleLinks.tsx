@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 'react';
-import { getCapsules, getLifeEvents, updateCapsule } from '../../../api';
+import { createCapsule, getCapsules, getLifeEvents, updateCapsule } from '../../../api';
 import type { Capsule, LifeEvent } from '../../../types';
 import Overlay from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
 import { assetErrorMessage, useResource } from '../../useResource';
-import { DataTable, EditorActions, Feedback } from '../db/Database';
-import { useMutation } from '../db/forms';
+import { DataTable, EditorActions, Feedback, Field } from '../db/Database';
+import { buttonClass, inputClass, useMutation } from '../db/forms';
 
 async function loadAllCapsules() {
     const rows: Capsule[] = [];
@@ -15,6 +15,39 @@ async function loadAllCapsules() {
         rows.push(...page);
         if (page.length < 100) return rows;
     }
+}
+
+/** A capsule for this event, prefilled from it so most users only press save. */
+function NewCapsuleForm({ goal, onCreated, onBack }: {
+    goal: LifeEvent; onCreated: (capsule: Capsule) => void; onBack: () => void;
+}) {
+    const formId = useId();
+    const mutation = useMutation();
+    const [name, setName] = useState(goal.name);
+    const [target, setTarget] = useState(String(goal.target_amount ?? 0));
+    const [monthly, setMonthly] = useState('');
+    const submit = (event: FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
+        if (mutation.busy || !name.trim()) return;
+        let created: Capsule | null = null;
+        void mutation.run(async () => {
+            // Created already linked, so the list it returns to cannot unlink it by accident.
+            created = await createCapsule({
+                name: name.trim(), target_amount: Number(target),
+                monthly_contribution: monthly.trim() === '' ? 0 : Number(monthly), life_event_id: goal.id,
+            });
+        }, '取り置きを作成しました。', () => { if (created) onCreated(created); });
+    };
+    return <form id={formId} onSubmit={submit} className="space-y-4">
+        <button type="button" disabled={mutation.busy} onClick={onBack} className={buttonClass}>一覧に戻る</button>
+        <Feedback error={mutation.error} />
+        <fieldset disabled={mutation.busy} className="grid gap-4 md:grid-cols-2">
+            <Field label="名称"><input required value={name} onChange={(event) => setName(event.target.value)} className={inputClass} /></Field>
+            <Field label="目標額"><input required type="number" min="0" step="any" value={target} onChange={(event) => setTarget(event.target.value)} className={inputClass} /></Field>
+            <Field label="月額積立（任意）"><input type="number" min="0" step="any" value={monthly} onChange={(event) => setMonthly(event.target.value)} className={inputClass} /></Field>
+        </fieldset>
+        <EditorActions form={formId} busy={mutation.busy} onCancel={onBack} />
+    </form>;
 }
 
 function CapsuleLinkEditor({ goal, capsules, goals, onClose, onChanged, onBusy }: {
@@ -32,6 +65,7 @@ function CapsuleLinkEditor({ goal, capsules, goals, onClose, onChanged, onBusy }
         return () => { mounted.current = false; };
     }, []);
     const [rows, setRows] = useState(capsules);
+    const [creating, setCreating] = useState(false);
     const [selected, setSelected] = useState(() => new Set(capsules.filter((row) => row.life_event_id === goal.id).map((row) => row.id)));
     const eventName = (id: number, events = goals) => events.find((event) => event.id === id)?.name ?? `ライフイベント #${id}`;
     const save = (event: FormEvent<HTMLFormElement>) => {
@@ -76,7 +110,14 @@ function CapsuleLinkEditor({ goal, capsules, goals, onClose, onChanged, onBusy }
         }, '取り置きの紐づけを保存しました。', () => { if (completed) onClose(); })
             .finally(() => { inFlight.current = false; onBusy(false); });
     };
+    if (creating) return <NewCapsuleForm goal={goal} onBack={() => setCreating(false)} onCreated={(capsule) => {
+        setRows((previous) => [...previous, capsule]);
+        setSelected((previous) => new Set(previous).add(capsule.id));
+        setCreating(false);
+        onChanged();
+    }} />;
     return <form id={formId} onSubmit={save} className="space-y-4">
+        <button type="button" disabled={mutation.busy} onClick={() => setCreating(true)} className={buttonClass}>新しい取り置き</button>
         <Feedback error={mutation.error} />
         <fieldset disabled={mutation.busy}>
             <DataTable columns={['紐づける', '取り置き', '現在のライフイベント']}>
