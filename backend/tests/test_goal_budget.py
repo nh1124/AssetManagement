@@ -305,3 +305,50 @@ def test_destination_must_be_one_updatable_definition_or_one_account(db, story):
         workflow.preview(db, 1, options(savings_definition_id=yearly.id))
     with pytest.raises(Refused):
         workflow.preview(db, 1, options(savings_definition_id=definition.id, savings_account_id=story["savings"].id))
+
+
+
+def codes(result):
+    return [row["code"] for row in result["reminders"]]
+
+
+def test_status_breaks_savings_down_and_asks_for_a_first_reflection(db, story):
+    result = workflow.status(db, 1, START)
+    rows = {row["name"]: row for row in result["events"]}
+    assert result["goal"]["monthly_savings"] == 50000
+    assert (rows["車"]["kind"], rows["車"]["allocation"], rows["車"]["source"]) == ("near", 10000, "rule")
+    assert rows["別荘"]["kind"] == "simulation_only" and rows["別荘"]["allocation"] == 0
+    assert rows["退職金"]["kind"] == "income"
+    assert codes(result) == ["never"]
+
+
+def test_status_reminds_when_the_reflection_runs_out_or_the_goal_moves(db, story):
+    chosen = options(savings_account_id=story["savings"].id)
+    workflow.apply(db, 1, chosen, workflow.preview(db, 1, chosen)["fingerprint"])
+    now = workflow.status(db, 1, START)
+    # The budget now carries the whole 50,000: car capsule plus the goal row.
+    assert now["budget"]["total"] == 50000 and now["budget"]["difference"] == 0
+    assert codes(now) == ["coverage_ending"]
+    assert {row["name"]: row["source"] for row in now["events"]}["車"] == "reflection"
+    assert codes(workflow.status(db, 1, "2026-12"))[0] == "coverage_ended"
+    story["car"].target_amount_minor = 300000
+    db.add(models.LifeEvent(client_id=1, scenario_id=story["car"].scenario_id, name="新車", target_date=date(2030, 1, 1),
+                            target_amount_minor=100))
+    db.commit()
+    from app.services import life_scenario_service
+    life_scenario_service.update(db, 1, story["car"].scenario_id, {"monthly_savings": 60000})
+    later = codes(workflow.status(db, 1, START))
+    assert "savings_changed" in later and "events_changed" in later and "budget_drift" in later
+
+
+def test_a_far_event_entering_the_range_suggests_a_handover(db, story):
+    chosen = options(savings_account_id=story["savings"].id, months=3)
+    preview = workflow.preview(db, 1, chosen)
+    home = next(row for row in preview["events"] if row["name"] == "住宅")
+    workflow.apply(db, 1, chosen, preview["fingerprint"])
+    # Five years before the home's target month it becomes near.
+    result = workflow.status(db, 1, "2042-01")
+    near = next(row for row in result["reminders"] if row["code"] == "event_near")
+    assert near["event_id"] == story["home"].id
+    # Three reflected months of its far share were planned into the savings.
+    assert near["handover_amount"] == pytest.approx(home["allocation"] * 3)

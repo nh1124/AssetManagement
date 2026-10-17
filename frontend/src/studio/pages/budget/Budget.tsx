@@ -11,6 +11,8 @@ import { DataTable, EditorActions, Feedback, Field } from '../db/Database';
 import { buttonClass, inputClass, useMutation } from '../db/forms';
 import MonthCopy from './MonthCopy';
 import GoalBudgetReflection from '../goals/GoalBudgetReflection';
+import GoalReminders from '../goals/GoalReminders';
+import { getGoalBudgetStatus } from '../../../api/goalBudget';
 import MonthPicker from '../ledger/MonthPicker';
 
 // budget_plan_service returns plan_lines and plan_id, not the legacy budget model.
@@ -57,6 +59,8 @@ function MonthlyBudget({ period, currency, clientName, onBusy }: { period: strin
     const [copyBusy, setCopyBusy] = useState(false);
     const [editing, setEditing] = useState<MonthlyPlanLine | null>(null);
     const [reflecting, setReflecting] = useState(false);
+    const loadStatus = useCallback(() => getGoalBudgetStatus(period), [period]);
+    const goalStatus = useResource(loadStatus);
     const disabled = resource.loading || Boolean(resource.error) || mutation.busy || copyBusy || !clientName;
     const save = async (amount: number) => {
         if (disabled || !editing || !resource.data) return;
@@ -95,7 +99,10 @@ function MonthlyBudget({ period, currency, clientName, onBusy }: { period: strin
             <MonthCopy period={period} disabled={disabled || editing !== null} clientName={clientName} onBusy={(busy) => { setCopyBusy(busy); onBusy(busy); }} onCopied={resource.reload} />
             <button type="button" disabled={disabled || editing !== null} onClick={() => setReflecting(true)} className={buttonClass}>ゴールから更新</button>
         </div>
-        {reflecting && <GoalBudgetReflection title="ゴールから予算を更新" initialPeriod={period} onClose={() => setReflecting(false)} onApplied={resource.reload} />}
+        {reflecting && <GoalBudgetReflection title="ゴールから予算を更新" initialPeriod={period} onClose={() => { setReflecting(false); goalStatus.reload(); }} onApplied={resource.reload} />}
+        {/* Reasons to reflect again; the goal's breakdown itself lives on the goal page. */}
+        {goalStatus.data?.goal && goalStatus.data.reminders.length > 0 && <GoalReminders reminders={goalStatus.data.reminders}
+            action={<button type="button" disabled={disabled || editing !== null} onClick={() => setReflecting(true)} className={buttonClass}>ゴールから更新</button>} />}
         {editing && <Overlay title={`「${lineName(editing)}」の金額を編集`} onClose={() => setEditing(null)} footer={editing.id != null
             ? <button type="button" disabled={disabled} onClick={() => remove(editing)} className={`${buttonClass} mr-auto text-[var(--studio-danger)]`}>削除</button>
             : <span className="mr-auto text-xs text-[var(--studio-text-muted)]">未保存のため削除不可</span>}><Feedback error={mutation.error} /><AmountEditor key={editing.id ?? lineName(editing)} line={editing} currency={currency} busy={disabled} onSave={save} onCancel={() => setEditing(null)} /></Overlay>}

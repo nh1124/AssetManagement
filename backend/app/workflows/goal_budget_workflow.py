@@ -39,7 +39,11 @@ from ..services.budget_plan_store import (
     update_plan_lines,
 )
 from ..services.cache_service import invalidate_client
-from ..services import goal_baseline_service, goal_budget_record
+from ..services import goal_baseline_service, goal_budget_record, life_scenario_service
+from ..services.budget_plan_service import get_budget_summary
+from ..services.goal_service import list_goals
+from ..services.life_scenario_scope import get_goal
+from ..services.strategy_service import DEFAULT_NEAR_YEARS, event_monthly_allocation
 from ..services.goal_budget_inputs import goal_budget_inputs
 from ..services.goal_service import get_life_event
 from ..services.life_scenario_scope import lock_client
@@ -349,6 +353,7 @@ def apply(db: Session, client_id: int, options: dict, fingerprint: str, *, updat
                 end_period=planned["periods"][-1], options=planned["options"], summary=planned["savings"],
                 events=[{key: row.get(key) for key in (
                     "event_id", "lineage", "name", "direction", "status", "near", "monthly_required", "allocation",
+                    "target_amount", "target_date",
                 )} for row in planned["events"]],
             )
             if update_baseline:
@@ -368,4 +373,133 @@ def apply(db: Session, client_id: int, options: dict, fingerprint: str, *, updat
                              for event_id, capsule in created_capsules.items()],
         "periods": planned["periods"],
         "currency": currency,
+    }
+
+
+def _months_between(start: str, end: str) -> int:
+    (start_year, start_month), (end_year, end_month) = ((int(part) for part in value.split("-")) for value in (start, end))
+    return (end_year - start_year) * 12 + (end_month - start_month)
+
+
+def _planned_far_savings(records, lineage: str, period: str) -> float:
+    """What the reflections so far set aside each month for an event while it was far."""
+    total = 0.0
+    for row in records:
+        entry = next((item for item in row.events or [] if item.get("lineage") == lineage), None)
+        if entry is None or entry.get("near") or entry.get("status") != "reflected":
+            continue
+        last = min(row.end_period, period)
+        months = _months_between(row.start_period, last) + 1
+        if months > 0:
+            total += float(entry.get("allocation") or 0.0) * months
+    return total
+
+
+def _reminders(goal, total: float, events, records, period: str, budget_total: float) -> list[dict]:
+    """Why the budget may no longer follow the goal: each a reason to reflect again."""
+    record = records[-1] if records else None
+    if record is None:
+        return [{"code": "never", "message": "ゴールをまだ予算に反映していません。"}]
+    reminders = []
+    if record.scenario_id != goal.id:
+        reminders.append({"code": "goal_changed", "message": "ゴールのシナリオが前回の反映から変わっています。"})
+    if record.end_period < period:
+        reminders.append({"code": "coverage_ended", "message": f"予算に反映したのは {record.end_period} までです。{period} 以降の予算を更新してください。"})
+    elif record.end_period == period:
+        reminders.append({"code": "coverage_ending", "message": f"予算に反映したのは今月（{period}）までです。来月分の更新が必要です。"})
+    options = record.options or {}
+    summary = record.summary or {}
+    if options.get("savings_source") == "scenario" and abs(float(summary.get("scenario_amount") or 0) - total) >= 1:
+        reminders.append({"code": "savings_changed",
+                          "message": f"月の積立が前回の反映（{float(summary.get('scenario_amount') or 0):,.0f}）から {total:,.0f} に変わっています。"})
+    if record.scenario_id == goal.id:
+        known = {row.get("lineage"): row for row in record.events or []}
+        near_years = options.get("near_years", DEFAULT_NEAR_YEARS)
+        changed = False
+        for event in events:
+            if event.direction != "expense":
+                continue
+            row = known.get(event.lineage)
+            if row is None:
+                changed = True
+                continue
+            if ("target_amount" in row and abs(float(row["target_amount"] or 0) - float(event.target_amount or 0)) >= 1) or (
+                    "target_date" in row and row["target_date"] != event.target_date.isoformat()):
+                changed = True
+            months = _months_between(period, event.target_date.strftime("%Y-%m"))
+            if row.get("status") == "reflected" and not row.get("near") and near_years is not None and months < near_years * 12:
+                handover = _planned_far_savings(records, event.lineage, period)
+                reminders.append({
+                    "code": "event_near", "event_id": event.id,
+                    "message": f"「{event.name}」が取り置きで積み立てる範囲に入りました。取り置きの月額を予算に入れてください。"
+                               + (f"これまで積立に含めて計画した約 {handover:,.0f} を取り置きへ確保すると、月額を抑えられます。" if handover >= 1 else ""),
+                    "handover_amount": round(handover, 2),
+                })
+        if changed or {row.get("lineage") for row in record.events or [] if row.get("direction") == "expense"} - {event.lineage for event in events}:
+            reminders.append({"code": "events_changed", "message": "ライフイベントが前回の反映から追加・変更されています。"})
+    if abs(budget_total - total) >= max(1.0, total * 0.01):
+        reminders.append({"code": "budget_drift",
+                          "message": f"今月の予算の積立の合計（{budget_total:,.0f}）が月の積立（{total:,.0f}）と {budget_total - total:+,.0f} ずれています。"})
+    return reminders
+
+
+def status(db: Session, client_id: int, period: str) -> dict:
+    """How the monthly savings is divided among the goal's events, and whether to reflect again.
+
+    Read-only. The budget side counts this month's allocations into capsules and
+    asset accounts -- everything the budget sets aside, whatever its source.
+    """
+    goal = get_goal(db, client_id)
+    if goal is None:
+        return {"goal": None, "events": [], "budget": None, "reflection": None, "reminders": []}
+    total = life_scenario_service.monthly_savings(db, goal)
+    year, month = (int(part) for part in period.split("-"))
+    today = date(year, month, 1)
+    records = goal_budget_record.history(db, client_id)
+    record = records[-1] if records else None
+    near_years = (record.options or {}).get("near_years", DEFAULT_NEAR_YEARS) if record is not None and record.scenario_id == goal.id else DEFAULT_NEAR_YEARS
+    events = list_goals(db, client_id)
+    rows = []
+    for event in sorted(events, key=lambda item: (item.target_date, item.id)):
+        if event.direction != "expense":
+            rows.append({"event_id": event.id, "name": event.name, "direction": "income", "kind": "income",
+                         "allocation": 0.0, "source": None, "target_date": event.target_date.isoformat()})
+            continue
+        allocation, source = event_monthly_allocation(db, client_id, event, total, today)
+        months = _months_between(period, event.target_date.strftime("%Y-%m"))
+        kind = ("simulation_only" if event.budget_reflection_effective == "simulation_only"
+                else "near" if near_years is None or months < near_years * 12 else "far")
+        rows.append({"event_id": event.id, "name": event.name, "direction": "expense", "kind": kind,
+                     "reflection": event.budget_reflection_effective, "allocation": round(allocation, 2),
+                     "source": source, "target_date": event.target_date.isoformat()})
+    summary = get_budget_summary(db, client_id, period)
+    budget_total = 0.0
+    lines = []
+    for line in summary.get("plan_lines", []):
+        if line.get("line_type") != "allocation":
+            continue
+        if line.get("target_type") != "capsule":
+            account = ledger_service.get_account(db, client_id, line["account_id"]) if line.get("account_id") else None
+            if account is None or account.account_type != "asset":
+                continue
+        amount = float(line.get("amount") or 0.0)
+        if line.get("id") is None and not amount:
+            # A definition not yet saved for the month still runs at its own amount.
+            amount = float(line.get("recurring_amount") or 0.0)
+        budget_total += amount
+        lines.append({"name": line.get("target_name") or line.get("name"), "account_name": line.get("account_name"),
+                      "amount": amount, "actual": float(line.get("actual") or 0.0), "source_kind": line.get("source_kind")})
+    return {
+        "goal": {"id": goal.id, "name": goal.name, "monthly_savings": total,
+                 "monthly_savings_is_default": goal.monthly_savings_minor is None},
+        "period": period,
+        "near_years": near_years,
+        "events": rows,
+        "allocated_total": round(sum(row["allocation"] for row in rows), 2),
+        "budget": {"total": round(budget_total, 2), "difference": round(budget_total - total, 2), "lines": lines},
+        "reflection": None if record is None else {
+            "applied_at": record.applied_at.isoformat(), "start_period": record.start_period,
+            "end_period": record.end_period, "scenario_id": record.scenario_id, "options": record.options,
+        },
+        "reminders": _reminders(goal, total, events, records, period, budget_total),
     }

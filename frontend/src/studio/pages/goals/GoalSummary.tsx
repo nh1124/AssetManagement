@@ -12,6 +12,7 @@ import { useResource } from '../../useResource';
 import { DataTable, Feedback } from '../db/Database';
 import { buttonClass, primaryClass } from '../db/forms';
 import GoalBaselinePanel from './GoalBaselinePanel';
+import GoalSavingsBreakdown from './GoalSavingsBreakdown';
 import GoalBudgetReflection from './GoalBudgetReflection';
 import NoLifeEvents from './NoLifeEvents';
 import { goalPercent } from './presentation';
@@ -52,6 +53,8 @@ function Projection({ scenario, currency }: { scenario: ProjectedLifeScenario; c
 function ScenarioSummary({ scenario, events, currency }: { scenario: ProjectedLifeScenario; events: LifeEvent[]; currency: string }) {
     const navigate = useNavigate();
     const [reflecting, setReflecting] = useState(false);
+    // A reflection changes the breakdown and may move the baseline; reload both after it.
+    const [version, setVersion] = useState(0);
     const progress = new Map(events.map((event) => [event.id, event]));
     const rows = [...scenario.events].sort((a, b) => (a.resolved_date ?? '\uffff').localeCompare(b.resolved_date ?? '\uffff') || a.id - b.id);
     // Income events are inflows, not funding needs; keep them in the chart and table only.
@@ -68,7 +71,7 @@ function ScenarioSummary({ scenario, events, currency }: { scenario: ProjectedLi
                 <button type="button" onClick={() => setReflecting(true)} className={`inline-flex items-center gap-2 ${buttonClass}`}><Wallet size={14} aria-hidden="true" />予算に反映</button>
             </div>
         </div>
-        {reflecting && <GoalBudgetReflection onClose={() => setReflecting(false)} />}
+        {reflecting && <GoalBudgetReflection onClose={() => { setReflecting(false); setVersion((value) => value + 1); }} />}
         <dl className="grid gap-4 sm:grid-cols-3 lg:grid-cols-5">
             {[
                 ['合計金額', formatCurrency(required, currency)],
@@ -79,7 +82,8 @@ function ScenarioSummary({ scenario, events, currency }: { scenario: ProjectedLi
             ].map(([label, value]) => <div key={label} className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-4"><dt className="text-xs text-[var(--studio-text-muted)]">{label}</dt><dd className="mt-2 font-semibold tabular-nums">{value}</dd></div>)}
         </dl>
         <Projection scenario={scenario} currency={currency} />
-        <GoalBaselinePanel currency={currency} />
+        <GoalSavingsBreakdown key={`breakdown-${version}`} currency={currency} onReflect={() => setReflecting(true)} />
+        <GoalBaselinePanel key={`baseline-${version}`} currency={currency} />
         <section className="space-y-3">
             <h3 className="font-semibold">ライフイベント</h3>
             <DataTable columns={['名称', '種別', '日付', '金額', '確保済み', '進捗']}>

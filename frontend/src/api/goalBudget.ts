@@ -104,3 +104,38 @@ export async function previewGoalBudget(options: GoalBudgetOptions): Promise<Goa
 export async function applyGoalBudget(options: GoalBudgetOptions, fingerprint: string, updateBaseline = false): Promise<GoalBudgetResult> {
     return (await api.post<GoalBudgetResult>('/goal-budget/apply', { ...options, fingerprint, update_baseline: updateBaseline })).data;
 }
+
+export interface GoalBudgetReminder {
+    code: 'never' | 'goal_changed' | 'coverage_ended' | 'coverage_ending' | 'savings_changed' | 'event_near' | 'events_changed' | 'budget_drift';
+    message: string;
+    event_id?: number;
+    /** For event_near: what earlier reflections planned into the savings for this event. */
+    handover_amount?: number;
+}
+
+export interface GoalBudgetStatusEvent {
+    event_id: number;
+    name: string;
+    direction: 'expense' | 'income';
+    kind: 'near' | 'far' | 'simulation_only' | 'income';
+    reflection?: BudgetReflection;
+    allocation: number;
+    source: 'reflection' | 'rule' | null;
+    target_date: string;
+}
+
+export interface GoalBudgetOverview {
+    goal: { id: number; name: string; monthly_savings: number; monthly_savings_is_default: boolean } | null;
+    period: string;
+    near_years: number | null;
+    events: GoalBudgetStatusEvent[];
+    allocated_total: number;
+    budget: { total: number; difference: number; lines: Array<{ name: string; account_name: string | null; amount: number; actual: number; source_kind: string }> } | null;
+    reflection: { applied_at: string; start_period: string; end_period: string; scenario_id: number | null } | null;
+    reminders: GoalBudgetReminder[];
+}
+
+/** The savings breakdown for a month and the reasons to reflect again; read-only. */
+export async function getGoalBudgetStatus(period: string): Promise<GoalBudgetOverview> {
+    return (await api.get<GoalBudgetOverview>('/goal-budget/status', { params: { period } })).data;
+}

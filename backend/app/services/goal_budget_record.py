@@ -16,6 +16,13 @@ def latest(db: Session, client_id: int) -> models.GoalBudgetReflection | None:
     ).first()
 
 
+def history(db: Session, client_id: int) -> list[models.GoalBudgetReflection]:
+    """Every applied reflection, oldest first."""
+    return db.query(models.GoalBudgetReflection).filter_by(client_id=client_id).order_by(
+        models.GoalBudgetReflection.applied_at, models.GoalBudgetReflection.id,
+    ).all()
+
+
 def record(
     db: Session, client_id: int, *, scenario_id: int, start_period: str, end_period: str,
     options: dict, summary: dict, events: list[dict],

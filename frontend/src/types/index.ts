@@ -338,6 +338,9 @@ export interface LifeEvent {
     plan_gap?: number;
     plan_status?: 'Ahead' | 'On Track' | 'Watch' | 'Behind' | 'No Plan' | string;
     plan_progress_percentage?: number;
+    /** This event's share of the monthly savings, as the budget reflection divides it. */
+    monthly_allocation?: number;
+    allocation_source?: 'reflection' | 'rule' | 'direct' | null;
     plan_previous_milestone?: MilestonePlanSummary | null;
     plan_next_milestone?: MilestonePlanSummary | null;
     years_remaining?: number;

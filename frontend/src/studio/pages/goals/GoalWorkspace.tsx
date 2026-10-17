@@ -14,7 +14,7 @@ import GoalDeletion from './GoalDeletion';
 import GoalEditor from './GoalEditor';
 import GoalProjection from './GoalProjection';
 import Milestones from './Milestones';
-import { capsuleClaims, goalPercent, goalPlanStatus } from './presentation';
+import { capsuleClaims, goalPercent, goalPlanStatus, REFLECTIONS } from './presentation';
 import { useScenario } from './scenarioContext';
 
 function GoalWorkspaceForClient({ goalId, currency, clientName }: { goalId: string; currency: string; clientName?: string }) {
@@ -75,6 +75,10 @@ function GoalWorkspaceForClient({ goalId, currency, clientName }: { goalId: stri
                     ['種別', income ? '収入' : '支出'], ['口座・科目', accountLabel],
                     [income ? '金額' : '目標額', formatCurrency(goal.target_amount, currency)], ['目標日', formatDate(goal.target_date)],
                     ...(!income && isGoal ? [['現在の確保額', formatCurrency(goal.current_funded, currency)], ['進捗', goalPercent(goal.funded_percentage)], ['計画の状態', goalPlanStatus(goal)]] : []),
+                    ...(!income ? [
+                        ['予算への反映', REFLECTIONS[goal.budget_reflection_effective ?? 'firm']],
+                        ['毎月の積立（このイベント分）', `${formatCurrency(goal.monthly_allocation ?? 0, currency)}${goal.allocation_source === 'reflection' ? '（予算の反映どおり）' : goal.allocation_source === 'rule' ? '（計算上の配分）' : ''}`],
+                    ] : []),
                 ].map(([label, value]) => <div key={label}><dt className="text-xs text-[var(--studio-text-muted)]">{label}</dt><dd className="mt-2 font-semibold tabular-nums">{value}</dd></div>)}
             </dl>
             <details className="rounded-lg border border-[var(--studio-border)] p-5"><summary className="cursor-pointer font-semibold">マイルストーン</summary><div className="mt-5">
