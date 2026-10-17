@@ -10,7 +10,6 @@ import { DataTable, Feedback } from '../db/Database';
 import { ACCOUNT_TYPES, buttonClass, loadAccounts, useMutation } from '../db/forms';
 import GoalArchive from './GoalArchive';
 import GoalCapsuleLinks from './GoalCapsuleLinks';
-import GoalConditions from './GoalConditions';
 import GoalDeletion from './GoalDeletion';
 import GoalEditor from './GoalEditor';
 import GoalProjection from './GoalProjection';
@@ -71,7 +70,6 @@ function GoalWorkspaceForClient({ goalId, currency, clientName }: { goalId: stri
                     ...(!income ? [['現在の確保額', formatCurrency(goal.current_funded, currency)], ['進捗', goalPercent(goal.funded_percentage)], ['計画の状態', goalPlanStatus(goal)]] : []),
                 ].map(([label, value]) => <div key={label}><dt className="text-xs text-[var(--studio-text-muted)]">{label}</dt><dd className="mt-2 font-semibold tabular-nums">{value}</dd></div>)}
             </dl>
-            <GoalConditions goalId={goal.id} currency={currency} clientName={clientName} disabled={disabled || dialog !== null} onBusy={setDetailBusy} />
             <details className="rounded-lg border border-[var(--studio-border)] p-5"><summary className="cursor-pointer font-semibold">マイルストーン</summary><div className="mt-5">
                 <Milestones goalId={goal.id} currency={currency} disabled={disabled || dialog !== null || Boolean(goal.archived_at)} onBusy={setDetailBusy} onChanged={refresh} />
             </div></details>

@@ -1,9 +1,10 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 
 export type ContextMenuItem = { label: string; onSelect: () => void };
 
-export default function ContextMenu({ x, y, items, onClose }: {
-    x: number; y: number; items: ContextMenuItem[]; onClose: () => void;
+export default function ContextMenu({ x, y, items, onClose, viewport = false, label = '図の操作' }: {
+    x: number; y: number; items: ContextMenuItem[]; onClose: () => void; viewport?: boolean; label?: string;
 }) {
     const menu = useRef<HTMLDivElement>(null);
 
@@ -13,18 +14,21 @@ export default function ContextMenu({ x, y, items, onClose }: {
         if (!element || !container) return;
         const place = () => {
             // Measure the rendered menu because labels and browser zoom change its size.
-            element.style.maxWidth = `${Math.max(0, container.clientWidth - 8)}px`;
-            element.style.maxHeight = `${Math.max(0, container.clientHeight - 8)}px`;
-            element.style.left = `${Math.max(4, Math.min(x, container.clientWidth - element.offsetWidth - 4))}px`;
-            element.style.top = `${Math.max(4, Math.min(y, container.clientHeight - element.offsetHeight - 4))}px`;
+            const width = viewport ? window.innerWidth : container.clientWidth;
+            const height = viewport ? window.innerHeight : container.clientHeight;
+            element.style.maxWidth = `${Math.max(0, width - 8)}px`;
+            element.style.maxHeight = `${Math.max(0, height - 8)}px`;
+            element.style.left = `${Math.max(4, Math.min(x, width - element.offsetWidth - 4))}px`;
+            element.style.top = `${Math.max(4, Math.min(y, height - element.offsetHeight - 4))}px`;
         };
         place();
         element.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();
         const observer = new ResizeObserver(place);
         observer.observe(container);
         observer.observe(element);
-        return () => observer.disconnect();
-    }, [x, y]);
+        window.addEventListener('resize', place);
+        return () => { observer.disconnect(); window.removeEventListener('resize', place); };
+    }, [x, y, viewport]);
 
     useEffect(() => {
         const outside = (event: Event) => {
@@ -48,7 +52,7 @@ export default function ContextMenu({ x, y, items, onClose }: {
         };
     }, [onClose]);
 
-    return <div ref={menu} role="menu" aria-label="図の操作" className="absolute z-50 w-52 overflow-auto rounded-md border border-[var(--studio-border)] bg-[var(--studio-surface)] p-1 text-sm shadow-lg"
+    const content = <div ref={menu} role="menu" aria-label={label} className={`${viewport ? 'fixed' : 'absolute'} z-50 w-52 overflow-auto rounded-md border border-[var(--studio-border)] bg-[var(--studio-surface)] p-1 text-sm shadow-lg`}
         onKeyDown={(event) => {
             event.stopPropagation();
             const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')];
@@ -65,4 +69,6 @@ export default function ContextMenu({ x, y, items, onClose }: {
             className="block w-full rounded px-3 py-2 text-left hover:bg-[var(--studio-accent-soft)] focus:bg-[var(--studio-accent-soft)] focus:outline-none"
             onClick={() => { menu.current?.parentElement?.focus(); onClose(); item.onSelect(); }}>{item.label}</button>)}
     </div>;
+    // Scenario chips have no canvas bounds; their menu must fit the viewport instead.
+    return viewport ? createPortal(content, document.querySelector('.studio-root') ?? document.body) : content;
 }

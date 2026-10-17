@@ -5,7 +5,8 @@ import { Controls, Handle, MarkerType, Position, ReactFlow, ReactFlowProvider,
 import '@xyflow/react/dist/style.css';
 import './lifeEventDiagram.css';
 import type { ConditionEvaluation } from '../../../api/lifeEventConditions';
-import type { LifeEventLink, LifeEventScenario } from '../../../api/lifeEventGraph';
+import type { LifeEventLink } from '../../../api/lifeEventGraph';
+import type { LifeScenario } from '../../../api/lifeScenarios';
 import type { LifeEvent } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import { layout } from './graphLayout';
@@ -32,10 +33,9 @@ function LifeEventNode({ data, isConnectable }: NodeProps<EventNode>) {
             <div>{formatCurrency(data.amount, data.currency)}</div>
         </div>
         <div className="min-h-4 text-xs text-[var(--studio-text-muted)]">
-            {data.evaluation?.satisfied === false && <span>○ 条件未達</span>}
-            {Boolean(data.evaluation?.conditions.length) && data.evaluation?.satisfied === null && <span>○ 判定不能</span>}
+            {Boolean(data.evaluation?.conditions.length) && <span>前提条件あり</span>}
         </div>
-        {!data.included && <span className="text-xs text-[var(--studio-text-muted)]">選択中の案では対象外</span>}
+        {!data.included && <span className="text-xs text-[var(--studio-text-muted)]">選択中のシナリオでは対象外</span>}
         <Handle type="source" position={Position.Right} isConnectable={isConnectable} aria-label={`${data.name}からの接続`} title="接続元" />
     </div>;
 }
@@ -73,11 +73,12 @@ const flowStyle = {
 
 type MenuTarget = { type: 'pane' } | { type: 'node'; event: LifeEvent } | { type: 'edge'; edge: LifeEventLink };
 
-export default function LifeEventDiagram({ events, links, scenarios, scenario, evaluations, currency, disabled, onAddEvent, onEditEvent, onDeleteEvent, onDeleteEdge, onConnect, onEdgeClick }: {
-    events: LifeEvent[]; links: LifeEventLink[]; scenarios: LifeEventScenario[]; scenario?: LifeEventScenario;
+export default function LifeEventDiagram({ events, links, scenarios, scenario, evaluations, currency, disabled, onAddEvent, onEditEvent, onDeleteEvent, onConditions, onChooseEdge, onDeleteEdge, onConnect, onEdgeClick }: {
+    events: LifeEvent[]; links: LifeEventLink[]; scenarios: LifeScenario[]; scenario?: LifeScenario;
     evaluations: Record<number, ConditionEvaluation>; currency: string; disabled: boolean;
     onAddEvent: (sourceId?: number, handleType?: 'source' | 'target') => void;
     onEditEvent: (event: LifeEvent) => void; onDeleteEvent: (event: LifeEvent) => void; onDeleteEdge: (edge: LifeEventLink) => void;
+    onConditions: (event: LifeEvent) => void; onChooseEdge?: (edge: LifeEventLink) => void;
     onConnect: (source: number, target: number) => void; onEdgeClick: (edge: LifeEventLink) => void;
 }) {
     const navigate = useNavigate();
@@ -97,11 +98,13 @@ export default function LifeEventDiagram({ events, links, scenarios, scenario, e
             case 'pane': return [{ label: 'ライフイベントを追加', onSelect: () => onAddEvent() }, simulation];
             case 'node': return [
                 { label: '編集', onSelect: () => onEditEvent(target.event) },
+                { label: '前提条件', onSelect: () => onConditions(target.event) },
                 { label: '詳細を開く', onSelect: () => { void navigate(`/goals/events/${target.event.id}`); } },
                 { label: '削除', onSelect: () => onDeleteEvent(target.event) }, simulation,
             ];
             case 'edge': return [
                 { label: '接続の詳細', onSelect: () => onEdgeClick(target.edge) },
+                ...(target.edge.kind === 'alternative' && onChooseEdge ? [{ label: 'このシナリオでこちらを選ぶ', onSelect: () => onChooseEdge(target.edge) }] : []),
                 { label: '削除', onSelect: () => onDeleteEdge(target.edge) },
             ];
         }
@@ -115,18 +118,23 @@ export default function LifeEventDiagram({ events, links, scenarios, scenario, e
         }
         const graph = layout(events.map((event): EventData => ({
             id: event.id, name: event.name,
-            resolved_date: selected.has(event.id) ? selected.get(event.id)?.resolved_date ?? null : fallback.has(event.id) ? fallback.get(event.id) ?? null : null,
-            amount: event.target_amount, currency, included: selected.has(event.id), evaluation: evaluations[event.id],
+            resolved_date: selected.has(event.id) ? selected.get(event.id)?.resolved_date ?? null : fallback.has(event.id) ? fallback.get(event.id) ?? null : event.target_date || null,
+            amount: event.target_amount, currency, included: !scenario || selected.has(event.id), evaluation: evaluations[event.id],
         })), links);
         return {
             nodes: graph.nodes.map((node): EventNode => ({
                 id: node.id, position: { x: node.x, y: node.y }, data: node.data, type: 'lifeEvent',
-                ariaLabel: `${node.data.name}・${node.data.resolved_date ?? '日付未設定'}${node.data.included ? '' : '・選択中の案では対象外'}`,
+                ariaLabel: `${node.data.name}・${node.data.resolved_date ?? '日付未設定'}${node.data.included ? '' : '・選択中のシナリオでは対象外'}`,
             })),
             edges: graph.edges.map((edge): LinkEdge => ({
                 ...edge, data: { link: edge.data }, type: 'smoothstep',
-                style: { stroke: 'var(--studio-text-muted)', strokeWidth: 1.5, strokeDasharray: edge.data.kind === 'alternative' ? '6 4' : undefined },
-                markerEnd: { type: MarkerType.ArrowClosed, color: 'var(--studio-text-muted)' },
+                style: {
+                    stroke: scenario?.choices.includes(edge.data.id) ? 'var(--studio-accent)' : 'var(--studio-text-muted)',
+                    strokeWidth: scenario?.choices.includes(edge.data.id) ? 3 : 1.5,
+                    strokeDasharray: edge.data.kind === 'alternative' ? '6 4' : undefined,
+                    opacity: scenario && edge.data.kind === 'alternative' && !scenario.choices.includes(edge.data.id) ? 0.3 : 1,
+                },
+                markerEnd: { type: MarkerType.ArrowClosed, color: scenario?.choices.includes(edge.data.id) ? 'var(--studio-accent)' : 'var(--studio-text-muted)' },
                 label: edge.data.offset_months === 0 ? undefined : `${edge.data.offset_months > 0 ? '+' : ''}${edge.data.offset_months}か月`,
                 labelStyle: { fill: 'var(--studio-text)', fontSize: 12 },
                 labelBgStyle: { fill: 'var(--studio-surface)' }, labelBgPadding: [6, 4],
