@@ -37,21 +37,34 @@ def _assets(db: Session, client_id: int) -> list[models.Account]:
     ).order_by(models.Account.id).all()
 
 
+def _positive_asset_balances(db: Session, client_id: int) -> list[tuple[models.Account, float]]:
+    accounts = _assets(db, client_id)
+    currency = get_client_currency(db, client_id)
+    balances = calculate_account_balances(db, accounts)
+    # Match the blend's denomination: foreign holdings without a client-currency
+    # balance must not silently acquire the return assumed for this pool.
+    # The earning pool must sit inside the net worth the projection starts from,
+    # and the balance sheet counts active accounts only. An inactive balance
+    # counted here would grow at the market rate while its offset stayed flat in
+    # the residual -- a gain on money the forecast never started with.
+    return [(account, Money(minor, currency).to_float()) for account in accounts
+            if account.is_active and (minor := balances[account.id].balances_minor.get(currency, 0)) > 0]
+
+
+def positive_asset_balance(db: Session, client_id: int) -> float:
+    """Principal that can earn the client-currency blended return."""
+    return sum(balance for _, balance in _positive_asset_balances(db, client_id))
+
+
 def blended_after_tax_return(
     db: Session, client_id: int, *, gross_annual_return: float, tax_rate: float,
     account_returns: dict[int, float] | None = None,
 ) -> float:
     """Rates use percent units, like the projection settings they replace."""
-    accounts = _assets(db, client_id)
-    currency = get_client_currency(db, client_id)
-    balances = calculate_account_balances(db, accounts)
     weighted = total = 0.0
-    for account in accounts:
-        # A scalar projection is denominated in the client currency. Do not add
-        # foreign units or silently treat a missing FX quote as equal value.
-        balance = Money(balances[account.id].balances_minor.get(currency, 0), currency).to_float()
-        if balance == 0:
-            continue
+    # Signed weights let overdrafts invert rate changes when the total is
+    # negative. Only money held can earn a return; debt has no blend weight.
+    for account, balance in _positive_asset_balances(db, client_id):
         rate = (account_returns or {}).get(account.id, account.expected_return)
         if rate is None:
             rate = gross_annual_return

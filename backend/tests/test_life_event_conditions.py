@@ -23,7 +23,7 @@ from app.services.capsule_service import claimed_minor
 from app.services.data_transfer_service import export_client, import_client
 from app.services.goal_service import delete_goal
 from app.services.ledger_service import create_transaction
-from app.services.life_event_graph import compare_scenarios
+from app.services import life_scenario_service as saved
 from app.services.strategy_service import get_life_events_with_progress
 
 
@@ -209,7 +209,9 @@ def test_bulk_evaluation_is_scoped_and_financial_reader_runs_once(db, monkeypatc
 def test_evaluation_does_not_flush_pending_changes_or_modify_projection(db):
     owner = goal(db)
     add(db, owner, "date_reached", threshold_date=date(2099, 1, 1))
-    before = compare_scenarios(db, 1, years=2, annual_return=0, inflation=0)
+    scenario = saved.create(db, 1, "試算")
+    saved.update(db, 1, scenario.id, {"horizon_years": 2, "annual_return": 0, "inflation": 0})
+    before = saved.compare(db, 1, str(scenario.id))
     owner.note = "未保存"
     writes = []
     @event.listens_for(db.get_bind(), "before_cursor_execute")
@@ -220,7 +222,7 @@ def test_evaluation_does_not_flush_pending_changes_or_modify_projection(db):
     assert conditions.evaluate_all(db, 1)[owner.id]["satisfied"] is False
     assert not writes
     db.rollback()
-    assert compare_scenarios(db, 1, years=2, annual_return=0, inflation=0) == before
+    assert saved.compare(db, 1, str(scenario.id)) == before
 
 
 def test_backup_remaps_every_reference_and_preserves_dangling_without_id_collision(db):

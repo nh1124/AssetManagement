@@ -21,9 +21,11 @@ from app.dependencies import get_current_client
 from app.domain.errors import Conflict, DomainError, Invalid, NotFound, Refused, detail_for, status_for
 from app.domain.transfer import EXPORT_VERSION, validate_import_payload
 from app.routers.life_scenarios import router
-from app.routers.life_events import router as legacy_router
+from app.routers.life_events import router as events_router
 from app.services import life_scenario_service as service, life_event_graph as graph
 from app.services.data_transfer_service import export_client, import_client
+from app.services.life_event_walk import walk_scenarios, _subtract_demand
+from app.services.strategy_service import simulate_net_worth_forward
 from app.services.institution_service import blended_after_tax_return
 from app.services.ledger_service import create_account, create_transaction
 
@@ -104,10 +106,9 @@ def test_resolve_does_not_enumerate_or_stop_at_legacy_cap(db):
     resolved = service.resolve(db, 1, scenario)
     assert resolved.chosen_link_ids == [pair[1].id for pair in edges]
     assert len(resolved.events) == 16 and resolved.missing_forks == []
-    enumerated = graph.enumerate_scenarios(db, 1)
+    enumerated = walk_scenarios(db, 1)[0]
     assert enumerated.truncated
-    adoption = graph.adopted_scenario(db, 1, enumerated)
-    assert adoption.exact and adoption.scenario.chosen_link_ids == resolved.chosen_link_ids
+    assert resolved.chosen_link_ids not in [item.chosen_link_ids for item in enumerated]
 
 
 @pytest.mark.parametrize("removal", ["service", "sql", "event"])
@@ -304,7 +305,10 @@ def test_v20_import_creates_goal_using_config_and_legacy_asset_returns(db):
     account(db, name="未設定", rate=None)
     account(db, name="収入", kind="income", rate=99)
     config(db)
-    before = graph.project_scenario(db, 1, graph.enumerate_scenarios(db, 1)[1], years=8, annual_return=7.5, inflation=1.5)
+    baseline = simulate_net_worth_forward(
+        db, 1, years=8, annual_return=7.5, inflation=1.5, include_event_income=False,
+    )
+    before = _subtract_demand(walk_scenarios(db, 1)[0][1], baseline, 8)
     document = export_client(db, db.get(models.Client, 1))
     data = document["data"]
     for key in ("life_scenarios", "life_scenario_choices", "life_scenario_account_returns"):
@@ -336,8 +340,11 @@ def test_migration_both_directions_preserve_branch_assumptions_and_projection(db
     account(db, name="費用", kind="expense", rate=99)
     config(db)
     node(db, "既定", client_id=2)
-    chosen = graph.enumerate_scenarios(db, 1)[-1]
-    before = graph.project_scenario(db, 1, chosen, years=8, annual_return=7.5, inflation=1.5)
+    chosen = walk_scenarios(db, 1)[0][-1]
+    baseline = simulate_net_worth_forward(
+        db, 1, years=8, annual_return=7.5, inflation=1.5, include_event_income=False,
+    )
+    before = _subtract_demand(chosen, baseline, 8)
     db.commit()
     spec = importlib.util.spec_from_file_location("ls1_migration", Path(__file__).parents[1] / "alembic/versions/20261017_0067_life_scenarios.py")
     migration = importlib.util.module_from_spec(spec)
@@ -399,7 +406,7 @@ def test_backup_validates_new_references_before_replace(db, collection, field):
 def api(db):
     app = FastAPI()
     app.include_router(router)
-    app.include_router(legacy_router)
+    app.include_router(events_router)
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[get_current_client] = lambda: db.get(models.Client, 1)
 
@@ -423,7 +430,7 @@ def request(app, method, url, **kwargs):
     return asyncio.run(run())
 
 
-def test_http_crud_compare_and_legacy_fallback_with_goal_assumptions(db, api):
+def test_http_crud_compare_and_goal_assumptions(db, api):
     edges = fork(db)[2]
     asset = account(db, rate=3)
     config(db)
@@ -443,12 +450,7 @@ def test_http_crud_compare_and_legacy_fallback_with_goal_assumptions(db, api):
     assert compare.status_code == 200
     assert [row["annual_return"] for row in compare.json()["scenarios"]] == [9, 0]
     assert compare.json()["scenarios"][0]["projection"] != compare.json()["scenarios"][1]["projection"]
-    legacy = request(api, "GET", "/life-events/scenarios").json()
-    assert legacy["parameters"] == {"years": 2, "annual_return": 9, "inflation": 0}
-    assert legacy["adopted"] == {"scenario_id": str(edges[1].id), "exact": True}
-    assert legacy["scenarios"][1]["projection"] == compare.json()["scenarios"][0]["projection"]
-    assert request(api, "GET", "/life-events/scenarios?annual_return=0").json()["parameters"]["annual_return"] == 0
-    assert request(api, "POST", "/life-events/scenarios/adopt", json={"scenario_id": str(edges[0].id)}).json()["exact"]
+    assert request(api, "PUT", base + "/choices", json={"link_ids": [edges[0].id]}).json()["missing_forks"] == []
     assert service.choice_ids(db, service.get_goal(db, 1)) == [edges[0].id]
     assert request(api, "GET", "/life-scenarios").json()[0]["name"] == "新規"
     assert request(api, "POST", f'/life-scenarios/{clone["id"]}/goal').status_code == 200
@@ -479,13 +481,13 @@ def test_http_names_and_client_isolation(db, api):
     assert request(api, "GET", "/life-scenarios/compare?ids=bad").status_code == 422
 
 
-def test_legacy_adopt_can_create_first_goal_after_an_existing_default_named_scenario(db, api):
-    edges = fork(db)[2]
-    service.create(db, 1, "基本シナリオ")
-    config(db)
-    response = request(api, "POST", "/life-events/scenarios/adopt", json={"scenario_id": str(edges[1].id)})
-    assert response.status_code == 200
-    assert service.get_goal(db, 1).annual_return == 7.5
+def test_deprecated_scenario_routes_are_absent(api):
+    paths = api.openapi()["paths"]
+    assert "/life-events/scenarios" not in paths
+    assert "/life-events/scenarios/adopt" not in paths
+    # The remaining /{event_id} routes match this path but provide no GET handler.
+    assert request(api, "GET", "/life-events/scenarios").status_code == 405
+    assert request(api, "POST", "/life-events/scenarios/adopt", json={"scenario_id": "base"}).status_code == 404
 
 
 @pytest.mark.parametrize("defect", ["name", "duplicate_name", "goals", "horizon", "rate", "missing_rate", "same_fork", "after", "non_asset", "duplicate_account"])

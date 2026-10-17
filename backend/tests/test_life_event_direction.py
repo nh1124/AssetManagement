@@ -3,6 +3,7 @@ import asyncio
 import json
 from datetime import date, datetime
 
+import numpy as np
 import httpx
 import pytest
 from fastapi import FastAPI
@@ -17,11 +18,11 @@ from app.database import Base, get_db
 from app.dependencies import get_current_client
 from app.domain.errors import DomainError, NotFound, Refused, detail_for, status_for
 from app.domain.transfer import EXPORT_VERSION, validate_import_payload
-from app.routers import ai, life_events, simulation
+from app.routers import ai, life_events, life_scenarios, simulation
 from app.services import (
     ai_context_service, analysis_service, capsule_service, goal_service,
     ledger_service, life_event_conditions, life_event_graph, milestone_service,
-    report_service, simulation_scenario_service, strategy_service,
+    report_service, simulation_scenario_service, strategy_service, life_scenario_service,
 )
 from app.services.data_transfer_service import export_client, import_client
 from app.workflows.goal_workflow import create_goal
@@ -50,6 +51,7 @@ def api(db):
     app = FastAPI()
     app.include_router(life_events.router)
     app.include_router(simulation.router)
+    app.include_router(life_scenarios.router)
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[get_current_client] = lambda: db.get(models.Client, 1)
 
@@ -341,17 +343,20 @@ def test_ai_savings_optimization_excludes_income_events(db, monkeypatch):
     assert json.dumps("支出専用学費") in prompts[0] and json.dumps("収入専用退職金") not in prompts[0]
 
 
-def test_scenario_adds_resolved_income_and_subtracts_expense_in_their_years(db, monkeypatch):
+def test_scenario_adds_resolved_income_and_subtracts_expense_in_their_years(db, api, monkeypatch):
     linked = account(db)
     expense = node(db, amount=100, offset=1)
     receipt = node(db, "income", amount=300, offset=10, account_id=linked.id)
     life_event_graph.create_link(db, 1, from_event_id=expense.id, to_event_id=receipt.id, kind="after", offset_months=12)
     year = date.today().year
     baseline = [{"year": year+i, "p10": 900, "p50": 1000, "p90": 1100} for i in range(4)]
-    monkeypatch.setattr(life_event_graph, "simulate_net_worth_forward", lambda *a, **k: baseline)
-    result = life_event_graph.compare_scenarios(db, 1, years=3, annual_return=0, inflation=0)
+    monkeypatch.setattr(life_scenario_service, "simulate_net_worth_forward_with_paths",
+                        lambda *a, **k: (baseline, np.full((1200, 4), 1000.)))
+    saved = life_scenario_service.create(db, 1, "保存")
+    life_scenario_service.update(db, 1, saved.id, {"horizon_years": 3, "annual_return": 0, "inflation": 0})
+    result = request(api, "GET", f"/life-scenarios/compare?ids={saved.id}").json()
     scenario = result["scenarios"][0]
-    assert scenario["events"][1]["resolved_date"] == date(year+2, 1, 1)
+    assert scenario["events"][1]["resolved_date"] == date(year+2, 1, 1).isoformat()
     assert scenario["events"][1]["direction"] == "income" and scenario["events"][1]["account_id"] == linked.id
     rows = scenario["projection"]
     for band, initial in (("p10", 900), ("p50", 1000), ("p90", 1100)):
@@ -361,7 +366,7 @@ def test_scenario_adds_resolved_income_and_subtracts_expense_in_their_years(db, 
     assert [row["p50"] for row in baseline] == [1000]*4
 
 
-def test_scenario_receipts_are_counted_only_on_the_selected_branch(db, monkeypatch):
+def test_scenario_receipts_are_counted_only_on_the_selected_branch(db, api, monkeypatch):
     root = node(db, amount=0)
     a, b = node(db, "income", amount=100), node(db, "income", amount=300)
     archived = node(db, "income", amount=999, archived_at=datetime.utcnow())
@@ -370,9 +375,14 @@ def test_scenario_receipts_are_counted_only_on_the_selected_branch(db, monkeypat
             life_event_graph.create_link(db, 1, from_event_id=root.id, to_event_id=child.id, kind="alternative")
     year = date.today().year
     baseline = [{"year": year+i, "p10": 1000, "p50": 1000, "p90": 1000} for i in range(4)]
-    monkeypatch.setattr(life_event_graph, "simulate_net_worth_forward", lambda *a, **k: baseline)
-    scenarios = life_event_graph.enumerate_scenarios(db, 1)
-    rows = [life_event_graph.project_scenario(db, 1, item, years=3, annual_return=0, inflation=0) for item in scenarios]
+    monkeypatch.setattr(life_scenario_service, "simulate_net_worth_forward_with_paths",
+                        lambda *a, **k: (baseline, np.full((1200, 4), 1000.)))
+    saved = life_scenario_service.create(db, 1, "保存")
+    life_scenario_service.update(db, 1, saved.id, {"horizon_years": 3, "annual_return": 0, "inflation": 0})
+    rows = []
+    for edge in life_event_graph.list_links(db, 1):
+        assert request(api, "PUT", f"/life-scenarios/{saved.id}/choices", json={"link_ids": [edge.id]}).status_code == 200
+        rows.append(request(api, "GET", f"/life-scenarios/compare?ids={saved.id}").json()["scenarios"][0]["projection"])
     assert [item[-1]["p50"] for item in rows] == [1100, 1300]
     assert [item[-1]["cumulative_income"] for item in rows] == [100, 300]
 
@@ -401,21 +411,16 @@ def test_forward_net_worth_counts_income_and_scenario_baseline_can_opt_out(db):
     assert [row["p50"] for row in baseline] == [0, 0, 0]
 
 
-@pytest.mark.parametrize("stored", [False, True])
-def test_scenario_query_defaults_overrides_and_reported_parameters(db, api, stored):
-    db.add(models.SimulationConfig(client_id=2, horizon_years=55, annual_return=9, inflation_rate=4))
-    db.commit()
-    if stored:
-        db.add(models.SimulationConfig(client_id=1, horizon_years=7, annual_return=3.5, inflation_rate=1.2))
-        db.commit()
-    defaults = {"years": 7, "annual_return": 3.5, "inflation": 1.2} if stored else {"years": 30, "annual_return": 5.0, "inflation": 2.0}
-    for query, expected in (("", defaults), ("?years=2&annual_return=0&inflation=0", {"years": 2, "annual_return": 0, "inflation": 0}),
-                            ("?annual_return=0", {**defaults, "annual_return": 0})):
-        response = request(api, "GET", f"/life-events/scenarios{query}")
-        assert response.status_code == 200
-        assert response.json()["parameters"] == expected
-        assert len(response.json()["scenarios"][0]["projection"]) == expected["years"]+1
-    assert db.query(models.SimulationConfig).filter_by(client_id=1).count() == int(stored)
+def test_saved_scenario_assumptions_are_reported_and_used_by_comparison(db, api):
+    scenario = request(api, "POST", "/life-scenarios", json={"name": "保存"}).json()
+    base = f'/life-scenarios/{scenario["id"]}'
+    for values in ({"horizon_years": 7, "annual_return": 3.5, "inflation": 1.2},
+                   {"horizon_years": 2, "annual_return": 0, "inflation": 0}):
+        assert request(api, "PUT", base, json=values).status_code == 200
+        projected = request(api, "GET", f'/life-scenarios/compare?ids={scenario["id"]}').json()["scenarios"][0]
+        assert {key: projected[key] for key in values} == values
+        assert len(projected["projection"]) == values["horizon_years"] + 1
+    assert db.query(models.SimulationConfig).count() == 0
 
 
 def test_simulation_config_horizon_round_trips_get_post_put(db, api):
@@ -424,7 +429,6 @@ def test_simulation_config_horizon_round_trips_get_post_put(db, api):
     assert request(api, "POST", "/simulation/config", json={"horizon_years": 1}).json()["horizon_years"] == 1
     assert request(api, "PUT", "/simulation/config", json={"horizon_years": 60}).json()["horizon_years"] == 60
     assert request(api, "GET", "/simulation/config").json()["horizon_years"] == 60
-    assert request(api, "GET", "/life-events/scenarios").json()["parameters"]["years"] == 60
 
 
 @pytest.mark.parametrize("method", ["POST", "PUT"])

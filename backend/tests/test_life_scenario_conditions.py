@@ -9,6 +9,7 @@ from sqlalchemy import event as sqlalchemy_event
 from app import models
 from app.services import life_event_conditions as evaluator, life_scenario_service as service
 from app.services import strategy_service as strategy
+from app.services.institution_service import positive_asset_balance
 from test_life_scenarios import account, api, config, db, fork, node, request
 
 
@@ -50,6 +51,8 @@ def test_bands_are_byte_identical_to_pre_ls2_seed_42_case(db):
     account(db, rate=3.5, balance=1000000)
     config(db)
     result = strategy.simulate_net_worth_forward(db, 1, years=4, annual_return=7.5, inflation=1.5)
+    # With only positive assets and no debts, the earning pool is the old held pool.
+    assert positive_asset_balance(db, 1) == strategy.get_balance_sheet(db, client_id=1)["net_worth"] == 1000000
     # Captured from the original implementation before factoring the simulation.
     expected = ('[{"year":2030,"p10":1000000.0,"p50":1000000.0,"p90":1000000.0,"cumulative_income":0},'
                 '{"year":2031,"p10":1332809.0,"p50":1640829.0,"p90":1948986.0,"cumulative_income":0},'

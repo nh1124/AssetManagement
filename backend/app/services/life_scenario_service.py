@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from .. import models
 from ..domain.errors import Conflict, NotFound, Refused
 from .life_event_conditions import evaluate_projection
-from .life_event_walk import Scenario, ScenarioEvent, walk_scenarios, _subtract_demand
+from .life_event_walk import ScenarioEvent, walk_scenarios, _subtract_demand
 from .strategy_service import simulate_net_worth_forward_with_paths
 
 
@@ -256,11 +256,6 @@ def legacy_parameters(db: Session, client_id: int) -> dict:
     }
 
 
-def legacy_account_returns(db: Session, client_id: int) -> dict:
-    goal = get_goal(db, client_id)
-    return {"account_returns": {row["account_id"]: row["annual_return"] for row in account_returns(db, goal)}} if goal else {}
-
-
 def seed_legacy_goal(db: Session, client_id: int, adopted_link_ids: list[int]) -> models.LifeScenario | None:
     """Convert pre-LS1 facts without committing; the importer owns its transaction."""
     if not db.query(models.LifeEvent.id).filter_by(client_id=client_id).first():
@@ -272,7 +267,7 @@ def seed_legacy_goal(db: Session, client_id: int, adopted_link_ids: list[int]) -
     ).order_by(models.LifeEventLink.id).all()
     names = {event.id: event.name for event in db.query(models.LifeEvent).filter_by(client_id=client_id).all()}
     name = " ／ ".join(names[link.to_event_id] for link in links) or "基本シナリオ"
-    # Legacy adoption can be the first goal after the user has already created names.
+    # Imported legacy goals may collide with scenario names already in the backup.
     base_name, suffix = name, 2
     while db.query(models.LifeScenario.id).filter_by(client_id=client_id, name=name).first():
         name = f"{base_name} ({suffix})"
@@ -291,24 +286,3 @@ def seed_legacy_goal(db: Session, client_id: int, adopted_link_ids: list[int]) -
     ).all():
         db.add(models.LifeScenarioAccountReturn(scenario_id=scenario.id, account_id=account.id, annual_return=account.expected_return))
     return scenario
-
-
-def adopt_legacy(db: Session, client_id: int, branch: Scenario) -> None:
-    _lock(db, client_id)
-    goal = get_goal(db, client_id)
-    if goal is None:
-        goal = seed_legacy_goal(db, client_id, [])
-        if goal is None:
-            parameters = legacy_parameters(db, client_id)
-            name = "基本シナリオ"
-            suffix = 2
-            while db.query(models.LifeScenario.id).filter_by(client_id=client_id, name=name).first():
-                name = f"基本シナリオ ({suffix})"
-                suffix += 1
-            goal = models.LifeScenario(client_id=client_id, name=name, is_goal=True,
-                                       horizon_years=parameters["years"], annual_return=parameters["annual_return"],
-                                       inflation=parameters["inflation"])
-            db.add(goal)
-            db.flush()
-    _replace_choices(db, client_id, goal, branch.chosen_link_ids)
-    db.commit()

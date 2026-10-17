@@ -89,33 +89,6 @@ def delete_link(
     return {"message": "Deleted"}
 
 
-@router.get("/scenarios")
-def get_scenarios(
-    years: int | None = Query(None, ge=1, le=60),
-    annual_return: float | None = Query(None, allow_inf_nan=False),
-    inflation: float | None = Query(None, allow_inf_nan=False),
-    db: Session = Depends(get_db),
-    current_client: models.Client = Depends(get_current_client),
-):
-    # Deprecated: retained until the frontend switches to saved life scenarios.
-    return life_event_graph.compare_scenarios(
-        db, current_client.id, years=years, annual_return=annual_return, inflation=inflation,
-    )
-
-
-@router.post("/scenarios/adopt")
-def adopt_scenario(
-    payload: schemas.LifeEventScenarioAdopt,
-    db: Session = Depends(get_db),
-    current_client: models.Client = Depends(get_current_client),
-):
-    # Deprecated: retained until the frontend switches to saved life scenarios.
-    return life_event_graph.adoption_payload(
-        life_event_graph.adopt_scenario(db, current_client.id, payload.scenario_id),
-    )
-
-
-
 @router.get("/")
 def get_life_events(
     include_archived: bool = False,

@@ -14,7 +14,7 @@ import numpy as np
 from .. import models
 from .ledger_valuation import calculate_account_valued_balance
 from .reporting_service import get_balance_sheet, get_net_worth_history
-from .institution_service import blended_after_tax_return
+from .institution_service import blended_after_tax_return, positive_asset_balance
 
 # Every projection draws from this one seed, so a figure does not move when
 # nothing about the plan moved, and two scenarios can be read as differing by
@@ -930,10 +930,13 @@ def simulate_net_worth_forward_with_paths(
     rng = np.random.default_rng(PROJECTION_SEED)
     # 年利 describes how new savings will be invested; existing holdings
     # already have their own account rates, including cash held at zero percent.
-    held = np.full(n_simulations, starting_net_worth, dtype=float)
+    earning = np.full(n_simulations, positive_asset_balance(db, client_id), dtype=float)
+    # Loans, overdrafts and other net-worth residuals are not invested. Keep
+    # their nominal principal flat, using the projection's real-rate convention.
+    residual = starting_net_worth - earning[0]
     invested = np.zeros(n_simulations)
     paths = np.empty((n_simulations, years + 1))
-    paths[:, 0] = held
+    paths[:, 0] = starting_net_worth
     projection = [
         {
             "year": current_year,
@@ -945,9 +948,10 @@ def simulate_net_worth_forward_with_paths(
 
     for offset in range(1, years + 1):
         shock = rng.normal(0, return_std, n_simulations)
-        held *= 1 + blended_real + shock
+        earning *= 1 + blended_real + shock
+        residual *= 1 - inflation / 100.0
         invested = (invested + annual_contribution) * (1 + contribution_real + shock)
-        paths[:, offset] = held + invested
+        paths[:, offset] = earning + residual + invested
         p10, p50, p90 = np.percentile(paths[:, offset], [10, 50, 90])
         projection.append(
             {

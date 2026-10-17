@@ -95,9 +95,12 @@ def test_mix_uses_account_rate_or_projection_rate_and_never_rolls_up_twice(db):
     fund(db, account(db, name="別人", rate=100, client_id=2), 9000)
     assert blended_after_tax_return(db, 1, gross_annual_return=8, tax_rate=20) == 8
     assert blended_after_tax_return(db, 1, gross_annual_return=12, tax_rate=20) == 11
+    # The blend weights the earning pool, which must sit inside the net worth the
+    # projection starts from -- and the balance sheet counts active accounts only.
+    # Once the taxable account is inactive, only the sheltered 3000 earns: 12.
     taxable.is_active = False
     db.commit()
-    assert blended_after_tax_return(db, 1, gross_annual_return=12, tax_rate=20) == 11
+    assert blended_after_tax_return(db, 1, gross_annual_return=12, tax_rate=20) == 12
 
 
 def test_explicit_zero_rate_is_not_missing(db):
@@ -391,14 +394,14 @@ def test_account_response_serializes_both_attributes_and_nullable_return(db):
     assert (response.institution, response.withdrawable_from_age, response.expected_return) == ("dc_corporate", 62, None)
 
 
-def test_blend_follows_signed_balance_weights(db):
+def test_blend_ignores_overdrawn_accounts(db):
     positive = account(db, rate=10)
     negative = account(db, name="負の残高", institution="nisa_growth", rate=20)
     fund(db, positive, 1000)
     income = db.query(models.Account).filter_by(client_id=1, name="給与").one()
     create_transaction(db, client_id=1, date=date(2020, 1, 1), description="残高", amount_minor=500,
                        currency="JPY", from_account_id=negative.id, to_account_id=income.id)
-    assert blended_after_tax_return(db, 1, gross_annual_return=12, tax_rate=20) == -4
+    assert blended_after_tax_return(db, 1, gross_annual_return=12, tax_rate=20) == 8
 
 
 def test_foreign_locked_asset_makes_free_cash_condition_unknown(db):
