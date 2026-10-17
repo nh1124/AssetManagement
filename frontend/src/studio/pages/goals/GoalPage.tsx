@@ -28,7 +28,7 @@ function GoalPageForClient({ goalId }: { goalId?: string }) {
         <h2 className="text-lg font-semibold">{goalId ? `「${resource.data?.name ?? `ライフイベント #${goalId}`}」を編集` : '新しいライフイベント'}</h2>
         <Feedback loading={resource.loading} error={resource.error || mutation.error} />
         {resource.loading && <button type="button" onClick={leave} className={buttonClass}>キャンセル</button>}
-        {!resource.loading && !resource.error && <GoalEditor goal={resource.data} currency={currency} busy={!identified || mutation.busy} onCancel={leave}
+        {!resource.loading && !resource.error && <GoalEditor goal={resource.data} scenarioId={scenarioId ? Number(scenarioId) : undefined} currency={currency} busy={!identified || mutation.busy} onCancel={leave}
             onSave={(action) => void mutation.run(action, 'ライフイベントを保存しました。', leave)} />}
         {resource.error && <div className="flex gap-2"><button type="button" onClick={leave} className={buttonClass}>キャンセル</button></div>}
     </section>;

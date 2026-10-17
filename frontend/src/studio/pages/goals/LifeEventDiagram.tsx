@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Controls, Handle, MarkerType, Position, ReactFlow, ReactFlowProvider,
     useNodesInitialized, useReactFlow, type Edge, type Node, type NodeProps } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import './lifeEventDiagram.css';
-import type { ConditionEvaluation } from '../../../api/lifeEventConditions';
 import type { LifeEventLink } from '../../../api/lifeEventGraph';
 import type { LifeScenario } from '../../../api/lifeScenarios';
 import type { LifeEvent } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import { layout } from './graphLayout';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
+import { useScenario } from './scenarioContext';
 
 type EventData = {
     id: number;
@@ -18,26 +18,23 @@ type EventData = {
     resolved_date: string | null;
     amount: number;
     currency: string;
-    included: boolean;
-    evaluation?: ConditionEvaluation;
+    hasConditions: boolean;
 };
 type EventNode = Node<EventData, 'lifeEvent'>;
 type LinkEdge = Edge<{ link: LifeEventLink }>;
 
 function LifeEventNode({ data, isConnectable }: NodeProps<EventNode>) {
-    const { scenarioId } = useParams();
-    const eventBase = scenarioId ? `/goals/scenarios/${scenarioId}/events` : '/goals/events';
-    return <div className={`life-event-node ${data.included ? '' : 'life-event-node-excluded'}`}>
+    const { scenario } = useScenario();
+    return <div className="life-event-node">
         <Handle type="target" position={Position.Left} isConnectable={isConnectable} aria-label={`${data.name}への接続`} title="接続先" />
-        <Link to={`${eventBase}/${data.id}`} title={data.name} className="nodrag line-clamp-2 font-medium text-[var(--studio-accent)] hover:underline">{data.name}</Link>
+        <Link to={`/goals/scenarios/${scenario.id}/events/${data.id}`} title={data.name} className="nodrag line-clamp-2 font-medium text-[var(--studio-accent)] hover:underline">{data.name}</Link>
         <div className="mt-auto space-y-1 tabular-nums">
             <div>{data.resolved_date ?? '日付未設定'}</div>
             <div>{formatCurrency(data.amount, data.currency)}</div>
         </div>
         <div className="min-h-4 text-xs text-[var(--studio-text-muted)]">
-            {Boolean(data.evaluation?.conditions.length) && <span>前提条件あり</span>}
+            {data.hasConditions && <span>前提条件あり</span>}
         </div>
-        {!data.included && <span className="text-xs text-[var(--studio-text-muted)]">選択中のシナリオでは対象外</span>}
         <Handle type="source" position={Position.Right} isConnectable={isConnectable} aria-label={`${data.name}からの接続`} title="接続元" />
     </div>;
 }
@@ -75,17 +72,19 @@ const flowStyle = {
 
 type MenuTarget = { type: 'pane' } | { type: 'node'; event: LifeEvent } | { type: 'edge'; edge: LifeEventLink };
 
-export default function LifeEventDiagram({ events, links, scenarios, scenario, evaluations, currency, disabled, onAddEvent, onEditEvent, onDeleteEvent, onConditions, onDeleteEdge, onConnect, onEdgeClick }: {
-    events: LifeEvent[]; links: LifeEventLink[]; scenarios: LifeScenario[]; scenario?: LifeScenario;
-    evaluations: Record<number, ConditionEvaluation>; currency: string; disabled: boolean;
+export default function LifeEventDiagram({ events, links, scenario, conditionEventIds, currency, disabled, onAddEvent, onEditEvent, onDeleteEvent, onConditions, onDeleteEdge, onConnect, onEdgeClick }: {
+    events: LifeEvent[]; links: LifeEventLink[];
+    // Only for its resolved dates: a link offset moves an event off its stored date.
+    scenario?: LifeScenario;
+    conditionEventIds: ReadonlySet<number>; currency: string; disabled: boolean;
     onAddEvent: (sourceId?: number, handleType?: 'source' | 'target') => void;
     onEditEvent: (event: LifeEvent) => void; onDeleteEvent: (event: LifeEvent) => void; onDeleteEdge: (edge: LifeEventLink) => void;
     onConditions: (event: LifeEvent) => void;
     onConnect: (source: number, target: number) => void; onEdgeClick: (edge: LifeEventLink) => void;
 }) {
     const navigate = useNavigate();
-    const { scenarioId } = useParams();
-    const eventBase = scenarioId ? `/goals/scenarios/${scenarioId}/events` : '/goals/events';
+    const { scenario: current } = useScenario();
+    const eventBase = `/goals/scenarios/${current.id}/events`;
     const container = useRef<HTMLDivElement>(null);
     const dragAllowed = useRef(false);
     const [menu, setMenu] = useState<{ x: number; y: number; target: MenuTarget } | null>(null);
@@ -96,7 +95,7 @@ export default function LifeEventDiagram({ events, links, scenarios, scenario, e
         const bounds = container.current.getBoundingClientRect();
         setMenu({ x: event.clientX - bounds.left - container.current.clientLeft, y: event.clientY - bounds.top - container.current.clientTop, target });
     };
-    const simulation: ContextMenuItem = { label: 'シミュレーションへ', onSelect: () => { void navigate(scenarioId ? `/goals/scenarios/${scenarioId}/simulation` : '/goals/scenarios'); } };
+    const simulation: ContextMenuItem = { label: 'シミュレーションへ', onSelect: () => { void navigate(`/goals/scenarios/${current.id}/simulation`); } };
     const menuItems = (target: MenuTarget): ContextMenuItem[] => {
         switch (target.type) {
             case 'pane': return [{ label: 'ライフイベントを追加', onSelect: () => onAddEvent() }, simulation];
@@ -113,21 +112,16 @@ export default function LifeEventDiagram({ events, links, scenarios, scenario, e
         }
     };
     const { nodes, edges } = useMemo(() => {
-        const selected = new Map(scenario?.events.map((event) => [event.id, event]));
-        // Preserve server-resolved dates while event reads await scenario scoping in N2b.
-        const fallback = new Map<number, string | null>();
-        for (const story of scenarios) for (const event of story.events) {
-            if (!fallback.has(event.id)) fallback.set(event.id, event.resolved_date);
-        }
+        const resolved = new Map(scenario?.events.map((event) => [event.id, event.resolved_date]));
         const graph = layout(events.map((event): EventData => ({
             id: event.id, name: event.name,
-            resolved_date: selected.has(event.id) ? selected.get(event.id)?.resolved_date ?? null : fallback.has(event.id) ? fallback.get(event.id) ?? null : event.target_date || null,
-            amount: event.target_amount, currency, included: !scenario || selected.has(event.id), evaluation: evaluations[event.id],
+            resolved_date: resolved.has(event.id) ? resolved.get(event.id) ?? null : event.target_date || null,
+            amount: event.target_amount, currency, hasConditions: conditionEventIds.has(event.id),
         })), links);
         return {
             nodes: graph.nodes.map((node): EventNode => ({
                 id: node.id, position: { x: node.x, y: node.y }, data: node.data, type: 'lifeEvent',
-                ariaLabel: `${node.data.name}・${node.data.resolved_date ?? '日付未設定'}${node.data.included ? '' : '・選択中のシナリオでは対象外'}`,
+                ariaLabel: `${node.data.name}・${node.data.resolved_date ?? '日付未設定'}${node.data.hasConditions ? '・前提条件あり' : ''}`,
             })),
             edges: graph.edges.map((edge): LinkEdge => ({
                 ...edge, data: { link: edge.data }, type: 'smoothstep',
@@ -148,7 +142,7 @@ export default function LifeEventDiagram({ events, links, scenarios, scenario, e
                 ariaLabel: `${events.find((event) => event.id === edge.data.from_event_id)?.name}から${events.find((event) => event.id === edge.data.to_event_id)?.name}・必ず続く・${edge.data.offset_months}か月`,
             })),
         };
-    }, [events, links, scenarios, scenario, evaluations, currency, disabled, onEdgeClick]);
+    }, [events, links, scenario, conditionEventIds, currency, disabled, onEdgeClick]);
 
     const signature = `${nodes.map((node) => node.id).join()}|${edges.map((edge) => edge.id).join()}`;
     return <div ref={container} tabIndex={-1} onContextMenu={(event) => event.preventDefault()}

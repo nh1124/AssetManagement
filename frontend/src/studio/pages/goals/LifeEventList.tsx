@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { Archive } from 'lucide-react';
-import { Link, useNavigate, useSearchParams, useParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { getLifeEventsWithProgress } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
 import { formatCurrency } from '../../../utils/currency';
@@ -10,15 +10,16 @@ import { useResource } from '../../useResource';
 import { DataTable, Feedback } from '../db/Database';
 import { buttonClass, useMutation } from '../db/forms';
 import GoalEditor from './GoalEditor';
+import { useScenario } from './scenarioContext';
 import { goalPercent, goalPlanStatus } from './presentation';
 
 function LifeEventListForClient({ currency, clientName }: { currency: string; clientName?: string }) {
     const navigate = useNavigate();
-    const { scenarioId } = useParams();
-    const eventBase = scenarioId ? `/goals/scenarios/${scenarioId}/events` : '/goals/events';
+    const { scenario } = useScenario();
+    const eventBase = `/goals/scenarios/${scenario.id}/events`;
     const [search, setSearch] = useSearchParams();
     const includeArchived = search.get('archived') === 'true';
-    const load = useCallback(() => getLifeEventsWithProgress(includeArchived), [includeArchived]);
+    const load = useCallback(() => getLifeEventsWithProgress(includeArchived, scenario.id), [includeArchived, scenario.id]);
     const resource = useResource(load);
     const mutation = useMutation();
     const [editing, setEditing] = useState(false);
@@ -35,7 +36,7 @@ function LifeEventListForClient({ currency, clientName }: { currency: string; cl
         <Feedback loading={resource.loading} error={resource.error} />
         {editing && <Overlay title="新しいライフイベント" onClose={closeEditor}>
             <Feedback error={mutation.error} />
-            <GoalEditor goal={null} currency={currency} embedded busy={mutation.busy || !clientName} onCancel={closeEditor}
+            <GoalEditor goal={null} scenarioId={scenario.id} currency={currency} embedded busy={mutation.busy || !clientName} onCancel={closeEditor}
                 onSave={(action) => { if (clientName) void mutation.run(action, 'ライフイベントを保存しました。', () => { setEditing(false); resource.reload(); }); }} />
         </Overlay>}
         {resource.data && <DataTable columns={['名称', '種別', '目標額', '目標日', '現在の確保額', '進捗', '計画の状態']}>

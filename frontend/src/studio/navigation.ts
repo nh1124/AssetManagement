@@ -169,6 +169,4 @@ export const SETTINGS_PATH = 'settings';
 export const STUDIO_EDITOR_PATHS = {
     record: 'record',
     transaction: 'record/:transactionId',
-    newGoal: 'goals/events/new',
-    editGoal: 'goals/events/:goalId/edit',
 } as const;

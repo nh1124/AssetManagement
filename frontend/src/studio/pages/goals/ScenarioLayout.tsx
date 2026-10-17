@@ -41,7 +41,8 @@ function ScenarioForClient({ scenarioId }: { scenarioId: string }) {
                     </li>)}
                 </ol>
             </nav>
-            <Outlet />
+            {/* Each step edits only this scenario's story. */}
+            <Outlet context={{ scenario: resource.data, reload: resource.reload }} />
             <div className="flex justify-end"><Link to={next ? `${base}/${next.segment}` : '/goals/scenarios'} className={primaryClass}>{next ? '次へ' : 'シナリオ一覧へ'}</Link></div>
         </>}
     </div>;

@@ -94,9 +94,8 @@ export default function StudioApp() {
                     <Route path="goals/events" element={<Navigate to="/goals/scenarios" replace />} />
                     <Route path="goals/graph" element={<Navigate to="/goals/scenarios" replace />} />
                     <Route path="goals/simulation" element={<Navigate to="/goals/scenarios" replace />} />
-                    <Route path={STUDIO_EDITOR_PATHS.newGoal} element={<GoalPage />} />
-                    <Route path={STUDIO_EDITOR_PATHS.editGoal} element={<GoalPage />} />
-                    <Route path="goals/events/:goalId" element={<GoalWorkspace />} />
+                    {/* Events live inside a scenario now; flat event URLs have no scenario to edit. */}
+                    <Route path="goals/events/*" element={<Navigate to="/goals/scenarios" replace />} />
                     {STUDIO_SCREENS.map((screen) => {
                         const screenRoutes = SCREENS[screen.path];
                         return (

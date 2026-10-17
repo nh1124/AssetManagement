@@ -543,13 +543,14 @@ export const createTransactionBatch = async (payload: {
 };
 
 // Life Events endpoints
-export const getLifeEvents = async (includeArchived = false): Promise<LifeEvent[]> => {
-    const response = await api.get('/life-events/', { params: { include_archived: includeArchived } });
+// Without a scenario the server answers with the goal scenario's events.
+export const getLifeEvents = async (includeArchived = false, scenarioId?: number): Promise<LifeEvent[]> => {
+    const response = await api.get('/life-events/', { params: { include_archived: includeArchived, scenario_id: scenarioId } });
     return response.data;
 };
 
-export const getLifeEventsWithProgress = async (includeArchived = false): Promise<LifeEvent[]> => {
-    const response = await api.get('/life-events/with-progress', { params: { include_archived: includeArchived } });
+export const getLifeEventsWithProgress = async (includeArchived = false, scenarioId?: number): Promise<LifeEvent[]> => {
+    const response = await api.get('/life-events/with-progress', { params: { include_archived: includeArchived, scenario_id: scenarioId } });
     return response.data;
 };
 
@@ -574,7 +575,8 @@ export const getGoalDashboard = async (
     return response.data;
 };
 
-export type GoalPayload = Pick<LifeEvent, 'direction' | 'account_id' | 'name' | 'target_amount' | 'target_date' | 'start_date' | 'priority' | 'note' | 'condition_mode' | 'active_plan_basis' | 'active_plan_label' | 'plan_status_override'>;
+// A new event belongs to the scenario it is created in; an update never moves it.
+export type GoalPayload = Pick<LifeEvent, 'direction' | 'account_id' | 'name' | 'target_amount' | 'target_date' | 'start_date' | 'priority' | 'note' | 'condition_mode' | 'active_plan_basis' | 'active_plan_label' | 'plan_status_override'> & { scenario_id?: number };
 
 export const createGoal = async (event: GoalPayload): Promise<LifeEvent> => {
     const response = await api.post('/life-events/', event);

@@ -8,9 +8,11 @@ import type { Account } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import { assetErrorMessage, useResource } from '../../useResource';
 import { DataTable, Feedback, Field } from '../db/Database';
-import { inputClass } from '../db/forms';
+import { buttonClass, inputClass } from '../db/forms';
 import ScenarioProjectionChart from './ScenarioProjectionChart';
 import ScenarioPreconditions from './ScenarioPreconditions';
+import { useScenario } from './scenarioContext';
+import { useMakeScenarioGoal } from './useMakeScenarioGoal';
 import { parseParameters, parseReturns, ScenarioSaveQueue, type ParameterDraft, type ReturnDraft } from './scenarioSimulation';
 
 type Draft = { parameters: ParameterDraft; returns: ReturnDraft };
@@ -28,6 +30,8 @@ function SimulationEditor({ initial, accounts, currency, clientName }: { initial
     const [saver] = useState(() => new ScenarioSaveQueue());
     const revision = useRef(0);
     const mounted = useRef(false);
+    const { scenario: current, reload } = useScenario();
+    const goal = useMakeScenarioGoal(reload);
     const focused = initial[0];
     const focusedId = focused?.id;
     const checkedKey = String(focusedId);
@@ -94,7 +98,11 @@ function SimulationEditor({ initial, accounts, currency, clientName }: { initial
         changed({ ...draft, returns });
     };
     return <section className="space-y-5">
-        <Feedback error={error} />
+        {/* The layout's bottom-right action is navigation; adopting stays a plain button. */}
+        {!current.is_goal && <div className="flex justify-end">
+            <button type="button" disabled={goal.busy || locked} onClick={() => goal.chooseGoal(current.id)} className={buttonClass}>このシナリオをゴールにする</button>
+        </div>}
+        <Feedback error={error || goal.error} message={goal.message} />
         {pending && <p role="status" className="text-xs text-[var(--studio-text-muted)]">試算・保存中…</p>}
         <div aria-busy={pending} className="space-y-5 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
             <ScenarioProjectionChart scenarios={comparison} focusedId={focusedId} currency={currency} colourIds={initial.map((scenario) => scenario.id)} />

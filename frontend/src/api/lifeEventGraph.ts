@@ -3,7 +3,8 @@ import api from './index';
 export interface LifeEventLinkInput {
     from_event_id: number;
     to_event_id: number;
-    kind: 'after' | 'alternative';
+    // Branches were abolished: a different story is a different scenario.
+    kind: 'after';
     offset_months: number;
     note?: string | null;
 }
@@ -25,8 +26,8 @@ export interface ScenarioEvent {
     incoming_link_id: number | null;
 }
 
-export async function getLifeEventLinks(): Promise<LifeEventLink[]> {
-    return (await api.get<LifeEventLink[]>('/life-events/links')).data;
+export async function getLifeEventLinks(scenarioId?: number): Promise<LifeEventLink[]> {
+    return (await api.get<LifeEventLink[]>('/life-events/links', { params: { scenario_id: scenarioId } })).data;
 }
 
 export async function createLifeEventLink(input: LifeEventLinkInput): Promise<LifeEventLink> {

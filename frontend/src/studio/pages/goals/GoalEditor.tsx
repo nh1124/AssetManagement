@@ -5,8 +5,8 @@ import { useResource } from '../../useResource';
 import { Choice, EditorActions, Feedback, Field } from '../db/Database';
 import { ACCOUNT_TYPES, buttonClass, inputClass, loadAccounts } from '../db/forms';
 
-export default function GoalEditor({ goal, currency, busy, embedded = false, onSave, onCancel }: {
-    goal: LifeEvent | null; currency: string; busy: boolean; embedded?: boolean;
+export default function GoalEditor({ goal, scenarioId, currency, busy, embedded = false, onSave, onCancel }: {
+    goal: LifeEvent | null; scenarioId?: number; currency: string; busy: boolean; embedded?: boolean;
     onSave: (action: () => Promise<unknown>) => void; onCancel: () => void;
 }) {
     const formId = useId();
@@ -33,7 +33,7 @@ export default function GoalEditor({ goal, currency, busy, embedded = false, onS
         event.preventDefault();
         if (locked || !name.trim()) return;
         const payload = { direction, account_id: accountId, name: name.trim(), target_amount: Number(amount), target_date: target, start_date: start || null, priority, note: note.trim() || null };
-        onSave(() => goal ? updateGoal(goal.id, payload) : createGoal(payload));
+        onSave(() => goal ? updateGoal(goal.id, payload) : createGoal({ ...payload, scenario_id: scenarioId }));
     };
     return <form id={formId} onSubmit={submit} className={embedded ? 'space-y-4' : 'space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5'}>
         <Feedback loading={accounts.loading} error={accounts.error} />
