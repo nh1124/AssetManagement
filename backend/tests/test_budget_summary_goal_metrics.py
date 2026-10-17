@@ -43,7 +43,7 @@ def _session():
 
 
 def _seed(db, client_id: int):
-    client = models.Client(id=client_id, name=f"c{client_id}", general_settings={}, ai_config={})
+    client = models.Client(id=client_id, name=f"c{client_id}", general_settings={})
     cash = models.Account(client_id=client_id, name="cash", account_type="asset")
     db.add_all([client, cash])
     db.flush()

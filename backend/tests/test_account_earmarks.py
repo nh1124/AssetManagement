@@ -22,7 +22,7 @@ def db():
     Base.metadata.create_all(engine)
     with Session(engine) as session:
         session.add_all([
-            models.Client(id=i, name=f"Client {i}", general_settings={"currency": "JPY"}, ai_config={})
+            models.Client(id=i, name=f"Client {i}", general_settings={"currency": "JPY"})
             for i in [1, 2]
         ])
         session.flush()

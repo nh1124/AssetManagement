@@ -10,7 +10,7 @@ from app.database import Base
 
 
 # N1a owns events per story and removes branch-choice rows.
-EXPECTED_METADATA_SHA256 = "4f8da9a9d62dc301decf94a435abfbc5920ef907f4342f7426e7476aa417f078"
+EXPECTED_METADATA_SHA256 = "1a1a266451a1f078e2b0cc61c55029e6471587c64745e9cef2e1bd189d110aab"
 
 MODEL_NAMES = (
     "Client", "ClientMfaSetting", "ClientRecoveryCode",
@@ -91,7 +91,7 @@ def _metadata_snapshot():
 def test_metadata_matches_the_minor_unit_schema():
     snapshot = _metadata_snapshot()
     assert len(snapshot["table_names"]) == 37
-    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 447
+    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 446
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == EXPECTED_METADATA_SHA256
 
@@ -118,9 +118,3 @@ def test_every_model_enum_and_base_is_reexported():
         assert issubclass(getattr(models, name), str)
         assert list(getattr(models, name))
 
-
-def test_client_key_decryption_preserves_the_security_import_target():
-    from app.security import encrypt_key
-
-    client = models.Client(ai_config={"gemini_api_key": encrypt_key("package-move-test")})
-    assert client.gemini_api_key == "package-move-test"

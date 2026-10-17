@@ -32,7 +32,7 @@ def _session():
 def test_transaction_batch_posts_grouped_transactions() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         cash = models.Account(client_id=1, name="cash", account_type="asset")
         food = models.Account(client_id=1, name="food", account_type="expense")
         receivable = models.Account(client_id=1, name="receivable", account_type="asset")
@@ -79,7 +79,7 @@ def test_transaction_batch_posts_grouped_transactions() -> None:
 def test_account_delete_is_locked_by_active_quick_template() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         cash = models.Account(client_id=1, name="cash", account_type="asset")
         food = models.Account(client_id=1, name="food", account_type="expense")
         db.add_all([client, cash, food])

@@ -26,8 +26,8 @@ def workspace():
 
     Base.metadata.create_all(engine)
     with sessionmaker(bind=engine, autoflush=False)() as db:
-        client = models.Client(name='Archive choices', general_settings={'currency': 'JPY'}, ai_config={})
-        other = models.Client(name='Other', general_settings={'currency': 'JPY'}, ai_config={})
+        client = models.Client(name='Archive choices', general_settings={'currency': 'JPY'})
+        other = models.Client(name='Other', general_settings={'currency': 'JPY'})
         db.add_all([client, other])
         db.flush()
         goal = models.LifeEvent(scenario_id=goal_scenario_id(db, client.id), client_id=client.id, name='Home', target_date=date(2028, 12, 31), target_amount_minor=2000)

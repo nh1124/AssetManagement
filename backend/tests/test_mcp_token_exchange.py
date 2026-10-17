@@ -28,7 +28,6 @@ def _client(db, client_id: int, username: str):
         name=f"User {client_id}",
         username=username,
         password_hash=hash_password("password123"),
-        ai_config={},
         general_settings={},
     )
     db.add(client)

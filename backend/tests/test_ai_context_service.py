@@ -47,7 +47,6 @@ def _client_with_data(db):
         username="tester",
         email="tester@example.com",
         password_hash=hash_password("password123"),
-        ai_config={"gemini_api_key": "encrypted-secret-value"},
         general_settings={"currency": "JPY", "language": "ja"},
     )
     db.add(client)
@@ -104,7 +103,6 @@ def test_context_settings_omits_secret_fields_and_values() -> None:
         text = json.dumps(payload, default=str)
 
         assert payload["resource"] == "settings"
-        assert payload["data"]["ai_key_configured"] is True
         assert payload["data"]["mfa_enabled"] is True
         assert "password_hash" not in text
         assert "encrypted-secret-value" not in text

@@ -54,7 +54,6 @@ def test_contract_manifest_exists_and_is_nonempty():
         "recurring_process_due",
         "data_import_replace_current_client",
         "clients_update_settings",
-        "clients_update_gemini_key",
     }
 
 

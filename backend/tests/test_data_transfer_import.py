@@ -37,8 +37,7 @@ def db():
 def _client(db, client_id):
     client = models.Client(
         id=client_id, name=f"client-{client_id}", username=f"user-{client_id}",
-        email=f"client-{client_id}@example.com", general_settings={"currency": "JPY"},
-        ai_config={}, created_at=STAMP, updated_at=STAMP,
+        email=f"client-{client_id}@example.com", general_settings={"currency": "JPY"}, created_at=STAMP, updated_at=STAMP,
     )
     db.add(client)
     db.commit()

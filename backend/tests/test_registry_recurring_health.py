@@ -29,7 +29,7 @@ def db():
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(bind=engine)
     session = sessionmaker(autocommit=False, autoflush=False, bind=engine)()
-    session.add(models.Client(id=1, name="test", general_settings={}, ai_config={}))
+    session.add(models.Client(id=1, name="test", general_settings={}))
     session.add_all([
         models.Account(client_id=1, name="bank", account_type="asset"),
         models.Account(client_id=1, name="subscriptions", account_type="expense"),
@@ -65,7 +65,7 @@ def test_registry_created_definition_has_no_health_violations(db):
 def test_recurring_with_dangling_registry_is_reported(db, foreign_client):
     # SQLite leaves FKs off; missing pins check logic despite PostgreSQL rejecting it.
     if foreign_client:
-        db.add(models.Client(id=2, name="other", general_settings={}, ai_config={}))
+        db.add(models.Client(id=2, name="other", general_settings={}))
         db.add(models.RegistryEntry(id=999, client_id=2, name="other entry"))
     recurring = models.RecurringTransaction(client_id=1, **minor_fields(_payload(db), _payload(db).get("currency") or "JPY", 'amount'), source_registry_entry_id=999)
     db.add(recurring)
@@ -94,7 +94,7 @@ def test_recurring_budget_inactive_clears_when_budget_enabled(db):
 
 
 def test_inactive_rows_and_other_clients_are_excluded(db):
-    db.add(models.Client(id=2, name="other", general_settings={}, ai_config={}))
+    db.add(models.Client(id=2, name="other", general_settings={}))
     inactive_entry = models.RegistryEntry(
         client_id=1,
         name="inactive",

@@ -44,7 +44,7 @@ def db():
     with Session(engine, autoflush=False) as session:
         for client_id, currency in [(1, "JPY"), (2, "USD")]:
             session.add(models.Client(id=client_id, name=f"Client {client_id}",
-                                      general_settings={"currency": currency}, ai_config={}))
+                                      general_settings={"currency": currency}))
             session.flush()
             offset = (client_id - 1) * 10
             session.add_all([

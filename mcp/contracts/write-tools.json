@@ -392,16 +392,6 @@
     "required_fields": ["general_settings"]
   },
   {
-    "tool": "clients_update_gemini_key",
-    "method": "put",
-    "path": "/clients/{client_id}/key",
-    "body": "object",
-    "source": "src/tools/clients.ts",
-    "path_fragment": "/key",
-    "allowed_fields": ["gemini_api_key"],
-    "required_fields": ["gemini_api_key"]
-  },
-  {
     "tool": "accounts_seed_defaults",
     "method": "post",
     "path": "/accounts/seed-defaults",

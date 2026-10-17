@@ -1,13 +1,13 @@
 import { useState, type FormEvent } from 'react';
 import { isAxiosError } from 'axios';
-import { getMe, updateAiKey, updateProfile } from '../../api';
+import { getMe, updateProfile } from '../../api';
 import { useClient } from '../../context/ClientContext';
 import { useLanguage, type TranslationKey } from '../i18n';
 import { useResource } from '../useResource';
 import { Field } from './db/Database';
 import { inputClass, primaryClass } from './db/forms';
 
-interface Me { id: number; name: string; email?: string | null; has_ai_key?: boolean }
+interface Me { id: number; name: string; email?: string | null }
 
 // Statuses, not server messages: a validation payload may echo a password.
 function failure(error: unknown): TranslationKey {
@@ -15,7 +15,7 @@ function failure(error: unknown): TranslationKey {
     return status === 403 ? 'account.wrongPassword' : status === 409 ? 'account.taken' : status === 422 ? 'account.invalid' : 'settings.failed';
 }
 
-/** The signed-in account: name, email, password and the AI API key. */
+/** The signed-in account: name, email and password. */
 export default function AccountSettings({ sectionClass }: { sectionClass: string }) {
     const { t } = useLanguage();
     const { refreshClients } = useClient();
@@ -25,7 +25,6 @@ export default function AccountSettings({ sectionClass }: { sectionClass: string
     const [password, setPassword] = useState('');
     const [confirmation, setConfirmation] = useState('');
     const [current, setCurrent] = useState('');
-    const [aiKey, setAiKey] = useState('');
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<TranslationKey | null>(null);
     const [message, setMessage] = useState<TranslationKey | null>(null);
@@ -46,7 +45,6 @@ export default function AccountSettings({ sectionClass }: { sectionClass: string
             setPassword('');
             setConfirmation('');
             setCurrent('');
-            setAiKey('');
             me.reload();
             void refreshClients();
         } catch (caught: unknown) {
@@ -64,11 +62,6 @@ export default function AccountSettings({ sectionClass }: { sectionClass: string
             password: password || undefined,
             current_password: needsCurrent ? current : undefined,
         }), 'account.saved');
-    };
-    const saveAiKey = (event: FormEvent<HTMLFormElement>) => {
-        event.preventDefault();
-        if (busy || !aiKey.trim() || !me.data) return;
-        void run(() => updateAiKey(me.data!.id, aiKey.trim()), 'account.aiKeySaved');
     };
     return <details className={sectionClass}>
         <summary className="cursor-pointer text-sm font-semibold">{t('account.title')}</summary>
@@ -88,13 +81,6 @@ export default function AccountSettings({ sectionClass }: { sectionClass: string
                     {mismatch && <p role="alert" className="text-xs text-[var(--studio-danger)]">{t('account.mismatch')}</p>}
                     <p className="text-xs text-[var(--studio-text-muted)]">{t('account.help')}</p>
                     <button type="submit" disabled={busy || mismatch || (needsCurrent && !current)} className={primaryClass}>{t(busy ? 'common.busy' : 'account.save')}</button>
-                </fieldset>
-            </form>
-            <form onSubmit={saveAiKey} className="border-t border-[var(--studio-border)] pt-4">
-                <fieldset disabled={busy} className="space-y-3">
-                    <Field label={t('account.aiKey')}><input type="password" value={aiKey} onChange={(event) => setAiKey(event.target.value)} placeholder={t(me.data.has_ai_key ? 'account.aiKeySet' : 'account.aiKeyUnset')} autoComplete="off" className={inputClass} /></Field>
-                    <p className="text-xs text-[var(--studio-text-muted)]">{t('account.aiKeyHelp')}</p>
-                    <button type="submit" disabled={busy || !aiKey.trim()} className={primaryClass}>{t('account.aiKeySave')}</button>
                 </fieldset>
             </form>
         </>}

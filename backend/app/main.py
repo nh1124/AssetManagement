@@ -15,7 +15,6 @@ from .domain.errors import DomainError, detail_for, status_for
 from .routers import (
     accounts,
     actions,
-    ai,
     ai_change_requests,
     ai_operations,
     analysis,
@@ -212,7 +211,6 @@ async def startup_event():
                     name="Default User",
                     username="admin",
                     password_hash=hash_password("adminadmin"),
-                    ai_config={},
                     general_settings={}
                 )
                 db.add(default_client)
@@ -305,7 +303,6 @@ app.include_router(simulation.router)
 app.include_router(simulation_scenarios.router)
 app.include_router(accounts.router)
 app.include_router(actions.router, dependencies=[Depends(get_current_client)])
-app.include_router(ai.router)
 app.include_router(ai_operations.router)
 app.include_router(ai_change_requests.router)
 app.include_router(clients.router)
@@ -326,8 +323,6 @@ def get_me(current_client: models.Client = Depends(get_current_client)):
         "username": current_client.username,
         "email": current_client.email,
         "general_settings": current_client.general_settings or {},
-        # Whether an AI API key is stored; the key itself never leaves the server.
-        "has_ai_key": bool((current_client.ai_config or {}).get("gemini_api_key")),
     }
 
 @app.get("/")

@@ -33,8 +33,8 @@ def db():
     Base.metadata.create_all(engine)
     with sessionmaker(bind=engine, autoflush=False)() as session:
         session.add_all([
-            models.Client(id=1, name="Budget owner", general_settings={"currency": "JPY"}, ai_config={}),
-            models.Client(id=2, name="Other owner", general_settings={"currency": "JPY"}, ai_config={}),
+            models.Client(id=1, name="Budget owner", general_settings={"currency": "JPY"}),
+            models.Client(id=2, name="Other owner", general_settings={"currency": "JPY"}),
         ])
         session.flush()
         session.add_all([

@@ -3,23 +3,12 @@ from __future__ import annotations
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
-from .. import models, security
+from .. import models
 from ..domain.errors import Invalid
 from ..domain.money import normalize_currency
 
 
-def set_gemini_api_key(
-    db: Session, client: models.Client, raw_key: str, *, commit: bool = True,
-) -> None:
-    config = dict(client.ai_config) if client.ai_config else {}
-    config["gemini_api_key"] = security.encrypt_key(raw_key)
-    client.ai_config = config
-    # SQLAlchemy does not detect mutated JSON columns without an explicit dirty flag.
-    flag_modified(client, "ai_config")
-    if commit:
-        db.commit()
-    else:
-        db.flush()
+
 
 
 def merge_general_settings(

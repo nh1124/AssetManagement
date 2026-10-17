@@ -23,7 +23,6 @@ def db():
         id=1,
         name="test",
         general_settings={},
-        ai_config={},
     ))
     session.add_all([
         models.Account(

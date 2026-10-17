@@ -26,8 +26,8 @@ def db():
     Base.metadata.create_all(bind=engine)
     session = sessionmaker(autocommit=False, autoflush=False, bind=engine)()
     session.add_all([
-        models.Client(id=1, name="first", ai_config={}, general_settings={}),
-        models.Client(id=2, name="second", ai_config={}, general_settings={}),
+        models.Client(id=1, name="first", general_settings={}),
+        models.Client(id=2, name="second", general_settings={}),
     ])
     session.flush()
     session.add_all([

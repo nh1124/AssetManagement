@@ -39,13 +39,11 @@ def posting():
         id=1,
         name="transaction-proposal-test",
         general_settings={},
-        ai_config={},
     )
     other_client = models.Client(
         id=2,
         name="other-client",
         general_settings={},
-        ai_config={},
     )
     cash = models.Account(
         client_id=1,

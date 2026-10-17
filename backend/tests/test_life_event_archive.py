@@ -30,7 +30,7 @@ def workspace():
 
     Base.metadata.create_all(engine)
     with sessionmaker(bind=engine, autoflush=False)() as db:
-        client = models.Client(name='Archive test', general_settings={'currency': 'JPY'}, ai_config={})
+        client = models.Client(name='Archive test', general_settings={'currency': 'JPY'})
         db.add(client)
         db.flush()
         goal = models.LifeEvent(scenario_id=goal_scenario_id(db, client.id), client_id=client.id, name='House', target_date=date(2027, 12, 31), target_amount_minor=1000)
@@ -110,7 +110,7 @@ def test_foreign_or_missing_goal_is_not_modified(workspace, action):
     db, http, client, goal, *_ = workspace
     before = _rows(db)
     assert http.post(f'/life-events/99999/{action}').status_code == 404
-    foreign = models.Client(name='Other', general_settings={}, ai_config={})
+    foreign = models.Client(name='Other', general_settings={})
     db.add(foreign)
     db.commit()
     app = http.app
@@ -140,7 +140,7 @@ def test_backup_round_trip_preserves_archive_and_v12_defaults_to_active(workspac
     document = export_client(db, client)
     assert document['version'] == EXPORT_VERSION == 22
     assert document['data']['life_events'][0]['archived_at'] == goal.archived_at.isoformat()
-    target = models.Client(name='Restore', general_settings={'currency': 'JPY'}, ai_config={})
+    target = models.Client(name='Restore', general_settings={'currency': 'JPY'})
     db.add(target)
     db.commit()
     import_client(db, target, data=document['data'], version=document['version'], manifest=document['manifest'])
@@ -148,7 +148,7 @@ def test_backup_round_trip_preserves_archive_and_v12_defaults_to_active(workspac
     assert restored.archived_at == goal.archived_at
     assert capsule_service.claimed_minor(db, target.id, restored.capsules[0].id) == {'JPY': 500}
     document['data']['life_events'][0].pop('archived_at')
-    legacy = models.Client(name='Legacy', general_settings={'currency': 'JPY'}, ai_config={})
+    legacy = models.Client(name='Legacy', general_settings={'currency': 'JPY'})
     db.add(legacy)
     db.commit()
     import_client(db, legacy, data=document['data'], version=12, manifest=None)

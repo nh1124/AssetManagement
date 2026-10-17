@@ -29,7 +29,7 @@ def db():
 
     Base.metadata.create_all(bind=engine)
     session = sessionmaker(autocommit=False, autoflush=False, bind=engine)()
-    session.add(models.Client(id=1, name="test", general_settings={"currency": "JPY"}, ai_config={}))
+    session.add(models.Client(id=1, name="test", general_settings={"currency": "JPY"}))
     session.add_all([
         models.Account(id=1, client_id=1, name="depreciation", account_type="expense"),
         models.Account(id=2, client_id=1, name="equipment", account_type="item"),

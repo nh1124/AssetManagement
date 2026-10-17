@@ -33,7 +33,7 @@ def db():
 
     Base.metadata.create_all(engine)
     with sessionmaker(bind=engine, autoflush=False)() as session:
-        session.add_all([models.Client(id=i, name=f"Client {i}", general_settings={"currency": "JPY"}, ai_config={}) for i in [1, 2]])
+        session.add_all([models.Client(id=i, name=f"Client {i}", general_settings={"currency": "JPY"}) for i in [1, 2]])
         session.flush()
         session.add_all([
             models.Account(id=i, client_id=1 if i < 5 else 2, name=f"Account {i}",

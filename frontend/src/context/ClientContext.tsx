@@ -5,9 +5,7 @@ import { useAuth } from './AuthContext';
 interface Client {
     id: number;
     name: string;
-    ai_config: Record<string, any>;
     general_settings: Record<string, any>;
-    has_key: boolean;
 }
 
 

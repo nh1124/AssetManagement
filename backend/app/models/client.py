@@ -14,24 +14,11 @@ class Client(Base):
     username = Column(String, unique=True, index=True, nullable=True) # For login
     email = Column(String, unique=True, index=True, nullable=True)    # For login/recovery
     password_hash = Column(String, nullable=True)                    # Bcrypt hash
-    ai_config = Column(JSON, default=dict)  # { "gemini_api_key": "...", "openai_api_key": "..." }
     general_settings = Column(JSON, default=dict) # { "currency": "JPY", "language": "ja" }
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, onupdate=datetime.utcnow)
 
-    @property
-    def gemini_api_key(self):
-        """Automatically decrypt and return the Gemini API key. Pattern from VisionArk."""
-        if not self.ai_config:
-            return None
-        encrypted_key = self.ai_config.get("gemini_api_key")
-        if not encrypted_key:
-            return None
-        # Keep this local as a precaution against a security cycle; the extra
-        # dot preserves the security target after the package move.
-        from ..security import decrypt_key
-        return decrypt_key(encrypted_key)
 
     # Relationships
     accounts = relationship("Account", back_populates="client")

@@ -36,7 +36,7 @@ def _session():
 def _client(db) -> models.Client:
     client = models.Client(
         id=1, name="Test", username="legs-test",
-        password_hash=hash_password("password123"), ai_config={}, general_settings={},
+        password_hash=hash_password("password123"), general_settings={},
     )
     db.add(client)
     db.commit()

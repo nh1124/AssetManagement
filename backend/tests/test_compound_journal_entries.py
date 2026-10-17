@@ -58,7 +58,7 @@ def _session():
 
 def _split_meal(db):
     """5,000 on the card: 3,000 our own food, 2,000 fronted for a friend."""
-    client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+    client = models.Client(id=1, name="test", general_settings={})
     card = models.Account(
         client_id=1, name="card", account_type="liability", liability_kind="card"
     )
@@ -224,7 +224,7 @@ def test_a_card_funded_line_moves_no_cash_this_month() -> None:
 def test_a_cash_funded_line_still_reports_its_own_leg_as_cash() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         cash = models.Account(client_id=1, name="cash", account_type="asset", role="operating")
         food = models.Account(client_id=1, name="food", account_type="expense")
         advance = models.Account(client_id=1, name="advance", account_type="asset")
@@ -264,7 +264,7 @@ def test_a_cash_funded_line_still_reports_its_own_leg_as_cash() -> None:
 
 
 def _split_payroll(db):
-    client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+    client = models.Client(id=1, name="test", general_settings={})
     salary = models.Account(client_id=1, name="salary", account_type="income")
     bank = models.Account(client_id=1, name="bank", account_type="asset", role="operating")
     savings = models.Account(client_id=1, name="savings plan", account_type="asset")
@@ -390,7 +390,7 @@ def test_transaction_account_mode_skips_a_compound_entry_rather_than_guessing() 
 def test_transaction_account_mode_still_works_on_a_two_leg_entry() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         salary = models.Account(client_id=1, name="salary", account_type="income")
         bank = models.Account(client_id=1, name="bank", account_type="asset", role="operating")
         db.add_all([client, salary, bank])

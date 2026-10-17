@@ -33,7 +33,6 @@ def posting():
         id=1,
         name="delete-transaction-test",
         general_settings={},
-        ai_config={},
     )
     cash = models.Account(
         client_id=1,

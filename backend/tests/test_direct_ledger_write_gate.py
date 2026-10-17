@@ -158,7 +158,7 @@ def test_mcp_create_refused_then_posts_same_payload_when_policy_opens(http_ledge
 def test_mcp_create_needs_applicable_executable_ledger_policy(http_ledger, policy):
     http, db, payload = http_ledger
     if "client_id" in policy:
-        db.add(models.Client(id=2, name="Other test client", ai_config={}, general_settings={}))
+        db.add(models.Client(id=2, name="Other test client", general_settings={}))
         db.commit()
         db.add(models.AiOperationPolicy(
             client_id=2, resource="transactions", action="create", risk="medium", mode="allow_execute",

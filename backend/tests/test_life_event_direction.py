@@ -1,6 +1,5 @@
 """Receipts affect projections, never the amount a client must save."""
 import asyncio
-import json
 from datetime import date, datetime
 
 import numpy as np
@@ -20,7 +19,7 @@ from app.database import Base, get_db
 from app.dependencies import get_current_client
 from app.domain.errors import DomainError, NotFound, Refused, detail_for, status_for
 from app.domain.transfer import EXPORT_VERSION, validate_import_payload
-from app.routers import ai, life_events, life_scenarios, simulation
+from app.routers import life_events, life_scenarios, simulation
 from app.services import (
     ai_context_service, analysis_service, capsule_service, goal_service,
     ledger_service, life_event_conditions, life_event_graph, milestone_service,
@@ -317,28 +316,6 @@ def test_goal_capsule_and_boost_workflows_cannot_fund_income(db):
         monthly_action_workflow._apply_boost_allocation(db, models.MonthlyAction(
             client_id=1, payload={"life_event_id": receipt.id, "account_id": cash.id, "delta_percent": 10}))
     assert db.query(models.Capsule).count() == db.query(models.Transaction).count() == 0
-
-
-def test_ai_savings_optimization_excludes_income_events(db, monkeypatch):
-    from app.security import encrypt_key
-
-    receipt = node(db, "income")
-    receipt.name = "収入専用退職金"
-    expense = node(db)
-    expense.name = "支出専用学費"
-    owner = db.get(models.Client, 1)
-    owner.ai_config = {"gemini_api_key": encrypt_key("test-only")}
-    db.commit()
-    prompts = []
-
-    async def capture_prompt(_key, prompt):
-        prompts.append(prompt)
-        return {"suggestions": []}
-
-    monkeypatch.setattr(ai, "call_gemini", capture_prompt)
-    asyncio.run(ai.optimize_allocations(db, owner))
-    assert len(prompts) == 1
-    assert json.dumps("支出専用学費") in prompts[0] and json.dumps("収入専用退職金") not in prompts[0]
 
 
 def test_scenario_adds_resolved_income_and_subtracts_expense_in_their_years(db, api, monkeypatch):

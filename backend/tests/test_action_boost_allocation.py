@@ -32,7 +32,7 @@ def _session():
 
 
 def _seed(db, *, balance: float = 1_000_000.0):
-    client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+    client = models.Client(id=1, name="test", general_settings={})
     savings = models.Account(client_id=1, name="savings", account_type="asset")
     goal = models.LifeEvent(scenario_id=goal_scenario_id(db, 1),
         client_id=1,

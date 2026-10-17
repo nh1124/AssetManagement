@@ -24,7 +24,6 @@ def db():
         id=1,
         name="test",
         general_settings={},
-        ai_config={},
     ))
     session.flush()
     try:
@@ -124,7 +123,6 @@ def test_import_bulk_registry_wipe_cascades_existing_owned_definitions():
             id=1,
             name="test",
             general_settings={},
-            ai_config={},
         ))
         session.flush()
         upsert_registry_from_recurring_payload(session, 1, {"name": "old subscription"})

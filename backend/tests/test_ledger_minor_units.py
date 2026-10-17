@@ -30,7 +30,7 @@ def posting():
     engine = sa.create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     with Session(engine) as db:
-        client = models.Client(id=1, name="B4 SQLite", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="B4 SQLite", general_settings={})
         accounts = [models.Account(client_id=1, name=name, account_type=kind)
                     for name, kind in (("cash", "asset"), ("food", "expense"), ("advance", "asset"))]
         db.add_all([client, *accounts])
@@ -165,7 +165,7 @@ def test_export_import_keeps_major_wire_and_integer_storage(posting, currency, a
     assert response.status_code == 200
     document = export_client(db, client)
     assert document["data"]["transactions"][0]["amount"] == amount
-    target = models.Client(id=2, name="B4 import target", general_settings={}, ai_config={})
+    target = models.Client(id=2, name="B4 import target", general_settings={})
     db.add(target)
     db.commit()
     import_client(db, target, data=document["data"], version=document["version"], manifest=document["manifest"])

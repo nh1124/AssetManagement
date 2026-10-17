@@ -34,7 +34,6 @@ def posting():
         id=1,
         name="create-transaction-test",
         general_settings={},
-        ai_config={},
     )
     cash = models.Account(
         client_id=1,

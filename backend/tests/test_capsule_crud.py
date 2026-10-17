@@ -32,8 +32,8 @@ def db():
     Base.metadata.create_all(engine)
     with sessionmaker(bind=engine, autoflush=False)() as session:
         session.add_all([
-            models.Client(id=1, name="Capsule CRUD", general_settings={}, ai_config={}),
-            models.Client(id=2, name="Other client", general_settings={}, ai_config={}),
+            models.Client(id=1, name="Capsule CRUD", general_settings={}),
+            models.Client(id=2, name="Other client", general_settings={}),
         ])
         session.commit()
         yield session

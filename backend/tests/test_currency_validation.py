@@ -36,7 +36,7 @@ def http():
     Base.metadata.create_all(engine)
     with Session(engine, autoflush=False) as db:
         client = models.Client(id=1, name="Guard", username="guard",
-                               general_settings={"currency": "JPY"}, ai_config={})
+                               general_settings={"currency": "JPY"})
         db.add(client)
         db.commit()
         app = FastAPI()

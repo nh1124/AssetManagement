@@ -77,8 +77,7 @@ def _get_routes():
 
 
 def _seed(db, scenario, today):
-    db.add(models.Client(id=1, name="GET guard", username="get-guard",
-                         ai_config={}, general_settings={"currency": "JPY"}))
+    db.add(models.Client(id=1, name="GET guard", username="get-guard", general_settings={"currency": "JPY"}))
     db.flush()
     if scenario != "missing_default_accounts":
         ensure_default_accounts(db, 1)

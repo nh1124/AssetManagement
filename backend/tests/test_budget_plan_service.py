@@ -75,7 +75,7 @@ def _session():
 def test_data_health_repairs_plan_line_source_from_posted_transaction() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         payable = models.Account(client_id=1, name="long payable", account_type="liability")
         beauty = models.Account(client_id=1, name="beauty", account_type="expense")
         db.add_all([client, payable, beauty])
@@ -119,7 +119,7 @@ def test_data_health_repairs_plan_line_source_from_posted_transaction() -> None:
 def test_data_export_includes_budget_plan_line_fields_without_legacy_columns() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", username="test", email="test@example.com", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", username="test", email="test@example.com", general_settings={})
         cash = models.Account(client_id=1, name="cash", account_type="asset")
         food = models.Account(client_id=1, name="food", account_type="expense")
         plan = models.BudgetPlan(client_id=1, name="Baseline", is_default=True)
@@ -160,7 +160,7 @@ def test_data_export_includes_budget_plan_line_fields_without_legacy_columns() -
 def test_data_export_manifest_and_validate_include_monthly_actions() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", username="test", email="test@example.com", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", username="test", email="test@example.com", general_settings={})
         db.add(client)
         db.add(
             models.MonthlyAction(
@@ -197,7 +197,7 @@ def test_data_import_round_trip_remaps_account_targets_and_monthly_actions() -> 
     source_db = _session()
     target_db = _session()
     try:
-        source_client = models.Client(id=1, name="source", username="source", general_settings={}, ai_config={})
+        source_client = models.Client(id=1, name="source", username="source", general_settings={})
         cash = models.Account(client_id=1, name="cash", account_type="asset")
         food = models.Account(client_id=1, name="food", account_type="expense")
         plan = models.BudgetPlan(client_id=1, name="Baseline", is_default=True)
@@ -236,7 +236,7 @@ def test_data_import_round_trip_remaps_account_targets_and_monthly_actions() -> 
         source_db.commit()
 
         snapshot = export_client_data(db=source_db, current_client=source_client)
-        target_client = models.Client(id=2, name="target", username="target", general_settings={}, ai_config={})
+        target_client = models.Client(id=2, name="target", username="target", general_settings={})
         target_db.add(target_client)
         target_db.commit()
 
@@ -260,7 +260,7 @@ def test_data_import_allows_legacy_checksum_mismatch_when_structure_is_valid() -
     source_db = _session()
     target_db = _session()
     try:
-        source_client = models.Client(id=1, name="source", username="source", general_settings={}, ai_config={})
+        source_client = models.Client(id=1, name="source", username="source", general_settings={})
         cash = models.Account(client_id=1, name="cash", account_type="asset")
         source_db.add_all([source_client, cash])
         source_db.commit()
@@ -276,7 +276,7 @@ def test_data_import_allows_legacy_checksum_mismatch_when_structure_is_valid() -
         assert validation["status"] == "valid"
         assert validation["warning_count"] >= 2
 
-        target_client = models.Client(id=2, name="target", username="target", general_settings={}, ai_config={})
+        target_client = models.Client(id=2, name="target", username="target", general_settings={})
         target_db.add(target_client)
         target_db.commit()
         result = import_client_data(payload=payload, db=target_db, current_client=target_client)
@@ -292,7 +292,7 @@ def test_data_import_backfills_plan_line_source_identity_for_legacy_payload() ->
     source_db = _session()
     target_db = _session()
     try:
-        source_client = models.Client(id=1, name="source", username="source", general_settings={}, ai_config={})
+        source_client = models.Client(id=1, name="source", username="source", general_settings={})
         cash = models.Account(client_id=1, name="cash", account_type="asset")
         food = models.Account(client_id=1, name="food", account_type="expense")
         source_db.add_all([source_client, cash, food])
@@ -342,7 +342,7 @@ def test_data_import_backfills_plan_line_source_identity_for_legacy_payload() ->
         snapshot["manifest"]["checksums"]["monthly_plan_lines"] = "legacy"
         snapshot["manifest"]["payload_checksum"] = "legacy"
 
-        target_client = models.Client(id=2, name="target", username="target", general_settings={}, ai_config={})
+        target_client = models.Client(id=2, name="target", username="target", general_settings={})
         target_db.add(target_client)
         target_db.commit()
         result = import_client_data(payload=ImportPayload(**snapshot), db=target_db, current_client=target_client)
@@ -361,7 +361,7 @@ def test_data_import_backfills_plan_line_source_identity_for_legacy_payload() ->
 def test_budget_summary_combines_income_spending_allocations_and_debt() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         salary = models.Account(client_id=1, name="salary", account_type="income")
         cash = models.Account(client_id=1, name="cash", account_type="asset")
         food = models.Account(client_id=1, name="food", account_type="expense")
@@ -457,7 +457,7 @@ def test_budget_summary_combines_income_spending_allocations_and_debt() -> None:
 def test_set_budget_action_updates_specified_plan_only() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         food = models.Account(client_id=1, name="food", account_type="expense")
         baseline = models.BudgetPlan(client_id=1, name="Baseline", is_default=True, sort_order=0)
         lean = models.BudgetPlan(client_id=1, name="Lean", is_default=False, sort_order=1)
@@ -512,7 +512,7 @@ def test_set_budget_action_updates_specified_plan_only() -> None:
 def test_variance_analysis_uses_specified_plan_budget() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         food = models.Account(client_id=1, name="food", account_type="expense")
         baseline = models.BudgetPlan(client_id=1, name="Baseline", is_default=True, sort_order=0)
         lean = models.BudgetPlan(client_id=1, name="Lean", is_default=False, sort_order=1)
@@ -547,7 +547,7 @@ def test_variance_analysis_uses_specified_plan_budget() -> None:
 def test_create_plan_lines_updates_capsule_contribution_and_monthly_plan_line() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         cash = models.Account(client_id=1, name="cash", account_type="asset")
         food = models.Account(client_id=1, name="food", account_type="expense")
         cap_account = models.Account(client_id=1, name="house capsule", account_type="asset", role="earmarked")
@@ -598,7 +598,7 @@ def test_create_plan_lines_updates_capsule_contribution_and_monthly_plan_line() 
 def test_update_plan_lines_requires_existing_id() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         food = models.Account(client_id=1, name="food", account_type="expense")
         db.add_all([client, food])
         db.commit()
@@ -647,7 +647,7 @@ def test_update_plan_lines_requires_existing_id() -> None:
 def test_budget_summary_deduplicates_expense_lines_without_writing() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         food = models.Account(client_id=1, name="food", account_type="expense")
         db.add_all([client, food])
         db.flush()
@@ -690,7 +690,7 @@ def test_budget_summary_deduplicates_expense_lines_without_writing() -> None:
 def test_data_health_reports_and_repairs_duplicate_plan_lines() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         food = models.Account(client_id=1, name="food", account_type="expense")
         db.add_all([client, food])
         db.flush()
@@ -733,7 +733,7 @@ def test_data_health_reports_and_repairs_duplicate_plan_lines() -> None:
 def test_db_rejects_duplicate_active_plan_line_identity() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         food = models.Account(client_id=1, name="food", account_type="expense")
         plan = models.BudgetPlan(client_id=1, name="Baseline", is_default=True)
         db.add_all([client, food, plan])
@@ -771,7 +771,7 @@ def test_db_rejects_duplicate_active_plan_line_identity() -> None:
 def test_capsule_allocation_actual_uses_current_journal_claim() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         account = models.Account(client_id=1, name="bank", account_type="asset")
         db.add_all([client, account])
         db.flush()
@@ -814,7 +814,7 @@ def test_capsule_allocation_actual_uses_current_journal_claim() -> None:
 def test_product_reserve_capsule_allocation_exposes_suggested_amount() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         capsule = models.Capsule(
             client_id=1,
             name="Item Reserve",
@@ -869,7 +869,7 @@ def test_product_reserve_capsule_allocation_exposes_suggested_amount() -> None:
 def test_expense_only_products_are_variable_budget_suggestions() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         food = models.Account(client_id=1, name="food", account_type="expense")
         db.add_all([client, food])
         db.flush()
@@ -907,7 +907,7 @@ def test_expense_only_products_are_variable_budget_suggestions() -> None:
 def test_life_event_allocation_is_presented_as_capsule() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         account = models.Account(client_id=1, name="event capsule account", account_type="asset")
         db.add_all([client, account])
         db.flush()
@@ -954,7 +954,7 @@ def test_life_event_allocation_is_presented_as_capsule() -> None:
 def test_cash_flow_projection_warns_about_unsynced_yearly_income() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         salary = models.Account(client_id=1, name="bonus", account_type="income")
         cash = models.Account(client_id=1, name="cash", account_type="asset")
         db.add_all([client, salary, cash])
@@ -989,7 +989,7 @@ def test_cash_flow_projection_uses_remaining_current_month_plan_after_actuals() 
     try:
         current_period = current_period_key()
         next_period = add_months(current_period, 1)
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         salary = models.Account(client_id=1, name="salary", account_type="income")
         cash = models.Account(client_id=1, name="cash", account_type="asset")
         food = models.Account(client_id=1, name="food", account_type="expense")
@@ -1085,7 +1085,7 @@ def test_cash_flow_projection_does_not_double_count_current_month_over_actuals()
     db = _session()
     try:
         current_period = current_period_key()
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         salary = models.Account(client_id=1, name="salary", account_type="income")
         cash = models.Account(client_id=1, name="cash", account_type="asset")
         food = models.Account(client_id=1, name="food", account_type="expense")
@@ -1139,7 +1139,7 @@ def test_financed_expense_counts_as_budget_usage_without_cash_flow_expense() -> 
     try:
         current_period = current_period_key()
         next_period = add_months(current_period, 1)
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         salary = models.Account(client_id=1, name="salary", account_type="income")
         cash = models.Account(client_id=1, name="cash", account_type="asset")
         beauty = models.Account(client_id=1, name="beauty", account_type="expense")
@@ -1246,7 +1246,7 @@ def test_auto_cash_treatment_excludes_credit_expense_and_projects_card_payment()
     db = _session()
     try:
         next_period = add_months(current_period_key(), 1)
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         cash = models.Account(client_id=1, name="cash", account_type="asset")
         credit = models.Account(client_id=1, name="credit", account_type="liability", liability_kind="card")
         subscription = models.Account(client_id=1, name="subscription", account_type="expense")
@@ -1308,7 +1308,7 @@ def test_cash_flow_splits_same_expense_account_by_source_account_bucket() -> Non
     db = _session()
     try:
         next_period = add_months(current_period_key(), 1)
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         cash = models.Account(client_id=1, name="cash", account_type="asset", role="operating")
         loan = models.Account(client_id=1, name="medical loan", account_type="liability")
         beauty = models.Account(client_id=1, name="beauty", account_type="expense")
@@ -1363,7 +1363,7 @@ def test_balance_projection_tracks_future_liability_financed_expense() -> None:
     db = _session()
     try:
         next_period = add_months(current_period_key(), 1)
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         loan = models.Account(client_id=1, name="loan", account_type="liability")
         beauty = models.Account(client_id=1, name="beauty", account_type="expense")
         db.add_all([client, loan, beauty])
@@ -1404,7 +1404,7 @@ def test_income_direct_to_asset_counts_as_allocation_actual_without_remaining_ca
     db = _session()
     try:
         current_period = current_period_key()
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         salary = models.Account(client_id=1, name="salary", account_type="income")
         bank = models.Account(client_id=1, name="bank", account_type="asset", role="operating")
         stock = models.Account(client_id=1, name="employee stock", account_type="asset", role="growth")
@@ -1453,7 +1453,7 @@ def test_balance_projection_tracks_debt_payment_and_liability_asset_purchase() -
     db = _session()
     try:
         next_period = add_months(current_period_key(), 1)
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         salary = models.Account(client_id=1, name="salary", account_type="income")
         cash = models.Account(client_id=1, name="cash", account_type="asset", role="operating")
         loan = models.Account(client_id=1, name="loan", account_type="liability")
@@ -1521,7 +1521,7 @@ def test_cash_flow_uses_registry_source_when_saved_budget_line_lacks_source_acco
     db = _session()
     try:
         next_period = add_months(current_period_key(), 1)
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         loan = models.Account(client_id=1, name="long term payable", account_type="liability")
         beauty = models.Account(client_id=1, name="beauty", account_type="expense")
         db.add_all([client, loan, beauty])
@@ -1577,7 +1577,7 @@ def test_credit_expense_creates_credit_settlement_projection() -> None:
     try:
         period = current_period_key()
         start, _ = period_to_range(period)
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         cash = models.Account(client_id=1, name="cash", account_type="asset", role="operating")
         card = models.Account(client_id=1, name="credit card", account_type="liability", liability_kind="card")
         food = models.Account(client_id=1, name="food", account_type="expense")
@@ -1631,7 +1631,7 @@ def test_credit_expense_creates_credit_settlement_projection() -> None:
 def test_credit_settlement_uses_liability_closing_day_and_payment_offset() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         card = models.Account(
             client_id=1,
             name="card",
@@ -1683,7 +1683,7 @@ def test_credit_settlement_applies_fixed_payment_policy() -> None:
     db = _session()
     try:
         period = "2026-05"
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         card = models.Account(
             client_id=1,
             name="card",
@@ -1719,7 +1719,7 @@ def test_credit_settlement_applies_fixed_payment_policy() -> None:
 def test_credit_settlement_spreads_installment_policy_across_future_months() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         card = models.Account(
             client_id=1,
             name="card",
@@ -1759,7 +1759,7 @@ def test_cash_flow_reports_asset_role_movements() -> None:
     db = _session()
     try:
         next_period = add_months(current_period_key(), 1)
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         cash = models.Account(client_id=1, name="cash", account_type="asset", role="operating")
         nisa = models.Account(client_id=1, name="NISA", account_type="asset", role="growth")
         reserve = models.Account(client_id=1, name="Trip Reserve", account_type="asset", role="earmarked")
@@ -1802,7 +1802,7 @@ def test_cash_flow_reports_asset_role_movements() -> None:
 def test_cash_flow_projection_warns_about_unsynced_product_reserve_capsule() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         capsule = models.Capsule(
             client_id=1,
             name="Item Reserve",
@@ -1829,7 +1829,7 @@ def test_cash_flow_projection_warns_about_unsynced_product_reserve_capsule() -> 
 def test_cash_flow_projection_warns_about_product_reserve_amount_diff() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         capsule = models.Capsule(
             client_id=1,
             name="Item Reserve",
@@ -1866,7 +1866,7 @@ def test_cash_flow_projection_warns_about_product_reserve_amount_diff() -> None:
 def test_cash_flow_summary_reports_buffer_and_shortfall_month() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         cash = models.Account(client_id=1, name="cash", account_type="asset")
         rent = models.Account(client_id=1, name="rent", account_type="expense")
         db.add_all([client, cash, rent])
@@ -1898,7 +1898,7 @@ def test_cash_flow_summary_reports_buffer_and_shortfall_month() -> None:
 def test_recurring_budget_context_converts_currency_to_client_currency() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={"currency": "JPY"}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={"currency": "JPY"})
         cash = models.Account(client_id=1, name="cash", account_type="asset")
         subscription = models.Account(client_id=1, name="subscription", account_type="expense")
         db.add_all([client, cash, subscription])
@@ -1947,7 +1947,7 @@ def test_recurring_budget_context_converts_currency_to_client_currency() -> None
 def test_the_repair_adopts_legacy_null_plan_lines_and_the_resolvers_do_not() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         food = models.Account(client_id=1, name="food", account_type="expense")
         db.add_all([client, food])
         db.flush()
@@ -1994,7 +1994,7 @@ def test_the_repair_adopts_legacy_null_plan_lines_and_the_resolvers_do_not() -> 
 def test_same_line_identity_is_allowed_across_plans_but_not_within_one_plan() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         baseline = models.BudgetPlan(client_id=1, name="Baseline", is_default=True)
         house = models.BudgetPlan(client_id=1, name="House")
         food = models.Account(client_id=1, name="food", account_type="expense")
@@ -2026,8 +2026,8 @@ def test_same_line_identity_is_allowed_across_plans_but_not_within_one_plan() ->
 def test_plan_line_create_and_update_reject_foreign_or_missing_plan_ids() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
-        other_client = models.Client(id=2, name="other", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
+        other_client = models.Client(id=2, name="other", general_settings={})
         other_plan = models.BudgetPlan(client_id=2, name="Other", is_default=True)
         food = models.Account(client_id=1, name="food", account_type="expense")
         db.add_all([client, other_client, other_plan, food])
@@ -2068,7 +2068,7 @@ def test_plan_line_create_and_update_reject_foreign_or_missing_plan_ids() -> Non
 def test_budget_plan_router_rejects_invalid_compare_and_self_copy() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         plan = models.BudgetPlan(client_id=1, name="Baseline", is_default=True)
         db.add_all([client, plan])
         db.commit()
@@ -2100,7 +2100,7 @@ def test_budget_plan_router_rejects_invalid_compare_and_self_copy() -> None:
 def test_copy_period_full_replace_only_affects_selected_plan() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         baseline = models.BudgetPlan(client_id=1, name="Baseline", is_default=True)
         house = models.BudgetPlan(client_id=1, name="House")
         food = models.Account(client_id=1, name="food", account_type="expense")

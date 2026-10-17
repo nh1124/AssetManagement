@@ -48,7 +48,6 @@ def register(
         username=username,
         email=email,
         password_hash=password_hash,
-        ai_config={},
         general_settings={},
     )
     try:

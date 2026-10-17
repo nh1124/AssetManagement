@@ -39,7 +39,7 @@ def _session():
 
 
 def _client_and_accounts(db):
-    client = models.Client(id=1, name="recurring-test", general_settings={}, ai_config={})
+    client = models.Client(id=1, name="recurring-test", general_settings={})
     cash = models.Account(client_id=1, name="Cash", account_type="asset")
     expense = models.Account(client_id=1, name="Rent expense", account_type="expense")
     db.add_all([client, cash, expense])

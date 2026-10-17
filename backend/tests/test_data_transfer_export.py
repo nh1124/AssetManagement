@@ -82,7 +82,7 @@ def _seed_client(db, client_id, base, marker):
 
     client = models.Client(
         id=client_id, name=marker, username=marker, email=f"{marker}@example.com",
-        general_settings={"currency": "JPY", "owner": marker}, ai_config={},
+        general_settings={"currency": "JPY", "owner": marker},
         created_at=STAMP, updated_at=STAMP,
     )
     db.add(client)

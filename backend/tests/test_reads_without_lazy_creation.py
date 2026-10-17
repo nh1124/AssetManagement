@@ -34,7 +34,7 @@ def database():
     sessions = sessionmaker(bind=engine, autoflush=False)
     with sessions() as db:
         db.add(models.Client(id=1, name="Read test", username="read-test",
-                             general_settings={"currency": "JPY"}, ai_config={}))
+                             general_settings={"currency": "JPY"}))
         db.commit()
 
     def override_db():

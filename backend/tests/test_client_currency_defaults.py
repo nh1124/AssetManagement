@@ -34,8 +34,8 @@ def posting():
     )
     Base.metadata.create_all(engine)
     with Session(engine, autoflush=False) as db:
-        client = models.Client(id=1, name="USD client", general_settings={"currency": "USD"}, ai_config={})
-        other = models.Client(id=2, name="EUR client", general_settings={"currency": "EUR"}, ai_config={})
+        client = models.Client(id=1, name="USD client", general_settings={"currency": "USD"})
+        other = models.Client(id=2, name="EUR client", general_settings={"currency": "EUR"})
         cash, food, reserve, income = [
             models.Account(client_id=1, name=name, account_type=kind)
             for name, kind in (("cash", "asset"), ("food", "expense"),

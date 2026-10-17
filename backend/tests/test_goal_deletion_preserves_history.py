@@ -44,7 +44,6 @@ def _setup(db, *, claimed_amount=0):
         id=1,
         name="goal-deletion-test",
         general_settings={},
-        ai_config={},
     )
     earmarked = models.Account(
         client_id=client.id,

@@ -33,7 +33,6 @@ def _setup(db):
         id=1,
         name="provenance-test",
         general_settings={},
-        ai_config={},
     )
     cash = models.Account(
         client_id=1,

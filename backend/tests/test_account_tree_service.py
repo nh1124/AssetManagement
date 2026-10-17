@@ -19,8 +19,8 @@ def db():
     Base.metadata.create_all(bind=engine)
     session = sessionmaker(autocommit=False, autoflush=False, bind=engine)()
     session.add_all([
-        models.Client(id=1, name="account-tree", ai_config={}, general_settings={}),
-        models.Client(id=2, name="other", ai_config={}, general_settings={}),
+        models.Client(id=1, name="account-tree", general_settings={}),
+        models.Client(id=2, name="other", general_settings={}),
     ])
     session.commit()
     try:

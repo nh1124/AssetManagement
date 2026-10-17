@@ -34,7 +34,7 @@ def _session():
 def test_applying_add_recurring_creates_the_definition_and_its_registry_entry() -> None:
     db = _session()
     try:
-        db.add(models.Client(id=1, name="test", general_settings={}, ai_config={}))
+        db.add(models.Client(id=1, name="test", general_settings={}))
         bank = models.Account(client_id=1, name="bank", account_type="asset")
         subs = models.Account(client_id=1, name="subscriptions", account_type="expense")
         db.add_all([bank, subs])
@@ -80,7 +80,7 @@ def test_applying_add_recurring_creates_the_definition_and_its_registry_entry() 
 def test_pausing_deactivates_the_definition() -> None:
     db = _session()
     try:
-        db.add(models.Client(id=1, name="test", general_settings={}, ai_config={}))
+        db.add(models.Client(id=1, name="test", general_settings={}))
         registry_entry = models.RegistryEntry(
             client_id=1,
             name="recurring owner",

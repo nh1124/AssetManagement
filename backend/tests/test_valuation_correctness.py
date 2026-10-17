@@ -32,7 +32,6 @@ def _client(db) -> models.Client:
         id=1,
         name="Valuation Test",
         general_settings={"currency": "JPY"},
-        ai_config={},
     )
     db.add(client)
     db.commit()

@@ -45,7 +45,7 @@ def _session():
 
 
 def _accounts(db):
-    db.add(models.Client(id=1, name="test", general_settings={}, ai_config={}))
+    db.add(models.Client(id=1, name="test", general_settings={}))
     bank = models.Account(client_id=1, name="bank", account_type="asset")
     card = models.Account(
         client_id=1, name="card", account_type="liability", liability_kind="card"

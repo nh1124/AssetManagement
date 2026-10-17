@@ -53,7 +53,6 @@ def _client(db) -> models.Client:
         name="Test",
         username="roundtrip-test",
         password_hash=hash_password("password123"),
-        ai_config={},
         general_settings={},
     )
     db.add(client)

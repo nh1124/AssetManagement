@@ -39,7 +39,7 @@ def _session():
 
 
 def _card_and_subscription(db):
-    db.add(models.Client(id=1, name="test", general_settings={}, ai_config={}))
+    db.add(models.Client(id=1, name="test", general_settings={}))
     card = models.Account(
         client_id=1,
         name="card",

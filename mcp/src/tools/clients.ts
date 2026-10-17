@@ -55,29 +55,4 @@ export function registerClientTools(server: McpServer): void {
     },
   );
 
-  server.registerTool(
-    "clients_update_gemini_key",
-    {
-      title: "Update Gemini API key",
-      description: "Stores an encrypted Gemini API key for a client. Avoid calling unless the user explicitly provides the key.",
-      inputSchema: z
-        .object({
-          client_id: z.number().int().min(1).describe("Client ID"),
-          gemini_api_key: z.string().min(1).describe("Gemini API key"),
-        })
-        .strict(),
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-    },
-    async ({ client_id, gemini_api_key }) => {
-      try {
-        const data = await api.put<unknown>(`/clients/${client_id}/key`, { gemini_api_key });
-        return {
-          content: [{ type: "text", text: `Updated Gemini API key:\n${JSON.stringify(data, null, 2)}` }],
-          structuredContent: toStructured(data),
-        };
-      } catch (err) {
-        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
-      }
-    },
-  );
 }

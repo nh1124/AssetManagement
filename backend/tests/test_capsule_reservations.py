@@ -42,7 +42,6 @@ def posting():
         id=1,
         name="reservation-test",
         general_settings={},
-        ai_config={},
     )
     accounts = [models.Account(
         client_id=1,

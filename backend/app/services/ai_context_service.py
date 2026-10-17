@@ -272,7 +272,6 @@ def _settings_payload(client: models.Client) -> dict[str, Any]:
         "username": client.username,
         "email": client.email,
         "general_settings": client.general_settings or {},
-        "ai_key_configured": bool(client.ai_config),
         "mfa_enabled": bool(client.mfa_setting and client.mfa_setting.enabled),
     }
 

@@ -51,7 +51,7 @@ def _session():
 
 
 def _client_and_goal(db, target_date: date, target_amount: float = 1_500_000, priority: int = 2):
-    client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+    client = models.Client(id=1, name="test", general_settings={})
     db.add(client)
     goal = models.LifeEvent(scenario_id=goal_scenario_id(db, 1),
         client_id=1,

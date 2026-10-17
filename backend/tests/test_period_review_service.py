@@ -22,7 +22,7 @@ def db():
                            poolclass=StaticPool)
     Base.metadata.create_all(bind=engine)
     session = sessionmaker(autocommit=False, autoflush=False, bind=engine)()
-    session.add(models.Client(id=1, name="test", ai_config={}, general_settings={}))
+    session.add(models.Client(id=1, name="test", general_settings={}))
     session.commit()
     try:
         yield session
@@ -126,7 +126,7 @@ def test_list_reviews_limit_keeps_only_the_newest_periods(db):
 
 
 def test_list_reviews_is_client_scoped_before_applying_limit(db):
-    db.add(models.Client(id=2, name="other", ai_config={}, general_settings={}))
+    db.add(models.Client(id=2, name="other", general_settings={}))
     db.commit()
     own = save_review(db, date(2026, 9, 1), date(2026, 9, 30))
     other = save_review(db, date(2026, 10, 1), date(2026, 10, 31), client_id=2)

@@ -84,7 +84,7 @@ def _post_opening_balances(db, accounts: list[tuple[models.Account, float]]) -> 
 def test_logical_balance_follows_the_plan_and_ignores_the_recurring_definition() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         cash = models.Account(client_id=1, name="cash", account_type="asset")
         bank = models.Account(client_id=1, name="bank", account_type="asset")
         savings = models.Account(client_id=1, name="savings", account_type="asset")
@@ -158,7 +158,7 @@ def test_logical_balance_follows_the_plan_and_ignores_the_recurring_definition()
 def test_update_transaction_rebuilds_journal_and_revalues_balances() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         db.add(client)
         cash = models.Account(client_id=1, name="cash", account_type="asset")
         food = models.Account(client_id=1, name="food", account_type="expense")
@@ -197,7 +197,7 @@ def test_update_transaction_rebuilds_journal_and_revalues_balances() -> None:
 def test_foreign_currency_transactions_are_valued_with_exchange_rates() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={"currency": "JPY"}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={"currency": "JPY"})
         cash = models.Account(client_id=1, name="cash", account_type="asset")
         salary = models.Account(client_id=1, name="salary", account_type="income")
         db.add(client)
@@ -239,7 +239,7 @@ def test_foreign_currency_transactions_are_valued_with_exchange_rates() -> None:
 def test_auto_update_detects_used_currency_once_per_day() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={"currency": "JPY"}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={"currency": "JPY"})
         cash = models.Account(client_id=1, name="cash", account_type="asset")
         salary = models.Account(client_id=1, name="salary", account_type="income")
         db.add_all([client, cash, salary])
@@ -276,7 +276,7 @@ def test_roadmap_projection_returns_projection_and_liability_demand() -> None:
     db = _session()
     try:
         today = date.today()
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         cash = models.Account(client_id=1, name="cash", account_type="asset")
         credit = models.Account(client_id=1, name="credit", account_type="liability")
         db.add(client)
@@ -345,7 +345,7 @@ def test_roadmap_projection_returns_projection_and_liability_demand() -> None:
 def test_idle_money_uses_account_roles_and_defense_excess() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         emergency = models.Account(
             client_id=1,
             name="emergency",
@@ -391,7 +391,7 @@ def test_idle_money_uses_account_roles_and_defense_excess() -> None:
 def test_profit_loss_rollup_uses_parent_account_category() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         db.add(client)
         db.add_all(
             [
@@ -427,7 +427,7 @@ def test_profit_loss_rollup_uses_parent_account_category() -> None:
 def test_period_pl_and_balance_sheet_respect_explicit_dates() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         cash = models.Account(client_id=1, id=10, name="cash", account_type="asset")
         salary = models.Account(client_id=1, id=11, name="salary", account_type="income")
         db.add_all([client, cash, salary])
@@ -462,7 +462,7 @@ def test_period_pl_and_balance_sheet_respect_explicit_dates() -> None:
 def test_account_flows_and_account_transactions_use_journal_sides() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={"currency": "JPY"}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={"currency": "JPY"})
         cash = models.Account(client_id=1, name="cash", account_type="asset")
         salary = models.Account(client_id=1, name="salary", account_type="income")
         food = models.Account(client_id=1, name="food", account_type="expense")
@@ -537,7 +537,7 @@ def test_account_flows_and_account_transactions_use_journal_sides() -> None:
 def test_review_action_set_budget_applies_to_target_period() -> None:
     db = _session()
     try:
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         account = models.Account(client_id=1, id=20, name="food", account_type="expense")
         db.add_all([client, account])
         db.commit()
@@ -569,7 +569,7 @@ def test_simulation_milestones_preview_and_apply_persist_source_snapshot() -> No
     db = _session()
     try:
         today = date.today()
-        client = models.Client(id=1, name="test", general_settings={}, ai_config={})
+        client = models.Client(id=1, name="test", general_settings={})
         cash = models.Account(client_id=1, name="cash", account_type="asset")
         db.add_all(
             [

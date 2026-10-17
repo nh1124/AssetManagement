@@ -13,7 +13,7 @@ from app import models, schemas
 from app.database import Base, get_db
 from app.dependencies import get_current_client
 from app.domain.journal import Leg
-from app.routers import ai, ai_operations, analysis, budget_plans, capsules, data_transfer, life_events, reports, roadmap
+from app.routers import ai_operations, analysis, budget_plans, capsules, data_transfer, life_events, reports, roadmap
 from app.services import capsule_service, goal_service, life_event_conditions, life_scenario_service, strategy_service
 from app.services.budget_context import BudgetContext
 from app.services.cache_service import invalidate_client
@@ -240,19 +240,9 @@ def test_current_progress_conditions_treat_a_draft_reference_as_unknown_until_ad
     assert detail["actual"] is not None and detail["satisfied"] is True
 
 
-def test_milestone_generation_and_legacy_ai_prompt_ignore_copied_goals(db, monkeypatch):
+def test_milestone_generation_ignores_copied_goals(db):
     goal, original, _ = seed(db)
     before = preview_milestones_from_simulation(db, 1, original.id, basis="deterministic")
-    prompts = []
-
-    async def capture(_key, prompt):
-        prompts.append(prompt)
-        return []
-
-    monkeypatch.setattr(ai, "call_gemini", capture)
-    client = db.get(models.Client, 1)
-    monkeypatch.setattr(type(client), "gemini_api_key", property(lambda _: "test-key"))
-    asyncio.run(ai.optimize_allocations(db, client))
     duplicate = life_scenario_service.duplicate(db, 1, goal.id, "Draft")
     event(db, duplicate.id, "Draft only", 100_000_000)
     db.commit()
@@ -262,5 +252,3 @@ def test_milestone_generation_and_legacy_ai_prompt_ignore_copied_goals(db, monke
         for row in preview["items"]:
             row["source_snapshot"].pop("generated_at", None)
     assert after == before
-    asyncio.run(ai.optimize_allocations(db, client))
-    assert prompts[0] == prompts[1]

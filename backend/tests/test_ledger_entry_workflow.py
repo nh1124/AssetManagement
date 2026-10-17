@@ -22,7 +22,7 @@ def posting():
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(bind=engine)
     db = sessionmaker(autocommit=False, autoflush=False, bind=engine)()
-    client = models.Client(id=1, name="workflow-test", ai_config={}, general_settings={})
+    client = models.Client(id=1, name="workflow-test", general_settings={})
     db.add(client)
     ledger.ensure_default_accounts(db, client_id=1)
     cash = db.query(models.Account).filter_by(client_id=1, name="cash").one()
@@ -195,7 +195,7 @@ def entries(posting):
                    dict(account_id=posting[3].id, debit=250),
                    dict(account_id=reserve.id, debit=150)]),
     ]]
-    other = models.Client(id=2, name="other-client", ai_config={}, general_settings={})
+    other = models.Client(id=2, name="other-client", general_settings={})
     db.add(other)
     ledger.ensure_default_accounts(db, client_id=2)
     other_accounts = db.query(models.Account).filter_by(client_id=2).all()
@@ -334,7 +334,7 @@ def test_proposal_handlers_return_404_without_changing_missing_or_other_client_p
     proposal = db.query(models.TransactionProposal).one()
     proposal_id = 999999 if missing == "unknown_id" else proposal.id
     if missing == "other_client":
-        client = models.Client(id=2, name="other", ai_config={}, general_settings={})
+        client = models.Client(id=2, name="other", general_settings={})
         db.add(client)
         db.commit()
     before = _counts(db)

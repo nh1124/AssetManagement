@@ -36,7 +36,6 @@ def _client(db, *, username="tester", **fields):
         "username": username,
         "email": f"{username}@example.com",
         "password_hash": "original-hash",
-        "ai_config": {"existing": True},
         "general_settings": {"currency": "JPY"},
     }
     values.update(fields)
@@ -78,7 +77,7 @@ def test_register_stores_one_client_with_the_supplied_hash(db):
     assert stored.password_hash == password_hash
     assert stored.password_hash != password
     assert verify_password(password, stored.password_hash)
-    assert (stored.ai_config, stored.general_settings, stored.is_active) == ({}, {}, True)
+    assert (stored.general_settings, stored.is_active) == ({}, True)
 
 
 def test_register_rolls_back_a_duplicate_display_name(db):
@@ -129,7 +128,7 @@ def test_update_profile_changes_only_supplied_fields(db, fields):
     original = {
         "name": client.name, "email": client.email, "password_hash": client.password_hash,
         "username": client.username, "is_active": client.is_active,
-        "ai_config": dict(client.ai_config), "general_settings": dict(client.general_settings),
+        "general_settings": dict(client.general_settings),
     }
     assert client_service.update_profile(db, client, fields) is client
     db.expire_all()

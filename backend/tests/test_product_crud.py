@@ -22,7 +22,7 @@ def db():
 
     Base.metadata.create_all(engine)
     with sessionmaker(bind=engine, autoflush=False)() as session:
-        session.add(models.Client(id=1, name="Product CRUD", general_settings={}, ai_config={}))
+        session.add(models.Client(id=1, name="Product CRUD", general_settings={}))
         session.commit()
         yield session
     engine.dispose()

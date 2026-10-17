@@ -28,7 +28,7 @@ def db():
     engine = sa.create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     with sessionmaker(bind=engine, autoflush=False)() as session:
-        session.add_all([models.Client(id=i, name=f"Client {i}", general_settings={"currency": "JPY"}, ai_config={}) for i in [1, 2]])
+        session.add_all([models.Client(id=i, name=f"Client {i}", general_settings={"currency": "JPY"}) for i in [1, 2]])
         session.commit()
         yield session
     engine.dispose()
@@ -57,7 +57,7 @@ def old_database(*, holding=False):
     engine = sa.create_engine("sqlite:///:memory:")
     metadata.create_all(engine)
     with engine.begin() as connection:
-        connection.execute(metadata.tables["clients"].insert(), {"id": 1, "name": "scratch", "general_settings": {}, "ai_config": {}})
+        connection.execute(metadata.tables["clients"].insert(), {"id": 1, "name": "scratch", "general_settings": {}})
         connection.execute(metadata.tables["accounts"].insert(), [
             {"id": i, "client_id": 1, "name": str(i), "account_type": "asset"} for i in [1, 2, 3]])
         connection.execute(metadata.tables["capsules"].insert(), [

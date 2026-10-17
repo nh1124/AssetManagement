@@ -22,8 +22,8 @@ def posting():
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(bind=engine)
     db = sessionmaker(autocommit=False, autoflush=False, bind=engine)()
-    client = models.Client(id=1, name="batch-test", ai_config={}, general_settings={})
-    other = models.Client(id=2, name="other", ai_config={}, general_settings={})
+    client = models.Client(id=1, name="batch-test", general_settings={})
+    other = models.Client(id=2, name="other", general_settings={})
     db.add_all([client, other])
     ledger.ensure_default_accounts(db, client_id=1)
     accounts = {row.name: row for row in db.query(models.Account).filter_by(client_id=1)}

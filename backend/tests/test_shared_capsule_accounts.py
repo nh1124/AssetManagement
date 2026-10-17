@@ -28,7 +28,7 @@ def db():
     Base.metadata.create_all(bind=engine)
     session = sessionmaker(autocommit=False, autoflush=False, bind=engine)()
     session.add(models.Client(id=1, name="shared", username="shared",
-                              general_settings={"currency": "JPY"}, ai_config={}))
+                              general_settings={"currency": "JPY"}))
     cash = models.Account(client_id=1, name="Cash", account_type="asset", role="operating")
     pooled = models.Account(client_id=1, name="Pooled", account_type="asset", role="earmarked")
     session.add_all([cash, pooled])
