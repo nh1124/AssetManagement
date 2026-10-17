@@ -99,12 +99,12 @@ function MonthlyBudget({ period, currency, clientName, onBusy }: { period: strin
             <button type="button" disabled={disabled || editing !== null} onClick={() => setReflecting(true)} className={buttonClass}>ゴールから更新</button>
         </div>
         {reflecting && <GoalBudgetReflection title="ゴールから予算を更新" initialPeriod={period} onClose={() => { setReflecting(false); notifications.refresh(); }} onApplied={resource.reload} />}
-        <GoalReflectionNotice action={<button type="button" disabled={disabled || editing !== null} onClick={() => setReflecting(true)} className={buttonClass}>ゴールから更新</button>} />
+        <GoalReflectionNotice />
         {editing && <Overlay title={`「${lineName(editing)}」の金額を編集`} onClose={() => setEditing(null)} footer={editing.id != null
             ? <button type="button" disabled={disabled} onClick={() => remove(editing)} className={`${buttonClass} mr-auto text-[var(--studio-danger)]`}>削除</button>
             : <span className="mr-auto text-xs text-[var(--studio-text-muted)]">未保存のため削除不可</span>}><Feedback error={mutation.error} /><AmountEditor key={editing.id ?? lineName(editing)} line={editing} currency={currency} busy={disabled} onSave={save} onCancel={() => setEditing(null)} /></Overlay>}
         {resource.data && <>
-            <DataTable columns={['計画項目', '種別', '予算', '支出', '残り予算', '状態']}>
+            <DataTable columns={['計画項目', '種別', '予算', '実績', '差額', '状態']}>
                 {resource.data.plan_lines.length ? BLOCKS.map((block) => {
                     const lines = resource.data?.plan_lines.filter((line) => line.line_type === block.type) ?? [];
                     return lines.map((line, index) => <tr key={line.id ?? `${block.type}:${index}`} onClick={() => { if (!disabled && editing === null) setEditing(line); }} className={disabled || editing !== null ? '' : 'cursor-pointer hover:bg-[var(--studio-accent-soft)] focus-within:bg-[var(--studio-accent-soft)]'}>

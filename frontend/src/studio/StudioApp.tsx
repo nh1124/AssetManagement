@@ -4,7 +4,6 @@ import StudioLayout from './components/StudioLayout';
 import ScreenTabs from './components/ScreenTabs';
 import Record from './pages/Record';
 import Overview from './pages/assets/Overview';
-import Assets from './pages/assets/Assets';
 import Accounts from './pages/assets/Accounts';
 import Earmarks from './pages/assets/Earmarks';
 import Ledger from './pages/ledger/Ledger';
@@ -41,7 +40,7 @@ import './theme.css';
  * Adding a screen is one entry here plus one in navigation.ts, rather than
  * another branch in the route tree.
  */
-const SCREENS: Record<string, { index: ReactElement; tabs?: Record<string, ReactElement>; layout?: ReactElement }> = {
+const SCREENS: Record<string, { index: ReactElement; tabs?: Record<string, ReactElement> }> = {
     ledger: {
         index: <Ledger />,
         tabs: { unmatched: <Ledger unmatched /> },
@@ -51,7 +50,6 @@ const SCREENS: Record<string, { index: ReactElement; tabs?: Record<string, React
     report: { index: <Trends />, tabs: { breakdown: <Breakdown />, review: <Review />, export: <Export /> } },
     goals: { index: <GoalSummary /> },
     assets: {
-        layout: <Assets />,
         index: <Overview />,
         tabs: { accounts: <Accounts />, earmarks: <Earmarks /> },
     },
@@ -102,7 +100,7 @@ export default function StudioApp() {
                             <Route
                                 key={screen.path}
                                 path={screen.path}
-                                element={<><ScreenTabs screen={screen} />{screenRoutes.layout ?? <Outlet />}</>}
+                                element={<><ScreenTabs screen={screen} /><Outlet /></>}
                             >
                                 <Route index element={screenRoutes.index} />
                                 {screen.tabs

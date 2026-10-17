@@ -74,7 +74,7 @@ function ScenarioSummary({ scenario, events, currency }: { scenario: ProjectedLi
         <div className="flex items-center justify-between gap-3">
             <h2 className="font-semibold">{scenario.name}</h2>
             <div className="flex flex-wrap items-center gap-2">
-                <Link to="/goals/scenarios" className={`inline-flex items-center gap-2 ${buttonClass}`}><Pencil size={14} aria-hidden="true" />編集する</Link>
+                <Link to={`/goals/scenarios/${scenario.id}/events`} className={`inline-flex items-center gap-2 ${buttonClass}`}><Pencil size={14} aria-hidden="true" />編集する</Link>
                 <button type="button" onClick={() => setReflecting(true)} className={`inline-flex items-center gap-2 ${buttonClass}`}><Wallet size={14} aria-hidden="true" />予算に反映</button>
             </div>
         </div>

@@ -88,7 +88,8 @@ export default function RecordForm({ existing, onSaved, onCancel, onDelete, dele
     const formId = useId();
     // The overlay draws the frame and the title, so the standalone card chrome
     // would nest one box inside another and repeat the heading.
-    const inOverlay = useContext(OverlayFooterContext) !== null;
+    // undefined means no overlay; null is an overlay whose footer has not mounted yet.
+    const inOverlay = useContext(OverlayFooterContext) !== undefined;
     const confirm = useConfirm();
     const { clientId, currentClient } = useClient();
     const identified = currentClient?.id === clientId;

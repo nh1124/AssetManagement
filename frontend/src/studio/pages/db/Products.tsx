@@ -4,7 +4,7 @@ import { useId, useState, type FormEvent } from 'react';
 import { createProduct, deleteProduct, getDepreciationSummary, getProducts, postDepreciation,
          runDepreciation, updateProduct } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
-import type { DepreciationMethod, Product } from '../../../types';
+import type { DepreciationMethod, DepreciationRunResult, Product } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import { useResource } from '../../useResource';
 import { clientToday } from '../../datetime';
@@ -125,6 +125,7 @@ function ProductsForClient({ assets, currency, timezone }: { assets: boolean; cu
     const period = clientToday(timezone).slice(0, 7);
     const mutation = useMutation();
     const [editor, setEditor] = useState<{ product: Product | null } | null>(null);
+    const [lastRun, setLastRun] = useState<DepreciationRunResult | null>(null);
     const rows = resource.data?.filter((product) => assets ? product.is_asset : !product.is_asset) ?? [];
     const disabled = resource.loading || Boolean(resource.error) || mutation.busy;
     const editorDisabled = disabled || lookups.loading || Boolean(lookups.error) || !lookups.data;
@@ -151,10 +152,9 @@ function ProductsForClient({ assets, currency, timezone }: { assets: boolean; cu
             + '記帳できないものは理由とともに報告します。',
             '記帳する',
         ))) return;
-        void mutation.run(async () => {
-            const result = await runDepreciation(period);
-            return result;
-        }, `${period}分を記帳しました。`, () => { resource.reload(); positions.reload(); });
+        let result: DepreciationRunResult | null = null;
+        void mutation.run(async () => { result = await runDepreciation(period); }, `${period}分の記帳を終えました。`,
+            () => { setLastRun(result); resource.reload(); positions.reload(); });
     };
     const remove = async (product: Product) => {
         if (disabled || !(await confirm(`「${product.name}」を削除しますか？`, '削除する'))) return;
@@ -166,6 +166,11 @@ function ProductsForClient({ assets, currency, timezone }: { assets: boolean; cu
     return <section className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex gap-2">{assets && <button type="button" disabled={editorDisabled || editor !== null} onClick={() => void writeMonth()} className={buttonClass}>{period}分を記帳</button>}<button type="button" disabled={editorDisabled || editor !== null} onClick={() => setEditor({ product: null })} className={buttonClass}>新規作成</button></div></div>
         {assets && <p className="text-xs text-[var(--studio-text-muted)]">更新予定は目安です。</p>}
+        {lastRun && <details role="status" className="space-y-2 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5 text-sm">
+            <summary className="cursor-pointer">{lastRun.period}分：記帳 {lastRun.posted.length}件 ／ 記帳しなかったもの {lastRun.skipped.length}件</summary>
+            {lastRun.posted.map((row) => <p key={`posted-${row.product_id}`}>{row.name}</p>)}
+            {lastRun.skipped.map((row) => <p key={`skipped-${row.product_id}`} className="text-[var(--studio-text-muted)]">{row.name} — {row.reason}</p>)}
+        </details>}
         <Feedback loading={resource.loading || lookups.loading || positions.loading} error={mutation.error || resource.error || lookups.error || positions.error} message={mutation.message} />
         {editor && lookups.data && <Overlay title={editor.product ? `${editor.product.name}を編集` : `${assets ? '固定資産' : '消耗品'}の新規作成`} onClose={() => setEditor(null)}><Feedback error={mutation.error} /><ProductEditor key={editor.product?.id ?? 'new'} product={editor.product} assets={assets} currency={currency} lookups={lookups.data} busy={editorDisabled} onCancel={() => setEditor(null)} onSave={(action) => void mutation.run(action, '物品を保存しました。', () => { setEditor(null); resource.reload(); positions.reload(); })} /></Overlay>}
         {resource.data && <DataTable columns={assets ? ['物品', '取得額', '帳簿価額', '減価の方法', '次回の記帳', '更新予定', '記帳', '積立先', '推奨月額', '操作'] : ['物品', '単価', '購入単位', '購入周期', '予算口座', '積立先', '推奨月額', '操作']}>

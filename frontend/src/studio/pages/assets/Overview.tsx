@@ -1,7 +1,8 @@
-import { useCallback } from 'react';
-import { useOutletContext } from 'react-router-dom';
-import type { AssetPeriod } from './Assets';
+import { useCallback, useState } from 'react';
 import { getBalanceSheet } from '../../../api';
+import { useClient } from '../../../context/ClientContext';
+import { clientToday, useTimezone } from '../../datetime';
+import MonthPicker from '../ledger/MonthPicker';
 import { formatCurrency } from '../../../utils/currency';
 import { useResource as useAssetData } from '../../useResource';
 
@@ -34,7 +35,7 @@ function BalanceRows({ rows, currency, emptyLabel }: {
     );
 }
 
-function OverviewForDate({ asOf }: AssetPeriod) {
+function OverviewForDate({ asOf }: { asOf: string }) {
     const loadBalanceSheet = useCallback((): Promise<BalanceSheet> => getBalanceSheet(undefined, undefined, asOf), [asOf]);
     const { data: sheet, loading, error } = useAssetData(loadBalanceSheet);
 
@@ -74,9 +75,22 @@ function OverviewForDate({ asOf }: AssetPeriod) {
     );
 }
 
-export default function Overview() {
-    const { asOf } = useOutletContext<AssetPeriod>();
+function OverviewForClient() {
+    const timezone = useTimezone();
+    const [monthEdit, setMonth] = useState<string | null>(null);
+    const month = monthEdit ?? clientToday(timezone).slice(0, 7);
+    const [year, number] = month.split('-').map(Number);
+    // UTC arithmetic preserves the selected calendar month across browser zones.
+    const asOf = new Date(Date.UTC(year, number, 0)).toISOString().slice(0, 10);
     // A month change starts a fresh reader so stale figures and errors cannot
     // appear under the newly selected month while its request is pending.
-    return <OverviewForDate key={asOf} asOf={asOf} />;
+    return <section className="space-y-4">
+        <MonthPicker value={month} onChange={setMonth} />
+        <OverviewForDate key={asOf} asOf={asOf} />
+    </section>;
+}
+
+export default function Overview() {
+    const { clientId } = useClient();
+    return <OverviewForClient key={clientId} />;
 }

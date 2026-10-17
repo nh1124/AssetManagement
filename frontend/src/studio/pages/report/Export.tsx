@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useClient } from '../../../context/ClientContext';
 import { buttonClass, primaryClass } from '../db/forms';
+import { Feedback } from '../db/Database';
 import { lastMonthsRange } from '../ledger/periods';
 import BreakdownReading from './BreakdownReading';
 import PeriodSelector from './PeriodSelector';
@@ -21,9 +22,13 @@ function ExportPeriod({ startDate, endDate, months, currency, onMonths }: {
     return <section className="space-y-6">
         <div className="studio-print-hide flex flex-wrap items-end gap-4">
             <PeriodSelector months={months} onChange={onMonths} />
-            <button type="button" onClick={() => window.print()} className={primaryClass}>印刷・PDF保存</button>
+            <button type="button" disabled={!resource.ready} onClick={() => window.print()} className={primaryClass}>印刷・PDF保存</button>
             <button type="button" disabled={!resource.ready} onClick={() => save('md')} className={buttonClass}>Markdownで保存</button>
             <button type="button" disabled={!resource.ready} onClick={() => save('csv')} className={buttonClass}>CSVで保存</button>
+        </div>
+        <div className="studio-print-hide flex flex-wrap items-center gap-3">
+            <Feedback loading={resource.loading} error={resource.failed ? '内訳を取得できませんでした。' : undefined} />
+            {resource.failed && <button type="button" onClick={resource.refresh} className={buttonClass}>再取得</button>}
         </div>
         <div className="studio-print-only" inert aria-hidden="true">
             <BreakdownReading startDate={startDate} endDate={endDate} months={months} currency={currency} resource={resource} readOnly />

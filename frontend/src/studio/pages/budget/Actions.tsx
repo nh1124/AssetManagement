@@ -76,7 +76,7 @@ function MonthlyActions({ sourcePeriod, currency, clientName }: { sourcePeriod: 
         <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap gap-2">
                 <button type="button" disabled={disabled || adding} onClick={() => setAdding(true)} className={buttonClass}>行動を追加</button>
-                <button type="button" disabled={disabled || adding} onClick={processDue} className={buttonClass}>すべて実行</button>
+                <button type="button" disabled={disabled || adding} onClick={processDue} className={buttonClass}>期限到来分を実行</button>
             </div>
         </div>
         <Feedback loading={resource.loading} error={resource.error} />
