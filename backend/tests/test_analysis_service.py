@@ -11,6 +11,8 @@ from backend.app.domain.money import Money
 
 from datetime import date, timedelta
 
+import pytest
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -614,7 +616,8 @@ def test_simulation_milestones_preview_and_apply_persist_source_snapshot() -> No
         assert preview["items"]
         assert created
         assert all(item.source == "simulation_deterministic" for item in created)
-        assert created[0].source_snapshot["allocated_monthly_savings"] == 120000
+        # A near goal receives its shortfall over the 24 months left, not the whole savings.
+        assert created[0].source_snapshot["allocated_monthly_savings"] == pytest.approx(1000000 / 24)
         assert created[-1].target_amount == 1000000
     finally:
         db.close()

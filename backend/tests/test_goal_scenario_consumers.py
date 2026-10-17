@@ -211,13 +211,15 @@ def test_scope_preserves_archive_option_scenario_editor_and_record_name_resoluti
     # Budget labels resolve stored references even after those events stop being the plan.
     assert draft_events[0].id in BudgetContext(db, 1).target_name_maps["life_event"]
     context = strategy_service.get_goal_simulation_context(db, 1, original)
-    assert context["total_priority_weight"] == 4
-    assert context["allocated_monthly_savings"] == 22_500
+    # Both events are near and together need more than the 30,000 saved, so they
+    # share it in proportion to their shortfall (Home has 100,000 earmarked).
+    assert context["allocation_source"] == "rule"
+    assert context["allocated_monthly_savings"] == pytest.approx(30_000 * 7_900_000 / 19_900_000)
     # Savings are shared within one story, so a draft event competes only with its
-    # own scenario's events: an exact copy of the goal gets the original's share,
-    # and the goal's own figures above stay as they were.
+    # own scenario's events. The draft's copy holds no earmark (capsules stay with
+    # the goal), so its shortfall and share are larger; the goal's stay as they were.
     draft_context = strategy_service.get_goal_simulation_context(db, 1, draft_events[0])
-    assert draft_context["allocated_monthly_savings"] == 22_500
+    assert draft_context["allocated_monthly_savings"] == pytest.approx(30_000 * 8_000_000 / 20_000_000)
 
 
 def test_current_progress_conditions_treat_a_draft_reference_as_unknown_until_adopted(db):

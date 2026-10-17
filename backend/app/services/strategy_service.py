@@ -16,6 +16,10 @@ from .ledger_valuation import calculate_account_valued_balance
 from .reporting_service import get_balance_sheet, get_net_worth_history
 from .institution_service import blended_after_tax_return, positive_asset_balance
 from .goal_service import goal_events_query, list_goals, story_events_query
+from . import goal_budget_record
+
+PRIORITY_WEIGHTS = {1: 3, 2: 2, 3: 1}
+DEFAULT_NEAR_YEARS = 5
 
 # Every projection draws from this one seed, so a figure does not move when
 # nothing about the plan moved, and two scenarios can be read as differing by
@@ -246,6 +250,63 @@ def monthly_equivalent_from_contribution_schedule(
     return total / horizon_years / 12
 
 
+def _months_until(start: date, target: date) -> int:
+    return (target.year - start.year) * 12 + (target.month - start.month)
+
+
+def event_monthly_allocation(
+    db: Session, client_id: int, event: models.LifeEvent, total: float, evaluation_date: date,
+    *, use_record: bool = True,
+) -> tuple[float, str]:
+    """What this event receives each month out of the story's monthly savings, and why.
+
+    The same breakdown the budget reflection writes, so event progress, milestones
+    and the budget describe one plan:
+    - a goal event in the latest applied reflection receives exactly what the
+      budget was told ("reflection");
+    - otherwise ("rule"), a near event (within the reflection's range, five years by
+      default) receives its shortfall over the remaining months, as cash in its
+      capsule, and a far event a priority share of what remains; an event left to
+      simulation only (試算のみ) receives nothing. When near events need more than
+      the savings, they share the savings in proportion to need and far events get
+      nothing, so progress shows the shortfall instead of a plan nobody can fund.
+    The rule does not judge preconditions; the reflection does, when it is applied.
+    """
+    near_years: int | None = DEFAULT_NEAR_YEARS
+    record = goal_budget_record.latest(db, client_id)
+    if record is not None and record.scenario_id == event.scenario_id:
+        near_years = (record.options or {}).get("near_years", DEFAULT_NEAR_YEARS)
+        if use_record:
+            for row in record.events or []:
+                if row.get("lineage") == event.lineage:
+                    return float(row.get("allocation") or 0.0), "reflection"
+    story = [item for item in story_events_query(db, client_id, event).filter(
+        models.LifeEvent.direction == "expense",
+    ).all() if item.budget_reflection_effective != "simulation_only"]
+    if all(item.id != event.id for item in story):
+        # A called-off or simulation-only event keeps its saved money but no longer competes.
+        return 0.0, "rule"
+
+    def near(item: models.LifeEvent) -> bool:
+        return near_years is None or _months_until(evaluation_date, item.target_date) < near_years * 12
+
+    def required(item: models.LifeEvent) -> float:
+        months = _months_until(evaluation_date, item.target_date)
+        if months < 0:
+            return 0.0
+        funded = calculate_current_funded_and_weighted_return(item, db)[0]
+        return max(0.0, (item.target_amount or 0.0) - funded) / max(1, months)
+
+    near_total = sum(required(item) for item in story if near(item))
+    if near(event):
+        own = required(event)
+        return (own if near_total <= total else total * own / near_total), "rule"
+    pool = max(0.0, total - near_total)
+    far = [item for item in story if not near(item)]
+    weights = sum(PRIORITY_WEIGHTS.get(item.priority, 1) for item in far) or 1
+    return pool * PRIORITY_WEIGHTS.get(event.priority, 1) / weights, "rule"
+
+
 def get_goal_simulation_context(
     db: Session,
     client_id: int,
@@ -270,14 +331,13 @@ def get_goal_simulation_context(
     if base_inflation is None:
         base_inflation = config.inflation_rate if config else 2.0
 
-    base_monthly_savings = monthly_savings
-    if base_monthly_savings is None:
-        # The event's own scenario carries its savings; the client setting is the default.
-        scenario = db.get(models.LifeScenario, event.scenario_id) if event.scenario_id else None
-        if scenario is not None and scenario.monthly_savings is not None:
-            base_monthly_savings = scenario.monthly_savings
-        else:
-            base_monthly_savings = config.monthly_savings if config else 50000.0
+    # The event's own scenario carries its savings; the client setting is the default.
+    scenario = db.get(models.LifeScenario, event.scenario_id) if event.scenario_id else None
+    if scenario is not None and scenario.monthly_savings is not None:
+        default_monthly_savings = scenario.monthly_savings
+    else:
+        default_monthly_savings = config.monthly_savings if config else 50000.0
+    base_monthly_savings = default_monthly_savings if monthly_savings is None else monthly_savings
 
     evaluation_date = reference_date or date.today()
     schedule_monthly = monthly_equivalent_from_contribution_schedule(
@@ -288,19 +348,20 @@ def get_goal_simulation_context(
     if schedule_monthly is not None:
         base_monthly_savings = schedule_monthly
 
-    # Savings are shared within one story: a goal event competes with the goal's
-    # events, a draft event with its own scenario's events. A goal event's figures
-    # are therefore unchanged, and a draft scenario's milestones describe that
-    # story instead of reading zero.
-    life_events = story_events_query(db, client_id, event).filter(
-        models.LifeEvent.direction == "expense",
-    ).all()
-    priority_weight_map = {1: 3, 2: 2, 3: 1}
-    total_weight = sum(priority_weight_map.get(item.priority, 1) for item in life_events) or 1
-    weight = priority_weight_map.get(event.priority, 1)
-    # A called-off goal keeps its saved money but no longer competes for future savings.
-    in_story = any(item.id == event.id for item in life_events)
-    allocation_ratio = (weight / total_weight if allocation_mode != "direct" else 1.0) if in_story else 0.0
+    # Savings are shared within one story by the breakdown the budget reflection
+    # uses. "direct" sends the whole amount to this event (a what-if for one goal).
+    # The recorded reflection describes the default savings only; a schedule or an
+    # explicit what-if amount is divided by the rule instead.
+    if allocation_mode == "direct":
+        in_story = event.archived_at is None and event.direction == "expense"
+        allocated_monthly_savings = base_monthly_savings if in_story else 0.0
+        allocation_source = "direct"
+    else:
+        what_if = schedule_monthly is not None or abs(base_monthly_savings - default_monthly_savings) > 1e-6
+        allocated_monthly_savings, allocation_source = event_monthly_allocation(
+            db, client_id, event, base_monthly_savings, evaluation_date, use_record=not what_if,
+        )
+    weight = PRIORITY_WEIGHTS.get(event.priority, 1)
 
     current_funded, weighted_return = calculate_current_funded_and_weighted_return(event, db)
     tax_rate = config.tax_rate if config else 20.0
@@ -318,11 +379,11 @@ def get_goal_simulation_context(
         "tax_rate": tax_rate,
         "inflation_rate": base_inflation,
         "monthly_savings": base_monthly_savings,
-        "allocated_monthly_savings": base_monthly_savings * allocation_ratio,
+        "allocated_monthly_savings": allocated_monthly_savings,
+        "allocation_source": allocation_source,
         "contribution_schedule": contribution_schedule or [],
         "allocation_mode": allocation_mode,
         "priority_weight": weight,
-        "total_priority_weight": total_weight,
         "years_remaining": years_remaining,
         "reference_date": evaluation_date,
     }
@@ -763,6 +824,9 @@ def get_life_events_with_progress(
         result.append({
             **_life_event_fields(event),
             "allocations": [],
+            # The event's share of the monthly savings and where it comes from.
+            "monthly_allocation": round(allocated_savings, 2),
+            "allocation_source": context["allocation_source"],
             "current_funded": round(current_funded, 2),
             "projected_amount": round(projected, 2),
             "gap": round(gap, 2),

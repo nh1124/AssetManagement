@@ -175,7 +175,10 @@ def test_called_off_goal_is_excluded_from_savings_allocation_and_future_demand(w
     db.commit()
     goal_service.archive_goal(db, client.id, goal.id)
     context = strategy_service.get_goal_simulation_context(db, client.id, active, monthly_savings=100)
-    assert context['allocated_monthly_savings'] == 100
+    # The only remaining event: a near one gets its shortfall (capped by the savings), a far one everything.
+    months = strategy_service._months_until(date.today(), active.target_date)
+    expected = min(100, 2000 / max(1, months)) if months < 60 else 100
+    assert context['allocated_monthly_savings'] == pytest.approx(expected)
     archived_context = strategy_service.get_goal_simulation_context(db, client.id, goal, monthly_savings=100)
     assert archived_context['allocated_monthly_savings'] == 0
     assert strategy_service.aggregate_life_event_demand_by_year(db, client.id, years=2)[-1]['event_count'] == 1

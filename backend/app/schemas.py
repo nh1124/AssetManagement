@@ -898,6 +898,8 @@ class LifeEventWithProgress(LifeEvent):
     plan_progress_percentage: float = 0.0
     plan_previous_milestone: Optional[dict[str, Any]] = None
     plan_next_milestone: Optional[dict[str, Any]] = None
+    monthly_allocation: float = 0.0
+    allocation_source: Optional[str] = None
 
 class StrategyDashboard(BaseModel):
     events: list[LifeEventWithProgress]

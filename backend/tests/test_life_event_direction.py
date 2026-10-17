@@ -177,8 +177,12 @@ def test_income_goal_workflow_creates_no_capsule_or_milestone(db, commit):
 def test_income_is_excluded_from_savings_allocation_and_priority_denominator(db):
     expense = node(db, priority=3)
     receipt = node(db, "income", priority=1)
+    # The receipt neither receives savings nor shares them: the expense alone gets
+    # its near-term shortfall in weighted mode, and everything in direct mode.
+    months = strategy_service._months_until(date.today(), expense.target_date)
+    expected = {"weighted": min(120, 1200 / max(1, months)), "direct": 120}
     for mode in ("weighted", "direct"):
-        assert strategy_service.get_goal_simulation_context(db, 1, expense, monthly_savings=120, allocation_mode=mode)["allocated_monthly_savings"] == 120
+        assert strategy_service.get_goal_simulation_context(db, 1, expense, monthly_savings=120, allocation_mode=mode)["allocated_monthly_savings"] == pytest.approx(expected[mode])
         assert strategy_service.get_goal_simulation_context(db, 1, receipt, monthly_savings=120, allocation_mode=mode)["allocated_monthly_savings"] == 0
 
 

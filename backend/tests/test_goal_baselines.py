@@ -166,3 +166,62 @@ def test_http_capture_and_read(db, api):
     assert captured.status_code == 200 and captured.json()["baseline"]["reason"] == "manual"
     assert request(api, "GET", "/goal-baselines/current").json()["baseline"]["scenario_name"] == "基本"
     assert [row["reason"] for row in request(api, "GET", "/goal-baselines").json()] == ["manual"]
+
+
+
+def far_story(db):
+    goal, other = scenarios(db)
+    life_scenario_service.make_goal(db, 1, goal.id)
+    rows = {
+        "near": models.LifeEvent(client_id=1, scenario_id=goal.id, lineage="near", name="近い", priority=2,
+                                 target_date=date(date.today().year + 2, date.today().month, 1), target_amount_minor=240_000),
+        "far1": models.LifeEvent(client_id=1, scenario_id=goal.id, lineage="far1", name="遠い", priority=1,
+                                 target_date=date(2050, 1, 1), target_amount_minor=1_000_000),
+        "far3": models.LifeEvent(client_id=1, scenario_id=goal.id, lineage="far3", name="遠い2", priority=3,
+                                 target_date=date(2051, 1, 1), target_amount_minor=1_000_000),
+        "idea": models.LifeEvent(client_id=1, scenario_id=goal.id, lineage="idea", name="案", priority=1,
+                                 target_date=date(2050, 1, 1), target_amount_minor=1_000_000,
+                                 budget_reflection="simulation_only"),
+    }
+    db.add_all(rows.values())
+    db.commit()
+    return goal, rows
+
+
+def test_event_progress_divides_savings_like_the_reflection(db):
+    from app.services.strategy_service import get_goal_simulation_context, get_life_events_with_progress
+    _, rows = far_story(db)
+    allocation = {name: get_goal_simulation_context(db, 1, row)["allocated_monthly_savings"] for name, row in rows.items()}
+    # Near: shortfall over the 24 months left; far: a 3:1 priority share of the rest;
+    # simulation only: nothing.
+    assert allocation["near"] == pytest.approx(10_000)
+    assert allocation["far1"] == pytest.approx(40_000 * 3 / 4)
+    assert allocation["far3"] == pytest.approx(40_000 / 4)
+    assert allocation["idea"] == 0
+    progress = {row["name"]: row for row in get_life_events_with_progress(db, 1)}
+    assert progress["近い"]["monthly_allocation"] == pytest.approx(10_000)
+    assert progress["近い"]["allocation_source"] == "rule"
+
+
+def test_an_applied_reflection_is_what_progress_reads(db):
+    from app.services.strategy_service import get_goal_simulation_context
+    goal, rows = far_story(db)
+    db.add(models.GoalBudgetReflection(client_id=1, scenario_id=goal.id, start_period="2026-11", end_period="2026-11",
+                                       options={"near_years": 5}, summary={}, events=[
+                                           {"lineage": "near", "allocation": 12_345}, {"lineage": "far1", "allocation": 1_000}]))
+    db.commit()
+    context = get_goal_simulation_context(db, 1, rows["near"])
+    assert (context["allocated_monthly_savings"], context["allocation_source"]) == (12_345, "reflection")
+    # An event the reflection did not know falls back to the rule.
+    assert get_goal_simulation_context(db, 1, rows["far3"])["allocation_source"] == "rule"
+    # A what-if amount is divided by the rule, not read from the budget.
+    what_if = get_goal_simulation_context(db, 1, rows["near"], monthly_savings=999_999)
+    assert what_if["allocation_source"] == "rule" and what_if["allocated_monthly_savings"] == pytest.approx(10_000)
+
+
+def test_near_events_share_savings_that_cannot_cover_them(db):
+    from app.services.strategy_service import get_goal_simulation_context
+    _, rows = far_story(db)
+    life_scenario_service.update(db, 1, rows["near"].scenario_id, {"monthly_savings": 4_000})
+    assert get_goal_simulation_context(db, 1, rows["near"])["allocated_monthly_savings"] == pytest.approx(4_000)
+    assert get_goal_simulation_context(db, 1, rows["far1"])["allocated_monthly_savings"] == 0
