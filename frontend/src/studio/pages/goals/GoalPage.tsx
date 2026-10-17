@@ -11,7 +11,8 @@ import { useReturnTo } from '../../useReturnTo';
 function GoalPageForClient({ goalId }: { goalId?: string }) {
     const { clientId, currentClient } = useClient();
     const navigate = useNavigate();
-    const returnTo = useReturnTo('/goals/events');
+    const { scenarioId } = useParams();
+    const returnTo = useReturnTo(scenarioId ? `/goals/scenarios/${scenarioId}/events` : '/goals/scenarios');
     const mutation = useMutation();
     const load = useCallback(async () => {
         if (goalId === undefined) return null;

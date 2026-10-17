@@ -1,10 +1,10 @@
 import { getAllConditions, type ConditionEvaluation } from '../../../api/lifeEventConditions';
-import { useCallback, useEffect, useId, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useCallback, useId, useState } from 'react';
+import { Link, useParams } from 'react-router-dom';
 import { createGoal, getLifeEventsWithProgress } from '../../../api';
 import { createLifeEventLink, deleteLifeEventLink, getLifeEventLinks } from '../../../api/lifeEventGraph';
 import type { LifeEventLink, LifeEventLinkInput } from '../../../api/lifeEventGraph';
-import { list as listScenarios, setChoices, type LifeScenario } from '../../../api/lifeScenarios';
+import { list as listScenarios, type LifeScenario } from '../../../api/lifeScenarios';
 import { useClient } from '../../../context/ClientContext';
 import type { LifeEvent } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
@@ -19,7 +19,6 @@ import GoalDeletion from './GoalDeletion';
 import LifeEventDiagram from './LifeEventDiagram';
 import LifeEventLinkDetails from './LifeEventLinkDetails';
 import GoalConditions from './GoalConditions';
-import ScenarioBar from './ScenarioBar';
 
 function LinkEditor({ events, busy, onSave, onCancel }: {
     events: LifeEvent[]; busy: boolean; onSave: (input: LifeEventLinkInput) => void; onCancel: () => void;
@@ -27,18 +26,14 @@ function LinkEditor({ events, busy, onSave, onCancel }: {
     const form = useId();
     const [source, setSource] = useState<number | null>(null);
     const [target, setTarget] = useState<number | null>(null);
-    const [kind, setKind] = useState<LifeEventLinkInput['kind']>('after');
     const [offset, setOffset] = useState(0);
     return <form id={form} onSubmit={(event) => {
         event.preventDefault();
-        if (source !== null && target !== null && !busy) onSave({ from_event_id: source, to_event_id: target, kind, offset_months: offset });
+        if (source !== null && target !== null && !busy) onSave({ from_event_id: source, to_event_id: target, kind: 'after', offset_months: offset });
     }}>
         <fieldset disabled={busy} className="grid gap-4 sm:grid-cols-2">
             <Choice label="元のイベント" value={source} options={events} required onChange={(value) => { setSource(value); if (value === target) setTarget(null); }} />
             <Choice label="次のイベント" value={target} options={events.filter((item) => item.id !== source)} required onChange={setTarget} />
-            <Field label="接続の種類"><select value={kind} onChange={(event) => setKind(event.target.value as LifeEventLinkInput['kind'])} className={inputClass}>
-                <option value="after">必ず続く</option><option value="alternative">いずれかを選ぶ</option>
-            </select></Field>
             <Field label="元のイベントからの月数（0＝目標日）"><input type="number" required step="1" value={offset} onChange={(event) => setOffset(Number(event.target.value))} className={inputClass} /></Field>
         </fieldset>
         <EditorActions busy={busy} form={form} onCancel={onCancel} />
@@ -62,6 +57,8 @@ function EventOutline({ events, links, scenario, evaluations, currency, disabled
     events: LifeEvent[]; links: LifeEventLink[]; scenario?: LifeScenario; evaluations: Record<number, ConditionEvaluation>; currency: string;
     disabled: boolean; onDelete: (link: LifeEventLink) => void;
 }) {
+    const { scenarioId } = useParams();
+    const eventBase = scenarioId ? `/goals/scenarios/${scenarioId}/events` : '/goals/events';
     const byId = new Map(events.map((item) => [item.id, item]));
     const activeLinks = links.filter((edge) => byId.has(edge.from_event_id) && byId.has(edge.to_event_id));
     const outgoing = new Map<number, LifeEventLink[]>();
@@ -91,8 +88,8 @@ function EventOutline({ events, links, scenario, evaluations, currency, disabled
         {rows.length ? <ul className="min-w-max space-y-2" aria-label="イベントの接続">
             {rows.map(({ event, edge, depth, date, shared }) => <li key={edge ? `link-${edge.id}` : `root-${event.id}`} style={{ paddingLeft: `${depth * 24}px` }}>
                 <div className="flex items-center gap-3 rounded border-l-2 border-[var(--studio-border)] py-2 pl-3 text-sm">
-                    {edge && <span className="text-xs text-[var(--studio-text-muted)]">{edge.kind === 'alternative' ? '選択肢' : '必ず続く'}・{edge.offset_months === 0 ? '目標日' : `${edge.offset_months > 0 ? '+' : ''}${edge.offset_months}か月`}</span>}
-                    <Link to={`/goals/events/${event.id}`} className="text-[var(--studio-accent)] hover:underline">{event.name}</Link>
+                    {edge && <span className="text-xs text-[var(--studio-text-muted)]">必ず続く・{edge.offset_months === 0 ? '目標日' : `${edge.offset_months > 0 ? '+' : ''}${edge.offset_months}か月`}</span>}
+                    <Link to={`${eventBase}/${event.id}`} className="text-[var(--studio-accent)] hover:underline">{event.name}</Link>
                     {evaluations[event.id]?.conditions.length > 0 && <span className="text-xs text-[var(--studio-text-muted)]">前提条件あり</span>}
                     <span className="tabular-nums">{date ?? '日付未設定'}</span>
                     <span className="tabular-nums">{formatCurrency(event.target_amount, currency)}</span>
@@ -108,7 +105,7 @@ function EventOutline({ events, links, scenario, evaluations, currency, disabled
 function GraphEditor({ currency, clientName, view }: { currency: string; clientName?: string; view: 'diagram' | 'outline' }) {
     const confirm = useConfirm();
     const timezone = useTimezone();
-    const [search, setSearch] = useSearchParams();
+    const { scenarioId } = useParams();
     const load = useCallback(async () => {
         // This goal reader exposes major-unit target amounts; raw ORM rows carry minor units.
         const [events, links, scenarios, evaluations] = await Promise.all([getLifeEventsWithProgress(), getLifeEventLinks(), listScenarios(), getAllConditions()]);
@@ -123,35 +120,8 @@ function GraphEditor({ currency, clientName, view }: { currency: string; clientN
     const [conditionsBusy, setConditionsBusy] = useState(false);
     const disabled = resource.loading || Boolean(resource.error) || mutation.busy || conditionsBusy || !clientName;
     const scenarios = resource.data?.scenarios;
-    const selected = scenarios?.find((item) => String(item.id) === search.get('scenario'))
+    const selected = scenarios?.find((item) => String(item.id) === scenarioId)
         ?? scenarios?.find((item) => item.is_goal) ?? scenarios?.[0];
-    useEffect(() => {
-        if (resource.loading || resource.error || !scenarios) return;
-        const id = selected ? String(selected.id) : null;
-        if (search.get('scenario') === id) return;
-        // Canonicalize stale or absent IDs after loading, while preserving other URL state.
-        setSearch((previous) => {
-            const next = new URLSearchParams(previous);
-            if (id) next.set('scenario', id); else next.delete('scenario');
-            return next;
-        }, { replace: true });
-    }, [resource.loading, resource.error, scenarios, selected, search, setSearch]);
-    const selectScenario = (id: number) => setSearch((previous) => {
-        const next = new URLSearchParams(previous);
-        next.set('scenario', String(id));
-        return next;
-    });
-    const runScenario = (action: () => Promise<unknown>, message: string, onSuccess?: () => void) => {
-        if (disabled) return;
-        void mutation.run(action, message, () => { onSuccess?.(); resource.reload(); });
-    };
-    const chooseBranch = (link: LifeEventLink) => {
-        if (!selected || disabled || selected.choices.includes(link.id)) return;
-        // Choices are a replacement set; retain choices even on currently unreachable forks.
-        const sameFork = new Set(resource.data?.links.filter((edge) => edge.from_event_id === link.from_event_id).map((edge) => edge.id));
-        const choices = [...selected.choices.filter((id) => !sameFork.has(id)), link.id];
-        runScenario(() => setChoices(selected.id, choices), '分岐の選択を保存しました。');
-    };
     const remove = async (edge: LifeEventLink) => {
         if (disabled) return;
         const source = resource.data?.events.find((event) => event.id === edge.from_event_id)?.name;
@@ -182,7 +152,6 @@ function GraphEditor({ currency, clientName, view }: { currency: string; clientN
         }, source ? 'ライフイベントと接続を追加しました。' : 'ライフイベントを追加しました。', resource.reload);
     };
     return <div className="space-y-5">
-        {resource.data && <ScenarioBar scenarios={resource.data.scenarios} selected={selected} events={resource.data.events} links={resource.data.links} clientName={clientName} disabled={disabled} busy={mutation.busy} error={mutation.error} onSelect={selectScenario} onChoose={chooseBranch} onRun={runScenario} />}
         {view === 'outline' && <div>
             <button type="button" disabled={disabled || addingLink || (resource.data?.events.length ?? 0) < 2} onClick={() => setAddingLink(true)} className={buttonClass}>接続を追加</button>
         </div>}
@@ -191,7 +160,7 @@ function GraphEditor({ currency, clientName, view }: { currency: string; clientN
             {view === 'diagram' ? <LifeEventDiagram evaluations={resource.data.evaluations} events={resource.data.events} links={resource.data.links} scenarios={resource.data.scenarios} scenario={selected} currency={currency} disabled={disabled}
                 onAddEvent={addEvent}
                 onEditEvent={(goal) => setEditingGoal({ goal, mode: 'edit' })} onDeleteEvent={(goal) => setEditingGoal({ goal, mode: 'delete' })}
-                onConditions={setConditionsEvent} onChooseEdge={selected ? chooseBranch : undefined}
+                onConditions={setConditionsEvent}
                 onDeleteEdge={(edge) => { void remove(edge); }}
                 onEdgeClick={setEditingLink} onConnect={(source, target) => {
                     if (disabled) return;

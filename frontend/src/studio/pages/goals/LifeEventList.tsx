@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { Archive } from 'lucide-react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams, useParams } from 'react-router-dom';
 import { getLifeEventsWithProgress } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
 import { formatCurrency } from '../../../utils/currency';
@@ -14,6 +14,8 @@ import { goalPercent, goalPlanStatus } from './presentation';
 
 function LifeEventListForClient({ currency, clientName }: { currency: string; clientName?: string }) {
     const navigate = useNavigate();
+    const { scenarioId } = useParams();
+    const eventBase = scenarioId ? `/goals/scenarios/${scenarioId}/events` : '/goals/events';
     const [search, setSearch] = useSearchParams();
     const includeArchived = search.get('archived') === 'true';
     const load = useCallback(() => getLifeEventsWithProgress(includeArchived), [includeArchived]);
@@ -37,8 +39,8 @@ function LifeEventListForClient({ currency, clientName }: { currency: string; cl
                 onSave={(action) => { if (clientName) void mutation.run(action, 'ライフイベントを保存しました。', () => { setEditing(false); resource.reload(); }); }} />
         </Overlay>}
         {resource.data && <DataTable columns={['名称', '種別', '目標額', '目標日', '現在の確保額', '進捗', '計画の状態']}>
-            {resource.data.length ? resource.data.map((goal) => <tr key={goal.id} className="cursor-pointer hover:bg-[var(--studio-accent-soft)]" onClick={() => navigate(`/goals/events/${goal.id}`)}>
-                <th scope="row" className="px-5 py-3 font-medium"><Link to={`/goals/events/${goal.id}`} onClick={(event) => event.stopPropagation()} className="rounded text-[var(--studio-accent)] hover:underline focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)]">{goal.name}</Link></th>
+            {resource.data.length ? resource.data.map((goal) => <tr key={goal.id} className="cursor-pointer hover:bg-[var(--studio-accent-soft)]" onClick={() => navigate(`${eventBase}/${goal.id}`)}>
+                <th scope="row" className="px-5 py-3 font-medium"><Link to={`${eventBase}/${goal.id}`} onClick={(event) => event.stopPropagation()} className="rounded text-[var(--studio-accent)] hover:underline focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)]">{goal.name}</Link></th>
                 <td className="whitespace-nowrap px-5 py-3">{goal.direction === 'income' ? '収入' : '支出'}</td>
                 <td className="whitespace-nowrap px-5 py-3 tabular-nums">{formatCurrency(goal.target_amount, currency)}</td>
                 <td className="whitespace-nowrap px-5 py-3">{formatDate(goal.target_date)}</td>

@@ -12,7 +12,6 @@ import { useResource } from '../../useResource';
 import { DataTable, Feedback } from '../db/Database';
 import { buttonClass, primaryClass } from '../db/forms';
 import NoLifeEvents from './NoLifeEvents';
-import { MissingForks } from './Comparison';
 import { goalPercent } from './presentation';
 
 const linkClass = 'rounded text-[var(--studio-accent)] hover:underline focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)]';
@@ -61,9 +60,8 @@ function ScenarioSummary({ scenario, events, currency }: { scenario: ProjectedLi
     return <>
         <div className="flex items-center justify-between gap-3">
             <h2 className="font-semibold">{scenario.name}</h2>
-            <Link to="/goals/events" className={`inline-flex items-center gap-2 ${buttonClass}`}><Pencil size={14} aria-hidden="true" />編集する</Link>
+            <Link to="/goals/scenarios" className={`inline-flex items-center gap-2 ${buttonClass}`}><Pencil size={14} aria-hidden="true" />編集する</Link>
         </div>
-        <MissingForks scenario={scenario} />
         <dl className="grid gap-4 sm:grid-cols-3 lg:grid-cols-5">
             {[
                 ['合計金額', formatCurrency(required, currency)],
@@ -80,8 +78,8 @@ function ScenarioSummary({ scenario, events, currency }: { scenario: ProjectedLi
                 {rows.map((item) => {
                     const income = item.direction === 'income';
                     const claimed = progress.get(item.id)?.current_funded ?? 0;
-                    return <tr key={item.id} className="cursor-pointer hover:bg-[var(--studio-accent-soft)]" onClick={() => navigate(`/goals/events/${item.id}`)}>
-                        <th scope="row" className="px-5 py-3 font-medium"><Link to={`/goals/events/${item.id}`} onClick={(event) => event.stopPropagation()} className={linkClass}>{item.name}</Link></th>
+                    return <tr key={item.id} className="cursor-pointer hover:bg-[var(--studio-accent-soft)]" onClick={() => navigate(`/goals/scenarios/${scenario.id}/events/${item.id}`)}>
+                        <th scope="row" className="px-5 py-3 font-medium"><Link to={`/goals/scenarios/${scenario.id}/events/${item.id}`} onClick={(event) => event.stopPropagation()} className={linkClass}>{item.name}</Link></th>
                         <td className="whitespace-nowrap px-5 py-3">{income ? '収入' : '支出'}</td>
                         <td className="whitespace-nowrap px-5 py-3">{item.resolved_date ? formatDate(item.resolved_date) : '未設定'}</td>
                         <td className="whitespace-nowrap px-5 py-3 tabular-nums">{formatCurrency(item.target_amount, currency)}</td>
@@ -115,7 +113,7 @@ function SummaryForClient({ currency }: { currency: string }) {
                 : data.events.length === 0 && data.scenarios.every((item) => item.events.length === 0) ? <NoLifeEvents />
                 : !scenario ? <div className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
                     <h2 className="font-semibold">ゴールにするシナリオが選ばれていません</h2>
-                    <div className="flex justify-end"><Link to="/goals/simulation" className={primaryClass}>シミュレーションで選ぶ</Link></div>
+                    <div className="flex justify-end"><Link to="/goals/scenarios" className={primaryClass}>シナリオ一覧で選ぶ</Link></div>
                 </div>
                     : mixedCurrencies ? <Feedback error="ゴールシナリオの通貨が一致しないため集計できません。" />
                         : <ScenarioSummary scenario={scenario} events={data.events} currency={scenarioCurrency} />

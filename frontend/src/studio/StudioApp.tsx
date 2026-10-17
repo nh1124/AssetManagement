@@ -20,7 +20,9 @@ import GoalSummary from './pages/goals/GoalSummary';
 import GoalPage from './pages/goals/GoalPage';
 import GoalWorkspace from './pages/goals/GoalWorkspace';
 import LifeEventGraph from './pages/goals/LifeEventGraph';
-import GoalEditingLayout from './pages/goals/GoalEditingLayout';
+import ScenarioLayout from './pages/goals/ScenarioLayout';
+import ScenarioList from './pages/goals/ScenarioList';
+import Comparison from './pages/goals/Comparison';
 import Simulation from './pages/goals/Simulation';
 import Ai from './pages/automation/Ai';
 import Approvals from './pages/automation/Approvals';
@@ -78,14 +80,23 @@ export default function StudioApp() {
                     <Route path={STUDIO_EDITOR_PATHS.record} element={<Record />} />
                     {/* Editors have URLs without becoming destinations in the rail. */}
                     <Route path={STUDIO_EDITOR_PATHS.transaction} element={<Record />} />
-                    <Route element={<GoalEditingLayout />}>
-                        <Route path="goals/events" element={<LifeEventList />} />
-                        <Route path="goals/graph" element={<LifeEventGraph />} />
-                        <Route path="goals/simulation" element={<Simulation />} />
-                        <Route path={STUDIO_EDITOR_PATHS.newGoal} element={<GoalPage />} />
-                        <Route path={STUDIO_EDITOR_PATHS.editGoal} element={<GoalPage />} />
-                        <Route path="goals/events/:goalId" element={<GoalWorkspace />} />
+                    <Route path="goals/scenarios" element={<ScenarioList />} />
+                    <Route path="goals/compare" element={<Comparison />} />
+                    <Route path="goals/scenarios/:scenarioId" element={<ScenarioLayout />}>
+                        <Route index element={<Navigate to="events" replace />} />
+                        <Route path="events" element={<LifeEventList />} />
+                        <Route path="graph" element={<LifeEventGraph />} />
+                        <Route path="simulation" element={<Simulation />} />
+                        <Route path="events/:goalId" element={<GoalWorkspace />} />
+                        <Route path="events/new" element={<GoalPage />} />
+                        <Route path="events/:goalId/edit" element={<GoalPage />} />
                     </Route>
+                    <Route path="goals/events" element={<Navigate to="/goals/scenarios" replace />} />
+                    <Route path="goals/graph" element={<Navigate to="/goals/scenarios" replace />} />
+                    <Route path="goals/simulation" element={<Navigate to="/goals/scenarios" replace />} />
+                    <Route path={STUDIO_EDITOR_PATHS.newGoal} element={<GoalPage />} />
+                    <Route path={STUDIO_EDITOR_PATHS.editGoal} element={<GoalPage />} />
+                    <Route path="goals/events/:goalId" element={<GoalWorkspace />} />
                     {STUDIO_SCREENS.map((screen) => {
                         const screenRoutes = SCREENS[screen.path];
                         return (

@@ -25,7 +25,7 @@ const dictionary = {
     'tab.records': ['すべての記録', 'All records'],
     'tab.goal': ['ゴール', 'Goal'],
     'tab.lifeEvents': ['ライフイベント', 'Life events'],
-    'tab.graph': ['シナリオ作成', 'Scenario creation'],
+    'tab.graph': ['構成', 'Structure'],
     'tab.simulation': ['シミュレーション', 'Simulation'],
     'tab.unmatched': ['未照合', 'Unmatched'],
     'tab.overview': ['全体の状況', 'Overview'],

@@ -13,12 +13,11 @@ export default function LifeEventLinkDetails({ edge, events, clientName, onReloa
     const form = useId();
     const confirm = useConfirm();
     const mutation = useMutation();
-    const [kind, setKind] = useState(edge.kind);
     const [offset, setOffset] = useState(edge.offset_months);
     const [deleted, setDeleted] = useState(false);
     const source = events.find((event) => event.id === edge.from_event_id)?.name ?? `#${edge.from_event_id}`;
     const target = events.find((event) => event.id === edge.to_event_id)?.name ?? `#${edge.to_event_id}`;
-    const changed = kind !== edge.kind || offset !== edge.offset_months;
+    const changed = offset !== edge.offset_months;
     const done = () => { onClose(); onReload(); };
 
     return <Overlay title="接続" onClose={() => { if (!mutation.busy) onClose(); }} footer={<>
@@ -52,7 +51,7 @@ export default function LifeEventLinkDetails({ edge, events, clientName, onReloa
                     setDeleted(true);
                 }
                 try {
-                    await createLifeEventLink({ from_event_id: edge.from_event_id, to_event_id: edge.to_event_id, kind, offset_months: offset, note: edge.note });
+                    await createLifeEventLink({ from_event_id: edge.from_event_id, to_event_id: edge.to_event_id, kind: 'after', offset_months: offset, note: edge.note });
                 } catch (failure: unknown) {
                     // A failed second request has already removed the old edge. Refresh and allow creation to be retried.
                     onReload();
@@ -63,9 +62,6 @@ export default function LifeEventLinkDetails({ edge, events, clientName, onReloa
             <fieldset disabled={mutation.busy} className="grid gap-4 sm:grid-cols-2">
                 <Field label="元のイベント"><span className="block">{source}</span></Field>
                 <Field label="次のイベント"><span className="block">{target}</span></Field>
-                <Field label="接続の種類"><select value={kind} onChange={(event) => setKind(event.target.value as LifeEventLink['kind'])} className={inputClass}>
-                    <option value="after">必ず続く</option><option value="alternative">いずれかを選ぶ</option>
-                </select></Field>
                 <Field label="元のイベントからの月数（0＝目標日）"><input type="number" required step="1" value={offset} onChange={(event) => setOffset(Number(event.target.value))} className={inputClass} /></Field>
             </fieldset>
             {/* This operation is two requests, so the user must see its non-atomic state. */}

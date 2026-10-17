@@ -24,10 +24,8 @@ export interface LifeScenario {
     is_goal: boolean;
     created_at: string | null;
     updated_at: string | null;
-    choices: number[];
     account_returns: LifeScenarioAccountReturn[];
     events: ScenarioEvent[];
-    missing_forks: number[];
 }
 
 export interface ScenarioProjectionRow {
@@ -82,16 +80,12 @@ export async function update(id: number, input: LifeScenarioUpdate): Promise<Lif
     return (await api.put<LifeScenario>(`/life-scenarios/${id}`, input)).data;
 }
 
-export async function setChoices(id: number, linkIds: number[]): Promise<LifeScenario> {
-    return (await api.put<LifeScenario>(`/life-scenarios/${id}/choices`, { link_ids: linkIds })).data;
-}
-
 export async function setAccountReturns(id: number, returns: LifeScenarioAccountReturn[]): Promise<LifeScenario> {
     return (await api.put<LifeScenario>(`/life-scenarios/${id}/account-returns`, { returns })).data;
 }
 
-export async function makeGoal(id: number): Promise<LifeScenario> {
-    return (await api.post<LifeScenario>(`/life-scenarios/${id}/goal`)).data;
+export async function makeGoal(id: number, confirm_detach = false): Promise<LifeScenario> {
+    return (await api.post<LifeScenario>(`/life-scenarios/${id}/goal`, { confirm_detach })).data;
 }
 
 export async function remove(id: number): Promise<void> {

@@ -18,6 +18,8 @@ import { capsuleClaims, goalPercent, goalPlanStatus } from './presentation';
 
 function GoalWorkspaceForClient({ goalId, currency, clientName }: { goalId: string; currency: string; clientName?: string }) {
     const navigate = useNavigate();
+    const { scenarioId } = useParams();
+    const eventBase = scenarioId ? `/goals/scenarios/${scenarioId}/events` : '/goals/events';
     const load = useCallback(async () => {
         if (!/^\d+$/.test(goalId)) throw new Error('このライフイベントは見つかりません。');
         const [roadmap, capsules, accounts] = await Promise.all([
@@ -38,7 +40,7 @@ function GoalWorkspaceForClient({ goalId, currency, clientName }: { goalId: stri
     const refresh = () => { resource.reload(); setProjectionRevision((value) => value + 1); };
     const run = (action: () => Promise<unknown>, message: string, deleted = false) => {
         if (disabled) return;
-        void mutation.run(action, message, () => { setDialog(null); if (deleted) navigate('/goals/events', { replace: true }); else refresh(); });
+        void mutation.run(action, message, () => { setDialog(null); if (deleted) navigate(eventBase, { replace: true }); else refresh(); });
     };
     const goal = resource.data?.goal;
     const income = goal?.direction === 'income';
@@ -46,7 +48,7 @@ function GoalWorkspaceForClient({ goalId, currency, clientName }: { goalId: stri
     const accountLabel = account ? `${account.name}（${ACCOUNT_TYPES[account.account_type]}）` : goal?.account_id != null ? `#${goal.account_id}（一覧にありません）` : '未設定';
     return <section className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
-            <div><Link to={goal?.archived_at ? '/goals/events?archived=true' : '/goals/events'} className="text-sm text-[var(--studio-accent)] hover:underline">ライフイベント一覧へ</Link><h2 className="mt-2 text-lg font-semibold">{goal?.name ?? 'ライフイベント'}{goal?.archived_at && '（中止・アーカイブ）'}</h2></div>
+            <div><Link to={goal?.archived_at ? `${eventBase}?archived=true` : eventBase} className="text-sm text-[var(--studio-accent)] hover:underline">ライフイベント一覧へ</Link><h2 className="mt-2 text-lg font-semibold">{goal?.name ?? 'ライフイベント'}{goal?.archived_at && '（中止・アーカイブ）'}</h2></div>
             {goal && <div className="flex flex-wrap gap-2">
                 <button type="button" disabled={disabled || dialog !== null} onClick={() => setDialog('edit')} className={buttonClass}>編集</button>
                 {goal.archived_at ? <button type="button" disabled={disabled || dialog !== null} onClick={() => run(() => unarchiveGoal(goal.id), 'ライフイベントを戻しました。停止した規則と戻したお金は、そのままです。')} className={buttonClass}>戻す</button> : <button type="button" disabled={disabled || dialog !== null} onClick={() => setDialog('archive')} className={buttonClass}>中止する</button>}
