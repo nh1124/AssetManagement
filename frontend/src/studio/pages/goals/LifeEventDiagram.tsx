@@ -1,15 +1,14 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Controls, Handle, MarkerType, Panel, Position, ReactFlow, ReactFlowProvider,
+import { Controls, Handle, MarkerType, Position, ReactFlow, ReactFlowProvider,
     useNodesInitialized, useReactFlow, type Edge, type Node, type NodeProps } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import './lifeEventDiagram.css';
 import type { ConditionEvaluation } from '../../../api/lifeEventConditions';
-import type { LifeEventLink, LifeEventLinkInput, LifeEventScenario } from '../../../api/lifeEventGraph';
+import type { LifeEventLink, LifeEventScenario } from '../../../api/lifeEventGraph';
 import type { LifeEvent } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import { layout } from './graphLayout';
-import { buttonClass } from '../db/forms';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 
 type EventData = {
@@ -65,27 +64,18 @@ function FitWhenMeasured({ signature }: { signature: string }) {
 const ariaLabelConfig = {
     'node.a11yDescription.keyboardDisabled': 'イベントの詳細を開くにはリンクを選択してください。',
     'edge.a11yDescription.default': 'Enterキーで接続を開きます。',
-    'controls.ariaLabel': '図の表示操作',
-    'controls.zoomIn.ariaLabel': '拡大',
-    'controls.zoomOut.ariaLabel': '縮小',
-    'controls.fitView.ariaLabel': '全体を表示',
     'handle.ariaLabel': 'イベントを接続',
 };
 const flowStyle = {
     '--xy-background-color': 'var(--studio-bg)',
-    '--xy-controls-button-background-color': 'var(--studio-surface)',
-    '--xy-controls-button-background-color-hover': 'var(--studio-accent-soft)',
-    '--xy-controls-button-color': 'var(--studio-text)',
-    '--xy-controls-button-border-color': 'var(--studio-border)',
     '--xy-edge-stroke-selected': 'var(--studio-accent)',
 } as CSSProperties;
 
 type MenuTarget = { type: 'pane' } | { type: 'node'; event: LifeEvent } | { type: 'edge'; edge: LifeEventLink };
 
-export default function LifeEventDiagram({ events, links, scenarios, scenario, evaluations, currency, disabled, nextKind, onKindChange, onAddEvent, onEditEvent, onDeleteEvent, onDeleteEdge, onConnect, onEdgeClick }: {
+export default function LifeEventDiagram({ events, links, scenarios, scenario, evaluations, currency, disabled, onAddEvent, onEditEvent, onDeleteEvent, onDeleteEdge, onConnect, onEdgeClick }: {
     events: LifeEvent[]; links: LifeEventLink[]; scenarios: LifeEventScenario[]; scenario?: LifeEventScenario;
     evaluations: Record<number, ConditionEvaluation>; currency: string; disabled: boolean;
-    nextKind: LifeEventLinkInput['kind']; onKindChange: (kind: LifeEventLinkInput['kind']) => void;
     onAddEvent: (sourceId?: number, handleType?: 'source' | 'target') => void;
     onEditEvent: (event: LifeEvent) => void; onDeleteEvent: (event: LifeEvent) => void; onDeleteEdge: (edge: LifeEventLink) => void;
     onConnect: (source: number, target: number) => void; onEdgeClick: (edge: LifeEventLink) => void;
@@ -178,21 +168,18 @@ export default function LifeEventDiagram({ events, links, scenarios, scenario, e
                     onAddEvent(Number(connection.fromNode.id), connection.fromHandle.type);
                 }}
                 onPaneContextMenu={(event) => openMenu(event, { type: 'pane' })}
+                onNodeClick={(event, node) => {
+                    // Let handles connect and real links retain keyboard and modified-click behavior.
+                    if (event.target instanceof Element && event.target.closest('.react-flow__handle, a')) return;
+                    void navigate(`/goals/events/${node.data.id}`);
+                }}
                 onNodeContextMenu={(event, node) => {
                     const goal = events.find((item) => item.id === node.data.id);
                     if (goal) openMenu(event, { type: 'node', event: goal });
                 }}
                 onEdgeContextMenu={(event, edge) => { if (edge.data) openMenu(event, { type: 'edge', edge: edge.data.link }); }}
                 onEdgeClick={(_, edge) => { if (!disabled && edge.data) onEdgeClick(edge.data.link); }}>
-                <Panel position="top-left" className="rounded-md border border-[var(--studio-border)] bg-[var(--studio-surface)] p-1 shadow-sm">
-                    <div role="group" aria-label="ドラッグで作る接続の種類" className="flex gap-1">
-                        {(['after', 'alternative'] as const).map((kind) => <button key={kind} type="button" aria-pressed={nextKind === kind} disabled={disabled} onClick={() => onKindChange(kind)}
-                            className={`${buttonClass} ${nextKind === kind ? 'bg-[var(--studio-accent-soft)] ring-1 ring-[var(--studio-accent)]' : ''}`}>
-                            {kind === 'after' ? '必ず続く' : 'いずれかを選ぶ'}
-                        </button>)}
-                    </div>
-                </Panel>
-                {/* Zoom and recentering help with wide chains; a minimap would crowd this viewport. */}
+                {/* Zoom belongs to the diagram itself; a wide chain is unreadable without it. */}
                 <Controls showInteractive={false} fitViewOptions={{ padding: 0.15 }} />
                 <FitWhenMeasured signature={signature} />
             </ReactFlow>

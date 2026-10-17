@@ -15,7 +15,6 @@ import GoalDeletion from './GoalDeletion';
 import GoalEditor from './GoalEditor';
 import GoalProjection from './GoalProjection';
 import Milestones from './Milestones';
-import Scenarios from './Scenarios';
 import { capsuleClaims, goalPercent, goalPlanStatus } from './presentation';
 
 function GoalWorkspaceForClient({ goalId, currency, clientName }: { goalId: string; currency: string; clientName?: string }) {
@@ -35,8 +34,6 @@ function GoalWorkspaceForClient({ goalId, currency, clientName }: { goalId: stri
     const [monteCarlo, setMonteCarlo] = useState(false);
     const [detailBusy, setDetailBusy] = useState(false);
     const [projectionRevision, setProjectionRevision] = useState(0);
-    const [milestoneRevision, setMilestoneRevision] = useState(0);
-    const [scenarioRevision, setScenarioRevision] = useState(0);
     const busy = mutation.busy || detailBusy;
     const disabled = busy || resource.loading || Boolean(resource.error) || !clientName;
     const refresh = () => { resource.reload(); setProjectionRevision((value) => value + 1); };
@@ -76,18 +73,15 @@ function GoalWorkspaceForClient({ goalId, currency, clientName }: { goalId: stri
             </dl>
             <GoalConditions goalId={goal.id} currency={currency} clientName={clientName} disabled={disabled || dialog !== null} onBusy={setDetailBusy} />
             <details className="rounded-lg border border-[var(--studio-border)] p-5"><summary className="cursor-pointer font-semibold">マイルストーン</summary><div className="mt-5">
-                <Milestones key={milestoneRevision} goalId={goal.id} currency={currency} disabled={disabled || dialog !== null || Boolean(goal.archived_at)} onBusy={setDetailBusy} onChanged={() => { setScenarioRevision((value) => value + 1); refresh(); }} />
+                <Milestones goalId={goal.id} currency={currency} disabled={disabled || dialog !== null || Boolean(goal.archived_at)} onBusy={setDetailBusy} onChanged={refresh} />
             </div></details>
-            {/* Reservations and funding scenarios only apply to expense events, which need funding. */}
+            {/* Reservations only apply to expense events, which need funding. */}
             {!income && <details className="rounded-lg border border-[var(--studio-border)] p-5"><summary className="cursor-pointer font-semibold">取り置き</summary><div className="mt-5 space-y-4">
                 <button type="button" disabled={disabled || dialog !== null} onClick={() => setDialog('capsules')} className={buttonClass}>取り置きを紐づける</button>
                 <DataTable columns={['取り置き', '現在の確保額（通貨別）']}>
                     {resource.data.capsules.length ? resource.data.capsules.map((row) => <tr key={row.id}><th scope="row" className="px-5 py-3 font-medium">{row.name}</th><td className="px-5 py-3 tabular-nums">{capsuleClaims(row)}</td></tr>) : <tr><td colSpan={2} className="px-5 py-4 text-[var(--studio-text-muted)]">このライフイベントの取り置きはありません。</td></tr>}
                 </DataTable>
             </div></details>}
-            {!income && <details className="rounded-lg border border-[var(--studio-border)] p-5"><summary className="cursor-pointer font-semibold">計画案</summary><fieldset disabled={disabled || dialog !== null || Boolean(goal.archived_at)} className="mt-5 min-w-0">
-                <Scenarios key={scenarioRevision} goal={goal} currency={currency} clientName={clientName} onBusy={setDetailBusy} onAdopted={() => { setMilestoneRevision((value) => value + 1); refresh(); }} />
-            </fieldset></details>}
             {dialog === 'edit' && <Overlay title={`「${goal.name}」を編集`} onClose={() => { if (!busy) setDialog(null); }}>
                 <Feedback error={mutation.error} />
                 <GoalEditor goal={goal} currency={currency} embedded busy={disabled} onCancel={() => { if (!busy) setDialog(null); }} onSave={(action) => run(action, 'ライフイベントを保存しました。')} />

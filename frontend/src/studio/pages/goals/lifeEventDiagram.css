@@ -1,5 +1,6 @@
 .life-event-diagram .life-event-node {
     display: flex;
+    cursor: pointer;
     flex-direction: column;
     gap: 4px;
     width: 256px;
