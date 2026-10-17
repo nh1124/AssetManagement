@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import { Pencil } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Area, CartesianGrid, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
@@ -11,6 +11,7 @@ import { formatDate } from '../../datetime';
 import { useResource } from '../../useResource';
 import { DataTable, Feedback } from '../db/Database';
 import { buttonClass, primaryClass } from '../db/forms';
+import GoalBudgetReflection from './GoalBudgetReflection';
 import NoLifeEvents from './NoLifeEvents';
 import { goalPercent } from './presentation';
 
@@ -49,6 +50,7 @@ function Projection({ scenario, currency }: { scenario: ProjectedLifeScenario; c
 
 function ScenarioSummary({ scenario, events, currency }: { scenario: ProjectedLifeScenario; events: LifeEvent[]; currency: string }) {
     const navigate = useNavigate();
+    const [reflecting, setReflecting] = useState(false);
     const progress = new Map(events.map((event) => [event.id, event]));
     const rows = [...scenario.events].sort((a, b) => (a.resolved_date ?? '\uffff').localeCompare(b.resolved_date ?? '\uffff') || a.id - b.id);
     // Income events are inflows, not funding needs; keep them in the chart and table only.
@@ -72,6 +74,14 @@ function ScenarioSummary({ scenario, events, currency }: { scenario: ProjectedLi
             ].map(([label, value]) => <div key={label} className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-4"><dt className="text-xs text-[var(--studio-text-muted)]">{label}</dt><dd className="mt-2 font-semibold tabular-nums">{value}</dd></div>)}
         </dl>
         <Projection scenario={scenario} currency={currency} />
+        <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
+            <div className="space-y-1">
+                <h3 className="font-semibold">予算への反映</h3>
+                <p className="text-sm text-[var(--studio-text-muted)]">月の積立と近いライフイベントの取り置きを、月の予算に反映します。反映する前に、変わる予算行を確認できます。</p>
+            </div>
+            <button type="button" onClick={() => setReflecting(true)} className={primaryClass}>予算に反映</button>
+        </section>
+        {reflecting && <GoalBudgetReflection onClose={() => setReflecting(false)} />}
         <section className="space-y-3">
             <h3 className="font-semibold">ライフイベント</h3>
             <DataTable columns={['名称', '種別', '日付', '金額', '確保済み', '進捗']}>

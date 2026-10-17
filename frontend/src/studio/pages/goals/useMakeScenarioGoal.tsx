@@ -4,6 +4,7 @@ import { goalPreview, makeGoal, type GoalPreview } from '../../../api/lifeScenar
 import { useClient } from '../../../context/ClientContext';
 import { assetErrorMessage } from '../../useResource';
 import { useMutation } from '../db/forms';
+import GoalBudgetReflection from './GoalBudgetReflection';
 import GoalSwitchOverlay, { type PendingGoal } from './GoalSwitchOverlay';
 
 /** Make a scenario the goal after showing what happens to real money.
@@ -18,6 +19,8 @@ export function useMakeScenarioGoal(onSuccess: () => void): ReturnType<typeof us
     const { currentClient } = useClient();
     const currency = currentClient?.general_settings?.currency || 'JPY';
     const [pending, setPending] = useState<PendingGoal | null>(null);
+    // After a switch the budget still follows the old goal; offer the reflection right away.
+    const [reflect, setReflect] = useState(false);
     const mounted = useRef(false);
     useEffect(() => {
         mounted.current = true;
@@ -50,12 +53,14 @@ export function useMakeScenarioGoal(onSuccess: () => void): ReturnType<typeof us
                 partial = true;
                 throw new Error(`ゴールにしましたが、取り置きを作成できなかったライフイベントがあります：${failed.join('、')}。ライフイベントの画面から作成できます。`);
             }
-        }, 'ゴールにしました。', () => { setPending(null); onSuccess(); }).finally(() => {
+        }, 'ゴールにしました。', () => { setPending(null); onSuccess(); setReflect(true); }).finally(() => {
             // The goal changed even though a capsule failed; refresh and close anyway.
-            if (partial && mounted.current) { setPending(null); onSuccess(); }
+            if (partial && mounted.current) { setPending(null); onSuccess(); setReflect(true); }
         });
     };
-    const dialog = pending && <GoalSwitchOverlay pending={pending} busy={mutation.busy} currency={currency}
+    const dialog = reflect && !pending ? <GoalBudgetReflection title="予算にも反映しますか？"
+        intro="ゴールを変更しました。予算は前のゴールのままです。内容を確認して反映できます。反映しない場合は閉じてください（ゴールのページや予算のページから後で反映できます）。"
+        onClose={() => setReflect(false)} /> : pending && <GoalSwitchOverlay pending={pending} busy={mutation.busy} currency={currency}
         onClose={() => setPending(null)} onConfirm={confirmGoal}
         onToggle={(eventId, checked) => setPending((previous) => {
             if (!previous) return previous;

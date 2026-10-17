@@ -37,6 +37,7 @@ from ..services.life_scenario_scope import lock_client
 from ..services.money_storage import money_client_currency
 
 GOAL_SOURCE = "goal"
+GOAL_LINE_NAME = "ゴールの積立"
 
 
 def _periods(start: str, months: int) -> list[str]:
@@ -122,7 +123,7 @@ def _plan(db: Session, client_id: int, options: dict, plan_id: int | None) -> di
             line = next((line for line in goal_lines if line.account_id == account.id), None)
             changes.append({
                 "period": period, "kind": "savings", "event_id": None, "capsule_id": None,
-                "name": account.name, "account_id": account.id,
+                "name": GOAL_LINE_NAME, "account_id": account.id,
                 "line_id": line.id if line is not None else None,
                 "current_amount": line.amount if line is not None else None,
                 "new_amount": _major(account_minor, currency),

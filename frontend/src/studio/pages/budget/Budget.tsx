@@ -10,6 +10,7 @@ import { useResource } from '../../useResource';
 import { DataTable, EditorActions, Feedback, Field } from '../db/Database';
 import { buttonClass, inputClass, useMutation } from '../db/forms';
 import MonthCopy from './MonthCopy';
+import GoalBudgetReflection from '../goals/GoalBudgetReflection';
 import MonthPicker from '../ledger/MonthPicker';
 
 // budget_plan_service returns plan_lines and plan_id, not the legacy budget model.
@@ -55,6 +56,7 @@ function MonthlyBudget({ period, currency, clientName, onBusy }: { period: strin
     const mutation = useMutation();
     const [copyBusy, setCopyBusy] = useState(false);
     const [editing, setEditing] = useState<MonthlyPlanLine | null>(null);
+    const [reflecting, setReflecting] = useState(false);
     const disabled = resource.loading || Boolean(resource.error) || mutation.busy || copyBusy || !clientName;
     const save = async (amount: number) => {
         if (disabled || !editing || !resource.data) return;
@@ -89,7 +91,11 @@ function MonthlyBudget({ period, currency, clientName, onBusy }: { period: strin
     return <div className="space-y-4">
         <Feedback loading={resource.loading} error={resource.error} />
         <Feedback error={mutation.error} message={mutation.message} />
-        <MonthCopy period={period} disabled={disabled || editing !== null} clientName={clientName} onBusy={(busy) => { setCopyBusy(busy); onBusy(busy); }} onCopied={resource.reload} />
+        <div className="flex flex-wrap items-start justify-between gap-3">
+            <MonthCopy period={period} disabled={disabled || editing !== null} clientName={clientName} onBusy={(busy) => { setCopyBusy(busy); onBusy(busy); }} onCopied={resource.reload} />
+            <button type="button" disabled={disabled || editing !== null} onClick={() => setReflecting(true)} className={buttonClass}>ゴールから更新</button>
+        </div>
+        {reflecting && <GoalBudgetReflection title="ゴールから予算を更新" initialPeriod={period} onClose={() => setReflecting(false)} onApplied={resource.reload} />}
         {editing && <Overlay title={`「${lineName(editing)}」の金額を編集`} onClose={() => setEditing(null)} footer={editing.id != null
             ? <button type="button" disabled={disabled} onClick={() => remove(editing)} className={`${buttonClass} mr-auto text-[var(--studio-danger)]`}>削除</button>
             : <span className="mr-auto text-xs text-[var(--studio-text-muted)]">未保存のため削除不可</span>}><Feedback error={mutation.error} /><AmountEditor key={editing.id ?? lineName(editing)} line={editing} currency={currency} busy={disabled} onSave={save} onCancel={() => setEditing(null)} /></Overlay>}
