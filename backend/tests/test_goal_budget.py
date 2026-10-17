@@ -221,3 +221,14 @@ def test_http_preview_apply_and_validation(db, api, story):
     assert stale.status_code == 409
     for invalid in ({"start_period": "2026-13"}, {"near_years": 0}, {"months": 13}, {"savings_source": "guess"}):
         assert request(api, "POST", "/goal-budget/preview", json=body | invalid).status_code == 422
+
+
+def test_every_range_funds_far_events_through_capsules_too(db, story):
+    result = workflow.preview(db, 1, options(near_years=None))
+    rows = {row["name"]: row for row in result["events"]}
+    assert all(row["near"] for row in result["events"])
+    # The home has no capsule, so it now asks for one like any near event.
+    assert rows["住宅"]["status"] == "no_capsule"
+    # In cash, without the after-tax return: 10,000,000 over 240 months.
+    assert rows["住宅"]["monthly_required"] == 41667
+    assert result["options"]["near_years"] is None

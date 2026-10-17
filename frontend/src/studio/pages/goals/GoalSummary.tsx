@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { Pencil } from 'lucide-react';
+import { Pencil, Wallet } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Area, CartesianGrid, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { getLifeEventsWithProgress } from '../../../api';
@@ -62,8 +62,12 @@ function ScenarioSummary({ scenario, events, currency }: { scenario: ProjectedLi
     return <>
         <div className="flex items-center justify-between gap-3">
             <h2 className="font-semibold">{scenario.name}</h2>
-            <Link to="/goals/scenarios" className={`inline-flex items-center gap-2 ${buttonClass}`}><Pencil size={14} aria-hidden="true" />編集する</Link>
+            <div className="flex flex-wrap items-center gap-2">
+                <Link to="/goals/scenarios" className={`inline-flex items-center gap-2 ${buttonClass}`}><Pencil size={14} aria-hidden="true" />編集する</Link>
+                <button type="button" onClick={() => setReflecting(true)} className={`inline-flex items-center gap-2 ${buttonClass}`}><Wallet size={14} aria-hidden="true" />予算に反映</button>
+            </div>
         </div>
+        {reflecting && <GoalBudgetReflection onClose={() => setReflecting(false)} />}
         <dl className="grid gap-4 sm:grid-cols-3 lg:grid-cols-5">
             {[
                 ['合計金額', formatCurrency(required, currency)],
@@ -74,14 +78,6 @@ function ScenarioSummary({ scenario, events, currency }: { scenario: ProjectedLi
             ].map(([label, value]) => <div key={label} className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-4"><dt className="text-xs text-[var(--studio-text-muted)]">{label}</dt><dd className="mt-2 font-semibold tabular-nums">{value}</dd></div>)}
         </dl>
         <Projection scenario={scenario} currency={currency} />
-        <section className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
-            <div className="space-y-1">
-                <h3 className="font-semibold">予算への反映</h3>
-                <p className="text-sm text-[var(--studio-text-muted)]">月の積立と近いライフイベントの取り置きを、月の予算に反映します。反映する前に、変わる予算行を確認できます。</p>
-            </div>
-            <button type="button" onClick={() => setReflecting(true)} className={primaryClass}>予算に反映</button>
-        </section>
-        {reflecting && <GoalBudgetReflection onClose={() => setReflecting(false)} />}
         <section className="space-y-3">
             <h3 className="font-semibold">ライフイベント</h3>
             <DataTable columns={['名称', '種別', '日付', '金額', '確保済み', '進捗']}>

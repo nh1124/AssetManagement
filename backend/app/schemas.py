@@ -1326,8 +1326,9 @@ class GoalBudgetOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
     # Q1: the scenario's monthly savings, or what the reflected events require.
     savings_source: Literal["scenario", "required"] = "scenario"
-    # Q2: events within this many years are funded through their own capsules.
-    near_years: int = Field(default=5, ge=1, le=10)
+    # Q2: events within this many years are funded through their own capsules;
+    # null funds every event that way, however far.
+    near_years: Optional[int] = Field(default=5, ge=1, le=60)
     start_period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
     months: int = Field(default=1, ge=1, le=12)
     savings_account_id: Optional[int] = None

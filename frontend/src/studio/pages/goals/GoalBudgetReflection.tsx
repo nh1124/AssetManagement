@@ -13,6 +13,15 @@ import { inputClass, primaryClass } from '../db/forms';
 import { REFLECTIONS } from './presentation';
 
 const NEAR_YEARS = [1, 3, 5, 10];
+const sectionClass = 'space-y-3 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-bg)] p-4';
+
+function Heading({ step, title, note }: { step: number; title: string; note?: string }) {
+    return <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 border-b border-[var(--studio-border)] pb-2">
+        <span aria-hidden="true" className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-[var(--studio-accent-soft)] text-xs font-semibold text-[var(--studio-accent)]">{step}</span>
+        <h3 className="font-semibold">{title}</h3>
+        {note && <span className="text-xs text-[var(--studio-text-muted)]">{note}</span>}
+    </div>;
+}
 const MONTHS = [1, 3, 6, 12];
 
 function treatment(row: GoalBudgetEvent): string {
@@ -114,10 +123,10 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
     const savings = preview?.savings;
     return <Overlay title={title} onClose={() => { if (!busy) onClose(); }}
         footer={<button type="button" disabled={busy || loading || !preview || !changed.length} onClick={() => void apply()} className={primaryClass}>{busy ? '反映中…' : '予算に反映する'}</button>}>
-        <div className="space-y-6">
+        <div className="space-y-5">
             {intro && <p className="text-sm">{intro}</p>}
-            <section className="space-y-3">
-                <h3 className="text-sm font-semibold">反映のしかた</h3>
+            <section className={sectionClass}>
+                <Heading step={1} title="反映のしかた" note="選ぶと下の内容がすぐ変わります" />
                 <fieldset disabled={busy} className="grid gap-4 sm:grid-cols-2">
                     <fieldset className="space-y-2 sm:col-span-2">
                         <legend className="text-sm text-[var(--studio-text-muted)]">毎月の積立額</legend>
@@ -127,8 +136,9 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
                             {savings && <span className="tabular-nums text-[var(--studio-text-muted)]">{formatCurrency(value === 'scenario' ? savings.scenario_amount : savings.required_amount, currency)}</span>}
                         </label>)}
                     </fieldset>
-                    <Field label="取り置きで積み立てる範囲"><select value={options.near_years} onChange={(event) => choose('near_years', Number(event.target.value))} className={inputClass}>
+                    <Field label="取り置きで積み立てる範囲"><select value={options.near_years ?? 'all'} onChange={(event) => choose('near_years', event.target.value === 'all' ? null : Number(event.target.value))} className={inputClass}>
                         {NEAR_YEARS.map((years) => <option key={years} value={years}>{years}年以内のライフイベント</option>)}
+                        <option value="all">すべてのライフイベント</option>
                     </select></Field>
                     <Field label="積立先の口座"><select value={options.savings_account_id ?? ''} onChange={(event) => choose('savings_account_id', event.target.value ? Number(event.target.value) : null)} className={inputClass}>
                         <option value="">選ばない（取り置きだけ反映）</option>
@@ -142,15 +152,15 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
             </section>
             <Feedback loading={loading} error={error} message={message} />
             {preview && savings && <>
-                <section className="space-y-2">
-                    <h3 className="text-sm font-semibold">毎月の積立（{preview.scenario.name}）</h3>
+                <section className={sectionClass}>
+                    <Heading step={2} title="毎月の積立" note={`ゴール：${preview.scenario.name}`} />
                     <p className="text-sm tabular-nums">{formatCurrency(savings.chosen_amount, currency)} ＝ 取り置き {formatCurrency(savings.capsule_amount, currency)} ＋ 積立先 {formatCurrency(savings.account_amount, currency)}</p>
                     {savings.shortfall > 0 && <p role="alert" className="text-sm text-[var(--studio-warning)]">近いライフイベントの取り置きだけで、毎月の積立額を {formatCurrency(savings.shortfall, currency)} 超えています。</p>}
                     {savings.account_required && <p className="text-xs text-[var(--studio-text-muted)]">積立先の口座を選ぶと、残りの {formatCurrency(savings.account_amount, currency)} も予算に入ります。</p>}
                     <p className="text-xs text-[var(--studio-text-muted)]">遠いライフイベントの必要額は、税引後の年利 {preview.scenario.after_tax_return.toFixed(1)}% で運用する前提で計算しています。</p>
                 </section>
-                <section className="space-y-2">
-                    <h3 className="text-sm font-semibold">ライフイベントの扱い</h3>
+                <section className={sectionClass}>
+                    <Heading step={3} title="ライフイベントの扱い" />
                     <DataTable columns={['ライフイベント', '目標日', '予算への反映', '扱い', '月額', '取り置きを作る']}>
                         {preview.events.map((row) => {
                             const creatable = row.status === 'no_capsule' || Boolean(row.create_capsule);
@@ -167,8 +177,8 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
                     </DataTable>
                     <p className="text-xs text-[var(--studio-text-muted)]">予算への反映（確定・条件つき・試算のみ）は、各ライフイベントの編集で変えられます。</p>
                 </section>
-                <section className="space-y-2">
-                    <h3 className="text-sm font-semibold">予算の変更</h3>
+                <section className={`${sectionClass} border-[var(--studio-accent)]`}>
+                    <Heading step={4} title="予算の変更" note="「予算に反映する」でこの内容が保存されます" />
                     {changed.length ? <DataTable columns={['月', '項目', '口座', '現在', '反映後']}>
                         {changed.map((row, index) => <tr key={`change-${row.period}-${row.kind}-${row.line_id ?? index}`}>
                             <td className="whitespace-nowrap px-5 py-3">{row.period}</td>

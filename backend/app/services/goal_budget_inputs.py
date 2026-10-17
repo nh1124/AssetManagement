@@ -60,7 +60,7 @@ def _status(event: models.LifeEvent, reflection: str, judged: dict, months: int)
     return "reflected"
 
 
-def goal_budget_inputs(db: Session, client_id: int, *, start_period: str, near_years: int) -> dict:
+def goal_budget_inputs(db: Session, client_id: int, *, start_period: str, near_years: int | None) -> dict:
     goal = get_goal(db, client_id)
     if goal is None:
         return {"scenario": None, "events": []}
@@ -76,7 +76,7 @@ def goal_budget_inputs(db: Session, client_id: int, *, start_period: str, near_y
         reflection = event.budget_reflection_effective
         conditions = judged.get(event.id, {}).get("conditions", [])
         status = _status(event, reflection, judged.get(event.id, {}), months)
-        near = months < near_years * 12
+        near = near_years is None or months < near_years * 12
         funded = calculate_current_funded_and_weighted_return(event, db)[0] if event.direction == "expense" else 0.0
         target = event.target_amount or 0.0
         contributions = max(1, months)

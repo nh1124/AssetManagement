@@ -4,8 +4,8 @@ import type { BudgetReflection } from '../types';
 export interface GoalBudgetOptions {
     /** Q1: the scenario's monthly savings, or what the reflected events require. */
     savings_source: 'scenario' | 'required';
-    /** Q2: events within this many years are funded through their own capsules. */
-    near_years: number;
+    /** Q2: events within this many years are funded through their own capsules; null = all. */
+    near_years: number | null;
     start_period: string;
     months: number;
     savings_account_id: number | null;
