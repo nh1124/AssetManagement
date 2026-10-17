@@ -1,15 +1,13 @@
-"""Goal service boundary.
+"""Own life-event records and the shared read scope for the adopted plan.
 
-The public API still exposes legacy /life-events routes, but UI responsibility now treats
-these records as the Goal domain. This module keeps routers and reports from depending on
-strategy execution services directly.
+Projection consumers depend on this owner so scenario copies cannot become real goals.
 """
 
 from datetime import date, datetime
 from typing import Literal
 
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Query, Session
 
 from .money_storage import minor_fields, money_client_currency
 
@@ -21,17 +19,10 @@ from .cache_service import invalidate_client
 from .capsule_service import capsule_balance, claimed_minor
 from .life_scenario_scope import get as get_scenario, selected as selected_scenario
 from .ledger_service import create_transaction
-from .strategy_service import (
-    calculate_overall_goal_probability,
-    generate_budget_from_goals,
-    get_life_events_with_progress,
-    get_strategy_dashboard,
-    summarize_goal_funding_gap,
-)
 
 __all__ = [
     "list_goals",
-    "list_goals_with_progress",
+    "goal_events_query",
     "copy_events",
     "create_goal_record",
     "update_goal",
@@ -39,13 +30,21 @@ __all__ = [
     "unarchive_goal",
     "delete_goal",
     "list_goal_capsules",
-    "calculate_overall_goal_probability",
-    "generate_budget_from_goals",
-    "get_life_events_with_progress",
     "get_life_event",
-    "get_strategy_dashboard",
-    "summarize_goal_funding_gap",
 ]
+
+
+def goal_events_query(db: Session, client_id: int, *, include_archived: bool = False) -> Query:
+    """Read the adopted plan without counting copies in other scenarios."""
+    scenario_ids = db.query(models.LifeScenario.id).filter_by(client_id=client_id, is_goal=True)
+    # A subquery also yields no events when the client has no adopted scenario.
+    query = db.query(models.LifeEvent).filter(
+        models.LifeEvent.client_id == client_id,
+        models.LifeEvent.scenario_id.in_(scenario_ids),
+    )
+    if not include_archived:
+        query = query.filter(models.LifeEvent.archived_at.is_(None))
+    return query
 
 
 def get_life_event(db: Session, client_id: int, life_event_id: int) -> models.LifeEvent | None:
@@ -57,6 +56,8 @@ def get_life_event(db: Session, client_id: int, life_event_id: int) -> models.Li
 
 def list_goals(db: Session, client_id: int, include_archived: bool = False,
                scenario_id: int | None = None) -> list[models.LifeEvent]:
+    if scenario_id is None:
+        return goal_events_query(db, client_id, include_archived=include_archived).all()
     scenario = selected_scenario(db, client_id, scenario_id)
     if scenario is None:
         return []
@@ -64,14 +65,6 @@ def list_goals(db: Session, client_id: int, include_archived: bool = False,
     if not include_archived:
         query = query.filter(models.LifeEvent.archived_at.is_(None))
     return query.all()
-
-
-def list_goals_with_progress(db: Session, client_id: int, include_archived: bool = False,
-                             scenario_id: int | None = None) -> list[dict]:
-    scenario = selected_scenario(db, client_id, scenario_id)
-    if scenario is None:
-        return []
-    return get_life_events_with_progress(db, client_id, include_archived=include_archived, scenario_id=scenario.id)
 
 
 def copy_events(db: Session, client_id: int, source_id: int, target_id: int) -> dict[int, int]:

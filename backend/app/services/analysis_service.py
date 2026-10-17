@@ -23,7 +23,8 @@ from .institution_service import locked_accounts, locked_until_age_minor
 from ..domain.money import Money
 from .periods import current_period_key
 from .journal_legs import legs_in_range
-from .goal_service import calculate_overall_goal_probability
+from .goal_service import goal_events_query
+from .strategy_service import calculate_overall_goal_probability
 from .reporting_service import (
     get_balance_sheet,
     get_profit_loss,
@@ -245,10 +246,9 @@ def get_summary(db: Session, client_id: int) -> dict:
         extract("month", models.Transaction.date) == today.month,
     ).scalar() or 0
 
-    goal_count = db.query(func.count(models.LifeEvent.id)).filter(
-        models.LifeEvent.client_id == client_id,
+    goal_count = goal_events_query(db, client_id).filter(
         models.LifeEvent.direction == "expense",
-    ).scalar() or 0
+    ).count()
 
     runway_text = (
         f"runway {runway_months:.1f} months"

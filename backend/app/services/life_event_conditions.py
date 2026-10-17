@@ -15,6 +15,7 @@ from .capsule_service import claimed_minor
 from .fx_service import get_client_currency
 from .ledger_valuation import calculate_account_balances
 from .strategy_service import get_life_events_with_progress
+from .goal_service import goal_events_query
 
 REFERENCE_MODELS = {
     "account_balance": models.Account,
@@ -85,7 +86,11 @@ class _Readers:
         self.db, self.client_id, self.as_of = db, client_id, as_of
         self.currency = get_client_currency(db, client_id)
         self.references = {
-            metric: {row.id: row for row in db.query(model).filter(model.client_id == client_id).all()}
+            # A current goal-progress fact always refers to the adopted plan, even in a draft's conditions.
+            metric: {row.id: row for row in (
+                goal_events_query(db, client_id, include_archived=True) if metric == "goal_progress"
+                else db.query(model).filter(model.client_id == client_id)
+            ).all()}
             for metric, model in REFERENCE_MODELS.items()
             if metric in {row.metric for row in conditions}
         }
@@ -229,7 +234,7 @@ def evaluate(db: Session, client_id: int, life_event_id: int, *, as_of: date | N
 
 def evaluate_all(db: Session, client_id: int, *, as_of: date | None = None) -> dict[int, dict]:
     with db.no_autoflush:
-        return _evaluate(db, client_id, db.query(models.LifeEvent).filter_by(client_id=client_id).order_by(models.LifeEvent.id).all(), as_of)
+        return _evaluate(db, client_id, goal_events_query(db, client_id, include_archived=True).order_by(models.LifeEvent.id).all(), as_of)
 
 
 def _same_day_in(day: date, year: int) -> date:

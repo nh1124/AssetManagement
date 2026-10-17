@@ -12,8 +12,9 @@ from .money_storage import minor_fields, money_client_currency
 from .. import models, schemas
 from ..domain.errors import Refused
 from ..domain.transfer import remap_nested_ids
-from .goal_service import get_life_events_with_progress
+from .goal_service import goal_events_query
 from .strategy_service import (
+    get_life_events_with_progress,
     _period_contribution_from_schedule,
     calculate_goal_probability_monte_carlo,
     calculate_projection,
@@ -109,6 +110,13 @@ def list_milestones(
     query = db.query(models.Milestone).filter(models.Milestone.client_id == client_id)
     if life_event_id is not None:
         query = query.filter(models.Milestone.life_event_id == life_event_id)
+    else:
+        # The roadmap lists the adopted plan; an explicit event ID still opens its own story.
+        query = query.filter(
+            models.Milestone.life_event_id.is_(None) | models.Milestone.life_event_id.in_(
+                goal_events_query(db, client_id, include_archived=True).with_entities(models.LifeEvent.id)
+            )
+        )
     return query.order_by(models.Milestone.date, models.Milestone.id).offset(skip).limit(limit).all()
 
 

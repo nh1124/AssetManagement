@@ -150,6 +150,7 @@ class BudgetContext:
 
     @cached_property
     def target_name_maps(self) -> dict[str, dict[int, str]]:
+        # Stored budget references still need their names after the goal switches scenarios.
         life_events = (
             self.db.query(models.LifeEvent)
             .filter(models.LifeEvent.client_id == self.client_id)

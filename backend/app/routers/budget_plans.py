@@ -24,7 +24,7 @@ from ..services.budget_plan_store import (
 )
 from ..services.budget_projection import get_cash_flow_projection, liquid_cash
 from ..services.cache_service import get_or_set
-from ..services.goal_service import summarize_goal_funding_gap
+from ..services.strategy_service import summarize_goal_funding_gap
 
 router = APIRouter(prefix="/budget-plans", tags=["budget_plans"])
 

@@ -23,7 +23,7 @@ from .reporting_service import (
 )
 from .capsule_service import create_capsule_for_goal, set_funding_sources
 from ..schemas import CapsuleFundingSourceInput
-from .goal_service import get_life_events_with_progress
+from .strategy_service import get_life_events_with_progress
 
 ANOMALY_THRESHOLD_PCT = 150
 HIGH_SEVERITY_PCT = 200

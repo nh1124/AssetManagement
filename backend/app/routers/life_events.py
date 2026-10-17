@@ -8,13 +8,15 @@ from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.goal_service import (
-    list_goals_with_progress,
     list_goals,
     update_goal,
     archive_goal,
     unarchive_goal,
     delete_goal,
     list_goal_capsules,
+)
+from ..services.strategy_service import (
+    get_life_events_with_progress,
     calculate_overall_goal_probability,
     generate_budget_from_goals,
     get_strategy_dashboard,
@@ -108,7 +110,7 @@ def get_life_events_progress(
     current_client: models.Client = Depends(get_current_client)
 ):
     """Get all life events with calculated progress for current client."""
-    return list_goals_with_progress(db, client_id=current_client.id, include_archived=include_archived, scenario_id=scenario_id)
+    return get_life_events_with_progress(db, client_id=current_client.id, include_archived=include_archived, scenario_id=scenario_id)
 
 @router.get("/goal-probability")
 def get_goal_probability(

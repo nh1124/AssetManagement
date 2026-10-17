@@ -12,6 +12,7 @@ from ..domain.errors import NotFound, Refused
 from .ai_policy_service import SENSITIVE_KEY_PARTS
 from .journal_legs import primary_accounts
 from .analysis_service import get_summary
+from .goal_service import goal_events_query
 
 AiDataClassification = Literal["normal", "sensitive", "secret"]
 
@@ -395,9 +396,7 @@ def _recurring_transactions(db: Session, client_id: int, limit: int) -> dict[str
 
 
 def _goals(db: Session, client_id: int, limit: int) -> dict[str, Any]:
-    rows = db.query(models.LifeEvent).filter(
-        models.LifeEvent.client_id == client_id,
-    ).order_by(models.LifeEvent.target_date, models.LifeEvent.id).limit(limit).all()
+    rows = goal_events_query(db, client_id).order_by(models.LifeEvent.target_date, models.LifeEvent.id).limit(limit).all()
     return {
         "count": len(rows),
         "goals": [
