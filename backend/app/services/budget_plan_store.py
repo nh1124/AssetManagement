@@ -503,7 +503,23 @@ def sync_capsule_monthly_contributions(
         ).scalar())
 
 
-def create_plan_lines(db: Session, client_id: int, payloads: list) -> list[models.MonthlyPlanLine]:
+def active_lines_for_periods(
+    db: Session, client_id: int, plan_id: int | None, periods: Sequence[str],
+) -> list[models.MonthlyPlanLine]:
+    """The stored active rows of one plan in these months; none when there is no plan yet."""
+    if plan_id is None or not periods:
+        return []
+    return db.query(models.MonthlyPlanLine).filter(
+        models.MonthlyPlanLine.client_id == client_id,
+        models.MonthlyPlanLine.plan_id == plan_id,
+        models.MonthlyPlanLine.target_period.in_(list(periods)),
+        models.MonthlyPlanLine.is_active.is_(True),
+    ).order_by(models.MonthlyPlanLine.target_period, models.MonthlyPlanLine.id).all()
+
+
+def create_plan_lines(
+    db: Session, client_id: int, payloads: list, *, commit: bool = True,
+) -> list[models.MonthlyPlanLine]:
     created: list[models.MonthlyPlanLine] = []
     for payload in payloads:
         data = _payload_data(payload)
@@ -520,6 +536,9 @@ def create_plan_lines(db: Session, client_id: int, payloads: list) -> list[model
             raise ValueError("Monthly plan line already exists for this period and source")
         created.append(line)
     sync_capsule_monthly_contributions(db, client_id, created)
+    if not commit:
+        db.flush()
+        return created
     db.commit()
     for line in created:
         db.refresh(line)

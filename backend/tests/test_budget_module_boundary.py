@@ -33,6 +33,8 @@ PUBLIC: dict[str, set[str]] = {
     "budget_context": {"BudgetContext"},
     "budget_plan_service": {"get_budget_summary"},
     "budget_plan_store": {
+        # The goal reflection reads the rows it may replace before it confirms.
+        "active_lines_for_periods",
         "create_plan",
         "create_plan_line",
         "create_plan_lines",
@@ -62,6 +64,8 @@ PUBLIC: dict[str, set[str]] = {
     },
     "budget_lines": {
         "assign_plan_line_identity",
+        # A reflected capsule amount is split across accounts as its rows are.
+        "capsule_shares",
         "line_identity_key",
         "newest_line_key",
     },

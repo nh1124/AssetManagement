@@ -1321,6 +1321,23 @@ class LifeScenarioUpdate(BaseModel):
         return values
 
 
+class GoalBudgetOptions(BaseModel):
+    """The user's choices for reflecting the goal into the budget (Q1 and Q2)."""
+    model_config = ConfigDict(extra="forbid")
+    # Q1: the scenario's monthly savings, or what the reflected events require.
+    savings_source: Literal["scenario", "required"] = "scenario"
+    # Q2: events within this many years are funded through their own capsules.
+    near_years: int = Field(default=5, ge=1, le=10)
+    start_period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    months: int = Field(default=1, ge=1, le=12)
+    savings_account_id: Optional[int] = None
+    create_capsules: list[int] = Field(default_factory=list)
+
+
+class GoalBudgetApply(GoalBudgetOptions):
+    fingerprint: str = Field(min_length=64, max_length=64)
+
+
 class LifeScenarioGoal(BaseModel):
     model_config = ConfigDict(extra="forbid")
     confirm_detach: bool = False

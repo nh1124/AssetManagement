@@ -24,7 +24,11 @@ ASSET_FLOW_BUCKETS = ("operating", "defense", "earmarked", "growth", "unassigned
 
 def _capsule_allocation_amounts(capsule: models.Capsule, currency: str) -> list[tuple[int | None, Money]]:
     """The monthly contribution shares in the funding plan's stable order."""
-    whole = Money(capsule.monthly_contribution_minor or 0, currency)
+    return capsule_shares(capsule, Money(capsule.monthly_contribution_minor or 0, currency))
+
+
+def capsule_shares(capsule: models.Capsule, whole: Money) -> list[tuple[int | None, Money]]:
+    """Split a monthly amount across the capsule's funding accounts, as its plan rows do."""
     sources = sorted(capsule.funding_sources, key=lambda source: (source.sort_order, source.id))
     if not sources:
         return [(None, whole)]
