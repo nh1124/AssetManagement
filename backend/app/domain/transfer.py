@@ -39,6 +39,8 @@ DATA_COLLECTIONS = [
     "capsule_rules",
     "simulation_scenarios",
     "exchange_rates",
+    "goal_baselines",
+    "goal_budget_reflections",
 ]
 
 
@@ -493,7 +495,9 @@ def validate_import_payload(
 
     expected_payload_checksum = manifest.get("payload_checksum")
     if expected_payload_checksum:
-        actual_payload_checksum = _sha256({"data": data, "checksums": actual_checksums})
+        # An older export predates later collections; its checksum covers only its own.
+        covered = {key: value for key, value in actual_checksums.items() if key in expected_checksums} if expected_checksums else actual_checksums
+        actual_payload_checksum = _sha256({"data": data, "checksums": covered})
         if expected_payload_checksum != actual_payload_checksum:
             issue(
                 "warning",

@@ -10,7 +10,7 @@ from app.database import Base
 
 
 # N1a owns events per story and removes branch-choice rows.
-EXPECTED_METADATA_SHA256 = "1fbcc98b9a1597b917989f471da5571dc4b8246f339970a91fccc0439b06bfcf"
+EXPECTED_METADATA_SHA256 = "4f8da9a9d62dc301decf94a435abfbc5920ef907f4342f7426e7476aa417f078"
 
 MODEL_NAMES = (
     "Client", "ClientMfaSetting", "ClientRecoveryCode",
@@ -20,7 +20,7 @@ MODEL_NAMES = (
     "BudgetPlan", "MonthlyPlanLine", "PeriodReview", "MonthlyAction", "PeriodClose",
     "AiOperationPolicy", "AiAuditLog", "AiChangeRequest",
     "SimulationConfig", "SimulationScenario",
-    "LifeScenario", "LifeScenarioAccountReturn",
+    "LifeScenario", "LifeScenarioAccountReturn", "GoalBaseline", "GoalBudgetReflection",
     "Capsule", "CapsuleFundingSource", "CapsuleRule", "CapsuleDrawdown",
     "ProductDepreciation",
 )
@@ -90,8 +90,8 @@ def _metadata_snapshot():
 
 def test_metadata_matches_the_minor_unit_schema():
     snapshot = _metadata_snapshot()
-    assert len(snapshot["table_names"]) == 35
-    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 427
+    assert len(snapshot["table_names"]) == 37
+    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 447
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == EXPECTED_METADATA_SHA256
 

@@ -44,6 +44,8 @@ FORMAT_FIELDS = {
     "capsule_rules": ["id","capsule_id","trigger_type","trigger_category","trigger_description","source_mode","source_account_id","destination_account_id","amount_type","amount_value","is_active","created_at"],
     "simulation_scenarios": ["id","life_event_id","name","description","annual_return","inflation","monthly_savings","contribution_schedule","allocation_mode","created_at","updated_at"],
     "exchange_rates": ["id","base_currency","quote_currency","rate","as_of_date","source","created_at","updated_at"],
+    "goal_baselines": ["id","scenario_id","scenario_name","reason","anchor_date","is_current","assumptions","projection","events","created_at"],
+    "goal_budget_reflections": ["id","scenario_id","applied_at","start_period","end_period","options","summary","events"],
 }
 
 STAMP = datetime(2026, 10, 1, 12)
@@ -181,6 +183,11 @@ def _seed_client(db, client_id, base, marker):
     db.flush()
     db.flush()
     add(models.LifeScenarioAccountReturn, 38, scenario_id=scenario.id, account_id=cash.id, annual_return=3.0)
+    add(models.GoalBaseline, 40, scenario_id=scenario.id, scenario_name="保存案", reason="adopted",
+        anchor_date=date(2026, 10, 1), is_current=True, assumptions={"annual_return": 7.0},
+        projection=[{"offset": 0, "year": 2026, "p10": 1, "p50": 2, "p90": 3}], events=[{"name": "基準"}])
+    add(models.GoalBudgetReflection, 41, scenario_id=scenario.id, applied_at=STAMP, start_period="2026-10",
+        end_period="2026-10", options={"months": 1}, summary={"chosen_amount": 5}, events=[{"lineage": "x", "allocation": 5}])
     db.commit()
     return client, rows
 

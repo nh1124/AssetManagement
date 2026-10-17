@@ -48,7 +48,7 @@ def _checksum_sample(amount=12.5):
 EMPTY_TABLE_DIGEST = "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
 SAMPLE_DIGEST = "b0af7658403f3086011bd58bd60d0e583d974b3fd2530c69b845a2f300682108"
 # N1a removes branch choices; the sample data byte digest stays fixed.
-PAYLOAD_DIGEST = "961bfd13ee85675ee9ed0a5f0601fa85b3ab894c4f34fe92dce0e2bd5486157c"
+PAYLOAD_DIGEST = "8ce363d73785ffbc2a3c6d9e1b53da7bbda72874400f841d84c1c4ecba0e5d14"
 TABLE_DIGESTS = {
     "accounts": "69abf8cb7c47317e9cdeb2200e9bd1157c5b0c09fd880290e46e561fd78a51ee",
     "products": EMPTY_TABLE_DIGEST,
@@ -78,6 +78,8 @@ TABLE_DIGESTS = {
     "capsule_rules": EMPTY_TABLE_DIGEST,
     "simulation_scenarios": EMPTY_TABLE_DIGEST,
     "exchange_rates": EMPTY_TABLE_DIGEST,
+    "goal_baselines": EMPTY_TABLE_DIGEST,
+    "goal_budget_reflections": EMPTY_TABLE_DIGEST,
 }
 SAMPLE_COUNTS = {
     key: {"accounts": 2, "transactions": 1, "journal_entries": 2}.get(key, 0)

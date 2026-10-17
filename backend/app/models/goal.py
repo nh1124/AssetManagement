@@ -183,6 +183,54 @@ class LifeScenario(Base):
         return major_expression(cls.monthly_savings_minor, client_currency_expression(cls))
 
 
+class GoalBaseline(Base):
+    """The goal's projection frozen when it was adopted; later edits never move it.
+
+    Projection rows are yearly from anchor_date (offset 0 is that day), so actual
+    month-end net worth can be compared against an interpolated band. Choosing a
+    goal, or confirming an update, makes a new current row; older rows remain as
+    history.
+    """
+    __tablename__ = "goal_baselines"
+    __table_args__ = (
+        CheckConstraint("reason IN ('adopted', 'reflection', 'manual')", name="ck_goal_baselines_reason"),
+        Index("uq_goal_baselines_current", "client_id", unique=True,
+              postgresql_where=text("is_current"), sqlite_where=text("is_current")),
+    )
+
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    scenario_id = Column(Integer, ForeignKey("life_scenarios.id", ondelete="SET NULL"), nullable=True)
+    scenario_name = Column(String, nullable=False)
+    reason = Column(String, nullable=False)
+    anchor_date = Column(Date, nullable=False)
+    is_current = Column(Boolean, nullable=False, default=False, server_default="false")
+    assumptions = Column(JSON, nullable=False)
+    projection = Column(JSON, nullable=False)
+    events = Column(JSON, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class GoalBudgetReflection(Base):
+    """One applied goal reflection: what the budget was told, and how each event was funded.
+
+    Event progress reads the latest one so its monthly amounts match the budget,
+    and reminders compare it with today's goal to know when to reflect again.
+    Events are keyed by lineage, which survives backups and goal switches.
+    """
+    __tablename__ = "goal_budget_reflections"
+
+    id = Column(Integer, primary_key=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
+    scenario_id = Column(Integer, ForeignKey("life_scenarios.id", ondelete="SET NULL"), nullable=True)
+    applied_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    start_period = Column(String(7), nullable=False)
+    end_period = Column(String(7), nullable=False)
+    options = Column(JSON, nullable=False)
+    summary = Column(JSON, nullable=False)
+    events = Column(JSON, nullable=False)
+
+
 class LifeScenarioAccountReturn(Base):
     __tablename__ = "life_scenario_account_returns"
     __table_args__ = (UniqueConstraint("scenario_id", "account_id", name="uq_life_scenario_account_returns_account"),)

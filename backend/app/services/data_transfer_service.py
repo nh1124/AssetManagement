@@ -33,6 +33,10 @@ from .registry_service import account_entry_type, account_line_type
 from .life_scenario_service import seed_legacy_goal, copy_graph, get_goal
 
 
+
+def _int_or_none(value):
+    return int(value) if value not in (None, "") else None
+
 def _db_revision(db: Session) -> str | None:
     try:
         return db.execute(text("SELECT version_num FROM alembic_version")).scalar()
@@ -532,6 +536,15 @@ def export_client(db: Session, client: models.Client) -> dict:
                 .order_by(models.ExchangeRate.id)
                 .all()
             ],
+            "goal_baselines": [
+                row_fields(row, ["id", "scenario_id", "scenario_name", "reason", "anchor_date", "is_current",
+                                 "assumptions", "projection", "events", "created_at"])
+                for row in db.query(models.GoalBaseline).filter_by(client_id=client.id).order_by(models.GoalBaseline.id).all()
+            ],
+            "goal_budget_reflections": [
+                row_fields(row, ["id", "scenario_id", "applied_at", "start_period", "end_period", "options", "summary", "events"])
+                for row in db.query(models.GoalBudgetReflection).filter_by(client_id=client.id).order_by(models.GoalBudgetReflection.id).all()
+            ],
     }
 
     return {
@@ -599,6 +612,8 @@ def import_client(
         ).delete(synchronize_session=False)
 
         for model in [
+            models.GoalBaseline,
+            models.GoalBudgetReflection,
             models.LifeEventCondition,
             models.HouseholdMember,
             models.LifeEventLink,
@@ -888,6 +903,21 @@ def import_client(
                 db.add(models.LifeScenarioAccountReturn(
                     scenario_id=scenario_map[int(item["scenario_id"])], account_id=account_map[int(item["account_id"])], annual_return=item["annual_return"],
                 ))
+        for item in data.get("goal_baselines", []):
+            db.add(models.GoalBaseline(
+                client_id=client.id, scenario_id=scenario_map.get(_int_or_none(item.get("scenario_id"))),
+                scenario_name=item["scenario_name"], reason=item["reason"], anchor_date=parse_date(item["anchor_date"]),
+                is_current=bool(item.get("is_current")), assumptions=item.get("assumptions") or {},
+                projection=item.get("projection") or [], events=item.get("events") or [],
+                created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
+            ))
+        for item in data.get("goal_budget_reflections", []):
+            db.add(models.GoalBudgetReflection(
+                client_id=client.id, scenario_id=scenario_map.get(_int_or_none(item.get("scenario_id"))),
+                applied_at=parse_datetime(item.get("applied_at")) or datetime.utcnow(),
+                start_period=item["start_period"], end_period=item["end_period"], options=item.get("options") or {},
+                summary=item.get("summary") or {}, events=item.get("events") or [],
+            ))
         legacy_graph = version is None or version < 22
         restored_goal = get_goal(db, client.id)
         if legacy_graph and data.get("life_events") and restored_goal is None:

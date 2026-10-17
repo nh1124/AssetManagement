@@ -11,6 +11,7 @@ import { formatDate } from '../../datetime';
 import { useResource } from '../../useResource';
 import { DataTable, Feedback } from '../db/Database';
 import { buttonClass, primaryClass } from '../db/forms';
+import GoalBaselinePanel from './GoalBaselinePanel';
 import GoalBudgetReflection from './GoalBudgetReflection';
 import NoLifeEvents from './NoLifeEvents';
 import { goalPercent } from './presentation';
@@ -78,6 +79,7 @@ function ScenarioSummary({ scenario, events, currency }: { scenario: ProjectedLi
             ].map(([label, value]) => <div key={label} className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-4"><dt className="text-xs text-[var(--studio-text-muted)]">{label}</dt><dd className="mt-2 font-semibold tabular-nums">{value}</dd></div>)}
         </dl>
         <Projection scenario={scenario} currency={currency} />
+        <GoalBaselinePanel currency={currency} />
         <section className="space-y-3">
             <h3 className="font-semibold">ライフイベント</h3>
             <DataTable columns={['名称', '種別', '日付', '金額', '確保済み', '進捗']}>

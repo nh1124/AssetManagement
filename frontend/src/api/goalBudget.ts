@@ -44,6 +44,8 @@ export interface GoalBudgetEvent {
     near: boolean;
     months: number;
     monthly_required: number;
+    /** What this event receives each month: its capsule amount, or its share of the rest saved. */
+    allocation: number;
     capsule_id: number | null;
     capsule_name: string | null;
     create_capsule?: boolean;
@@ -88,6 +90,7 @@ export interface GoalBudgetPreview {
 
 export interface GoalBudgetResult {
     applied: number;
+    baseline_updated: boolean;
     created_capsules: Array<{ event_id: number; capsule_id: number; name: string }>;
     periods: string[];
 }
@@ -98,6 +101,6 @@ export async function previewGoalBudget(options: GoalBudgetOptions): Promise<Goa
 }
 
 /** Writes exactly the confirmed preview, or fails with 409 when anything changed since. */
-export async function applyGoalBudget(options: GoalBudgetOptions, fingerprint: string): Promise<GoalBudgetResult> {
-    return (await api.post<GoalBudgetResult>('/goal-budget/apply', { ...options, fingerprint })).data;
+export async function applyGoalBudget(options: GoalBudgetOptions, fingerprint: string, updateBaseline = false): Promise<GoalBudgetResult> {
+    return (await api.post<GoalBudgetResult>('/goal-budget/apply', { ...options, fingerprint, update_baseline: updateBaseline })).data;
 }

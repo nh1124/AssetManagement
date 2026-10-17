@@ -25,6 +25,7 @@ from .routers import (
     clients,
     data_transfer,
     exchange_rates,
+    goal_baselines,
     goal_budget,
     life_events,
     life_scenarios,
@@ -295,6 +296,7 @@ app.include_router(registry_entries.router, dependencies=[Depends(get_current_cl
 app.include_router(life_events.router)
 app.include_router(life_scenarios.router)
 app.include_router(goal_budget.router)
+app.include_router(goal_baselines.router)
 app.include_router(household_members.router)
 app.include_router(budget_plans.router, dependencies=[Depends(get_current_client)])
 app.include_router(period_reviews.router)

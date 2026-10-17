@@ -56,6 +56,8 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
     const [error, setError] = useState('');
     const [message, setMessage] = useState('');
     const [refresh, setRefresh] = useState(0);
+    // Q4: the baseline stays as adopted unless the user moves it here.
+    const [updateBaseline, setUpdateBaseline] = useState(false);
     // Suggestions fill the first preview only; afterwards every choice is the user's.
     const defaulted = useRef(false);
     const revision = useRef(0);
@@ -118,9 +120,10 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
         setBusy(true);
         setError('');
         try {
-            const result = await applyGoalBudget(options, preview.fingerprint);
+            const result = await applyGoalBudget(options, preview.fingerprint, updateBaseline);
             const created = result.created_capsules.length ? `取り置きを${result.created_capsules.length}件作成しました。` : '';
-            setMessage(`予算に${result.applied}件反映しました。${created}`);
+            setMessage(`予算に${result.applied}件反映しました。${created}${result.baseline_updated ? '基準線も更新しました。' : ''}`);
+            setUpdateBaseline(false);
             setRefresh((value) => value + 1);
             onApplied?.(result);
         } catch (failure: unknown) {
@@ -216,6 +219,10 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
                             <td className="whitespace-nowrap px-5 py-3 tabular-nums">{row.kind === 'retire' ? '削除' : formatCurrency(row.new_amount, currency)}</td>
                         </tr>)}
                     </DataTable> : <p className="text-sm text-[var(--studio-text-muted)]">予算は今の内容のままで、変更はありません。</p>}
+                    <label className="flex items-start gap-2 border-t border-[var(--studio-border)] pt-3 text-sm">
+                        <input type="checkbox" className="mt-1" disabled={busy} checked={updateBaseline} onChange={(event) => setUpdateBaseline(event.target.checked)} />
+                        <span>基準線も今のゴールの予測で作り直す<span className="block text-xs text-[var(--studio-text-muted)]">実績と比べる基準線は、ゴールに採用したときのままです。計画を見直した場合に選んでください（以前の基準線は履歴に残ります）。</span></span>
+                    </label>
                     {changed.some((row) => row.kind === 'definition') && <p role="note" className="text-xs text-[var(--studio-warning)]">定義の金額を書き換えると、反映する期間に関係なく以後の毎月の予算に使われ、定義から自動作成される取引の金額も変わります。</p>}
                 </section>
             </>}

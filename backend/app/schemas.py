@@ -1341,6 +1341,8 @@ class GoalBudgetOptions(BaseModel):
 
 class GoalBudgetApply(GoalBudgetOptions):
     fingerprint: str = Field(min_length=64, max_length=64)
+    # Q4: also freeze today's goal projection as the new baseline.
+    update_baseline: bool = False
 
 
 class LifeScenarioGoal(BaseModel):

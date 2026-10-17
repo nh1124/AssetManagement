@@ -39,6 +39,7 @@ from ..services.budget_plan_store import (
     update_plan_lines,
 )
 from ..services.cache_service import invalidate_client
+from ..services import goal_baseline_service, goal_budget_record
 from ..services.goal_budget_inputs import goal_budget_inputs
 from ..services.goal_service import get_life_event
 from ..services.life_scenario_scope import lock_client
@@ -46,6 +47,7 @@ from ..services.money_storage import money_client_currency
 
 GOAL_SOURCE = "goal"
 GOAL_LINE_NAME = "ゴールの積立"
+PRIORITY_WEIGHTS = {1: 3, 2: 2, 3: 1}
 
 
 def _periods(start: str, months: int) -> list[str]:
@@ -177,6 +179,20 @@ def _plan(db: Session, client_id: int, options: dict, plan_id: int | None) -> di
     counted = {period: sum(row["amounts"][period] for row in existing if row["counted"]) for period in periods}
     residual = {period: max(0, chosen_minor - capsule_minor - counted[period]) for period in periods}
     account_minor = residual[periods[0]]
+    # How each event is funded each month, as event progress will read it: a near
+    # event by its capsule, a far one by its priority share of everything else
+    # saved (existing savings and the goal row alike).
+    funded_events = {row["event_id"] for row, _, _ in funded_capsules}
+    far = [row for row in events if row["direction"] == "expense" and row["status"] == "reflected" and not row["near"]]
+    far_pool = max(0, chosen_minor - capsule_minor)
+    weights = [PRIORITY_WEIGHTS.get(row["priority"], 1) for row in far]
+    shares = Money(far_pool, currency).allocate(weights) if far and sum(weights) else []
+    far_share = {row["event_id"]: share.minor for row, share in zip(far, shares)}
+    for row in events:
+        if row["event_id"] in funded_events:
+            row["allocation_minor"] = row["monthly_required_minor"]
+        else:
+            row["allocation_minor"] = far_share.get(row["event_id"], 0)
 
     changes = []
     for period in periods:
@@ -247,6 +263,7 @@ def _plan(db: Session, client_id: int, options: dict, plan_id: int | None) -> di
                      "amount": _major(row["amounts"][start], currency)} for row in existing]
     for row in events:
         row["monthly_required"] = _major(row.pop("monthly_required_minor"), currency)
+        row["allocation"] = _major(row.pop("allocation_minor"), currency)
     return {
         "scenario": inputs["scenario"],
         "options": normalized,
@@ -278,7 +295,7 @@ def preview(db: Session, client_id: int, options: dict) -> dict:
     return result
 
 
-def apply(db: Session, client_id: int, options: dict, fingerprint: str) -> dict:
+def apply(db: Session, client_id: int, options: dict, fingerprint: str, *, update_baseline: bool = False) -> dict:
     lock_client(db, client_id)
     try:
         planned = _plan(db, client_id, options, find_budget_plan_id(db, client_id))
@@ -327,6 +344,16 @@ def apply(db: Session, client_id: int, options: dict, fingerprint: str) -> dict:
                 create_plan_lines(db, client_id, creates, commit=False)
             for change in definitions:
                 registry_service.update_entry(db, client_id, change["definition_id"], {"amount": change["new_amount"]}, commit=False)
+            goal_budget_record.record(
+                db, client_id, scenario_id=planned["scenario"]["id"], start_period=planned["periods"][0],
+                end_period=planned["periods"][-1], options=planned["options"], summary=planned["savings"],
+                events=[{key: row.get(key) for key in (
+                    "event_id", "lineage", "name", "direction", "status", "near", "monthly_required", "allocation",
+                )} for row in planned["events"]],
+            )
+            if update_baseline:
+                # Q4: the user may move the baseline to the plan the budget now follows.
+                goal_baseline_service.capture(db, client_id, "reflection")
         except ValueError as exc:
             raise Conflict(f"予算行を書き込めませんでした：{exc}") from exc
         db.commit()
@@ -336,6 +363,7 @@ def apply(db: Session, client_id: int, options: dict, fingerprint: str) -> dict:
     invalidate_client(client_id)
     return {
         "applied": len(creates) + len(updates) + len(definitions),
+        "baseline_updated": update_baseline,
         "created_capsules": [{"event_id": event_id, "capsule_id": capsule.id, "name": capsule.name}
                              for event_id, capsule in created_capsules.items()],
         "periods": planned["periods"],

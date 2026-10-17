@@ -319,7 +319,9 @@ def test_missing_lineage_conflict_changes_nothing_then_confirmation_detaches(db,
     assert journal_snapshot(db) == before
     response = request(api, "POST", f"/life-scenarios/{clone.id}/goal", json={"confirm_detach": True})
     assert response.status_code == 200 and response.json()["is_goal"] is True
-    assert commits == [True]
+    # The switch commits once; the adopted goal's baseline follows in its own commit.
+    assert commits == [True, True]
+    assert db.query(models.GoalBaseline).filter_by(client_id=1, is_current=True).one().scenario_id == clone.id
     assert missing.life_event_id is None
     assert db.get(models.LifeEvent, moving.life_event_id).scenario_id == clone.id
     assert capsule_service.claimed_minor(db, 1, missing.id) == claims

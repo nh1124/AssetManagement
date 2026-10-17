@@ -74,6 +74,8 @@ LAYERS: dict[str, int] = {
     "data_health_service": 5,
     "data_transfer_service": 5,  # Backup includes L5 health; no service depends on it.
     "goal_budget_inputs": 5,  # Reads what the goal asks of the budget; only its workflow uses it.
+    "goal_baseline_service": 5,  # Freezes the goal projection and reads month-end net worth.
+    "goal_budget_record": 0,  # The applied reflections; models only.
     "goal_service": 5,
     "life_event_conditions": 5,  # Current assumptions compose existing readers.
     "life_event_walk": 5,  # Shared graph resolution and event cash-flow application.
@@ -95,6 +97,7 @@ LAYERS: dict[str, int] = {
     "product_workflow": 6,
     "goal_workflow": 6,
     "goal_budget_workflow": 6,
+    "scenario_goal_workflow": 6,
     "capsule_workflow": 6,
     "simulation_workflow": 6,
 }

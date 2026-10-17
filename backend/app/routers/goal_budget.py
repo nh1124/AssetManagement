@@ -26,5 +26,5 @@ def apply(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    options = payload.model_dump(exclude={"fingerprint"})
-    return workflow.apply(db, current_client.id, options, payload.fingerprint)
+    options = payload.model_dump(exclude={"fingerprint", "update_baseline"})
+    return workflow.apply(db, current_client.id, options, payload.fingerprint, update_baseline=payload.update_baseline)

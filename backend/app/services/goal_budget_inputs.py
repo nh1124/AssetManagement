@@ -90,6 +90,8 @@ def goal_budget_inputs(db: Session, client_id: int, *, start_period: str, near_y
         capsule = next(iter(sorted(event.capsules, key=lambda row: row.id)), None)
         rows.append({
             "event_id": event.id,
+            "lineage": event.lineage,
+            "priority": event.priority or 2,
             "name": event.name,
             "direction": event.direction,
             "target_date": event.target_date.isoformat(),

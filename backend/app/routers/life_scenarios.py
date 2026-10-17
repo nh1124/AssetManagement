@@ -6,6 +6,7 @@ from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
 from ..services import life_scenario_service as service
+from ..workflows.scenario_goal_workflow import choose_goal
 
 router = APIRouter(prefix="/life-scenarios", tags=["life_scenarios"])
 
@@ -88,7 +89,7 @@ def goal(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    scenario = service.make_goal(db, current_client.id, scenario_id, confirm_detach=payload.confirm_detach)
+    scenario = choose_goal(db, current_client.id, scenario_id, confirm_detach=payload.confirm_detach)
     return service.describe(db, current_client.id, scenario)
 
 

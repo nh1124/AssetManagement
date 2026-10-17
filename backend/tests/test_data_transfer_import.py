@@ -87,6 +87,11 @@ def _seed(db, client_id=101, base=10000):
     add(models.LifeEventLink, 32, from_event_id=goal.id, to_event_id=next_goal.id,
         kind="after", offset_months=12, note="graph note")
     add(models.LifeScenarioAccountReturn, 38, scenario_id=scenario.id, account_id=cash.id, annual_return=3.0)
+    add(models.GoalBaseline, 40, scenario_id=scenario.id, scenario_name="保存案", reason="adopted",
+        anchor_date=date(2026, 10, 1), is_current=True, assumptions={"annual_return": 7.0},
+        projection=[{"offset": 0, "year": 2026, "p10": 1, "p50": 2, "p90": 3}], events=[{"name": "基準"}])
+    add(models.GoalBudgetReflection, 41, scenario_id=scenario.id, applied_at=STAMP, start_period="2026-10",
+        end_period="2026-10", options={"months": 1}, summary={"chosen_amount": 5}, events=[{"lineage": "x", "allocation": 5}])
     capsule = add(models.Capsule, 5, name="goal", life_event_id=goal.id,
                   target_amount=1000, monthly_contribution=10,
                   capsule_type="life_event", target_amount_source="life_event")
