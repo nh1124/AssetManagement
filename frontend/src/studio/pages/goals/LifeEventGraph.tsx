@@ -1,7 +1,7 @@
 import { getAllConditions, type ConditionEvaluation } from '../../../api/lifeEventConditions';
-import { useCallback, useId, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { getLifeEventsWithProgress } from '../../../api';
+import { createGoal, getLifeEventsWithProgress } from '../../../api';
 import { createLifeEventLink, deleteLifeEventLink, getLifeEventLinks, getLifeEventScenarios } from '../../../api/lifeEventGraph';
 import type { LifeEventLink, LifeEventLinkInput, LifeEventScenario } from '../../../api/lifeEventGraph';
 import { useClient } from '../../../context/ClientContext';
@@ -9,35 +9,14 @@ import type { LifeEvent } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import Overlay from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
-import { useResource } from '../../useResource';
-import { Choice, EditorActions, Feedback, Field } from '../db/Database';
-import { buttonClass, inputClass, useMutation } from '../db/forms';
+import { clientToday, useTimezone } from '../../datetime';
+import { assetErrorMessage, useResource } from '../../useResource';
+import { Feedback } from '../db/Database';
+import { buttonClass, useMutation } from '../db/forms';
+import GoalEditor from './GoalEditor';
+import GoalDeletion from './GoalDeletion';
 import LifeEventDiagram from './LifeEventDiagram';
 import LifeEventLinkDetails from './LifeEventLinkDetails';
-
-function LinkEditor({ events, busy, onSave, onCancel }: {
-    events: LifeEvent[]; busy: boolean; onSave: (input: LifeEventLinkInput) => void; onCancel: () => void;
-}) {
-    const form = useId();
-    const [source, setSource] = useState<number | null>(null);
-    const [target, setTarget] = useState<number | null>(null);
-    const [kind, setKind] = useState<LifeEventLinkInput['kind']>('after');
-    const [offset, setOffset] = useState(0);
-    return <form id={form} onSubmit={(event) => {
-        event.preventDefault();
-        if (source !== null && target !== null && !busy) onSave({ from_event_id: source, to_event_id: target, kind, offset_months: offset });
-    }}>
-        <fieldset disabled={busy} className="grid gap-4 sm:grid-cols-2">
-            <Choice label="元のイベント" value={source} options={events} required onChange={(value) => { setSource(value); if (value === target) setTarget(null); }} />
-            <Choice label="次のイベント" value={target} options={events.filter((item) => item.id !== source)} required onChange={setTarget} />
-            <Field label="接続の種類"><select value={kind} onChange={(event) => setKind(event.target.value as LifeEventLinkInput['kind'])} className={inputClass}>
-                <option value="after">必ず続く</option><option value="alternative">いずれかを選ぶ</option>
-            </select></Field>
-            <Field label="元のイベントからの月数（0＝目標日）"><input type="number" required step="1" value={offset} onChange={(event) => setOffset(Number(event.target.value))} className={inputClass} /></Field>
-        </fieldset>
-        <EditorActions busy={busy} form={form} onCancel={onCancel} />
-    </form>;
-}
 
 function offsetDate(source: string | null, months: number): string | null {
     if (!source) return null;
@@ -100,8 +79,9 @@ function EventOutline({ events, links, scenario, evaluations, currency, disabled
     </div>;
 }
 
-function ScenarioResults({ currency, clientName, view }: { currency: string; clientName?: string; view: 'diagram' | 'outline' }) {
+function GraphEditor({ currency, clientName, view }: { currency: string; clientName?: string; view: 'diagram' | 'outline' }) {
     const confirm = useConfirm();
+    const timezone = useTimezone();
     const load = useCallback(async () => {
         // This goal reader exposes major-unit target amounts; raw ORM rows carry minor units.
         const [events, links, comparison, evaluations] = await Promise.all([getLifeEventsWithProgress(), getLifeEventLinks(), getLifeEventScenarios(), getAllConditions()]);
@@ -109,7 +89,7 @@ function ScenarioResults({ currency, clientName, view }: { currency: string; cli
     }, []);
     const resource = useResource(load);
     const mutation = useMutation();
-    const [editing, setEditing] = useState(false);
+    const [editingGoal, setEditingGoal] = useState<{ goal: LifeEvent; mode: 'edit' | 'delete' } | null>(null);
     const [editingLink, setEditingLink] = useState<LifeEventLink | null>(null);
     const [nextKind, setNextKind] = useState<LifeEventLinkInput['kind']>('after');
     const disabled = resource.loading || Boolean(resource.error) || mutation.busy || !clientName;
@@ -122,34 +102,51 @@ function ScenarioResults({ currency, clientName, view }: { currency: string; cli
             void mutation.run(() => deleteLifeEventLink(edge.id), '接続を削除しました。', resource.reload);
         }
     };
+    const addEvent = (sourceId?: number, handleType?: 'source' | 'target') => {
+        if (disabled) return;
+        const source = resource.data?.events.find((event) => event.id === sourceId);
+        if (sourceId !== undefined && !source) return;
+        void mutation.run(async () => {
+            const created = await createGoal({ name: '新しいライフイベント', target_amount: 0, direction: 'expense', target_date: source?.target_date || clientToday(timezone), priority: 2 });
+            if (source && handleType) {
+                try {
+                    await createLifeEventLink({
+                        from_event_id: handleType === 'source' ? source.id : created.id,
+                        to_event_id: handleType === 'source' ? created.id : source.id,
+                        kind: nextKind, offset_months: 0,
+                    });
+                } catch (failure: unknown) {
+                    // Keep the real event after a partial success and make it visible for recovery.
+                    resource.reload();
+                    throw new Error(`ライフイベント「${created.name}」（ID: ${created.id}）は作成しましたが、接続の作成に失敗しました。イベントは残っています。${assetErrorMessage(failure)}`);
+                }
+            }
+        }, source ? 'ライフイベントと接続を追加しました。' : 'ライフイベントを追加しました。', resource.reload);
+    };
     return <div className="space-y-5">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-            <div className="flex flex-wrap items-end gap-3">
-                <button type="button" disabled={disabled || (resource.data?.events.length ?? 0) < 2} onClick={() => setEditing(true)} className={buttonClass}>接続を追加</button>
-                <div className="space-y-2 text-sm"><span className="block text-[var(--studio-text-muted)]">接続の種類</span><div role="group" aria-label="ドラッグで作る接続の種類" className="flex gap-1">
-                    {(['after', 'alternative'] as const).map((kind) => <button key={kind} type="button" aria-pressed={nextKind === kind} disabled={disabled} onClick={() => setNextKind(kind)} className={`${buttonClass} ${nextKind === kind ? 'bg-[var(--studio-accent-soft)] ring-1 ring-[var(--studio-accent)]' : ''}`}>
-                        {kind === 'after' ? '必ず続く' : 'いずれかを選ぶ'}
-                    </button>)}
-                </div></div>
-            </div>
-        </div>
-        <Feedback loading={resource.loading} error={resource.error || (!editing && !editingLink ? mutation.error : '')} message={mutation.message} />
+        <Feedback loading={resource.loading || mutation.busy} error={resource.error || (!editingGoal && !editingLink ? mutation.error : '')} message={mutation.message} />
         {resource.data && !resource.loading && !resource.error && <>
-            {!resource.data.comparison.adopted.exact && <p role="status" className="text-sm text-[var(--studio-warning)]">分岐の選択がまだ確定していません。</p>}
-            {resource.data.comparison.truncated && <p role="status" className="text-sm text-[var(--studio-warning)]">{resource.data.comparison.fork_count}か所の分岐で64案を超えたため、先頭64案を表示しています。</p>}
             {view === 'diagram' ? <LifeEventDiagram evaluations={resource.data.evaluations} events={resource.data.events} links={resource.data.links} scenarios={resource.data.comparison.scenarios} scenario={selected} currency={currency} disabled={disabled}
+                nextKind={nextKind} onKindChange={setNextKind} onAddEvent={addEvent}
+                onEditEvent={(goal) => setEditingGoal({ goal, mode: 'edit' })} onDeleteEvent={(goal) => setEditingGoal({ goal, mode: 'delete' })}
+                onDeleteEdge={(edge) => { void remove(edge); }}
                 onEdgeClick={setEditingLink} onConnect={(source, target) => {
                     if (disabled) return;
                     void mutation.run(() => createLifeEventLink({ from_event_id: source, to_event_id: target, kind: nextKind, offset_months: 0 }), '接続を追加しました。', resource.reload);
                 }} />
                 : <EventOutline evaluations={resource.data.evaluations} events={resource.data.events} links={resource.data.links} scenario={selected} currency={currency} disabled={disabled} onDelete={(edge) => { void remove(edge); }} />}
         </>}
-        {editing && resource.data && <Overlay title="接続を追加" onClose={() => { if (!mutation.busy) setEditing(false); }}>
+        {editingGoal && clientName && <Overlay title={`「${editingGoal.goal.name}」を${editingGoal.mode === 'edit' ? '編集' : '削除'}`} onClose={() => { if (!mutation.busy) setEditingGoal(null); }}>
             <Feedback error={mutation.error} />
-            <LinkEditor events={resource.data.events} busy={mutation.busy} onCancel={() => setEditing(false)} onSave={(input) => {
-                if (disabled) return;
-                void mutation.run(() => createLifeEventLink(input), '接続を追加しました。', () => { setEditing(false); resource.reload(); });
-            }} />
+            {editingGoal.mode === 'edit'
+                ? <GoalEditor goal={editingGoal.goal} currency={currency} busy={mutation.busy} embedded onCancel={() => setEditingGoal(null)} onSave={(action) => {
+                    if (disabled) return;
+                    void mutation.run(action, 'ライフイベントを保存しました。', () => { setEditingGoal(null); resource.reload(); });
+                }} />
+                : <GoalDeletion goal={editingGoal.goal} clientName={clientName} busy={mutation.busy} embedded onDelete={(action) => {
+                    if (disabled) return;
+                    void mutation.run(action, 'ライフイベントを削除しました。', () => { setEditingGoal(null); resource.reload(); });
+                }} />}
         </Overlay>}
         {editingLink && resource.data && clientName && <LifeEventLinkDetails edge={editingLink} events={resource.data.events} clientName={clientName} onReload={resource.reload} onClose={() => setEditingLink(null)} />}
     </div>;
@@ -163,7 +160,7 @@ function LifeEventGraphForClient({ currency, clientName }: { currency: string; c
                 {mode === 'diagram' ? '図' : '接続の一覧'}
             </button>)}
         </div>
-        <ScenarioResults currency={currency} clientName={clientName} view={view} />
+        <GraphEditor currency={currency} clientName={clientName} view={view} />
     </section>;
 }
 

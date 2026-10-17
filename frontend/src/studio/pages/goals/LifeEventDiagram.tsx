@@ -1,14 +1,16 @@
-import { useEffect, useMemo, type CSSProperties } from 'react';
-import { Link } from 'react-router-dom';
-import { Controls, Handle, MarkerType, Position, ReactFlow, ReactFlowProvider,
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Controls, Handle, MarkerType, Panel, Position, ReactFlow, ReactFlowProvider,
     useNodesInitialized, useReactFlow, type Edge, type Node, type NodeProps } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import './lifeEventDiagram.css';
 import type { ConditionEvaluation } from '../../../api/lifeEventConditions';
-import type { LifeEventLink, LifeEventScenario } from '../../../api/lifeEventGraph';
+import type { LifeEventLink, LifeEventLinkInput, LifeEventScenario } from '../../../api/lifeEventGraph';
 import type { LifeEvent } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import { layout } from './graphLayout';
+import { buttonClass } from '../db/forms';
+import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 
 type EventData = {
     id: number;
@@ -78,11 +80,42 @@ const flowStyle = {
     '--xy-edge-stroke-selected': 'var(--studio-accent)',
 } as CSSProperties;
 
-export default function LifeEventDiagram({ events, links, scenarios, scenario, evaluations, currency, disabled, onConnect, onEdgeClick }: {
+type MenuTarget = { type: 'pane' } | { type: 'node'; event: LifeEvent } | { type: 'edge'; edge: LifeEventLink };
+
+export default function LifeEventDiagram({ events, links, scenarios, scenario, evaluations, currency, disabled, nextKind, onKindChange, onAddEvent, onEditEvent, onDeleteEvent, onDeleteEdge, onConnect, onEdgeClick }: {
     events: LifeEvent[]; links: LifeEventLink[]; scenarios: LifeEventScenario[]; scenario?: LifeEventScenario;
     evaluations: Record<number, ConditionEvaluation>; currency: string; disabled: boolean;
+    nextKind: LifeEventLinkInput['kind']; onKindChange: (kind: LifeEventLinkInput['kind']) => void;
+    onAddEvent: (sourceId?: number, handleType?: 'source' | 'target') => void;
+    onEditEvent: (event: LifeEvent) => void; onDeleteEvent: (event: LifeEvent) => void; onDeleteEdge: (edge: LifeEventLink) => void;
     onConnect: (source: number, target: number) => void; onEdgeClick: (edge: LifeEventLink) => void;
 }) {
+    const navigate = useNavigate();
+    const container = useRef<HTMLDivElement>(null);
+    const dragAllowed = useRef(false);
+    const [menu, setMenu] = useState<{ x: number; y: number; target: MenuTarget } | null>(null);
+    const openMenu = (event: ReactMouseEvent | MouseEvent, target: MenuTarget) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (disabled || !container.current) return;
+        const bounds = container.current.getBoundingClientRect();
+        setMenu({ x: event.clientX - bounds.left - container.current.clientLeft, y: event.clientY - bounds.top - container.current.clientTop, target });
+    };
+    const simulation: ContextMenuItem = { label: 'シミュレーションへ', onSelect: () => { void navigate('/goals/simulation'); } };
+    const menuItems = (target: MenuTarget): ContextMenuItem[] => {
+        switch (target.type) {
+            case 'pane': return [{ label: 'ライフイベントを追加', onSelect: () => onAddEvent() }, simulation];
+            case 'node': return [
+                { label: '編集', onSelect: () => onEditEvent(target.event) },
+                { label: '詳細を開く', onSelect: () => { void navigate(`/goals/events/${target.event.id}`); } },
+                { label: '削除', onSelect: () => onDeleteEvent(target.event) }, simulation,
+            ];
+            case 'edge': return [
+                { label: '接続の詳細', onSelect: () => onEdgeClick(target.edge) },
+                { label: '削除', onSelect: () => onDeleteEdge(target.edge) },
+            ];
+        }
+    };
     const { nodes, edges } = useMemo(() => {
         const selected = new Map(scenario?.events.map((event) => [event.id, event]));
         // Keep dates on excluded branches server-resolved too, using the first available scenario.
@@ -119,24 +152,51 @@ export default function LifeEventDiagram({ events, links, scenarios, scenario, e
         };
     }, [events, links, scenarios, scenario, evaluations, currency, disabled, onEdgeClick]);
 
-    if (!events.length) return <div className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-4 text-sm text-[var(--studio-text-muted)]">イベントはありません。</div>;
     const signature = `${nodes.map((node) => node.id).join()}|${edges.map((edge) => edge.id).join()}`;
-    return <div className="life-event-diagram h-[min(65vh,640px)] min-h-96 overflow-hidden rounded-lg border border-[var(--studio-border)]" aria-label="ライフイベントの接続図">
+    return <div ref={container} tabIndex={-1} onContextMenu={(event) => event.preventDefault()}
+        className="life-event-diagram relative h-[min(65vh,640px)] min-h-96 overflow-hidden rounded-lg border border-[var(--studio-border)]" aria-label="ライフイベントの接続図">
         <ReactFlowProvider>
             <ReactFlow<EventNode, LinkEdge> nodes={nodes} edges={edges} nodeTypes={nodeTypes} style={flowStyle}
                 fitView fitViewOptions={fitOptions} minZoom={0.25} maxZoom={1.5}
                 nodesDraggable={false} nodesConnectable={!disabled} edgesReconnectable={false} deleteKeyCode={null}
                 nodesFocusable={false} edgesFocusable={!disabled} ariaLabelConfig={ariaLabelConfig}
                 connectionLineStyle={{ stroke: 'var(--studio-accent)', strokeWidth: 2 }}
+                onConnectStart={() => { dragAllowed.current = !disabled; setMenu(null); }}
                 onConnect={(connection) => {
                     // Wait for the server before changing edges; its cycle errors leave the diagram intact.
                     if (!disabled) onConnect(Number(connection.source), Number(connection.target));
                 }}
+                onConnectEnd={(event, connection) => {
+                    const allowed = dragAllowed.current;
+                    dragAllowed.current = false;
+                    if (!allowed || disabled || connection.isValid || connection.toNode || !connection.fromNode || !connection.fromHandle) return;
+                    const pointer = 'changedTouches' in event ? event.changedTouches[0] : event;
+                    if (!pointer) return;
+                    // Invalid drops on node bodies, controls or outside the canvas must not create events.
+                    const hit = document.elementFromPoint(pointer.clientX, pointer.clientY);
+                    if (!hit?.classList.contains('react-flow__pane') || !container.current?.contains(hit)) return;
+                    onAddEvent(Number(connection.fromNode.id), connection.fromHandle.type);
+                }}
+                onPaneContextMenu={(event) => openMenu(event, { type: 'pane' })}
+                onNodeContextMenu={(event, node) => {
+                    const goal = events.find((item) => item.id === node.data.id);
+                    if (goal) openMenu(event, { type: 'node', event: goal });
+                }}
+                onEdgeContextMenu={(event, edge) => { if (edge.data) openMenu(event, { type: 'edge', edge: edge.data.link }); }}
                 onEdgeClick={(_, edge) => { if (!disabled && edge.data) onEdgeClick(edge.data.link); }}>
+                <Panel position="top-left" className="rounded-md border border-[var(--studio-border)] bg-[var(--studio-surface)] p-1 shadow-sm">
+                    <div role="group" aria-label="ドラッグで作る接続の種類" className="flex gap-1">
+                        {(['after', 'alternative'] as const).map((kind) => <button key={kind} type="button" aria-pressed={nextKind === kind} disabled={disabled} onClick={() => onKindChange(kind)}
+                            className={`${buttonClass} ${nextKind === kind ? 'bg-[var(--studio-accent-soft)] ring-1 ring-[var(--studio-accent)]' : ''}`}>
+                            {kind === 'after' ? '必ず続く' : 'いずれかを選ぶ'}
+                        </button>)}
+                    </div>
+                </Panel>
                 {/* Zoom and recentering help with wide chains; a minimap would crowd this viewport. */}
                 <Controls showInteractive={false} fitViewOptions={{ padding: 0.15 }} />
                 <FitWhenMeasured signature={signature} />
             </ReactFlow>
         </ReactFlowProvider>
+        {menu && !disabled && <ContextMenu x={menu.x} y={menu.y} items={menuItems(menu.target)} onClose={() => setMenu(null)} />}
     </div>;
 }
