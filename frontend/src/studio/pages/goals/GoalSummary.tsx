@@ -3,7 +3,7 @@ import { Pencil } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Area, CartesianGrid, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { getLifeEventsWithProgress } from '../../../api';
-import { getLifeEventScenarios, type LifeEventScenario, type ScenarioParameters } from '../../../api/lifeEventGraph';
+import { compare, list, type ProjectedLifeScenario } from '../../../api/lifeScenarios';
 import { useClient } from '../../../context/ClientContext';
 import type { LifeEvent } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
@@ -12,11 +12,12 @@ import { useResource } from '../../useResource';
 import { DataTable, Feedback } from '../db/Database';
 import { buttonClass, primaryClass } from '../db/forms';
 import NoLifeEvents from './NoLifeEvents';
+import { MissingForks } from './Comparison';
 import { goalPercent } from './presentation';
 
 const linkClass = 'rounded text-[var(--studio-accent)] hover:underline focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)]';
 
-function Projection({ scenario, currency, parameters }: { scenario: LifeEventScenario; currency: string; parameters: ScenarioParameters }) {
+function Projection({ scenario, currency }: { scenario: ProjectedLifeScenario; currency: string }) {
     const axisStyle = { fill: 'var(--studio-text-muted)', fontSize: 11 };
     const rows = scenario.projection.map((row) => ({ ...row, band: [row.p10, row.p90] }));
     const eventNames = new Map<number, string[]>();
@@ -27,7 +28,7 @@ function Projection({ scenario, currency, parameters }: { scenario: LifeEventSce
     }
     const hasIncome = scenario.events.some((event) => event.direction === 'income');
     return <div className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
-        <div role="img" aria-label={`ゴール案の純資産推移。横軸：年、縦軸：金額（${currency}）。P10〜P90、P50、累計必要額${hasIncome ? '、累計収入' : ''}とライフイベントの予定年`} className="h-96 min-w-0">
+        <div role="img" aria-label={`ゴールシナリオの純資産推移。横軸：年、縦軸：金額（${currency}）。P10〜P90、P50、累計必要額${hasIncome ? '、累計収入' : ''}とライフイベントの予定年`} className="h-96 min-w-0">
             <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={rows} margin={{ top: 40, right: 30, bottom: 28, left: 20 }} accessibilityLayer>
                     <CartesianGrid stroke="var(--studio-border)" vertical={false} />
@@ -43,11 +44,11 @@ function Projection({ scenario, currency, parameters }: { scenario: LifeEventSce
                 </ComposedChart>
             </ResponsiveContainer>
         </div>
-        <p className="mt-3 text-xs text-[var(--studio-text-muted)]">期間 {parameters.years}年 ／ 年利 {parameters.annual_return}% ／ インフレ {parameters.inflation}%</p>
+        <p className="mt-3 text-xs text-[var(--studio-text-muted)]">期間 {scenario.horizon_years}年 ／ 年利 {scenario.annual_return}% ／ インフレ {scenario.inflation}%</p>
     </div>;
 }
 
-function AdoptedSummary({ scenario, events, exact, currency, parameters }: { scenario: LifeEventScenario; events: LifeEvent[]; exact: boolean; currency: string; parameters: ScenarioParameters }) {
+function ScenarioSummary({ scenario, events, currency }: { scenario: ProjectedLifeScenario; events: LifeEvent[]; currency: string }) {
     const navigate = useNavigate();
     const progress = new Map(events.map((event) => [event.id, event]));
     const rows = [...scenario.events].sort((a, b) => (a.resolved_date ?? '\uffff').localeCompare(b.resolved_date ?? '\uffff') || a.id - b.id);
@@ -59,10 +60,10 @@ function AdoptedSummary({ scenario, events, exact, currency, parameters }: { sce
     const lastDate = rows.filter((event) => event.resolved_date !== null).at(-1)?.resolved_date;
     return <>
         <div className="flex items-center justify-between gap-3">
-            <h2 className="font-semibold">{scenario.label}</h2>
+            <h2 className="font-semibold">{scenario.name}</h2>
             <Link to="/goals/events" className={`inline-flex items-center gap-2 ${buttonClass}`}><Pencil size={14} aria-hidden="true" />編集する</Link>
         </div>
-        {!exact && <p role="status" className="text-sm text-[var(--studio-warning)]">分岐の選択がまだ確定していません（<Link to="/goals/simulation" className={linkClass}>シミュレーション</Link>）。</p>}
+        <MissingForks scenario={scenario} />
         <dl className="grid gap-4 sm:grid-cols-3 lg:grid-cols-5">
             {[
                 ['合計金額', formatCurrency(required, currency)],
@@ -72,7 +73,7 @@ function AdoptedSummary({ scenario, events, exact, currency, parameters }: { sce
                 ['イベント数', `${rows.length}件`],
             ].map(([label, value]) => <div key={label} className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-4"><dt className="text-xs text-[var(--studio-text-muted)]">{label}</dt><dd className="mt-2 font-semibold tabular-nums">{value}</dd></div>)}
         </dl>
-        <Projection scenario={scenario} currency={currency} parameters={parameters} />
+        <Projection scenario={scenario} currency={currency} />
         <section className="space-y-3">
             <h3 className="font-semibold">ライフイベント</h3>
             <DataTable columns={['名称', '種別', '日付', '金額', '確保済み', '進捗']}>
@@ -96,25 +97,28 @@ function AdoptedSummary({ scenario, events, exact, currency, parameters }: { sce
 
 function SummaryForClient({ currency }: { currency: string }) {
     const load = useCallback(async () => {
-        const [comparison, events] = await Promise.all([getLifeEventScenarios(), getLifeEventsWithProgress(false)]);
-        return { comparison, events };
+        const [scenarios, events] = await Promise.all([list(), getLifeEventsWithProgress(false)]);
+        const goal = scenarios.find((scenario) => scenario.is_goal);
+        const scenario = goal ? (await compare([goal.id])).scenarios.find((item) => item.id === goal.id) : undefined;
+        return { scenarios, scenario, events };
     }, []);
     const resource = useResource(load);
     const data = resource.data;
-    const scenario = data?.comparison.scenarios.find((item) => item.id === data.comparison.adopted.scenario_id);
+    const scenario = data?.scenario;
     // The graph contract expresses every event in one client currency; never combine currencies.
     const scenarioCurrency = scenario?.events[0]?.currency ?? currency;
     const mixedCurrencies = scenario?.events.some((event) => event.currency !== scenarioCurrency);
     return <section className="space-y-5">
         <Feedback loading={resource.loading} error={resource.error} />
         {data && !resource.loading && !resource.error && (
-            data.events.length === 0 && data.comparison.scenarios.every((item) => item.events.length === 0) ? <NoLifeEvents />
+            data.scenarios.length === 0 ? <NoLifeEvents noScenarios />
+                : data.events.length === 0 && data.scenarios.every((item) => item.events.length === 0) ? <NoLifeEvents />
                 : !scenario ? <div className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
-                    <h2 className="font-semibold">ゴールにする案が選ばれていません</h2>
+                    <h2 className="font-semibold">ゴールにするシナリオが選ばれていません</h2>
                     <div className="flex justify-end"><Link to="/goals/simulation" className={primaryClass}>シミュレーションで選ぶ</Link></div>
                 </div>
-                    : mixedCurrencies ? <Feedback error="採用案の通貨が一致しないため集計できません。" />
-                        : <AdoptedSummary scenario={scenario} events={data.events} exact={data.comparison.adopted.exact} currency={scenarioCurrency} parameters={data.comparison.parameters} />
+                    : mixedCurrencies ? <Feedback error="ゴールシナリオの通貨が一致しないため集計できません。" />
+                        : <ScenarioSummary scenario={scenario} events={data.events} currency={scenarioCurrency} />
         )}
     </section>;
 }

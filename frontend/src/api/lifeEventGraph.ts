@@ -25,33 +25,6 @@ export interface ScenarioEvent {
     incoming_link_id: number | null;
 }
 
-export interface LifeEventScenario {
-    id: string;
-    label: string;
-    chosen_link_ids: number[];
-    events: ScenarioEvent[];
-    projection: Array<{ year: number; p10: number; p50: number; p90: number; cumulative_target: number; cumulative_income: number }>;
-}
-
-export interface ScenarioAdoption {
-    scenario_id: string | null;
-    exact: boolean;
-}
-
-export interface ScenarioComparison {
-    parameters: ScenarioParameters;
-    scenarios: LifeEventScenario[];
-    truncated: boolean;
-    fork_count: number;
-    adopted: ScenarioAdoption;
-}
-
-export interface ScenarioParameters {
-    years: number;
-    annual_return: number;
-    inflation: number;
-}
-
 export async function getLifeEventLinks(): Promise<LifeEventLink[]> {
     return (await api.get<LifeEventLink[]>('/life-events/links')).data;
 }
@@ -62,12 +35,4 @@ export async function createLifeEventLink(input: LifeEventLinkInput): Promise<Li
 
 export async function deleteLifeEventLink(id: number): Promise<void> {
     await api.delete(`/life-events/links/${id}`);
-}
-
-export async function getLifeEventScenarios(params?: ScenarioParameters): Promise<ScenarioComparison> {
-    return (await api.get<ScenarioComparison>('/life-events/scenarios', { params })).data;
-}
-
-export async function adoptLifeEventScenario(scenarioId: string): Promise<ScenarioAdoption> {
-    return (await api.post<ScenarioAdoption>('/life-events/scenarios/adopt', { scenario_id: scenarioId })).data;
 }
