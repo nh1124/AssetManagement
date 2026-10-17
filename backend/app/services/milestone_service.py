@@ -50,6 +50,7 @@ def _deterministic_balance_with_schedule(
             monthly_savings=context["allocated_monthly_savings"],
             years_remaining=max(0.0, (target_date - reference_date).days / 365.25),
             annual_return=context["effective_return"],
+            contribution_annual_return=context["contribution_annual_return"],
         )
 
     monthly_savings = context.get("monthly_savings") or 0.0
@@ -57,7 +58,9 @@ def _deterministic_balance_with_schedule(
     allocation_ratio = (allocated / monthly_savings) if monthly_savings > 0 else 1.0
 
     monthly_rate = (1 + context["effective_return"] / 100) ** (1 / 12) - 1
-    balance = context["current_funded"]
+    contribution_monthly_rate = (1 + context["contribution_annual_return"] / 100) ** (1 / 12) - 1
+    held = context["current_funded"]
+    invested = 0.0
     cursor = date(reference_date.year, reference_date.month, 1)
 
     while cursor < target_date:
@@ -67,10 +70,12 @@ def _deterministic_balance_with_schedule(
             _period_contribution_from_schedule(schedule, cursor, period_end)
             * allocation_ratio
         )
-        balance = balance * (1 + monthly_rate) + contribution
+        # Keep the schedule's month-end deposits while giving new savings their own rate.
+        held *= 1 + monthly_rate
+        invested = invested * (1 + contribution_monthly_rate) + contribution
         cursor = next_m
 
-    return balance
+    return held + invested
 
 
 def _get_event(db: Session, client_id: int, life_event_id: int) -> models.LifeEvent:
@@ -168,6 +173,7 @@ def _simulation_value_at(
             monthly_savings=context["allocated_monthly_savings"],
             years_remaining=years_elapsed,
             annual_return=context["effective_return"],
+            contribution_annual_return=context["contribution_annual_return"],
         )
 
     result = run_monte_carlo(
@@ -175,6 +181,7 @@ def _simulation_value_at(
         monthly_savings=context["allocated_monthly_savings"],
         years_remaining=years_elapsed,
         annual_return=context["effective_return"],
+        contribution_annual_return=context["contribution_annual_return"],
         volatility=volatility,
         inflation_rate=context["inflation_rate"],
         n_simulations=n_simulations,
@@ -347,6 +354,7 @@ def preview_milestones_from_simulation(
         monthly_savings=context["allocated_monthly_savings"],
         years_remaining=target_years_remaining,
         annual_return=context["effective_return"],
+        contribution_annual_return=context["contribution_annual_return"],
     )
     if basis == "deterministic":
         probability_at_target = None
@@ -357,6 +365,7 @@ def preview_milestones_from_simulation(
             monthly_savings=context["allocated_monthly_savings"],
             years_remaining=target_years_remaining,
             annual_return=context["effective_return"],
+            contribution_annual_return=context["contribution_annual_return"],
             volatility=volatility,
             inflation_rate=context["inflation_rate"],
             n_simulations=n_simulations,
@@ -368,6 +377,7 @@ def preview_milestones_from_simulation(
             years_remaining=target_years_remaining,
             target_amount=event.target_amount,
             annual_return=context["effective_return"],
+            contribution_annual_return=context["contribution_annual_return"],
             volatility=volatility,
             inflation_rate=context["inflation_rate"],
             n_simulations=n_simulations,

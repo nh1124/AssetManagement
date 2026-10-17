@@ -59,7 +59,8 @@ def calculate_projection(
     current_funded: float,
     monthly_savings: float,
     years_remaining: float,
-    annual_return: float = 5.0
+    annual_return: float = 5.0,
+    *, contribution_annual_return: float | None = None,
 ) -> float:
     """
     Calculate projected future value using the loop-based 'Roadmap' logic.
@@ -69,7 +70,11 @@ def calculate_projection(
         return current_funded
     
     r = annual_return / 100.0
-    balance = current_funded
+    contribution_rate = (annual_return if contribution_annual_return is None else contribution_annual_return) / 100.0
+    # The simulation rate describes how new savings will be invested;
+    # existing holdings already have their own rates.
+    held = current_funded
+    invested = 0.0
     annual_contribution = monthly_savings * 12
     
     full_years = int(years_remaining)
@@ -77,13 +82,15 @@ def calculate_projection(
     
     # Loop through full years
     for _ in range(full_years):
-        balance = (balance + annual_contribution) * (1 + r)
+        held *= 1 + r
+        invested = (invested + annual_contribution) * (1 + contribution_rate)
         
     # Add partial year if any
     if partial_year > 0:
-        balance = (balance + annual_contribution * partial_year) * (1 + r * partial_year)
+        held *= 1 + r * partial_year
+        invested = (invested + annual_contribution * partial_year) * (1 + contribution_rate * partial_year)
         
-    return balance
+    return held + invested
 
 
 def _period_contribution_from_schedule(
@@ -298,6 +305,7 @@ def get_goal_simulation_context(
         "weighted_return": weighted_return,
         "annual_return": base_annual_return,
         "effective_return": effective_return,
+        "contribution_annual_return": base_annual_return * (1 - tax_rate / 100.0),
         "tax_rate": tax_rate,
         "inflation_rate": base_inflation,
         "monthly_savings": base_monthly_savings,
@@ -319,6 +327,7 @@ def run_monte_carlo(
     volatility: float = 15.0,
     inflation_rate: float = 2.0,
     n_simulations: int = 1000,
+    *, contribution_annual_return: float | None = None,
 ) -> dict:
     """
     Monte Carlo simulation for goal projection.
@@ -336,6 +345,7 @@ def run_monte_carlo(
         }
 
     r_mean = (annual_return - inflation_rate) / 100.0
+    contribution_mean = ((annual_return if contribution_annual_return is None else contribution_annual_return) - inflation_rate) / 100.0
     r_std = max(volatility, 0.0) / 100.0
     full_years = int(years_remaining)
     partial_year = years_remaining - full_years
@@ -346,16 +356,19 @@ def run_monte_carlo(
 
     rng = np.random.default_rng(PROJECTION_SEED)
     annual_contribution = monthly_savings * 12
+    held = np.full(n_simulations, current_funded, dtype=float)
+    invested = np.zeros(n_simulations)
     for t in range(1, n_years + 1):
-        returns = rng.normal(r_mean, r_std, n_simulations)
+        shock = rng.normal(0, r_std, n_simulations)
         year_contribution = annual_contribution
         year_return_scale = 1.0
         if t == n_years and partial_year > 0:
             year_contribution = annual_contribution * partial_year
             year_return_scale = partial_year
-        all_year_balances[:, t] = (
-            all_year_balances[:, t - 1] + year_contribution
-        ) * (1 + returns * year_return_scale)
+        # One market shock moves both existing holdings and newly invested savings.
+        held *= 1 + (r_mean + shock) * year_return_scale
+        invested = (invested + year_contribution) * (1 + (contribution_mean + shock) * year_return_scale)
+        all_year_balances[:, t] = held + invested
 
     end_values = all_year_balances[:, -1]
     p10, p50, p90 = np.percentile(end_values, [10, 50, 90])
@@ -387,6 +400,7 @@ def calculate_goal_probability_monte_carlo(
     volatility: float = 15.0,
     inflation_rate: float = 2.0,
     n_simulations: int = 1000,
+    *, contribution_annual_return: float | None = None,
 ) -> float:
     """
     Estimate goal success probability (0.0-100.0) via Monte Carlo.
@@ -399,6 +413,7 @@ def calculate_goal_probability_monte_carlo(
         volatility=volatility,
         inflation_rate=inflation_rate,
         n_simulations=n_simulations,
+        contribution_annual_return=contribution_annual_return,
     )
     end_values = mc["simulated_end_values"]
     if not end_values:
@@ -416,6 +431,7 @@ def generate_roadmap(
     interval: str = 'auto',
     reference_date: Optional[date] = None,
     contribution_schedule: list[dict] | None = None,
+    *, contribution_annual_return: float | None = None,
 ) -> List[dict]:
     """Generate time-period simulation data with configurable granularity.
 
@@ -428,6 +444,7 @@ def generate_roadmap(
     """
     ref_date = reference_date or date.today()
     r_annual = annual_return / 100.0
+    contribution_rate = (annual_return if contribution_annual_return is None else contribution_annual_return) / 100.0
     months_remaining = max(1, round(years_remaining * 12))
     use_schedule = bool(contribution_schedule)
 
@@ -457,9 +474,16 @@ def generate_roadmap(
 
     roadmap: List[dict] = []
     balance = current_funded
+    held = current_funded
+    invested = 0.0
+
+    def advance(contribution: float, periods_per_year: int) -> float:
+        nonlocal held, invested
+        held *= (1 + r_annual) ** (1 / periods_per_year)
+        invested = (invested + contribution) * (1 + contribution_rate) ** (1 / periods_per_year)
+        return held + invested
 
     if effective == 'monthly':
-        r_period = (1 + r_annual) ** (1 / 12) - 1
         roadmap.append(_row(0, ref_date.strftime('%Y-%m'), balance, 0, 0, balance))
         for m in range(1, months_remaining + 1):
             raw_month = ref_date.month + m
@@ -472,13 +496,12 @@ def generate_roadmap(
                 if use_schedule else monthly_savings
             )
             start_bal = balance
-            end_bal = (start_bal + per_period) * (1 + r_period)
+            end_bal = advance(per_period, 12)
             gain = end_bal - start_bal - per_period
             balance = end_bal
             roadmap.append(_row(m, f"{lbl_year:04d}-{lbl_month:02d}", start_bal, per_period, gain, end_bal))
 
     elif effective == 'quarterly':
-        r_period = (1 + r_annual) ** (1 / 4) - 1
         quarters_remaining = max(1, round(years_remaining * 4))
         start_q = (ref_date.month - 1) // 3 + 1
         roadmap.append(_row(0, f"{ref_date.year} Q{start_q}", balance, 0, 0, balance))
@@ -497,7 +520,7 @@ def generate_roadmap(
                 if use_schedule else monthly_savings * 3
             )
             start_bal = balance
-            end_bal = (start_bal + per_period) * (1 + r_period)
+            end_bal = advance(per_period, 4)
             gain = end_bal - start_bal - per_period
             balance = end_bal
             roadmap.append(_row(q, f"{lbl_year} Q{lbl_q}", start_bal, per_period, gain, end_bal))
@@ -518,7 +541,7 @@ def generate_roadmap(
                 if use_schedule else monthly_savings * 12
             )
             start_bal = balance
-            end_bal = (start_bal + per_period) * (1 + r_annual)
+            end_bal = advance(per_period, 1)
             gain = end_bal - start_bal - per_period
             balance = end_bal
             roadmap.append(_row(y, f"Year {y}", start_bal, per_period, gain, end_bal))
@@ -701,7 +724,8 @@ def get_life_events_with_progress(
             current_funded=current_funded,
             monthly_savings=allocated_savings,
             years_remaining=years_remaining,
-            annual_return=effective_return
+            annual_return=effective_return,
+            contribution_annual_return=context["contribution_annual_return"],
         )
         
         gap = event.target_amount - projected
@@ -724,6 +748,7 @@ def get_life_events_with_progress(
             monthly_savings=allocated_savings,
             years_remaining=years_remaining,
             annual_return=effective_return,
+            contribution_annual_return=context["contribution_annual_return"],
             target_amount=event.target_amount,
             interval=roadmap_interval,
             reference_date=evaluation_date,
@@ -870,16 +895,21 @@ def simulate_net_worth_forward(
     bs = get_balance_sheet(db, client_id=client_id)
     starting_net_worth = bs.get("net_worth", 0.0) or 0.0
     annual_contribution = (monthly_savings or 0.0) * 12
+    tax_rate = config.tax_rate if config else 20.0
     effective_return = blended_after_tax_return(
-        db, client_id, gross_annual_return=annual_return, tax_rate=config.tax_rate if config else 20.0,
+        db, client_id, gross_annual_return=annual_return, tax_rate=tax_rate,
     )
-    real_return = (effective_return - inflation) / 100.0
+    blended_real = (effective_return - inflation) / 100.0
+    contribution_real = (annual_return * (1 - tax_rate / 100.0) - inflation) / 100.0
     return_std = max(volatility or 0.0, 0.0) / 100.0
     current_year = today.year
 
     n_simulations = 1200
     rng = np.random.default_rng(PROJECTION_SEED)
-    balances = np.full(n_simulations, starting_net_worth, dtype=float)
+    # 年利 describes how new savings will be invested; existing holdings
+    # already have their own account rates, including cash held at zero percent.
+    held = np.full(n_simulations, starting_net_worth, dtype=float)
+    invested = np.zeros(n_simulations)
     projection = [
         {
             "year": current_year,
@@ -890,9 +920,10 @@ def simulate_net_worth_forward(
     ]
 
     for offset in range(1, years + 1):
-        sampled_returns = rng.normal(real_return, return_std, n_simulations)
-        balances = (balances + annual_contribution) * (1 + sampled_returns)
-        p10, p50, p90 = np.percentile(balances, [10, 50, 90])
+        shock = rng.normal(0, return_std, n_simulations)
+        held *= 1 + blended_real + shock
+        invested = (invested + annual_contribution) * (1 + contribution_real + shock)
+        p10, p50, p90 = np.percentile(held + invested, [10, 50, 90])
         projection.append(
             {
                 "year": current_year + offset,

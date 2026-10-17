@@ -1,6 +1,7 @@
 """Shelters affect estimates and access, never the recorded holdings."""
 from datetime import date
 
+import numpy as np
 import pytest
 from pydantic import ValidationError
 from sqlalchemy import create_engine, event
@@ -20,7 +21,7 @@ from app.services.institution_service import (
 from app.services.ledger_service import create_account, create_transaction, update_account
 from app.services.ledger_valuation import calculate_account_balances
 from app.services.strategy_service import (
-    calculate_projection, get_goal_simulation_context, get_life_events_with_progress,
+    PROJECTION_SEED, calculate_projection, generate_roadmap, get_goal_simulation_context, get_life_events_with_progress,
     simulate_net_worth_forward,
 )
 from app.workflows.simulation_workflow import monte_carlo_for_goal
@@ -213,6 +214,93 @@ def test_goal_context_deterministic_monte_carlo_and_forward_share_blend_once(db)
                               monthly_savings=0, contribution_schedule=None, allocation_mode="direct")
     assert mc["percentiles"]["p50"] == round(progress["projected_amount"])
     assert simulate_net_worth_forward(db, 1, years=1, annual_return=12, inflation=0, monthly_savings=0)[1]["p50"] == 1075
+
+
+@pytest.mark.parametrize("tax_rate", [None, 25])
+def test_forward_zero_rate_holdings_use_simulation_rate_only_for_new_savings(db, tax_rate):
+    fund(db, account(db, rate=0), 1000)
+    if tax_rate is not None:
+        goal(db)
+    low = simulate_net_worth_forward(db, 1, years=5, annual_return=0, monthly_savings=100)
+    high = simulate_net_worth_forward(db, 1, years=5, annual_return=12, monthly_savings=100)
+    assert high[-1]["p50"] > low[-1]["p50"]
+    assert high[0] == low[0]
+    held_low = simulate_net_worth_forward(db, 1, years=5, annual_return=0, monthly_savings=0)
+    held_high = simulate_net_worth_forward(db, 1, years=5, annual_return=12, monthly_savings=0)
+    assert held_high == held_low
+    assert db.query(models.Account).filter_by(account_type="asset").one().expected_return == 0
+
+
+def test_forward_zero_rate_holdings_only_lose_inflation_without_market_noise(db):
+    fund(db, account(db, rate=0), 1000)
+    goal(db)
+    rows = simulate_net_worth_forward(db, 1, years=3, annual_return=12, inflation=2, monthly_savings=0)
+    assert [row["p50"] for row in rows] == [round(1000 * .98 ** year) for year in range(4)]
+    assert all(row["p10"] == row["p50"] == row["p90"] for row in rows)
+
+
+def test_forward_pools_share_one_market_shock_and_repeat_bands(db):
+    fund(db, account(db, rate=0), 1000)
+    # No config: contributions use the default 20% tax and 15% volatility.
+    args = dict(years=1, annual_return=10, inflation=2, monthly_savings=100)
+    first = simulate_net_worth_forward(db, 1, **args)
+    assert first == simulate_net_worth_forward(db, 1, **args)
+    shocks = np.percentile(np.random.default_rng(PROJECTION_SEED).normal(0, .15, 1200), [10, 50, 90])
+    # With one shared shock, both principals have the same random multiplier.
+    for band, shock in zip(("p10", "p50", "p90"), shocks):
+        assert first[1][band] == round(1000 * .98 + 1200 * 1.06 + 2200 * shock)
+    assert first[0] == dict(year=date.today().year, p10=1000, p50=1000, p90=1000, cumulative_income=0)
+    without_income = simulate_net_worth_forward(db, 1, **args, include_event_income=False)
+    assert [{key: value for key, value in row.items() if key != "cumulative_income"} for row in first] == without_income
+
+
+@pytest.mark.parametrize("monthly_savings", [0, 100])
+def test_goal_consumers_keep_held_rate_and_invest_future_savings_at_requested_rate(db, monthly_savings):
+    from app.services import milestone_service, simulation_scenario_service
+
+    row = account(db, rate=0)
+    fund(db, row)
+    owner = goal(db)
+    capsule = models.Capsule(client_id=1, name="目標", life_event_id=owner.id)
+    db.add(capsule)
+    db.flush()
+    db.query(models.JournalEntry).filter_by(account_id=row.id).one().capsule_id = capsule.id
+    db.commit()
+    scenarios = [simulation_scenario_service.create_scenario(
+        db, 1, schemas.SimulationScenarioCreate(life_event_id=owner.id, name=f"rate {rate}",
+                                               annual_return=rate, inflation=0, monthly_savings=monthly_savings,
+                                               allocation_mode="direct"),
+    ) for rate in (0, 12)]
+    compared_rows = simulation_scenario_service.compare_scenarios(
+        db, 1, schemas.SimulationScenarioCompareRequest(life_event_id=owner.id, scenario_ids=[item.id for item in scenarios]),
+    )
+    results = []
+    for rate, compared in zip((0, 12), compared_rows):
+        inputs = dict(annual_return=rate, inflation=0, monthly_savings=monthly_savings, allocation_mode="direct")
+        context = get_goal_simulation_context(db, 1, owner, **inputs)
+        assert context["effective_return"] == 0
+        assert context["contribution_annual_return"] == rate * .75
+        progress = get_life_events_with_progress(db, 1, **inputs)[0]
+        mc = monte_carlo_for_goal(db, 1, owner.id, n_simulations=100, contribution_schedule=None, **inputs)
+        values = [progress["projected_amount"], progress["roadmap"][-1]["end_balance"], mc["percentiles"]["p50"],
+                  compared["percentiles"]["p50"], compared["deterministic_yearly"][-1]["end_balance"]]
+        for basis in ("deterministic", "p50", "annual_plan"):
+            preview = milestone_service.preview_milestones_from_simulation(db, 1, owner.id, basis=basis, **inputs)
+            values.append(preview["items"][0]["target_amount"])
+        results.append(values)
+    if monthly_savings:
+        assert all(high > low for low, high in zip(*results))
+    else:
+        assert results[0] == results[1] == [1000] * 8
+
+
+@pytest.mark.parametrize("interval,periods,contribution", [("monthly", 12, 100), ("quarterly", 4, 300), ("annual", 1, 1200)])
+def test_roadmap_rates_apply_to_separate_pools_at_each_interval(interval, periods, contribution):
+    rows = generate_roadmap(1000, 100, 1, annual_return=0, contribution_annual_return=12,
+                            interval=interval, reference_date=date(2026, 1, 1))
+    multiplier = 1.12 ** (1 / periods)
+    expected = 1000 + contribution * sum(multiplier ** year for year in range(1, periods + 1))
+    assert rows[-1]["end_balance"] == round(expected, 2)
 
 
 def test_attribute_edit_and_readers_never_post_or_change_balance(db):

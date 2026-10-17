@@ -144,6 +144,7 @@ def compare_scenarios(
             monthly_savings=context["allocated_monthly_savings"],
             years_remaining=context["years_remaining"],
             annual_return=context["effective_return"],
+            contribution_annual_return=context["contribution_annual_return"],
             volatility=volatility,
             inflation_rate=context["inflation_rate"],
             n_simulations=1000,
@@ -154,6 +155,7 @@ def compare_scenarios(
             years_remaining=context["years_remaining"],
             target_amount=event.target_amount,
             annual_return=context["effective_return"],
+            contribution_annual_return=context["contribution_annual_return"],
             volatility=volatility,
             inflation_rate=context["inflation_rate"],
             n_simulations=1000,
@@ -168,6 +170,7 @@ def compare_scenarios(
                 monthly_savings=context["allocated_monthly_savings"],
                 years_remaining=float(year),
                 annual_return=context["effective_return"],
+                contribution_annual_return=context["contribution_annual_return"],
             )
             deterministic_yearly.append({"year": year, "end_balance": round(float(balance), 0)})
         if years_remaining - full_years > 0:
@@ -176,6 +179,7 @@ def compare_scenarios(
                 monthly_savings=context["allocated_monthly_savings"],
                 years_remaining=years_remaining,
                 annual_return=context["effective_return"],
+                contribution_annual_return=context["contribution_annual_return"],
             )
             deterministic_yearly.append(
                 {"year": round(years_remaining, 2), "end_balance": round(float(balance), 0)}

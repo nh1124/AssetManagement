@@ -192,7 +192,7 @@ def test_compare_scenarios_keeps_parameter_delegation_request_order_and_response
         calls.append(kwargs)
         assert session is db and client_id == 1 and event.id == 1
         return dict(current_funded=100, allocated_monthly_savings=kwargs["monthly_savings"],
-                    years_remaining=1.5, effective_return=0, inflation_rate=2)
+                    years_remaining=1.5, effective_return=0, contribution_annual_return=0, inflation_rate=2)
 
     def monte_carlo(**kwargs):
         assert kwargs["volatility"] == 7 and kwargs["n_simulations"] == 1000

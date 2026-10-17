@@ -24,6 +24,7 @@ ARGS = dict(
     monthly_savings=50_000.0,
     years_remaining=8.0,
     annual_return=5.0,
+    contribution_annual_return=7.0,
     volatility=15.0,
     inflation_rate=2.0,
     n_simulations=400,

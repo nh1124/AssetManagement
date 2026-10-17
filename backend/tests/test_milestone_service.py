@@ -12,6 +12,7 @@ from app.services.money_storage import to_minor
 
 from datetime import date
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -73,6 +74,7 @@ def _make_context(schedule, reference_date, target_date, annual_return=0.0, curr
         "monthly_savings": 100_000.0,
         "allocated_monthly_savings": 100_000.0,
         "effective_return": annual_return,
+        "contribution_annual_return": annual_return,
         "inflation_rate": 2.0,
         "contribution_schedule": schedule,
         "allocation_mode": "direct",
@@ -162,6 +164,7 @@ def test_deterministic_allocation_ratio_applied():
         "monthly_savings": 100_000.0,
         "allocated_monthly_savings": 50_000.0,  # ratio = 0.5
         "effective_return": 0.0,
+        "contribution_annual_return": 0.0,
         "inflation_rate": 2.0,
         "contribution_schedule": schedule,
         "allocation_mode": "weighted",
@@ -172,6 +175,16 @@ def test_deterministic_allocation_ratio_applied():
     )
     # 2 months × 100_000 × 0.5 = 100_000
     assert abs(result - 100_000.0) < 1.0
+
+
+def test_scheduled_milestones_keep_cash_flat_and_grow_only_previous_deposits():
+    ref = date(2026, 5, 1)
+    target = date(2026, 7, 1)
+    ctx = _make_context([{"kind": "monthly", "amount": 100}], ref, target, current_funded=1000)
+    ctx["contribution_annual_return"] = 12
+    result = _deterministic_balance_with_schedule(context=ctx, reference_date=ref, target_date=target)
+    # May's deposit grows in June; June's deposit arrives at month end.
+    assert result == pytest.approx(1000 + 100 * 1.12 ** (1 / 12) + 100)
 
 
 # ---------------------------------------------------------------------------
