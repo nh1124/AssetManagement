@@ -67,14 +67,16 @@ def test_product_funding_link_stays_single_and_same_through_put_and_patch(db):
     assert patched.last_unit_price == 12000
     assert db.query(models.Product).one().funding_capsule_id == capsule_id
     assert db.query(models.Capsule).count() == capsules_before
-    # CRUD keeps the link; the explicit reserve-sync endpoint owns aggregation.
-    assert db.execute(models.Capsule.__table__.select()).all() == capsule_before
+    # The link stays; the capsule's amounts follow the product (12,000 every 180 days).
+    pool = db.get(models.Capsule, capsule_id)
+    assert (pool.target_amount, pool.monthly_contribution) == (12000, 2000)
+    assert [row.id for row in db.execute(models.Capsule.__table__.select()).all()] == [row.id for row in capsule_before]
 
 
 @pytest.mark.parametrize("has_registry", [False, True])
 def test_delete_product_deactivates_and_detaches_registry_but_keeps_capsules_and_recurring(db, has_registry):
     product = product_workflow.create_product(db, 1, _payload())
-    product_id = product.id
+    product_id, capsule_id = product.id, product.funding_capsule_id
     if has_registry:
         entry = registry_service.sync_registry_from_product(db, product)
         db.flush()
@@ -95,7 +97,12 @@ def test_delete_product_deactivates_and_detaches_registry_but_keeps_capsules_and
     assert product_workflow.delete_product(db, 1, product_id)
     db.expire_all()
     assert db.get(models.Product, product_id) is None
-    assert db.execute(models.Capsule.__table__.select()).all() == capsules_before
+    # The capsules stay; one left without products keeps its amounts, now managed by hand.
+    after = {row.id: row for row in db.execute(models.Capsule.__table__.select()).all()}
+    assert set(after) == {row.id for row in capsules_before}
+    pool = db.get(models.Capsule, capsule_id)
+    assert (pool.target_amount, pool.monthly_contribution) == (6000, 1000)
+    assert pool.target_amount_source == pool.monthly_contribution_source == "manual"
     assert db.execute(models.RecurringTransaction.__table__.select()).all() == recurring_before
     if has_registry:
         entry = db.get(models.RegistryEntry, entry_id)

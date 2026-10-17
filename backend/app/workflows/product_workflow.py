@@ -6,7 +6,7 @@ from .. import models, schemas
 from ..domain.errors import Invalid
 from ..services import capsule_service, ledger_service, product_service
 from ..services.cache_service import invalidate_client
-from ..services.product_reserve_service import ensure_default_product_reserve_pools
+from ..services.product_reserve_service import ensure_default_product_reserve_pools, refresh_product_capsules
 from ..services.registry_service import detach_product, get_product_entry
 
 
@@ -56,6 +56,7 @@ def create_product(
 ) -> models.Product:
     data = normalize_product_data(db, client_id, payload.model_dump())
     product = product_service.create_product(db, client_id, data, commit=False)
+    refresh_product_capsules(db, client_id, [product.funding_capsule_id])
     if commit:
         db.commit()
         db.refresh(product)
@@ -67,10 +68,13 @@ def update_product(
     db: Session, client_id: int, product_id: int, payload: schemas.ProductCreate,
     *, commit: bool = True,
 ) -> models.Product | None:
-    if product_service.get_product(db, client_id, product_id) is None:
+    product = product_service.get_product(db, client_id, product_id)
+    if product is None:
         return None
+    previous_capsule_id = product.funding_capsule_id
     data = normalize_product_data(db, client_id, payload.model_dump())
     product = product_service.update_product(db, client_id, product_id, data, commit=False)
+    refresh_product_capsules(db, client_id, [previous_capsule_id, product.funding_capsule_id])
     if commit:
         db.commit()
         db.refresh(product)
@@ -85,6 +89,7 @@ def patch_product(
     product = product_service.get_product(db, client_id, product_id)
     if product is None:
         return None
+    previous_capsule_id = product.funding_capsule_id
     data = patch.model_dump(exclude_unset=True)
     merged = {
         column.name: getattr(product, column.name)
@@ -99,6 +104,7 @@ def patch_product(
     if "funding_capsule_id" in data or "budget_treatment" in data or "is_asset" in data:
         changes["funding_capsule_id"] = merged.get("funding_capsule_id")
     product = product_service.update_product(db, client_id, product_id, changes, commit=False)
+    refresh_product_capsules(db, client_id, [previous_capsule_id, product.funding_capsule_id])
     if commit:
         db.commit()
         db.refresh(product)
@@ -112,10 +118,12 @@ def delete_product(
     product = product_service.get_product(db, client_id, product_id)
     if product is None:
         return False
+    capsule_id = product.funding_capsule_id
     registry = get_product_entry(db, client_id, product.id)
     if registry:
         detach_product(db, registry)
     product_service.delete_product(db, client_id, product_id, commit=False)
+    refresh_product_capsules(db, client_id, [capsule_id])
     if commit:
         db.commit()
         invalidate_client(client_id)

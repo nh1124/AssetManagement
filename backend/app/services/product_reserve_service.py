@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import date
 
 from sqlalchemy.orm import Session
@@ -75,6 +76,40 @@ def effective_budget_treatment(product: models.Product) -> str:
 
 def should_use_reserve(product: models.Product) -> bool:
     return effective_budget_treatment(product) in RESERVE_TREATMENTS
+
+
+def refresh_product_capsules(
+    db: Session, client_id: int, capsule_ids: Iterable[int | None],
+) -> list[dict]:
+    db.flush()
+    capsules = db.query(models.Capsule).filter(
+        models.Capsule.client_id == client_id,
+        models.Capsule.id.in_({capsule_id for capsule_id in capsule_ids if capsule_id is not None}),
+    ).all()
+    refreshed = []
+    for capsule in capsules:
+        products = [product for product in db.query(models.Product).filter(
+            models.Product.client_id == client_id,
+            models.Product.funding_capsule_id == capsule.id,
+        ).all() if should_use_reserve(product)]
+        if products:
+            reserves = [product_reserve_values(product) for product in products]
+            currency = money_client_currency(db, client_id)
+            capsule.capsule_type = "product_pool"
+            capsule.target_amount_source = capsule.monthly_contribution_source = "linked_products"
+            capsule.target_amount_minor = to_minor(sum(value["reserve_target_amount"] for value in reserves), currency)
+            capsule.monthly_contribution_minor = to_minor(sum(value["recommended_monthly_reserve"] for value in reserves), currency)
+        elif "linked_products" in {capsule.target_amount_source, capsule.monthly_contribution_source}:
+            # Keep the last amounts available for the user to manage manually.
+            capsule.target_amount_source = capsule.monthly_contribution_source = "manual"
+        refreshed.append({
+            "capsule_id": capsule.id,
+            "products": len(products),
+            "target_amount": float(capsule.target_amount or 0.0),
+            "monthly_contribution": float(capsule.monthly_contribution or 0.0),
+        })
+    db.flush()
+    return refreshed
 
 
 def ensure_default_product_reserve_pools(db: Session, client_id: int) -> list[models.Capsule]:
