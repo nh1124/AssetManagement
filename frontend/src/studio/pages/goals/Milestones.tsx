@@ -54,7 +54,6 @@ export default function Milestones({ goalId, currency, disabled, onChanged, onBu
         <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex gap-2">
             <button type="button" disabled={locked || editor !== null} onClick={() => setEditor({ row: null })} className={buttonClass}>新しいマイルストーン</button>
         </div></div>
-        <p className="text-xs text-[var(--studio-text-muted)]">採用中の行を進捗計算に使います。シナリオを採用すると、手動で編集したものを含む現在のマイルストーンが置き換わります。</p>
         <Feedback loading={resource.loading} error={resource.error} />
         <Feedback error={mutation.error} message={mutation.message} />
         {editor && <Overlay title={editor.row ? 'マイルストーンを編集' : '新しいマイルストーン'} onClose={() => setEditor(null)}><Feedback error={mutation.error} /><MilestoneEditor key={editor.row?.id ?? 'new'} row={editor.row} goalId={goalId} currency={currency} busy={locked} onCancel={() => setEditor(null)} onSave={(action) => run(action, 'マイルストーンを保存しました。', true)} /></Overlay>}

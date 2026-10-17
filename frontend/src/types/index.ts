@@ -304,6 +304,8 @@ export interface RoadmapEntry {
 }
 
 export interface LifeEvent {
+    direction?: 'expense' | 'income';
+    account_id?: number | null;
     condition_mode?: 'all' | 'any';
     id: number;
     name: string;

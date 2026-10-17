@@ -574,7 +574,7 @@ export const getGoalDashboard = async (
     return response.data;
 };
 
-export type GoalPayload = Pick<LifeEvent, 'name' | 'target_amount' | 'target_date' | 'start_date' | 'priority' | 'note' | 'condition_mode' | 'active_plan_basis' | 'active_plan_label' | 'plan_status_override'>;
+export type GoalPayload = Pick<LifeEvent, 'direction' | 'account_id' | 'name' | 'target_amount' | 'target_date' | 'start_date' | 'priority' | 'note' | 'condition_mode' | 'active_plan_basis' | 'active_plan_label' | 'plan_status_override'>;
 
 export const createGoal = async (event: GoalPayload): Promise<LifeEvent> => {
     const response = await api.post('/life-events/', event);
