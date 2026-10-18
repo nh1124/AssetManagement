@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
-import { applyAiChangeRequest, approveAiChangeRequest, getAiChangeRequests, rejectAiChangeRequest } from '../../../api';
+import { Link } from 'react-router-dom';
+import { applyAiChangeRequest, approveAiChangeRequest, getAiChangeRequests, getMfaStatus, reauth, rejectAiChangeRequest } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
 import type { AiChangeRequest } from '../../../types';
 import { assetErrorMessage, useResource } from '../../useResource';
@@ -11,18 +12,27 @@ type RequestAction = 'approve' | 'apply' | 'reject';
 const FILTERS: StatusFilter[] = ['pending', 'approved', 'applied', 'rejected'];
 const ACTION_LABELS: Record<RequestAction, string> = { approve: '承認', apply: '適用', reject: '却下' };
 
-function RequestList({ status, currency }: { status: StatusFilter; currency: string }) {
+/** The step-up factor the backend accepts: an authenticator or recovery code, or the password without MFA. */
+function stepUpFactor(value: string, mfaEnabled: boolean) {
+    if (!mfaEnabled) return { current_password: value };
+    return /^\d{6}$/.test(value) ? { code: value } : { recovery_code: value };
+}
+
+function RequestList({ status, currency, mfaEnabled }: { status: StatusFilter; currency: string; mfaEnabled: boolean | null }) {
     const load = useCallback(() => getAiChangeRequests({ status }), [status]);
     const { data, setData, loading, error, reload } = useResource(load);
     const [busy, setBusy] = useState<{ id: number; action: RequestAction } | null>(null);
+    const [factors, setFactors] = useState<Record<number, string>>({});
     const [operationError, setOperationError] = useState('');
     const [confirmation, setConfirmation] = useState('');
     const inFlight = useRef(false);
 
     const runAction = async (request: AiChangeRequest, action: RequestAction) => {
         if (inFlight.current || loading || error) return;
-        // Critical requests also need step-up in the legacy flow; never approve them without a token.
-        if (action === 'approve' && (request.status !== 'pending' || request.requires_mfa || request.risk === 'critical')) return;
+        // Critical requests need step-up too; never approve them without a token.
+        const needsMfa = request.requires_mfa || request.risk === 'critical';
+        const factor = (factors[request.id] ?? '').trim();
+        if (action === 'approve' && (request.status !== 'pending' || (needsMfa && (!factor || mfaEnabled === null)))) return;
         if (action === 'apply' && request.status !== 'approved') return;
         if (action === 'reject' && request.status !== 'pending' && request.status !== 'approved') return;
         inFlight.current = true;
@@ -30,7 +40,19 @@ function RequestList({ status, currency }: { status: StatusFilter; currency: str
         setOperationError('');
         setConfirmation('');
         try {
-            const updated = action === 'approve' ? await approveAiChangeRequest(request.id)
+            let stepUpToken: string | undefined;
+            if (action === 'approve' && needsMfa) {
+                try {
+                    stepUpToken = (await reauth(stepUpFactor(factor, mfaEnabled === true))).step_up_token;
+                } catch {
+                    setOperationError(mfaEnabled ? '認証コードが正しくありません。' : 'パスワードが正しくありません。');
+                    return;
+                } finally {
+                    // A one-time code is spent either way; never keep a secret in state.
+                    setFactors((previous) => ({ ...previous, [request.id]: '' }));
+                }
+            }
+            const updated = action === 'approve' ? await approveAiChangeRequest(request.id, stepUpToken ? { step_up_token: stepUpToken } : undefined)
                 : action === 'apply' ? await applyAiChangeRequest(request.id) : await rejectAiChangeRequest(request.id);
             // Remove a decided request immediately, even if refreshing the status list fails.
             setData((previous) => previous?.map((row) => row.id === updated.id ? updated : row).filter((row) => row.status === status) ?? null);
@@ -52,7 +74,8 @@ function RequestList({ status, currency }: { status: StatusFilter; currency: str
             {confirmation && <p role="status" className="text-sm text-[var(--studio-positive)]">{confirmation}</p>}
             {data && (data.length ? data.map((request) => {
                 const needsMfa = request.requires_mfa || request.risk === 'critical';
-                const disabled = loading || Boolean(error) || busy !== null;
+                const disabled = loading || Boolean(error) || busy !== null || (needsMfa && mfaEnabled === null);
+                const stepUp = needsMfa && request.status === 'pending' && mfaEnabled !== null;
                 return (
                     <article key={request.id} className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5" aria-busy={busy?.id === request.id}>
                         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -63,9 +86,15 @@ function RequestList({ status, currency }: { status: StatusFilter; currency: str
                             {Object.entries(request.target_ref).map(([key, value]) => <div key={key} className="flex gap-2"><dt className="text-[var(--studio-text-muted)]">{key}</dt><dd className="break-all">{value == null ? '—' : typeof value === 'object' ? JSON.stringify(value) : String(value)}</dd></div>)}
                         </dl>}
                         <DiffRows change={request} currency={currency} />
-                        {needsMfa && request.status === 'pending' && <p id={`mfa-${request.id}`} className="text-xs text-[var(--studio-warning)]">MFAが必要です。MFAを入力できる承認画面で承認してください。</p>}
+                        {stepUp && <label className="block space-y-1 text-xs">
+                            <span id={`mfa-${request.id}`} className="text-[var(--studio-warning)]">{mfaEnabled ? '承認には認証コードが必要です（認証アプリの 6 桁、またはリカバリーコード）。' : 'MFA が未設定のため、パスワードで本人確認します。'}{!mfaEnabled && <> <Link to="/settings" className="underline">MFA を設定</Link></>}</span>
+                            <input type={mfaEnabled ? 'text' : 'password'} inputMode={mfaEnabled ? 'numeric' : undefined} autoComplete={mfaEnabled ? 'one-time-code' : 'current-password'} value={factors[request.id] ?? ''} disabled={disabled}
+                                onChange={(event) => setFactors((previous) => ({ ...previous, [request.id]: event.target.value }))}
+                                onKeyDown={(event) => { if (event.key === 'Enter') void runAction(request, 'approve'); }}
+                                aria-label={mfaEnabled ? '認証コード' : 'パスワード'} className={`block w-56 ${inputClass}`} />
+                        </label>}
                         <div className="flex flex-wrap gap-2">
-                            <button type="button" onClick={() => void runAction(request, 'approve')} disabled={disabled || request.status !== 'pending' || needsMfa} aria-describedby={needsMfa && request.status === 'pending' ? `mfa-${request.id}` : undefined} className={buttonClass}>{busy?.id === request.id && busy.action === 'approve' ? '承認中…' : '承認'}</button>
+                            <button type="button" onClick={() => void runAction(request, 'approve')} disabled={disabled || request.status !== 'pending' || (stepUp && !(factors[request.id] ?? '').trim())} aria-describedby={stepUp ? `mfa-${request.id}` : undefined} className={buttonClass}>{busy?.id === request.id && busy.action === 'approve' ? '承認中…' : '承認'}</button>
                             <button type="button" onClick={() => void runAction(request, 'apply')} disabled={disabled || request.status !== 'approved'} className={buttonClass}>{busy?.id === request.id && busy.action === 'apply' ? '適用中…' : '適用'}</button>
                             <button type="button" onClick={() => void runAction(request, 'reject')} disabled={disabled || (request.status !== 'pending' && request.status !== 'approved')} className={buttonClass}>{busy?.id === request.id && busy.action === 'reject' ? '却下中…' : '却下'}</button>
                         </div>
@@ -79,6 +108,7 @@ function RequestList({ status, currency }: { status: StatusFilter; currency: str
 export default function Approvals() {
     const { clientId, currentClient } = useClient();
     const [status, setStatus] = useState<StatusFilter>('pending');
+    const mfa = useResource(getMfaStatus);
     return (
         <section className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
@@ -87,7 +117,8 @@ export default function Approvals() {
                 </label>
             </div>
             {/* Remounting prevents an earlier filter or client response from entering this list. */}
-            <RequestList key={`${clientId}:${status}`} status={status} currency={currentClient?.general_settings?.currency || 'JPY'} />
+            {mfa.error && <p role="alert" className="text-sm text-[var(--studio-danger)]">MFA の設定を取得できませんでした。MFA が必要な承認は再読み込み後に行えます。</p>}
+            <RequestList key={`${clientId}:${status}`} status={status} currency={currentClient?.general_settings?.currency || 'JPY'} mfaEnabled={mfa.data?.enabled ?? null} />
         </section>
     );
 }

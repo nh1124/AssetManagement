@@ -1,11 +1,12 @@
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { LogOut, Settings as SettingsIcon } from 'lucide-react';
+import { useState } from 'react';
+import { ChevronRight, LogOut, Settings as SettingsIcon } from 'lucide-react';
 import { useClient } from '../../context/ClientContext';
 import NotificationBell from './NotificationBell';
 import NotificationsProvider from './NotificationsProvider';
 import { useLanguage } from '../i18n';
 import { useAuth } from '../../context/AuthContext';
-import { SETTINGS_PATH, STUDIO_GROUPS, STUDIO_SCREENS } from '../navigation';
+import { SETTINGS_PATH, STUDIO_GROUPS, STUDIO_SCREENS, type StudioScreen } from '../navigation';
 import ConfirmProvider from './ConfirmProvider';
 
 /** The screen whose path is the longest prefix of the current location.
@@ -21,9 +22,50 @@ function useCurrentScreen() {
         .sort((a, b) => b.path.length - a.path.length)[0];
 }
 
-function Rail() {
+const RAIL_OPEN_KEY = 'studio.rail.open';
+
+/** Ids of the collapsible groups the user opened. Storage may be unavailable. */
+function readOpenGroups(): string[] {
+    try {
+        const stored: unknown = JSON.parse(localStorage.getItem(RAIL_OPEN_KEY) ?? '[]');
+        return Array.isArray(stored) ? stored.filter((id): id is string => typeof id === 'string') : [];
+    } catch {
+        return [];
+    }
+}
+
+const railLinkClass = ({ isActive }: { isActive: boolean }) =>
+    `flex items-center gap-3 px-5 py-2 text-sm transition-colors ${
+        isActive
+            ? 'bg-[var(--studio-rail-active)] text-[var(--studio-rail-text-strong)]'
+            : 'hover:bg-[var(--studio-rail-active)]/50'
+    }`;
+
+function RailLink({ screen }: { screen: StudioScreen }) {
+    const { t } = useLanguage();
+    const Icon = screen.icon;
+    return (
+        <NavLink to={screen.path} className={railLinkClass}>
+            <Icon size={16} />
+            <span>{t(screen.label)}</span>
+        </NavLink>
+    );
+}
+
+function Rail({ current }: { current?: StudioScreen }) {
     const { user } = useAuth();
     const { t } = useLanguage();
+    const [openGroups, setOpenGroups] = useState(readOpenGroups);
+    const toggle = (id: string) => {
+        const next = openGroups.includes(id) ? openGroups.filter((open) => open !== id) : [...openGroups, id];
+        setOpenGroups(next);
+        try {
+            localStorage.setItem(RAIL_OPEN_KEY, JSON.stringify(next));
+        } catch {
+            // The rail still works; it just forgets on reload.
+        }
+    };
+    const offRail = STUDIO_GROUPS.filter((group) => group.offRail).flatMap((group) => group.screens);
     return (
         <aside className="studio-rail flex w-60 flex-shrink-0 flex-col bg-[var(--studio-rail)] text-[var(--studio-rail-text)]">
             <div className="px-5 pt-5 pb-6">
@@ -40,34 +82,31 @@ function Rail() {
                 </p>
             </div>
             <nav className="flex-1 overflow-y-auto pb-4">
-                {STUDIO_GROUPS.map((group) => (
-                    <div key={group.id} className="mb-4">
-                        {group.label && (
-                            <p className="px-5 pb-2 text-[10px] font-medium tracking-[0.16em] text-[var(--studio-rail-group)]">
-                                {t(group.label)}
-                            </p>
-                        )}
-                        {group.screens.map((screen) => {
-                            const Icon = screen.icon;
-                            return (
-                                <NavLink
-                                    key={screen.path}
-                                    to={screen.path}
-                                    className={({ isActive }) =>
-                                        `flex items-center gap-3 px-5 py-2 text-sm transition-colors ${
-                                            isActive
-                                                ? 'bg-[var(--studio-rail-active)] text-[var(--studio-rail-text-strong)]'
-                                                : 'hover:bg-[var(--studio-rail-active)]/50'
-                                        }`
-                                    }
+                {STUDIO_GROUPS.filter((group) => !group.offRail).map((group) => {
+                    const open = !group.collapsible || openGroups.includes(group.id);
+                    // A closed group still shows the screen you are on, so the rail never loses your place.
+                    const screens = open ? group.screens : group.screens.filter((screen) => screen === current);
+                    return (
+                        <div key={group.id} className="mb-4">
+                            {group.label && (group.collapsible ? (
+                                <button
+                                    type="button"
+                                    onClick={() => toggle(group.id)}
+                                    aria-expanded={open}
+                                    className="flex w-full items-center gap-1 px-5 pb-2 text-left text-[10px] font-medium tracking-[0.16em] text-[var(--studio-rail-group)] hover:text-[var(--studio-rail-text)]"
                                 >
-                                    <Icon size={16} />
-                                    <span>{t(screen.label)}</span>
-                                </NavLink>
-                            );
-                        })}
-                    </div>
-                ))}
+                                    <ChevronRight size={12} className={`transition-transform ${open ? 'rotate-90' : ''}`} />
+                                    {t(group.label)}
+                                </button>
+                            ) : (
+                                <p className="px-5 pb-2 text-[10px] font-medium tracking-[0.16em] text-[var(--studio-rail-group)]">
+                                    {t(group.label)}
+                                </p>
+                            ))}
+                            {screens.map((screen) => <RailLink key={screen.path} screen={screen} />)}
+                        </div>
+                    );
+                })}
             </nav>
             {/* Settings sits at the bottom of the rail, as decided for the rebuild. */}
             <div className="border-t border-white/10 px-3 py-3">
@@ -84,6 +123,15 @@ function Rail() {
                     <SettingsIcon size={16} />
                     <span className="flex-1 text-left">{t('settings.title')}{user?.name && <span className="mt-1 block text-xs opacity-70">{user.name}</span>}</span>
                 </NavLink>
+                {offRail.map((screen) => (
+                    <NavLink
+                        key={screen.path}
+                        to={screen.path}
+                        className="mt-1 block px-2 text-[11px] text-[var(--studio-rail-group)] hover:text-[var(--studio-rail-text)]"
+                    >
+                        {t(screen.section)}：{t(screen.label)}
+                    </NavLink>
+                ))}
             </div>
         </aside>
     );
@@ -101,7 +149,7 @@ export default function StudioLayout() {
             <ConfirmProvider>
             {/* Keyed by client: notifications belong to one client and must not carry over. */}
             <NotificationsProvider key={clientId ?? 'none'}>
-            <Rail />
+            <Rail current={screen} />
             <div className="studio-content flex min-w-0 flex-1 flex-col">
                 <header className="studio-header flex h-14 flex-shrink-0 items-center gap-3 border-b border-[var(--studio-border)] bg-[var(--studio-surface)] px-6">
                     <div className="min-w-0">

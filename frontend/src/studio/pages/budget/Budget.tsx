@@ -30,13 +30,27 @@ const BLOCKS: Array<{ type: MonthlyPlanLineType; label: string }> = [
 ];
 const STATES = { synced: '定義と一致', missing: '月の計画は未保存', diff: '定義との差あり' };
 const lineName = (line: MonthlyPlanLine) => line.target_name || line.name || line.account_name || '名称未設定';
+const isCapsuleRow = (line: MonthlyPlanLine) => line.line_type === 'allocation' && line.target_type === 'capsule';
 
-function AmountEditor({ line, currency, busy, onSave, onCancel }: {
-    line: MonthlyPlanLine; currency: string; busy: boolean;
+/** What the capsule's other rows this month add up to, beside this one (a capsule has a row per funding account). */
+function otherCapsuleRows(lines: MonthlyPlanLine[], line: MonthlyPlanLine): number {
+    return lines.filter((row) => row !== line && isCapsuleRow(row) && row.target_id === line.target_id)
+        .reduce((total, row) => total + row.amount, 0);
+}
+
+/** B5: manual amounts win, but a capsule budgeted below its monthly saving is called out. */
+function savingShortfall(line: MonthlyPlanLine, total: number): number | null {
+    const saving = isCapsuleRow(line) ? line.capsule_monthly_saving : undefined;
+    return saving != null && total < saving ? saving : null;
+}
+
+function AmountEditor({ line, others, currency, busy, onSave, onCancel }: {
+    line: MonthlyPlanLine; others: number; currency: string; busy: boolean;
     onSave: (amount: number) => void; onCancel: () => void;
 }) {
     const formId = useId();
     const [amount, setAmount] = useState(String(line.amount));
+    const below = Number.isFinite(Number(amount)) ? savingShortfall(line, others + Number(amount)) : null;
     const submit = (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         if (busy || amount.trim() === '' || !Number.isFinite(Number(amount)) || Number(amount) < 0) return;
@@ -44,6 +58,7 @@ function AmountEditor({ line, currency, busy, onSave, onCancel }: {
     };
     return <form id={formId} onSubmit={submit} className="space-y-4">
         {line.target_type === 'capsule' && <p className="text-xs text-[var(--studio-warning)]">取り置きの月額積立計画にも反映されます。</p>}
+        {below != null && <p role="status" className="text-xs text-[var(--studio-warning)]">取り置きの積立分（月 {formatCurrency(below, currency)}）を下回ります。入力した金額のまま保存されます。</p>}
         <fieldset disabled={busy} className="grid gap-4 md:grid-cols-2">
             <Field label={`予算（${currency}）`}><input required type="number" min="0" step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} className={inputClass} /></Field>
             <EditorActions form={formId} busy={busy} onCancel={onCancel} />
@@ -64,7 +79,9 @@ function MonthlyBudget({ period, currency, clientName, onBusy }: { period: strin
     const save = async (amount: number) => {
         if (disabled || !editing || !resource.data) return;
         const name = lineName(editing);
-        const effect = editing.target_type === 'capsule' ? '\n取り置きの月額積立計画にも反映されます。' : '';
+        const below = savingShortfall(editing, otherCapsuleRows(resource.data.plan_lines, editing) + amount);
+        const effect = (editing.target_type === 'capsule' ? '\n取り置きの月額積立計画にも反映されます。' : '')
+            + (below != null ? `\n取り置きの積立分（月 ${formatCurrency(below, currency)}）を下回ります。` : '');
         if (!(await confirm(`「${clientName}」の${period}「${name}」を ${formatCurrency(editing.amount, currency)} → ${formatCurrency(amount, currency)}（${currency}）に変更しますか？${effect}`, '変更する'))) return;
         // Send only writable fields; summary actuals and synchronization state are server-owned.
         const payload: MonthlyPlanLinePayload = {
@@ -102,19 +119,24 @@ function MonthlyBudget({ period, currency, clientName, onBusy }: { period: strin
         <GoalReflectionNotice />
         {editing && <Overlay title={`「${lineName(editing)}」の金額を編集`} onClose={() => setEditing(null)} footer={editing.id != null
             ? <button type="button" disabled={disabled} onClick={() => remove(editing)} className={`${buttonClass} mr-auto text-[var(--studio-danger)]`}>削除</button>
-            : <span className="mr-auto text-xs text-[var(--studio-text-muted)]">未保存のため削除不可</span>}><Feedback error={mutation.error} /><AmountEditor key={editing.id ?? lineName(editing)} line={editing} currency={currency} busy={disabled} onSave={save} onCancel={() => setEditing(null)} /></Overlay>}
+            : <span className="mr-auto text-xs text-[var(--studio-text-muted)]">未保存のため削除不可</span>}><Feedback error={mutation.error} /><AmountEditor key={editing.id ?? lineName(editing)} line={editing} others={otherCapsuleRows(resource.data?.plan_lines ?? [], editing)} currency={currency} busy={disabled} onSave={save} onCancel={() => setEditing(null)} /></Overlay>}
         {resource.data && <>
             <DataTable columns={['計画項目', '種別', '予算', '実績', '差額', '状態']}>
                 {resource.data.plan_lines.length ? BLOCKS.map((block) => {
-                    const lines = resource.data?.plan_lines.filter((line) => line.line_type === block.type) ?? [];
-                    return lines.map((line, index) => <tr key={line.id ?? `${block.type}:${index}`} onClick={() => { if (!disabled && editing === null) setEditing(line); }} className={disabled || editing !== null ? '' : 'cursor-pointer hover:bg-[var(--studio-accent-soft)] focus-within:bg-[var(--studio-accent-soft)]'}>
+                    const all = resource.data?.plan_lines ?? [];
+                    const lines = all.filter((line) => line.line_type === block.type);
+                    return lines.map((line, index) => {
+                        const below = savingShortfall(line, otherCapsuleRows(all, line) + line.amount);
+                        return <tr key={line.id ?? `${block.type}:${index}`} onClick={() => { if (!disabled && editing === null) setEditing(line); }} className={disabled || editing !== null ? '' : 'cursor-pointer hover:bg-[var(--studio-accent-soft)] focus-within:bg-[var(--studio-accent-soft)]'}>
                         <th scope="row" className="px-5 py-3 font-medium"><button type="button" disabled={disabled || editing !== null} aria-label={`${lineName(line)}の金額を編集`} aria-haspopup="dialog" onClick={(event) => { event.stopPropagation(); setEditing(line); }} className="rounded text-left hover:text-[var(--studio-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)] disabled:opacity-40">{lineName(line)}</button>{line.account_name && <span className="mt-1 block text-xs font-normal text-[var(--studio-text-muted)]">{line.account_name}</span>}</th>
                         <td className="whitespace-nowrap px-5 py-3">{block.label}</td>
                         <td className="whitespace-nowrap px-5 py-3 tabular-nums">{formatCurrency(line.amount, currency)}</td>
                         <td className="whitespace-nowrap px-5 py-3 tabular-nums">{line.actual == null ? '—' : formatCurrency(line.actual, currency)}</td>
                         <td className="whitespace-nowrap px-5 py-3 tabular-nums">{line.variance == null ? '—' : formatCurrency(line.variance, currency)}</td>
-                        <td className="px-5 py-3 text-xs text-[var(--studio-text-muted)]">{line.sync_status ? STATES[line.sync_status] : line.suggested_status ? STATES[line.suggested_status] : '—'}</td>
-                    </tr>);
+                        <td className="px-5 py-3 text-xs text-[var(--studio-text-muted)]">{line.sync_status ? STATES[line.sync_status] : line.suggested_status ? STATES[line.suggested_status] : '—'}
+                            {below != null && <span className="mt-1 block text-[var(--studio-warning)]">積立分（月 {formatCurrency(below, currency)}）を下回っています</span>}</td>
+                    </tr>;
+                    });
                 }) : <tr><td colSpan={6} className="px-5 py-4 text-[var(--studio-text-muted)]">この月の予算行はありません。</td></tr>}
             </DataTable>
         </>}
