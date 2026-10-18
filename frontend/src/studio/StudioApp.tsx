@@ -63,7 +63,7 @@ const SCREENS: Record<string, { index: ReactElement; tabs?: Record<string, React
         index: <Definitions />,
         tabs: {
             income: <Definitions tab="income" />, repayment: <Definitions tab="repayment" />,
-            allocation: <Definitions tab="allocation" />, automatic: <Definitions tab="automatic" />,
+            allocation: <Definitions tab="allocation" />,
         },
     },
     'db/fixed-assets': { index: <Products assets /> },

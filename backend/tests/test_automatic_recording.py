@@ -9,13 +9,14 @@ from __future__ import annotations
 from datetime import date
 
 import pytest
+from dateutil.relativedelta import relativedelta
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from app import models
 from app.database import Base
 from app.domain.errors import Invalid
-from app.services import depreciation_service, registry_service
+from app.services import depreciation_service, recurring_service, registry_service
 from app.workflows import automatic_recording_workflow as workflow
 
 TODAY = date(2026, 4, 15)
@@ -182,3 +183,86 @@ def test_the_list_shows_what_runs_and_writes_nothing(db):
     assert depreciation["product_id"] == product.id
     assert depreciation["auto_depreciation"] is False and depreciation["entry_id"] is None
     assert depreciation["pending_periods"] == 3 and depreciation["blocked_reason"] is None
+
+
+def test_a_write_down_by_hand_posts_the_ended_periods_once(db):
+    product = _product(db)
+
+    result = workflow.post_due_depreciation(db, 1, product.id, today=TODAY)
+
+    assert result["posted_periods"] == ["2026-01", "2026-02", "2026-03"]
+    assert registry_service.get_product_entry(db, 1, product.id) is None  # by hand needs no definition
+    with pytest.raises(Invalid, match="まだありません"):
+        workflow.post_due_depreciation(db, 1, product.id, today=TODAY)
+    assert _postings(db, product) == ["2026-03", "2026-02", "2026-01"]
+
+
+def test_a_write_down_by_hand_is_refused_when_it_cannot_post(db):
+    product = _product(db, depreciation_asset_account_id=None)
+    with pytest.raises(Invalid, match="勘定科目"):
+        workflow.post_due_depreciation(db, 1, product.id, today=TODAY)
+    consumable = _product(db, name="paper", is_asset=False)
+    with pytest.raises(Invalid, match="固定資産"):
+        workflow.post_due_depreciation(db, 1, consumable.id, today=TODAY)
+    assert db.query(models.Transaction).count() == 0
+
+
+# --- 記帳待ち in the inbox (U18) -------------------------------------------------
+
+def _recording_due(db):
+    from app.workflows import notification_workflow
+
+    return notification_workflow.recording_due_notifications(db, 1, date.today().strftime("%Y-%m"))
+
+
+def _due_definition(db, **changes):
+    entry, recurring = _definition(db, **changes)
+    recurring.next_due_date = date.today() - relativedelta(days=1)
+    db.commit()
+    return entry, recurring
+
+
+def test_waiting_items_whose_date_has_come_are_notified_by_tab(db):
+    _due_definition(db, name="rent", auto_post=False)
+    _due_definition(db, name="salary", entry_type="income", line_type="income", auto_post=False)
+    _due_definition(db, name="automatic", auto_post=True)
+    later, recurring = _definition(db, name="later", auto_post=False)
+    recurring.next_due_date = date.today() + relativedelta(days=3)
+    db.commit()
+    start = (date.today() - relativedelta(months=2)).replace(day=1)
+    _product(db, purchase_date=start, depreciation_start_date=start)
+
+    by_link = {item["link"]: item for item in _recording_due(db)}
+
+    assert set(by_link) == {"/db/definitions", "/db/definitions/income"}
+    spending = by_link["/db/definitions"]
+    assert spending["payload"]["count"] == 2
+    assert "rent" in spending["body"] and "laptopの減価" in spending["body"] and "later" not in spending["body"]
+    assert "automatic" not in spending["body"]
+    assert by_link["/db/definitions/income"]["title"] == "記帳待ちが1件あります（収入）"
+
+
+def test_automatic_or_blocked_write_downs_are_not_notified(db):
+    start = (date.today() - relativedelta(months=2)).replace(day=1)
+    automatic = _product(db, purchase_date=start, depreciation_start_date=start)
+    workflow.set_auto_depreciation(db, 1, automatic.id, enabled=True, today=start)
+    _product(db, name="broken", purchase_date=start, depreciation_start_date=start, depreciation_asset_account_id=None)
+    assert _recording_due(db) == []
+
+
+def test_recording_resolves_the_notification(db):
+    from app.services import notification_service
+    from app.workflows import notification_workflow
+
+    period = date.today().strftime("%Y-%m")
+    _, recurring = _due_definition(db, name="rent", auto_post=False)
+    notification_workflow.sync(db, 1, period)
+    [row] = db.query(models.Notification).filter_by(kind="recording_due").all()
+    assert row.status == "open"
+
+    recurring_service.process_one(db, recurring)
+    notification_workflow.sync(db, 1, period)
+
+    db.refresh(row)
+    assert row.status == "done"
+    assert [item for item in notification_service.visible(db, 1) if item.kind == "recording_due"] == []

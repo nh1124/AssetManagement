@@ -435,12 +435,6 @@ class ProductUpdate(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-class DepreciationPostRequest(BaseModel):
-    period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
-
-    model_config = ConfigDict(extra="forbid")
-
-
 class Product(ProductBase):
     id: int
     unit_cost: float = 0.0

@@ -171,20 +171,3 @@ def test_a_yearly_interval_posts_twelve_months_and_steps_a_year(db):
     assert depreciation_service.posted_minor(db, 1, product.id) == 120000
     assert depreciation_service.schedule(db, 1, product.id)["next_period"] == "2027-01"
 
-
-def test_the_batch_skips_a_product_whose_next_period_is_another_one(db):
-    due = _product(db)
-    later = _product(db, name="camera", depreciation_start_date=date(2026, 6, 1))
-    result = depreciation_service.run_for_period(db, 1, "2026-01")
-    assert [row["product_id"] for row in result["posted"]] == [due.id]
-    assert [row["product_id"] for row in result["skipped"]] == [later.id]
-    assert "2026-06" in result["skipped"][0]["reason"]
-
-
-def test_the_batch_reports_a_missing_account_instead_of_failing(db):
-    good = _product(db)
-    broken = _product(db, name="broken", depreciation_asset_account_id=None)
-    result = depreciation_service.run_for_period(db, 1, "2026-01")
-    assert [row["product_id"] for row in result["posted"]] == [good.id]
-    assert [row["product_id"] for row in result["skipped"]] == [broken.id]
-    assert depreciation_service.posted_minor(db, 1, good.id) > 0

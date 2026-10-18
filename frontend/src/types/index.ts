@@ -290,27 +290,6 @@ export interface MilestonePlanSummary {
 export type DepreciationMethod = 'none' | 'straight_line' | 'declining_balance';
 export type DepreciationInterval = 'monthly' | 'yearly';
 
-/** What has been written down, and what the next posting is due to be.
- *  The book value is never stored: it is the price less the postings. */
-export interface DepreciationSchedule {
-    product_id: number;
-    currency: string;
-    method: DepreciationMethod;
-    interval: DepreciationInterval;
-    purchase_price_minor: number;
-    posted_minor: number;
-    book_value_minor: number;
-    next_period: string | null;
-    due_minor: number;
-    blocked_reason: string | null;
-}
-
-export interface DepreciationRunResult {
-    period: string;
-    posted: Array<{ product_id: number; name: string; amount_minor: number }>;
-    skipped: Array<{ product_id: number; name: string; reason: string }>;
-}
-
 export interface Product {
     id: number;
     name: string;
@@ -923,6 +902,7 @@ export type { ReconciliationAdjustment, ReconciliationComparison } from './recon
 /** What records on its own, as the definitions screen lists it (WP7). */
 export interface AutomaticRecurringRecording {
     entry_id: number;
+    entry_type: RegistryEntryType;
     recurring_transaction_id: number | null;
     name: string;
     amount: number;
@@ -948,6 +928,8 @@ export interface AutomaticDepreciationRecording {
     next_amount: number;
     book_value: number;
     currency: string;
+    expense_account_id: number | null;
+    asset_account_id: number | null;
     pending_periods: number;
     auto_depreciation: boolean;
     is_active: boolean;

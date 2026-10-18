@@ -22,13 +22,21 @@ from ..services import (
     notification_service, period_close_service,
 )
 from ..services.periods import add_months, period_to_range
-from . import goal_budget_workflow
+from . import automatic_recording_workflow, goal_budget_workflow
 
 APPROVAL_PENDING = "approval_pending"
 ACTIONS_DUE = "actions_due"
 UNMATCHED = "unmatched"
 DATA_HEALTH = "data_health"
 MONTH_CLOSE = "month_close"
+RECORDING_DUE = "recording_due"
+# The definitions tab that lists each kind; a write-down sits with the spending.
+RECORDING_TABS = {
+    "income": ("/db/definitions/income", "収入"),
+    "debt": ("/db/definitions/repayment", "返済"),
+    "allocation": ("/db/definitions/allocation", "配分"),
+}
+SPENDING_TAB = ("/db/definitions", "支出")
 # Longer lists end in a count; the screen the notification opens has the rest.
 BODY_LINES = 10
 
@@ -93,6 +101,33 @@ def month_close_notifications(db: Session, client_id: int, period: str) -> list[
                          ["記録を確認して月を締めてください。"], f"/ledger?month={previous}", {"period": previous})
 
 
+def recording_due_notifications(db: Session, client_id: int, period: str) -> list[dict]:
+    """記帳待ち definitions and write-downs whose date has come, one notification per tab (U18).
+
+    A reason is the item and the date it waits for, so recording it resolves the
+    notification; a catch-up still due afterwards brings a new one.
+    """
+    listing = automatic_recording_workflow.list_recordings(db, client_id)
+    groups: dict[tuple[str, str], list[tuple[str, str]]] = {}
+    for row in listing["recurring"]:
+        if row["auto_post"] or not row["is_due"] or not row["is_active"]:
+            continue
+        tab = RECORDING_TABS.get(row["entry_type"], SPENDING_TAB)
+        groups.setdefault(tab, []).append((f"r{row['entry_id']}:{row['next_due_date']}", f"{row['next_due_date']} {row['name']}"))
+    for row in listing["depreciation"]:
+        if row["auto_depreciation"] or row["blocked_reason"] or not row["is_active"] or not row["pending_periods"]:
+            continue
+        groups.setdefault(SPENDING_TAB, []).append((
+            f"d{row['product_id']}:{row['next_period']}",
+            f"{row['name']}の減価（{row['next_period']}から{row['pending_periods']}期）",
+        ))
+    notifications = []
+    for (link, label), items in groups.items():
+        notifications += _notification(RECORDING_DUE, [reason for reason, _ in items], f"記帳待ちが{len(items)}件あります（{label}）",
+                                       [line for _, line in items], link, {"tab": label})
+    return notifications
+
+
 GENERATORS: dict[str, Callable[[Session, int, str], list[dict]]] = {
     goal_budget_workflow.REFLECTION_NOTIFICATION: goal_budget_workflow.reflection_notifications,
     APPROVAL_PENDING: approval_notifications,
@@ -100,6 +135,7 @@ GENERATORS: dict[str, Callable[[Session, int, str], list[dict]]] = {
     UNMATCHED: unmatched_notifications,
     DATA_HEALTH: data_health_notifications,
     MONTH_CLOSE: month_close_notifications,
+    RECORDING_DUE: recording_due_notifications,
 }
 
 

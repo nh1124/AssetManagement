@@ -2,7 +2,8 @@
 
 The registry holds the settings (owner decision U4): a generated definition
 posts on its due date, and a product's definition can write its asset down each
-period. This workflow runs both and lays them out for the definitions screen.
+period. This workflow runs both and lays them out for the definitions screen,
+where whatever waits for a hand is also recorded (U17).
 How much a product depreciates stays with the product (U3); this only asks the
 depreciation service to post what has fallen due.
 
@@ -52,6 +53,7 @@ def list_recordings(db: Session, client_id: int, *, today: date | None = None) -
         due = row.next_due_date if row is not None and row.is_active else None
         recurring.append({
             "entry_id": entry.id,
+            "entry_type": entry.entry_type,
             "recurring_transaction_id": row.id if row is not None else None,
             "name": entry.name,
             "amount": entry.amount,
@@ -85,7 +87,9 @@ def list_recordings(db: Session, client_id: int, *, today: date | None = None) -
             "next_amount": Money(schedule["due_minor"], currency).to_float(),
             "book_value": Money(schedule["book_value_minor"], currency).to_float(),
             "currency": currency,
-            "pending_periods": depreciation_service.pending_periods(db, client_id, product, effective_today),
+            "expense_account_id": product.depreciation_expense_account_id,
+            "asset_account_id": product.depreciation_asset_account_id,
+            "pending_periods":depreciation_service.pending_periods(db, client_id, product, effective_today),
             "auto_depreciation": bool(entry is not None and entry.auto_depreciation),
             "is_active": entry.is_active if entry is not None else True,
             "blocked_reason": _depreciation_blocked(product),
@@ -127,6 +131,26 @@ def process_due_all(db: Session, *, today: date | None = None) -> None:
         except Exception:
             db.rollback()
             logger.exception("Automatic recording failed for client_id=%s", client_id)
+
+
+def post_due_depreciation(db: Session, client_id: int, product_id: int, *, today: date | None = None) -> dict:
+    """Write down by hand the ended periods not yet recorded, oldest first (U17)."""
+    product = product_service.get_product(db, client_id, product_id)
+    if product is None:
+        raise NotFound("物品が見つかりません")
+    reason = _depreciation_blocked(product) if product.is_asset else "減価を記帳できるのは固定資産だけです"
+    if reason:
+        raise Invalid(reason)
+    try:
+        rows = depreciation_service.post_due(db, client_id, product_id, today=today or date.today())
+        if not rows:
+            raise Invalid("記帳する期はまだありません")
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    invalidate_client(client_id)
+    return {"product_id": product_id, "posted_periods": [row.period for row in rows]}
 
 
 def set_auto_depreciation(
