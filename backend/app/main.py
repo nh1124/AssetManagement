@@ -33,13 +33,13 @@ from .routers import (
     period_reviews,
     period_closes,
     products,
-    quick_templates,
     registry_entries,
     recurring,
     reports,
     roadmap,
     simulation,
     simulation_scenarios,
+    transaction_batches,
     transactions,
 )
 from .dependencies import get_current_client
@@ -237,7 +237,6 @@ async def startup_event():
                 "accounts",
                 "transactions",
                 "transaction_batches",
-                "quick_templates",
                 "products",
                 "registry_entries",
                 "life_events",
@@ -288,8 +287,7 @@ app.add_middleware(
 # Include routers
 app.include_router(analysis.router)
 app.include_router(transactions.router)
-app.include_router(quick_templates.router)
-app.include_router(quick_templates.batch_router)
+app.include_router(transaction_batches.router)
 app.include_router(products.router)
 app.include_router(registry_entries.router, dependencies=[Depends(get_current_client)])
 app.include_router(life_events.router)

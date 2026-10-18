@@ -42,6 +42,10 @@ export interface StudioGroup {
     /** Rail heading. Null renders the group without one. */
     label: TranslationKey | null;
     screens: StudioScreen[];
+    /** Folds under its heading; closed unless opened or holding the current screen. */
+    collapsible?: boolean;
+    /** Routed but kept out of the rail's main list (linked small below settings). */
+    offRail?: boolean;
 }
 
 const WORKSPACE = 'group.workspace';
@@ -113,6 +117,7 @@ export const STUDIO_GROUPS: StudioGroup[] = [
     {
         id: 'database',
         label: 'group.database',
+        collapsible: true,
         screens: [
             { path: 'db/accounts', label: 'screen.accounts', icon: Landmark, section: DATABASE },
             { path: 'db/fx', label: 'screen.fx', icon: Coins, section: DATABASE },
@@ -135,6 +140,7 @@ export const STUDIO_GROUPS: StudioGroup[] = [
     {
         id: 'automation',
         label: 'group.automation',
+        collapsible: true,
         screens: [
             { path: 'automation/ai', label: 'screen.ai', icon: PiggyBank, section: AUTOMATION },
             { path: 'automation/approvals', label: 'screen.approvals', icon: ShieldCheck, section: AUTOMATION },
@@ -144,6 +150,7 @@ export const STUDIO_GROUPS: StudioGroup[] = [
     {
         id: 'prototype',
         label: 'group.prototype',
+        offRail: true,
         screens: [
             {
                 /* Debug surface for data_health. It is deliberately not part of the

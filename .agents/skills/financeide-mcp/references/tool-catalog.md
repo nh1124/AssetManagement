@@ -18,7 +18,7 @@
 | 戦略 | `strategy_dashboard`, `roadmap_projection`, `roadmap_milestones_list` | 戦略・ロードマップ |
 | シミュレーション | `simulation_config_get`, `simulation_scenarios_list/compare`, `simulation_monte_carlo` | 将来予測 |
 | 計算機 | `calc_future_value(_multi)`, `calc_nisa_cap_usage`, `calc_dc_tax_saving`, `calc_project_all` | 副作用なし |
-| その他 | `products_list`, `life_events_list/get`, `exchange_rates_list`, `quick_templates_list`, `clients_list` | マスタ類 |
+| その他 | `products_list`, `life_events_list/get`, `exchange_rates_list`, `clients_list` | マスタ類 |
 
 ## preview（副作用なし・write 前に必ず）
 

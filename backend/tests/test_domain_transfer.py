@@ -47,8 +47,10 @@ def _checksum_sample(amount=12.5):
 # Captured from the router at 2f60437, before extracting the file format rules.
 EMPTY_TABLE_DIGEST = "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
 SAMPLE_DIGEST = "b0af7658403f3086011bd58bd60d0e583d974b3fd2530c69b845a2f300682108"
-# N1a removes branch choices; the sample data byte digest stays fixed.
-PAYLOAD_DIGEST = "8ce363d73785ffbc2a3c6d9e1b53da7bbda72874400f841d84c1c4ecba0e5d14"
+# Quick templates left the format (E4); the sample data byte digest stays fixed.
+PAYLOAD_DIGEST = "d43ed79442da90eb72f3da6a72717b69cf00aa37e898d7c51d2d27f10a6e0f86"
+# The same sample as exported while quick_templates was still a collection.
+PRE_E4_PAYLOAD_DIGEST = "8ce363d73785ffbc2a3c6d9e1b53da7bbda72874400f841d84c1c4ecba0e5d14"
 TABLE_DIGESTS = {
     "accounts": "69abf8cb7c47317e9cdeb2200e9bd1157c5b0c09fd880290e46e561fd78a51ee",
     "products": EMPTY_TABLE_DIGEST,
@@ -56,7 +58,6 @@ TABLE_DIGESTS = {
     "simulation_configs": EMPTY_TABLE_DIGEST,
     "recurring_transactions": EMPTY_TABLE_DIGEST,
     "registry_entries": EMPTY_TABLE_DIGEST,
-    "quick_templates": EMPTY_TABLE_DIGEST,
     "transaction_batches": EMPTY_TABLE_DIGEST,
     "life_events": EMPTY_TABLE_DIGEST,
     "life_event_links": EMPTY_TABLE_DIGEST,
@@ -184,6 +185,17 @@ def test_valid_payload_accepts_balanced_journal_and_matching_manifest():
         "status": "valid", "error_count": 0, "warning_count": 0,
         "counts": SAMPLE_COUNTS, "issues": [],
     }
+
+
+def test_a_manifest_from_before_quick_templates_were_removed_still_verifies():
+    sample = _checksum_sample()
+    checksums = {**TABLE_DIGESTS, "quick_templates": EMPTY_TABLE_DIGEST}
+    counts = {**SAMPLE_COUNTS, "quick_templates": 0}
+    manifest = {"counts": counts, "checksums": checksums, "payload_checksum": PRE_E4_PAYLOAD_DIGEST}
+    assert validate_import_payload(sample, 22, manifest)["issues"] == []
+    # Rows in the retired collection are not reported, and never counted.
+    result = validate_import_payload({"quick_templates": [{"id": 1, "default_from_account_id": 99}]}, 22)
+    assert (result["issues"], "quick_templates" in result["counts"]) == ([], False)
 
 
 @pytest.mark.parametrize("data, version, manifest, expected", [

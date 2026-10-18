@@ -3,7 +3,7 @@ import { applyPeriodReportAction } from '../../../api';
 import { formatCurrency } from '../../../utils/currency';
 import { DataTable, Feedback } from '../db/Database';
 import { buttonClass } from '../db/forms';
-import { AccountFlowsReading } from './Trends';
+import { AccountFlowsReading } from './AccountFlows';
 import { ComparisonChart } from './Charts';
 import { ReportContext, ReportFigures, ReportProposals } from './ReportReading';
 import { useBreakdownData, type BreakdownResource } from './useBreakdownData';

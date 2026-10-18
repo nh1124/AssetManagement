@@ -53,35 +53,6 @@ export interface TransactionProposal {
     decided_by_client_id?: number | null;
 }
 
-export interface QuickTemplate {
-    id: number;
-    tray: string;
-    name: string;
-    template_kind: string;
-    description?: string | null;
-    category?: string | null;
-    default_currency: string;
-    default_from_account_id?: number | null;
-    default_to_account_id?: number | null;
-    default_from_account_name?: string | null;
-    default_to_account_name?: string | null;
-    config: Record<string, unknown>;
-    sort_order: number;
-    is_active: boolean;
-    created_at?: string | null;
-    updated_at?: string | null;
-}
-
-export interface TransactionBatch {
-    id: number;
-    quick_template_id?: number | null;
-    label?: string | null;
-    source: string;
-    input_payload: Record<string, unknown>;
-    created_at: string;
-    transactions: Transaction[];
-}
-
 export type AccountRole = 'defense' | 'growth' | 'earmarked' | 'operating' | 'unassigned';
 export type LiabilityPaymentPolicy = 'full' | 'minimum' | 'fixed' | 'installment' | 'revolving';
 
@@ -436,6 +407,8 @@ export interface MonthlyPlanLine {
         source?: string;
     }>;
     suggested_status?: 'synced' | 'diff' | null;
+    /** Capsule allocation rows: the capsule's whole monthly saving (products' recommendation when product-funded). */
+    capsule_monthly_saving?: number;
     sync_status?: 'synced' | 'missing' | 'diff' | null;
     registry_amount?: number;
     registry_entry_ids?: number[];

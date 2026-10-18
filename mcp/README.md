@@ -90,7 +90,7 @@ Tools cover:
 
 - accounts and net worth
 - transactions
-- quick templates and transaction batches
+- transaction batches
 - analysis
 - reports and period reviews
 - monthly planning and monthly reviews

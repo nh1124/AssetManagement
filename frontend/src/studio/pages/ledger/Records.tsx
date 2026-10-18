@@ -10,6 +10,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import Overlay from '../../components/Overlay';
 import RecordForm from '../RecordForm';
 import { Feedback } from '../db/Database';
+import MonthlyClose from './MonthlyClose';
 import MonthPicker from './MonthPicker';
 import { monthRange } from './periods';
 
@@ -157,7 +158,8 @@ export default function Records({ onDeleted }: { onDeleted: () => void }) {
     const timezone = useTimezone();
     const [search, setSearch] = useSearchParams();
     const monthEdit = search.get('month');
-    const month = monthEdit && /^\d{4}-(0[1-9]|1[0-2])$/.test(monthEdit) ? monthEdit : clientToday(timezone).slice(0, 7);
+    const today = clientToday(timezone).slice(0, 7);
+    const month = monthEdit && /^\d{4}-(0[1-9]|1[0-2])$/.test(monthEdit) ? monthEdit : today;
     const setMonth = (value: string) => setSearch((previous) => {
         const next = new URLSearchParams(previous);
         next.set('month', value);
@@ -168,6 +170,7 @@ export default function Records({ onDeleted }: { onDeleted: () => void }) {
     return (
         <section className="space-y-4">
             <MonthPicker value={month} onChange={setMonth} disabled={busy} />
+            <MonthlyClose key={month} period={month} currentPeriod={today} disabled={busy} onBusy={setBusy} onSelect={setMonth} />
             {/* Remounting prevents an old month's request from replacing the new month. */}
             <RecordResults key={month} month={month} currency={currency} onDeleted={onDeleted} onBusy={setBusy} />
         </section>
