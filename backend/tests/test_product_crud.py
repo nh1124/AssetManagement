@@ -10,6 +10,7 @@ from app import models, schemas
 from app.database import Base
 from app.services import product_service, registry_service
 from app.workflows import product_workflow
+from product_saves import confirmed
 
 
 @pytest.fixture
@@ -36,7 +37,7 @@ def _payload(**changes):
 
 
 def test_product_create_defers_registry_sync_and_repeated_sync_creates_one_entry_per_product_identity(db):
-    product = product_workflow.create_product(db, 1, _payload())
+    product = confirmed(product_workflow.create_product, db, 1, _payload())
     assert db.query(models.Product).count() == 1
     assert db.query(models.RegistryEntry).count() == 0
     first = registry_service.sync_registry_from_product(db, product)
@@ -50,18 +51,16 @@ def test_product_create_defers_registry_sync_and_repeated_sync_creates_one_entry
 
 
 def test_product_funding_link_stays_single_and_same_through_put_and_patch(db):
-    product = product_workflow.create_product(db, 1, _payload())
+    product = confirmed(product_workflow.create_product, db, 1, _payload())
     product_id, capsule_id = product.id, product.funding_capsule_id
     capsules_before = db.query(models.Capsule).count()
     assert capsules_before == 2
     capsule_before = db.execute(models.Capsule.__table__.select()).all()
 
-    updated = product_workflow.update_product(
-        db, 1, product_id, _payload(last_unit_price=9000, funding_capsule_id=capsule_id),
+    updated = confirmed(product_workflow.update_product, db, 1, product_id, _payload(last_unit_price=9000, funding_capsule_id=capsule_id),
     )
     assert updated.funding_capsule_id == capsule_id
-    patched = product_workflow.patch_product(
-        db, 1, product_id, schemas.ProductUpdate(last_unit_price=12000),
+    patched = confirmed(product_workflow.patch_product, db, 1, product_id, schemas.ProductUpdate(last_unit_price=12000),
     )
     assert patched.funding_capsule_id == capsule_id
     assert patched.last_unit_price == 12000
@@ -75,7 +74,7 @@ def test_product_funding_link_stays_single_and_same_through_put_and_patch(db):
 
 @pytest.mark.parametrize("has_registry", [False, True])
 def test_delete_product_deactivates_and_detaches_registry_but_keeps_capsules_and_recurring(db, has_registry):
-    product = product_workflow.create_product(db, 1, _payload())
+    product = confirmed(product_workflow.create_product, db, 1, _payload())
     product_id, capsule_id = product.id, product.funding_capsule_id
     if has_registry:
         entry = registry_service.sync_registry_from_product(db, product)
@@ -94,7 +93,7 @@ def test_delete_product_deactivates_and_detaches_registry_but_keeps_capsules_and
     capsules_before = db.execute(models.Capsule.__table__.select()).all()
     recurring_before = db.execute(models.RecurringTransaction.__table__.select()).all()
 
-    assert product_workflow.delete_product(db, 1, product_id)
+    assert confirmed(product_workflow.delete_product, db, 1, product_id)
     db.expire_all()
     assert db.get(models.Product, product_id) is None
     # The capsules stay; one left without products keeps its amounts, now managed by hand.
@@ -116,8 +115,7 @@ def test_delete_product_deactivates_and_detaches_registry_but_keeps_capsules_and
 
 
 def test_product_reads_are_client_scoped_and_preserve_unit_economics(db):
-    product = product_workflow.create_product(
-        db, 1, _payload(name="Coffee", category="Grocery", frequency_days=30, units_per_purchase=2),
+    product = confirmed(product_workflow.create_product, db, 1, _payload(name="Coffee", category="Grocery", frequency_days=30, units_per_purchase=2),
     )
     assert product_service.get_product(db, 2, product.id) is None
     assert product_service.list_products(db, 2) == []

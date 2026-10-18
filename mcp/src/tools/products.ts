@@ -30,12 +30,30 @@ const productInputSchema = z
   })
   .strict();
 
+// A save that would change a linked earmark's target or monthly amount is refused
+// (409 reserve_changes_unconfirmed) with the changes and a fingerprint.
+const reserveFingerprint = z
+  .string()
+  .length(64)
+  .optional()
+  .describe("Fingerprint from a refused save. Pass it only after the user has seen and agreed to the listed earmark changes");
+const RESERVE_CONFIRMATION =
+  " If the save would change a linked earmark's target or monthly amount, it is refused with the changes and a fingerprint: show them to the user and repeat with reserve_fingerprint only after they agree.";
+
+const productCreateSchema = productInputSchema.extend({ reserve_fingerprint: reserveFingerprint });
+
 const productPatchSchema = productInputSchema.partial().extend({
   id: z.number().int().min(1).describe("Product ID"),
+  reserve_fingerprint: reserveFingerprint,
 });
 
 type ProductInput = z.infer<typeof productInputSchema>;
+type ProductCreate = z.infer<typeof productCreateSchema>;
 type ProductPatch = z.infer<typeof productPatchSchema>;
+
+function confirmation(fingerprint: string | undefined): string {
+  return fingerprint ? `?reserve_fingerprint=${encodeURIComponent(fingerprint)}` : "";
+}
 
 const productPayloadKeys = [
   "name",
@@ -98,13 +116,13 @@ export function registerProductTools(server: McpServer): void {
     "products_create",
     {
       title: "Create product",
-      description: "Creates a product or consumable item for the current client.",
-      inputSchema: productInputSchema,
+      description: "Creates a product or consumable item for the current client." + RESERVE_CONFIRMATION,
+      inputSchema: productCreateSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    async (input: ProductInput) => {
+    async (input: ProductCreate) => {
       try {
-        const data = await api.post<unknown>("/products/", productPayload(input));
+        const data = await api.post<unknown>(`/products/${confirmation(input.reserve_fingerprint)}`, productPayload(input));
         return {
           content: [{ type: "text", text: `Created product:\n${JSON.stringify(data, null, 2)}` }],
           structuredContent: toStructured(data),
@@ -182,13 +200,13 @@ export function registerProductTools(server: McpServer): void {
     "products_update",
     {
       title: "Update product",
-      description: "Updates a product or consumable item. Missing fields are kept from the current product.",
+      description: "Updates a product or consumable item. Missing fields are kept from the current product." + RESERVE_CONFIRMATION,
       inputSchema: productPatchSchema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    async ({ id, ...patch }: ProductPatch) => {
+    async ({ id, reserve_fingerprint, ...patch }: ProductPatch) => {
       try {
-        const data = await api.patch<unknown>(`/products/${id}`, productPayload(patch));
+        const data = await api.patch<unknown>(`/products/${id}${confirmation(reserve_fingerprint)}`, productPayload(patch));
         return {
           content: [{ type: "text", text: `Updated product:\n${JSON.stringify(data, null, 2)}` }],
           structuredContent: toStructured(data),
@@ -203,13 +221,15 @@ export function registerProductTools(server: McpServer): void {
     "products_delete",
     {
       title: "Delete product",
-      description: "Deletes one product or consumable item.",
-      inputSchema: z.object({ id: z.number().int().min(1).describe("Product ID") }).strict(),
+      description: "Deletes one product or consumable item." + RESERVE_CONFIRMATION,
+      inputSchema: z
+        .object({ id: z.number().int().min(1).describe("Product ID"), reserve_fingerprint: reserveFingerprint })
+        .strict(),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },
-    async ({ id }) => {
+    async ({ id, reserve_fingerprint }) => {
       try {
-        const data = await api.delete<unknown>(`/products/${id}`);
+        const data = await api.delete<unknown>(`/products/${id}${confirmation(reserve_fingerprint)}`);
         return {
           content: [{ type: "text", text: `Deleted product ${id}:\n${JSON.stringify(data, null, 2)}` }],
           structuredContent: toStructured(data ?? { id, deleted: true }),

@@ -14,6 +14,7 @@ from app.domain.errors import Invalid
 from app.services import capsule_service, ledger_service, registry_service
 from app.services.fx_service import get_client_currency
 from app.workflows import ledger_entry_workflow, product_workflow
+from product_saves import confirmed
 
 
 @pytest.fixture
@@ -81,7 +82,7 @@ def test_product_funding_reads_refuse_goal_other_client_and_missing_capsules(db)
 
 
 def test_product_registry_read_finds_inactive_definition_and_scopes_detachment(db):
-    product = product_workflow.create_product(db, 1, schemas.ProductCreate(
+    product = confirmed(product_workflow.create_product, db, 1, schemas.ProductCreate(
         name="Supplies", last_unit_price=100, frequency_days=30,
         budget_treatment="expense_only",
     ))
@@ -94,9 +95,9 @@ def test_product_registry_read_finds_inactive_definition_and_scopes_detachment(d
     assert registry_service.get_product_entry(db, 1, product.id) is entry
     assert registry_service.get_product_entry(db, 2, product.id) is None
     assert registry_service.get_product_entry(db, 1, 999999) is None
-    assert product_workflow.delete_product(db, 2, product.id) is False
+    assert confirmed(product_workflow.delete_product, db, 2, product.id) is False
     assert entry.source_product_id == product.id
-    assert product_workflow.delete_product(db, 1, product.id) is True
+    assert confirmed(product_workflow.delete_product, db, 1, product.id) is True
     db.refresh(entry)
     assert (entry.source_product_id, entry.budget_active, entry.is_active) == (None, False, False)
 
