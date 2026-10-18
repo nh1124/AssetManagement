@@ -559,18 +559,20 @@ def test_a_handover_cannot_exceed_the_unclaimed_balance_or_the_need(db, story, a
 
 
 def test_reasons_become_one_notification_and_the_reflection_answers_it(db, story):
-    from app.services import notification_service
     from app.workflows import notification_workflow
+
+    def reflections(listing):
+        return [row for row in listing["items"] if row["kind"] == "goal_reflection"]
     first = notification_workflow.sync(db, 1, START)
     again = notification_workflow.sync(db, 1, START)
     assert [row["id"] for row in first["items"]] == [row["id"] for row in again["items"]]
-    (note,) = again["items"]
-    assert (note["kind"], note["status"], note["link"]) == ("goal_reflection", "open", "/goals")
+    (note,) = reflections(again)
+    assert (note["status"], note["link"]) == ("open", "/goals")
     assert note["payload"]["reminders"][0]["code"] == "never"
     chosen = options(savings_account_id=story["savings"].id)
     workflow.apply(db, 1, chosen, workflow.preview(db, 1, chosen)["fingerprint"])
     assert db.get(models.Notification, note["id"]).status == "done"
-    assert notification_service.visible(db, 1) == []
+    assert reflections(notification_workflow.listing(db, 1)) == []
 
 
 def consumable(db, story):

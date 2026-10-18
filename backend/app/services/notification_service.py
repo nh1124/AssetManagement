@@ -10,12 +10,15 @@ right now (sync). This module owns the rows and the user's decisions on them:
   shown again);
 - done: resolved by the action itself or because the reasons went away; a done
   notification whose reasons come back is reopened.
+
+Done and dismissed rows are deleted RETENTION_DAYS after they were resolved; a
+dismissal whose reasons still hold then comes back as a new notification.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import or_
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from .. import models
@@ -23,6 +26,7 @@ from .. import models
 ACTIVE = ("open", "snoozed")
 # Everything that is not done yet; a dismissal is a decision about the current reasons only.
 UNRESOLVED = (*ACTIVE, "dismissed")
+RETENTION_DAYS = 90
 
 
 def _now(now: datetime | None) -> datetime:
@@ -62,6 +66,17 @@ def resolve_kind(db: Session, client_id: int, kind: str, *, now: datetime | None
     db.flush()
 
 
+def purge(db: Session, client_id: int, *, now: datetime | None = None) -> None:
+    """Delete done and dismissed rows resolved more than RETENTION_DAYS ago; flushes only."""
+    # Dismissals recorded before resolved_at was set on them fall back to their last update.
+    resolved = func.coalesce(models.Notification.resolved_at, models.Notification.updated_at)
+    db.query(models.Notification).filter(
+        models.Notification.client_id == client_id, models.Notification.status.in_(("done", "dismissed")),
+        resolved <= _now(now) - timedelta(days=RETENTION_DAYS),
+    ).delete(synchronize_session="fetch")
+    db.flush()
+
+
 def visible(db: Session, client_id: int, *, now: datetime | None = None) -> list[models.Notification]:
     """Open notifications and snoozed ones whose time has come, newest first."""
     now = _now(now)
@@ -96,7 +111,7 @@ def decide(db: Session, notification: models.Notification, action: str, *, until
             raise ValueError("snooze needs a time in the future")
         notification.status, notification.snoozed_until = "snoozed", until
     elif action == "dismiss":
-        notification.status, notification.snoozed_until = "dismissed", None
+        notification.status, notification.snoozed_until, notification.resolved_at = "dismissed", None, now
     elif action == "reopen":
         notification.status, notification.snoozed_until, notification.resolved_at = "open", None, None
     else:
