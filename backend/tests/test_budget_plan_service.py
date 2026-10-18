@@ -687,6 +687,50 @@ def test_budget_summary_deduplicates_expense_lines_without_writing() -> None:
         db.close()
 
 
+def test_budget_summary_lists_unset_accounts_with_their_actuals() -> None:
+    db = _session()
+    try:
+        client = models.Client(id=1, name="test", general_settings={})
+        bank = models.Account(client_id=1, name="bank", account_type="asset", role="operating")
+        food = models.Account(client_id=1, name="food", account_type="expense")
+        travel = models.Account(client_id=1, name="travel", account_type="expense")
+        old = models.Account(client_id=1, name="old", account_type="expense", is_active=False)
+        salary = models.Account(client_id=1, name="salary", account_type="income")
+        nisa = models.Account(client_id=1, name="NISA", account_type="asset", role="growth")
+        card = models.Account(client_id=1, name="card", account_type="liability", liability_kind="card")
+        loan = models.Account(client_id=1, name="loan", account_type="liability", liability_kind="loan")
+        db.add_all([client, bank, food, travel, old, salary, nisa, card, loan])
+        db.flush()
+        db.add(models.MonthlyPlanLine(
+            client_id=1, target_period="2026-05", line_type="expense", target_type="account",
+            account_id=food.id, name="food", amount_minor=to_minor(30000, "JPY"),
+        ))
+        tx = models.Transaction(
+            client_id=1, date=date(2026, 5, 10), description="trip",
+            amount_minor=Money.from_major("12000", "JPY").minor, currency="JPY",
+        )
+        db.add(tx)
+        db.commit()
+        process_transaction(db, tx, from_account_id=bank.id, to_account_id=travel.id)
+        _give_fixture_lines_a_plan(db)
+
+        assert "unset_lines" not in get_budget_summary(db, client_id=1, period="2026-05")
+        summary = get_budget_summary(db, client_id=1, period="2026-05", include_unset=True)
+        rows = {(line["line_type"], line["name"]): line for line in summary["unset_lines"]}
+
+        assert set(rows) == {
+            ("income", "salary"), ("expense", "travel"), ("allocation", "NISA"),
+            ("debt_payment", "card"), ("debt_payment", "loan"), ("borrowing", "loan"), ("drawdown", "NISA"),
+        }
+        travel_row = rows[("expense", "travel")]
+        assert travel_row["id"] is None and travel_row["amount"] == 0
+        assert travel_row["target_type"] == "account" and travel_row["account_id"] == travel.id
+        assert travel_row["actual"] == 12000 and travel_row["variance"] == -12000
+        assert summary["total_variable_budget"] == 30000
+    finally:
+        db.close()
+
+
 def test_data_health_reports_and_repairs_duplicate_plan_lines() -> None:
     db = _session()
     try:

@@ -21,6 +21,7 @@ from .budget_lines import (
     _line_source_kind,
     _sum_actual,
     _sum_lines,
+    account_flow_bucket,
     plan_line_identity_key,
 )
 from .budget_plan_store import _deduplicate_active_plan_models, find_budget_plan_id
@@ -189,6 +190,63 @@ def _attach_capsule_savings(ctx: BudgetContext, plan_lines: list[dict]) -> None:
         line["capsule_monthly_saving"] = savings[capsule_id]
 
 
+# Which active accounts each block lists when no plan line names them (WP5).
+# Operating accounts are where the money comes from, not a budget target, and a
+# card's purchases are expenses settled through the card bill, not borrowing.
+def _lists_account(line_type: str, account: models.Account) -> bool:
+    if line_type in {"income", "expense"}:
+        return account.account_type == line_type
+    if line_type in {"allocation", "drawdown"}:
+        return account.account_type == "asset" and account_flow_bucket(account) != "operating"
+    if line_type == "debt_payment":
+        return account.account_type == "liability"
+    if line_type == "borrowing":
+        return account.account_type == "liability" and account.liability_kind != "card"
+    return False
+
+
+def _unset_account_lines(ctx: BudgetContext, plan_lines: list[dict], period: str) -> list[dict]:
+    """A zero, unsaved row with its actual for every active account no line covers."""
+    covered = {
+        (line.get("line_type"), line.get("account_id"))
+        for line in plan_lines
+        if line.get("target_type") != "capsule"
+    }
+    accounts = sorted(
+        (account for account in ctx.accounts.values() if account.is_active),
+        key=lambda account: (account.name or "", account.id),
+    )
+    lines = []
+    for line_type in ("income", "expense", "allocation", "debt_payment", "borrowing", "drawdown"):
+        for account in accounts:
+            if (line_type, account.id) in covered or not _lists_account(line_type, account):
+                continue
+            line = {
+                "id": None,
+                "target_period": period,
+                "line_type": line_type,
+                "target_type": "account",
+                "target_id": None,
+                "account_id": account.id,
+                "source_account_id": None,
+                "name": account.name,
+                "target_name": account.name,
+                "account_name": None,
+                "amount": 0.0,
+                "source": "manual",
+                "source_kind": "manual",
+                "manual_override": False,
+                "cash_treatment": "auto",
+                "is_active": True,
+                "sync_status": None,
+            }
+            actual = round(actual_for_plan_line(ctx, line, period), 0)
+            line["actual"] = actual
+            line["variance"] = -actual
+            lines.append(line)
+    return lines
+
+
 def get_budget_summary(
     db: Session,
     client_id: int,
@@ -197,6 +255,7 @@ def get_budget_summary(
     cash_flow_start_period: str | None = None,
     cash_flow_months: int = 12,
     goal_metrics: dict | None = None,
+    include_unset: bool = False,
 ) -> dict:
     """Build the monthly cash-flow plan summary.
 
@@ -204,6 +263,9 @@ def get_budget_summary(
     total_goal_gap / required_monthly_savings). The caller supplies them --
     see strategy_service.summarize_goal_funding_gap -- so that planning never
     depends on the goal domain.
+
+    include_unset adds unset_lines: the active accounts no plan line covers,
+    for the budget screen that lists every account (WP5).
     """
     ctx = BudgetContext(db, client_id)
     plan_id = find_budget_plan_id(db, client_id, plan_id)
@@ -329,7 +391,9 @@ def get_budget_summary(
     balance_projection = _balance_projection(ctx, projection_start, months=cash_flow_months, plan_id=plan_id)
     balance_summary = summarize_balance_projection(balance_projection)
 
+    extra = {"unset_lines": _unset_account_lines(ctx, plan_lines, period)} if include_unset else {}
     return {
+        **extra,
         "period": period,
         "plan_id": plan_id,
         "required_monthly_savings": round(required_monthly_savings, 0),
