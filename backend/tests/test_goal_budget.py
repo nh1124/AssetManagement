@@ -768,3 +768,52 @@ def test_a_goal_that_fails_part_way_is_not_saved(db, monkeypatch):
         goal_workflow.create_goal(db, 1, payload)
     db.rollback()
     assert db.query(models.LifeEvent).filter_by(name="途中で失敗").count() == 0
+
+
+def needs(check):
+    return {group["key"]: group["need"] for group in check["groups"]}
+
+
+def test_savings_check_compares_the_budget_with_every_monthly_need(db, api, story):
+    _, _, loose = existing_savings(db, story)
+    consumable(db, story)
+    check = workflow.savings_check(db, 1, START)
+    # 37,000 the user put in the budget, 1,000 products, the car's 10,000; the goal's
+    # 50,000 leaves 2,000 for its own row. Each is counted once, so the need is 50,000.
+    assert needs(check) == {"existing": 37000, "products": 1000, "near": 10000, "rest": 2000}
+    assert check["need"] == 50000 and check["goal"]["monthly_savings"] == 50000
+    assert check["budgeted"] == workflow.status(db, 1, START)["budget"]["total"]
+    assert check["shortfall"] == 50000 - check["budgeted"] > 0
+    near = next(group for group in check["groups"] if group["key"] == "near")
+    assert near["items"] == [{"name": "車", "amount": 10000}]
+    # The reflected budget holds exactly the need.
+    chosen = options(savings_account_id=story["savings"].id)
+    workflow.apply(db, 1, chosen, workflow.preview(db, 1, chosen)["fingerprint"])
+    after = request(api, "GET", "/goal-budget/savings-check", params={"period": START}).json()
+    assert (after["budgeted"], after["need"], after["shortfall"]) == (50000, 50000, 0)
+    # Savings the reflection does not count still need their budget row; the goal's rest grows.
+    uncounted = options(savings_account_id=story["savings"].id, uncounted=[f"capsule:{loose.id}"])
+    workflow.apply(db, 1, uncounted, workflow.preview(db, 1, uncounted)["fingerprint"])
+    later = workflow.savings_check(db, 1, START)
+    assert needs(later)["existing"] == 37000 and needs(later)["rest"] == 7000
+    assert (later["budgeted"], later["shortfall"]) == (55000, 0)
+
+
+def test_savings_check_shows_what_a_cut_reflection_leaves_short(db, story):
+    consumable(db, story)
+    short_savings(db, story, 10500)
+    chosen = options(savings_account_id=story["savings"].id)
+    workflow.apply(db, 1, chosen, workflow.preview(db, 1, chosen)["fingerprint"])
+    check = workflow.savings_check(db, 1, START)
+    assert needs(check) == {"existing": 0, "products": 1000, "near": 10000, "rest": 0}
+    assert (check["budgeted"], check["need"], check["shortfall"]) == (10500, 11000, 500)
+
+
+def test_savings_check_without_a_goal_needs_the_products_and_the_budgets_own_savings(db):
+    other = create_account(db, 1, {"name": "別の口座", "account_type": "asset"})
+    db.commit()
+    consumable(db, {"other": other})
+    check = workflow.savings_check(db, 1, START)
+    assert check["goal"] is None
+    assert needs(check) == {"existing": 0, "products": 1000, "near": 0, "rest": 0}
+    assert check["shortfall"] == 1000 - check["budgeted"]

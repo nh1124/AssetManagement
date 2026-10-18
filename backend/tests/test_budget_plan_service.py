@@ -906,43 +906,6 @@ def test_product_reserve_capsule_allocation_exposes_suggested_amount() -> None:
             "amount": 3000,
             "source": "product_reserve",
         }]
-        # B5: the products' recommendation is the saving the row falls short of.
-        assert line["capsule_monthly_saving"] == 3000
-    finally:
-        db.close()
-
-
-def test_manual_capsule_rows_carry_the_capsule_monthly_saving() -> None:
-    """A manual amount below the capsule's monthly saving stays; the screen warns (B5)."""
-    db = _session()
-    try:
-        client = models.Client(id=1, name="test", general_settings={})
-        capsule = models.Capsule(
-            client_id=1,
-            name="Travel",
-            target_amount_minor=to_minor(120000, "JPY"),
-            monthly_contribution_minor=to_minor(5000, "JPY"),
-        )
-        db.add_all([client, capsule])
-        db.flush()
-        db.add(models.MonthlyPlanLine(
-            client_id=1,
-            target_period="2026-05",
-            line_type="allocation",
-            target_type="capsule",
-            target_id=capsule.id,
-            name=capsule.name,
-            amount_minor=to_minor(2000, "JPY"),
-            manual_override=True,
-        ))
-        db.commit()
-
-        _give_fixture_lines_a_plan(db)
-        summary = get_budget_summary(db, client_id=1, period="2026-05")
-        line = next(item for item in summary["plan_lines"] if item["target_type"] == "capsule")
-
-        assert line["amount"] == 2000
-        assert line["capsule_monthly_saving"] == 5000
     finally:
         db.close()
 

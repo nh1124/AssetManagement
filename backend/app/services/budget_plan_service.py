@@ -166,30 +166,6 @@ def _attach_capsule_suggestions(ctx: BudgetContext, plan_lines: list[dict]) -> N
         )
 
 
-def _attach_capsule_savings(ctx: BudgetContext, plan_lines: list[dict]) -> None:
-    """Give each capsule allocation row its capsule's whole monthly saving.
-
-    Product-funded capsules compare with the products' recommended reserve, the
-    rest with the capsule's monthly contribution. The screen warns when the
-    capsule's rows add up to less (owner decision B5); the rows keep their
-    manual amounts.
-    """
-    savings: dict[int, float] = {}
-    for line in plan_lines:
-        if line.get("line_type") != "allocation" or line.get("target_type") != "capsule":
-            continue
-        capsule_id = line.get("target_id")
-        if capsule_id not in savings:
-            capsule = ctx.capsule(capsule_id)
-            items = product_reserve_source_items(ctx.db, capsule) if capsule else []
-            savings[capsule_id] = round(
-                sum(item["amount"] for item in items) if items
-                else (capsule.monthly_contribution or 0.0) if capsule else 0.0,
-                0,
-            )
-        line["capsule_monthly_saving"] = savings[capsule_id]
-
-
 # Which active accounts each block lists when no plan line names them (WP5).
 # Operating accounts are where the money comes from, not a budget target, and a
 # card's purchases are expenses settled through the card bill, not borrowing.
@@ -351,7 +327,6 @@ def get_budget_summary(
             )
         plan_lines = _merge_registry_lines(plan_lines, registry_plan_lines(ctx, period))
         plan_lines = _merge_credit_settlement_lines(plan_lines, credit_settlement_plan_lines(ctx, period, plan_id))
-    _attach_capsule_savings(ctx, plan_lines)
 
     expense_lines = [line for line in plan_lines if line["line_type"] == "expense"]
     allocation_lines = [line for line in plan_lines if line["line_type"] == "allocation"]

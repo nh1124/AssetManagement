@@ -14,7 +14,7 @@ from ..domain.errors import Conflict, Invalid, NotFound, Refused
 from ..domain.money import Money
 from ..services.money_storage import money_client_currency
 from ..services.fx_service import get_exchange_rate
-from ..services import ai_change_request_store
+from ..services import ai_change_request_store, mfa_service
 from ..services.fx_service import get_client_currency
 from ..services.ledger_service import (
     ensure_default_accounts,
@@ -346,6 +346,8 @@ def approve_change_request(
     if row.status not in {"draft", "pending"}:
         raise Invalid(f"Change request cannot be approved from status {row.status}")
     if row.requires_mfa:
+        if not mfa_service.mfa_enabled(db, actor_client_id):
+            raise Refused("MFA setup required")
         if not step_up_token_payload or step_up_token_payload.get("type") != "step_up" or str(step_up_token_payload.get("sub")) != str(actor_client_id):
             raise Refused("Step-up authentication required", status_code=401)
     row.status = "approved"
