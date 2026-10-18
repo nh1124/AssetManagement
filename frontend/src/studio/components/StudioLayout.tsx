@@ -12,7 +12,7 @@ import ConfirmProvider from './ConfirmProvider';
 /** The screen whose path is the longest prefix of the current location.
  *
  * Longest wins so that "db/accounts" is not shadowed by a future "db", and a
- * tab route ("assets/earmarks") still resolves to its screen.
+ * tab route ("flows/accounts") still resolves to its screen.
  */
 function useCurrentScreen() {
     const { pathname } = useLocation();

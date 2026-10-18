@@ -89,6 +89,12 @@ def _next_period(db: Session, client_id: int, product: models.Product) -> str | 
     return None
 
 
+def _posting_date(period: str) -> Date:
+    """A period is written down on its last day."""
+    _, end = period_to_range(period)
+    return end - relativedelta(days=1)
+
+
 def _months_elapsed(start: Date, period: str) -> int:
     begins = start.replace(day=1)
     at, _ = period_to_range(period)
@@ -197,8 +203,7 @@ def post(
         raise Invalid("Nothing left to depreciate")
 
     currency = get_client_currency(db, client_id)
-    _, end = period_to_range(period)
-    posting_date = end - relativedelta(days=1)
+    posting_date = _posting_date(period)
     try:
         transaction = ledger_service.create_transaction(
             db,
@@ -266,3 +271,54 @@ def run_for_period(db: Session, client_id: int, period: str) -> dict:
     if posted:
         db.commit()
     return {"period": period, "posted": posted, "skipped": skipped}
+
+
+# How many periods one automatic run writes down per product. A schedule switched
+# on long after the purchase catches up over several runs, as recurring does.
+CATCH_UP_LIMIT = 24
+
+
+def pending_periods(db: Session, client_id: int, product: models.Product, today: Date) -> int:
+    """Periods that have ended and are not written down yet, within the useful life."""
+    if (product.depreciation_method or "none") == "none":
+        return 0
+    start = _start_date(product)
+    if start is None or int(product.purchase_price_minor or 0) - posted_minor(db, client_id, product.id) <= 0:
+        return 0
+    life = int(product.lifespan_months or 0)
+    posted = {row.period for row in db.query(models.ProductDepreciation.period).filter(
+        models.ProductDepreciation.client_id == client_id,
+        models.ProductDepreciation.product_id == product.id,
+    )}
+    step = _months_in(product.depreciation_interval or "monthly")
+    cursor = start.replace(day=1)
+    count = 0
+    for _ in range(1200 // step + 1):
+        key = _period_key(cursor)
+        if _posting_date(key) > today or (life and _months_elapsed(start, key) >= life):
+            break
+        if key not in posted:
+            count += 1
+        cursor += relativedelta(months=step)
+    return count
+
+
+def post_due(
+    db: Session, client_id: int, product_id: int, *, today: Date, limit: int = CATCH_UP_LIMIT,
+) -> list[models.ProductDepreciation]:
+    """Write down every ended period in order, without committing.
+
+    Stops at the first period that has not ended or once nothing is left, so a
+    run never posts ahead of the calendar.
+    """
+    product = _get_product(db, client_id, product_id)
+    rows: list[models.ProductDepreciation] = []
+    while len(rows) < limit:
+        period = _next_period(db, client_id, product)
+        if period is None or _posting_date(period) > today:
+            break
+        if due_minor(db, client_id, product, period) <= 0:
+            break
+        _, row = post(db, client_id, product.id, period=period, commit=False)
+        rows.append(row)
+    return rows

@@ -10,7 +10,7 @@ from app.database import Base
 
 
 # E4 removes quick templates and the batch link to them.
-EXPECTED_METADATA_SHA256 = "e0fb551bca124991ee192d3c0f5b540101559a0c050389c076bb9315201c1d68"
+EXPECTED_METADATA_SHA256 = "cb1feadff63f119eefb4ac88eb08bd020e3e7d8a2fff3555b6afc32718aa8a8d"
 
 MODEL_NAMES = (
     "Client", "ClientMfaSetting", "ClientRecoveryCode",
@@ -91,7 +91,7 @@ def _metadata_snapshot():
 def test_metadata_matches_the_minor_unit_schema():
     snapshot = _metadata_snapshot()
     assert len(snapshot["table_names"]) == 37
-    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 443
+    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 445
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == EXPECTED_METADATA_SHA256
 

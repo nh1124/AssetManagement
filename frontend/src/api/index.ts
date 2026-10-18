@@ -7,6 +7,7 @@ import type {
     AccountFlowGrain,
     AccountFlowTransactionPage,
     AccountRole,
+    AutomaticRecordings,
     AiChangeRequest,
     AiAuditLog,
     AiExecutionSettings,
@@ -731,9 +732,26 @@ export const getRecurringTransactions = async (): Promise<RecurringTransaction[]
     return response.data;
 };
 
-export const processDueRecurringTransactions = async () => {
-    const response = await api.post('/recurring/process-due');
+// Posts one occurrence of a definition that waits to be posted by hand.
+export const processRecurringTransaction = async (recurringId: number) => {
+    const response = await api.post(`/recurring/${recurringId}/process`);
+    return response.data as { transaction_id: number; next_due_date: string | null };
+};
+
+// Automatic recordings: everything the registry switches on to post by itself.
+export const getAutomaticRecordings = async (): Promise<AutomaticRecordings> => {
+    const response = await api.get('/automatic-recordings/');
     return response.data;
+};
+
+export const processDueAutomaticRecordings = async () => {
+    const response = await api.post('/automatic-recordings/process-due');
+    return response.data;
+};
+
+export const setAutoDepreciation = async (productId: number, enabled: boolean) => {
+    const response = await api.put(`/automatic-recordings/depreciation/${productId}`, { enabled });
+    return response.data as { product_id: number; auto_depreciation: boolean; posted_periods: string[]; skipped: string | null };
 };
 
 // Roadmap endpoints

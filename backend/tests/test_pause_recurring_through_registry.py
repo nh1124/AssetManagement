@@ -48,7 +48,7 @@ def test_pause_rejects_rows_outside_action_client(db, missing):
     assert recurring.is_active is True
 
 
-def test_registry_sync_defaults_new_definition_to_auto_post_and_preserves_manual_choice(db):
+def test_registry_owns_auto_post_and_sync_preserves_manual_choice(db):
     entry = models.RegistryEntry(
         client_id=1,
         name="subscription",
@@ -57,11 +57,13 @@ def test_registry_sync_defaults_new_definition_to_auto_post_and_preserves_manual
     )
     db.add(entry)
     db.flush()
-    assert "auto_post" not in registry_to_recurring_data(entry, currency=entry.currency)
+    # The registry owns the choice now, so every sync writes it rather than resetting it.
+    assert registry_to_recurring_data(entry, currency=entry.currency)["auto_post"] is True
     sync_recurring_from_registry(db, entry)
     recurring = db.get(models.RecurringTransaction, entry.source_recurring_transaction_id)
     assert recurring.auto_post is True
     recurring = upsert_registry_from_recurring_payload(db, 1, {"auto_post": False}, recurring)
+    assert entry.auto_post is False
     entry.amount_minor = 1300
     sync_recurring_from_registry(db, entry)
     reconcile_registry_recurring_links(db, 1)

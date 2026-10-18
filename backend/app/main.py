@@ -19,6 +19,7 @@ from .routers import (
     ai_operations,
     analysis,
     auth,
+    automatic_recordings,
     budget_plans,
     capsules,
     clients,
@@ -47,7 +48,7 @@ from .utils.password import verify_password
 
 
 logger = logging.getLogger(__name__)
-_recurring_auto_post_task: asyncio.Task | None = None
+_automatic_recording_task: asyncio.Task | None = None
 
 app = FastAPI(
     title="Finance IDE API",
@@ -156,30 +157,18 @@ def backfill_recurring_next_due_dates(db, today: date | None = None) -> int:
     return len(rows)
 
 
-async def run_recurring_auto_post_loop() -> None:
+async def run_automatic_recording_loop() -> None:
+    """Daily run of every automatic recording the registry switches on."""
     from .database import SessionLocal
-    from .services.recurring_service import process_due_for_client
+    from .workflows.automatic_recording_workflow import process_due_all
 
     while True:
         db = SessionLocal()
         try:
-            today = date.today()
-            client_rows = db.query(models.RecurringTransaction.client_id).filter(
-                models.RecurringTransaction.client_id.isnot(None),
-                models.RecurringTransaction.is_active.is_(True),
-                models.RecurringTransaction.auto_post.is_(True),
-                models.RecurringTransaction.next_due_date.isnot(None),
-                models.RecurringTransaction.next_due_date <= today,
-            ).distinct().all()
-            for (client_id,) in client_rows:
-                try:
-                    process_due_for_client(db, client_id, today=today)
-                except Exception:
-                    db.rollback()
-                    logger.exception("Recurring auto-post failed for client_id=%s", client_id)
+            process_due_all(db, today=date.today())
         except Exception:
             db.rollback()
-            logger.exception("Recurring auto-post cycle failed")
+            logger.exception("Automatic recording cycle failed")
         finally:
             db.close()
         await asyncio.sleep(24 * 60 * 60)
@@ -260,20 +249,20 @@ async def startup_event():
     finally:
         db.close()
 
-    global _recurring_auto_post_task
-    _recurring_auto_post_task = asyncio.create_task(run_recurring_auto_post_loop())
+    global _automatic_recording_task
+    _automatic_recording_task = asyncio.create_task(run_automatic_recording_loop())
 
 
 @app.on_event("shutdown")
 async def shutdown_event() -> None:
-    global _recurring_auto_post_task
-    if _recurring_auto_post_task:
-        _recurring_auto_post_task.cancel()
+    global _automatic_recording_task
+    if _automatic_recording_task:
+        _automatic_recording_task.cancel()
         try:
-            await _recurring_auto_post_task
+            await _automatic_recording_task
         except asyncio.CancelledError:
             pass
-        _recurring_auto_post_task = None
+        _automatic_recording_task = None
 
 # CORS for frontend
 app.add_middleware(
@@ -289,6 +278,7 @@ app.include_router(analysis.router)
 app.include_router(transactions.router)
 app.include_router(transaction_batches.router)
 app.include_router(products.router)
+app.include_router(automatic_recordings.router)
 app.include_router(registry_entries.router, dependencies=[Depends(get_current_client)])
 app.include_router(life_events.router)
 app.include_router(life_scenarios.router)

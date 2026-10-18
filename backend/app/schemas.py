@@ -473,6 +473,9 @@ class RegistryEntryBase(BaseModel):
     funding_capsule_id: Optional[int] = None
     budget_treatment: ProductBudgetTreatmentLiteral = "expense_only"
     generate_recurring: bool = False
+    # Null keeps the stored setting: a client that predates them sends none.
+    auto_post: Optional[bool] = None
+    auto_depreciation: Optional[bool] = None
     budget_active: bool = True
     is_active: bool = True
     source_product_id: Optional[int] = None

@@ -55,12 +55,26 @@ def list_entries(db: Session, client_id: int) -> list[models.RegistryEntry]:
     ).order_by(models.RegistryEntry.entry_type, models.RegistryEntry.name).all()
 
 
+AUTOMATIC_SETTINGS = ("auto_post", "auto_depreciation")
+
+
+def _without_unset_settings(data: dict) -> dict:
+    """Drop automatic-recording settings the caller left out.
+
+    A definition is replaced whole on PUT, but a client that predates these
+    settings sends none: reading that as "off" would silently turn a manual
+    approval into automatic posting, or stop a write-down nobody touched.
+    """
+    return {key: value for key, value in data.items() if key not in AUTOMATIC_SETTINGS or value is not None}
+
+
 def create_entry(
     db: Session, client_id: int, data: dict, *, commit: bool = True,
 ) -> models.RegistryEntry:
     if data.get("currency") is None:
         data = {**data, "currency": get_client_currency(db, client_id)}
     validate_account_refs(db, client_id, data)
+    data = _without_unset_settings(data)
     entry = models.RegistryEntry(**minor_fields(data, data["currency"], 'amount'), client_id=client_id)
     db.add(entry)
     db.flush()
@@ -89,6 +103,7 @@ def update_entry(
     currency = data.get("currency", entry.currency)
     if currency != entry.currency and "amount" not in data:
         data = {**data, "amount": entry.amount}
+    data = _without_unset_settings(data)
     for key, value in minor_fields(data, currency, "amount").items():
         setattr(entry, key, value)
     normalise_registry_flags(entry)
@@ -143,6 +158,7 @@ def detach_product(
     # has never done that; sharing that path would change its behavior.
     entry.budget_active = False
     entry.is_active = False
+    entry.auto_depreciation = False
     entry.source_product_id = None
     if commit:
         db.commit()
@@ -210,7 +226,7 @@ def sync_registry_from_product(db: Session, product: models.Product) -> models.R
         models.RegistryEntry.source_product_id == product.id,
     ).first()
     if not entry:
-        entry = models.RegistryEntry(client_id=product.client_id, source_product_id=product.id)
+        entry = models.RegistryEntry(client_id=product.client_id, source_product_id=product.id, is_active=True)
         db.add(entry)
 
     entry.name = product.name
@@ -227,8 +243,59 @@ def sync_registry_from_product(db: Session, product: models.Product) -> models.R
     entry.budget_treatment = product.budget_treatment or "auto"
     entry.generate_recurring = False
     entry.budget_active = product_budget_active(product)
-    entry.is_active = True
+    # Whether the definition is switched on is the user's choice, kept across
+    # product edits; only an asset can be written down.
+    if not product.is_asset:
+        entry.auto_depreciation = False
     return entry
+
+
+def refresh_product_entry(db: Session, product: models.Product) -> None:
+    """Carry a product edit into its definition, when it has one.
+
+    A product's definition is created lazily (repair, or switching on its
+    automatic write-down); once it exists the budget reads it instead of the
+    product, so it has to follow the product or the budget goes stale.
+    """
+    if get_product_entry(db, product.client_id, product.id) is not None:
+        sync_registry_from_product(db, product)
+
+
+def set_auto_depreciation(
+    db: Session, product: models.Product, enabled: bool,
+) -> models.RegistryEntry:
+    """Switch a product's automatic write-down, creating its definition if needed."""
+    entry = get_product_entry(db, product.client_id, product.id) or sync_registry_from_product(db, product)
+    entry.auto_depreciation = bool(enabled) and bool(product.is_asset)
+    db.flush()
+    return entry
+
+
+def product_entries(db: Session, client_id: int) -> dict[int, models.RegistryEntry]:
+    return {
+        entry.source_product_id: entry
+        for entry in db.query(models.RegistryEntry).filter(
+            models.RegistryEntry.client_id == client_id,
+            models.RegistryEntry.source_product_id.isnot(None),
+        )
+    }
+
+
+def auto_depreciation_entries(db: Session, client_id: int) -> list[models.RegistryEntry]:
+    return db.query(models.RegistryEntry).filter(
+        models.RegistryEntry.client_id == client_id,
+        models.RegistryEntry.auto_depreciation.is_(True),
+        models.RegistryEntry.is_active.is_(True),
+        models.RegistryEntry.source_product_id.isnot(None),
+    ).order_by(models.RegistryEntry.id).all()
+
+
+def clients_with_auto_depreciation(db: Session) -> set[int]:
+    return {client_id for (client_id,) in db.query(models.RegistryEntry.client_id).filter(
+        models.RegistryEntry.auto_depreciation.is_(True),
+        models.RegistryEntry.is_active.is_(True),
+        models.RegistryEntry.source_product_id.isnot(None),
+    ).distinct()}
 
 
 def upsert_registry_from_recurring_payload(
@@ -254,7 +321,6 @@ def upsert_registry_from_recurring_payload(
     }
     if data["currency"] is None:
         data["currency"] = recurring.currency if recurring is not None else get_client_currency(db, client_id)
-    auto_post = payload.get("auto_post", recurring.auto_post if recurring is not None else True)
     entry = None
     if recurring is not None:
         if recurring.source_registry_entry_id:
@@ -270,6 +336,14 @@ def upsert_registry_from_recurring_payload(
     if entry is None:
         entry = models.RegistryEntry(client_id=client_id)
         db.add(entry)
+    # The entry owns the choice; a recurring-shaped payload that omits it keeps it.
+    auto_post = payload.get("auto_post")
+    if auto_post is None:
+        if entry.auto_post is not None:
+            auto_post = entry.auto_post
+        else:
+            # A recurring row without an entry still carries its old choice.
+            auto_post = recurring.auto_post if recurring is not None else True
 
     accounts = db.query(models.Account).filter(
         models.Account.client_id == client_id,
@@ -292,6 +366,7 @@ def upsert_registry_from_recurring_payload(
     entry.generate_recurring = True
     entry.budget_active = True
     entry.is_active = bool(data["is_active"])
+    entry.auto_post = bool(auto_post)
     if recurring is not None:
         entry.source_recurring_transaction_id = recurring.id
     db.flush()
@@ -303,8 +378,7 @@ def upsert_registry_from_recurring_payload(
     ).first()
     if linked is None:
         raise ValueError("Registry entry did not produce a recurring transaction")
-    # The registry cannot express these posting-only fields yet.
-    linked.auto_post = auto_post
+    # The registry does not schedule individual occurrences; a caller may move one.
     if "next_due_date" in payload:
         linked.next_due_date = payload["next_due_date"]
     db.flush()
@@ -344,6 +418,8 @@ def registry_to_recurring_data(entry: models.RegistryEntry, *, currency: str) ->
         "start_period": entry.start_period,
         "end_period": entry.end_period,
         "is_active": entry.is_active and (not entry.end_period or entry.end_period >= current_period_key()),
+        # The registry owns it now, so writing it on every sync keeps the choice.
+        "auto_post": entry.auto_post is not False,
         "source_registry_entry_id": entry.id,
     }
 
@@ -357,6 +433,9 @@ def normalise_registry_flags(entry: models.RegistryEntry) -> None:
     """
     if entry.generate_recurring:
         entry.budget_active = True
+    # Only a product has an asset to write down.
+    if entry.source_product_id is None:
+        entry.auto_depreciation = False
 
 
 def sync_recurring_from_registry(db: Session, entry: models.RegistryEntry) -> None:
