@@ -170,7 +170,7 @@ export default function Records({ onDeleted }: { onDeleted: () => void }) {
     return (
         <section className="space-y-4">
             <MonthPicker value={month} onChange={setMonth} disabled={busy} />
-            <MonthlyClose key={month} period={month} currentPeriod={today} disabled={busy} onBusy={setBusy} onSelect={setMonth} />
+            <MonthlyClose key={`close:${month}`}period={month} currentPeriod={today} disabled={busy} onBusy={setBusy} onSelect={setMonth} />
             {/* Remounting prevents an old month's request from replacing the new month. */}
             <RecordResults key={month} month={month} currency={currency} onDeleted={onDeleted} onBusy={setBusy} />
         </section>
