@@ -34,6 +34,15 @@ def process_due_automatic_recordings(
     return automatic_recording_workflow.process_due(db, current_client.id)
 
 
+@router.post("/depreciation/{product_id}/post-due")
+def post_due_depreciation(
+    product_id: int,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    return automatic_recording_workflow.post_due_depreciation(db, current_client.id, product_id)
+
+
 @router.put("/depreciation/{product_id}")
 def set_auto_depreciation(
     product_id: int,

@@ -24,8 +24,6 @@ import type {
     CapsuleFundingSourceInput,
     DataHealthResult,
     DepreciationMethod,
-    DepreciationRunResult,
-    DepreciationSchedule,
     DataRepairResult,
     ExchangeRate,
     ExchangeRateAutoUpdateResult,
@@ -640,17 +638,6 @@ export const getDepreciationSummary = async (): Promise<{
     return response.data;
 };
 
-export const postDepreciation = async (productId: number, period: string) => {
-    const response = await api.post(`/products/${productId}/depreciation`, { period });
-    return response.data as { transaction_id: number; period: string; amount_minor: number; schedule: DepreciationSchedule };
-};
-
-// Posts every product whose own next period is this one, and reports the rest.
-export const runDepreciation = async (period: string): Promise<DepreciationRunResult> => {
-    const response = await api.post('/products/depreciation/run', { period });
-    return response.data;
-};
-
 export const deleteProduct = async (id: number, reserveFingerprint?: string) => {
     await api.delete(`/products/${id}`, reserveParams(reserveFingerprint));
 };
@@ -748,6 +735,12 @@ export const getAutomaticRecordings = async (): Promise<AutomaticRecordings> => 
 export const processDueAutomaticRecordings = async () => {
     const response = await api.post('/automatic-recordings/process-due');
     return response.data;
+};
+
+// Writes down by hand the ended periods not yet recorded (up to 24 at a time).
+export const postDueDepreciation = async (productId: number) => {
+    const response = await api.post(`/automatic-recordings/depreciation/${productId}/post-due`);
+    return response.data as { product_id: number; posted_periods: string[] };
 };
 
 export const setAutoDepreciation = async (productId: number, enabled: boolean) => {

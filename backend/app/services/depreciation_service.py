@@ -240,39 +240,6 @@ def list_postings(db: Session, client_id: int, product_id: int) -> list[models.P
     ).order_by(models.ProductDepreciation.period.desc()).all()
 
 
-def run_for_period(db: Session, client_id: int, period: str) -> dict:
-    """Post every product whose next period is this one.
-
-    Reports what was skipped and why rather than failing the batch: one product
-    missing an account should not stop the rest being written down.
-    """
-    _validate_period(period)
-    posted: list[dict] = []
-    skipped: list[dict] = []
-    products = db.query(models.Product).filter(
-        models.Product.client_id == client_id,
-        models.Product.depreciation_method != "none",
-    ).order_by(models.Product.id).all()
-    for product in products:
-        # Only the product's own next period. Posting a later one first would
-        # leave a gap that the schedule would then offer again, out of order.
-        expected = _next_period(db, client_id, product)
-        if expected != period:
-            skipped.append({
-                "product_id": product.id, "name": product.name,
-                "reason": f"Next period is {expected}" if expected else "No start date",
-            })
-            continue
-        try:
-            _, row = post(db, client_id, product.id, period=period, commit=False)
-            posted.append({"product_id": product.id, "name": product.name, "amount_minor": row.amount_minor})
-        except Invalid as error:
-            skipped.append({"product_id": product.id, "name": product.name, "reason": str(error)})
-    if posted:
-        db.commit()
-    return {"period": period, "posted": posted, "skipped": skipped}
-
-
 # How many periods one automatic run writes down per product. A schedule switched
 # on long after the purchase catches up over several runs, as recurring does.
 CATCH_UP_LIMIT = 24

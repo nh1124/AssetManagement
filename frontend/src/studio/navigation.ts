@@ -131,8 +131,6 @@ export const STUDIO_GROUPS: StudioGroup[] = [
                     { segment: 'income', label: 'tab.income' },
                     { segment: 'repayment', label: 'tab.repayment' },
                     { segment: 'allocation', label: 'tab.allocation' },
-                    // Everything that records on its own, set here (U4); earmark rules stay with earmarks.
-                    { segment: 'automatic', label: 'tab.automatic' },
                 ],
             },
             { path: 'db/fixed-assets', label: 'screen.fixedAssets', icon: Boxes, section: DATABASE },

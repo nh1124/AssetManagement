@@ -16,6 +16,7 @@ const KIND_LABELS: Record<string, string> = {
     unmatched: '未照合',
     data_health: 'データ健全性',
     month_close: '月次締め',
+    recording_due: '記帳待ち',
 };
 const KIND_ORDER = Object.keys(KIND_LABELS);
 

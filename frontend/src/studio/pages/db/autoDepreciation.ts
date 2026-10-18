@@ -3,7 +3,7 @@ import type { AutomaticDepreciationRecording } from '../../../types';
 import type { useConfirm } from '../../components/useConfirm';
 import type { useMutation } from './forms';
 
-/** Switch a product's automatic write-down; shared by the definitions tab and the fixed-asset screen. */
+/** Switch a product's automatic write-down; shared by the definitions list and the fixed-asset screen. */
 export async function toggleAutoDepreciation(
     confirm: ReturnType<typeof useConfirm>, mutation: ReturnType<typeof useMutation>,
     row: Pick<AutomaticDepreciationRecording, 'product_id' | 'name' | 'auto_depreciation' | 'pending_periods'>,
