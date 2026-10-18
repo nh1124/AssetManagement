@@ -10,7 +10,11 @@ export function Feedback({ loading, error, message }: { loading?: boolean; error
     </>;
 }
 
-const tooltipClass = 'pointer-events-none invisible absolute left-0 top-full z-10 mt-1 w-64 rounded-md border border-[var(--studio-border)] bg-[var(--studio-surface)] p-2 text-xs font-normal leading-relaxed text-[var(--studio-text)] shadow-lg';
+// buttonClass already sets a text colour, so a danger button needs its own class.
+const dangerClass = 'rounded-md border border-[var(--studio-border)] px-3 py-1.5 text-xs text-[var(--studio-danger)] hover:bg-[var(--studio-accent-soft)] disabled:opacity-40';
+
+// Above the control: the overlay body clips what hangs below its last field.
+const tooltipClass = 'pointer-events-none invisible absolute bottom-full left-0 z-10 mb-1 w-64 rounded-md border border-[var(--studio-border)] bg-[var(--studio-surface)] p-2 text-xs font-normal leading-relaxed text-[var(--studio-text)] shadow-lg';
 
 // A short explanation beside a field name, shown on hover or keyboard focus.
 export function Help({ label, text }: { label: string; text: string }) {
@@ -64,7 +68,7 @@ export function Choice({ label, help, value, options, onChange, required = false
 export function EditorActions({ busy, form, onCancel, onDelete }: { busy: boolean; form: string; onCancel: () => void; onDelete?: () => void }) {
     const save = <button type="submit" form={form} disabled={busy} className={primaryClass}>{busy ? '保存中…' : '保存'}</button>;
     // Deleting sits apart from saving, on the far side and in the danger colour.
-    const remove = onDelete && <button type="button" disabled={busy} onClick={onDelete} className={`${buttonClass} mr-auto text-[var(--studio-danger)]`}>削除</button>;
+    const remove = onDelete && <button type="button" disabled={busy} onClick={onDelete} className={`${dangerClass} mr-auto`}>削除</button>;
     return <OverlayFooter fallback={<div className="flex justify-end gap-2 md:col-span-2">
         {remove}
         {save}
@@ -103,6 +107,6 @@ export function ActiveSwitch({ name, active, disabled, busy = false, onToggle }:
 export function RowActions({ name, disabled, onEdit, onDelete, deleteLabel = '削除' }: { name: string; disabled: boolean; onEdit: () => void; onDelete: () => void; deleteLabel?: string }) {
     return <td className="whitespace-nowrap px-5 py-3"><div className="flex gap-2">
         <button type="button" disabled={disabled} onClick={onEdit} aria-label={`${name}を編集`} className={buttonClass}>編集</button>
-        <button type="button" disabled={disabled} onClick={onDelete} aria-label={`${name}を${deleteLabel}`} className={`${buttonClass} text-[var(--studio-danger)]`}>{deleteLabel}</button>
+        <button type="button" disabled={disabled} onClick={onDelete} aria-label={`${name}を${deleteLabel}`} className={dangerClass}>{deleteLabel}</button>
     </div></td>;
 }
