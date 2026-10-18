@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy.orm import Session
 
@@ -24,12 +25,26 @@ def _get_close(db: Session, client_id: int, period: str) -> models.PeriodClose |
     return db.query(models.PeriodClose).filter_by(client_id=client_id, period=validate_period(period)).first()
 
 
-def close_period(db: Session, client_id: int, period: str, *, note: str | None = None) -> models.PeriodClose:
+def _client_month(client: models.Client, now: datetime | None = None) -> str:
+    """The client's current month, in the time zone its settings name (UTC when none or unknown)."""
+    name = (client.general_settings or {}).get("timezone") if isinstance(client.general_settings, dict) else None
+    try:
+        zone = ZoneInfo(name) if name else timezone.utc
+    except (ZoneInfoNotFoundError, ValueError):
+        zone = timezone.utc
+    return (now or datetime.now(timezone.utc)).astimezone(zone).strftime("%Y-%m")
+
+
+def close_period(db: Session, client_id: int, period: str, *, note: str | None = None,
+                 now: datetime | None = None) -> models.PeriodClose:
     validate_period(period)
     # Serialize repeated closes on the owner so the unique key remains idempotent.
     client = db.query(models.Client).filter_by(id=client_id).with_for_update().first()
     if client is None:
         raise NotFound("Client not found")
+    if period >= _client_month(client, now):
+        # A close confirms a finished month; closing the running one flags every entry made today.
+        raise Invalid("締められるのは終わった月だけです。")
     row = _get_close(db, client_id, period)
     if row is None:
         row = models.PeriodClose(client_id=client_id, period=period, closed_at=datetime.utcnow(), note=note)
