@@ -1,27 +1,28 @@
 import Overlay from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
 import { useId, useState, type FormEvent } from 'react';
-import { createRegistryEntry, deleteRegistryEntry, getRegistryEntries, updateRegistryEntry } from '../../../api';
+import { createRegistryEntry, deleteRegistryEntry, getAutomaticRecordings, getRegistryEntries, updateRegistryEntry } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
-import type { MonthlyPlanLineType, RegistryEntry, RegistryEntryType, RegistryFrequency } from '../../../types';
+import type { AutomaticRecordings as AutomaticRecordingList, MonthlyPlanLineType, RegistryEntry, RegistryEntryType, RegistryFrequency } from '../../../types';
+import AutomaticRecordings from './AutomaticRecordings';
 import { formatCurrency } from '../../../utils/currency';
 import { useResource } from '../../useResource';
-import { Choice, DataTable, EditorActions, Feedback, Field, RowActions } from './Database';
+import { Choice, DataTable, EditorActions, Feedback, Field, OptionGroup, RowActions } from './Database';
 import { buttonClass, inputClass, loadLookups, useMutation } from './forms';
 
-type Tab = 'index' | 'income' | 'repayment' | 'allocation';
+type Tab = 'index' | 'income' | 'repayment' | 'allocation' | 'automatic';
 type Lookups = Awaited<ReturnType<typeof loadLookups>>;
 type Draft = Pick<RegistryEntry,
     'name' | 'entry_type' | 'category' | 'amount' | 'currency' | 'frequency' | 'frequency_days' |
     'day_of_month' | 'month_of_year' | 'line_type' | 'budget_account_id' | 'source_account_id' |
-    'destination_account_id' | 'funding_capsule_id' | 'budget_treatment' | 'generate_recurring' |
+    'destination_account_id' | 'funding_capsule_id' | 'budget_treatment' | 'generate_recurring' | 'auto_post' | 'auto_depreciation' |
     'budget_active' | 'is_active' | 'source_product_id' | 'source_recurring_transaction_id' |
     'note' | 'start_period' | 'end_period'>;
 const TYPES: Record<RegistryEntryType, string> = { service: 'サービス・継続支出', income: '収入', debt: '返済', allocation: '配分', asset: '固定資産', item: '消耗品' };
 const FREQUENCIES: Record<RegistryFrequency, string> = { Monthly: '毎月', Yearly: '毎年', EveryNDays: '日数周期', Irregular: '不定期' };
 const LINE_TYPES: Record<MonthlyPlanLineType, string> = { income: '収入', expense: '支出', allocation: '配分', debt_payment: '返済', borrowing: '借入', drawdown: '取り崩し' };
 const DEFAULT_LINES: Record<RegistryEntryType, MonthlyPlanLineType> = { service: 'expense', income: 'income', debt: 'debt_payment', allocation: 'allocation', asset: 'allocation', item: 'expense' };
-const TAB_TYPES: Record<Tab, RegistryEntryType> = { index: 'service', income: 'income', repayment: 'debt', allocation: 'allocation' };
+const TAB_TYPES: Record<Tab, RegistryEntryType> = { index: 'service', income: 'income', repayment: 'debt', allocation: 'allocation', automatic: 'service' };
 
 function entryTab(entry: RegistryEntry): Tab {
     // entry_type is the registry's semantic discriminator; line_type describes budget treatment.
@@ -42,7 +43,8 @@ function toDraft(entry: RegistryEntry | null, currency: string, type: RegistryEn
         line_type: entry?.line_type ?? DEFAULT_LINES[type], budget_account_id: entry?.budget_account_id ?? null,
         source_account_id: entry?.source_account_id ?? null, destination_account_id: entry?.destination_account_id ?? null,
         funding_capsule_id: entry?.funding_capsule_id ?? null, budget_treatment: entry?.budget_treatment ?? 'expense_only',
-        generate_recurring: entry?.generate_recurring ?? false, budget_active: entry?.budget_active ?? true,
+        generate_recurring: entry?.generate_recurring ?? false, auto_post: entry?.auto_post ?? true,
+        auto_depreciation: entry?.auto_depreciation ?? false, budget_active: entry?.budget_active ?? true,
         is_active: entry?.is_active ?? true, source_product_id: entry?.source_product_id ?? null,
         source_recurring_transaction_id: entry?.source_recurring_transaction_id ?? null,
         note: entry?.note ?? null, start_period: entry?.start_period ?? null, end_period: entry?.end_period ?? null,
@@ -56,6 +58,12 @@ function schedule(entry: RegistryEntry) {
         case 'EveryNDays': return entry.frequency_days ? `${entry.frequency_days}日ごと` : '日数周期（未設定）';
         case 'Irregular': return '不定期';
     }
+}
+
+// What this definition records on its own, beside its kind in the list.
+function automaticLabel(entry: RegistryEntry) {
+    if (entry.generate_recurring) return entry.auto_post ? '・自動記帳' : '・記帳待ち';
+    return entry.auto_depreciation ? '・減価を自動記帳' : '';
 }
 
 function DefinitionEditor({ entry, type, currency, lookups, busy, onSave, onCancel }: {
@@ -97,7 +105,14 @@ function DefinitionEditor({ entry, type, currency, lookups, busy, onSave, onCanc
             <div className="space-y-3 text-sm md:col-span-2">
                 <label className="flex items-center gap-2"><input type="checkbox" checked={form.generate_recurring} disabled={!scheduled && !form.generate_recurring} onChange={(event) => setForm((previous) => ({ ...previous, generate_recurring: event.target.checked, budget_active: event.target.checked || previous.budget_active }))} />定義から自動記帳する（毎月・毎年）</label>
                 <label className="flex items-center gap-2"><input type="checkbox" checked={form.budget_active} disabled={form.generate_recurring} onChange={(event) => set('budget_active', event.target.checked)} />予算に反映する</label>
-                {form.generate_recurring && <p className="text-xs text-[var(--studio-text-muted)]">自動記帳する定義は予算にも反映されます。</p>}
+                {form.generate_recurring && <>
+                    <OptionGroup label="記帳のしかた" value={form.auto_post ? 'auto' : 'manual'} onChange={(value) => set('auto_post', value === 'auto')} options={[
+                        { value: 'auto', label: '期日に自動で記帳', description: '予定日になると取引を自動で記帳します。' },
+                        { value: 'manual', label: '記帳待ちにする', description: '予定日になっても記帳せず、「自動記録」タブの「記帳する」で記帳します。' },
+                    ]} />
+                    <p className="text-xs text-[var(--studio-text-muted)]">自動記帳する定義は予算にも反映されます。</p>
+                </>}
+                {form.entry_type === 'asset' && form.source_product_id != null && <p className="text-xs text-[var(--studio-text-muted)]">減価の自動記帳は「自動記録」タブか固定資産の画面で切り替えます（現在：{form.auto_depreciation ? 'オン' : 'オフ'}）。</p>}
                 <label className="flex items-center gap-2"><input type="checkbox" checked={form.is_active} onChange={(event) => set('is_active', event.target.checked)} />定義を有効にする</label>
             </div>
             <details className="md:col-span-2"><summary className="cursor-pointer text-sm text-[var(--studio-text-muted)]">詳細設定</summary><div className="mt-4 grid gap-4 md:grid-cols-2">
@@ -113,14 +128,20 @@ function DefinitionEditor({ entry, type, currency, lookups, busy, onSave, onCanc
     </form>;
 }
 
+// Stable loaders: useResource refetches whenever its loader changes identity.
+const loadRecordings = () => getAutomaticRecordings();
+const noRecordings = async (): Promise<AutomaticRecordingList | null> => null;
+
 function DefinitionsForClient({ tab, currency }: { tab: Tab; currency: string }) {
     const confirm = useConfirm();
     const resource = useResource(getRegistryEntries);
     const lookups = useResource(loadLookups);
+    const automatic = tab === 'automatic';
+    const recordings = useResource(automatic ? loadRecordings : noRecordings);
     const mutation = useMutation();
     const [editor, setEditor] = useState<{ entry: RegistryEntry | null } | null>(null);
     const rows = resource.data?.filter((entry) => entryTab(entry) === tab) ?? [];
-    const disabled = resource.loading || Boolean(resource.error) || mutation.busy;
+    const disabled = resource.loading || Boolean(resource.error) || recordings.loading || Boolean(recordings.error) || mutation.busy;
     const editorDisabled = disabled || lookups.loading || Boolean(lookups.error) || !lookups.data;
     const remove = async (entry: RegistryEntry) => {
         if (disabled || !(await confirm(`「${entry.name}」の定義を削除しますか？`, '削除する'))) return;
@@ -128,12 +149,12 @@ function DefinitionsForClient({ tab, currency }: { tab: Tab; currency: string })
     };
     const accountName = (id: number | null | undefined, name?: string | null) => name || (id == null ? '—' : lookups.data?.accounts.find((row) => row.id === id)?.name ?? `#${id}`);
     return <section className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex gap-2"><button type="button" disabled={editorDisabled || editor !== null} onClick={() => setEditor({ entry: null })} className={buttonClass}>新規作成</button></div></div>
-        <Feedback loading={resource.loading || lookups.loading} error={mutation.error || resource.error || lookups.error} message={mutation.message} />
-        {editor && lookups.data && <Overlay title={editor.entry ? `${editor.entry.name}を編集` : '定義の新規作成'} onClose={() => setEditor(null)}><Feedback error={mutation.error} /><DefinitionEditor key={editor.entry?.id ?? 'new'} entry={editor.entry} type={TAB_TYPES[tab]} currency={currency} lookups={lookups.data} busy={editorDisabled} onCancel={() => setEditor(null)} onSave={(action) => void mutation.run(action, '定義を保存しました。', () => { setEditor(null); resource.reload(); })} /></Overlay>}
-        {resource.data && <DataTable columns={['名称', '周期・予定日', '金額', '口座', '予算に反映するか', '操作']}>
+        <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex gap-2">{!automatic && <button type="button" disabled={editorDisabled || editor !== null} onClick={() => setEditor({ entry: null })} className={buttonClass}>新規作成</button>}</div></div>
+        <Feedback loading={resource.loading || lookups.loading || recordings.loading} error={mutation.error || resource.error || lookups.error || recordings.error} message={mutation.message} />
+        {editor && lookups.data && <Overlay title={editor.entry ? `${editor.entry.name}を編集` : '定義の新規作成'} onClose={() => setEditor(null)}><Feedback error={mutation.error} /><DefinitionEditor key={editor.entry?.id ?? 'new'} entry={editor.entry} type={TAB_TYPES[tab]} currency={currency} lookups={lookups.data} busy={editorDisabled} onCancel={() => setEditor(null)} onSave={(action) => void mutation.run(action, '定義を保存しました。', () => { setEditor(null); resource.reload(); recordings.reload(); })} /></Overlay>}
+        {automatic ? resource.data && recordings.data && <AutomaticRecordings data={recordings.data} entries={resource.data} currency={currency} disabled={editorDisabled || editor !== null} mutation={mutation} onEdit={(entry) => setEditor({ entry })} onChanged={() => { resource.reload(); recordings.reload(); }} /> : resource.data && <DataTable columns={['名称', '周期・予定日', '金額', '口座', '予算に反映するか', '操作']}>
             {rows.length ? rows.map((row) => <tr key={row.id}>
-                <th scope="row" className="px-5 py-3 font-medium">{row.name}<span className="mt-1 block text-xs font-normal text-[var(--studio-text-muted)]">{TYPES[row.entry_type]}{!row.is_active && '・無効'}</span></th>
+                <th scope="row" className="px-5 py-3 font-medium">{row.name}<span className="mt-1 block text-xs font-normal text-[var(--studio-text-muted)]">{TYPES[row.entry_type]}{!row.is_active && '・無効'}{automaticLabel(row)}</span></th>
                 <td className="whitespace-nowrap px-5 py-3">{schedule(row)}{(row.start_period || row.end_period) && <span className="mt-1 block text-xs text-[var(--studio-text-muted)]">{row.start_period || '開始未設定'} 〜 {row.end_period || '終了未設定'}</span>}</td>
                 <td className="whitespace-nowrap px-5 py-3 tabular-nums">{formatCurrency(row.amount, row.currency || currency)} <span className="text-xs text-[var(--studio-text-muted)]">{row.currency || currency}</span></td>
                 <td className="px-5 py-3"><p>{accountName(row.source_account_id, row.source_account_name)} → {accountName(row.destination_account_id, row.destination_account_name)}</p><p className="mt-1 text-xs text-[var(--studio-text-muted)]">予算：{accountName(row.budget_account_id, row.budget_account_name)}</p></td>

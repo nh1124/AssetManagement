@@ -46,6 +46,16 @@ def list_due(
     ).all()
 
 
+def clients_with_due_auto_post(db: Session, today: date) -> set[int]:
+    return {client_id for (client_id,) in db.query(models.RecurringTransaction.client_id).filter(
+        models.RecurringTransaction.client_id.isnot(None),
+        models.RecurringTransaction.is_active.is_(True),
+        models.RecurringTransaction.auto_post.is_(True),
+        models.RecurringTransaction.next_due_date.isnot(None),
+        models.RecurringTransaction.next_due_date <= today,
+    ).distinct()}
+
+
 class RecurringNotPostable(Conflict):
     """This occurrence must not post, as opposed to a posting that failed.
 

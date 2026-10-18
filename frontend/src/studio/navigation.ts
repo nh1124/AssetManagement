@@ -8,6 +8,7 @@
  */
 import {
     Activity,
+    Archive,
     BookOpen,
     Boxes,
     ChartLine,
@@ -77,7 +78,6 @@ export const STUDIO_GROUPS: StudioGroup[] = [
                 tabs: [
                     { segment: '', label: 'tab.overview' },
                     { segment: 'accounts', label: 'tab.accounts' },
-                    { segment: 'earmarks', label: 'tab.earmarks' },
                 ],
             },
             {
@@ -131,10 +131,14 @@ export const STUDIO_GROUPS: StudioGroup[] = [
                     { segment: 'income', label: 'tab.income' },
                     { segment: 'repayment', label: 'tab.repayment' },
                     { segment: 'allocation', label: 'tab.allocation' },
+                    // Everything that records on its own, set here (U4); earmark rules stay with earmarks.
+                    { segment: 'automatic', label: 'tab.automatic' },
                 ],
             },
             { path: 'db/fixed-assets', label: 'screen.fixedAssets', icon: Boxes, section: DATABASE },
             { path: 'db/consumables', label: 'screen.consumables', icon: Layers, section: DATABASE },
+            // Earmarks set money aside; they are neither accounts nor transactions (U4).
+            { path: 'db/earmarks', label: 'screen.earmarks', icon: Archive, section: DATABASE },
         ],
     },
     {

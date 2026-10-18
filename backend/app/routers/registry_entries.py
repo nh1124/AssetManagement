@@ -38,6 +38,8 @@ def enrich_entry(entry: models.RegistryEntry) -> dict:
         "funding_capsule_name": entry.funding_capsule.name if entry.funding_capsule else None,
         "budget_treatment": entry.budget_treatment,
         "generate_recurring": entry.generate_recurring,
+        "auto_post": entry.auto_post,
+        "auto_depreciation": entry.auto_depreciation,
         "budget_active": entry.budget_active,
         "is_active": entry.is_active,
         "source_product_id": entry.source_product_id,

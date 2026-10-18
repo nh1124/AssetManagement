@@ -1,14 +1,15 @@
 import Overlay from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
 import { useId, useState, type FormEvent } from 'react';
-import { createProduct, deleteProduct, getDepreciationSummary, getProducts, postDepreciation,
+import { createProduct, deleteProduct, getAutomaticRecordings, getDepreciationSummary, getProducts, postDepreciation,
          reserveConfirmation, runDepreciation, updateProduct } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
 import type { DepreciationMethod, DepreciationRunResult, Product } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import { useResource } from '../../useResource';
 import { clientToday } from '../../datetime';
-import { Choice, DataTable, EditableRow, EditorActions, Feedback, Field, OptionGroup, RowTitle } from './Database';
+import { ActiveSwitch, Choice, DataTable, EditableRow, EditorActions, Feedback, Field, OptionGroup, RowTitle } from './Database';
+import { toggleAutoDepreciation } from './autoDepreciation';
 import { buttonClass, inputClass, loadLookups, useMutation, userCancelled } from './forms';
 
 const loadProducts = (): Promise<Product[]> => getProducts();
@@ -20,6 +21,10 @@ const loadPositions = () => getDepreciationSummary().then((summary) => summary.i
 // Module-level so the loader is stable: an inline one reloads on every render and,
 // by re-rendering forever, keeps a route transition from ever committing.
 const noPositions = async (): Promise<Position[]> => [];
+// The automatic write-down is a registry setting (U3); this screen only operates it.
+type AutoRow = Awaited<ReturnType<typeof getAutomaticRecordings>>['depreciation'][number];
+const loadAutomatic = () => getAutomaticRecordings().then((recordings) => recordings.depreciation);
+const noAutomatic = async (): Promise<AutoRow[]> => [];
 const METHODS: Record<DepreciationMethod, string> = {
     none: '記帳しない', straight_line: '定額法', declining_balance: '定率法',
 };
@@ -132,6 +137,8 @@ function ProductsForClient({ assets, currency, timezone }: { assets: boolean; cu
     const lookups = useResource(loadLookups);
     const positions = useResource(assets ? loadPositions : noPositions);
     const byProduct = new Map((positions.data ?? []).map((row) => [row.product_id, row]));
+    const automatic = useResource(assets ? loadAutomatic : noAutomatic);
+    const autoByProduct = new Map((automatic.data ?? []).map((row) => [row.product_id, row]));
     const period = clientToday(timezone).slice(0, 7);
     const mutation = useMutation();
     const [editor, setEditor] = useState<{ product: Product | null } | null>(null);
@@ -153,7 +160,7 @@ function ProductsForClient({ assets, currency, timezone }: { assets: boolean; cu
         void mutation.run(
             () => postDepreciation(product.id, position.next_period as string),
             `「${product.name}」の${position.next_period}分を記帳しました。`,
-            () => { resource.reload(); positions.reload(); },
+            () => { resource.reload(); positions.reload(); automatic.reload(); },
         );
     };
     const writeMonth = async () => {
@@ -164,7 +171,7 @@ function ProductsForClient({ assets, currency, timezone }: { assets: boolean; cu
         ))) return;
         let result: DepreciationRunResult | null = null;
         void mutation.run(async () => { result = await runDepreciation(period); }, `${period}分の記帳を終えました。`,
-            () => { setLastRun(result); resource.reload(); positions.reload(); });
+            () => { setLastRun(result); resource.reload(); positions.reload(); automatic.reload(); });
     };
     // A save that moves an earmark's amounts is refused with the changes; show them and
     // repeat with the fingerprint only if the user agrees (again if they moved meanwhile).
@@ -185,7 +192,7 @@ function ProductsForClient({ assets, currency, timezone }: { assets: boolean; cu
     };
     const save = (attempt: (reserveFingerprint?: string) => Promise<unknown>) => void mutation.run(
         () => withReserveCheck(attempt, '変更して保存'), '物品を保存しました。',
-        () => { setEditor(null); resource.reload(); positions.reload(); },
+        () => { setEditor(null); resource.reload(); positions.reload(); automatic.reload(); },
     );
     const remove = async (product: Product) => {
         if (disabled || !(await confirm(`「${product.name}」を削除しますか？`, '削除する'))) return;
@@ -205,7 +212,7 @@ function ProductsForClient({ assets, currency, timezone }: { assets: boolean; cu
         </details>}
         <Feedback loading={resource.loading || lookups.loading || positions.loading} error={mutation.error || resource.error || lookups.error || positions.error} message={mutation.message} />
         {editor && lookups.data && <Overlay title={editor.product ? `${editor.product.name}を編集` : `${assets ? '固定資産' : '消耗品'}の新規作成`} onClose={() => setEditor(null)}><Feedback error={mutation.error} /><ProductEditor key={editor.product?.id ?? 'new'} product={editor.product} assets={assets} currency={currency} lookups={lookups.data} busy={editorDisabled} onCancel={() => setEditor(null)} onSave={save} onDelete={editor.product ? () => void remove(editor.product as Product) : undefined} /></Overlay>}
-        {resource.data && <DataTable columns={assets ? ['物品', '取得額', '帳簿価額', '減価の方法', '次回の記帳', '更新予定', '記帳', '積立先', '推奨月額'] : ['物品', '単価', '購入単位', '購入周期', '予算口座', '積立先', '推奨月額']}>
+        {resource.data && <DataTable columns={assets ? ['物品', '取得額', '帳簿価額', '減価の方法', '次回の記帳', '更新予定', '記帳', '自動で記帳', '積立先', '推奨月額'] : ['物品', '単価', '購入単位', '購入周期', '予算口座', '積立先', '推奨月額']}>
             {rows.length ? rows.map((row) => <EditableRow key={row.id} disabled={editorDisabled || editor !== null} onEdit={() => setEditor({ product: row })}>
                 <RowTitle name={row.name} disabled={editorDisabled || editor !== null} onEdit={() => setEditor({ product: row })}>{row.name}<span className="mt-1 block text-xs font-normal text-[var(--studio-text-muted)]">{row.category === 'Uncategorized' ? '未分類' : row.category}</span></RowTitle>
                 {assets ? <>
@@ -226,9 +233,16 @@ function ProductsForClient({ assets, currency, timezone }: { assets: boolean; cu
                 {assets && <td className="px-5 py-3"><button type="button"
                     disabled={disabled || editor !== null || !byProduct.get(row.id)?.next_period || Boolean(byProduct.get(row.id)?.blocked_reason)}
                     onClick={(event) => { event.stopPropagation(); void write(row); }} className={buttonClass}>記帳する</button></td>}
+                {assets && <td className="px-5 py-3">{(() => {
+                    const auto = autoByProduct.get(row.id);
+                    if (!auto) return '—';
+                    return <ActiveSwitch name={`${row.name}の減価の自動記帳`} active={auto.auto_depreciation}
+                        disabled={disabled || automatic.loading || editor !== null || (!auto.auto_depreciation && Boolean(auto.blocked_reason))}
+                        onToggle={() => void toggleAutoDepreciation(confirm, mutation, auto, () => { positions.reload(); automatic.reload(); })} />;
+                })()}</td>}
                 <td className="px-5 py-3">{row.funding_capsule_name || '—'}</td>
                 <td className="whitespace-nowrap px-5 py-3 tabular-nums">{row.recommended_monthly_reserve ? formatCurrency(row.recommended_monthly_reserve, currency) : '—'}</td>
-            </EditableRow>) : <tr><td colSpan={assets ? 9 : 7} className="px-5 py-4 text-[var(--studio-text-muted)]">登録された{assets ? '固定資産' : '消耗品'}はありません。</td></tr>}
+            </EditableRow>) : <tr><td colSpan={assets ? 10 : 7} className="px-5 py-4 text-[var(--studio-text-muted)]">登録された{assets ? '固定資産' : '消耗品'}はありません。</td></tr>}
         </DataTable>}
     </section>;
 }

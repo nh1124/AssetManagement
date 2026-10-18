@@ -193,6 +193,8 @@ def export_client(db: Session, client: models.Client) -> dict:
                         "funding_capsule_id",
                         "budget_treatment",
                         "generate_recurring",
+                        "auto_post",
+                        "auto_depreciation",
                         "budget_active",
                         "is_active",
                         "source_product_id",
@@ -735,6 +737,8 @@ def import_client(
                 funding_capsule_id=capsule_map.get(item.get("funding_capsule_id")),
                 budget_treatment=item.get("budget_treatment") or "expense_only",
                 generate_recurring=item.get("generate_recurring", False),
+                auto_post=item.get("auto_post", True),
+                auto_depreciation=item.get("auto_depreciation", False),
                 budget_active=item.get("budget_active", True),
                 is_active=item.get("is_active", True),
                 source_product_id=product_map.get(item.get("source_product_id")),
@@ -777,6 +781,7 @@ def import_client(
                     entry_type=account_entry_type(source, destination),
                     budget_account_id=destination_id if line_type in {"expense", "debt_payment"} else None,
                     generate_recurring=True,
+                    auto_post=item.get("auto_post", True),
                     budget_active=True,
                     is_active=item.get("is_active", True),
                 )
@@ -811,6 +816,9 @@ def import_client(
         for item in data.get("registry_entries", []):
             entry = db.get(models.RegistryEntry, registry_map[int(item["id"])])
             entry.source_recurring_transaction_id = recurring_map.get(item.get("source_recurring_transaction_id"))
+            # Older exports kept the manual-approval choice on the recurring row only.
+            if "auto_post" not in item and entry.source_recurring_transaction_id is not None:
+                entry.auto_post = db.get(models.RecurringTransaction, entry.source_recurring_transaction_id).auto_post
 
         if backfilled_recurring:
             validation["issues"].append({

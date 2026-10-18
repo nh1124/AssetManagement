@@ -74,6 +74,12 @@ class RegistryEntry(Base):
     funding_capsule_id = Column(Integer, ForeignKey("capsules.id", ondelete="SET NULL"), nullable=True)
     budget_treatment = Column(String, nullable=False, default="expense_only")
     generate_recurring = Column(Boolean, default=False, server_default="false", nullable=False)
+    # The automatic-recording settings live here, the source of truth for every
+    # posting that runs on its own. auto_post: a generated definition posts on its
+    # due date, or waits to be posted by hand. auto_depreciation: a product-backed
+    # entry writes its asset down each period; how much stays with the product.
+    auto_post = Column(Boolean, default=True, server_default="true", nullable=False)
+    auto_depreciation = Column(Boolean, default=False, server_default="false", nullable=False)
     budget_active = Column(Boolean, default=True, server_default="true", nullable=False)
     is_active = Column(Boolean, default=True, server_default="true", nullable=False)
     source_product_id = Column(Integer, ForeignKey("products.id", ondelete="SET NULL"), nullable=True)

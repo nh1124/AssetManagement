@@ -368,6 +368,10 @@ export interface RegistryEntry {
     funding_capsule_name?: string | null;
     budget_treatment?: 'auto' | 'expense_only' | 'reserve_allocation' | 'asset_replacement';
     generate_recurring: boolean;
+    /** Posts on its due date; false waits to be posted by hand. */
+    auto_post: boolean;
+    /** A product definition writes its asset down each ended period. */
+    auto_depreciation: boolean;
     budget_active: boolean;
     is_active: boolean;
     source_product_id?: number | null;
@@ -917,3 +921,42 @@ export interface DataRepairResult {
 }
 
 export type { ReconciliationAdjustment, ReconciliationComparison } from './reconciliation';
+
+/** What records on its own, as the definitions screen lists it (WP7). */
+export interface AutomaticRecurringRecording {
+    entry_id: number;
+    recurring_transaction_id: number | null;
+    name: string;
+    amount: number;
+    currency: string;
+    frequency: RegistryFrequency;
+    day_of_month: number;
+    month_of_year?: number | null;
+    source_account_name?: string | null;
+    destination_account_name?: string | null;
+    is_active: boolean;
+    auto_post: boolean;
+    next_due_date: string | null;
+    is_due: boolean;
+}
+
+export interface AutomaticDepreciationRecording {
+    product_id: number;
+    entry_id: number | null;
+    name: string;
+    method: DepreciationMethod;
+    interval: DepreciationInterval;
+    next_period: string | null;
+    next_amount: number;
+    book_value: number;
+    currency: string;
+    pending_periods: number;
+    auto_depreciation: boolean;
+    is_active: boolean;
+    blocked_reason: string | null;
+}
+
+export interface AutomaticRecordings {
+    recurring: AutomaticRecurringRecording[];
+    depreciation: AutomaticDepreciationRecording[];
+}

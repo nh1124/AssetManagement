@@ -5,7 +5,7 @@ import ScreenTabs from './components/ScreenTabs';
 import Record from './pages/Record';
 import Overview from './pages/assets/Overview';
 import Accounts from './pages/assets/Accounts';
-import Earmarks from './pages/assets/Earmarks';
+import Earmarks from './pages/earmarks/Earmarks';
 import Ledger from './pages/ledger/Ledger';
 import Flows from './pages/Flows';
 import Budget from './pages/budget/Budget';
@@ -51,7 +51,7 @@ const SCREENS: Record<string, { index: ReactElement; tabs?: Record<string, React
     goals: { index: <GoalSummary /> },
     assets: {
         index: <Overview />,
-        tabs: { accounts: <Accounts />, earmarks: <Earmarks /> },
+        tabs: { accounts: <Accounts /> },
     },
     'automation/ai': { index: <Ai /> },
     'automation/approvals': { index: <Approvals /> },
@@ -61,10 +61,14 @@ const SCREENS: Record<string, { index: ReactElement; tabs?: Record<string, React
     'db/fx': { index: <Fx /> },
     'db/definitions': {
         index: <Definitions />,
-        tabs: { income: <Definitions tab="income" />, repayment: <Definitions tab="repayment" />, allocation: <Definitions tab="allocation" /> },
+        tabs: {
+            income: <Definitions tab="income" />, repayment: <Definitions tab="repayment" />,
+            allocation: <Definitions tab="allocation" />, automatic: <Definitions tab="automatic" />,
+        },
     },
     'db/fixed-assets': { index: <Products assets /> },
     'db/consumables': { index: <Products assets={false} /> },
+    'db/earmarks': { index: <Earmarks /> },
     [SETTINGS_PATH]: { index: <Settings /> },
 };
 
@@ -94,6 +98,8 @@ export default function StudioApp() {
                     <Route path="goals/simulation" element={<Navigate to="/goals/scenarios" replace />} />
                     {/* Events live inside a scenario now; flat event URLs have no scenario to edit. */}
                     <Route path="goals/events/*" element={<Navigate to="/goals/scenarios" replace />} />
+                    {/* Earmarks left the assets tabs for their own database screen (U4). */}
+                    <Route path="assets/earmarks" element={<Navigate to="/db/earmarks" replace />} />
                     {STUDIO_SCREENS.map((screen) => {
                         const screenRoutes = SCREENS[screen.path];
                         return (

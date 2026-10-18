@@ -102,6 +102,7 @@ LAYERS: dict[str, int] = {
     "notification_workflow": 6,
     "capsule_workflow": 6,
     "simulation_workflow": 6,
+    "automatic_recording_workflow": 6,
 }
 
 
