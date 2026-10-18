@@ -135,7 +135,7 @@ def unclosed_month(db, client_id):
     (workflow.APPROVAL_PENDING, approval, "/automation/approvals"),
     (workflow.ACTIONS_DUE, due_action, "/budget/actions"),
     (workflow.UNMATCHED, unmatched, "/ledger/unmatched"),
-    (workflow.MONTH_CLOSE, unclosed_month, "/ledger"),
+    (workflow.MONTH_CLOSE, unclosed_month, "/ledger?month=2026-09"),
 ])
 def test_each_kind_notifies_while_its_reasons_hold(db, kind, seed, link):
     generate = workflow.GENERATORS[kind]

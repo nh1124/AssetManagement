@@ -88,9 +88,9 @@ def month_close_notifications(db: Session, client_id: int, period: str) -> list[
     rows, _ = ledger_service.list_transactions(db, client_id, start_date=start, end_date=end - timedelta(days=1), limit=1)
     if not rows:
         return []
-    # WP3 moves the monthly close into the ledger; the link follows it there.
+    # The ledger month view holds the close; the link opens that month.
     return _notification(MONTH_CLOSE, [previous], f"{previous} が締められていません",
-                         ["記録を確認して月を締めてください。"], "/ledger", {"period": previous})
+                         ["記録を確認して月を締めてください。"], f"/ledger?month={previous}", {"period": previous})
 
 
 GENERATORS: dict[str, Callable[[Session, int, str], list[dict]]] = {
