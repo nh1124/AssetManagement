@@ -1281,6 +1281,16 @@ class GoalBudgetOptions(BaseModel):
     create_capsules: list[int] = Field(default_factory=list)
     # Confirmed handovers: claim part of an account for a near event's capsule.
     handovers: list[GoalBudgetHandover] = Field(default_factory=list)
+    # U1: the order the monthly savings funds these groups in; the rest always comes last.
+    # Null keeps the default order (existing savings, products, near events).
+    funding_order: Optional[list[Literal["existing", "products", "near"]]] = None
+
+    @field_validator("funding_order")
+    @classmethod
+    def _every_group_once(cls, value):
+        if value is not None and sorted(value) != ["existing", "near", "products"]:
+            raise ValueError("funding_order must list existing, products and near once each")
+        return value
 
 
 class GoalBudgetApply(GoalBudgetOptions):

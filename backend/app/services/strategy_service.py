@@ -21,6 +21,42 @@ from .product_reserve_service import reserve_totals_by_capsule
 
 PRIORITY_WEIGHTS = {1: 3, 2: 2, 3: 1}
 DEFAULT_NEAR_YEARS = 5
+# U1: what the monthly savings funds first; the rest (far events, the goal row) is always last.
+DEFAULT_FUNDING_ORDER = ("existing", "products", "near")
+
+
+def fund_in_order(total, needs: dict, order) -> dict:
+    """Each group in order receives its need while the savings last.
+
+    The first group that does not fit gets what is left and the later ones nothing,
+    so a shortfall cuts the groups at the end first.
+    """
+    left = max(total, 0)
+    funded = {}
+    for group in order:
+        funded[group] = min(needs.get(group, 0), left)
+        left -= funded[group]
+    return funded
+
+
+def reflection_settings(db: Session, client_id: int, scenario_id: int | None, period: str):
+    """The reflection covering this month (if it is of this story), its range and its funding order.
+
+    Without a covering reflection the latest one of the story still sets the range and
+    the order, so progress before the next reflection follows the user's last choice.
+    """
+    near_years, order = DEFAULT_NEAR_YEARS, DEFAULT_FUNDING_ORDER
+    record = goal_budget_record.covering(db, client_id, period)
+    if record is None or record.scenario_id != scenario_id:
+        record = None
+        source = goal_budget_record.latest(db, client_id)
+    else:
+        source = record
+    if source is not None and source.scenario_id == scenario_id:
+        options = source.options or {}
+        near_years = options.get("near_years", DEFAULT_NEAR_YEARS)
+        order = tuple(options.get("funding_order") or DEFAULT_FUNDING_ORDER)
+    return record, near_years, order
 
 # Every projection draws from this one seed, so a figure does not move when
 # nothing about the plan moved, and two scenarios can be read as differing by
@@ -268,22 +304,20 @@ def event_monthly_allocation(
     - otherwise ("rule"), a near event (within the reflection's range, five years by
       default) receives its shortfall over the remaining months, as cash in its
       capsule, and a far event a priority share of what remains; an event left to
-      simulation only (試算のみ) receives nothing. When near events need more than
-      the savings, they share the savings in proportion to need and far events get
-      nothing, so progress shows the shortfall instead of a plan nobody can fund.
+      simulation only (試算のみ) receives nothing. Product reserves and near events
+      are funded in the reflection's funding order; when the savings fall short the
+      later group is cut (near events share what is left in proportion to need) and
+      far events get nothing, so progress shows the shortfall instead of a plan
+      nobody can fund. The rule does not read the budget, so existing savings are
+      not deducted here.
     The rule does not judge preconditions; the reflection does, when it is applied.
     """
     if (event.archived_at is not None or event.direction != "expense"
             or event.budget_reflection_effective == "simulation_only"):
         # A called-off, income or simulation-only event receives nothing, whatever was recorded.
         return 0.0, "rule"
-    near_years: int | None = DEFAULT_NEAR_YEARS
-    latest = goal_budget_record.latest(db, client_id)
-    if latest is not None and latest.scenario_id == event.scenario_id:
-        near_years = (latest.options or {}).get("near_years", DEFAULT_NEAR_YEARS)
-    record = goal_budget_record.covering(db, client_id, evaluation_date.strftime("%Y-%m"))
-    if use_record and record is not None and record.scenario_id == event.scenario_id:
-        near_years = (record.options or {}).get("near_years", DEFAULT_NEAR_YEARS)
+    record, near_years, order = reflection_settings(db, client_id, event.scenario_id, evaluation_date.strftime("%Y-%m"))
+    if use_record and record is not None:
         for row in record.events or []:
             if row.get("lineage") == event.lineage:
                 return float(row.get("allocation") or 0.0), "reflection"
@@ -304,14 +338,14 @@ def event_monthly_allocation(
         funded = calculate_current_funded_and_weighted_return(item, db)[0]
         return max(0.0, (item.target_amount or 0.0) - funded) / max(1, months)
 
-    # Consumables and fixed assets set aside their reserve first, as the reflection does.
+    # Consumables and fixed assets set aside their reserve too, in the reflection's order.
     reserves = sum(row["monthly"] for row in reserve_totals_by_capsule(db, client_id, evaluation_date).values())
-    available = max(0.0, total - reserves)
     near_total = sum(required(item) for item in story if near(item))
+    funded = fund_in_order(total, {"products": reserves, "near": near_total}, order)
     if near(event):
         own = required(event)
-        return (own if near_total <= available else available * own / near_total), "rule"
-    pool = max(0.0, available - near_total)
+        return (own if funded["near"] >= near_total else funded["near"] * own / near_total), "rule"
+    pool = max(0.0, total - funded["products"] - funded["near"])
     far = [item for item in story if not near(item)]
     weights = sum(PRIORITY_WEIGHTS.get(item.priority, 1) for item in far) or 1
     return pool * PRIORITY_WEIGHTS.get(event.priority, 1) / weights, "rule"
