@@ -53,7 +53,17 @@ function GoalWorkspaceForClient({ goalId, currency, clientName }: { goalId: stri
     const accountLabel = account ? `${account.name}（${ACCOUNT_TYPES[account.account_type]}）` : goal?.account_id != null ? `#${goal.account_id}（一覧にありません）` : '未設定';
     return <section className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
-            <div><Link to={goal?.archived_at ? `${eventBase}?archived=true` : eventBase} className="text-sm text-[var(--studio-accent)] hover:underline">ライフイベント一覧へ</Link><h2 className="mt-2 text-lg font-semibold">{goal?.name ?? 'ライフイベント'}{goal?.archived_at && '（アーカイブ済み）'}</h2></div>
+            <div>
+                {/* U6: where this event sits; the scenario link opens its event list. */}
+                <nav aria-label="現在位置"><ol className="flex flex-wrap items-center gap-1 text-sm text-[var(--studio-text-muted)]">
+                    <li><Link to="/goals" className="text-[var(--studio-accent)] hover:underline">ゴール</Link></li>
+                    <li aria-hidden="true">›</li>
+                    <li><Link to={goal?.archived_at ? `${eventBase}?archived=true` : eventBase} className="text-[var(--studio-accent)] hover:underline">{scenario.name}</Link></li>
+                    <li aria-hidden="true">›</li>
+                    <li aria-current="page">{goal?.name ?? 'ライフイベント'}</li>
+                </ol></nav>
+                <h2 className="mt-2 text-lg font-semibold">{goal?.name ?? 'ライフイベント'}{goal?.archived_at && '（アーカイブ済み）'}</h2>
+            </div>
             {goal && <div className="flex flex-wrap gap-2">
                 <button type="button" disabled={disabled || dialog !== null} onClick={() => setDialog('edit')} className={buttonClass}>編集</button>
                 {goal.archived_at ? <button type="button" disabled={disabled || dialog !== null} onClick={() => run(() => unarchiveGoal(goal.id), 'ライフイベントを戻しました。停止した規則と戻したお金は、そのままです。')} className={buttonClass}>戻す</button> : <button type="button" disabled={disabled || dialog !== null} onClick={() => setDialog('archive')} className={buttonClass}>アーカイブする</button>}
@@ -81,6 +91,8 @@ function GoalWorkspaceForClient({ goalId, currency, clientName }: { goalId: stri
                     ] : []),
                 ].map(([label, value]) => <div key={label}><dt className="text-xs text-[var(--studio-text-muted)]">{label}</dt><dd className="mt-2 font-semibold tabular-nums">{value}</dd></div>)}
             </dl>
+            {/* U5: progress before a reflection covers the month does not judge preconditions. */}
+            {!income && goal.allocation_source === 'rule' && <p className="-mt-3 text-xs text-[var(--studio-text-muted)]">計算上の配分は前提条件を判定していません。前提条件は予算に反映するときに判定します。</p>}
             <details className="rounded-lg border border-[var(--studio-border)] p-5"><summary className="cursor-pointer font-semibold">マイルストーン</summary><div className="mt-5">
                 <Milestones goalId={goal.id} currency={currency} disabled={disabled || dialog !== null || Boolean(goal.archived_at)} onBusy={setDetailBusy} onChanged={refresh} />
             </div></details>

@@ -4,13 +4,13 @@ import type { AccountInstitution, AccountRole } from '../../../types';
 import { Choice, EditorActions, Field } from './Database';
 import { ACCOUNT_TYPES, INSTITUTIONS, ROLES, inputClass, type DatabaseAccount } from './forms';
 
-export default function AccountEditor({ account, accounts, currency, busy, onSave, onCancel }: {
-    account: DatabaseAccount | null; accounts: DatabaseAccount[]; currency: string; busy: boolean;
+export default function AccountEditor({ account, accounts, initialType = 'asset', currency, busy, onSave, onCancel }: {
+    account: DatabaseAccount | null; accounts: DatabaseAccount[]; initialType?: DatabaseAccount['account_type']; currency: string; busy: boolean;
     onSave: (action: () => Promise<unknown>) => void; onCancel: () => void;
 }) {
     const formId = useId();
     const [name, setName] = useState(account?.name ?? '');
-    const [type, setType] = useState<DatabaseAccount['account_type']>(account?.account_type ?? 'asset');
+    const [type, setType] = useState<DatabaseAccount['account_type']>(account?.account_type ?? initialType);
     const [role, setRole] = useState<AccountRole>(account?.role ?? 'unassigned');
     const [target, setTarget] = useState(account?.role_target_amount == null ? '' : String(account.role_target_amount));
     const [institution, setInstitution] = useState<AccountInstitution>(account?.institution ?? 'none');

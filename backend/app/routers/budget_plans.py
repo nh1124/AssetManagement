@@ -121,6 +121,7 @@ def get_budget_plan_summary(
     plan_id: Optional[int] = Query(None, description="Budget plan ID"),
     cash_flow_start_period: Optional[str] = Query(None, description="Format: YYYY-MM"),
     cash_flow_months: int = Query(12, ge=1, le=36),
+    include_unset: bool = Query(False, description="Add unset_lines: active accounts no plan line covers"),
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
@@ -130,7 +131,7 @@ def get_budget_plan_summary(
     try:
         key = (
             f"client:{current_client.id}:budget_summary:{period}:{plan_id}:"
-            f"{cash_flow_start_period}:{cash_flow_months}"
+            f"{cash_flow_start_period}:{cash_flow_months}:{include_unset}"
         )
         return get_or_set(
             key,
@@ -143,6 +144,7 @@ def get_budget_plan_summary(
                 cash_flow_start_period=cash_flow_start_period,
                 cash_flow_months=cash_flow_months,
                 goal_metrics=summarize_goal_funding_gap(db, current_client.id),
+                include_unset=include_unset,
             ),
         )
     except ValueError as exc:

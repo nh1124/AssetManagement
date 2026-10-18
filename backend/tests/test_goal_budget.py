@@ -387,7 +387,9 @@ def test_a_near_capsule_stops_at_its_target_month(db, story):
     preview = workflow.preview(db, 1, chosen)
     trip = [(row["period"], row["new_amount"]) for row in preview["changes"] if row["kind"] == "capsule" and row["name"] == "旅行"]
     # Funded in November only (one month before December); later months write nothing.
-    assert trip[0] == ("2026-11", 60000) and all(amount == 0 for _, amount in trip[1:])
+    # November's near events need 70,000 of the 50,000, so the trip and the car share it.
+    assert trip[0] == ("2026-11", 42857) and all(amount == 0 for _, amount in trip[1:])
+    assert preview["savings"]["shortfall"] == 20000
     savings = {row["period"]: row["new_amount"] for row in preview["changes"] if row["kind"] == "savings"}
     assert savings == {"2026-11": 0, "2026-12": 40000, "2027-01": 40000}
 
@@ -428,7 +430,7 @@ def test_an_accountless_row_is_split_when_the_capsule_has_several_accounts(db, s
     assert legacy.is_active is False
 
 
-def test_a_definition_destination_also_updates_saved_months_and_needs_one_amount(db, story):
+def test_a_definition_destination_also_updates_saved_months(db, story):
     from app.services.budget_plan_store import create_plan_lines
     definition, yearly, _ = existing_savings(db, story)
     create_plan_lines(db, 1, [{"target_period": START, "line_type": "allocation", "target_type": "account",
@@ -437,11 +439,98 @@ def test_a_definition_destination_also_updates_saved_months_and_needs_one_amount
     preview = workflow.preview(db, 1, chosen)
     saved = next(row for row in preview["changes"] if row["kind"] == "definition_row")
     assert (saved["current_amount"], saved["new_amount"]) == (20000, 23000)
+    assert preview["savings"]["definition_differences"] == []
     workflow.apply(db, 1, chosen, preview["fingerprint"])
     assert [line.amount for line in plan_lines(db, target_period=START, account_id=story["savings"].id)] == [23000]
-    # The yearly definition makes November differ from December: one amount cannot follow.
-    with pytest.raises(Refused):
-        workflow.preview(db, 1, options(savings_definition_id=definition.id, months=2))
+
+
+def test_a_definition_destination_takes_the_first_months_rest(db, story):
+    definition, _, _ = existing_savings(db, story)
+    chosen = options(savings_definition_id=definition.id, months=2)
+    preview = workflow.preview(db, 1, chosen)
+    # The yearly definition is saved only in November, so December's own rest is 12,000
+    # larger; the definition holds one amount, November's, and shows the difference.
+    change = next(row for row in preview["changes"] if row["kind"] == "definition")
+    assert change["new_amount"] == 23000
+    assert preview["savings"]["definition_differences"] == [{"period": "2026-12", "difference": -12000}]
+    workflow.apply(db, 1, chosen, preview["fingerprint"])
+    db.refresh(definition)
+    assert definition.amount == 23000
+
+
+def short_savings(db, story, amount):
+    from app.services import life_scenario_service
+    life_scenario_service.update(db, 1, story["car"].scenario_id, {"monthly_savings": amount})
+
+
+def capsule_rows(preview):
+    return {row["name"]: row["new_amount"] for row in preview["changes"] if row["kind"] == "capsule"}
+
+
+def test_a_shortfall_cuts_the_groups_at_the_end_of_the_funding_order(db, story):
+    consumable(db, story)
+    short_savings(db, story, 10500)
+    # Default order: products are funded in full and the car's capsule is cut.
+    first = workflow.preview(db, 1, options(savings_account_id=story["savings"].id))
+    assert capsule_rows(first) == {"車の取り置き": 9500, "日用品": 1000}
+    assert first["savings"]["groups"] == [
+        {"key": "existing", "need": 0, "amount": 0}, {"key": "products", "need": 1000, "amount": 1000},
+        {"key": "near", "need": 10000, "amount": 9500}]
+    assert next(row for row in first["events"] if row["name"] == "車")["allocation"] == 9500
+    # Near events first: the car is funded and the product reserve is cut instead.
+    near_first = options(savings_account_id=story["savings"].id, funding_order=["near", "existing", "products"])
+    second = workflow.preview(db, 1, near_first)
+    assert capsule_rows(second) == {"車の取り置き": 10000, "日用品": 500}
+    assert second["savings"]["shortfall"] == 500 and second["savings"]["account_amount"] == 0
+    assert second["options"]["funding_order"] == ["near", "existing", "products"]
+    # The order is part of what is confirmed.
+    with pytest.raises(Conflict):
+        workflow.apply(db, 1, near_first, first["fingerprint"])
+
+
+def test_existing_savings_ordered_last_are_counted_less_but_never_rewritten(db, story):
+    existing_savings(db, story)
+    short_savings(db, story, 40000)
+    before = workflow.preview(db, 1, options(savings_account_id=story["savings"].id))
+    # Existing 37,000 first: the car gets the 3,000 left.
+    assert (before["savings"]["existing_amount"], before["savings"]["capsule_amount"]) == (37000, 3000)
+    chosen = options(savings_account_id=story["savings"].id, funding_order=["near", "products", "existing"])
+    after = workflow.preview(db, 1, chosen)
+    groups = {row["key"]: row for row in after["savings"]["groups"]}
+    assert (groups["existing"]["need"], groups["existing"]["amount"]) == (37000, 30000)
+    assert (after["savings"]["capsule_amount"], after["savings"]["account_amount"]) == (10000, 0)
+    # Only the goal's own rows are written; the definitions and the loose capsule stay as they are.
+    assert {row["kind"] for row in after["changes"]} <= {"capsule", "savings"}
+    assert capsule_rows(after) == {"車の取り置き": 10000}
+    workflow.apply(db, 1, chosen, after["fingerprint"])
+    record = db.query(models.GoalBudgetReflection).one()
+    assert record.options["funding_order"] == ["near", "products", "existing"]
+    assert record.summary["groups"][-1] == {"key": "existing", "need": 37000, "amount": 30000}
+
+
+def test_progress_and_breakdown_follow_the_latest_funding_order(db, story):
+    from app.services.strategy_service import event_monthly_allocation
+    consumable(db, story)
+    short_savings(db, story, 10500)
+    chosen = options(savings_account_id=story["savings"].id, funding_order=["near", "existing", "products"])
+    workflow.apply(db, 1, chosen, workflow.preview(db, 1, chosen)["fingerprint"])
+    covered = {row["name"]: row for row in workflow.status(db, 1, START)["events"]}
+    assert (covered["車"]["allocation"], covered["車"]["source"]) == (10000, "reflection")
+    assert (covered["日用品"]["allocation"], covered["日用品"]["source"]) == (500, "reflection")
+    # A later month is divided by the rule, still near events first: they need more
+    # than the 10,500, so they share all of it and the product reserve gets nothing.
+    assert event_monthly_allocation(db, 1, story["car"], 10500, date(2027, 1, 1))[1] == "rule"
+    later = {row["name"]: row for row in workflow.status(db, 1, "2027-01")["events"]}
+    near = sum(row["allocation"] for row in later.values() if row["kind"] == "near")
+    assert near == pytest.approx(10500, abs=0.05)
+    assert (later["日用品"]["allocation"], later["日用品"]["source"]) == (0, "rule")
+    assert all(row["allocation"] == 0 for row in later.values() if row["kind"] == "far")
+
+
+def test_the_funding_order_lists_every_group_once():
+    with pytest.raises(ValueError):
+        schemas.GoalBudgetOptions(start_period=START, funding_order=["near", "near", "products"])
+    assert schemas.GoalBudgetOptions(start_period=START).funding_order is None
 
 
 def test_a_zero_definition_destination_stays_selectable(db, story):

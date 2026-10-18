@@ -526,7 +526,7 @@ export const getGoalCapsules = async (goalId: number): Promise<GoalCapsule[]> =>
 // Budget Builder
 export const getBudgetSummary = async (
     period?: string,
-    options: { cash_flow_start_period?: string; cash_flow_months?: number; plan_id?: number } = {},
+    options: { cash_flow_start_period?: string; cash_flow_months?: number; plan_id?: number; include_unset?: boolean } = {},
 ) => {
     const response = await api.get('/budget-plans/summary', {
         params: {
@@ -534,6 +534,7 @@ export const getBudgetSummary = async (
             plan_id: options.plan_id,
             cash_flow_start_period: options.cash_flow_start_period,
             cash_flow_months: options.cash_flow_months,
+            include_unset: options.include_unset,
         },
     });
     return response.data;
