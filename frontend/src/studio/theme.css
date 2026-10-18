@@ -32,6 +32,12 @@
     --studio-expense: var(--studio-danger);
 }
 
+/* Wide tables scroll sideways; keep that scrollbar thin and in the surface colours. */
+.studio-root .overflow-x-auto {
+    scrollbar-width: thin;
+    scrollbar-color: var(--studio-border-strong) transparent;
+}
+
 /* Height zero keeps charts laid out at their real width; display:none would
    prevent measurement and leave their print output blank. */
 .studio-print-only {

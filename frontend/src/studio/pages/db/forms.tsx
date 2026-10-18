@@ -40,6 +40,9 @@ export function today() {
     return new Date().toLocaleDateString('sv-SE');
 }
 
+// An action resolves to this when the user backed out midway: no message, no follow-up.
+export const userCancelled = Symbol('cancelled');
+
 export function useMutation() {
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState('');
@@ -58,9 +61,9 @@ export function useMutation() {
         setError('');
         setMessage('');
         try {
-            await action();
+            const result = await action();
             // Navigation or a client switch must not refresh the previous screen.
-            if (mounted.current) {
+            if (mounted.current && result !== userCancelled) {
                 setMessage(confirmation);
                 onSuccess?.();
             }

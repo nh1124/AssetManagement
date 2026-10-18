@@ -123,6 +123,20 @@ def refresh_product_capsules(
     return refreshed
 
 
+def capsule_amounts(db: Session, client_id: int, capsule_ids: Iterable[int | None]) -> dict[int, dict]:
+    """The stored target and monthly amounts of these capsules, keyed by id."""
+    ids = {capsule_id for capsule_id in capsule_ids if capsule_id is not None}
+    if not ids:
+        return {}
+    return {capsule.id: {
+        "name": capsule.name,
+        "target_minor": capsule.target_amount_minor, "monthly_minor": capsule.monthly_contribution_minor,
+        "target": float(capsule.target_amount or 0.0), "monthly": float(capsule.monthly_contribution or 0.0),
+    } for capsule in db.query(models.Capsule).filter(
+        models.Capsule.client_id == client_id, models.Capsule.id.in_(ids),
+    ).all()}
+
+
 def ensure_default_product_reserve_pools(db: Session, client_id: int) -> list[models.Capsule]:
     pools: list[models.Capsule] = []
     for name, _is_asset in DEFAULT_PRODUCT_RESERVE_POOLS:

@@ -395,11 +395,6 @@ export const updateAccount = async (id: number, data: {
     return response.data;
 };
 
-export const deleteAccount = async (id: number) => {
-    const response = await api.delete(`/accounts/${id}`);
-    return response.data;
-};
-
 // Transaction endpoints
 export interface TransactionQuery {
     startDate?: string;
@@ -630,13 +625,29 @@ export const getProducts = async () => {
     return response.data;
 };
 
-export const createProduct = async (product: any) => {
-    const response = await api.post('/products/', product);
+// A save that changes an earmark's amounts is refused (409) with the changes and a
+// fingerprint; repeating it with that fingerprint confirms exactly those changes.
+export interface ReserveChange {
+    capsule_id: number; name: string;
+    target_before: number; target_after: number; monthly_before: number; monthly_after: number;
+}
+export interface ReserveConfirmation { code: 'reserve_changes_unconfirmed'; fingerprint: string; changes: ReserveChange[] }
+
+export const reserveConfirmation = (failure: unknown): ReserveConfirmation | null => {
+    if (!axios.isAxiosError(failure) || failure.response?.status !== 409) return null;
+    const detail = failure.response.data?.detail;
+    return detail?.code === 'reserve_changes_unconfirmed' ? detail as ReserveConfirmation : null;
+};
+
+const reserveParams = (fingerprint?: string) => fingerprint ? { params: { reserve_fingerprint: fingerprint } } : undefined;
+
+export const createProduct = async (product: any, reserveFingerprint?: string) => {
+    const response = await api.post('/products/', product, reserveParams(reserveFingerprint));
     return response.data;
 };
 
-export const updateProduct = async (id: number, product: any) => {
-    const response = await api.put(`/products/${id}`, product);
+export const updateProduct = async (id: number, product: any, reserveFingerprint?: string) => {
+    const response = await api.put(`/products/${id}`, product, reserveParams(reserveFingerprint));
     return response.data;
 };
 
@@ -664,8 +675,8 @@ export const runDepreciation = async (period: string): Promise<DepreciationRunRe
     return response.data;
 };
 
-export const deleteProduct = async (id: number) => {
-    await api.delete(`/products/${id}`);
+export const deleteProduct = async (id: number, reserveFingerprint?: string) => {
+    await api.delete(`/products/${id}`, reserveParams(reserveFingerprint));
 };
 
 export const getRegistryEntries = async (): Promise<RegistryEntry[]> => {

@@ -18,6 +18,7 @@ from app.routers.goal_budget import router
 from app.services import capsule_service, registry_service
 from app.services.ledger_service import create_account
 from app.workflows import goal_budget_workflow as workflow
+from product_saves import confirmed
 from scenario_fixtures import goal_scenario_id
 
 START = "2026-11"
@@ -578,7 +579,7 @@ def consumable(db, story):
     from app.workflows import product_workflow
     pool = capsule_service.create_capsule(db, 1, schemas.CapsuleCreate(name="日用品", target_amount=0, monthly_contribution=0,
                                                                         account_id=story["other"].id))
-    product_workflow.create_product(db, 1, schemas.ProductCreate(
+    confirmed(product_workflow.create_product, db, 1, schemas.ProductCreate(
         name="浄水フィルター", last_unit_price=6000, frequency_days=180, funding_capsule_id=pool.id,
         budget_treatment="reserve_allocation"))
     return pool
@@ -635,7 +636,7 @@ def test_a_fixed_asset_reserve_is_read_for_each_month(db, story):
     from app.workflows import product_workflow
     pool = capsule_service.create_capsule(db, 1, schemas.CapsuleCreate(name="家電", target_amount=0, monthly_contribution=0,
                                                                         account_id=story["other"].id))
-    product = product_workflow.create_product(db, 1, schemas.ProductCreate(
+    product = confirmed(product_workflow.create_product, db, 1, schemas.ProductCreate(
         name="冷蔵庫", last_unit_price=120000, purchase_price=120000, is_asset=True, purchase_date=date(2026, 10, 1),
         lifespan_months=24, funding_capsule_id=pool.id))
     preview = workflow.preview(db, 1, options(savings_account_id=story["savings"].id, months=2))

@@ -1,14 +1,15 @@
 import Overlay from '../../components/Overlay';
 import Reconciliation from './Reconciliation';
 import AccountEarmarks from './AccountEarmarks';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useClient } from '../../../context/ClientContext';
-import { getAccounts, updateAccount } from '../../../api';
+import { getAccountFlows, getAccounts, updateAccount } from '../../../api';
 import type { Account, AccountRole } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
+import { clientToday } from '../../datetime';
 import { assetErrorMessage, useResource as useAssetData } from '../../useResource';
 import AccountEditor from '../db/AccountEditor';
-import { Feedback } from '../db/Database';
+import { ActiveSwitch, Feedback } from '../db/Database';
 import { buttonClass, useMutation } from '../db/forms';
 
 // Item accounts are returned by the API but omitted by the shared legacy type.
@@ -39,6 +40,8 @@ async function loadAccounts(): Promise<AssetAccount[]> {
     return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name, 'ja'));
 }
 
+const noFlows = async (): Promise<Map<number, number>> => new Map();
+
 function AccountDetails({ account, accounts, disabled, onPosted }: {
     account: AssetAccount; accounts: AssetAccount[]; disabled: boolean; onPosted: () => void;
 }) {
@@ -56,8 +59,19 @@ function AccountDetails({ account, accounts, disabled, onPosted }: {
     </>;
 }
 
-function AccountsForClient({ subjects, currency }: { subjects: boolean; currency: string }) {
+function AccountsForClient({ subjects, currency, timezone }: { subjects: boolean; currency: string; timezone: string }) {
     const { data: accounts, setData: setAccounts, loading, error, reload: reloadAccounts } = useAssetData(loadAccounts);
+    const month = clientToday(timezone).slice(0, 7);
+    // A subject's lifetime total says little; this month's amount is what it booked now.
+    const loadMonth = useCallback(async () => {
+        const [year, monthNumber] = month.split('-').map(Number);
+        const flows = await getAccountFlows({
+            startDate: `${month}-01`, endDate: `${month}-${String(new Date(year, monthNumber, 0).getDate()).padStart(2, '0')}`,
+            accountTypes: ['income', 'expense'], includeZero: true,
+        });
+        return new Map(flows.accounts.map((row) => [row.account_id, row.normal_balance_delta]));
+    }, [month]);
+    const thisMonth = useAssetData(subjects ? loadMonth : noFlows);
     const [selectedAccount, setSelectedAccount] = useState<AssetAccount | null>(null);
     const [creating, setCreating] = useState(false);
     const creation = useMutation();
@@ -70,7 +84,7 @@ function AccountsForClient({ subjects, currency }: { subjects: boolean; currency
         ? ['income', 'expense'].includes(type.value)
         : ['asset', 'liability', 'item'].includes(type.value));
     const visibleAccounts = accounts?.filter((account) => types.some((type) => type.value === account.account_type));
-    const columnCount = subjects ? 2 : 4;
+    const columnCount = subjects ? 3 : 4;
     const disabled = loading || Boolean(error) || updatingId !== null || creation.busy;
 
     useEffect(() => {
@@ -91,6 +105,8 @@ function AccountsForClient({ subjects, currency }: { subjects: boolean; currency
             setAccounts((rows) => rows?.map((row) => row.id === updated.id ? { ...row, is_active: updated.is_active } : row) ?? null);
             setConfirmation(`${account.name}を${updated.is_active ? '有効' : '無効'}にしました。`);
             reloadAccounts();
+            // The month's amounts cover active subjects only.
+            thisMonth.reload();
         } catch (failure: unknown) {
             if (mounted.current) setOperationError(`${account.name}の状態を変更できませんでした。${assetErrorMessage(failure)}`);
         } finally {
@@ -108,12 +124,13 @@ function AccountsForClient({ subjects, currency }: { subjects: boolean; currency
             {confirmation && <p role="status" className="rounded-md bg-[var(--studio-accent-soft)] p-3 text-sm text-[var(--studio-positive)]">{confirmation}</p>}
             {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">口座を読み込んでいます…</p>}
             {error && <p role="alert" className="text-sm text-[var(--studio-danger)]">口座一覧を取得できませんでした。{error}</p>}
+            {thisMonth.error && <p role="alert" className="text-sm text-[var(--studio-danger)]">今月の額を取得できませんでした。{thisMonth.error}</p>}
             {operationError && <p role="alert" className="text-sm text-[var(--studio-danger)]">{operationError}</p>}
             {visibleAccounts && (visibleAccounts.length ? (
                 <div className="overflow-x-auto rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)]">
                     <table className="w-full text-left text-sm" aria-busy={loading || updatingId !== null}>
                         <thead className="border-b border-[var(--studio-border)] text-xs text-[var(--studio-text-muted)]">
-                            <tr><th scope="col" className="px-5 py-3 font-medium">名称</th>{!subjects && <th scope="col" className="px-5 py-3 text-right font-medium">残高</th>}{!subjects && <th scope="col" className="px-5 py-3 font-medium">役割</th>}<th scope="col" className="px-5 py-3 font-medium">状態</th></tr>
+                            <tr><th scope="col" className="px-5 py-3 font-medium">名称</th>{subjects && <th scope="col" className="px-5 py-3 text-right font-medium">今月</th>}{!subjects && <th scope="col" className="px-5 py-3 text-right font-medium">残高</th>}{!subjects && <th scope="col" className="px-5 py-3 font-medium">役割</th>}<th scope="col" className="px-5 py-3 font-medium">状態</th></tr>
                         </thead>
                         {types.map((type) => {
                             const rows = visibleAccounts.filter((account) => account.account_type === type.value);
@@ -127,14 +144,11 @@ function AccountsForClient({ subjects, currency }: { subjects: boolean; currency
                                                 {account.name}
                                             </button> : account.name}</th>
                                             {/* A subject's total since its first entry is not a balance to reconcile. */}
+                                            {subjects && <td className="whitespace-nowrap px-5 py-3 text-right tabular-nums">{thisMonth.data?.has(account.id) ? formatCurrency(thisMonth.data.get(account.id) ?? 0, currency) : '—'}</td>}
                                             {!subjects && <td className="whitespace-nowrap px-5 py-3 text-right tabular-nums">{formatCurrency(account.balance, currency)}</td>}
                                             {!subjects && <td className="whitespace-nowrap px-5 py-3 text-[var(--studio-text-muted)]">{ROLE_LABELS[account.role] ?? '未設定'}</td>}
                                             <td className="px-5 py-3">
-                                                <button type="button" role="switch" aria-checked={account.is_active} aria-label={`${account.name}の有効状態`} disabled={disabled} onClick={(event) => { event.stopPropagation(); void toggleAccount(account); }} className="flex items-center gap-2 whitespace-nowrap rounded-md px-1 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)] disabled:cursor-not-allowed">
-                                                    <span aria-hidden="true" className={`flex h-5 w-9 items-center rounded-full px-0.5 ${account.is_active ? 'justify-end bg-[var(--studio-accent)]' : 'justify-start bg-[var(--studio-border-strong)]'}`}><span className="h-4 w-4 rounded-full bg-[var(--studio-surface)]" /></span>
-                                                    <span>{account.is_active ? '有効' : '無効'}</span>
-                                                    {updatingId === account.id && <span className="text-[var(--studio-text-muted)]">更新中…</span>}
-                                                </button>
+                                                <ActiveSwitch name={account.name} active={account.is_active} disabled={disabled} busy={updatingId === account.id} onToggle={() => void toggleAccount(account)} />
                                             </td>
                                         </tr>
                                     ))}
@@ -158,5 +172,6 @@ function AccountsForClient({ subjects, currency }: { subjects: boolean; currency
 export default function Accounts({ subjects = false }: { subjects?: boolean }) {
     const { clientId, currentClient } = useClient();
     // Client changes must discard pending confirmations and account-specific drafts.
-    return <AccountsForClient key={`${clientId}:${subjects}`} subjects={subjects} currency={currentClient?.general_settings?.currency || 'JPY'} />;
+    return <AccountsForClient key={`${clientId}:${subjects}`} subjects={subjects} currency={currentClient?.general_settings?.currency || 'JPY'}
+        timezone={currentClient?.general_settings?.timezone || 'UTC'} />;
 }
