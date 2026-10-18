@@ -16,7 +16,11 @@ export interface GoalBudgetOptions {
     create_capsules: number[];
     /** Confirmed handovers: claim this much of an account for a near event's capsule. */
     handovers: GoalBudgetHandoverChoice[];
+    /** U1: the order the monthly savings funds the groups in; null = the default order. The rest is always last. */
+    funding_order: GoalBudgetFundingGroup[] | null;
 }
+
+export type GoalBudgetFundingGroup = 'existing' | 'products' | 'near';
 
 export interface GoalBudgetHandoverChoice {
     event_id: number;
@@ -106,7 +110,8 @@ export interface GoalBudgetChange {
 
 export interface GoalBudgetPreview {
     scenario: { id: number; name: string; monthly_savings: number; monthly_savings_is_default: boolean; annual_return: number; after_tax_return: number };
-    options: GoalBudgetOptions;
+    /** As normalized by the server: funding_order is always the full list. */
+    options: GoalBudgetOptions & { funding_order: GoalBudgetFundingGroup[] };
     periods: string[];
     savings: {
         scenario_amount: number;
@@ -118,8 +123,13 @@ export interface GoalBudgetPreview {
         capsule_amount: number;
         account_amount: number;
         shortfall: number;
+        /** In funding order: what each group needs in the first month and what it receives. */
+        groups: Array<{ key: GoalBudgetFundingGroup; need: number; amount: number }>;
+        /** U2: with a definition as the destination, each later month's difference from its own rest. */
+        definition_differences: Array<{ period: string; difference: number }>;
         account_required: boolean;
         suggested_account_id: number | null;
+        suggested_funding_order: GoalBudgetFundingGroup[];
     };
     events: GoalBudgetEvent[];
     existing: GoalBudgetExisting[];

@@ -62,11 +62,13 @@ export default function GoalSavingsBreakdown({ scenario, funded, budget, currenc
             </tr>)}
             {events.length + products.length === 0 && <tr><td colSpan={6} className="px-5 py-3 text-[var(--studio-text-muted)]">ライフイベントはありません。</td></tr>}
         </DataTable>
+        {/* U5: the rule cannot judge preconditions (they read the allocation itself). */}
+        {budget?.events.some((row) => row.source === 'rule' && row.kind !== 'product') && <p className="text-xs text-[var(--studio-text-muted)]">「（計算上）」の月額は前提条件を判定していません。前提条件は予算に反映するときに判定します。</p>}
         {budget?.goal && <details>
             <summary className={summaryClass}>積立の根拠</summary>
             <div className="mt-2 space-y-2 text-xs text-[var(--studio-text-muted)]">
                 {budget.reflection && <p>前回の予算反映：{formatDate(budget.reflection.applied_at)}（{budget.reflection.start_period}〜{budget.reflection.end_period}）。反映した月は予算の反映どおりの金額、「（計算上）」はまだ反映していない計算上の配分です。</p>}
-                <p>月の積立は 1 つの総額で、近いライフイベントは不足額 ÷ 残り月数を取り置きに、残りは遠いライフイベントで優先度に応じて分けます（予算への反映と同じ配り方です）。予算の積立は、今月の取り置きと資産口座への配分の合計です。前提条件は予算に反映するときに判定するため、まだ反映していないイベントは条件つきでも配分に含めて表示します。</p>
+                <p>月の積立は 1 つの総額で、近いライフイベントは不足額 ÷ 残り月数を取り置きに、残りは遠いライフイベントで優先度に応じて分けます（予算への反映と同じ配り方で、足りないときは前回の反映の優先順位で後ろのものから削ります）。予算の積立は、今月の取り置きと資産口座への配分の合計です。まだ反映していないイベントは、条件つきでも配分に含めて表示します。</p>
             </div>
         </details>}
     </section>;

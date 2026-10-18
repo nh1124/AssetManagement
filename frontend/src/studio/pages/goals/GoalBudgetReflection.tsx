@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { isAxiosError } from 'axios';
 import { getAccounts } from '../../../api';
-import { applyGoalBudget, previewGoalBudget, type GoalBudgetEvent, type GoalBudgetOptions, type GoalBudgetPreview, type GoalBudgetResult } from '../../../api/goalBudget';
+import { applyGoalBudget, previewGoalBudget, type GoalBudgetEvent, type GoalBudgetFundingGroup, type GoalBudgetOptions, type GoalBudgetPreview, type GoalBudgetResult } from '../../../api/goalBudget';
 import { useClient } from '../../../context/ClientContext';
 import type { Account } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
@@ -9,13 +9,15 @@ import Overlay from '../../components/Overlay';
 import { clientToday, formatDate, useTimezone } from '../../datetime';
 import { assetErrorMessage } from '../../useResource';
 import { DataTable, Feedback, Field } from '../db/Database';
-import { inputClass, primaryClass } from '../db/forms';
+import { buttonClass, inputClass, primaryClass } from '../db/forms';
 import { useNotifications } from '../../notificationContext';
 import GoalHandovers from './GoalHandovers';
 import { REFLECTIONS } from './presentation';
 
 const NEAR_YEARS = [1, 3, 5, 10];
 const EXISTING_KINDS = { definition: '定義', manual: '手入力', capsule: '取り置き' };
+const DEFAULT_ORDER: GoalBudgetFundingGroup[] = ['existing', 'products', 'near'];
+const GROUPS: Record<GoalBudgetFundingGroup, string> = { existing: '予算にある積立', products: '消耗品・固定資産', near: '近いライフイベントの取り置き' };
 const sectionClass = 'space-y-3 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-bg)] p-4';
 
 function Heading({ step, title, note }: { step: number; title: string; note?: string }) {
@@ -50,7 +52,7 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
     const currency = currentClient?.general_settings?.currency || 'JPY';
     const [options, setOptions] = useState<GoalBudgetOptions>(() => ({
         savings_source: 'scenario', near_years: 5, start_period: initialPeriod ?? clientToday(timezone).slice(0, 7),
-        months: 1, savings_account_id: null, savings_definition_id: null, uncounted: [], create_capsules: [], handovers: [],
+        months: 1, savings_account_id: null, savings_definition_id: null, uncounted: [], create_capsules: [], handovers: [], funding_order: null,
     }));
     const [accounts, setAccounts] = useState<Account[]>([]);
     const [preview, setPreview] = useState<GoalBudgetPreview | null>(null);
@@ -83,9 +85,12 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
                     defaulted.current = true;
                     const missing = result.events.filter((row) => row.status === 'no_capsule').map((row) => row.event_id);
                     const account = result.savings.suggested_account_id;
-                    if (missing.length || account !== null) {
+                    // The last reflection's order stays the user's until changed here.
+                    const order = result.savings.suggested_funding_order;
+                    const reordered = order.join() !== result.options.funding_order.join();
+                    if (missing.length || account !== null || reordered) {
                         // Creating capsules is the default answer, as when choosing a goal.
-                        setOptions((previous) => ({ ...previous, create_capsules: missing, savings_account_id: previous.savings_account_id ?? account }));
+                        setOptions((previous) => ({ ...previous, create_capsules: missing, savings_account_id: previous.savings_account_id ?? account, funding_order: previous.funding_order ?? order }));
                         return;
                     }
                 }
@@ -127,6 +132,12 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
         setMessage('');
         const id = value ? Number(value.slice(2)) : null;
         setOptions((previous) => ({ ...previous, savings_account_id: value.startsWith('a:') ? id : null, savings_definition_id: value.startsWith('d:') ? id : null }));
+    };
+    const order = options.funding_order ?? preview?.options.funding_order ?? DEFAULT_ORDER;
+    const move = (index: number, step: -1 | 1) => {
+        const next = [...order];
+        [next[index], next[index + step]] = [next[index + step], next[index]];
+        choose('funding_order', next);
     };
     const definitions = preview?.existing.filter((row) => row.kind === 'definition' && row.updatable) ?? [];
     const changed = preview?.changes.filter((row) => row.changed) ?? [];
@@ -187,17 +198,39 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
                     <Field label="反映する期間"><select value={options.months} onChange={(event) => choose('months', Number(event.target.value))} className={inputClass}>
                         {MONTHS.map((months) => <option key={months} value={months}>{months}か月</option>)}
                     </select></Field>
+                    <fieldset className="space-y-2 sm:col-span-2">
+                        <legend className="text-sm text-[var(--studio-text-muted)]">積立の優先順位<span className="ml-2 text-xs">月の積立が足りないときは、下のものから削ります</span></legend>
+                        <ol className="space-y-1 text-sm">
+                            {order.map((group, index) => <li key={group} className="flex items-center gap-2">
+                                <span className="w-5 text-right tabular-nums text-[var(--studio-text-muted)]">{index + 1}</span>
+                                <span className="flex-1">{GROUPS[group]}</span>
+                                <button type="button" aria-label={`${GROUPS[group]}を上へ`} disabled={index === 0} onClick={() => move(index, -1)} className={buttonClass}>↑</button>
+                                <button type="button" aria-label={`${GROUPS[group]}を下へ`} disabled={index === order.length - 1} onClick={() => move(index, 1)} className={buttonClass}>↓</button>
+                            </li>)}
+                            <li className="flex items-center gap-2 text-[var(--studio-text-muted)]">
+                                <span className="w-5 text-right tabular-nums">{order.length + 1}</span>
+                                <span className="flex-1">残りの積立先（常に最後）</span>
+                            </li>
+                        </ol>
+                    </fieldset>
                 </fieldset>
             </section>
             <Feedback loading={loading} error={error} message={message} />
             {preview && savings && <>
                 <section className={sectionClass}>
                     <Heading step={2} title="毎月の積立" note={`ゴール：${preview.scenario.name}`} />
-                    <p className="text-sm tabular-nums">{formatCurrency(savings.chosen_amount, currency)} ＝ 予算にある積立 {formatCurrency(savings.existing_amount, currency)}{savings.product_amount > 0 && <> ＋ 消耗品・固定資産 {formatCurrency(savings.product_amount, currency)}</>} ＋ 取り置き {formatCurrency(savings.capsule_amount, currency)} ＋ 残りの積立先 {formatCurrency(savings.account_amount, currency)}</p>
-                    {savings.shortfall > 0 && <p role="alert" className="text-sm text-[var(--studio-warning)]">予算にある積立と近いライフイベントの取り置きだけで、毎月の積立額を {formatCurrency(savings.shortfall, currency)} 超えています。</p>}
+                    {/* Listed in funding order; the rest is always last. */}
+                    <p className="text-sm tabular-nums">{formatCurrency(savings.chosen_amount, currency)} ＝ {savings.groups.filter((group) => group.key !== 'products' || group.need > 0).map((group) => `${group.key === 'near' ? '取り置き' : GROUPS[group.key]} ${formatCurrency(group.amount, currency)} ＋ `).join('')}残りの積立先 {formatCurrency(savings.account_amount, currency)}</p>
+                    {savings.shortfall > 0 && <div role="alert" className="space-y-1 text-sm text-[var(--studio-warning)]">
+                        <p>毎月の積立が {formatCurrency(savings.shortfall, currency)} 足りないため、優先順位の低いものから削っています。</p>
+                        <ul className="list-disc pl-5 text-xs">
+                            {savings.groups.filter((group) => group.amount < group.need).map((group) => <li key={group.key}>{GROUPS[group.key]}：{formatCurrency(group.need, currency)} のうち {formatCurrency(group.amount, currency)}{group.key === 'existing' ? 'だけを積立に数えます（予算の行は書き換えません）' : 'を予算に入れます（行ごとに金額の割合で按分）'}</li>)}
+                        </ul>
+                    </div>}
+                    {savings.definition_differences.length > 0 && <p role="note" className="text-xs text-[var(--studio-warning)]">定義は毎月同じ金額のため、初月の残り {formatCurrency(savings.account_amount, currency)} に揃えます。2か月目以降は本来の額との差があります：{savings.definition_differences.map((row) => `${row.period} ${row.difference > 0 ? '+' : ''}${formatCurrency(row.difference, currency)}`).join('、')}</p>}
                     {savings.account_required && <p className="text-xs text-[var(--studio-text-muted)]">残りの積立先を選ぶと、残りの {formatCurrency(savings.account_amount, currency)} も予算に入ります。</p>}
                     {preview.existing.length > 0 && <>
-                        <p className="text-xs text-[var(--studio-text-muted)]">予算に既にある積立は、毎月の積立額の一部として先に差し引きます（同じお金を二重に計画しないため）。積立ではない移動は外してください。</p>
+                        <p className="text-xs text-[var(--studio-text-muted)]">予算に既にある積立は、毎月の積立額の一部として差し引きます（同じお金を二重に計画しないため）。積立ではない移動は外してください。</p>
                         <DataTable columns={['積立に数える', '種類', '名称', '口座', `月額（${preview.periods[0]}）`]}>
                             {preview.existing.map((row) => <tr key={row.key}>
                                 <td className="px-5 py-3">{row.destination ? <span className="text-xs text-[var(--studio-accent)]">残りの積立先</span> : <input type="checkbox" aria-label={`${row.name}を積立に数える`} disabled={busy} checked={row.counted} onChange={(event) => toggleCounted(row.key, event.target.checked)} />}</td>
