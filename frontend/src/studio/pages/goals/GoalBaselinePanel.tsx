@@ -31,32 +31,36 @@ export default function GoalBaselinePanel({ currency }: { currency: string }) {
     const axisStyle = { fill: 'var(--studio-text-muted)', fontSize: 11 };
     const rows = (data?.rows ?? []).map((row) => ({ ...row, band: [row.p10, row.p90] }));
     const latest = data?.latest;
-    return <section className="space-y-3 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-                <h3 className="font-semibold">基準線と実績</h3>
-                {data?.baseline && <p className="text-xs text-[var(--studio-text-muted)]">基準線：{data.baseline.scenario_name}（{formatDate(data.baseline.anchor_date)}、{REASONS[data.baseline.reason]}）／ 月の積立 {formatCurrency(data.baseline.assumptions.monthly_savings, currency)}・年利 {data.baseline.assumptions.annual_return}%</p>}
-            </div>
-            {data?.baseline && <button type="button" disabled={mutation.busy} onClick={() => void capture(true)} className={buttonClass}>基準線を作り直す</button>}
-        </div>
+    const state = !data ? null : !data.baseline ? '基準線がありません'
+        : !latest ? null
+            : latest.below_p10 ? '慎重な想定（P10）を下回っています' : latest.difference >= 0 ? '基準を上回っています' : '基準の範囲内です';
+    // Closed by default; the state and a shortfall stay visible without opening it.
+    return <section className="space-y-2">
+        <details className="space-y-3 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
+        <summary className="cursor-pointer">
+            <h3 className="inline font-semibold">基準線と実績</h3>
+            {state && <span className={`ml-3 text-xs ${latest?.below_p10 ? 'text-[var(--studio-warning)]' : 'text-[var(--studio-text-muted)]'}`}>{state}</span>}
+        </summary>
+        {data?.baseline && <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs text-[var(--studio-text-muted)]">基準線：{data.baseline.scenario_name}（{formatDate(data.baseline.anchor_date)}、{REASONS[data.baseline.reason]}）／ 月の積立 {formatCurrency(data.baseline.assumptions.monthly_savings, currency)}・年利 {data.baseline.assumptions.annual_return}%</p>
+            <button type="button" disabled={mutation.busy} onClick={() => void capture(true)} className={buttonClass}>基準線を作り直す</button>
+        </div>}
         <Feedback loading={resource.loading} error={resource.error || mutation.error} message={mutation.message} />
         {data && !data.baseline && <div className="space-y-3">
             <p className="text-sm text-[var(--studio-text-muted)]">基準線がありません。今のゴールの予測を基準線として保存すると、毎月の実際の純資産と比べられます（ゴールを選んだときは自動で保存されます）。</p>
             <button type="button" disabled={mutation.busy} onClick={() => void capture(false)} className={primaryClass}>今の予測を基準線にする</button>
         </div>}
         {data?.baseline && <>
-            {latest && <dl className="grid gap-3 sm:grid-cols-4">
+            {latest && <dl className="grid gap-3 sm:grid-cols-3">
                 {[
                     [`実績（${latest.period}・${latest.closed ? '確定' : '暫定'}）`, formatCurrency(latest.actual, currency)],
                     ['基準の中央値', formatCurrency(latest.p50, currency)],
                     ['差', `${latest.difference >= 0 ? '+' : ''}${formatCurrency(latest.difference, currency)}`],
-                    ['状態', latest.below_p10 ? '慎重な想定（P10）を下回っています' : latest.difference >= 0 ? '基準を上回っています' : '基準の範囲内です'],
                 ].map(([label, value], index) => <div key={label} className="rounded-lg border border-[var(--studio-border)] p-3">
                     <dt className="text-xs text-[var(--studio-text-muted)]">{label}</dt>
-                    <dd className={`mt-1 font-semibold tabular-nums ${index === 3 && latest.below_p10 ? 'text-[var(--studio-warning)]' : index === 2 && latest.difference < 0 ? 'text-[var(--studio-danger)]' : ''}`}>{value}</dd>
+                    <dd className={`mt-1 font-semibold tabular-nums ${index === 2 && latest.difference < 0 ? 'text-[var(--studio-danger)]' : ''}`}>{value}</dd>
                 </div>)}
             </dl>}
-            {latest?.below_p10 && <p role="alert" className="text-sm text-[var(--studio-warning)]">実績が基準線の慎重な想定を下回っています。積立額の見直し、ライフイベントの時期の変更、別シナリオとの比較を検討してください。</p>}
             <div role="img" aria-label={`基準線と実績の純資産。横軸：月、縦軸：金額（${currency}）。基準のP10〜P90と中央値、月末の実績（塗りつぶしは締め済み、白抜きは暫定）`} className="h-72 min-w-0">
                 <ResponsiveContainer width="100%" height="100%">
                     <ComposedChart data={rows} margin={{ top: 20, right: 20, bottom: 28, left: 20 }} accessibilityLayer>
@@ -73,5 +77,7 @@ export default function GoalBaselinePanel({ currency }: { currency: string }) {
             </div>
             <p className="text-xs text-[var(--studio-text-muted)]">実績は有効な口座の月末の純資産です。月次の締めをした月は確定（塗りつぶし）、それ以外は暫定（白抜き）で、今月は今日時点の値です。</p>
         </>}
+        </details>
+        {latest?.below_p10 && <p role="alert" className="text-sm text-[var(--studio-warning)]">実績が基準線の慎重な想定を下回っています。積立額の見直し、ライフイベントの時期の変更、別シナリオとの比較を検討してください。</p>}
     </section>;
 }

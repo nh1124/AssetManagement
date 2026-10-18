@@ -436,6 +436,8 @@ export interface MonthlyPlanLine {
         source?: string;
     }>;
     suggested_status?: 'synced' | 'diff' | null;
+    /** Capsule allocation rows: the capsule's whole monthly saving (products' recommendation when product-funded). */
+    capsule_monthly_saving?: number;
     sync_status?: 'synced' | 'missing' | 'diff' | null;
     registry_amount?: number;
     registry_entry_ids?: number[];

@@ -75,7 +75,8 @@ api.interceptors.response.use(
     (error) => {
         const hadToken = Boolean(localStorage.getItem('finance_access_token'));
         const url = String(error.config?.url || '');
-        const isAuthFlow = url.startsWith('/auth/login') || url.startsWith('/auth/mfa/login/verify') || url.startsWith('/auth/register');
+        // A wrong step-up code also answers 401; it must not sign the user out.
+        const isAuthFlow = url.startsWith('/auth/login') || url.startsWith('/auth/mfa/login/verify') || url.startsWith('/auth/register') || url.startsWith('/auth/reauth');
         if (error.response?.status === 401 && hadToken && !isAuthFlow) {
             localStorage.removeItem('finance_access_token');
             localStorage.removeItem('finance_client_id');

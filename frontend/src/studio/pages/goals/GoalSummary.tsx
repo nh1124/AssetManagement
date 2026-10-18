@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react';
 import { Pencil, Wallet } from 'lucide-react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { Area, CartesianGrid, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { getLifeEventsWithProgress } from '../../../api';
 import { getGoalBudgetStatus } from '../../../api/goalBudget';
@@ -8,18 +8,15 @@ import { compare, list, type ProjectedLifeScenario } from '../../../api/lifeScen
 import { useClient } from '../../../context/ClientContext';
 import type { LifeEvent } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
-import { clientToday, formatDate, useTimezone } from '../../datetime';
+import { clientToday, useTimezone } from '../../datetime';
 import { useResource } from '../../useResource';
-import { DataTable, Feedback } from '../db/Database';
+import { Feedback } from '../db/Database';
 import { buttonClass, primaryClass } from '../db/forms';
 import GoalBaselinePanel from './GoalBaselinePanel';
 import GoalReflectionNotice from './GoalReflectionNotice';
 import GoalSavingsBreakdown from './GoalSavingsBreakdown';
 import GoalBudgetReflection from './GoalBudgetReflection';
 import NoLifeEvents from './NoLifeEvents';
-import { goalPercent } from './presentation';
-
-const linkClass = 'rounded text-[var(--studio-accent)] hover:underline focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)]';
 
 function Projection({ scenario, currency }: { scenario: ProjectedLifeScenario; currency: string }) {
     const axisStyle = { fill: 'var(--studio-text-muted)', fontSize: 11 };
@@ -53,7 +50,6 @@ function Projection({ scenario, currency }: { scenario: ProjectedLifeScenario; c
 }
 
 function ScenarioSummary({ scenario, events, currency }: { scenario: ProjectedLifeScenario; events: LifeEvent[]; currency: string }) {
-    const navigate = useNavigate();
     const [reflecting, setReflecting] = useState(false);
     // A reflection changes the breakdown and may move the baseline; reload both after it.
     const [version, setVersion] = useState(0);
@@ -62,14 +58,13 @@ function ScenarioSummary({ scenario, events, currency }: { scenario: ProjectedLi
     // The status feeds the breakdown; the reminders are the goal-reflection notification.
     const loadStatus = useCallback(() => getGoalBudgetStatus(period), [period]);
     const status = useResource(loadStatus);
-    const progress = new Map(events.map((event) => [event.id, event]));
-    const rows = [...scenario.events].sort((a, b) => (a.resolved_date ?? '\uffff').localeCompare(b.resolved_date ?? '\uffff') || a.id - b.id);
+    const progress = new Map(events.map((event) => [event.id, event.current_funded ?? 0]));
     // Income events are inflows, not funding needs; keep them in the chart and table only.
-    const expenses = rows.filter((event) => event.direction === 'expense');
+    const expenses = scenario.events.filter((event) => event.direction === 'expense');
     const required = expenses.reduce((total, event) => total + event.target_amount, 0);
     // Only claims belonging to this branch count; missing progress contributes zero.
-    const funded = expenses.reduce((total, event) => total + (progress.get(event.id)?.current_funded ?? 0), 0);
-    const lastDate = rows.filter((event) => event.resolved_date !== null).at(-1)?.resolved_date;
+    const funded = expenses.reduce((total, event) => total + (progress.get(event.id) ?? 0), 0);
+    const budget = status.data?.goal ? status.data : null;
     return <>
         <div className="flex items-center justify-between gap-3">
             <h2 className="font-semibold">{scenario.name}</h2>
@@ -80,37 +75,23 @@ function ScenarioSummary({ scenario, events, currency }: { scenario: ProjectedLi
         </div>
         <GoalReflectionNotice />
         {reflecting && <GoalBudgetReflection onClose={() => { setReflecting(false); setVersion((value) => value + 1); status.reload(); }} />}
-        <dl className="grid gap-4 sm:grid-cols-3 lg:grid-cols-5">
+        <dl className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             {[
-                ['合計金額', formatCurrency(required, currency)],
-                ['確保済み合計', formatCurrency(funded, currency)],
-                ['不足', formatCurrency(Math.max(0, required - funded), currency)],
-                ['最終目標日', lastDate ? formatDate(lastDate) : '未設定'],
-                ['イベント数', `${rows.length}件`],
-            ].map(([label, value]) => <div key={label} className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-4"><dt className="text-xs text-[var(--studio-text-muted)]">{label}</dt><dd className="mt-2 font-semibold tabular-nums">{value}</dd></div>)}
+                ['必要額', formatCurrency(required, currency), null],
+                ['確保額', formatCurrency(funded, currency), null],
+                ['不足', formatCurrency(Math.max(0, required - funded), currency), null],
+                ['毎月の積立', formatCurrency(scenario.monthly_savings, currency),
+                    budget?.budget ? `今月の予算 ${formatCurrency(budget.budget.total, currency)}（差 ${budget.budget.difference >= 0 ? '+' : ''}${formatCurrency(budget.budget.difference, currency)}）` : null],
+            ].map(([label, value, note]) => <div key={label} className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-4">
+                <dt className="text-xs text-[var(--studio-text-muted)]">{label}</dt>
+                <dd className="mt-2 font-semibold tabular-nums">{value}</dd>
+                {note && <dd className="mt-1 text-xs text-[var(--studio-text-muted)] tabular-nums">{note}</dd>}
+            </div>)}
         </dl>
         <Projection scenario={scenario} currency={currency} />
         <Feedback error={status.error} />
-        {status.data?.goal && <GoalSavingsBreakdown data={status.data} currency={currency} />}
+        <GoalSavingsBreakdown scenario={scenario} funded={progress} budget={budget} currency={currency} />
         <GoalBaselinePanel key={`baseline-${version}`} currency={currency} />
-        <section className="space-y-3">
-            <h3 className="font-semibold">ライフイベント</h3>
-            <DataTable columns={['名称', '種別', '日付', '金額', '確保済み', '進捗']}>
-                {rows.map((item) => {
-                    const income = item.direction === 'income';
-                    const claimed = progress.get(item.id)?.current_funded ?? 0;
-                    return <tr key={item.id} className="cursor-pointer hover:bg-[var(--studio-accent-soft)]" onClick={() => navigate(`/goals/scenarios/${scenario.id}/events/${item.id}`)}>
-                        <th scope="row" className="px-5 py-3 font-medium"><Link to={`/goals/scenarios/${scenario.id}/events/${item.id}`} onClick={(event) => event.stopPropagation()} className={linkClass}>{item.name}</Link></th>
-                        <td className="whitespace-nowrap px-5 py-3">{income ? '収入' : '支出'}</td>
-                        <td className="whitespace-nowrap px-5 py-3">{item.resolved_date ? formatDate(item.resolved_date) : '未設定'}</td>
-                        <td className="whitespace-nowrap px-5 py-3 tabular-nums">{formatCurrency(item.target_amount, currency)}</td>
-                        <td className="whitespace-nowrap px-5 py-3 tabular-nums">{income ? '—' : formatCurrency(claimed, currency)}</td>
-                        {/* A zero target has no percentage to report; 0% would read as no progress. */}
-                        <td className="whitespace-nowrap px-5 py-3 tabular-nums">{income ? '—' : goalPercent(item.target_amount > 0 ? claimed / item.target_amount * 100 : undefined)}</td>
-                    </tr>;
-                })}
-            </DataTable>
-        </section>
     </>;
 }
 
