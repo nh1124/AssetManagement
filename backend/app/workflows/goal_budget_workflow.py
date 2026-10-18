@@ -822,6 +822,61 @@ def status(db: Session, client_id: int, period: str) -> dict:
         "reminders": _reminders(goal, total, events, records, period, budget_total),
     }
 
+def savings_check(db: Session, client_id: int, period: str) -> dict:
+    """U9: the month's budgeted savings against everything that needs saving monthly.
+
+    Read-only. The need is the reflection's own breakdown of this one month before any
+    group is cut: savings the user put in the budget (definitions, hand-entered
+    allocations, capsules the goal does not fund), the product reserves, the near
+    events' capsules and the rest of the goal's monthly savings (its savings row, far
+    events). Each budget row falls in one group, so nothing is counted twice. The
+    savings source, range and uncounted savings are those of the reflection covering
+    the month, or the goal's latest. Without a goal only the first two are needed.
+    """
+    currency = money_client_currency(db, client_id)
+    plan_id = find_budget_plan_id(db, client_id)
+    budgeted = sum(line["resolved_amount"] for line in _budget_rows(db, client_id, period, plan_id))
+    goal = get_goal(db, client_id)
+    order, near, rest = list(DEFAULT_FUNDING_ORDER), [], 0.0
+    if goal is None:
+        reserves = reserve_totals_by_capsule(db, client_id, _first_day(period))
+        capsules = {capsule_id: capsule_service.get_capsule(db, client_id, capsule_id) for capsule_id in sorted(reserves)}
+        products = [{"name": capsule.name, "amount": round(reserves[capsule_id]["monthly"], 2)}
+                    for capsule_id, capsule in capsules.items() if capsule is not None]
+        existing = [{"name": row["name"], "amount": _major(row["amounts"][period], currency)}
+                    for row in _existing_savings(db, client_id, [period], plan_id, set(reserves), currency)]
+    else:
+        covering, near_years, order = reflection_settings(db, client_id, goal.id, period)
+        latest = goal_budget_record.latest(db, client_id)
+        source = covering or (latest if latest is not None and latest.scenario_id == goal.id else None)
+        chosen = (source.options or {}) if source is not None else {}
+        planned = preview(db, client_id, {
+            "savings_source": chosen.get("savings_source", "scenario"), "near_years": near_years,
+            "start_period": period, "months": 1, "savings_account_id": None, "savings_definition_id": None,
+            "uncounted": chosen.get("uncounted") or [], "create_capsules": [], "handovers": [],
+            "funding_order": list(order),
+        })
+        savings = planned["savings"]
+        products = [{"name": row["name"], "amount": row["monthly"]} for row in planned["products"]]
+        # Uncounted savings are still budgeted savings; they only leave more for the goal's rest.
+        existing = [{"name": row["name"], "amount": row["amount"]} for row in planned["existing"]]
+        near = [{"name": row["name"], "amount": row["monthly_required"]} for row in planned["events"]
+                if row["direction"] == "expense" and row["status"] == "reflected" and row["near"]]
+        rest = max(0.0, savings["chosen_amount"] - sum(group["need"] for group in savings["groups"]))
+    items = {"existing": existing, "products": products, "near": near}
+    groups = [{"key": key, "need": round(sum(item["amount"] for item in items[key]), 2),
+               "items": [item for item in items[key] if item["amount"]]} for key in order]
+    groups.append({"key": "rest", "need": round(rest, 2), "items": []})
+    need = sum(group["need"] for group in groups)
+    return {
+        "period": period,
+        "goal": None if goal is None else {"name": goal.name, "monthly_savings": savings["chosen_amount"],
+                                           "savings_source": planned["options"]["savings_source"]},
+        "budgeted": round(budgeted, 2),
+        "need": round(need, 2),
+        "shortfall": round(max(0.0, need - budgeted), 2),
+        "groups": groups,
+    }
 
 
 def reflection_notifications(db: Session, client_id: int, period: str) -> list[dict]:

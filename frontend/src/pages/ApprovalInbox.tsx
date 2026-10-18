@@ -61,7 +61,6 @@ export default function ApprovalInboxPage() {
     const [selectedId, setSelectedId] = useState<number | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [busyAction, setBusyAction] = useState<string | null>(null);
-    const [stepPassword, setStepPassword] = useState('');
     const [stepCode, setStepCode] = useState('');
     const [stepRecoveryCode, setStepRecoveryCode] = useState('');
 
@@ -120,11 +119,9 @@ export default function ApprovalInboxPage() {
             async () => {
                 if (!needsStepUp) return approveAiChangeRequest(selected.id);
                 const step = await reauth({
-                    current_password: stepPassword || undefined,
                     code: stepCode || undefined,
                     recovery_code: stepRecoveryCode || undefined,
                 });
-                setStepPassword('');
                 setStepCode('');
                 setStepRecoveryCode('');
                 return approveAiChangeRequest(selected.id, { step_up_token: step.step_up_token });
@@ -249,7 +246,7 @@ export default function ApprovalInboxPage() {
                                     <button
                                         type="button"
                                         onClick={approveSelected}
-                                        disabled={!canApprove || Boolean(busyAction) || (needsStepUp && !stepPassword && !stepCode && !stepRecoveryCode)}
+                                        disabled={!canApprove || Boolean(busyAction) || (needsStepUp && !stepCode && !stepRecoveryCode)}
                                         className="flex items-center gap-2 border border-emerald-500/50 px-3 py-2 text-xs text-emerald-300 hover:bg-emerald-500/10 disabled:opacity-50"
                                     >
                                         <CheckCircle2 size={14} />
@@ -280,16 +277,9 @@ export default function ApprovalInboxPage() {
                                 <div className="border border-amber-500/30 bg-amber-950/10 p-3">
                                     <div className="mb-2 flex items-center gap-2 text-xs font-medium text-amber-200">
                                         <AlertTriangle size={14} />
-                                        Step-up required before approval
+                                        承認には MFA が必要です（未設定ならデスクトップの 設定 › MFA で設定）
                                     </div>
-                                    <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
-                                        <input
-                                            type="password"
-                                            value={stepPassword}
-                                            onChange={(event) => setStepPassword(event.target.value)}
-                                            placeholder="Current password"
-                                            className="border border-slate-700 bg-slate-950 px-3 py-2 text-xs outline-none focus:border-amber-500"
-                                        />
+                                    <div className="grid grid-cols-1 gap-2 md:grid-cols-2">
                                         <input
                                             type="text"
                                             value={stepCode}

@@ -26,6 +26,13 @@ def get_mfa_setting(db: Session, client: models.Client, create: bool = False) ->
     return setting
 
 
+def mfa_enabled(db: Session, client_id: int) -> bool:
+    return db.query(models.ClientMfaSetting.id).filter(
+        models.ClientMfaSetting.client_id == client_id,
+        models.ClientMfaSetting.enabled.is_(True),
+    ).first() is not None
+
+
 def mfa_status(db: Session, client: models.Client) -> dict:
     setting = get_mfa_setting(db, client)
     remaining = db.query(models.ClientRecoveryCode).filter(

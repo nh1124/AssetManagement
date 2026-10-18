@@ -310,13 +310,10 @@ def reauth(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    if not mfa_service.verify_reauth_factor(
-        db,
-        current_client,
-        current_password=req.current_password,
-        code=req.code,
-        recovery_code=req.recovery_code,
-    ):
+    # Step-up is MFA only: a password never stands in for the second factor.
+    if not mfa_service.mfa_enabled(db, current_client.id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="MFA setup required")
+    if not mfa_service.verify_mfa_factor(db, current_client, code=req.code, recovery_code=req.recovery_code):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Reauthentication required")
     return _issue_step_up_token(current_client)
 

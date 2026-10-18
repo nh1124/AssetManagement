@@ -20,6 +20,16 @@ def status(
     return workflow.status(db, current_client.id, period)
 
 
+@router.get("/savings-check")
+def savings_check(
+    period: str = Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$"),
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    """U9: the month's budgeted savings against the monthly need, with the breakdown; nothing is saved."""
+    return workflow.savings_check(db, current_client.id, period)
+
+
 @router.post("/preview")
 def preview(
     payload: schemas.GoalBudgetOptions,

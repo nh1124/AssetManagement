@@ -12,9 +12,8 @@ type RequestAction = 'approve' | 'apply' | 'reject';
 const FILTERS: StatusFilter[] = ['pending', 'approved', 'applied', 'rejected'];
 const ACTION_LABELS: Record<RequestAction, string> = { approve: '承認', apply: '適用', reject: '却下' };
 
-/** The step-up factor the backend accepts: an authenticator or recovery code, or the password without MFA. */
-function stepUpFactor(value: string, mfaEnabled: boolean) {
-    if (!mfaEnabled) return { current_password: value };
+/** The step-up factor the backend accepts: an authenticator code or a recovery code (MFA only). */
+function stepUpFactor(value: string) {
     return /^\d{6}$/.test(value) ? { code: value } : { recovery_code: value };
 }
 
@@ -32,7 +31,7 @@ function RequestList({ status, currency, mfaEnabled }: { status: StatusFilter; c
         // Critical requests need step-up too; never approve them without a token.
         const needsMfa = request.requires_mfa || request.risk === 'critical';
         const factor = (factors[request.id] ?? '').trim();
-        if (action === 'approve' && (request.status !== 'pending' || (needsMfa && (!factor || mfaEnabled === null)))) return;
+        if (action === 'approve' && (request.status !== 'pending' || (needsMfa && (!factor || mfaEnabled !== true)))) return;
         if (action === 'apply' && request.status !== 'approved') return;
         if (action === 'reject' && request.status !== 'pending' && request.status !== 'approved') return;
         inFlight.current = true;
@@ -43,9 +42,9 @@ function RequestList({ status, currency, mfaEnabled }: { status: StatusFilter; c
             let stepUpToken: string | undefined;
             if (action === 'approve' && needsMfa) {
                 try {
-                    stepUpToken = (await reauth(stepUpFactor(factor, mfaEnabled === true))).step_up_token;
+                    stepUpToken = (await reauth(stepUpFactor(factor))).step_up_token;
                 } catch {
-                    setOperationError(mfaEnabled ? '認証コードが正しくありません。' : 'パスワードが正しくありません。');
+                    setOperationError('認証コードが正しくありません。');
                     return;
                 } finally {
                     // A one-time code is spent either way; never keep a secret in state.
@@ -75,7 +74,8 @@ function RequestList({ status, currency, mfaEnabled }: { status: StatusFilter; c
             {data && (data.length ? data.map((request) => {
                 const needsMfa = request.requires_mfa || request.risk === 'critical';
                 const disabled = loading || Boolean(error) || busy !== null || (needsMfa && mfaEnabled === null);
-                const stepUp = needsMfa && request.status === 'pending' && mfaEnabled !== null;
+                const stepUp = needsMfa && request.status === 'pending' && mfaEnabled === true;
+                const mfaMissing = needsMfa && request.status === 'pending' && mfaEnabled === false;
                 return (
                     <article key={request.id} className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5" aria-busy={busy?.id === request.id}>
                         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -86,15 +86,16 @@ function RequestList({ status, currency, mfaEnabled }: { status: StatusFilter; c
                             {Object.entries(request.target_ref).map(([key, value]) => <div key={key} className="flex gap-2"><dt className="text-[var(--studio-text-muted)]">{key}</dt><dd className="break-all">{value == null ? '—' : typeof value === 'object' ? JSON.stringify(value) : String(value)}</dd></div>)}
                         </dl>}
                         <DiffRows change={request} currency={currency} />
+                        {mfaMissing && <p id={`mfa-${request.id}`} className="text-xs text-[var(--studio-warning)]">この承認には MFA が必要です。<Link to="/settings#mfa" className="underline">設定 › MFA</Link> で設定してください。</p>}
                         {stepUp && <label className="block space-y-1 text-xs">
-                            <span id={`mfa-${request.id}`} className="text-[var(--studio-warning)]">{mfaEnabled ? '承認には認証コードが必要です（認証アプリの 6 桁、またはリカバリーコード）。' : 'MFA が未設定のため、パスワードで本人確認します。'}{!mfaEnabled && <> <Link to="/settings" className="underline">MFA を設定</Link></>}</span>
-                            <input type={mfaEnabled ? 'text' : 'password'} inputMode={mfaEnabled ? 'numeric' : undefined} autoComplete={mfaEnabled ? 'one-time-code' : 'current-password'} value={factors[request.id] ?? ''} disabled={disabled}
+                            <span id={`mfa-${request.id}`} className="text-[var(--studio-warning)]">承認には認証コードが必要です（認証アプリの 6 桁、またはリカバリーコード）。</span>
+                            <input type="text" inputMode="numeric" autoComplete="one-time-code" value={factors[request.id] ?? ''} disabled={disabled}
                                 onChange={(event) => setFactors((previous) => ({ ...previous, [request.id]: event.target.value }))}
                                 onKeyDown={(event) => { if (event.key === 'Enter') void runAction(request, 'approve'); }}
-                                aria-label={mfaEnabled ? '認証コード' : 'パスワード'} className={`block w-56 ${inputClass}`} />
+                                aria-label="認証コード" className={`block w-56 ${inputClass}`} />
                         </label>}
                         <div className="flex flex-wrap gap-2">
-                            <button type="button" onClick={() => void runAction(request, 'approve')} disabled={disabled || request.status !== 'pending' || (stepUp && !(factors[request.id] ?? '').trim())} aria-describedby={stepUp ? `mfa-${request.id}` : undefined} className={buttonClass}>{busy?.id === request.id && busy.action === 'approve' ? '承認中…' : '承認'}</button>
+                            <button type="button" onClick={() => void runAction(request, 'approve')} disabled={disabled || mfaMissing || request.status !== 'pending' || (stepUp && !(factors[request.id] ?? '').trim())} aria-describedby={stepUp || mfaMissing ? `mfa-${request.id}` : undefined} className={buttonClass}>{busy?.id === request.id && busy.action === 'approve' ? '承認中…' : '承認'}</button>
                             <button type="button" onClick={() => void runAction(request, 'apply')} disabled={disabled || request.status !== 'approved'} className={buttonClass}>{busy?.id === request.id && busy.action === 'apply' ? '適用中…' : '適用'}</button>
                             <button type="button" onClick={() => void runAction(request, 'reject')} disabled={disabled || (request.status !== 'pending' && request.status !== 'approved')} className={buttonClass}>{busy?.id === request.id && busy.action === 'reject' ? '却下中…' : '却下'}</button>
                         </div>

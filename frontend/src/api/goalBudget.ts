@@ -196,3 +196,24 @@ export async function getGoalBudgetStatus(period: string): Promise<GoalBudgetOve
     return (await api.get<GoalBudgetOverview>('/goal-budget/status', { params: { period } })).data;
 }
 
+
+export interface SavingsCheckGroup {
+    /** The reflection's groups in funding order, then the rest of the goal's monthly savings. */
+    key: GoalBudgetFundingGroup | 'rest';
+    need: number;
+    items: Array<{ name: string; amount: number }>;
+}
+
+export interface SavingsCheck {
+    period: string;
+    goal: { name: string; monthly_savings: number; savings_source: 'scenario' | 'required' } | null;
+    budgeted: number;
+    need: number;
+    shortfall: number;
+    groups: SavingsCheckGroup[];
+}
+
+/** U9: the month's budgeted savings against everything that needs saving monthly; read-only. */
+export async function getSavingsCheck(period: string): Promise<SavingsCheck> {
+    return (await api.get<SavingsCheck>('/goal-budget/savings-check', { params: { period } })).data;
+}

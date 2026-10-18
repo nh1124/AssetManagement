@@ -136,7 +136,7 @@ export const regenerateMfaRecoveryCodes = async (payload: { current_password?: s
     return response.data;
 };
 
-export const reauth = async (payload: { current_password?: string; code?: string; recovery_code?: string }) => {
+export const reauth = async (payload: { code?: string; recovery_code?: string }) => {
     const response = await api.post('/auth/reauth', payload);
     return response.data;
 };

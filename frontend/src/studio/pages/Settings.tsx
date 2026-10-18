@@ -3,6 +3,7 @@ import Household from './Household';
 import { useConfirm } from '../components/useConfirm';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import QRCode from 'qrcode';
+import { useLocation } from 'react-router-dom';
 import { disableMfa, exportData, getMfaStatus, importData, regenerateMfaRecoveryCodes, startMfaSetup, updateClientSettings, verifyMfaSetup } from '../../api';
 import { useClient } from '../../context/ClientContext';
 import type { MfaSetupStart } from '../../types';
@@ -65,6 +66,9 @@ function SettingsForClient() {
     const { t } = useLanguage();
     const timezone = useTimezone();
     const mfa = useResource(getMfaStatus);
+    // The approval screen links here (設定 › MFA) when an approval needs MFA.
+    const openMfa = useLocation().hash === '#mfa';
+    useEffect(() => { if (openMfa) document.getElementById('mfa')?.scrollIntoView(); }, [openMfa]);
     const mutation = useSettingsMutation();
     const [savedGeneral, setSavedGeneral] = useState<Record<string, unknown> | null>(null);
     const [currencyEdit, setCurrencyEdit] = useState<string | null>(null);
@@ -197,7 +201,7 @@ function SettingsForClient() {
             </form>
         </details>
         <AccountSettings sectionClass={sectionClass} />
-        <details className={sectionClass}>
+        <details id="mfa" open={openMfa} className={sectionClass}>
             <summary className="cursor-pointer text-sm font-semibold">{t('mfa.title')}</summary>
             {mfa.loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">{t('common.loading')}</p>}
             {mfa.error && <p role="alert" className="text-sm text-[var(--studio-danger)]">{t('settings.mfaLoadFailed')}</p>}
