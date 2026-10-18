@@ -130,7 +130,7 @@ Use products_preview before products_create when uncertain. The preview explains
 Treat these as high-risk:
 - data_import_replace_current_client: replaces current client data.
 - transactions_delete: reverts journal entries and changes balances.
-- products_delete, accounts_delete, quick_templates_delete, exchange_rates_delete, simulation_scenarios_delete.
+- products_delete, accounts_delete, exchange_rates_delete, simulation_scenarios_delete.
 - recurring_process: posts a real transaction when due.
 - actions_apply / actions_process_due / reports_apply_action: applies generated proposals.
 

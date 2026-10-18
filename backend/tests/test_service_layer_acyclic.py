@@ -37,12 +37,12 @@ LAYERS: dict[str, int] = {
     "money_storage": 0,
     "period_review_service": 0,
     "period_close_service": 0,  # Review markers do not depend on journal writers.
-    "quick_template_service": 0,
     "periods": 0,
     "product_reserve_service": 0,
     "product_service": 0,
     "schedule_rules": 0,
     "simulation_config_service": 0,
+    "transaction_batch_service": 0,
     # L1 - the ledger itself, and reading it one journal leg at a time
     "journal_legs": 1,
     "ledger_service": 1,

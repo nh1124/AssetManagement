@@ -22,8 +22,7 @@ FORMAT_FIELDS = {
     "simulation_configs": ["id","user_id","annual_return","tax_rate","is_nisa","monthly_savings","volatility","inflation_rate","horizon_years"],
     "recurring_transactions": ["id","name","amount","currency","from_account_id","to_account_id","frequency","day_of_month","month_of_year","next_due_date","start_period","end_period","auto_post","is_active","source_registry_entry_id","created_at"],
     "registry_entries": ["id","name","entry_type","category","amount","currency","frequency","frequency_days","day_of_month","month_of_year","line_type","budget_account_id","source_account_id","destination_account_id","funding_capsule_id","budget_treatment","generate_recurring","budget_active","is_active","source_product_id","source_recurring_transaction_id","note","start_period","end_period","created_at","updated_at"],
-    "quick_templates": ["id","tray","name","template_kind","description","category","default_currency","default_from_account_id","default_to_account_id","config","sort_order","is_active","created_at","updated_at"],
-    "transaction_batches": ["id","quick_template_id","label","source","input_payload","created_at"],
+    "transaction_batches": ["id","label","source","input_payload","created_at"],
     "life_events": ["id","scenario_id","lineage","name","start_date","target_date","target_amount","priority","note","condition_mode","direction","account_id","active_plan_basis","active_plan_label","plan_status_override","budget_reflection","archived_at","created_at"],
     "life_event_links": ["id","from_event_id","to_event_id","kind","offset_months","note","created_at"],
     "life_scenarios": ["id","name","annual_return","inflation","horizon_years","monthly_savings","is_goal","created_at","updated_at"],
@@ -123,13 +122,8 @@ def _seed_client(db, client_id, base, marker):
     )
     db.flush()
     registry.source_recurring_transaction_id = recurring.id
-    template = add(
-        models.QuickTemplate, 9, name=marker, tray="expense", template_kind="simple",
-        default_from_account_id=cash.id, default_to_account_id=expense.id,
-        config={"owner": marker, "nested": [{"account_id": cash.id, "capsule_id": capsule.id}]},
-    )
     batch = add(
-        models.TransactionBatch, 10, quick_template_id=template.id, label=marker,
+        models.TransactionBatch, 10, label=marker,
         input_payload={"nested": {"account_id": cash.id, "life_event_id": goal.id}},
     )
     tx = add(
@@ -279,8 +273,8 @@ def test_second_client_is_absent_even_from_nested_references_and_health(seeded):
     check(document)
     for collection, exported in document["data"].items():
         assert {row["id"] for row in exported} == {row.id for row in rows[collection]}
-    template = document["data"]["quick_templates"][0]
-    assert template["config"]["nested"][0]["account_id"] == rows["accounts"][0].id
+    batch = document["data"]["transaction_batches"][0]
+    assert batch["input_payload"]["nested"]["account_id"] == rows["accounts"][0].id
     assert document["data"]["monthly_actions"][0]["result"]["nested"]["transaction_id"] == rows["transactions"][0].id
 
 

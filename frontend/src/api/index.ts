@@ -43,13 +43,11 @@ import type {
     MilestoneSimulationRequest,
     PeriodReview,
     NetWorthHistoryPoint,
-    QuickTemplate,
     RecurringTransaction,
     RegistryEntry,
     ReviewActionCreate,
     RoadmapProjection,
     Transaction,
-    TransactionBatch,
     TransactionProposal,
 } from '../types';
 
@@ -472,31 +470,6 @@ export const updateTransaction = async (
 
 export const deleteTransaction = async (id: number) => {
     const response = await api.delete(`/transactions/${id}`);
-    return response.data;
-};
-
-export type QuickTemplatePayload = Omit<
-    QuickTemplate,
-    'id' | 'default_from_account_name' | 'default_to_account_name' | 'created_at' | 'updated_at'
->;
-
-export const getQuickTemplates = async (params?: { tray?: string; includeInactive?: boolean }): Promise<QuickTemplate[]> => {
-    const query = new URLSearchParams();
-    if (params?.tray) query.append('tray', params.tray);
-    if (params?.includeInactive) query.append('include_inactive', 'true');
-    const suffix = query.toString() ? `?${query.toString()}` : '';
-    const response = await api.get(`/quick-templates/${suffix}`);
-    return response.data;
-};
-
-export const createTransactionBatch = async (payload: {
-    quick_template_id?: number | null;
-    label?: string | null;
-    source?: string;
-    input_payload?: Record<string, unknown>;
-    transactions: Array<Omit<Transaction, 'id'>>;
-}): Promise<TransactionBatch> => {
-    const response = await api.post('/transaction-batches/', payload);
     return response.data;
 };
 

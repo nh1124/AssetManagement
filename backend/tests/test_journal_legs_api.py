@@ -19,7 +19,7 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.app import models, schemas
 from backend.app.database import Base
-from backend.app.routers import quick_templates as quick_template_router
+from backend.app.routers import transaction_batches as transaction_batch_router
 from backend.app.routers import transactions as transaction_router
 from backend.app.services.data_health_service import check_data_health
 from backend.app.utils.password import hash_password
@@ -371,7 +371,7 @@ def test_data_health_is_quiet_when_every_entry_balances() -> None:
 
 
 def test_a_batch_can_carry_a_compound_entry() -> None:
-    """The quick template posts through /transaction-batches/, not /transactions/.
+    """A batch posts through /transaction-batches/, not /transactions/.
 
     "Expense with advance" used to expand into two or three transactions for one
     payment. It is now one compound entry, plus a separate transaction only if
@@ -385,7 +385,7 @@ def test_a_batch_can_carry_a_compound_entry() -> None:
         db.add(cash)
         db.commit()
 
-        batch = quick_template_router.create_transaction_batch(
+        batch = transaction_batch_router.create_transaction_batch(
             schemas.TransactionBatchCreate(
                 label="dinner with a friend",
                 source="quick",

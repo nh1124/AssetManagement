@@ -333,51 +333,7 @@ class TransactionProposalDecision(BaseModel):
     note: Optional[str] = None
 
 
-class QuickTemplateBase(BaseModel):
-    tray: str
-    name: str
-    template_kind: str
-    description: Optional[str] = None
-    category: Optional[str] = None
-    default_currency: str | None = None
-    default_from_account_id: Optional[int] = None
-    default_to_account_id: Optional[int] = None
-    config: dict[str, Any] = Field(default_factory=dict)
-    sort_order: int = 0
-    is_active: bool = True
-
-
-class QuickTemplateCreate(QuickTemplateBase):
-    pass
-
-
-class QuickTemplateUpdate(BaseModel):
-    tray: Optional[str] = None
-    name: Optional[str] = None
-    template_kind: Optional[str] = None
-    description: Optional[str] = None
-    category: Optional[str] = None
-    default_currency: Optional[str] = None
-    default_from_account_id: Optional[int] = None
-    default_to_account_id: Optional[int] = None
-    config: Optional[dict[str, Any]] = None
-    sort_order: Optional[int] = None
-    is_active: Optional[bool] = None
-
-
-class QuickTemplate(QuickTemplateBase):
-    id: int
-    default_from_account_name: Optional[str] = None
-    default_to_account_name: Optional[str] = None
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-
-    class Config:
-        from_attributes = True
-
-
 class TransactionBatchCreate(BaseModel):
-    quick_template_id: Optional[int] = None
     label: Optional[str] = None
     source: str = "quick"
     input_payload: dict[str, Any] = Field(default_factory=dict)
@@ -386,7 +342,6 @@ class TransactionBatchCreate(BaseModel):
 
 class TransactionBatch(BaseModel):
     id: int
-    quick_template_id: Optional[int] = None
     label: Optional[str] = None
     source: str
     input_payload: dict[str, Any] = Field(default_factory=dict)

@@ -16,10 +16,10 @@ from backend.app import models, schemas
 from backend.app.domain.errors import Invalid
 from backend.app.database import Base, get_db
 from backend.app.dependencies import get_current_client
-from backend.app.routers import quick_templates, recurring, registry_entries, transactions
+from backend.app.routers import recurring, registry_entries, transaction_batches, transactions
 from backend.app.services import (
     capsule_service, fx_service, goal_service, ledger_service,
-    quick_template_service, registry_service, report_service,
+    registry_service, report_service,
 )
 from backend.app.services.budget_context import BudgetContext
 from backend.app.services.budget_registry_lines import _virtual_registry_entries, registry_plan_lines
@@ -45,7 +45,7 @@ def posting():
         db.commit()
         app = FastAPI()
         for router in (transactions.router, recurring.router, registry_entries.router,
-                       quick_templates.router, quick_templates.batch_router):
+                       transaction_batches.router):
             app.include_router(router)
         app.dependency_overrides[get_db] = lambda: db
         app.dependency_overrides[get_current_client] = lambda: client
@@ -54,10 +54,10 @@ def posting():
     engine.dispose()
 
 
-KINDS = ("transaction", "recurring", "registry", "template")
+KINDS = ("transaction", "recurring", "registry")
 PATHS = {
     "transaction": "/transactions/", "recurring": "/recurring/",
-    "registry": "/registry-entries/", "template": "/quick-templates/",
+    "registry": "/registry-entries/",
 }
 
 
@@ -65,8 +65,6 @@ def _payload(kind, accounts, amount=12.34):
     cash, food, *_ = accounts
     if kind == "transaction":
         return dict(date="2026-10-12", amount=amount, from_account_id=cash.id, to_account_id=food.id)
-    if kind == "template":
-        return dict(tray="food", name="Lunch", template_kind="simple_expense")
     if kind == "recurring":
         return dict(name="Lunch", amount=amount, frequency="Monthly",
                     from_account_id=cash.id, to_account_id=food.id)
@@ -79,12 +77,11 @@ def _payload(kind, accounts, amount=12.34):
 def test_http_creation_defaults_only_absent_currency(posting, kind, stated, expected):
     db, _, accounts, http = posting
     payload = _payload(kind, accounts, amount=12 if expected == "JPY" else 12.34)
-    field = "default_currency" if kind == "template" else "currency"
     if stated != "omitted":
-        payload[field] = stated
+        payload["currency"] = stated
     response = http.post(PATHS[kind], json=payload)
     assert response.status_code == 200, response.text
-    assert response.json()[field] == expected
+    assert response.json()["currency"] == expected
     if kind == "transaction":
         tx = db.query(models.Transaction).one()
         assert tx.currency == expected
@@ -103,7 +100,7 @@ def test_no_setting_uses_get_client_currency_fallback(posting, monkeypatch, kind
     db.commit()
     owner = {
         "transaction": ledger_entry_workflow, "recurring": registry_service,
-        "registry": registry_service, "template": quick_template_service,
+        "registry": registry_service,
     }[kind]
     calls = []
 
@@ -114,8 +111,7 @@ def test_no_setting_uses_get_client_currency_fallback(posting, monkeypatch, kind
     monkeypatch.setattr(owner, "get_client_currency", resolve)
     response = http.post(PATHS[kind], json=_payload(kind, accounts, amount=12))
     assert response.status_code == 200, response.text
-    field = "default_currency" if kind == "template" else "currency"
-    assert response.json()[field] == "JPY"
+    assert response.json()["currency"] == "JPY"
     assert calls == [client.id]
 
 
@@ -260,21 +256,16 @@ def test_report_allocation_uses_client_minor_units(posting):
 @pytest.mark.parametrize("kind", KINDS)
 def test_currency_is_client_scoped_and_not_cached(posting, kind):
     db, client, accounts, http = posting
-    create = registry_service.create_entry if kind == "registry" else quick_template_service.create_template
-    if kind in {"registry", "template"}:
-        data = dict(name="Other") if kind == "registry" else _payload(kind, accounts)
-        other = create(db, 2, data)
-        field = "currency" if kind == "registry" else "default_currency"
-        assert getattr(other, field) == "EUR"
+    if kind == "registry":
+        assert registry_service.create_entry(db, 2, dict(name="Other")).currency == "EUR"
     else:
         assert fx_service.get_client_currency(db, 2) == "EUR"
     first = http.post(PATHS[kind], json=_payload(kind, accounts))
     client.general_settings = {"currency": "EUR"}
     db.commit()
     second = http.post(PATHS[kind], json=_payload(kind, accounts))
-    field = "default_currency" if kind == "template" else "currency"
     assert first.status_code == second.status_code == 200
-    assert (first.json()[field], second.json()[field]) == ("USD", "EUR")
+    assert (first.json()["currency"], second.json()["currency"]) == ("USD", "EUR")
 
 
 @pytest.mark.parametrize("kind", KINDS)
@@ -282,10 +273,9 @@ def test_an_unsupported_setting_is_refused_the_moment_it_is_read(posting, kind):
     """X11: the refusal moved from money storage to the code that resolves it.
 
     This test used to assert the defect. `normalize_currency` canonicalised
-    `" gbp "` to `"GBP"` without validating, so three of the four paths failed
-    deep inside money storage and the fourth -- the template -- persisted an
-    unsupported currency without complaint. Every path now refuses in the same
-    place, and nothing is written in any of them.
+    `" gbp "` to `"GBP"` without validating, so paths failed deep inside money
+    storage or persisted an unsupported currency without complaint. Every path
+    now refuses in the same place, and nothing is written in any of them.
     """
     db, client, accounts, http = posting
     client.general_settings = {"currency": " gbp "}
@@ -297,19 +287,17 @@ def test_an_unsupported_setting_is_refused_the_moment_it_is_read(posting, kind):
     with pytest.raises(Invalid, match="Unsupported currency 'GBP'"):
         http.post(PATHS[kind], json=_payload(kind, accounts))
     assert db.query(models.Transaction).count() == 0
-    assert db.query(models.QuickTemplate).count() == 0
 
 
-@pytest.mark.parametrize("kind", ["recurring", "registry", "template"])
+@pytest.mark.parametrize("kind", ["recurring", "registry"])
 def test_update_omission_preserves_existing_currency(posting, kind):
     _, _, accounts, http = posting
     payload = _payload(kind, accounts)
-    field = "default_currency" if kind == "template" else "currency"
-    created = http.post(PATHS[kind], json={**payload, field: "EUR"})
+    created = http.post(PATHS[kind], json={**payload, "currency": "EUR"})
     assert created.status_code == 200, created.text
     updated = http.put(PATHS[kind] + str(created.json()["id"]), json=payload)
     assert updated.status_code == 200, updated.text
-    assert updated.json()[field] == "EUR"
+    assert updated.json()["currency"] == "EUR"
 
 
 @pytest.mark.parametrize("kind", ["transaction", "recurring"])
