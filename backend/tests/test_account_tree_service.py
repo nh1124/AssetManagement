@@ -166,30 +166,12 @@ def test_delete_refuses_active_children(db):
     assert root.is_active is True
 
 
-@pytest.mark.parametrize("reference", ["default_from_account_id", "default_to_account_id"])
-def test_delete_refuses_active_templates_in_either_direction(db, reference):
-    root = _account(db)
-    db.add(models.QuickTemplate(client_id=1, tray="test", name="test", template_kind="test",
-                                **{reference: root.id}))
-    db.commit()
-    _refusal(Invalid, "Account is used by active quick templates. Delete or update those templates first.",
-             lambda: ledger.delete_account(db, 1, root.id))
-    assert root.is_active is True
-
-
-def test_delete_ignores_inactive_children_and_inactive_or_other_client_templates(db):
+def test_delete_ignores_inactive_children(db):
     root = _account(db)
     child = _account(db, name="child", parent_id=root.id)
     child.is_active = False
-    db.add_all([
-        models.QuickTemplate(client_id=1, tray="test", name="inactive", template_kind="test",
-                             default_from_account_id=root.id, is_active=False),
-        models.QuickTemplate(client_id=2, tray="test", name="other", template_kind="test",
-                             default_to_account_id=root.id),
-    ])
     db.commit()
     assert ledger.delete_account(db, 1, root.id) is True
-    assert db.query(models.QuickTemplate).count() == 2
     assert child.parent_id == root.id
 
 

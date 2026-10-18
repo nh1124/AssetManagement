@@ -120,10 +120,7 @@ def _seed(db, client_id=101, base=10000):
                     from_account_id=cash.id, to_account_id=expense.id,
                     source_registry_entry_id=registry.id, next_due_date=date(2026, 10, 31))
     registry.source_recurring_transaction_id = recurring.id
-    template = add(models.QuickTemplate, 10, name="food", tray="expense", template_kind="simple",
-                   default_from_account_id=cash.id, default_to_account_id=expense.id,
-                   config={"nested": [{"account_id": cash.id, "capsule_id": capsule.id}]})
-    batch = add(models.TransactionBatch, 11, quick_template_id=template.id, label="batch",
+    batch = add(models.TransactionBatch, 11, label="batch",
                 input_payload={"nested": {"account_id": cash.id, "life_event_id": goal.id}})
     tx = add(models.Transaction, 12, date=date(2026, 10, 2), description="food", amount_minor=100,
              batch_id=batch.id, recurring_transaction_id=recurring.id)
@@ -162,8 +159,7 @@ def _seed(db, client_id=101, base=10000):
                              "capsule_id": capsule.id, "product_id": product.id,
                              "recurring_id": recurring.id, "plan_id": plan.id,
                              "plan_line_id": line.id, "milestone_id": milestone.id}]},
-        result={"nested": {"transaction_id": tx.id, "batch_id": batch.id,
-                           "quick_template_id": template.id}}, status="applied", applied_at=STAMP)
+        result={"nested": {"transaction_id": tx.id, "batch_id": batch.id}}, status="applied", applied_at=STAMP)
     # Tables outside the backup format must survive a failed restore too,
     # including proposal links that a transaction deletion sets to NULL.
     add(models.TransactionProposal, 24, origin="test", date=date(2026, 10, 2),
@@ -196,10 +192,10 @@ REFERENCES = {
     "scenario_id": "life_scenarios", "link_id": "life_event_links",
     "parent_id": "accounts", "account_id": "accounts", "from_account_id": "accounts",
     "to_account_id": "accounts", "source_account_id": "accounts", "destination_account_id": "accounts",
-    "budget_account_id": "accounts", "default_from_account_id": "accounts", "default_to_account_id": "accounts",
+    "budget_account_id": "accounts",
     "source_product_id": "products", "product_id": "products", "source_registry_entry_id": "registry_entries",
     "source_recurring_transaction_id": "recurring_transactions", "recurring_transaction_id": "recurring_transactions",
-    "recurring_id": "recurring_transactions", "quick_template_id": "quick_templates", "batch_id": "transaction_batches",
+    "recurring_id": "recurring_transactions", "batch_id": "transaction_batches",
     "from_event_id": "life_events", "to_event_id": "life_events",
     "life_event_id": "life_events", "transaction_id": "transactions", "plan_id": "budget_plans",
     "plan_line_id": "monthly_plan_lines", "milestone_id": "milestones", "capsule_id": "capsules",
@@ -302,9 +298,37 @@ def test_round_trip_preserves_every_collection_and_document(db):
     assert restored == expected
     # These JSON fields are opaque in the established format, unlike action
     # payload/result. Their embedded source IDs must remain byte-for-byte.
-    for collection, field in (("quick_templates", "config"), ("transaction_batches", "input_payload"),
+    for collection, field in (("transaction_batches", "input_payload"),
                               ("milestones", "source_snapshot"), ("simulation_scenarios", "contribution_schedule")):
         assert restored["data"][collection][0][field] == original["data"][collection][0][field]
+
+
+def test_an_older_backup_with_quick_templates_still_restores(db):
+    # Quick templates were removed (E4). A backup taken before that carries the
+    # collection, a batch link to it and both in its manifest; all are ignored.
+    source, _ = _seed(db)
+    target = _client(db, 202)
+    document = export_client(db, source)
+    template = {"id": 10900, "tray": "expense", "name": "food", "template_kind": "simple_expense",
+                "default_from_account_id": document["data"]["accounts"][0]["id"], "config": {},
+                "sort_order": 0, "is_active": True}
+    document["data"]["quick_templates"] = [template]
+    for batch in document["data"]["transaction_batches"]:
+        batch["quick_template_id"] = template["id"]
+    checksums = {key: _checksum(value) for key, value in document["data"].items()}
+    document["manifest"]["counts"]["quick_templates"] = 1
+    document["manifest"]["checksums"] = checksums
+    document["manifest"]["payload_checksum"] = _checksum({"data": document["data"], "checksums": checksums})
+
+    result = _restore(db, target, document)
+
+    assert result["status"] == "ok"
+    assert result["validation"]["error_count"] == result["validation"]["warning_count"] == 0
+    restored = export_client(db, target)
+    assert "quick_templates" not in restored["data"]
+    assert [row["label"] for row in restored["data"]["transaction_batches"]] == [
+        row["label"] for row in document["data"]["transaction_batches"]
+    ]
 
 
 def test_journal_failure_after_deletion_preserves_every_table_byte_for_byte(db):

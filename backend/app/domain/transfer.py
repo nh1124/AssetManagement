@@ -17,7 +17,6 @@ DATA_COLLECTIONS = [
     "simulation_configs",
     "recurring_transactions",
     "registry_entries",
-    "quick_templates",
     "transaction_batches",
     "life_events",
     "life_event_links",
@@ -42,6 +41,19 @@ DATA_COLLECTIONS = [
     "goal_baselines",
     "goal_budget_reflections",
 ]
+
+# Collections a later version stopped keeping, with the export version that
+# dropped them. Older exports still carry them: their manifest checksums still
+# verify, but the rows are never imported.
+RETIRED_COLLECTIONS = {"life_scenario_choices": 22, "quick_templates": None}
+
+
+def _retired(version: int | None) -> set[str]:
+    # None: retired without a version bump, so every export may carry it.
+    return {
+        name for name, dropped_in in RETIRED_COLLECTIONS.items()
+        if dropped_in is None or version is None or version < dropped_in
+    }
 
 
 def _iso(value: Any) -> Any:
@@ -151,7 +163,8 @@ def validate_import_payload(
         issues.append(row)
 
     legacy = version is None or version < 22
-    unknown_collections = sorted(set(data.keys()) - set(DATA_COLLECTIONS) - ({"life_scenario_choices"} if legacy else set()))
+    retired = _retired(version)
+    unknown_collections = sorted(set(data.keys()) - set(DATA_COLLECTIONS) - retired)
     for collection in unknown_collections:
         issue("warning", "unknown_collection", "This collection is not imported by this application version.", collection)
 
@@ -223,9 +236,6 @@ def validate_import_payload(
     check_ref("registry_entries", "funding_capsule_id", "capsules")
     check_ref("registry_entries", "source_product_id", "products")
     check_ref("registry_entries", "source_recurring_transaction_id", "recurring_transactions")
-    check_ref("quick_templates", "default_from_account_id", "accounts")
-    check_ref("quick_templates", "default_to_account_id", "accounts")
-    check_ref("transaction_batches", "quick_template_id", "quick_templates")
     # Only present in a v6 or older payload, where the columns still existed.
     check_ref("transactions", "from_account_id", "accounts")
     check_ref("transactions", "to_account_id", "accounts")
@@ -481,8 +491,8 @@ def validate_import_payload(
 
     expected_checksums = manifest.get("checksums") or {}
     actual_checksums = _table_checksums(data)
-    if legacy and "life_scenario_choices" in expected_checksums:
-        actual_checksums["life_scenario_choices"] = _sha256(data.get("life_scenario_choices", []))
+    for collection in retired & set(expected_checksums):
+        actual_checksums[collection] = _sha256(data.get(collection, []))
     for collection, expected in expected_checksums.items():
         actual = actual_checksums.get(collection)
         if actual and expected != actual:

@@ -209,37 +209,11 @@ def export_client(db: Session, client: models.Client) -> dict:
                 .order_by(models.RegistryEntry.id)
                 .all()
             ],
-            "quick_templates": [
-                row_fields(
-                    item,
-                    [
-                        "id",
-                        "tray",
-                        "name",
-                        "template_kind",
-                        "description",
-                        "category",
-                        "default_currency",
-                        "default_from_account_id",
-                        "default_to_account_id",
-                        "config",
-                        "sort_order",
-                        "is_active",
-                        "created_at",
-                        "updated_at",
-                    ],
-                )
-                for item in db.query(models.QuickTemplate)
-                .filter(models.QuickTemplate.client_id == client.id)
-                .order_by(models.QuickTemplate.id)
-                .all()
-            ],
             "transaction_batches": [
                 row_fields(
                     item,
                     [
                         "id",
-                        "quick_template_id",
                         "label",
                         "source",
                         "input_payload",
@@ -588,7 +562,6 @@ def import_client(
     transaction_map: dict[int, int] = {}
     batch_map: dict[int, int] = {}
     event_map: dict[int, int] = {}
-    quick_template_map: dict[int, int] = {}
     recurring_map: dict[int, int] = {}
     capsule_map: dict[int, int] = {}
     budget_plan_map: dict[int, int] = {}
@@ -634,7 +607,6 @@ def import_client(
             models.Product,
             models.Transaction,
             models.TransactionBatch,
-            models.QuickTemplate,
             models.BudgetPlan,
             models.LifeEvent,
             models.LifeScenario,
@@ -849,33 +821,12 @@ def import_client(
             })
             validation["warning_count"] += 1
 
-        for item in data.get("quick_templates", []):
-            old_id = int(item["id"])
-            template = models.QuickTemplate(
-                client_id=client.id,
-                tray=item["tray"],
-                name=item["name"],
-                template_kind=item["template_kind"],
-                description=item.get("description"),
-                category=item.get("category"),
-                default_currency=item.get("default_currency") or "JPY",
-                default_from_account_id=account_map.get(item.get("default_from_account_id")),
-                default_to_account_id=account_map.get(item.get("default_to_account_id")),
-                config=item.get("config") or {},
-                sort_order=item.get("sort_order") or 0,
-                is_active=item.get("is_active", True),
-                created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
-                updated_at=parse_datetime(item.get("updated_at")),
-            )
-            db.add(template)
-            db.flush()
-            quick_template_map[old_id] = template.id
-
+        # Older exports carry quick_templates and a batch's quick_template_id;
+        # the feature is gone, so both are left behind.
         for item in data.get("transaction_batches", []):
             old_id = int(item["id"])
             batch = models.TransactionBatch(
                 client_id=client.id,
-                quick_template_id=quick_template_map.get(item.get("quick_template_id")),
                 label=item.get("label"),
                 source=item.get("source") or "quick",
                 input_payload=item.get("input_payload") or {},
@@ -1285,7 +1236,6 @@ def import_client(
             "source_product_id": product_map,
             "transaction_id": transaction_map,
             "batch_id": batch_map,
-            "quick_template_id": quick_template_map,
             "budget_plan_id": budget_plan_map,
             "plan_id": budget_plan_map,
             "plan_line_id": monthly_plan_line_map,

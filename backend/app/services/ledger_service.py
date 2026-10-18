@@ -245,19 +245,6 @@ def delete_account(
     if child_count:
         raise Invalid("Account has child accounts")
 
-    # The FK check protects active templates without mutating their feature.
-    template_count = db.query(models.QuickTemplate).filter(
-        models.QuickTemplate.client_id == client_id,
-        models.QuickTemplate.is_active == True,
-        (
-            (models.QuickTemplate.default_from_account_id == account_id)
-            | (models.QuickTemplate.default_to_account_id == account_id)
-        ),
-    ).count()
-    if template_count:
-        raise Invalid(
-            "Account is used by active quick templates. Delete or update those templates first.",
-        )
     account.is_active = False
     if commit:
         db.commit()

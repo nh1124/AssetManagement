@@ -478,41 +478,13 @@
     "required_fields": ["start_date", "end_date"]
   },
   {
-    "tool": "quick_templates_create",
-    "method": "post",
-    "path": "/quick-templates/",
-    "body": "object",
-    "source": "src/tools/quick-templates.ts",
-    "path_fragment": "/quick-templates/",
-    "allowed_fields": ["tray", "name", "template_kind", "description", "category", "default_currency", "default_from_account_id", "default_to_account_id", "config", "sort_order", "is_active"],
-    "required_fields": ["tray", "name", "template_kind"]
-  },
-  {
-    "tool": "quick_templates_update",
-    "method": "put",
-    "path": "/quick-templates/{template_id}",
-    "body": "object",
-    "source": "src/tools/quick-templates.ts",
-    "path_fragment": "/quick-templates/${id}",
-    "allowed_fields": ["tray", "name", "template_kind", "description", "category", "default_currency", "default_from_account_id", "default_to_account_id", "config", "sort_order", "is_active"],
-    "required_fields": []
-  },
-  {
-    "tool": "quick_templates_delete",
-    "method": "delete",
-    "path": "/quick-templates/{template_id}",
-    "body": "none",
-    "source": "src/tools/quick-templates.ts",
-    "path_fragment": "/quick-templates/${id}"
-  },
-  {
     "tool": "transaction_batches_create",
     "method": "post",
     "path": "/transaction-batches/",
     "body": "object",
-    "source": "src/tools/quick-templates.ts",
+    "source": "src/tools/transaction-batches.ts",
     "path_fragment": "/transaction-batches/",
-    "allowed_fields": ["quick_template_id", "label", "source", "input_payload", "transactions"],
+    "allowed_fields": ["label", "source", "input_payload", "transactions"],
     "required_fields": ["transactions"]
   },
   {

@@ -9,7 +9,7 @@ from backend.app.database import get_db
 from backend.app.dependencies import get_current_client
 from backend.app.domain.errors import Conflict, DomainError, Invalid, NotFound, Refused
 from backend.app.main import app
-from backend.app.routers import quick_templates, recurring, simulation_scenarios
+from backend.app.routers import recurring, simulation_scenarios, transaction_batches
 from backend.app.services import simulation_scenario_service
 from backend.app.services.recurring_service import RecurringNotPostable
 from backend.app.services.simulation_scenario_service import ScenarioGoalMismatch, ScenarioNameConflict
@@ -53,7 +53,7 @@ def http():
 
     http_app.include_router(recurring.router)
     http_app.include_router(simulation_scenarios.router)
-    http_app.include_router(quick_templates.batch_router)
+    http_app.include_router(transaction_batches.router)
     http_app.dependency_overrides[get_db] = lambda: None
     http_app.dependency_overrides[get_current_client] = lambda: SimpleNamespace(id=1)
     with TestClient(http_app) as client:
@@ -141,7 +141,7 @@ def test_existing_errors_reach_the_handler_through_their_routers(
     elif error_type is ScenarioGoalMismatch:
         monkeypatch.setattr(simulation_scenario_service, "compare_scenarios", refuse)
     else:
-        monkeypatch.setattr(quick_templates, "post_transaction_batch", refuse)
+        monkeypatch.setattr(transaction_batches, "post_transaction_batch", refuse)
 
     domain = http.post(path, json=payload)
     equivalent = http.get(f"/http/{status_code}", params={"message": message})

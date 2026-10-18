@@ -24,7 +24,6 @@ class Client(Base):
     accounts = relationship("Account", back_populates="client")
     transactions = relationship("Transaction", back_populates="client")
     transaction_batches = relationship("TransactionBatch", back_populates="client")
-    quick_templates = relationship("QuickTemplate", back_populates="client")
     products = relationship("Product", back_populates="client")
     life_events = relationship("LifeEvent", back_populates="client")
     simulation_configs = relationship("SimulationConfig", back_populates="client")

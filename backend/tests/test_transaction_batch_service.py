@@ -11,9 +11,9 @@ from sqlalchemy.orm import sessionmaker
 from backend.app import models, schemas
 from backend.app.database import Base
 from backend.app.domain.errors import Conflict, Invalid, NotFound, Refused, status_for
-from backend.app.routers import quick_templates as router
+from backend.app.routers import transaction_batches as router
 from backend.app.services import ledger_service as ledger
-from backend.app.services import quick_template_service as service
+from backend.app.services import transaction_batch_service as service
 from backend.app.workflows import transaction_batch_workflow as workflow
 
 
@@ -34,114 +34,11 @@ def posting():
         engine.dispose()
 
 
-def _template_data(posting, **overrides):
-    _, _, cash, food, _ = posting
-    return schemas.QuickTemplateCreate(**dict(
-        dict(tray="food", name="Lunch", template_kind="simple_expense",
-             default_from_account_id=cash.id, default_to_account_id=food.id,
-             config={"amount": 100}), **overrides,
-    )).model_dump()
-
-
-def test_template_crud_returns_rows_and_soft_deletes(posting):
-    db, client, cash, food, _ = posting
-    template = service.create_template(db, client.id, _template_data(posting))
-    assert service._get_template(db, client.id, template.id) is template
-    assert service.list_templates(db, client.id) == [template]
-    assert (template.default_from_account_id, template.default_to_account_id) == (cash.id, food.id)
-    changed = service.update_template(db, client.id, template.id, {
-        "name": "Dinner", "default_to_account_id": None, "config": {"amount": 200},
-    })
-    assert changed is template
-    assert (template.name, template.default_to_account_id, template.config) == ("Dinner", None, {"amount": 200})
-    assert service.delete_template(db, client.id, template.id) is True
-    assert service.list_templates(db, client.id) == []
-    assert service.list_templates(db, client.id, include_inactive=True) == [template]
-    assert service._get_template(db, client.id, template.id) is template
-    assert template.is_active is False
-
-
-@pytest.mark.parametrize("missing", ["unknown_id", "other_client"])
-def test_template_not_found_returns_none_for_lookup_update_and_delete(posting, missing):
+def test_batch_primitive_commit_false_leaves_the_batch_for_the_caller(posting):
     db, client, *_ = posting
-    template = service.create_template(db, 2, _template_data(posting,
-                                       default_from_account_id=None, default_to_account_id=None))
-    template_id = 999999 if missing == "unknown_id" else template.id
-    assert service._get_template(db, client.id, template_id) is None
-    assert service.update_template(db, client.id, template_id, {"name": "changed"}) is None
-    assert service.delete_template(db, client.id, template_id) is None
-    assert service.create_batch(db, client.id, {"quick_template_id": template_id}) is None
-    assert template.name == "Lunch"
-    assert template.is_active is True
-    assert db.query(models.TransactionBatch).count() == 0
-
-
-def test_template_list_preserves_client_tray_activity_and_order(posting):
-    db, client, *_ = posting
-    data = [dict(name="Z", sort_order=1), dict(name="B"), dict(name="A"),
-            dict(tray="travel"), dict(name="inactive", is_active=False)]
-    templates = [service.create_template(db, client.id, _template_data(posting, **values)) for values in data]
-    service.create_template(db, 2, _template_data(posting,
-                            default_from_account_id=None, default_to_account_id=None))
-    assert service.list_templates(db, client.id) == [templates[i] for i in [2, 1, 0, 3]]
-    assert service.list_templates(db, client.id, tray="food") == [templates[i] for i in [2, 1, 0]]
-    assert service.list_templates(db, client.id, tray="food", include_inactive=True) == [
-        templates[i] for i in [2, 1, 4, 0]
-    ]
-
-
-@pytest.mark.parametrize("field", ["default_from", "default_to"])
-@pytest.mark.parametrize("missing", ["unknown_id", "other_client", "inactive"])
-def test_account_reference_preserves_each_not_found_error(posting, field, missing):
-    db, client, cash, *_ = posting
-    account_id = 999999
-    if missing == "other_client":
-        account = ledger.create_account(db, 2, {"name": "foreign", "account_type": "asset"})
-        account_id = account.id
-    elif missing == "inactive":
-        cash.is_active = False
-        db.commit()
-        account_id = cash.id
-    with pytest.raises(Invalid) as exc:
-        service._validate_account_reference(db, client.id, account_id, field)
-    assert str(exc.value) == f"{field} account not found"
-
-
-def test_account_reference_accepts_none_and_an_active_owned_account(posting):
-    db, client, cash, *_ = posting
-    service._validate_account_reference(db, client.id, None, "default_from")
-    service._validate_account_reference(db, client.id, cash.id, "default_from")
-
-
-@pytest.mark.parametrize("operation", ["create", "update"])
-@pytest.mark.parametrize("field", ["default_from_account_id", "default_to_account_id"])
-def test_template_writes_validate_both_account_references(posting, operation, field):
-    db, client, *_ = posting
-    other = ledger.create_account(db, 2, {"name": "foreign", "account_type": "asset"})
-    template = service.create_template(db, client.id, _template_data(posting))
-    before = (template.default_from_account_id, template.default_to_account_id)
-    with pytest.raises(Invalid) as exc:
-        if operation == "create":
-            service.create_template(db, client.id, _template_data(posting, **{field: other.id}))
-        else:
-            service.update_template(db, client.id, template.id, {field: other.id})
-    assert str(exc.value) == f"{field.removesuffix('_account_id')} account not found"
-    assert db.query(models.QuickTemplate).count() == 1
-    assert (template.default_from_account_id, template.default_to_account_id) == before
-
-
-def test_template_and_batch_primitives_commit_false_leave_changes_for_the_caller(posting):
-    db, client, *_ = posting
-    template = service.create_template(db, client.id, _template_data(posting))
-    pending = service.create_template(db, client.id, _template_data(posting, name="pending"), commit=False)
-    service.update_template(db, client.id, template.id, {"name": "changed"}, commit=False)
-    service.delete_template(db, client.id, template.id, commit=False)
-    batch = service.create_batch(db, client.id, {"quick_template_id": template.id}, commit=False)
-    pending_id, batch_id = pending.id, batch.id
+    batch_id = service.create_batch(db, client.id, {"label": "pending"}, commit=False).id
     db.rollback()
-    assert db.get(models.QuickTemplate, pending_id) is None
     assert db.get(models.TransactionBatch, batch_id) is None
-    assert (template.name, template.is_active) == ("Lunch", True)
 
 
 def _payload(posting, **overrides):
@@ -195,10 +92,9 @@ def _snapshots(db):
 @pytest.mark.parametrize("auto_post", [False, True])
 def test_batch_posts_every_entry_and_capsule_effect_in_one_commit(posting, auto_post):
     db, client, cash, food, reserve = posting
-    template = service.create_template(db, client.id, _template_data(posting))
     _rule(posting, auto_post)
     snapshots = _snapshots(db)
-    payload = _payload(posting, quick_template_id=template.id)
+    payload = _payload(posting)
     batch = workflow.post_transaction_batch(db, client.id, payload)
     # Three entries, three reservations. X3 put the trigger in the
     # proposal's idempotency key, so identical reservations from
@@ -208,9 +104,7 @@ def test_batch_posts_every_entry_and_capsule_effect_in_one_commit(posting, auto_
     expected = (1, 6, 13, 3) if auto_post else (1, 3, 7, 3)
     assert snapshots == [(0, 0, 0, 0), expected]
     assert _counts(db) == expected
-    assert (batch.quick_template_id, batch.label, batch.source, batch.input_payload) == (
-        template.id, "Lunch batch", "quick", {"tray": "food"},
-    )
+    assert (batch.label, batch.source, batch.input_payload) == ("Lunch batch", "quick", {"tray": "food"})
     assert [tx.description for tx in batch.transactions] == ["entry-1", "entry-2", "entry-3"]
     assert all(tx.batch_id == batch.id for tx in batch.transactions)
     assert sorted((leg.account_id, leg.debit, leg.credit) for leg in batch.transactions[2].journal_entries) == sorted([
@@ -257,25 +151,20 @@ def test_batch_reads_are_client_scoped_and_paginated(posting):
     assert service.get_batch(db, client.id, 999999) is None
 
 
-@pytest.mark.parametrize("operation,detail", [
-    ("update_template", "Quick template not found"),
-    ("delete_template", "Quick template not found"),
-    ("get_batch", "Transaction batch not found"),
-    ("post_batch", "Quick template not found"),
-])
-def test_router_keeps_missing_resource_404s(posting, operation, detail):
+def test_router_keeps_missing_batch_404(posting):
     db, client, *_ = posting
     with pytest.raises(HTTPException) as exc:
-        if operation == "update_template":
-            router.update_quick_template(999999, schemas.QuickTemplateUpdate(name="missing"), db=db, current_client=client)
-        elif operation == "delete_template":
-            router.delete_quick_template(999999, db=db, current_client=client)
-        elif operation == "get_batch":
-            router.get_transaction_batch(999999, db=db, current_client=client)
-        else:
-            router.create_transaction_batch(_payload(posting, quick_template_id=999999), db=db, current_client=client)
-    assert (exc.value.status_code, exc.value.detail) == (404, detail)
+        router.get_transaction_batch(999999, db=db, current_client=client)
+    assert (exc.value.status_code, exc.value.detail) == (404, "Transaction batch not found")
     assert _counts(db) == (0, 0, 0, 0)
+
+
+def test_a_stale_template_id_from_an_old_client_is_ignored(posting):
+    db, client, *_ = posting
+    payload = schemas.TransactionBatchCreate(**{**_payload(posting).model_dump(), "quick_template_id": 7})
+    batch = router.create_transaction_batch(payload, db=db, current_client=client)
+    assert "quick_template_id" not in batch
+    assert len(batch["transactions"]) == 3
 
 
 def test_router_keeps_empty_batch_400(posting):
