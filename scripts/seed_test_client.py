@@ -3,7 +3,7 @@
 Wipes the signed-in client's data with an empty import, then records a small household:
 accounts, three months of transactions, automatic transactions, a fixed asset and a consumable,
 earmarks with a rule, a tracked currency, and a goal scenario (events, a car loan and its
-repayments, branches, preconditions, 積立設定, which accounts pay each event) whose plan is made,
+repayments, branches, preconditions, 積立設定 with ライフイベントへの取り崩し) whose plan is made,
 which creates the goal's earmarks, and the user's own plan records for this month. Only ever run it against the
 test client.
 
@@ -148,7 +148,7 @@ def seed_ledger(api: Api, today: date) -> dict:
 
 
 def seed_goal(api: Api, today: date, accounts: dict) -> dict:
-    """A goal scenario with branches, a loan, preconditions, 積立設定 and 資金の割り当て; a second scenario to compare."""
+    """A goal scenario with branches, a loan, preconditions and 積立設定 (with event withdrawals); a second scenario to compare."""
     period = today.strftime("%Y-%m")
     member = api.post("/household-members", {"name": "本人", "relation": "本人", "birth_date": "1996-05-10"})
     base = api.post("/life-scenarios", {"name": "基本"})
@@ -168,12 +168,6 @@ def seed_goal(api: Api, today: date, accounts: dict) -> dict:
     events["ローン返済"] = api.post("/life-events/", {"scenario_id": base["id"], "name": "ローン返済", "direction": "repayment",
                                                     "target_date": "2029-07-01", "target_amount": 30000,
                                                     "priority": 3, "borrowing_event_id": events["マイカーローン"], "repeat_count": 36})["id"]
-    # 資金の割り当て (the simulation settings): which accounts pay each event; 結婚 is split over two.
-    for name, shares in (("ヨーロッパ旅行", [("貯蓄口座", 100)]), ("臨時収入", [("貯蓄口座", 100)]),
-                         ("結婚", [("貯蓄口座", 70), ("証券口座", 30)]), ("出産", [("メイン銀行", 100)]),
-                         ("住宅購入（頭金）", [("証券口座", 100)]), ("車の買い替え", [("メイン銀行", 100)]),
-                         ("マイカーローン", [("メイン銀行", 100)]), ("ローン返済", [("メイン銀行", 100)])):
-        api.put(f"/life-events/{events[name]}/fundings", [{"account_id": accounts[account], "share": share} for account, share in shares])
     for source, target, months in (("結婚", "出産", 24), ("結婚", "住宅購入（頭金）", 30), ("車の買い替え", "マイカーローン", 0)):
         api.post("/life-events/links", {"from_event_id": events[source], "to_event_id": events[target], "kind": "after", "offset_months": months})
     api.post(f"/life-events/{events['住宅購入（頭金）']}/conditions", {"metric": "net_worth", "comparator": "gte", "threshold_minor": 5000000, "note": "頭金を払っても生活できる"})
@@ -185,6 +179,13 @@ def seed_goal(api: Api, today: date, accounts: dict) -> dict:
     ):
         api.post(f"/life-scenarios/{base['id']}/contribution-plans", {"account_id": accounts[account], "start_period": start,
                                                                        "monthly_amount": monthly, "annual_return": rate, "note": note})
+    # ライフイベントへの取り崩し: which account pays how much toward an event, and when; 結婚 draws on two accounts.
+    for account, start, amount, name in (
+        ("貯蓄口座", "2027-08", 400000, "ヨーロッパ旅行"), ("貯蓄口座", "2028-10", 1750000, "結婚"), ("証券口座", "2028-10", 750000, "結婚"),
+        ("貯蓄口座", "2029-06", 500000, "車の買い替え"), ("貯蓄口座", "2030-10", 300000, "出産"), ("証券口座", "2031-03", 4000000, "住宅購入（頭金）"),
+    ):
+        api.post(f"/life-scenarios/{base['id']}/contribution-plans", {"account_id": accounts[account], "start_period": start,
+                                                                       "monthly_amount": -amount, "life_event_id": events[name]})
     api.post(f"/life-scenarios/{base['id']}/goal", {"earmarks": "keep"})
     # A comparison story: the same plan, investing more after a job change.
     other = api.post(f"/life-scenarios/{base['id']}/duplicate", {"name": "転職して積立を増やす"})

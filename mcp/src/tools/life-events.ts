@@ -25,19 +25,13 @@ const lifeEventFields = {
 };
 const lifeEventCreateSchema = z.object({ scenario_id: id.describe("Scenario that owns the event"), ...lifeEventFields }).strict();
 const lifeEventUpdateSchema = z.object(lifeEventFields).partial().extend({ id: id.describe("Life event ID") }).strict();
-const fundingSchema = z.object({
-  id: id.describe("Life event ID"),
-  fundings: z.array(z.object({
-    account_id: id.describe("Asset account"),
-    share: z.number().gt(0).max(100).describe("Share of the event in %"),
-  }).strict()).describe("Accounts and shares, at most 100% in total; an empty list clears them"),
-}).strict();
 const contributionFields = {
   account_id: id.describe("Asset account"),
   start_period: periodSchema.describe("First month the record applies, YYYY-MM"),
-  monthly_amount: z.number().describe("Monthly contribution from that month; negative withdraws (取り崩し)"),
-  annual_return: z.number().nullable().optional().describe("Yield % from that month; null keeps the previous one"),
+  monthly_amount: z.number().describe("Monthly contribution from that month; negative withdraws (取り崩し). With life_event_id: the negative amount withdrawn once"),
+  annual_return: z.number().nullable().optional().describe("Yield % from that month; null keeps the previous one (ignored with life_event_id)"),
   note: z.string().nullable().optional(),
+  life_event_id: id.nullable().optional().describe("An expense event of the same scenario: the record withdraws -monthly_amount once, in start_period, for it (ライフイベントへの取り崩し)"),
 };
 
 type Handler<T> = (input: T) => Promise<unknown>;
@@ -83,7 +77,7 @@ export function registerLifeEventTools(server: McpServer): void {
 
   server.registerTool("life_events_create", {
     title: "Create life event",
-    description: "Creates a life event in a scenario: kind (expense, income, borrowing, repayment), name, amount and date, priority, note; a repayment names its borrowing and number of months. Which accounts pay it is set with life_events_fundings_set.",
+    description: "Creates a life event in a scenario: kind (expense, income, borrowing, repayment), name, amount and date, priority, note; a repayment names its borrowing and number of months. Which accounts pay it: contribution_plans_create with life_event_id (a one-off withdrawal record).",
     inputSchema: lifeEventCreateSchema, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   }, guarded("Created life event:", async (input: z.infer<typeof lifeEventCreateSchema>) => api.post<unknown>("/life-events/", only(input))));
 
@@ -93,13 +87,6 @@ export function registerLifeEventTools(server: McpServer): void {
     inputSchema: lifeEventUpdateSchema, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, guarded("Updated life event:", async ({ id: eventId, ...patch }: z.infer<typeof lifeEventUpdateSchema>) =>
     api.put<unknown>(`/life-events/${eventId}`, only(patch))));
-
-  server.registerTool("life_events_fundings_set", {
-    title: "Set a life event's accounts",
-    description: "資金の割り当て: which asset accounts pay the event (or receive it, for income and borrowing) and by what share, e.g. 証券口座 60% and 貯蓄口座 40%. The rest is the residual net worth. Replaces the event's list. Making the plan from the goal earmarks an expense's share in each account.",
-    inputSchema: fundingSchema, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, guarded("Life event accounts:", async ({ id: eventId, fundings }: z.infer<typeof fundingSchema>) =>
-    api.put<unknown>(`/life-events/${eventId}/fundings`, fundings)));
 
   server.registerTool("life_events_delete", {
     title: "Delete life event",
@@ -123,7 +110,7 @@ export function registerLifeEventTools(server: McpServer): void {
 
   server.registerTool("contribution_plans_create", {
     title: "Add a contribution plan record",
-    description: "積立設定: from start_period, the account receives monthly_amount and earns annual_return (null keeps the previous yield).",
+    description: "積立設定: from start_period, the account receives monthly_amount and earns annual_return (null keeps the previous yield). With life_event_id, a one-off withdrawal for that expense event instead (e.g. 2028-10, 証券口座, -750000, 結婚): the simulation takes it out of the account that month, and making the plan from the goal earmarks it in that account until then.",
     inputSchema: z.object({ scenario_id: id, ...contributionFields }).strict(), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   }, guarded("Created contribution plan record:", async ({ scenario_id, ...record }: { scenario_id: number } & Record<string, unknown>) =>
     api.post<unknown>(`/life-scenarios/${scenario_id}/contribution-plans`, only(record))));

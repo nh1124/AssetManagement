@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from .. import models
 from ..domain.money import Money
 from .capsule_service import claimed_minor, goal_capsules
+from .contribution_plan_service import event_withdrawals
 from .life_scenario_scope import get_goal
 from .money_storage import money_client_currency
 
@@ -38,6 +39,8 @@ def events_with_progress(db: Session, client_id: int, scenario_id: int | None = 
     ids = [event.id for event in events]
     progress = funded(db, client_id, ids)
     capsules = goal_capsules(db, client_id, ids)
+    taken = event_withdrawals(db, ids)
+    currency = money_client_currency(db, client_id)
     rows = []
     for event in events:
         target = float(event.target_amount or 0.0)
@@ -47,7 +50,8 @@ def events_with_progress(db: Session, client_id: int, scenario_id: int | None = 
         rows.append({
             "id": event.id, "scenario_id": event.scenario_id, "lineage": event.lineage, "name": event.name,
             "direction": event.direction, "target_date": event.target_date,
-            "fundings": [{"account_id": row.account_id, "account_name": row.account_name, "share": row.share} for row in event.fundings],
+            "withdrawals": [{"account_id": row.account_id, "account_name": row.account.name if row.account else None, "period": row.start_period,
+                             "amount": Money(-row.monthly_amount_minor, currency).to_float()} for row in taken.get(event.id, [])],
             "target_amount": target, "priority": event.priority, "note": event.note,
             "condition_mode": event.condition_mode, "interest_rate": event.interest_rate,
             "borrowing_event_id": event.borrowing_event_id, "repeat_count": event.repeat_count,

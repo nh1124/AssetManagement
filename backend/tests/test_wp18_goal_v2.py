@@ -12,7 +12,7 @@ from app import models, schemas
 from app.domain.errors import NotFound, Refused
 from app.domain.journal import Leg
 from app.domain.transfer import migrate_goal_v2
-from app.services import capsule_service, event_funding_service
+from app.services import capsule_service
 from app.services import contribution_plan_service as plans
 from app.services import goal_earmark_service, goal_service, life_scenario_service as scenarios
 from app.services.ledger_service import create_transaction
@@ -47,16 +47,17 @@ def still(db):
 def create(db, scenario, name, amount, when, account_id=None, **values):
     row = goal_service.create_goal_record(db, 1, schemas.LifeEventCreate(
         scenario_id=scenario.id, name=name, target_amount=amount, target_date=when, **values))
-    if account_id is not None:
-        # 資金の割り当て (WP21): the whole event through one account.
-        row = event_funding_service.set_fundings(db, 1, row.id, [schemas.LifeEventFundingInput(account_id=account_id, share=100)])
+    if account_id is not None and row.direction == "expense":
+        # ライフイベントへの取り崩し (WP22): the account withdraws the whole amount in the event's month.
+        plans.create_plan(db, 1, scenario.id, {"account_id": account_id, "start_period": when.strftime("%Y-%m"),
+                                                "monthly_amount": -amount, "life_event_id": row.id})
     return row
 
 
 def test_an_event_works_through_an_asset_account_and_a_repayment_names_a_borrowing(db):
     scenario = goal(db)
     savings, food = account(db, "貯蓄"), account(db, "食費", kind="expense")
-    with pytest.raises(NotFound):
+    with pytest.raises(Refused):
         create(db, scenario, "外食", 1000, in_years(1), account_id=food.id)
     loan = create(db, scenario, "住宅ローン", 3_000_000, in_years(1), direction="borrowing", account_id=savings.id, interest_rate=1.5)
     assert (loan.interest_rate, loan.repeat_count) == (1.5, None)

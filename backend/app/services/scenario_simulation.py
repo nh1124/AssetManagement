@@ -1,13 +1,15 @@
 """Simulate a scenario account by account: contributions, yields, loans, and which events happen.
 
-The scenario's 使用口座 (the asset accounts its 積立設定 or its 資金の割り当て names)
-grow from their journal balance by the yield in force and receive the monthly amounts
-in force (a negative amount withdraws), year by year on shared seeded paths. Everything
-else -- other accounts, debts already on the books -- is the residual net worth.
+The scenario's 使用口座 (the asset accounts its 積立設定 names) grow from their journal
+balance by the yield in force and receive the monthly amounts in force (a negative
+amount withdraws), year by year on shared seeded paths. Everything else -- other
+accounts, debts already on the books -- is the residual net worth. A record that
+withdraws for a life event takes its amount out of the account in its month and hands
+it to the residual (where the event's paths still allow it), so the account falls then
+and net worth falls only when the event is paid.
 
 An event happens on a path when the event it follows happened there and its
-preconditions hold at its date. An expense leaves its accounts by their shares (the
-part no account takes leaves the residual), an inflow arrives the same way. A borrowing brings cash in and opens a debt of the same size,
+preconditions hold at its date. It is paid from (or arrives in) the residual. A borrowing brings cash in and opens a debt of the same size,
 so net worth does not move; its repayments pay a month at a time from their start,
 interest accruing on what is left, and happen only where the borrowing did.
 
@@ -26,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from ..domain.money import Money
-from .contribution_plan_service import resolve
+from .contribution_plan_service import resolve, withdrawals
 from .fx_service import get_client_currency
 from .ledger_valuation import calculate_account_balances
 from .life_event_conditions import PathJudge
@@ -44,9 +46,9 @@ def _period(start: date, offset_months: int) -> str:
     return f"{index // 12:04d}-{index % 12 + 1:02d}"
 
 
-def used_accounts(db: Session, client_id: int, plans, events=()) -> list[models.Account]:
-    """使用口座: the asset accounts the scenario's 積立設定 or its events' 資金の割り当て name."""
-    ids = {plan.account_id for plan in plans} | {account_id for event in events for account_id, _ in event.fundings}
+def used_accounts(db: Session, client_id: int, plans) -> list[models.Account]:
+    """使用口座: the asset accounts the scenario's 積立設定 records name."""
+    ids = {plan.account_id for plan in plans}
     if not ids:
         return []
     return db.query(models.Account).filter(
@@ -76,8 +78,12 @@ def simulate(db: Session, client_id: int, scenario: models.LifeScenario) -> dict
     inflation = scenario.inflation / 100.0
     plans = db.query(models.ScenarioContributionPlan).filter_by(scenario_id=scenario.id).all()
     events = walk(db, client_id, scenario.id)
-    accounts = used_accounts(db, client_id, plans, events)
+    accounts = used_accounts(db, client_id, plans)
     opening, currency = _opening(db, client_id, accounts)
+    taken_by_row: dict[int, list] = {}
+    for plan in withdrawals(plans):
+        if plan.start_period >= _period(today, 0):
+            taken_by_row.setdefault(int(plan.start_period[:4]) - today.year, []).append(plan)
     by_id = {event.id: event for event in events}
     parents = {link.to_event_id: link.from_event_id for link in db.query(models.LifeEventLink).filter(
         models.LifeEventLink.id.in_([event.incoming_link_id for event in events if event.incoming_link_id]))}
@@ -102,13 +108,18 @@ def simulate(db: Session, client_id: int, scenario: models.LifeScenario) -> dict
 
     def move(event: ScenarioEvent, amount: np.ndarray) -> None:
         nonlocal residual
-        left = amount
-        for account_id, share in event.fundings:
-            if account_id in balances:
-                part = amount * (share / 10000)
-                balances[account_id] = balances[account_id] + part
-                left = left - part
-        residual = residual + left
+        residual = residual + amount
+
+    def withdraw(index: int) -> None:
+        """This year's ライフイベントへの取り崩し: account to residual, only where the event can still happen."""
+        nonlocal residual
+        for plan in taken_by_row.get(index, []):
+            if plan.account_id not in balances:
+                continue
+            runs = executed.get(plan.life_event_id, np.ones(PATHS, dtype=bool))
+            amount = np.where(runs, Money(-plan.monthly_amount_minor, currency).to_float(), 0.0)
+            balances[plan.account_id] = balances[plan.account_id] - amount
+            residual = residual + amount
 
     def net() -> np.ndarray:
         return sum(balances.values(), residual) - sum(debts.values(), np.zeros(PATHS))
@@ -143,6 +154,7 @@ def simulate(db: Session, client_id: int, scenario: models.LifeScenario) -> dict
                                     "probability": None if np.any(truth == 0) else float(np.mean(truth == 1)),
                                     "conditions": details}
         repay(index)
+        withdraw(index)
 
     def repay(index: int) -> None:
         """Pay this calendar year's months of every running repayment, interest first."""
@@ -197,8 +209,7 @@ def simulate(db: Session, client_id: int, scenario: models.LifeScenario) -> dict
     taken = {event_id for event_id, runs in executed.items() if np.mean(runs) >= 0.5}
     return {
         "projection": projection,
-        "events": [{**asdict(event), "fundings": [{"account_id": account_id, "share": share / 100} for account_id, share in event.fundings],
-                    "executed_probability": round(float(np.mean(executed[event.id])), 4) if event.id in executed else None,
+        "events": [{**asdict(event), "executed_probability": round(float(np.mean(executed[event.id])), 4) if event.id in executed else None,
                     "funded_probability": round(float(np.mean(funded[event.id])), 4) if event.id in funded else None,
                     "on_likely_path": event.id in taken}
                    for event in events],

@@ -13,10 +13,10 @@ from ..database import Base
 class LifeEvent(Base):
     """A planned expense, inflow, borrowing or repayment in one scenario's story.
 
-    The event names no account: which accounts pay it, or receive it, is the
-    simulation setting's (LifeEventFunding). A repayment names its borrowing and pays
-    target_amount a month for repeat_count months; a borrowing carries its yearly
-    interest_rate.
+    The event names no account: what an account gives toward it is a 積立設定 record
+    of the simulation settings (ScenarioContributionPlan.life_event_id). A repayment
+    names its borrowing and pays target_amount a month for repeat_count months; a
+    borrowing carries its yearly interest_rate.
     """
     __tablename__ = "life_events"
 
@@ -45,8 +45,6 @@ class LifeEvent(Base):
     conditions = relationship("LifeEventCondition", cascade="all, delete-orphan")
     outgoing_links = relationship("LifeEventLink", foreign_keys="LifeEventLink.from_event_id", cascade="all, delete-orphan")
     incoming_links = relationship("LifeEventLink", foreign_keys="LifeEventLink.to_event_id", cascade="all, delete-orphan")
-    fundings = relationship("LifeEventFunding", cascade="all, delete-orphan", passive_deletes=True,
-                            lazy="selectin", order_by="LifeEventFunding.id")
 
     @hybrid_property
     def target_amount(self) -> float | None:
@@ -57,36 +55,6 @@ class LifeEvent(Base):
     @target_amount.expression
     def target_amount(cls):
         return major_expression(cls.target_amount_minor, client_currency_expression(cls))
-
-
-class LifeEventFunding(Base):
-    """資金の割り当て: a share of an event paid from (or received into) an asset account.
-
-    Set in the scenario's simulation settings, e.g. 証券口座 → 結婚 60%. An expense or
-    repayment leaves the account by its share, an income or borrowing arrives there;
-    the part no account takes is the residual net worth's. Making the plan from the
-    goal earmarks an expense's share in each of its accounts.
-    """
-    __tablename__ = "life_event_fundings"
-    __table_args__ = (
-        UniqueConstraint("life_event_id", "account_id", name="uq_life_event_fundings_account"),
-        CheckConstraint("share_bp > 0 AND share_bp <= 10000", name="ck_life_event_fundings_share"),
-    )
-
-    id = Column(Integer, primary_key=True)
-    life_event_id = Column(Integer, ForeignKey("life_events.id", ondelete="CASCADE"), nullable=False, index=True)
-    account_id = Column(Integer, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
-    share_bp = Column(Integer, nullable=False)
-
-    account = relationship("Account", lazy="joined")
-
-    @property
-    def share(self) -> float:
-        return self.share_bp / 100
-
-    @property
-    def account_name(self) -> str | None:
-        return self.account.name if self.account is not None else None
 
 
 class LifeEventLink(Base):
@@ -172,10 +140,17 @@ class ScenarioContributionPlan(Base):
     for the same account replaces the amount from its month; a null annual_return keeps
     the yield of the record before it. The accounts with records are the scenario's
     使用口座, the only ones the simulation grows.
+
+    A record naming a life event is different: once, in start_period, it takes
+    -monthly_amount out of the account for that event (ライフイベントへの取り崩し, e.g.
+    2028-10 証券口座 ¥750,000 for 結婚). It does not change the monthly amount.
     """
     __tablename__ = "scenario_contribution_plans"
     __table_args__ = (
-        UniqueConstraint("scenario_id", "account_id", "start_period", name="uq_scenario_contribution_plans_month"),
+        Index("uq_scenario_contribution_plans_month", "scenario_id", "account_id", "start_period", unique=True,
+              postgresql_where=text("life_event_id IS NULL"), sqlite_where=text("life_event_id IS NULL")),
+        Index("uq_scenario_contribution_plans_event", "scenario_id", "account_id", "start_period", "life_event_id", unique=True,
+              postgresql_where=text("life_event_id IS NOT NULL"), sqlite_where=text("life_event_id IS NOT NULL")),
     )
 
     id = Column(Integer, primary_key=True)
@@ -185,7 +160,11 @@ class ScenarioContributionPlan(Base):
     monthly_amount_minor = Column(BigInteger, nullable=False, default=0, server_default="0")
     annual_return = Column(Float, nullable=True)
     note = Column(String, nullable=True)
+    life_event_id = Column(Integer, ForeignKey("life_events.id", ondelete="CASCADE"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    event = relationship("LifeEvent")
+    account = relationship("Account")
 
 
 class GoalBudgetReflection(Base):

@@ -26,6 +26,7 @@ from ..domain.transfer import (
     remap_action_target_id,
     migrate_account_fields,
     migrate_event_fundings,
+    migrate_event_withdrawals,
     migrate_goal_fields,
     migrate_goal_v2,
 )
@@ -191,11 +192,6 @@ def export_client(db: Session, client: models.Client) -> dict:
                 .order_by(models.LifeEvent.id)
                 .all()
             ],
-            "life_event_fundings": [
-                row_fields(row, ["id", "life_event_id", "account_id", "share_bp"])
-                for row in db.query(models.LifeEventFunding).join(models.LifeEvent, models.LifeEvent.id == models.LifeEventFunding.life_event_id)
-                .filter(models.LifeEvent.client_id == client.id).order_by(models.LifeEventFunding.id).all()
-            ],
             "life_event_links": [
                 row_fields(link, ["id", "from_event_id", "to_event_id", "kind", "offset_months", "note", "created_at"])
                 for link in db.query(models.LifeEventLink)
@@ -207,7 +203,7 @@ def export_client(db: Session, client: models.Client) -> dict:
                 for row in db.query(models.LifeScenario).filter_by(client_id=client.id).order_by(models.LifeScenario.id).all()
             ],
             "scenario_contribution_plans": [
-                row_fields(row, ["id", "scenario_id", "account_id", "start_period", "monthly_amount_minor", "annual_return", "note", "created_at"])
+                row_fields(row, ["id", "scenario_id", "account_id", "start_period", "monthly_amount_minor", "annual_return", "note", "life_event_id", "created_at"])
                 for row in db.query(models.ScenarioContributionPlan).join(models.LifeScenario, models.LifeScenario.id == models.ScenarioContributionPlan.scenario_id)
                 .filter(models.LifeScenario.client_id == client.id).order_by(models.ScenarioContributionPlan.id).all()
             ],
@@ -474,6 +470,8 @@ def import_client(
         data = migrate_goal_v2(data)
     if version is None or version < 28:
         data = migrate_event_fundings(data)
+    if version is None or version < 29:
+        data = migrate_event_withdrawals(data, money_client_currency(db, client.id))
 
     link_map: dict[int, int] = {}
     scenario_map: dict[int, int] = {}
@@ -656,6 +654,9 @@ def import_client(
                 db.flush()
                 scenario_map[int(item["id"])] = scenario.id
             for item in data.get("scenario_contribution_plans", []):
+                # A withdrawal for a life event waits until the events exist.
+                if item.get("life_event_id") is not None:
+                    continue
                 db.add(models.ScenarioContributionPlan(
                     scenario_id=scenario_map[int(item["scenario_id"])], account_id=account_map[int(item["account_id"])],
                     start_period=item["start_period"], monthly_amount_minor=item["monthly_amount_minor"],
@@ -693,9 +694,15 @@ def import_client(
             db.add(event)
             db.flush()
             event_map[old_id] = event.id
-        for item in data.get("life_event_fundings", []):
-            db.add(models.LifeEventFunding(life_event_id=event_map[int(item["life_event_id"])],
-                                           account_id=account_map[int(item["account_id"])], share_bp=int(item["share_bp"])))
+        for item in data.get("scenario_contribution_plans", []):
+            if item.get("life_event_id") is None:
+                continue
+            db.add(models.ScenarioContributionPlan(
+                scenario_id=scenario_map[int(item["scenario_id"])], account_id=account_map[int(item["account_id"])],
+                start_period=item["start_period"], monthly_amount_minor=item["monthly_amount_minor"],
+                annual_return=item.get("annual_return"), note=item.get("note"), life_event_id=event_map[int(item["life_event_id"])],
+                created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
+            ))
         # A repayment names its borrowing, which may come later in the payload.
         for item in data.get("life_events", []):
             if item.get("borrowing_event_id") is not None:

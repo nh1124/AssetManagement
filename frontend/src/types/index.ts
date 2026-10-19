@@ -219,19 +219,11 @@ export type LifeEventKind = 'expense' | 'income' | 'borrowing' | 'repayment';
 /** A story fact of a scenario. Funding progress comes only from /life-events/with-progress.
  *  account_id is the asset account the event works through; for a repayment target_amount
  *  is the monthly payment, repeated repeat_count times, repaying borrowing_event_id. */
-/** 資金の割り当て: an account's share of an event, in percent (set in the simulation settings). */
-export interface LifeEventFunding {
-    account_id: number;
-    account_name: string | null;
-    share: number;
-}
-
 export interface LifeEvent {
     id: number;
     scenario_id: number;
     lineage: string;
     direction: LifeEventKind;
-    fundings: LifeEventFunding[];
     condition_mode: 'all' | 'any';
     name: string;
     target_date: string;
@@ -251,6 +243,8 @@ export interface LifeEventProgress extends LifeEvent {
     months_remaining: number;
     /** The earmark the plan made for the event (named after it), once it exists. */
     earmark: { capsule_id: number; capsule_name: string } | null;
+    /** ライフイベントへの取り崩し: the 積立設定 records that withdraw for the event. */
+    withdrawals: Array<{ account_id: number; account_name: string | null; period: string; amount: number }>;
 }
 
 export type DepreciationMethod = 'none' | 'straight_line' | 'declining_balance';

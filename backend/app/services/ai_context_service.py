@@ -362,7 +362,6 @@ def _goals(db: Session, client_id: int, limit: int) -> dict[str, Any]:
                 "target_date": _iso(row.target_date),
                 "target_amount": row.target_amount,
                 "direction": row.direction,
-                "fundings": [{"account_id": funding.account_id, "share": funding.share} for funding in row.fundings],
                 "priority": row.priority,
             }
             for row in rows

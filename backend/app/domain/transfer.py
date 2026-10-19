@@ -8,7 +8,7 @@ import re
 from datetime import date, datetime
 from typing import Any
 
-EXPORT_VERSION = 28
+EXPORT_VERSION = 29
 
 DATA_COLLECTIONS = [
     "accounts",
@@ -18,7 +18,6 @@ DATA_COLLECTIONS = [
     "registry_entries",
     "transaction_batches",
     "life_events",
-    "life_event_fundings",
     "life_event_links",
     "life_scenarios",
     "scenario_contribution_plans",
@@ -45,7 +44,7 @@ DATA_COLLECTIONS = [
 # verify, but the rows are never imported.
 RETIRED_COLLECTIONS = {"recurring_transactions": 24, "life_scenario_choices": 22, "quick_templates": None,
                        "life_scenario_account_returns": 26, "milestones": 26, "simulation_scenarios": 26, "goal_baselines": 26,
-                       "goal_event_earmarks": 27}
+                       "goal_event_earmarks": 27, "life_event_fundings": 29}
 
 
 def _retired(version: int | None) -> set[str]:
@@ -245,10 +244,11 @@ def validate_import_payload(
     check_ref("journal_entries", "account_id", "accounts", required=True)
     check_ref("journal_entries", "capsule_id", "capsules")
     check_ref("life_event_conditions", "life_event_id", "life_events", required=True)
-    # Only present before v28, when an event named one account itself.
+    # Only present before v28, when an event named one account itself, and in v28's shares.
     check_ref("life_events", "account_id", "accounts", required=False)
     check_ref("life_event_fundings", "life_event_id", "life_events", required=True)
     check_ref("life_event_fundings", "account_id", "accounts", required=True)
+    check_ref("scenario_contribution_plans", "life_event_id", "life_events")
     check_ref("life_event_links", "from_event_id", "life_events", required=True)
     check_ref("life_event_links", "to_event_id", "life_events", required=True)
     if not legacy:
@@ -294,10 +294,13 @@ def validate_import_payload(
                     issue("error", "invalid_scenario_rate", "利率は有限の数値で指定してください。", collection, item.get("id"), field)
     plan_keys = set()
     for item in data.get("scenario_contribution_plans", []):
-        key = (_as_int(item.get("scenario_id")), _as_int(item.get("account_id")), item.get("start_period"))
+        event_id = _as_int(item.get("life_event_id"))
+        key = (_as_int(item.get("scenario_id")), _as_int(item.get("account_id")), item.get("start_period"), event_id)
         amount, rate = item.get("monthly_amount_minor"), item.get("annual_return")
         valid = isinstance(key[2], str) and re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", key[2]) is not None and key not in plan_keys
         valid = valid and type(amount) is int and (rate is None or (type(rate) in (int, float) and math.isfinite(rate)))
+        # A withdrawal for a life event takes a positive amount out once.
+        valid = valid and (event_id is None or amount < 0)
         if not valid:
             issue("error", "invalid_contribution_plan", "積立設定のレコードが不正または重複しています。", "scenario_contribution_plans", item.get("id"))
         plan_keys.add(key)
@@ -718,3 +721,30 @@ def migrate_event_fundings(data: dict) -> dict:
             next_id += 1
             fundings.append({"id": next_id, "life_event_id": _as_int(event.get("id")), "account_id": account_id, "share_bp": 10000})
     return result
+
+
+def migrate_event_withdrawals(data: dict, currency: str) -> dict:
+    """Upgrade a verified pre-v29 payload the way migration 20261020_0082 upgrades the database.
+
+    A share of an expense event becomes a 積立設定 record withdrawing that share of the
+    target from its account in the event's month; other shares are dropped.
+    """
+    from copy import deepcopy
+    from .money import Money
+    result = deepcopy(data)
+    events = {_as_int(row.get("id")): row for row in result.get("life_events", [])}
+    plans = result.setdefault("scenario_contribution_plans", [])
+    next_id = max((_as_int(row.get("id")) or 0 for row in plans), default=0)
+    for share in sorted(result.pop("life_event_fundings", []), key=lambda row: _as_int(row.get("id")) or 0):
+        event = events.get(_as_int(share.get("life_event_id")))
+        if event is None or event.get("direction", "expense") != "expense" or not event.get("target_date"):
+            continue
+        amount = Money.from_major(str(event.get("target_amount") or 0), currency).minor * (share.get("share_bp") or 0) // 10000
+        if amount <= 0:
+            continue
+        next_id += 1
+        plans.append({"id": next_id, "scenario_id": event.get("scenario_id"), "account_id": share.get("account_id"),
+                      "start_period": str(event["target_date"])[:7], "monthly_amount_minor": -amount, "annual_return": None,
+                      "note": None, "life_event_id": _as_int(event.get("id"))})
+    return result
+

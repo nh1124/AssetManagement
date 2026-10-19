@@ -180,16 +180,6 @@
     "required_fields": []
   },
   {
-    "tool": "life_events_fundings_set",
-    "method": "put",
-    "path": "/life-events/{event_id}/fundings",
-    "body": "array",
-    "source": "src/tools/life-events.ts",
-    "path_fragment": "/life-events/${eventId}/fundings",
-    "allowed_fields": ["account_id", "share"],
-    "required_fields": ["account_id", "share"]
-  },
-  {
     "tool": "life_events_delete",
     "method": "delete",
     "path": "/life-events/{event_id}",
@@ -458,7 +448,7 @@
     "body": "object",
     "source": "src/tools/life-events.ts",
     "path_fragment": "/life-scenarios/${scenario_id}/contribution-plans",
-    "allowed_fields": ["account_id", "start_period", "monthly_amount", "annual_return", "note"],
+    "allowed_fields": ["account_id", "start_period", "monthly_amount", "annual_return", "note", "life_event_id"],
     "required_fields": []
   },
   {
@@ -468,7 +458,7 @@
     "body": "object",
     "source": "src/tools/life-events.ts",
     "path_fragment": "/life-scenarios/contribution-plans/${planId}",
-    "allowed_fields": ["account_id", "start_period", "monthly_amount", "annual_return", "note"],
+    "allowed_fields": ["account_id", "start_period", "monthly_amount", "annual_return", "note", "life_event_id"],
     "required_fields": []
   },
   {
