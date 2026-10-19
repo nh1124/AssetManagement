@@ -2,24 +2,17 @@ import { useId, useState, type FormEvent } from 'react';
 import { createGoal, updateGoal } from '../../../api';
 import type { LifeEvent, LifeEventKind } from '../../../types';
 import { Choice, EditorActions, Feedback, Field } from '../db/Database';
-import { buttonClass, inputClass, type DatabaseAccount } from '../db/forms';
-import { ACCOUNT_LABELS, KIND_LABELS } from './eventKinds';
+import { buttonClass, inputClass } from '../db/forms';
+import { KIND_LABELS } from './eventKinds';
 
-const ACCOUNT_HELP: Record<LifeEventKind, string> = {
-    expense: '計画の作成で、この口座にイベントと同じ名前の取り置きを作り、目標日にはこの口座から払います。未設定なら取り置きは作らず、シミュレーションでは残りの純資産から払います。',
-    income: 'シミュレーションでこの口座に入ります。未設定なら残りの純資産に入ります。',
-    borrowing: '借りたお金がこの口座に入り、同じ額の借入（負債）ができます。純資産は変わりません。',
-    repayment: '毎月の返済をこの口座から払います。未設定なら残りの純資産から払います。',
-};
-
-/** A life event: its kind, account, name, amount and date; a loan's rate, or a repayment's borrowing and months. */
-export default function GoalEditor({ goal, scenarioId, events, accounts, currency, busy, onSave, onCancel, onDelete }: {
-    goal: LifeEvent | null; scenarioId: number; events: LifeEvent[]; accounts: DatabaseAccount[]; currency: string; busy: boolean;
+/** A life event: its kind, name, amount and date; a loan's rate, or a repayment's borrowing and months.
+ * Which accounts pay it is set in the scenario's simulation settings (資金の割り当て). */
+export default function GoalEditor({ goal, scenarioId, events, currency, busy, onSave, onCancel, onDelete }: {
+    goal: LifeEvent | null; scenarioId: number; events: LifeEvent[]; currency: string; busy: boolean;
     onSave: (action: () => Promise<unknown>) => void; onCancel: () => void; onDelete?: () => void;
 }) {
     const formId = useId();
     const [direction, setDirection] = useState<LifeEventKind>(goal?.direction ?? 'expense');
-    const [accountId, setAccountId] = useState<number | null>(goal?.account_id ?? null);
     const [name, setName] = useState(goal?.name ?? '');
     const [amount, setAmount] = useState(goal ? String(goal.target_amount) : '');
     const [target, setTarget] = useState(goal?.target_date ?? '');
@@ -29,7 +22,6 @@ export default function GoalEditor({ goal, scenarioId, events, accounts, currenc
     const [borrowingId, setBorrowingId] = useState<number | null>(goal?.borrowing_event_id ?? null);
     const [count, setCount] = useState(goal?.repeat_count != null ? String(goal.repeat_count) : '12');
     const [error, setError] = useState('');
-    const assets = accounts.filter((row) => row.account_type === 'asset' && (row.is_active || row.id === accountId));
     const borrowings = events.filter((event) => event.direction === 'borrowing' && event.id !== goal?.id);
     const submit = (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
@@ -49,7 +41,7 @@ export default function GoalEditor({ goal, scenarioId, events, accounts, currenc
         }
         setError('');
         const payload = {
-            direction, account_id: accountId, name: name.trim(), target_amount: value, target_date: target, priority, note: note.trim() || null,
+            direction, name: name.trim(), target_amount: value, target_date: target, priority, note: note.trim() || null,
             interest_rate: direction === 'borrowing' ? Number(rate || 0) : null,
             borrowing_event_id: direction === 'repayment' ? borrowingId : null,
             repeat_count: direction === 'repayment' ? Number(count) : null,
@@ -63,7 +55,6 @@ export default function GoalEditor({ goal, scenarioId, events, accounts, currenc
                 {(Object.keys(KIND_LABELS) as LifeEventKind[]).map((value) => <button key={value} type="button" aria-pressed={direction === value} onClick={() => setDirection(value)} className={`${buttonClass} rounded-none border-0 aria-pressed:bg-[var(--studio-accent-soft)] aria-pressed:text-[var(--studio-accent)]`}>{KIND_LABELS[value]}</button>)}
             </div></fieldset>
             <Field label="名称"><input required value={name} onChange={(event) => setName(event.target.value)} className={inputClass} /></Field>
-            <Choice label={ACCOUNT_LABELS[direction]} help={ACCOUNT_HELP[direction]} value={accountId} options={assets} onChange={setAccountId} />
             {direction === 'repayment' && <Choice label="返済する借入" value={borrowingId} options={borrowings} required onChange={setBorrowingId} />}
             <Field label={direction === 'repayment' ? `毎月の返済額（${currency}）` : direction === 'expense' ? `目標額（${currency}）` : `金額（${currency}）`}><input required type="number" min="0" step="any" value={amount} onChange={(event) => setAmount(event.target.value)} className={inputClass} /></Field>
             <Field label={direction === 'repayment' ? '返済の開始日' : '目標日'}><input required type="date" value={target} onChange={(event) => setTarget(event.target.value)} className={inputClass} /></Field>
@@ -72,6 +63,7 @@ export default function GoalEditor({ goal, scenarioId, events, accounts, currenc
             <Field label="優先度"><select value={priority} onChange={(event) => setPriority(Number(event.target.value) as LifeEvent['priority'])} className={inputClass}><option value={1}>高</option><option value={2}>中</option><option value={3}>低</option></select></Field>
             <div className="md:col-span-2"><Field label="メモ"><textarea value={note} onChange={(event) => setNote(event.target.value)} className={inputClass} /></Field></div>
             {direction === 'repayment' && borrowings.length === 0 && <p className="text-xs text-[var(--studio-warning)] md:col-span-2">このシナリオに借入のイベントがありません。先に借入を作ってください。</p>}
+            <p className="text-xs text-[var(--studio-text-muted)] md:col-span-2">どの口座から払う（受け取る）かは、シミュレーションの設定の「ライフイベントの資金」で決めます。</p>
             <EditorActions form={formId} busy={busy} onCancel={onCancel} onDelete={onDelete} />
         </fieldset>
     </form>;

@@ -13,10 +13,10 @@ from ..database import Base
 class LifeEvent(Base):
     """A planned expense, inflow, borrowing or repayment in one scenario's story.
 
-    account_id names the asset account the event works through: where an expense is
-    set aside and drawn down, where an inflow or a loan arrives, what a repayment
-    is paid from. A repayment names its borrowing and pays target_amount a month
-    for repeat_count months; a borrowing carries its yearly interest_rate.
+    The event names no account: which accounts pay it, or receive it, is the
+    simulation setting's (LifeEventFunding). A repayment names its borrowing and pays
+    target_amount a month for repeat_count months; a borrowing carries its yearly
+    interest_rate.
     """
     __tablename__ = "life_events"
 
@@ -27,7 +27,6 @@ class LifeEvent(Base):
 
     condition_mode = Column(String, nullable=False, default="all", server_default="all")
     direction = Column(String, nullable=False, default="expense", server_default="expense")
-    account_id = Column(Integer, ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True)
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
     scenario_id = Column(Integer, ForeignKey("life_scenarios.id", ondelete="CASCADE"), nullable=False, index=True)
@@ -46,6 +45,8 @@ class LifeEvent(Base):
     conditions = relationship("LifeEventCondition", cascade="all, delete-orphan")
     outgoing_links = relationship("LifeEventLink", foreign_keys="LifeEventLink.from_event_id", cascade="all, delete-orphan")
     incoming_links = relationship("LifeEventLink", foreign_keys="LifeEventLink.to_event_id", cascade="all, delete-orphan")
+    fundings = relationship("LifeEventFunding", cascade="all, delete-orphan", passive_deletes=True,
+                            lazy="selectin", order_by="LifeEventFunding.id")
 
     @hybrid_property
     def target_amount(self) -> float | None:
@@ -56,6 +57,36 @@ class LifeEvent(Base):
     @target_amount.expression
     def target_amount(cls):
         return major_expression(cls.target_amount_minor, client_currency_expression(cls))
+
+
+class LifeEventFunding(Base):
+    """資金の割り当て: a share of an event paid from (or received into) an asset account.
+
+    Set in the scenario's simulation settings, e.g. 証券口座 → 結婚 60%. An expense or
+    repayment leaves the account by its share, an income or borrowing arrives there;
+    the part no account takes is the residual net worth's. Making the plan from the
+    goal earmarks an expense's share in each of its accounts.
+    """
+    __tablename__ = "life_event_fundings"
+    __table_args__ = (
+        UniqueConstraint("life_event_id", "account_id", name="uq_life_event_fundings_account"),
+        CheckConstraint("share_bp > 0 AND share_bp <= 10000", name="ck_life_event_fundings_share"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    life_event_id = Column(Integer, ForeignKey("life_events.id", ondelete="CASCADE"), nullable=False, index=True)
+    account_id = Column(Integer, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
+    share_bp = Column(Integer, nullable=False)
+
+    account = relationship("Account", lazy="joined")
+
+    @property
+    def share(self) -> float:
+        return self.share_bp / 100
+
+    @property
+    def account_name(self) -> str | None:
+        return self.account.name if self.account is not None else None
 
 
 class LifeEventLink(Base):

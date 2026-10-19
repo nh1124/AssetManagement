@@ -1,6 +1,6 @@
 import { useCallback, useId, useState, type FormEvent, type ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
-import { getLifeEvents } from '../../../api';
+import { getLifeEvents, setLifeEventFundings } from '../../../api';
 import { getLifeEventLinks } from '../../../api/lifeEventGraph';
 import * as scenariosApi from '../../../api/lifeScenarios';
 import type { ContributionPlan, LifeScenario, ProjectedLifeScenario } from '../../../api/lifeScenarios';
@@ -15,6 +15,7 @@ import { DataTable, Feedback, Field } from '../db/Database';
 import { buttonClass, inputClass, loadAccounts, primaryClass, useMutation } from '../db/forms';
 import type { LifeEventLink } from '../../../api/lifeEventGraph';
 import ContributionPlanEditor from './ContributionPlanEditor';
+import { EventFundingEditor, EventFundingTable } from './EventFundings';
 import { eventAmount, KIND_LABELS } from './eventKinds';
 import GoalProjectionChart from './GoalProjectionChart';
 import LifeEventDiagram from './LifeEventDiagram';
@@ -65,14 +66,20 @@ function Assumptions({ scenario, busy, onSave }: { scenario: LifeScenario; busy:
     </form>;
 }
 
-/** 使用口座と積立設定: each used account with its records, newest month last. */
-function UsedAccounts({ plans, currency, disabled, onEdit }: { plans: ContributionPlan[]; currency: string; disabled: boolean; onEdit: (plan: ContributionPlan) => void }) {
+/** 使用口座と積立設定: each used account with its records, newest month last; accounts only events use come last. */
+function UsedAccounts({ plans, funded, currency, disabled, onEdit }: {
+    plans: ContributionPlan[]; funded: Array<{ id: number; name: string }>; currency: string; disabled: boolean; onEdit: (plan: ContributionPlan) => void;
+}) {
     const groups = new Map<number, ContributionPlan[]>();
     for (const plan of [...plans].sort((a, b) => (a.account_name ?? '').localeCompare(b.account_name ?? '', 'ja') || a.start_period.localeCompare(b.start_period))) {
         groups.set(plan.account_id, [...(groups.get(plan.account_id) ?? []), plan]);
     }
-    if (!groups.size) return <p className="rounded-md border border-dashed border-[var(--studio-border)] p-4 text-sm text-[var(--studio-text-muted)]">使用口座がありません。「レコードを追加」で口座ごとの毎月の積立（または取り崩し）と年利を追加してください。</p>;
-    return <div className="space-y-3">{[...groups].map(([accountId, rows]) => <div key={accountId} className="overflow-hidden rounded-md border border-[var(--studio-border)]">
+    const eventOnly = funded.filter((account) => !groups.has(account.id));
+    if (!groups.size && !eventOnly.length) return <p className="rounded-md border border-dashed border-[var(--studio-border)] p-4 text-sm text-[var(--studio-text-muted)]">使用口座がありません。「レコードを追加」で口座ごとの毎月の積立（または取り崩し）と年利を追加してください。</p>;
+    return <div className="space-y-3">{eventOnly.map((account) => <div key={`funded-${account.id}`} className="overflow-hidden rounded-md border border-[var(--studio-border)]">
+        <h4 className="bg-[var(--studio-bg)] px-4 py-2 text-sm font-medium">{account.name}</h4>
+        <p className="px-4 py-2 text-xs text-[var(--studio-text-muted)]">積立設定のレコードはありません。ライフイベントの資金で使う口座として、今の残高から既定の年利で増減します。</p>
+    </div>)}{[...groups].map(([accountId, rows]) => <div key={accountId} className="overflow-hidden rounded-md border border-[var(--studio-border)]">
         <h4 className="bg-[var(--studio-bg)] px-4 py-2 text-sm font-medium">{rows[0].account_name ?? `#${accountId}`}</h4>
         <table className="w-full table-fixed text-left text-sm">
             <colgroup><col className="w-32" /><col className="w-48" /><col className="w-28" /><col /></colgroup>
@@ -160,9 +167,12 @@ function SimulationForClient({ currency, clientName, scenarioId }: { currency: s
     const goal = useMakeScenarioGoal(reloadLayout);
     // undefined: closed; null: a new record.
     const [editing, setEditing] = useState<ContributionPlan | null | undefined>(undefined);
+    const [funding, setFunding] = useState<LifeEvent | null>(null);
     const data = resource.data;
+    const funded = data ? [...new Map(data.events.flatMap((event) => event.fundings)
+        .map((row) => [row.account_id, { id: row.account_id, name: row.account_name ?? `#${row.account_id}` }])).values()] : [];
     const disabled = !clientName || mutation.busy || resource.loading || Boolean(resource.error);
-    const saveRecord = (action: () => Promise<unknown>, message: string) => { void mutation.run(action, message, () => { setEditing(undefined); resource.reload(); }); };
+    const saveRecord = (action: () => Promise<unknown>, message: string) => { void mutation.run(action, message, () => { setEditing(undefined); setFunding(null); resource.reload(); }); };
     const removeRecord = (plan: ContributionPlan) => {
         void (async () => {
             if (await confirm(`「${clientName}」の積立設定（${plan.account_name}・${plan.start_period}〜）を削除します。`, '削除する')) {
@@ -171,7 +181,7 @@ function SimulationForClient({ currency, clientName, scenarioId }: { currency: s
         })();
     };
     return <section className="space-y-6">
-        <Feedback loading={resource.loading && !data} error={resource.error || (editing === undefined ? mutation.error : '') || goal.error} message={mutation.message || goal.message} />
+        <Feedback loading={resource.loading && !data} error={resource.error || (editing === undefined && funding === null ? mutation.error : '') || goal.error} message={mutation.message || goal.message} />
         {goal.dialog}
         {data && <>
             {!data.scenario.is_goal && <div className="flex justify-end">
@@ -188,8 +198,13 @@ function SimulationForClient({ currency, clientName, scenarioId }: { currency: s
                         <h3 className="text-sm font-semibold">使用口座と積立設定</h3>
                         <button type="button" disabled={disabled} onClick={() => setEditing(null)} className={buttonClass}>レコードを追加</button>
                     </div>
-                    <UsedAccounts plans={data.scenario.contribution_plans} currency={currency} disabled={disabled} onEdit={setEditing} />
+                    <UsedAccounts plans={data.scenario.contribution_plans} funded={funded} currency={currency} disabled={disabled} onEdit={setEditing} />
                     <p className="text-xs text-[var(--studio-text-muted)]">シミュレーションで増やすのは使用口座だけです（それ以外の資産・負債は残りの純資産）。口座ごとに、開始月がその月以前で最も新しいレコードを使います。計画の作成では、積立は配分、取り崩しは取り崩しの行になります。</p>
+                </section>
+                <section className="space-y-3">
+                    <h3 className="text-sm font-semibold">ライフイベントの資金</h3>
+                    <EventFundingTable events={data.events} currency={currency} disabled={disabled} onEdit={setFunding} />
+                    <p className="text-xs text-[var(--studio-text-muted)]">どの口座から払う（受け取る）かを割合で決めます（例：証券口座 → 結婚 60%）。決めていない分は残りの純資産から出入りします。支出は、計画の作成で口座ごとの割合の取り置き（ゴール）になります。</p>
                 </section>
             </Panel>
             <Panel title="シミュレーションの結果" note={`${data.projected?.horizon_years ?? data.scenario.horizon_years}年分・1200 通りの試行の集計です。`}
@@ -197,6 +212,11 @@ function SimulationForClient({ currency, clientName, scenarioId }: { currency: s
                 {data.projected && <Results projected={data.projected} events={data.events} links={data.links} currency={currency} currentPeriod={currentPeriod} />}
             </Panel>
         </>}
+        {funding && data && <Overlay title={`「${funding.name}」の資金`} busy={mutation.busy} onClose={() => setFunding(null)}>
+            <Feedback error={mutation.error} />
+            <EventFundingEditor event={funding} accounts={data.accounts} busy={disabled} onCancel={() => setFunding(null)}
+                onSave={(rows) => saveRecord(() => setLifeEventFundings(funding.id, rows), 'ライフイベントの資金を保存しました。')} />
+        </Overlay>}
         {editing !== undefined && data && <Overlay title={editing ? '積立設定を編集' : '積立設定を追加'} busy={mutation.busy} onClose={() => setEditing(undefined)}>
             <Feedback error={mutation.error} />
             <ContributionPlanEditor plan={editing} accounts={data.accounts} defaultPeriod={currentPeriod} currency={currency} defaultRate={data.scenario.annual_return} busy={disabled}

@@ -22,7 +22,8 @@ export interface ScenarioEvent {
     target_amount: number;
     currency: string;
     direction: 'expense' | 'income' | 'borrowing' | 'repayment';
-    account_id: number | null;
+    /** 資金の割り当て: each account's share in percent; the rest is the residual net worth's. */
+    fundings: Array<{ account_id: number; share: number }>;
     incoming_link_id: number | null;
     interest_rate: number | null;
     borrowing_event_id: number | null;

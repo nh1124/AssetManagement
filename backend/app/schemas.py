@@ -740,7 +740,6 @@ LifeEventKind = Literal["expense", "income", "borrowing", "repayment"]
 class LifeEventBase(BaseModel):
     """target_amount is the amount; for a repayment, the monthly payment."""
     direction: LifeEventKind = "expense"
-    account_id: Optional[int] = None
     condition_mode: Literal["all", "any"] = "all"
     name: str
     target_date: date
@@ -758,7 +757,6 @@ class LifeEventCreate(LifeEventBase):
 class LifeEventUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     direction: Optional[LifeEventKind] = None
-    account_id: Optional[int] = None
     condition_mode: Optional[Literal["all", "any"]] = None
     name: Optional[str] = None
     target_date: Optional[date] = None
@@ -769,10 +767,25 @@ class LifeEventUpdate(BaseModel):
     borrowing_event_id: Optional[int] = None
     repeat_count: Optional[int] = Field(default=None, ge=1, le=1200)
 
+class LifeEventFundingInput(BaseModel):
+    """One account of an event's 資金の割り当て: its share of the event in percent."""
+    model_config = ConfigDict(extra="forbid")
+    account_id: int = Field(gt=0)
+    share: float = Field(gt=0, le=100, allow_inf_nan=False)
+
+
+class LifeEventFunding(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    account_id: int
+    account_name: Optional[str] = None
+    share: float
+
+
 class LifeEvent(LifeEventBase):
     id: int
     scenario_id: int
     lineage: str
+    fundings: list[LifeEventFunding] = []
     created_at: Optional[datetime] = None
 
     class Config:

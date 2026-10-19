@@ -2,9 +2,9 @@
 
 Wipes the signed-in client's data with an empty import, then records a small household:
 accounts, three months of transactions, automatic transactions, a fixed asset and a consumable,
-earmarks with a rule, a tracked currency, and a goal scenario (events with their accounts, a car
-loan and its repayments, branches, preconditions, 積立設定) whose plan is made, which creates the
-goal's earmarks, and the user's own plan records for this month. Only ever run it against the
+earmarks with a rule, a tracked currency, and a goal scenario (events, a car loan and its
+repayments, branches, preconditions, 積立設定, which accounts pay each event) whose plan is made,
+which creates the goal's earmarks, and the user's own plan records for this month. Only ever run it against the
 test client.
 
     python scripts/seed_test_client.py --base http://127.0.0.1:18100 --username admin --password ...
@@ -148,27 +148,32 @@ def seed_ledger(api: Api, today: date) -> dict:
 
 
 def seed_goal(api: Api, today: date, accounts: dict) -> dict:
-    """A goal scenario with branches, a loan, preconditions and 積立設定; a second scenario to compare."""
+    """A goal scenario with branches, a loan, preconditions, 積立設定 and 資金の割り当て; a second scenario to compare."""
     period = today.strftime("%Y-%m")
     member = api.post("/household-members", {"name": "本人", "relation": "本人", "birth_date": "1996-05-10"})
     base = api.post("/life-scenarios", {"name": "基本"})
     api.put(f"/life-scenarios/{base['id']}", {"annual_return": 1.0, "inflation": 1.0, "horizon_years": 30})
     events = {}
-    for name, direction, account, when, amount, priority, extra in (
-        ("ヨーロッパ旅行", "expense", "貯蓄口座", "2027-08-01", 400000, 3, {}),
-        ("臨時収入", "income", "貯蓄口座", "2027-06-30", 500000, 3, {}),
-        ("結婚", "expense", "貯蓄口座", "2028-10-01", 2500000, 1, {}),
-        ("出産", "expense", "メイン銀行", "2030-10-01", 800000, 1, {}),
-        ("住宅購入（頭金）", "expense", "証券口座", "2031-04-01", 6000000, 2, {}),
-        ("車の買い替え", "expense", "メイン銀行", "2029-06-01", 1500000, 3, {}),
-        ("マイカーローン", "borrowing", "メイン銀行", "2029-06-01", 1000000, 3, {"interest_rate": 2.5}),
+    for name, direction, when, amount, priority, extra in (
+        ("ヨーロッパ旅行", "expense", "2027-08-01", 400000, 3, {}),
+        ("臨時収入", "income", "2027-06-30", 500000, 3, {}),
+        ("結婚", "expense", "2028-10-01", 2500000, 1, {}),
+        ("出産", "expense", "2030-10-01", 800000, 1, {}),
+        ("住宅購入（頭金）", "expense", "2031-04-01", 6000000, 2, {}),
+        ("車の買い替え", "expense", "2029-06-01", 1500000, 3, {}),
+        ("マイカーローン", "borrowing", "2029-06-01", 1000000, 3, {"interest_rate": 2.5}),
     ):
-        events[name] = api.post("/life-events/", {"scenario_id": base["id"], "name": name, "direction": direction,
-                                                  "account_id": accounts[account], "target_date": when,
+        events[name] = api.post("/life-events/", {"scenario_id": base["id"], "name": name, "direction": direction, "target_date": when,
                                                   "target_amount": amount, "priority": priority, **extra})["id"]
     events["ローン返済"] = api.post("/life-events/", {"scenario_id": base["id"], "name": "ローン返済", "direction": "repayment",
-                                                    "account_id": accounts["メイン銀行"], "target_date": "2029-07-01", "target_amount": 30000,
+                                                    "target_date": "2029-07-01", "target_amount": 30000,
                                                     "priority": 3, "borrowing_event_id": events["マイカーローン"], "repeat_count": 36})["id"]
+    # 資金の割り当て (the simulation settings): which accounts pay each event; 結婚 is split over two.
+    for name, shares in (("ヨーロッパ旅行", [("貯蓄口座", 100)]), ("臨時収入", [("貯蓄口座", 100)]),
+                         ("結婚", [("貯蓄口座", 70), ("証券口座", 30)]), ("出産", [("メイン銀行", 100)]),
+                         ("住宅購入（頭金）", [("証券口座", 100)]), ("車の買い替え", [("メイン銀行", 100)]),
+                         ("マイカーローン", [("メイン銀行", 100)]), ("ローン返済", [("メイン銀行", 100)])):
+        api.put(f"/life-events/{events[name]}/fundings", [{"account_id": accounts[account], "share": share} for account, share in shares])
     for source, target, months in (("結婚", "出産", 24), ("結婚", "住宅購入（頭金）", 30), ("車の買い替え", "マイカーローン", 0)):
         api.post("/life-events/links", {"from_event_id": events[source], "to_event_id": events[target], "kind": "after", "offset_months": months})
     api.post(f"/life-events/{events['住宅購入（頭金）']}/conditions", {"metric": "net_worth", "comparator": "gte", "threshold_minor": 5000000, "note": "頭金を払っても生活できる"})

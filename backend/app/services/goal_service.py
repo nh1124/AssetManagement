@@ -9,7 +9,7 @@ from sqlalchemy.orm import Query, Session
 from .money_storage import minor_fields, money_client_currency
 
 from .. import models, schemas
-from ..domain.errors import NotFound, Refused
+from ..domain.errors import Refused
 from .cache_service import invalidate_client
 from .life_scenario_scope import get as get_scenario, selected as selected_scenario
 
@@ -73,10 +73,6 @@ _REQUIRED = {"direction", "condition_mode", "name", "target_date", "target_amoun
 
 def _settle(db: Session, client_id: int, event: models.LifeEvent) -> None:
     """Check the event as it will be saved, and clear what its kind does not use."""
-    if event.account_id is not None:
-        account = db.get(models.Account, event.account_id)
-        if account is None or account.client_id != client_id or account.account_type != "asset":
-            raise NotFound("同じクライアントの資産口座を選んでください。")
     event.interest_rate = (event.interest_rate or 0.0) if event.direction == "borrowing" else None
     if event.direction == "repayment":
         borrowing = get_life_event(db, client_id, event.borrowing_event_id) if event.borrowing_event_id else None
@@ -132,7 +128,7 @@ def update_goal(
 
 
 def delete_goal(db: Session, client_id: int, life_event_id: int) -> bool:
-    """Delete the story fact; its links, conditions and earmark links go with it, the earmarks stay."""
+    """Delete the story fact; its links, conditions and 資金の割り当て go with it, its earmark stays."""
     db_event = get_life_event(db, client_id, life_event_id)
     if db_event is None:
         return False

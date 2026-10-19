@@ -1,13 +1,13 @@
 """Simulate a scenario account by account: contributions, yields, loans, and which events happen.
 
-The scenario's 使用口座 (the asset accounts its 積立設定 names) grow from their journal
-balance by the yield in force and receive the monthly amounts in force (a negative
-amount withdraws), year by year on shared seeded paths. Everything else -- other
-accounts, debts already on the books -- is the residual net worth.
+The scenario's 使用口座 (the asset accounts its 積立設定 or its 資金の割り当て names)
+grow from their journal balance by the yield in force and receive the monthly amounts
+in force (a negative amount withdraws), year by year on shared seeded paths. Everything
+else -- other accounts, debts already on the books -- is the residual net worth.
 
 An event happens on a path when the event it follows happened there and its
-preconditions hold at its date. An expense leaves its account (or the residual), an
-inflow arrives there. A borrowing brings cash in and opens a debt of the same size,
+preconditions hold at its date. An expense leaves its accounts by their shares (the
+part no account takes leaves the residual), an inflow arrives the same way. A borrowing brings cash in and opens a debt of the same size,
 so net worth does not move; its repayments pay a month at a time from their start,
 interest accruing on what is left, and happen only where the borrowing did.
 
@@ -44,9 +44,9 @@ def _period(start: date, offset_months: int) -> str:
     return f"{index // 12:04d}-{index % 12 + 1:02d}"
 
 
-def used_accounts(db: Session, client_id: int, plans) -> list[models.Account]:
-    """使用口座: the asset accounts the scenario's 積立設定 names."""
-    ids = {plan.account_id for plan in plans}
+def used_accounts(db: Session, client_id: int, plans, events=()) -> list[models.Account]:
+    """使用口座: the asset accounts the scenario's 積立設定 or its events' 資金の割り当て name."""
+    ids = {plan.account_id for plan in plans} | {account_id for event in events for account_id, _ in event.fundings}
     if not ids:
         return []
     return db.query(models.Account).filter(
@@ -75,9 +75,9 @@ def simulate(db: Session, client_id: int, scenario: models.LifeScenario) -> dict
     tax = (config.tax_rate if config and config.tax_rate is not None else 20.0) / 100.0
     inflation = scenario.inflation / 100.0
     plans = db.query(models.ScenarioContributionPlan).filter_by(scenario_id=scenario.id).all()
-    accounts = used_accounts(db, client_id, plans)
-    opening, currency = _opening(db, client_id, accounts)
     events = walk(db, client_id, scenario.id)
+    accounts = used_accounts(db, client_id, plans, events)
+    opening, currency = _opening(db, client_id, accounts)
     by_id = {event.id: event for event in events}
     parents = {link.to_event_id: link.from_event_id for link in db.query(models.LifeEventLink).filter(
         models.LifeEventLink.id.in_([event.incoming_link_id for event in events if event.incoming_link_id]))}
@@ -102,10 +102,13 @@ def simulate(db: Session, client_id: int, scenario: models.LifeScenario) -> dict
 
     def move(event: ScenarioEvent, amount: np.ndarray) -> None:
         nonlocal residual
-        if event.account_id in balances:
-            balances[event.account_id] = balances[event.account_id] + amount
-        else:
-            residual = residual + amount
+        left = amount
+        for account_id, share in event.fundings:
+            if account_id in balances:
+                part = amount * (share / 10000)
+                balances[account_id] = balances[account_id] + part
+                left = left - part
+        residual = residual + left
 
     def net() -> np.ndarray:
         return sum(balances.values(), residual) - sum(debts.values(), np.zeros(PATHS))
@@ -194,7 +197,8 @@ def simulate(db: Session, client_id: int, scenario: models.LifeScenario) -> dict
     taken = {event_id for event_id, runs in executed.items() if np.mean(runs) >= 0.5}
     return {
         "projection": projection,
-        "events": [{**asdict(event), "executed_probability": round(float(np.mean(executed[event.id])), 4) if event.id in executed else None,
+        "events": [{**asdict(event), "fundings": [{"account_id": account_id, "share": share / 100} for account_id, share in event.fundings],
+                    "executed_probability": round(float(np.mean(executed[event.id])), 4) if event.id in executed else None,
                     "funded_probability": round(float(np.mean(funded[event.id])), 4) if event.id in funded else None,
                     "on_likely_path": event.id in taken}
                    for event in events],
