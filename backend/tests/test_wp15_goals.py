@@ -112,7 +112,7 @@ def test_duplicating_copies_the_story_and_contributions_not_earmarks_and_goal_on
     life_event_graph.create_link(db, 1, from_event_id=first.id, to_event_id=second.id, kind="after", offset_months=6)
     db.add(models.LifeEventCondition(client_id=1, life_event_id=second.id, metric="net_worth", comparator="gte", threshold_minor=10))
     plans.create_plan(db, 1, original.id, {"account_id": savings.id, "start_period": PERIOD, "monthly_amount": 5000})
-    capsule = capsule_service.create_goal_capsule(db, 1, event_id=first.id, name="A", target_minor=1000, parts={savings.id: 1000})
+    capsule = capsule_service.create_goal_capsule(db, 1, event_id=first.id, name="A", parts={savings.id: 1000})
     db.commit()
 
     copy = scenarios.duplicate(db, 1, original.id, "複製")
@@ -325,7 +325,7 @@ def test_http_conditions_contribution_plans_earmarks_and_plan_check(db, api):
     scenario = goal(db)
     savings = account(db, "貯蓄")
     house = event(db, scenario, "家", 1000, in_years(2), account_id=savings.id)
-    capsule = capsule_service.create_goal_capsule(db, 1, event_id=house.id, name="家", target_minor=1000, parts={savings.id: 1000})
+    capsule = capsule_service.create_goal_capsule(db, 1, event_id=house.id, name="家", parts={savings.id: 1000})
     db.commit()
     created = request(api, "POST", f"/life-events/{house.id}/conditions", json={"metric": "net_worth", "comparator": "gte", "threshold_minor": 100})
     updated = request(api, "PUT", f"/life-events/{house.id}/conditions/{created.json()['id']}",

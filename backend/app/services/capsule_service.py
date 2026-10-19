@@ -95,24 +95,25 @@ def create_capsule(
 
 
 def create_goal_capsule(
-    db: Session, client_id: int, *, event_id: int, name: str, target_minor: int, parts: dict[int, int],
+    db: Session, client_id: int, *, event_id: int, name: str, parts: dict[int, int],
     monthly_minor: int = 0, commit: bool = False,
 ) -> models.Capsule:
     """The earmark made for a goal event: named after it, set aside in its accounts by their parts."""
     capsule = models.Capsule(
-        client_id=client_id, name=name, target_amount_minor=max(0, target_minor), monthly_contribution_minor=max(0, monthly_minor),
+        client_id=client_id, name=name, target_amount_minor=sum(parts.values()), monthly_contribution_minor=max(0, monthly_minor),
         auto_post=False, capsule_type="manual", target_amount_source="manual", monthly_contribution_source="manual",
         goal_event_id=event_id,
     )
     db.add(capsule)
     db.flush()
-    sync_goal_capsule(db, client_id, capsule.id, target_minor, parts)
+    sync_goal_capsule(db, client_id, capsule.id, parts)
     _finish_write(db, client_id, capsule, commit=commit)
     return capsule
 
 
-def sync_goal_capsule(db: Session, client_id: int, capsule_id: int, target_minor: int, parts: dict[int, int]) -> None:
-    """Keep a goal earmark's target and accounts at its event's: one funding source per account part.
+def sync_goal_capsule(db: Session, client_id: int, capsule_id: int, parts: dict[int, int]) -> None:
+    """Keep a goal earmark at what its accounts withdraw for the event: one funding source per account part,
+    the target their total (the rest of the event is paid from the residual net worth).
 
     An account the event no longer uses stays as a source with no target while the
     earmark still holds money there, so nothing it holds is orphaned.
@@ -121,7 +122,7 @@ def sync_goal_capsule(db: Session, client_id: int, capsule_id: int, target_minor
     if capsule is None:
         raise NotFound("Capsule not found")
     currency = money_client_currency(db, client_id)
-    capsule.target_amount_minor = max(0, target_minor)
+    capsule.target_amount_minor = sum(parts.values())
     held = [source.account_id for source in capsule.funding_sources
             if source.account_id not in parts and claimed_minor(db, client_id, capsule.id, source.account_id).get(currency, 0)]
     set_funding_sources(db, client_id, capsule.id, [

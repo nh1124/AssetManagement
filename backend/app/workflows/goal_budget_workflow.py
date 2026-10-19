@@ -43,7 +43,7 @@ def apply(db: Session, client_id: int, start_period: str, end_period: str, finge
         targets = earmark_parts(db, list(events.values()))
         existing = capsule_service.goal_capsules(db, client_id, list(events))
         for event_id, capsule in existing.items():
-            capsule_service.sync_goal_capsule(db, client_id, capsule.id, events[event_id].target_amount_minor or 0, targets[event_id])
+            capsule_service.sync_goal_capsule(db, client_id, capsule.id, targets[event_id])
         first = planned["periods"][0]
         monthly: dict[int, int] = {}
         for change in planned["changes"]:
@@ -54,7 +54,7 @@ def apply(db: Session, client_id: int, start_period: str, end_period: str, finge
             if change["new_capsule"] and not change["retire"] and change["event_id"] not in made:
                 event = events[change["event_id"]]
                 made[event.id] = capsule_service.create_goal_capsule(
-                    db, client_id, event_id=event.id, name=event.name, target_minor=event.target_amount_minor or 0,
+                    db, client_id, event_id=event.id, name=event.name,
                     parts=targets[event.id], monthly_minor=monthly.get(event.id, 0),
                 ).id
         for event_id, capsule in existing.items():

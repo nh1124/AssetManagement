@@ -135,8 +135,8 @@ def _funded_goal(db):
     savings = account(db, "貯蓄", balance=500_000)
     trip = create(db, scenario, "旅行", 100000, months_ahead(10), account_id=savings.id)
     only = create(db, scenario, "車", 50000, months_ahead(10), account_id=savings.id)
-    capsule = capsule_service.create_goal_capsule(db, 1, event_id=trip.id, name="旅行", target_minor=100000, parts={savings.id: 100000})
-    lone = capsule_service.create_goal_capsule(db, 1, event_id=only.id, name="車", target_minor=50000, parts={savings.id: 50000})
+    capsule = capsule_service.create_goal_capsule(db, 1, event_id=trip.id, name="旅行", parts={savings.id: 100000})
+    lone = capsule_service.create_goal_capsule(db, 1, event_id=only.id, name="車", parts={savings.id: 50000})
     create_transaction(db, client_id=1, date=TODAY, description="確保", amount_minor=40000, currency="JPY",
                        legs=[Leg(savings.id, debit=40000, capsule_id=capsule.id), Leg(savings.id, credit=40000)])
     db.commit()
