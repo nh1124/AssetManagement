@@ -64,7 +64,7 @@ def _split_meal(db):
     )
     food = models.Account(client_id=1, name="food", account_type="expense")
     advance = models.Account(
-        client_id=1, name="advance / friend", account_type="asset", role="unassigned"
+        client_id=1, name="advance / friend", account_type="asset"
     )
     db.add_all([client, card, food, advance])
     db.flush()
@@ -225,7 +225,7 @@ def test_a_cash_funded_line_still_reports_its_own_leg_as_cash() -> None:
     db = _session()
     try:
         client = models.Client(id=1, name="test", general_settings={})
-        cash = models.Account(client_id=1, name="cash", account_type="asset", role="operating")
+        cash = models.Account(client_id=1, name="cash", account_type="asset")
         food = models.Account(client_id=1, name="food", account_type="expense")
         advance = models.Account(client_id=1, name="advance", account_type="asset")
         db.add_all([client, cash, food, advance])
@@ -266,9 +266,9 @@ def test_a_cash_funded_line_still_reports_its_own_leg_as_cash() -> None:
 def _split_payroll(db):
     client = models.Client(id=1, name="test", general_settings={})
     salary = models.Account(client_id=1, name="salary", account_type="income")
-    bank = models.Account(client_id=1, name="bank", account_type="asset", role="operating")
+    bank = models.Account(client_id=1, name="bank", account_type="asset")
     savings = models.Account(client_id=1, name="savings plan", account_type="asset")
-    stock = models.Account(client_id=1, name="stock plan", account_type="asset", role="growth")
+    stock = models.Account(client_id=1, name="stock plan", account_type="asset")
     db.add_all([client, salary, bank, savings, stock])
     db.flush()
 
@@ -392,7 +392,7 @@ def test_transaction_account_mode_still_works_on_a_two_leg_entry() -> None:
     try:
         client = models.Client(id=1, name="test", general_settings={})
         salary = models.Account(client_id=1, name="salary", account_type="income")
-        bank = models.Account(client_id=1, name="bank", account_type="asset", role="operating")
+        bank = models.Account(client_id=1, name="bank", account_type="asset")
         db.add_all([client, salary, bank])
         db.flush()
         tx = models.Transaction(

@@ -78,7 +78,7 @@ function EarmarkTable({ earmarks, currency, shortfall, need, disabled, onEarmark
 export default function BudgetTable({ accounts, earmarks, currency, narrowed, shortfall, need, highlight, disabled, onAccount, onEarmark }: TableProps) {
     const money = (amount: number) => formatCurrency(amount, currency);
     const groups = [...KINDS, null].map((kind) => ({ kind, rows: accounts.filter((row) => row.kind === kind) }))
-        .filter((group) => group.rows.length || (!narrowed && group.kind && group.kind !== 'item'));
+        .filter((group) => group.rows.length || (!narrowed && group.kind));
     const stack = (row: AccountRow, actual = false) => {
         const cells = row.cells.filter((cell) => cell.set || cell.budget !== 0 || cell.actual !== 0);
         if (!cells.length) return actual ? money(0) : <span className={faint}>未設定</span>;

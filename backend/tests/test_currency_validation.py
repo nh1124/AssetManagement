@@ -125,19 +125,3 @@ def test_merging_settings_without_a_currency_leaves_the_stored_one_alone(http):
     db, client, _ = http
     merged = merge_general_settings(db, client, {"locale": "ja-JP"})
     assert merged == {"currency": "JPY", "locale": "ja-JP"}
-
-
-def test_an_exchange_rate_cannot_be_recorded_for_an_unsupported_currency(http):
-    _, _, test_client = http
-    refused = test_client.post("/exchange-rates/", json={
-        "base_currency": "gbp", "quote_currency": "jpy",
-        "rate": 190.0, "as_of_date": "2026-10-12",
-    })
-    assert refused.status_code == 400
-    accepted = test_client.post("/exchange-rates/", json={
-        "base_currency": " usd ", "quote_currency": "jpy",
-        "rate": 150.0, "as_of_date": "2026-10-12",
-    })
-    assert accepted.status_code in (200, 201), accepted.text
-    body = accepted.json()
-    assert (body["base_currency"], body["quote_currency"]) == ("USD", "JPY")

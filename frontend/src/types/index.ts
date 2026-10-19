@@ -53,23 +53,14 @@ export interface TransactionProposal {
     decided_by_client_id?: number | null;
 }
 
-export type AccountRole = 'defense' | 'growth' | 'earmarked' | 'operating' | 'unassigned';
 export type LiabilityPaymentPolicy = 'full' | 'minimum' | 'fixed' | 'installment' | 'revolving';
 
-export type AccountInstitution = 'none' | 'nisa_tsumitate' | 'nisa_growth' | 'ideco' | 'dc_corporate' | 'tokutei_withholding' | 'tokutei_self' | 'general';
 
 export interface Account {
     id: number;
     name: string;
     account_type: 'asset' | 'liability' | 'income' | 'expense';
     balance: number;
-    rollup_balance?: number;
-    parent_id?: number | null;
-    institution: AccountInstitution;
-    withdrawable_from_age?: number | null;
-    expected_return: number | null;
-    role: AccountRole;
-    role_target_amount?: number | null;
     liability_closing_day?: number | null;
     liability_payment_day?: number | null;
     liability_payment_month_offset?: number;
@@ -94,9 +85,7 @@ export interface ExchangeRate {
 
 export interface ExchangeRateAutoUpdateResult {
     target_currency: string;
-    detected_pairs: Array<Pick<ExchangeRate, 'base_currency' | 'quote_currency'>>;
     updated: ExchangeRate[];
-    skipped: Array<Pick<ExchangeRate, 'base_currency' | 'quote_currency'> & { reason: string }>;
     errors: Array<Pick<ExchangeRate, 'base_currency' | 'quote_currency'> & { error: string }>;
 }
 
@@ -435,26 +424,8 @@ export interface AnalysisSummary {
     total_funded: number;
     effective_cash?: number;
     logical_balance?: number;
-    locked_until_age_minor?: Record<string, number>;
-    locked_as_of?: string;
-    locked_accounts?: Array<{
-        account_id: number;
-        name: string;
-        withdrawable_from_age: number;
-        available_on: string;
-        balances_minor: Record<string, number>;
-    }>;
     cfo_briefing?: string;
     savings_rate?: number;
-    idle_money_rate?: number;
-    idle_money?: number;
-    idle_money_by_role?: Array<{
-        role: AccountRole;
-        balance: number;
-        target?: number | null;
-        status: string;
-        idle_component: number;
-    }>;
     liquidity_coverage_ratio?: number;
     runway_months?: number;
     roadmap_progression?: 'On Track' | 'At Risk' | 'Off Track';
@@ -966,4 +937,10 @@ export interface ScheduledTransactions {
     period: string;
     currency: string;
     items: ScheduledTransaction[];
+}
+
+
+export interface FxTrackedCurrency {
+    currency: string;
+    created_at: string;
 }

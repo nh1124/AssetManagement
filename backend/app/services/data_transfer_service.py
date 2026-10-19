@@ -24,6 +24,7 @@ from ..domain.transfer import (
     validate_import_payload,
     remap_nested_ids,
     remap_action_target_id,
+    migrate_account_fields,
 )
 from .data_health_service import check_data_health
 from .budget_lines import assign_plan_line_identity
@@ -63,12 +64,6 @@ def export_client(db: Session, client: models.Client) -> dict:
                         "id",
                         "name",
                         "account_type",
-                        "parent_id",
-                        "expected_return",
-                        "institution",
-                        "withdrawable_from_age",
-                        "role",
-                        "role_target_amount",
                         "liability_closing_day",
                         "liability_payment_day",
                         "liability_payment_month_offset",
@@ -493,6 +488,10 @@ def export_client(db: Session, client: models.Client) -> dict:
                 .order_by(models.SimulationScenario.id)
                 .all()
             ],
+            "fx_tracked_currencies": [
+                row_fields(row, ["currency", "created_at"])
+                for row in db.query(models.FxTrackedCurrency).filter_by(client_id=client.id).order_by(models.FxTrackedCurrency.currency)
+            ],
             "exchange_rates": [
                 row_fields(
                     rate,
@@ -558,6 +557,11 @@ def import_client(
             },
         )
 
+    legacy_account_returns = {int(row["id"]): row["expected_return"] for row in data.get("accounts", [])
+                              if row.get("account_type") == "asset" and row.get("expected_return") is not None}
+    if version is None or version < 23:
+        data = migrate_account_fields(data, money_client_currency(db, client.id))
+
     link_map: dict[int, int] = {}
     scenario_map: dict[int, int] = {}
     account_map: dict[int, int] = {}
@@ -601,6 +605,7 @@ def import_client(
             models.CapsuleRule,
             models.Capsule,
             models.ExchangeRate,
+            models.FxTrackedCurrency,
             models.Milestone,
             models.RegistryEntry,
             models.RecurringTransaction,
@@ -621,18 +626,12 @@ def import_client(
         db.flush()
 
         # Legacy backups may contain balance; only their journal is authoritative.
-        account_parent_updates: list[tuple[models.Account, int]] = []
         for item in data.get("accounts", []):
             old_id = int(item["id"])
             account = models.Account(
                 client_id=client.id,
                 name=item["name"],
                 account_type=item["account_type"],
-                expected_return=item.get("expected_return", 0.0),
-                institution=item.get("institution", "none"),
-                withdrawable_from_age=item.get("withdrawable_from_age"),
-                role=item.get("role", "unassigned"),
-                role_target_amount_minor=to_minor(item.get("role_target_amount"), money_client_currency(db, client.id)),
                 liability_closing_day=item.get("liability_closing_day"),
                 liability_payment_day=item.get("liability_payment_day"),
                 liability_payment_month_offset=item.get("liability_payment_month_offset") or 0,
@@ -646,12 +645,6 @@ def import_client(
             db.add(account)
             db.flush()
             account_map[old_id] = account.id
-            if item.get("parent_id"):
-                account_parent_updates.append((account, int(item["parent_id"])))
-
-        for account, old_parent_id in account_parent_updates:
-            account.parent_id = account_map.get(old_parent_id)
-
         for item in data.get("budget_plans", []):
             old_id = int(item["id"])
             plan = models.BudgetPlan(
@@ -1180,6 +1173,10 @@ def import_client(
             db.flush()
             monthly_plan_line_map[old_id] = line.id
 
+        for item in data.get("fx_tracked_currencies", []):
+            db.add(models.FxTrackedCurrency(client_id=client.id, currency=item["currency"],
+                                           created_at=parse_datetime(item.get("created_at")) or datetime.utcnow()))
+
         for item in data.get("exchange_rates", []):
             db.add(
                 models.ExchangeRate(
@@ -1193,6 +1190,11 @@ def import_client(
                     updated_at=parse_datetime(item.get("updated_at")),
                 )
             )
+
+        if version is None or version < 21:
+            for scenario in db.query(models.LifeScenario).filter_by(client_id=client.id):
+                for old_id, rate in legacy_account_returns.items():
+                    db.add(models.LifeScenarioAccountReturn(scenario_id=scenario.id, account_id=account_map[old_id], annual_return=rate))
 
         member_map: dict[int, int] = {}
         for item in data.get("household_members", []):

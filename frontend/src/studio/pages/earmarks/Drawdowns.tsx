@@ -9,7 +9,7 @@ import { DataTable, Feedback, Field } from '../db/Database';
 import { buttonClass, inputClass, primaryClass, today, useMutation, type DatabaseAccount } from '../db/forms';
 
 const loadDestinations = async (): Promise<DatabaseAccount[]> => (await getAccounts() as DatabaseAccount[])
-    .filter((account) => ['asset', 'expense', 'item'].includes(account.account_type) && account.is_active);
+    .filter((account) => ['asset', 'expense'].includes(account.account_type) && account.is_active);
 const kindLabel = (kind: CapsuleDrawdownKind) => kind === 'as_intended' ? '意図どおり使った' : '他に回した';
 
 function DrawdownForm({ capsule, currency, onRecorded }: {

@@ -76,7 +76,7 @@ def _seed(db, client_id=101, base=10000):
 
     add(models.PeriodClose, 30, period="2026-10", closed_at=STAMP, note="reviewed")
     parent = add(models.Account, 1, name="assets", account_type="asset")
-    cash = add(models.Account, 2, name="cash", account_type="asset",  parent_id=parent.id)
+    cash = add(models.Account, 2, name="cash", account_type="asset")
     expense = add(models.Account, 3, name="food", account_type="expense")
     scenario = add(models.LifeScenario, 36, name="保存案", annual_return=7.0, inflation=1.0, horizon_years=12, monthly_savings=30000, is_goal=True)
     db.flush()
@@ -172,6 +172,9 @@ def _seed(db, client_id=101, base=10000):
         risk="critical", decision="allowed", request_summary={"marker": "audit"})
     add(models.AiChangeRequest, 29, source="test", resource="transactions", action="create",
         risk="low", idempotency_key="change-request", target_ref={"account_id": cash.id})
+    tracked = models.FxTrackedCurrency(client_id=client_id, currency="USD", created_at=STAMP)
+    db.add(tracked)
+    rows["fx_tracked_currencies"] = [tracked]
     db.commit()
     return client, rows
 
@@ -190,7 +193,7 @@ def _restore(db, client, document):
 
 REFERENCES = {
     "scenario_id": "life_scenarios", "link_id": "life_event_links",
-    "parent_id": "accounts", "account_id": "accounts", "from_account_id": "accounts",
+    "account_id": "accounts", "from_account_id": "accounts",
     "to_account_id": "accounts", "source_account_id": "accounts", "destination_account_id": "accounts",
     "budget_account_id": "accounts",
     "source_product_id": "products", "product_id": "products", "source_registry_entry_id": "registry_entries",
@@ -224,7 +227,7 @@ def test_round_trip_preserves_every_collection_and_document(db):
     target = _client(db, 202)
     original = export_client(db, source)
     assert list(original["data"]) == DATA_COLLECTIONS
-    assert all(original["data"].values())
+    assert all(value for key, value in original["data"].items() if key != "fx_tracked_currencies")
     result = _restore(db, target, original)
     restored = export_client(db, target)
     assert result["status"] == "ok"
@@ -232,13 +235,14 @@ def test_round_trip_preserves_every_collection_and_document(db):
     assert result["validation"]["error_count"] == result["validation"]["warning_count"] == 0
 
     maps = {
-        collection: {old["id"]: new["id"] for old, new in zip(old_rows, restored["data"][collection], strict=True)}
+        collection: {old["id"]: new["id"] for old, new in zip(old_rows, restored["data"][collection], strict=True) if "id" in old}
         for collection, old_rows in original["data"].items()
     }
     expected = copy.deepcopy(original)
     for collection, items in expected["data"].items():
         for item in items:
-            item["id"] = maps[collection][item["id"]]
+            if "id" in item:
+                item["id"] = maps[collection][item["id"]]
             for field, referenced_collection in REFERENCES.items():
                 if item.get(field) is not None:
                     item[field] = maps[referenced_collection][item[field]]
@@ -341,7 +345,7 @@ def test_journal_failure_after_deletion_preserves_every_table_byte_for_byte(db):
     document["data"]["journal_entries"][0]["account_id"] = str(document["data"]["journal_entries"][0]["account_id"])
     assert validate_import_payload(document["data"], document["version"], document["manifest"])["error_count"] == 0
     before = _table_bytes(db)
-    assert all(json.loads(value) for value in before.values())
+    assert all(json.loads(value) for name, value in before.items() if name != "fx_tracked_currencies")
     with pytest.raises(Invalid) as caught:
         _restore(db, client, document)
     assert str(caught.value).startswith("Import failed: Transaction ")
@@ -383,11 +387,17 @@ def test_colliding_ids_are_remapped_without_touching_the_other_client(db):
     restored = export_client(db, target)
     for collection in DATA_COLLECTIONS:
         assert len(restored["data"][collection]) == len(document["data"][collection])
+        if collection == "fx_tracked_currencies":
+            assert restored["data"][collection] == document["data"][collection]
+            continue
         assert {row["id"] for row in restored["data"][collection]}.isdisjoint(
             row["id"] for row in document["data"][collection]
         ), collection
     after = {name: json.loads(value) for name, value in _table_bytes(db).items()}
     for table, original_rows in before.items():
+        if table == "fx_tracked_currencies":
+            assert all(row in after[table] for row in original_rows)
+            continue
         by_id = {row["id"]: row for row in after[table]}
         assert [by_id[row["id"]] for row in original_rows] == original_rows, table
     assert export_client(db, other)["data"] == document["data"]

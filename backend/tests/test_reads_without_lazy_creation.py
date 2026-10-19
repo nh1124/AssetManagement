@@ -109,7 +109,7 @@ def test_registration_seeds_only_new_client(database):
 
 
 def seed_actuals_and_orphan(db):
-    cash = models.Account(client_id=1, name="cash", account_type="asset", role="operating")
+    cash = models.Account(client_id=1, name="cash", account_type="asset")
     salary = models.Account(client_id=1, name="Custom salary", account_type="income")
     food = models.Account(client_id=1, name="Custom food", account_type="expense")
     db.add_all([cash, salary, food])

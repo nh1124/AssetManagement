@@ -87,7 +87,7 @@ def snapshot(engine):
     metadata.reflect(engine)
     with engine.connect() as connection:
         return {name: ([(c.name, str(c.type), c.nullable) for c in table.columns],
-                       list(connection.execute(table.select().order_by(table.c.id))))
+                       list(connection.execute(table.select().order_by(*table.primary_key.columns))))
                 for name, table in metadata.tables.items()}
 
 
@@ -179,7 +179,7 @@ def test_v10_legacy_collection_warns_and_retired_capsule_fields_are_ignored(db, 
     _, one, _ = seed_accounts(db)
     owner = service.create_capsule(db, 1, schemas.CapsuleCreate(name="PC", target_amount=1001, monthly_contribution=10, account_id=one.id))
     document = json.loads(json.dumps(export_client(db, db.get(models.Client, 1))))
-    assert document["version"] == 22
+    assert document["version"] == 23
     assert "capsule_holdings" not in document["data"]
     row = document["data"]["capsules"][0]
     assert "current_balance" not in row and "account_id" not in row
@@ -206,10 +206,11 @@ def test_strategy_uses_account_claims_for_funding_and_weighted_return(db):
     from app.services.ledger_service import create_transaction
     from app.services.strategy_service import calculate_current_funded_and_weighted_return
     cash, one, two = seed_accounts(db)
-    one.expected_return, two.expected_return = 2, 8
     goal = models.LifeEvent(scenario_id=goal_scenario_id(db, 1), client_id=1, name="PC", target_amount_minor=1000, target_date=date(2027, 1, 1))
     db.add(goal)
     db.flush()
+    from app.services.life_scenario_service import replace_account_returns
+    replace_account_returns(db, 1, goal.scenario_id, [{"account_id": one.id, "annual_return": 2}, {"account_id": two.id, "annual_return": 8}])
     owner = service.create_capsule_for_goal(db, 1, goal)
     create_transaction(db, client_id=1, date=date(2026, 10, 12), description="Claims",
                        amount_minor=400, currency="JPY",

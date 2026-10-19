@@ -43,9 +43,9 @@ function AddItem({ currency, busy, error, onSave, onClose }: {
 }) {
     const accounts = useResource(loadAccounts);
     return <Overlay title="項目を追加（口座・勘定科目）" onClose={onClose}>
-        <p className="mb-4 text-xs text-[var(--studio-text-muted)]">作成すると予算に「未設定」で並びます。役割が運用の口座は予算の項目に出ません。</p>
+        <p className="mb-4 text-xs text-[var(--studio-text-muted)]">作成すると予算に「未設定」で並びます。</p>
         <Feedback loading={accounts.loading} error={error || accounts.error} />
-        {accounts.data && <AccountEditor account={null} accounts={accounts.data} initialType="expense" currency={currency} busy={busy} onSave={onSave} onCancel={onClose} />}
+        {accounts.data && <AccountEditor account={null} initialType="expense" currency={currency} busy={busy} onSave={onSave} onCancel={onClose} />}
     </Overlay>;
 }
 

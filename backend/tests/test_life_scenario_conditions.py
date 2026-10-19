@@ -9,7 +9,7 @@ from sqlalchemy import event as sqlalchemy_event
 from app import models
 from app.services import life_event_conditions as evaluator, life_scenario_service as service
 from app.services import strategy_service as strategy
-from app.services.institution_service import positive_asset_balance
+from app.services.account_return_service import positive_asset_balance
 from test_life_scenarios import account, api, config, db, fork, node, request
 
 
@@ -49,9 +49,9 @@ def scenario(db, **values):
 
 
 def test_bands_are_byte_identical_to_pre_ls2_seed_42_case(db):
-    account(db, rate=3.5, balance=1000000)
+    holding = account(db, balance=1000000)
     config(db)
-    result = strategy.simulate_net_worth_forward(db, 1, years=4, annual_return=7.5, inflation=1.5)
+    result = strategy.simulate_net_worth_forward(db, 1, years=4, annual_return=7.5, inflation=1.5, account_returns={holding.id: 3.5})
     # With only positive assets and no debts, the earning pool is the old held pool.
     assert positive_asset_balance(db, 1) == strategy.get_balance_sheet(db, client_id=1)["net_worth"] == 1000000
     # Captured from the original implementation before factoring the simulation.
@@ -65,7 +65,7 @@ def test_bands_are_byte_identical_to_pre_ls2_seed_42_case(db):
 
 @pytest.mark.parametrize("include_income", [False, True])
 def test_paths_match_bands_and_income_adjustment(db, include_income):
-    account(db, rate=3.5, balance=1000000)
+    account(db, balance=1000000)
     config(db)
     at(db, date(2032, 2, 1), direction="income", amount=120000)
     bands, paths = strategy.simulate_net_worth_forward_with_paths(db, 1, years=4, include_event_income=include_income)
@@ -114,11 +114,11 @@ def test_net_worth_probability_extremes_and_scenario_return(db):
 
 @pytest.mark.parametrize("when", [date(2030, 8, 1), date(2031, 8, 1), date(2033, 8, 1)])
 def test_down_payment_is_judged_before_own_year_expense(db, when):
-    account(db, rate=0, balance=1000000)
+    account(db, balance=1000000)
     config(db, monthly_savings_minor=0, volatility=0)
     owner = at(db, when, amount=900000)
     condition(db, owner, threshold_minor=1000000)
-    result = service.project(db, 1, scenario(db))
+    result = service.project(db, 1, scenario(db, annual_return=0))
     judgement = result["conditions"][0]
     assert judgement["probability"] == 1
     assert judgement["conditions"][0]["actual"] == 1000000
@@ -128,12 +128,12 @@ def test_down_payment_is_judged_before_own_year_expense(db, when):
 
 def test_prior_expenses_and_income_adjust_the_same_paths(db):
     config(db, volatility=0, monthly_savings_minor=0)
-    account(db, rate=0, balance=1000000)
+    account(db, balance=1000000)
     at(db, date(2031, 1, 1), amount=800000)
     at(db, date(2032, 1, 1), direction="income", amount=500000)
     owner = at(db, date(2033, 1, 1), amount=1000000)
     condition(db, owner, threshold_minor=700000, comparator="eq")
-    result = service.project(db, 1, scenario(db))["conditions"][0]
+    result = service.project(db, 1, scenario(db, annual_return=0))["conditions"][0]
     assert result["conditions"][0]["actual"] == 700000
     assert result["probability"] == 1
 
@@ -182,7 +182,7 @@ def test_current_metrics_use_exactly_the_existing_today_evaluator(db, metric):
 
 @pytest.mark.parametrize("mode", ["all", "any"])
 def test_conditions_combine_on_identical_paths_instead_of_multiplying_marginals(db, mode):
-    account(db, rate=3.5, balance=1000000)
+    account(db, balance=1000000)
     config(db)
     owner = at(db, date(2034, 1, 1), condition_mode=mode)
     condition(db, owner, "net_worth", "gte", threshold_minor=2500000)

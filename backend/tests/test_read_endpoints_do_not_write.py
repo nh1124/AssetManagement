@@ -81,9 +81,9 @@ def _seed(db, scenario, today):
     db.flush()
     if scenario != "missing_default_accounts":
         ensure_default_accounts(db, 1)
-    cash = models.Account(client_id=1, name="Guard cash", account_type="asset", role="operating")
+    cash = models.Account(client_id=1, name="Guard cash", account_type="asset")
     expense = models.Account(client_id=1, name="Guard food", account_type="expense")
-    income = models.Account(client_id=1, name="Guard salary", account_type="revenue")
+    income = models.Account(client_id=1, name="Guard salary", account_type="income")
     db.add_all([cash, expense, income])
     db.flush()
     currency = get_client_currency(db, 1)

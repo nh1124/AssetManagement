@@ -37,7 +37,7 @@ def db():
         session.flush()
         session.add_all([
             models.Account(id=i, client_id=1 if i < 5 else 2, name=f"Account {i}",
-                           account_type="expense" if i == 3 else "item" if i == 4 else "asset")
+                           account_type="expense" if i == 3 else "asset" if i == 4 else "asset")
             for i in range(1, 6)
         ])
         session.add_all([
@@ -239,7 +239,7 @@ def test_annotation_write_failure_rolls_back_journal(db):
 def test_backup_carries_and_restores_drawdowns_with_remapped_ids(db, kind):
     tx, row = draw(db, kind=kind)
     document = json.loads(json.dumps(export_client(db, db.get(models.Client, 1))))
-    assert document["version"] == 22
+    assert document["version"] == 23
     assert document["manifest"]["counts"]["capsule_drawdowns"] == 1
     exported = document["data"]["capsule_drawdowns"][0]
     assert (exported["kind"], exported["amount_minor"], exported["note"]) == (kind, 125, "Purpose")

@@ -23,8 +23,8 @@ export const TYPES: Array<{ type: MonthlyPlanLineType; label: string; kind: Acco
 ];
 export const TYPE_LABELS = Object.fromEntries(TYPES.map((item) => [item.type, item.label])) as Record<MonthlyPlanLineType, string>;
 // 収益 rather than the database screen's 収入, so the kind never reads as the movement.
-export const KIND_LABELS: Record<AccountKind, string> = { income: '収益', expense: '費用', asset: '資産', liability: '負債', item: '物品' };
-export const KINDS: AccountKind[] = ['income', 'expense', 'asset', 'liability', 'item'];
+export const KIND_LABELS: Record<AccountKind, string> = { income: '収益', expense: '費用', asset: '資産', liability: '負債' };
+export const KINDS: AccountKind[] = ['income', 'expense', 'asset', 'liability'];
 
 export const lineName = (line: MonthlyPlanLine) => line.target_name || line.name || line.account_name || '名称未設定';
 
@@ -82,7 +82,7 @@ export const isTransaction = (item: ScheduledTransaction) => item.recording !== 
 
 function fits(kind: AccountKind, type: MonthlyPlanLineType) {
     const expected = TYPES.find((item) => item.type === type)?.kind;
-    return kind === expected || (expected === 'asset' && kind === 'item');
+    return kind === expected;
 }
 
 // A line without a source account claims the account's whole side of the month;

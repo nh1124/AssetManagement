@@ -48,7 +48,7 @@ def db():
         session.flush()
         session.add_all([
             models.Account(id=i, client_id=2 if i == 4 else 1, name=f"Account {i}",
-                           account_type="expense" if i == 3 else "equity" if i == 5 else "asset")
+                           account_type="expense" if i == 3 else "income" if i == 5 else "asset")
             for i in range(1, 6)
         ])
         session.add_all([

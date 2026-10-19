@@ -182,7 +182,7 @@ def account_line_type(
             return "expense"
         if destination.account_type == "liability":
             return "debt_payment"
-        if destination.account_type in {"asset", "item"}:
+        if destination.account_type in {"asset"}:
             if source is not None and source.account_type == "liability":
                 return "borrowing" if source.liability_kind == "loan" else "allocation"
             return "allocation"
@@ -199,7 +199,7 @@ def account_entry_type(
     if destination is not None:
         if destination.account_type == "liability":
             return "debt"
-        if destination.account_type in {"asset", "item"}:
+        if destination.account_type in {"asset"}:
             return "allocation"
     return "service"
 

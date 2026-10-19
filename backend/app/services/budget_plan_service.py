@@ -21,7 +21,6 @@ from .budget_lines import (
     _line_source_kind,
     _sum_actual,
     _sum_lines,
-    account_flow_bucket,
     plan_line_identity_key,
 )
 from .budget_plan_store import _deduplicate_active_plan_models, find_budget_plan_id
@@ -205,7 +204,7 @@ def _lists_account(line_type: str, account: models.Account) -> bool:
     if line_type in {"income", "expense"}:
         return account.account_type == line_type
     if line_type in {"allocation", "drawdown"}:
-        return account.account_type == "asset" and account_flow_bucket(account) != "operating"
+        return account.account_type == "asset"
     if line_type == "debt_payment":
         return account.account_type == "liability"
     if line_type == "borrowing":

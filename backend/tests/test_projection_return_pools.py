@@ -5,15 +5,15 @@ import numpy as np
 import pytest
 
 from app.services import life_scenario_service as scenarios
-from app.services.institution_service import blended_after_tax_return, positive_asset_balance
+from app.services.account_return_service import blended_return, positive_asset_balance
 from app.services.ledger_service import create_account, create_transaction
 from app.services.strategy_service import PROJECTION_SEED, simulate_net_worth_forward_with_paths
 from test_life_scenarios import account, api, config, db, request
 
 
-def holding(db, name, balance, rate=0, kind="asset"):
-    row = account(db, name=name, rate=rate, kind=kind)
-    counter = create_account(db, 1, {"name": f"{name} opening", "account_type": "equity"})
+def holding(db, name, balance, kind="asset"):
+    row = account(db, name=name, kind=kind)
+    counter = create_account(db, 1, {"name": f"{name} opening", "account_type": "income"})
     debit_balance = balance > 0 if kind == "asset" else balance < 0
     source, target = (counter, row) if debit_balance else (row, counter)
     create_transaction(db, client_id=1, date=date(2020, 1, 1), description="Opening balance",
@@ -41,7 +41,6 @@ def test_overdrawn_client_savings_override_strictly_raises_30_year_p50(db, api, 
     assert low[0]["p50"] == high[0]["p50"] == -55006
     assert all(h["p50"] >= l["p50"] for l, h in zip(low, high))
     assert high[-1]["p50"] > low[-1]["p50"]
-    assert savings.expected_return == 0
 
 
 @pytest.mark.parametrize("seed", [17, 42, 103])
@@ -57,15 +56,18 @@ def test_raising_any_account_rate_never_lowers_p50_for_seeded_mixed_balances(db,
         positive *= 10
     balances = np.concatenate((positive, negative, [0]))
     rates = rng.uniform(0, 8, len(balances))
-    accounts = [holding(db, f"mix {i}", int(balance), float(rate)) if balance else account(db, name="empty", rate=float(rate))
-                for i, (balance, rate) in enumerate(zip(balances, rates))]
+    accounts = [holding(db, f"mix {i}", int(balance)) if balance else account(db, name="empty")
+                for i, balance in enumerate(balances)]
     config(db, monthly_savings_minor=1000)
     saved = scenarios.create(db, 1, "Mix")
     scenarios.update(db, 1, saved.id, {"horizon_years": 30})
+    baseline_returns = [{"account_id": row.id, "annual_return": float(rate)} for row, rate in zip(accounts, rates)]
+    scenarios.replace_account_returns(db, 1, saved.id, baseline_returns)
     baseline = scenarios.project(db, 1, saved)["projection"][-1]["p50"]
     assert positive_asset_balance(db, 1) == sum(positive)
     for row, balance, rate in zip(accounts, balances, rates):
-        scenarios.replace_account_returns(db, 1, saved.id, [{"account_id": row.id, "annual_return": float(rate) + 8}])
+        scenarios.replace_account_returns(db, 1, saved.id, [
+            {**item, "annual_return": item["annual_return"] + (8 if item["account_id"] == row.id else 0)} for item in baseline_returns])
         raised = scenarios.project(db, 1, saved)["projection"][-1]["p50"]
         assert raised >= baseline, (seed, net_sign, balance, baseline, raised)
         if balance > 0:
@@ -91,11 +93,11 @@ def test_liability_only_deflates_without_investment_return_or_market_shock(db, a
 
 
 def test_positive_assets_and_debt_use_one_shared_draw_for_earning_and_contributions(db):
-    holding(db, "savings", 20000, rate=8)
-    holding(db, "overdraft", -75006, rate=99)
+    savings = holding(db, "savings", 20000)
+    holding(db, "overdraft", -75006)
     config(db, monthly_savings_minor=1000, volatility=15)
     bands, paths = simulate_net_worth_forward_with_paths(
-        db, 1, years=4, annual_return=5, inflation=2, include_event_income=False,
+        db, 1, years=4, annual_return=5, inflation=2, include_event_income=False, account_returns={savings.id: 8},
     )
     rng = np.random.default_rng(PROJECTION_SEED)
     earning = np.full(1200, 20000.)
@@ -114,11 +116,11 @@ def test_positive_assets_and_debt_use_one_shared_draw_for_earning_and_contributi
 @pytest.mark.parametrize("balance", [-1000, 0])
 def test_no_positive_balance_keeps_taxed_gross_fallback(db, balance):
     if balance:
-        row = holding(db, "overdraft", balance, rate=99)
+        row = holding(db, "overdraft", balance)
     else:
-        row = account(db, rate=99)
+        row = account(db)
     assert positive_asset_balance(db, 1) == 0
-    assert blended_after_tax_return(db, 1, gross_annual_return=10, tax_rate=25, account_returns={row.id: 50}) == 7.5
+    assert blended_return(db, 1, gross_annual_return=10, tax_rate=25, account_returns={row.id: 50}) == 7.5
 
 
 def test_inactive_balance_earns_nothing_and_its_rate_changes_nothing(db, api):

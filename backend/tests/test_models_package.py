@@ -9,13 +9,13 @@ from app import models
 from app.database import Base
 
 
-# E4 removes quick templates and the batch link to them.
-EXPECTED_METADATA_SHA256 = "cb1feadff63f119eefb4ac88eb08bd020e3e7d8a2fff3555b6afc32718aa8a8d"
+# WP12 drops six account columns and adds tracked FX currencies.
+EXPECTED_METADATA_SHA256 = "bef1607e5d76177d38a08d9a4c1372b4ec21a11c24c4f0278a0dabe0b5afa6af"
 
 MODEL_NAMES = (
     "Client", "ClientMfaSetting", "ClientRecoveryCode",
     "Account", "JournalEntry", "Transaction", "TransactionProposal",
-    "TransactionBatch", "ExchangeRate", "Product",
+    "TransactionBatch", "ExchangeRate", "FxTrackedCurrency", "Product",
     "RecurringTransaction", "RegistryEntry", "LifeEvent", "LifeEventLink", "Milestone", "HouseholdMember", "LifeEventCondition",
     "BudgetPlan", "MonthlyPlanLine", "PeriodReview", "MonthlyAction", "PeriodClose",
     "AiOperationPolicy", "AiAuditLog", "AiChangeRequest",
@@ -24,7 +24,7 @@ MODEL_NAMES = (
     "Capsule", "CapsuleFundingSource", "CapsuleRule", "CapsuleDrawdown", "Notification",
     "ProductDepreciation",
 )
-ENUM_NAMES = ("AccountType", "AccountRole", "AccountInstitution")
+ENUM_NAMES = ("AccountType",)
 
 
 def _metadata_snapshot():
@@ -90,8 +90,8 @@ def _metadata_snapshot():
 
 def test_metadata_matches_the_minor_unit_schema():
     snapshot = _metadata_snapshot()
-    assert len(snapshot["table_names"]) == 37
-    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 445
+    assert len(snapshot["table_names"]) == 38
+    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 442
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == EXPECTED_METADATA_SHA256
 

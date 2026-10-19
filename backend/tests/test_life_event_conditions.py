@@ -61,7 +61,7 @@ def add(db, owner, metric, reference_id=None, comparator="gte", **threshold):
 
 def finances(db, currency="JPY", minor=500):
     cash = models.Account(client_id=1, name="cash", account_type="asset")
-    income = models.Account(client_id=1, name="給与", account_type="revenue")
+    income = models.Account(client_id=1, name="給与", account_type="income")
     capsule = models.Capsule(client_id=1, name="学費", target_amount_minor=1000)
     db.add_all([cash, income, capsule])
     db.commit()
@@ -239,7 +239,7 @@ def test_backup_remaps_every_reference_and_preserves_dangling_without_id_collisi
     db.commit()
     source, target = db.get(models.Client, 1), db.get(models.Client, 2)
     document = export_client(db, source)
-    assert document["version"] == EXPORT_VERSION == 22
+    assert document["version"] == EXPORT_VERSION == 23
     for _ in range(2):
         import_client(db, target, data=document["data"], version=17, manifest=document["manifest"])
         restored = db.query(models.LifeEvent).filter_by(client_id=2).one()

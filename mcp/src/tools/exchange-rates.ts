@@ -7,16 +7,6 @@ import { z } from "zod";
 import { api } from "../api-client.js";
 import { toStructured } from "../utils.js";
 
-const rateInputSchema = z
-  .object({
-    base_currency: z.string().min(3).max(10).describe("Base currency, e.g. USD"),
-    quote_currency: z.string().min(3).max(10).describe("Quote currency, e.g. JPY"),
-    rate: z.number().positive().describe("Exchange rate"),
-    as_of_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe("Rate date, YYYY-MM-DD"),
-    source: z.string().optional().describe("Rate source"),
-  })
-  .strict();
-
 export function registerExchangeRateTools(server: McpServer): void {
   server.registerTool(
     "exchange_rates_list",
@@ -49,50 +39,6 @@ export function registerExchangeRateTools(server: McpServer): void {
   );
 
   server.registerTool(
-    "exchange_rates_create",
-    {
-      title: "Create exchange rate",
-      description: "Creates or upserts an exchange rate for a date.",
-      inputSchema: rateInputSchema,
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-    },
-    async (input) => {
-      try {
-        const data = await api.post<unknown>("/exchange-rates/", input);
-        return {
-          content: [{ type: "text", text: `Saved exchange rate:\n${JSON.stringify(data, null, 2)}` }],
-          structuredContent: toStructured(data),
-        };
-      } catch (err) {
-        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
-      }
-    },
-  );
-
-  server.registerTool(
-    "exchange_rates_update",
-    {
-      title: "Update exchange rate",
-      description: "Updates one exchange rate row.",
-      inputSchema: rateInputSchema.partial().extend({
-        id: z.number().int().min(1).describe("Exchange rate ID"),
-      }),
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    },
-    async ({ id, ...patch }) => {
-      try {
-        const data = await api.put<unknown>(`/exchange-rates/${id}`, patch);
-        return {
-          content: [{ type: "text", text: `Updated exchange rate:\n${JSON.stringify(data, null, 2)}` }],
-          structuredContent: toStructured(data),
-        };
-      } catch (err) {
-        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
-      }
-    },
-  );
-
-  server.registerTool(
     "exchange_rates_delete",
     {
       title: "Delete exchange rate",
@@ -116,8 +62,8 @@ export function registerExchangeRateTools(server: McpServer): void {
   server.registerTool(
     "exchange_rates_auto_update",
     {
-      title: "Auto-update used exchange rates",
-      description: "Fetches today's rates for currencies used in journal transactions.",
+      title: "Refresh tracked exchange rates",
+      description: "Fetches the latest rates for every tracked currency against the client base currency.",
       inputSchema: z.object({}).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
@@ -128,6 +74,57 @@ export function registerExchangeRateTools(server: McpServer): void {
           content: [{ type: "text", text: `Auto-updated exchange rates:\n${JSON.stringify(data, null, 2)}` }],
           structuredContent: toStructured(data),
         };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
+      }
+    },
+  );
+  server.registerTool(
+    "fx_tracked_currencies_list",
+    {
+      title: "List tracked currencies",
+      description: "Lists tracked currencies.",
+      inputSchema: z.object({}).strict(),
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async () => {
+      try {
+        const data = await api.get<unknown>(`/exchange-rates/tracked`);
+        return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }], structuredContent: toStructured({ currencies: data }) };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
+      }
+    },
+  );
+  server.registerTool(
+    "fx_tracked_currencies_create",
+    {
+      title: "Track currency",
+      description: "Validates a currency with Frankfurter and fetches its latest rate.",
+      inputSchema: z.object({ currency: z.string().regex(/^[A-Za-z]{3}$/) }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    },
+    async ({ currency }) => {
+      try {
+        const data = await api.post<unknown>(`/exchange-rates/tracked`, { currency });
+        return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }], structuredContent: toStructured({ currencies: data }) };
+      } catch (err) {
+        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
+      }
+    },
+  );
+  server.registerTool(
+    "fx_tracked_currencies_delete",
+    {
+      title: "Stop tracking currency",
+      description: "Removes tracking; stored exchange rates stay.",
+      inputSchema: z.object({ currency: z.string().regex(/^[A-Za-z]{3}$/) }).strict(),
+      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+    },
+    async ({ currency }) => {
+      try {
+        const data = await api.delete<unknown>(`/exchange-rates/tracked/${currency}`);
+        return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }], structuredContent: toStructured({ currencies: data }) };
       } catch (err) {
         return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
       }

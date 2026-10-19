@@ -6,7 +6,7 @@ from sqlalchemy.orm import relationship
 from ..database import Base
 
 class ExchangeRate(Base):
-    """Manual exchange rates used to value journal transactions in the client base currency."""
+    """Stored rates used to value journal transactions in the client base currency."""
     __tablename__ = "exchange_rates"
     __table_args__ = (
         UniqueConstraint(
@@ -29,3 +29,12 @@ class ExchangeRate(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     client = relationship("Client", back_populates="exchange_rates")
+
+
+class FxTrackedCurrency(Base):
+    __tablename__ = "fx_tracked_currencies"
+    __table_args__ = (UniqueConstraint("client_id", "currency", name="uq_fx_tracked_client_currency"),)
+
+    client_id = Column(Integer, ForeignKey("clients.id"), primary_key=True)
+    currency = Column(String, primary_key=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

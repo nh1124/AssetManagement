@@ -6,7 +6,6 @@ import type {
     AccountFlowAnalysis,
     AccountFlowGrain,
     AccountFlowTransactionPage,
-    AccountRole,
     AutomaticRecordings,
     ScheduledTransactions,
     AiChangeRequest,
@@ -27,6 +26,7 @@ import type {
     DepreciationMethod,
     DataRepairResult,
     ExchangeRate,
+    FxTrackedCurrency,
     ExchangeRateAutoUpdateResult,
     LoginResult,
     LifeEvent,
@@ -215,11 +215,10 @@ export const getBalanceSheet = async (year?: number, month?: number, asOf?: stri
     return response.data;
 };
 
-export const getProfitLoss = async (year?: number, month?: number, rollup: boolean = false, startDate?: string, endDate?: string) => {
+export const getProfitLoss = async (year?: number, month?: number, startDate?: string, endDate?: string) => {
     const params = new URLSearchParams();
     if (year) params.append('year', String(year));
     if (month) params.append('month', String(month));
-    if (rollup) params.append('rollup', 'true');
     if (startDate) params.append('start_date', startDate);
     if (endDate) params.append('end_date', endDate);
     const response = await api.get(`/analysis/profit-loss?${params.toString()}`);
@@ -351,14 +350,9 @@ export const getAccountEarmarks = async (accountId: number): Promise<AccountEarm
 
 export const createAccount = async (account: {
     name: string;
-    account_type: string;
+    account_type: Account['account_type'];
+    is_active?: boolean;
     balance?: number;
-    parent_id?: number | null;
-    institution?: Account['institution'];
-    withdrawable_from_age?: number | null;
-    expected_return?: number | null;
-    role?: AccountRole;
-    role_target_amount?: number | null;
     liability_closing_day?: number | null;
     liability_payment_day?: number | null;
     liability_payment_month_offset?: number;
@@ -374,12 +368,6 @@ export const createAccount = async (account: {
 
 export const updateAccount = async (id: number, data: {
     name?: string;
-    parent_id?: number | null;
-    institution?: Account['institution'];
-    withdrawable_from_age?: number | null;
-    expected_return?: number | null;
-    role?: AccountRole;
-    role_target_amount?: number | null;
     liability_closing_day?: number | null;
     liability_payment_day?: number | null;
     liability_payment_month_offset?: number;
@@ -700,8 +688,18 @@ export const getExchangeRates = async (): Promise<ExchangeRate[]> => {
     return response.data;
 };
 
-export const createExchangeRate = async (payload: Omit<ExchangeRate, 'id' | 'created_at' | 'updated_at'>): Promise<ExchangeRate> => {
-    const response = await api.post('/exchange-rates/', payload);
+export const getTrackedCurrencies = async (): Promise<FxTrackedCurrency[]> => {
+    const response = await api.get('/exchange-rates/tracked');
+    return response.data;
+};
+
+export const trackCurrency = async (currency: string): Promise<FxTrackedCurrency> => {
+    const response = await api.post('/exchange-rates/tracked', { currency });
+    return response.data;
+};
+
+export const untrackCurrency = async (currency: string) => {
+    const response = await api.delete(`/exchange-rates/tracked/${currency}`);
     return response.data;
 };
 

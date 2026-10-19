@@ -10,7 +10,6 @@ from sqlalchemy.orm import sessionmaker
 from backend.app import models, schemas
 from backend.app.database import Base
 from backend.app.domain.errors import Invalid
-from backend.app.routers.exchange_rates import create_exchange_rate
 from backend.app.services import registry_service
 
 
@@ -189,35 +188,3 @@ def test_registry_crud_commit_false_leaves_entry_and_recurring_changes_rollbacka
     assert saved.is_active is True
     assert saved.source_recurring_transaction_id == recurring.id == recurring_id
     assert recurring.source_registry_entry_id == entry_id
-
-
-def test_exchange_rate_post_preserves_manual_upsert_row_and_metadata(db):
-    client = db.get(models.Client, 1)
-    payload = dict(
-        base_currency=" usd ", quote_currency=" jpy ", rate=150,
-        as_of_date="2026-10-11", source="",
-    )
-    first = create_exchange_rate(schemas.ExchangeRateCreate(**payload), db, client)
-    assert (first["base_currency"], first["quote_currency"], first["source"]) == (
-        "USD", "JPY", "manual",
-    )
-    second = create_exchange_rate(
-        schemas.ExchangeRateCreate(**(payload | {"rate": 151, "source": "custom"})), db, client,
-    )
-    assert second["id"] == first["id"]
-    assert second["created_at"] == first["created_at"]
-    assert (second["rate"], second["source"]) == (151, "custom")
-    with pytest.raises(HTTPException) as error:
-        create_exchange_rate(
-            schemas.ExchangeRateCreate(**(payload | {"quote_currency": "USD"})), db, client,
-        )
-    assert error.value.status_code == 400
-    assert error.value.detail == "Currencies must differ"
-    db.rollback()
-    db.expire_all()
-    saved = db.query(models.ExchangeRate).one()
-    assert saved.id == first["id"]
-    assert (saved.client_id, saved.base_currency, saved.quote_currency, saved.as_of_date) == (
-        1, "USD", "JPY", date(2026, 10, 11),
-    )
-    assert (saved.rate, saved.source) == (151, "custom")

@@ -542,9 +542,9 @@ def create_capsule_for_goal(db: Session, client_id: int, goal: models.LifeEvent)
 # to be on the other side. The transaction's own type is not consulted.
 _TRIGGER_LEGS: dict[str, tuple[str, set[str], set[str] | None]] = {
     "Income": ("credit", {"income"}, None),
-    "Expense": ("debit", {"expense"}, {"asset", "item"}),
+    "Expense": ("debit", {"expense"}, {"asset"}),
     "CreditExpense": ("debit", {"expense"}, {"liability"}),
-    "Transfer": ("debit", {"asset", "item"}, {"asset", "item"}),
+    "Transfer": ("debit", {"asset"}, {"asset"}),
 }
 
 

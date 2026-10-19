@@ -23,6 +23,7 @@ def migration():
 
 
 def shared_schema(connection):
+    connection.exec_driver_sql("ALTER TABLE accounts ADD COLUMN expected_return FLOAT")
     # SQLite recreates parent tables for ALTER; suspend checks only for this DDL.
     with Operations.context(MigrationContext.configure(connection)):
         with op.batch_alter_table("life_events") as batch:
@@ -65,7 +66,7 @@ def run_migration(db, method):
 
 def test_upgrade_copies_graph_preserves_projection_and_capsules_and_downgrade_keeps_current_goal(db, caplog):
     goal, root, children, edges = story(db)
-    account(db, rate=3.5, balance=10000)
+    account(db, balance=10000)
     cap = earmark(db, root, claim=600)
     draft = service.create(db, 1, "別案")
     original_id, goal_id, draft_id, cap_id = root.id, goal.id, draft.id, cap.id
@@ -110,9 +111,9 @@ def test_upgrade_copies_graph_preserves_projection_and_capsules_and_downgrade_ke
 
 def test_upgrade_seeds_missing_goal_with_defaults_and_converts_alternatives(db, caplog):
     goal, root, _, edges = story(db)
-    cash = account(db, rate=3.5)
-    account(db, name="未設定", rate=None)
-    account(db, name="収入", kind="income", rate=9)
+    cash = account(db)
+    account(db, name="未設定")
+    account(db, name="収入", kind="income")
     draft = service.create(db, 1, "旧別案")
     draft_id = draft.id
     client_id, goal_id, cash_id = 1, goal.id, cash.id
@@ -120,6 +121,7 @@ def test_upgrade_seeds_missing_goal_with_defaults_and_converts_alternatives(db, 
     with db.get_bind().begin() as connection:
         connection.execute(sa.text("DELETE FROM life_scenarios WHERE id=:id"), {"id": goal_id})
         connection.execute(sa.text("UPDATE life_event_links SET kind='alternative'"))
+        connection.execute(sa.text("UPDATE accounts SET expected_return=3.5 WHERE id=:id"), {"id": cash_id})
     run_migration(db, "upgrade")
     seeded = service.get_goal(db, client_id)
     assert (seeded.name, seeded.annual_return, seeded.inflation, seeded.horizon_years) == ("基本シナリオ", 5, 2, 30)

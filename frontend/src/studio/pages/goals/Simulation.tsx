@@ -126,7 +126,7 @@ function SimulationEditor({ initial, accounts, currency, clientName }: { initial
                         <th scope="row" className="px-5 py-3 font-medium">{account.name}{!account.is_active && <span className="ml-2 text-xs text-[var(--studio-text-muted)]">無効</span>}</th>
                         <td className="whitespace-nowrap px-5 py-3 tabular-nums">{formatCurrency(account.balance, currency)}</td>
                         {/* Text preserves incomplete decimal input so it cannot remove an override. */}
-                        <td className="w-44 px-5 py-3"><input inputMode="decimal" aria-label={`${account.name}の利回り（%）`} disabled={locked} value={draft.returns[account.id] ?? (account.expected_return === null ? '' : String(account.expected_return))} placeholder={account.expected_return === null ? 'シナリオの年利' : String(account.expected_return)} onChange={(event) => changeReturn(account.id, event.target.value)} className={inputClass} /></td>
+                        <td className="w-44 px-5 py-3"><input inputMode="decimal" aria-label={`${account.name}の利回り（%）`} disabled={locked} value={draft.returns[account.id] ?? ''} placeholder="シナリオの年利" onChange={(event) => changeReturn(account.id, event.target.value)} className={inputClass} /></td>
                     </tr>)}
                     {accounts.length === 0 && <tr><td colSpan={3} className="px-5 py-3 text-[var(--studio-text-muted)]">資産口座はありません。</td></tr>}
                 </DataTable>

@@ -6,7 +6,7 @@
     "body": "object",
     "source": "src/tools/accounts.ts",
     "path_fragment": "/accounts/",
-    "allowed_fields": ["name", "account_type", "balance", "parent_id", "expected_return", "role", "role_target_amount"],
+    "allowed_fields": ["name", "account_type", "balance", "is_active", "liability_closing_day", "liability_payment_day", "liability_payment_month_offset", "liability_payment_policy", "liability_minimum_payment", "liability_fixed_payment_amount", "liability_installment_months", "liability_revolving_rate"],
     "required_fields": ["name", "account_type"]
   },
   {
@@ -16,7 +16,7 @@
     "body": "object",
     "source": "src/tools/accounts.ts",
     "path_fragment": "/accounts/${id}",
-    "allowed_fields": ["name", "parent_id", "expected_return", "role", "role_target_amount", "is_active"],
+    "allowed_fields": ["name", "is_active", "liability_closing_day", "liability_payment_day", "liability_payment_month_offset", "liability_payment_policy", "liability_minimum_payment", "liability_fixed_payment_amount", "liability_installment_months", "liability_revolving_rate"],
     "required_fields": []
   },
   {
@@ -270,26 +270,6 @@
     "body": "none",
     "source": "src/tools/roadmap.ts",
     "path_fragment": "/roadmap/milestones/${id}"
-  },
-  {
-    "tool": "exchange_rates_create",
-    "method": "post",
-    "path": "/exchange-rates/",
-    "body": "object",
-    "source": "src/tools/exchange-rates.ts",
-    "path_fragment": "/exchange-rates/",
-    "allowed_fields": ["base_currency", "quote_currency", "rate", "as_of_date", "source"],
-    "required_fields": ["base_currency", "quote_currency", "rate", "as_of_date"]
-  },
-  {
-    "tool": "exchange_rates_update",
-    "method": "put",
-    "path": "/exchange-rates/{rate_id}",
-    "body": "object",
-    "source": "src/tools/exchange-rates.ts",
-    "path_fragment": "/exchange-rates/${id}",
-    "allowed_fields": ["base_currency", "quote_currency", "rate", "as_of_date", "source"],
-    "required_fields": []
   },
   {
     "tool": "exchange_rates_delete",
@@ -566,5 +546,27 @@
     "body": "none",
     "source": "src/tools/simulation.ts",
     "path_fragment": "/simulation/scenarios/${id}"
+  },
+  {
+    "tool": "fx_tracked_currencies_create",
+    "method": "post",
+    "path": "/exchange-rates/tracked",
+    "body": "object",
+    "source": "src/tools/exchange-rates.ts",
+    "path_fragment": "/exchange-rates/tracked",
+    "allowed_fields": [
+      "currency"
+    ],
+    "required_fields": [
+      "currency"
+    ]
+  },
+  {
+    "tool": "fx_tracked_currencies_delete",
+    "method": "delete",
+    "path": "/exchange-rates/tracked/{currency}",
+    "body": "none",
+    "source": "src/tools/exchange-rates.ts",
+    "path_fragment": "/exchange-rates/tracked/${currency}"
   }
 ]

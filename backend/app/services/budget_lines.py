@@ -15,11 +15,10 @@ from .. import models
 from ..domain.money import Money
 
 
-LIQUID_ACCOUNT_NAMES = {"cash", "bank", "savings"}
 INFLOW_LINE_TYPES = {"income", "borrowing", "drawdown"}
 OUTFLOW_LINE_TYPES = {"expense", "allocation", "debt_payment"}
 NON_CASH_TRANSACTION_TYPES = {"CreditExpense", "CreditAssetPurchase"}
-ASSET_FLOW_BUCKETS = ("operating", "defense", "earmarked", "growth", "unassigned")
+ASSET_FLOW_BUCKETS = ("asset",)
 
 
 def _capsule_allocation_amounts(capsule: models.Capsule, currency: str) -> list[tuple[int | None, Money]]:
@@ -135,15 +134,7 @@ def newest_line_key(line: models.MonthlyPlanLine) -> tuple:
 def account_flow_bucket(account: models.Account | None) -> str:
     if not account:
         return "unknown"
-    if account.account_type == "asset":
-        name = (account.name or "").strip().lower()
-        role = account.role or "unassigned"
-        if role == "operating" or name in LIQUID_ACCOUNT_NAMES:
-            return "operating"
-        if role in {"defense", "earmarked", "growth"}:
-            return role
-        return "unassigned"
-    if account.account_type in {"liability", "income", "expense"}:
+    if account.account_type in {"asset", "liability", "income", "expense"}:
         return account.account_type
     return "unknown"
 
@@ -154,11 +145,7 @@ def _empty_flow() -> dict[str, float]:
         "expense": 0.0,
         "allocation": 0.0,
         "debt": 0.0,
-        "operating": 0.0,
-        "defense": 0.0,
-        "earmarked": 0.0,
-        "growth": 0.0,
-        "unassigned": 0.0,
+        "asset": 0.0,
         "financing": 0.0,
         "internal_transfer": 0.0,
         "non_cash_budget": 0.0,
@@ -167,11 +154,7 @@ def _empty_flow() -> dict[str, float]:
 
 def _empty_balance() -> dict[str, float]:
     return {
-        "operating": 0.0,
-        "defense": 0.0,
-        "earmarked": 0.0,
-        "growth": 0.0,
-        "unassigned": 0.0,
+        "asset": 0.0,
         "liabilities": 0.0,
     }
 
@@ -191,23 +174,17 @@ def _movement_flow(from_bucket: str, to_bucket: str, amount: float) -> dict[str,
     if to_bucket in ASSET_FLOW_BUCKETS:
         flow[to_bucket] += amount
 
-    if from_bucket == "operating" and to_bucket == "expense":
+    if from_bucket == "asset" and to_bucket == "expense":
         flow["expense"] += amount
-    elif from_bucket == "operating" and to_bucket == "liability":
+    elif from_bucket == "asset" and to_bucket == "liability":
         flow["debt"] += amount
         flow["financing"] -= amount
     elif from_bucket == "liability" and to_bucket in ASSET_FLOW_BUCKETS:
-        flow["inflow"] += amount if to_bucket == "operating" else 0.0
+        flow["inflow"] += amount
         flow["financing"] += amount
     elif from_bucket == "income" and to_bucket in ASSET_FLOW_BUCKETS:
-        flow["inflow"] += amount if to_bucket == "operating" else 0.0
-    elif from_bucket == "operating" and to_bucket in {"defense", "earmarked", "growth", "unassigned"}:
-        flow["allocation"] += amount
-    elif from_bucket in {"defense", "earmarked", "growth", "unassigned"} and to_bucket == "operating":
         flow["inflow"] += amount
-    elif from_bucket == "operating" and to_bucket == "operating":
-        flow["internal_transfer"] += amount
-    elif from_bucket in ASSET_FLOW_BUCKETS and to_bucket in ASSET_FLOW_BUCKETS:
+    elif from_bucket == "asset" and to_bucket == "asset":
         flow["internal_transfer"] += amount
     elif from_bucket == "liability" and to_bucket == "expense":
         flow["non_cash_budget"] += amount
@@ -221,18 +198,18 @@ def _fallback_line_flow(line_type: str | None, amount: float) -> dict[str, float
         return flow
     if line_type in INFLOW_LINE_TYPES:
         flow["inflow"] = amount
-        flow["operating"] = amount
+        flow["asset"] = amount
         if line_type == "borrowing":
             flow["financing"] = amount
     elif line_type == "expense":
         flow["expense"] = amount
-        flow["operating"] = -amount
+        flow["asset"] = -amount
     elif line_type == "allocation":
         flow["allocation"] = amount
-        flow["operating"] = -amount
+        flow["asset"] = -amount
     elif line_type == "debt_payment":
         flow["debt"] = amount
-        flow["operating"] = -amount
+        flow["asset"] = -amount
         flow["financing"] = -amount
     return flow
 

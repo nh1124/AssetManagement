@@ -805,7 +805,7 @@ def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
             "code": "plan_line_sources",
             "severity": "warning",
             "title": "Plan line source accounts",
-            "detail": "Cash Flow accuracy depends on knowing whether each plan line moves cash, debt, or another asset role.",
+            "detail": "Cash Flow accuracy depends on knowing whether each plan line moves cash, debt, or another asset.",
             "count": len(missing_source),
             "repairable": any(item["repairable"] for item in missing_source),
             "items": missing_source[:100],

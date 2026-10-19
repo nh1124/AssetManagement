@@ -43,7 +43,7 @@ def db():
 def _capsule(db, *, client_id=1):
     suffix = db.query(models.Capsule).filter_by(client_id=client_id).count()
     cash = models.Account(client_id=client_id, name=f"Cash {suffix}", account_type="asset")
-    reserve = models.Account(client_id=client_id, name=f"Reserve {suffix}", account_type="asset", role="earmarked")
+    reserve = models.Account(client_id=client_id, name=f"Reserve {suffix}", account_type="asset")
     db.add_all([cash, reserve])
     db.flush()
     capsule = models.Capsule(

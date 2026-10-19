@@ -24,10 +24,9 @@ try:
         get_account_flows_for_range,
         get_account_transactions_for_range,
         get_profit_loss_for_range,
-        get_profit_loss_rollup,
         process_transaction,
     )
-    from backend.app.services.analysis_service import calculate_idle_money, get_summary
+    from backend.app.services.analysis_service import get_summary
     from backend.app.services.budget_plan_store import resolve_budget_plan_id
     from backend.app.services.periods import current_period_key
     from backend.app.services.report_service import apply_monthly_report_proposal, generate_monthly_report
@@ -35,7 +34,6 @@ try:
     from backend.app.workflows.monthly_action_workflow import apply_action, create_action
     from backend.app.services.strategy_service import get_roadmap_projection
     from backend.app.services.milestone_service import apply_milestones_from_simulation, preview_milestones_from_simulation
-    from backend.app.services.ledger_valuation import update_used_exchange_rates
 except ModuleNotFoundError:
     from app import models  # type: ignore[no-redef]
     from app.database import Base  # type: ignore[no-redef]
@@ -44,10 +42,9 @@ except ModuleNotFoundError:
         get_account_flows_for_range,
         get_account_transactions_for_range,
         get_profit_loss_for_range,
-        get_profit_loss_rollup,
         process_transaction,
     )
-    from app.services.analysis_service import calculate_idle_money, get_summary  # type: ignore[no-redef]
+    from app.services.analysis_service import get_summary  # type: ignore[no-redef]
     from app.services.budget_plan_store import resolve_budget_plan_id  # type: ignore[no-redef]
     from app.services.periods import current_period_key  # type: ignore[no-redef]
     from app.services.report_service import apply_monthly_report_proposal, generate_monthly_report  # type: ignore[no-redef]
@@ -55,7 +52,6 @@ except ModuleNotFoundError:
     from app.workflows.monthly_action_workflow import apply_action, create_action  # type: ignore[no-redef]
     from app.services.strategy_service import get_roadmap_projection  # type: ignore[no-redef]
     from app.services.milestone_service import apply_milestones_from_simulation, preview_milestones_from_simulation  # type: ignore[no-redef]
-    from app.services.ledger_valuation import update_used_exchange_rates  # type: ignore[no-redef]
 
 
 def _session():
@@ -75,7 +71,7 @@ def _post_opening_balances(db, accounts: list[tuple[models.Account, float]]) -> 
     db.add(tx)
     db.flush()
     for account, amount in accounts:
-        if account.account_type in ("asset", "expense", "item"):
+        if account.account_type in ("asset", "expense"):
             db.add(models.JournalEntry(transaction_id=tx.id, account_id=account.id, debit_minor=Money.from_major(str(amount), tx.currency).minor, credit_minor=Money.from_major(str(0), tx.currency).minor))
         else:
             db.add(models.JournalEntry(transaction_id=tx.id, account_id=account.id, debit_minor=Money.from_major(str(0), tx.currency).minor, credit_minor=Money.from_major(str(amount), tx.currency).minor))
@@ -236,40 +232,6 @@ def test_foreign_currency_transactions_are_valued_with_exchange_rates() -> None:
         db.close()
 
 
-def test_auto_update_detects_used_currency_once_per_day() -> None:
-    db = _session()
-    try:
-        client = models.Client(id=1, name="test", general_settings={"currency": "JPY"})
-        cash = models.Account(client_id=1, name="cash", account_type="asset")
-        salary = models.Account(client_id=1, name="salary", account_type="income")
-        db.add_all([client, cash, salary])
-        db.commit()
-
-        tx = models.Transaction(
-            client_id=1,
-            date=date.today(),
-            description="USD income",
-            amount_minor=Money.from_major(str(10), "USD").minor,
-            currency="USD",
-        )
-        db.add(tx)
-        db.commit()
-
-        calls = []
-
-        def fetcher(base: str, quote: str) -> dict:
-            calls.append((base, quote))
-            return {"rate": 150.0, "market_date": "2026-05-04", "provider": "test"}
-
-        first = update_used_exchange_rates(db, 1, today=date(2026, 5, 4), fetcher=fetcher)
-        second = update_used_exchange_rates(db, 1, today=date(2026, 5, 4), fetcher=fetcher)
-
-        assert calls == [("USD", "JPY")]
-        assert len(first["updated"]) == 1
-        assert first["updated"][0]["source"] == "auto:test:2026-05-04"
-        assert len(second["skipped"]) == 1
-    finally:
-        db.close()
 
 
 def test_roadmap_projection_returns_projection_and_liability_demand() -> None:
@@ -342,86 +304,8 @@ def test_roadmap_projection_returns_projection_and_liability_demand() -> None:
         db.close()
 
 
-def test_idle_money_uses_account_roles_and_defense_excess() -> None:
-    db = _session()
-    try:
-        client = models.Client(id=1, name="test", general_settings={})
-        emergency = models.Account(
-            client_id=1,
-            name="emergency",
-            account_type="asset",
-            role="defense",
-            role_target_amount_minor=to_minor(600000, "JPY"),
-        )
-        brokerage = models.Account(
-            client_id=1,
-            name="brokerage",
-            account_type="asset",
-            role="growth",
-        )
-        loose_cash = models.Account(
-            client_id=1,
-            name="loose_cash",
-            account_type="asset",
-            role="unassigned",
-        )
-        db.add(client)
-        db.add_all(
-            [
-                emergency,
-                brokerage,
-                loose_cash,
-            ]
-        )
-        db.flush()
-        _post_opening_balances(db, [(emergency, 800000), (brokerage, 300000), (loose_cash, 150000)])
-        db.commit()
-
-        result = calculate_idle_money(db, client_id=1)
-
-        assert result["idle_money"] == 350000
-        assert result["idle_money_rate"] == 28.0
-        defense = next(row for row in result["by_role_rows"] if row["role"] == "defense")
-        assert defense["status"] == "Over"
-        assert defense["idle_component"] == 200000
-    finally:
-        db.close()
 
 
-def test_profit_loss_rollup_uses_parent_account_category() -> None:
-    db = _session()
-    try:
-        client = models.Client(id=1, name="test", general_settings={})
-        db.add(client)
-        db.add_all(
-            [
-                models.Account(client_id=1, id=10, name="cash", account_type="asset"),
-                models.Account(client_id=1, id=20, name="food", account_type="expense"),
-                models.Account(client_id=1, id=21, name="lunch", account_type="expense", parent_id=20),
-            ]
-        )
-        db.commit()
-
-        tx = models.Transaction(
-            client_id=1,
-            date=date.today(),
-            description="Lunch",
-            amount_minor=Money.from_major(str(1200), "JPY").minor,
-        )
-        db.add(tx)
-        db.commit()
-        db.refresh(tx)
-        # The P/L reads journal legs, so the transaction has to be posted. Every
-        # other test here already does this; this one used to get away with an
-        # unposted transaction because the P/L read tx.category instead.
-        process_transaction(db, tx, from_account_id=10, to_account_id=21)
-
-        result = get_profit_loss_rollup(db, date.today().year, date.today().month, client_id=1)
-
-        assert result["expenses"] == [{"category": "food", "amount": 1200}]
-        assert result["rollup"] is True
-    finally:
-        db.close()
 
 
 def test_period_pl_and_balance_sheet_respect_explicit_dates() -> None:

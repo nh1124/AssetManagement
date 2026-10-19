@@ -14,7 +14,7 @@ import numpy as np
 from .. import models
 from .ledger_valuation import calculate_account_valued_balance
 from .reporting_service import get_balance_sheet, get_net_worth_history
-from .institution_service import blended_after_tax_return, positive_asset_balance
+from .account_return_service import blended_return, positive_asset_balance
 from .goal_service import goal_events_query, list_goals, story_events_query
 from . import goal_budget_record
 from .product_reserve_service import reserve_totals_by_capsule
@@ -78,6 +78,9 @@ def calculate_current_funded_and_weighted_return(event: models.LifeEvent, db: Op
         return 0.0, 5.0
     currency = get_client_currency(db, event.client_id)
     total_funded = 0.0
+    scenario = db.get(models.LifeScenario, event.scenario_id) if event.scenario_id else None
+    default_return = scenario.annual_return if scenario else 5.0
+    returns = {row.account_id: row.annual_return for row in db.query(models.LifeScenarioAccountReturn).filter_by(scenario_id=event.scenario_id)}
     weighted_return_sum = 0.0
     for capsule in event.capsules or []:
         account_ids = {row[0] for row in db.query(models.JournalEntry.account_id).filter(
@@ -86,10 +89,9 @@ def calculate_current_funded_and_weighted_return(event: models.LifeEvent, db: Op
         for account_id in account_ids:
             held = Money(claimed_minor(db, event.client_id, capsule.id, account_id).get(currency, 0), currency).to_float()
             if held > 0:
-                account = db.get(models.Account, account_id)
                 total_funded += held
-                weighted_return_sum += held * (account.expected_return or 0.0)
-    return total_funded, weighted_return_sum / total_funded if total_funded > 0 else 5.0
+                weighted_return_sum += held * returns.get(account_id, default_return)
+    return total_funded, weighted_return_sum / total_funded if total_funded > 0 else default_return
 
 
 def calculate_current_funded(event: models.LifeEvent, db: Optional[Session] = None) -> float:
@@ -367,16 +369,16 @@ def get_goal_simulation_context(
         models.SimulationConfig.client_id == client_id
     ).first()
 
+    scenario = db.get(models.LifeScenario, event.scenario_id) if event.scenario_id else None
     base_annual_return = annual_return
     if base_annual_return is None:
-        base_annual_return = config.annual_return if config else 5.0
+        base_annual_return = scenario.annual_return if scenario else (config.annual_return if config else 5.0)
 
     base_inflation = inflation
     if base_inflation is None:
         base_inflation = config.inflation_rate if config else 2.0
 
     # The event's own scenario carries its savings; the client setting is the default.
-    scenario = db.get(models.LifeScenario, event.scenario_id) if event.scenario_id else None
     if scenario is not None and scenario.monthly_savings is not None:
         default_monthly_savings = scenario.monthly_savings
     else:
@@ -409,8 +411,9 @@ def get_goal_simulation_context(
 
     current_funded, weighted_return = calculate_current_funded_and_weighted_return(event, db)
     tax_rate = config.tax_rate if config else 20.0
-    effective_return = blended_after_tax_return(
+    effective_return = blended_return(
         db, client_id, gross_annual_return=base_annual_return, tax_rate=tax_rate,
+        account_returns={row.account_id: row.annual_return for row in db.query(models.LifeScenarioAccountReturn).filter_by(scenario_id=event.scenario_id)},
     )
     years_remaining = max(0.0, (event.target_date - evaluation_date).days / 365.25)
 
@@ -825,7 +828,6 @@ def get_life_events_with_progress(
             allocation_mode=allocation_mode,
         )
         current_funded = context["current_funded"]
-        weighted_return = context["weighted_return"]
         effective_return = context["effective_return"]
         allocated_savings = context["allocated_monthly_savings"]
         years_remaining = context["years_remaining"]
@@ -876,7 +878,7 @@ def get_life_events_with_progress(
             "gap": round(gap, 2),
             "weighted_return": round(effective_return, 2),
             "gross_annual_return": context["annual_return"],
-            "blended_after_tax_return": effective_return,
+            "blended_return": effective_return,
             "tax_rate": context["tax_rate"],
             "status": status,
             "progress_percentage": round(min(progress_pct, 100), 1),
@@ -1034,7 +1036,7 @@ def simulate_net_worth_forward_with_paths(
     starting_net_worth = bs.get("net_worth", 0.0) or 0.0
     annual_contribution = (monthly_savings or 0.0) * 12
     tax_rate = config.tax_rate if config else 20.0
-    effective_return = blended_after_tax_return(
+    effective_return = blended_return(
         db, client_id, gross_annual_return=annual_return, tax_rate=tax_rate,
         account_returns=account_returns,
     )
@@ -1046,7 +1048,7 @@ def simulate_net_worth_forward_with_paths(
     n_simulations = 1200
     rng = np.random.default_rng(PROJECTION_SEED)
     # 年利 describes how new savings will be invested; existing holdings
-    # already have their own account rates, including cash held at zero percent.
+    # use their scenario overrides, falling back to its annual return.
     earning = np.full(n_simulations, positive_asset_balance(db, client_id), dtype=float)
     # Loans, overdrafts and other net-worth residuals are not invested. Keep
     # their nominal principal flat, using the projection's real-rate convention.

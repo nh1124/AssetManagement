@@ -50,7 +50,7 @@ LAYERS: dict[str, int] = {
     "depreciation_service": 1,  # Writes assets down with ledger primitives only.
     # L2 - the source of truth for recurring cash flow, and its bucket model
     "capsule_service": 2,
-    "institution_service": 2,  # Reads holdings and household facts for projection assumptions.
+    "account_return_service": 2,  # Scenario yields weighted by journal holdings.
     "reconciliation_service": 2,  # Attributed corrections also enforce capsule claims.
     "registry_service": 2,
     # L3 - generated from the registry. The budget_* modules are one feature
@@ -103,6 +103,7 @@ LAYERS: dict[str, int] = {
     "capsule_workflow": 6,
     "simulation_workflow": 6,
     "automatic_recording_workflow": 6,
+    "fx_workflow": 6,
 }
 
 

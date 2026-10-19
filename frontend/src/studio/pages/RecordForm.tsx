@@ -11,11 +11,7 @@ import { useClient } from '../../context/ClientContext';
 import { formatCurrency, getCurrencySymbol } from '../../utils/currency';
 import type { Account, Capsule, CapsuleDrawdownKind, Transaction, TransactionLeg } from '../../types';
 
-// The API also returns item accounts, which the shared legacy type omits.
-type RecordAccount = Omit<Account, 'account_type'> & {
-    account_type: Account['account_type'] | 'item';
-};
-type AccountType = RecordAccount['account_type'];
+type AccountType = Account['account_type'];
 type RecordKind = 'income' | 'expense' | 'transfer' | 'allocation' | 'purchase' | 'repayment';
 interface SplitRow {
     accountId: string;
@@ -42,7 +38,7 @@ const ACCOUNT_FIELDS: Record<RecordKind, {
     expense: { debitLabel: '費用科目', debitTypes: ['expense'], creditLabel: '支払元口座', creditTypes: ['asset', 'liability'] },
     transfer: { debitLabel: '振替先口座', debitTypes: ['asset'], creditLabel: '振替元口座', creditTypes: ['asset'] },
     allocation: { debitLabel: '', debitTypes: [], creditLabel: '資金元口座', creditTypes: ['asset'] },
-    purchase: { debitLabel: '物品または費用', debitTypes: ['item', 'expense'], creditLabel: '支払元口座', creditTypes: ['asset', 'liability'] },
+    purchase: { debitLabel: '資産または費用', debitTypes: ['asset', 'expense'], creditLabel: '支払元口座', creditTypes: ['asset', 'liability'] },
     repayment: { debitLabel: '返済する負債', debitTypes: ['liability'], creditLabel: '支払元口座', creditTypes: ['asset'] },
 };
 
@@ -67,7 +63,7 @@ function errorMessage(error: unknown): string {
 function AccountSelect({ label, value, accounts, onChange }: {
     label: string;
     value: string;
-    accounts: RecordAccount[];
+    accounts: Account[];
     onChange: (value: string) => void;
 }) {
     return (
@@ -96,7 +92,7 @@ export default function RecordForm({ existing, onSaved, onCancel, onDelete, dele
     // Money is per-currency here and is never totalled across currencies, so
     // edits retain the entry's denomination instead of relabelling its money.
     const currency = existing?.currency || currentClient?.general_settings?.currency || 'JPY';
-    const [accounts, setAccounts] = useState<RecordAccount[]>([]);
+    const [accounts, setAccounts] = useState<Account[]>([]);
     const [capsules, setCapsules] = useState<Capsule[]>([]);
     const [accountsLoading, setAccountsLoading] = useState(true);
     const [capsulesLoading, setCapsulesLoading] = useState(true);
@@ -166,7 +162,7 @@ export default function RecordForm({ existing, onSaved, onCancel, onDelete, dele
     const splitTotal = splitRows.reduce((sum, row) => sum + (Number(row.amount) || 0), 0);
     const splitRemainder = (numericAmount || 0) - splitTotal;
     const splitBalanced = Math.abs(splitRemainder) < 0.01;
-    const hasAccount = (options: RecordAccount[], id: string) => options.some((account) => String(account.id) === id);
+    const hasAccount = (options: Account[], id: string) => options.some((account) => String(account.id) === id);
     const validAmount = Number.isFinite(numericAmount) && numericAmount > 0;
     const validDebit = splitActive
         ? splitBalanced && splitRows.every((row) => hasAccount(debitAccounts, row.accountId) && Number.isFinite(Number(row.amount)) && Number(row.amount) > 0)

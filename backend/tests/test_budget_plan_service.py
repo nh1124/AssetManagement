@@ -184,7 +184,7 @@ def test_data_export_manifest_and_validate_include_monthly_actions() -> None:
         payload = ImportPayload(**snapshot)
         validation = validate_import_client_data(payload=payload, current_client=client)
 
-        assert snapshot["version"] == 22
+        assert snapshot["version"] == 23
         assert snapshot["manifest"]["counts"]["monthly_actions"] == 1
         assert snapshot["data"]["monthly_actions"][0]["kind"] == "set_budget"
         assert validation["status"] == "valid"
@@ -365,7 +365,7 @@ def test_budget_summary_combines_income_spending_allocations_and_debt() -> None:
         salary = models.Account(client_id=1, name="salary", account_type="income")
         cash = models.Account(client_id=1, name="cash", account_type="asset")
         food = models.Account(client_id=1, name="food", account_type="expense")
-        nisa = models.Account(client_id=1, name="NISA", account_type="asset", role="growth")
+        nisa = models.Account(client_id=1, name="NISA", account_type="asset")
         loan = models.Account(client_id=1, name="loan", account_type="liability")
         db.add_all([client, salary, cash, food, nisa, loan])
         db.flush()
@@ -550,7 +550,7 @@ def test_create_plan_lines_updates_capsule_contribution_and_monthly_plan_line() 
         client = models.Client(id=1, name="test", general_settings={})
         cash = models.Account(client_id=1, name="cash", account_type="asset")
         food = models.Account(client_id=1, name="food", account_type="expense")
-        cap_account = models.Account(client_id=1, name="house capsule", account_type="asset", role="earmarked")
+        cap_account = models.Account(client_id=1, name="house capsule", account_type="asset")
         db.add_all([client, cash, food, cap_account])
         db.flush()
         capsule = models.Capsule(
@@ -691,12 +691,12 @@ def test_budget_summary_lists_unset_accounts_with_their_actuals() -> None:
     db = _session()
     try:
         client = models.Client(id=1, name="test", general_settings={})
-        bank = models.Account(client_id=1, name="bank", account_type="asset", role="operating")
+        bank = models.Account(client_id=1, name="bank", account_type="asset")
         food = models.Account(client_id=1, name="food", account_type="expense")
         travel = models.Account(client_id=1, name="travel", account_type="expense")
         old = models.Account(client_id=1, name="old", account_type="expense", is_active=False)
         salary = models.Account(client_id=1, name="salary", account_type="income")
-        nisa = models.Account(client_id=1, name="NISA", account_type="asset", role="growth")
+        nisa = models.Account(client_id=1, name="NISA", account_type="asset")
         card = models.Account(client_id=1, name="card", account_type="liability", liability_kind="card")
         loan = models.Account(client_id=1, name="loan", account_type="liability", liability_kind="loan")
         db.add_all([client, bank, food, travel, old, salary, nisa, card, loan])
@@ -720,6 +720,7 @@ def test_budget_summary_lists_unset_accounts_with_their_actuals() -> None:
 
         assert set(rows) == {
             ("income", "salary"), ("expense", "travel"), ("allocation", "NISA"),
+            ("allocation", "bank"), ("drawdown", "bank"),
             ("debt_payment", "card"), ("debt_payment", "loan"), ("borrowing", "loan"), ("drawdown", "NISA"),
         }
         travel_row = rows[("expense", "travel")]
@@ -1354,7 +1355,7 @@ def test_cash_flow_splits_same_expense_account_by_source_account_bucket() -> Non
     try:
         next_period = add_months(current_period_key(), 1)
         client = models.Client(id=1, name="test", general_settings={})
-        cash = models.Account(client_id=1, name="cash", account_type="asset", role="operating")
+        cash = models.Account(client_id=1, name="cash", account_type="asset")
         loan = models.Account(client_id=1, name="medical loan", account_type="liability")
         beauty = models.Account(client_id=1, name="beauty", account_type="expense")
         db.add_all([client, cash, loan, beauty])
@@ -1398,7 +1399,7 @@ def test_cash_flow_splits_same_expense_account_by_source_account_bucket() -> Non
         assert summary["total_variable_budget"] == 600000
         assert row["expense"] == 100000
         assert row["non_cash_budget"] == 500000
-        assert row["operating_flow"] == -100000
+        assert row["asset_flow"] == -100000
         assert row["net_cash"] == -100000
     finally:
         db.close()
@@ -1451,8 +1452,8 @@ def test_income_direct_to_asset_counts_as_allocation_actual_without_remaining_ca
         current_period = current_period_key()
         client = models.Client(id=1, name="test", general_settings={})
         salary = models.Account(client_id=1, name="salary", account_type="income")
-        bank = models.Account(client_id=1, name="bank", account_type="asset", role="operating")
-        stock = models.Account(client_id=1, name="employee stock", account_type="asset", role="growth")
+        bank = models.Account(client_id=1, name="bank", account_type="asset")
+        stock = models.Account(client_id=1, name="employee stock", account_type="asset")
         db.add_all([client, salary, bank, stock])
         db.flush()
         line = models.MonthlyPlanLine(
@@ -1484,12 +1485,12 @@ def test_income_direct_to_asset_counts_as_allocation_actual_without_remaining_ca
 
         assert plan_line["actual"] == 54515
         assert plan_line["variance"] == -4515
-        assert row["planned_allocation"] == 54515
-        assert row["actual_allocation"] == 54515
+        assert row["planned_allocation"] == 0
+        assert row["actual_allocation"] == 0
         assert row["remaining_allocation"] == 0
         assert row["allocation"] == 0
         assert row["net_cash"] == 0
-        assert balance_row["growth_assets"] == 54515
+        assert balance_row["total_assets"] == 54515
     finally:
         db.close()
 
@@ -1500,9 +1501,9 @@ def test_balance_projection_tracks_debt_payment_and_liability_asset_purchase() -
         next_period = add_months(current_period_key(), 1)
         client = models.Client(id=1, name="test", general_settings={})
         salary = models.Account(client_id=1, name="salary", account_type="income")
-        cash = models.Account(client_id=1, name="cash", account_type="asset", role="operating")
+        cash = models.Account(client_id=1, name="cash", account_type="asset")
         loan = models.Account(client_id=1, name="loan", account_type="liability")
-        nisa = models.Account(client_id=1, name="NISA", account_type="asset", role="growth")
+        nisa = models.Account(client_id=1, name="NISA", account_type="asset")
         db.add_all([client, salary, cash, loan, nisa])
         db.flush()
         opening = models.Transaction(
@@ -1552,10 +1553,9 @@ def test_balance_projection_tracks_debt_payment_and_liability_asset_purchase() -
         balance_row = summary["balance_projection"][0]
 
         assert cash_row["debt"] == 30000
-        assert cash_row["net_cash"] == -30000
-        assert cash_row["growth_flow"] == 50000
-        assert balance_row["operating_assets"] == 70000
-        assert balance_row["growth_assets"] == 50000
+        assert cash_row["net_cash"] == 20000
+        assert cash_row["asset_flow"] == 20000
+        assert balance_row["total_assets"] == 120000
         assert balance_row["liabilities"] == 120000
         assert balance_row["net_worth"] == 0
     finally:
@@ -1623,7 +1623,7 @@ def test_an_unsaved_definition_row_reports_the_months_actual() -> None:
         period = current_period_key()
         start, _ = period_to_range(period)
         db.add(models.Client(id=1, name="test", general_settings={}))
-        bank = models.Account(client_id=1, name="bank", account_type="asset", role="operating")
+        bank = models.Account(client_id=1, name="bank", account_type="asset")
         rent = models.Account(client_id=1, name="rent", account_type="expense")
         db.add_all([bank, rent])
         db.flush()
@@ -1653,7 +1653,7 @@ def test_credit_expense_creates_credit_settlement_projection() -> None:
         period = current_period_key()
         start, _ = period_to_range(period)
         client = models.Client(id=1, name="test", general_settings={})
-        cash = models.Account(client_id=1, name="cash", account_type="asset", role="operating")
+        cash = models.Account(client_id=1, name="cash", account_type="asset")
         card = models.Account(client_id=1, name="credit card", account_type="liability", liability_kind="card")
         food = models.Account(client_id=1, name="food", account_type="expense")
         db.add_all([client, cash, card, food])
@@ -1830,15 +1830,15 @@ def test_credit_settlement_spreads_installment_policy_across_future_months() -> 
         db.close()
 
 
-def test_cash_flow_reports_asset_role_movements() -> None:
+def test_cash_flow_reports_asset_transfers_as_internal_movements() -> None:
     db = _session()
     try:
         next_period = add_months(current_period_key(), 1)
         client = models.Client(id=1, name="test", general_settings={})
-        cash = models.Account(client_id=1, name="cash", account_type="asset", role="operating")
-        nisa = models.Account(client_id=1, name="NISA", account_type="asset", role="growth")
-        reserve = models.Account(client_id=1, name="Trip Reserve", account_type="asset", role="earmarked")
-        defense = models.Account(client_id=1, name="Emergency", account_type="asset", role="defense")
+        cash = models.Account(client_id=1, name="cash", account_type="asset")
+        nisa = models.Account(client_id=1, name="NISA", account_type="asset")
+        reserve = models.Account(client_id=1, name="Trip Reserve", account_type="asset")
+        defense = models.Account(client_id=1, name="Emergency", account_type="asset")
         db.add_all([client, cash, nisa, reserve, defense])
         db.flush()
         for account, amount in [(nisa, 50000), (reserve, 20000), (defense, 10000)]:
@@ -1864,12 +1864,10 @@ def test_cash_flow_reports_asset_role_movements() -> None:
         )
         row = summary["cash_flow_projection"][0]
 
-        assert row["allocation"] == 80000
-        assert row["operating_flow"] == -80000
-        assert row["growth_flow"] == 50000
-        assert row["earmarked_flow"] == 20000
-        assert row["defense_flow"] == 10000
-        assert row["net_cash"] == -80000
+        assert row["allocation"] == 0
+        assert row["asset_flow"] == 0
+        assert row["internal_transfer"] == 80000
+        assert row["net_cash"] == 0
     finally:
         db.close()
 

@@ -29,8 +29,8 @@ def db():
     session = sessionmaker(autocommit=False, autoflush=False, bind=engine)()
     session.add(models.Client(id=1, name="shared", username="shared",
                               general_settings={"currency": "JPY"}))
-    cash = models.Account(client_id=1, name="Cash", account_type="asset", role="operating")
-    pooled = models.Account(client_id=1, name="Pooled", account_type="asset", role="earmarked")
+    cash = models.Account(client_id=1, name="Cash", account_type="asset")
+    pooled = models.Account(client_id=1, name="Pooled", account_type="asset")
     session.add_all([cash, pooled])
     session.commit()
     ledger_service.create_transaction(
@@ -64,7 +64,7 @@ def test_unattributed_shared_balance_is_never_a_capsule_claim(db, count):
 
 def test_unattributed_balance_on_two_accounts_is_not_earmarked(db):
     session, cash, pooled_account = db
-    second = models.Account(client_id=1, name="Second pool", account_type="asset", role="earmarked")
+    second = models.Account(client_id=1, name="Second pool", account_type="asset")
     session.add(second)
     session.commit()
     ledger_service.create_transaction(

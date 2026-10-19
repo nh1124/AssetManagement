@@ -56,7 +56,7 @@ AI_CONTEXT_CATALOG: tuple[AiContextResourceDescriptor, ...] = (
         classification="sensitive",
         available=True,
         risk="low",
-        includes=("account_id", "name", "type", "balance", "role"),
+        includes=("account_id", "name", "type", "balance"),
         excludes=SECRET_EXCLUDES,
         default_limit=200,
     ),
@@ -283,7 +283,6 @@ def _account_ref(account: models.Account | None) -> dict[str, Any] | None:
         "id": account.id,
         "name": account.name,
         "account_type": account.account_type,
-        "role": account.role,
     }
 
 
@@ -301,10 +300,6 @@ def _accounts(db: Session, client_id: int, limit: int) -> dict[str, Any]:
                 "account_type": account.account_type,
                 "balance": balances[account.id],
                 "currency": None,
-                "parent_id": account.parent_id,
-                "expected_return": account.expected_return,
-                "role": account.role,
-                "role_target_amount": account.role_target_amount,
                 "is_active": account.is_active,
             }
             for account in rows

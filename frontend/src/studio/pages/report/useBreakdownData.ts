@@ -20,7 +20,7 @@ export function useBreakdownData(startDate: string, endDate: string) {
     const grain: AccountFlowGrain = months === 1 ? 'day' : months === 12 ? 'month' : 'quarter';
     const loadReport = useCallback(() => getPeriodReport(startDate, endDate), [startDate, endDate]);
     // Report summaries expose the balance only; P/L supplies income and expense.
-    const loadProfitLoss = useCallback((): Promise<ProfitLoss> => getProfitLoss(undefined, undefined, false, startDate, endDate), [startDate, endDate]);
+    const loadProfitLoss = useCallback((): Promise<ProfitLoss> => getProfitLoss(undefined, undefined, startDate, endDate), [startDate, endDate]);
     const loadVariance = useCallback((): Promise<VarianceAnalysis> => getVarianceAnalysis(undefined, undefined, startDate, endDate), [startDate, endDate]);
     const loadFlows = useCallback(() => getAccountFlows({ startDate, endDate, grain }), [startDate, endDate, grain]);
     const report = useResource(loadReport);

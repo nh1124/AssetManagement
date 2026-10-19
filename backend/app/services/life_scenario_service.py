@@ -302,11 +302,6 @@ def seed_legacy_goal(db: Session, client_id: int) -> models.LifeScenario:
                                    annual_return=5.0, inflation=2.0, horizon_years=30)
     db.add(scenario)
     db.flush()
-    for account in db.query(models.Account).filter(
-        models.Account.client_id == client_id, models.Account.account_type == "asset", models.Account.expected_return.isnot(None),
-    ).all():
-        db.add(models.LifeScenarioAccountReturn(scenario_id=scenario.id, account_id=account.id, annual_return=account.expected_return))
-    db.flush()
     return scenario
 
 

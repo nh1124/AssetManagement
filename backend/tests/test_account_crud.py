@@ -7,8 +7,7 @@ from sqlalchemy.orm import sessionmaker
 
 from backend.app import models, schemas
 from backend.app.database import Base
-from backend.app.domain.errors import Invalid, NotFound
-from backend.app.routers import accounts as router
+from backend.app.domain.errors import Invalid
 from backend.app.services import ledger_service as ledger
 from backend.app.workflows.ledger_entry_workflow import record_entry
 
@@ -40,104 +39,6 @@ def _refusal(category, detail, operation):
     assert str(exc.value) == detail
 
 
-def test_parent_none_allows_a_root(db):
-    ledger._validate_parent(db, 1, "asset", None)
-
-
-def test_parent_cannot_be_the_account_itself(db):
-    parent = _account(db)
-    _refusal(Invalid, "Account cannot be its own parent", lambda:
-             ledger._validate_parent(db, 1, "asset", parent.id, account_id=parent.id))
-
-
-def test_parent_must_exist(db):
-    _refusal(NotFound, "Parent account not found", lambda:
-             ledger._validate_parent(db, 1, "asset", 999999))
-
-
-def test_parent_must_belong_to_the_client(db):
-    parent = _account(db, client_id=2)
-    _refusal(NotFound, "Parent account not found", lambda:
-             ledger._validate_parent(db, 1, "asset", parent.id))
-
-
-def test_parent_must_be_active(db):
-    parent = _account(db)
-    parent.is_active = False
-    db.commit()
-    _refusal(NotFound, "Parent account not found", lambda:
-             ledger._validate_parent(db, 1, "asset", parent.id))
-
-
-def test_parent_must_have_the_same_account_type(db):
-    parent = _account(db)
-    _refusal(Invalid, "Parent account must have the same account_type", lambda:
-             ledger._validate_parent(db, 1, "expense", parent.id))
-
-
-def test_parent_chain_must_not_already_contain_a_cycle(db):
-    first = _account(db, name="first")
-    second = _account(db, name="second", parent_id=first.id)
-    first.parent_id = second.id
-    db.commit()
-    _refusal(Invalid, "Account hierarchy cycle detected", lambda:
-             ledger._validate_parent(db, 1, "asset", first.id))
-
-
-def test_parent_chain_must_not_reach_the_account_being_updated(db):
-    root = _account(db)
-    child = _account(db, name="child", parent_id=root.id)
-    _refusal(Invalid, "Account hierarchy cycle detected", lambda:
-             ledger.update_account(db, 1, root.id, {"parent_id": child.id}))
-    assert root.parent_id is None
-
-
-def test_parent_chain_accepts_a_root_and_valid_ancestors(db):
-    root = _account(db)
-    child = _account(db, name="child", parent_id=root.id)
-    ledger._validate_parent(db, 1, "asset", root.id)
-    ledger._validate_parent(db, 1, "asset", child.id)
-
-
-@pytest.mark.parametrize("ancestor_kind", ["missing", "other_client"])
-def test_parent_chain_stops_at_an_unavailable_ancestor(db, ancestor_kind):
-    parent = _account(db)
-    parent.parent_id = 999999 if ancestor_kind == "missing" else _account(db, client_id=2).id
-    db.commit()
-    ledger._validate_parent(db, 1, "asset", parent.id)
-
-
-def test_parent_chain_checks_inactive_ancestors_for_cycles(db):
-    root = _account(db)
-    child = _account(db, name="child", parent_id=root.id)
-    root.is_active = False
-    root.parent_id = child.id
-    db.commit()
-    _refusal(Invalid, "Account hierarchy cycle detected", lambda:
-             ledger._validate_parent(db, 1, "asset", child.id))
-
-
-def test_parent_chain_does_not_revalidate_ancestor_types(db):
-    root = _account(db, name="root", account_type="expense")
-    parent = _account(db)
-    parent.parent_id = root.id
-    db.commit()
-    ledger._validate_parent(db, 1, "asset", parent.id)
-
-
-def test_create_child_of_a_different_type_is_rejected_without_writing(db):
-    parent = _account(db)
-    before = db.query(models.Account).count()
-    _refusal(Invalid, "Parent account must have the same account_type", lambda:
-             _account(db, name="child", account_type="expense", parent_id=parent.id))
-    assert db.query(models.Account).count() == before
-    client = db.get(models.Client, 1)
-    _refusal(Invalid, "Parent account must have the same account_type", lambda:
-             router.create_account(router.AccountCreate(
-                 name="child", account_type="expense", parent_id=parent.id,
-             ), db=db, current_client=client))
-
-
 def test_delete_deactivates_only_the_account_and_preserves_all_history(db):
     cash = _account(db, name="cash")
     food = _account(db, name="food", account_type="expense")
@@ -159,22 +60,6 @@ def test_delete_deactivates_only_the_account_and_preserves_all_history(db):
     assert ledger.delete_account(db, 1, cash.id) is True
 
 
-def test_delete_refuses_active_children(db):
-    root = _account(db)
-    _account(db, name="child", parent_id=root.id)
-    _refusal(Invalid, "Account has child accounts", lambda: ledger.delete_account(db, 1, root.id))
-    assert root.is_active is True
-
-
-def test_delete_ignores_inactive_children(db):
-    root = _account(db)
-    child = _account(db, name="child", parent_id=root.id)
-    child.is_active = False
-    db.commit()
-    assert ledger.delete_account(db, 1, root.id) is True
-    assert child.parent_id == root.id
-
-
 @pytest.mark.parametrize("missing", ["unknown", "other_client"])
 def test_update_and_delete_return_missing_without_modifying_other_clients(db, missing):
     account = _account(db, client_id=2)
@@ -183,8 +68,6 @@ def test_update_and_delete_return_missing_without_modifying_other_clients(db, mi
     assert ledger.delete_account(db, 1, account_id) is False
     assert account.name == "parent"
     assert account.is_active is True
-
-
 
 
 @pytest.mark.parametrize("field,value,detail", [
@@ -201,10 +84,12 @@ def test_liability_settings_preserve_each_range_refusal(db, field, value, detail
     _refusal(Invalid, detail, lambda: _account(db, account_type="liability", **{field: value}))
 
 
-def test_liability_update_retains_default_reset_and_nonliability_strips_settings(db):
+def test_liability_update_preserves_omitted_settings_and_nonliability_strips_settings(db):
     liability = _account(db, account_type="liability", liability_payment_policy="fixed",
                          liability_payment_month_offset=2, liability_closing_day=31)
     ledger.update_account(db, 1, liability.id, {"name": "renamed"})
+    assert (liability.liability_payment_policy, liability.liability_payment_month_offset) == ("fixed", 2)
+    ledger.update_account(db, 1, liability.id, {"liability_payment_policy": None, "liability_payment_month_offset": None})
     assert (liability.liability_payment_policy, liability.liability_payment_month_offset) == ("full", 0)
     assert liability.liability_closing_day == 31
     asset = _account(db, name="asset", liability_closing_day=-10)

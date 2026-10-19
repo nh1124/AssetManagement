@@ -19,7 +19,6 @@ from .budget_actuals import (
 from .budget_context import BudgetContext
 from .budget_lines import (
     ASSET_FLOW_BUCKETS,
-    LIQUID_ACCOUNT_NAMES,
     _add_flow,
     _empty_balance,
     _empty_flow,
@@ -32,13 +31,12 @@ from .periods import add_months
 
 
 def liquid_cash(ctx: BudgetContext) -> float:
-    """Cash the plan can actually draw on: operating accounts and plain cash."""
+    """All active assets fund the plan; account names no longer classify cash."""
     accounts = [
         account
         for account in ctx.accounts.values()
         if account.account_type == "asset"
         and account.is_active
-        and ((account.name or "") in LIQUID_ACCOUNT_NAMES or account.role == "operating")
     ]
     return sum(calculate_account_valued_balance(ctx.db, account) for account in accounts)
 
@@ -64,11 +62,6 @@ def _balance_projection_row(period: str, state: dict[str, float]) -> dict:
     liabilities = state["liabilities"]
     return {
         "period": period,
-        "operating_assets": round(state["operating"], 0),
-        "defense_assets": round(state["defense"], 0),
-        "earmarked_assets": round(state["earmarked"], 0),
-        "growth_assets": round(state["growth"], 0),
-        "unassigned_assets": round(state["unassigned"], 0),
         "total_assets": round(total_assets, 0),
         "liabilities": round(liabilities, 0),
         "net_worth": round(total_assets - liabilities, 0),
@@ -145,7 +138,7 @@ def _cash_flow_projection(
         expense = remaining_flow["expense"]
         allocation = remaining_flow["allocation"]
         debt = remaining_flow["debt"]
-        net = remaining_flow["operating"]
+        net = remaining_flow["asset"]
         cash += net
         setup_warnings = budget_setup_warnings(ctx, period, lines, plan_id)
         rows.append({
@@ -168,11 +161,7 @@ def _cash_flow_projection(
             "planned_debt": round(planned_flow["debt"], 0),
             "actual_debt": round(actual_flow["debt"], 0),
             "remaining_debt": round(remaining_flow["debt"], 0),
-            "operating_flow": round(remaining_flow["operating"], 0),
-            "defense_flow": round(remaining_flow["defense"], 0),
-            "earmarked_flow": round(remaining_flow["earmarked"], 0),
-            "growth_flow": round(remaining_flow["growth"], 0),
-            "unassigned_asset_flow": round(remaining_flow["unassigned"], 0),
+            "asset_flow": round(remaining_flow["asset"], 0),
             "financing_flow": round(remaining_flow["financing"], 0),
             "internal_transfer": round(remaining_flow["internal_transfer"], 0),
             "non_cash_budget": round(remaining_flow["non_cash_budget"], 0),

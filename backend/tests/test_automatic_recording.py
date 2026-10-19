@@ -35,7 +35,7 @@ def db():
     session.add(models.Client(id=1, name="test", general_settings={"currency": "JPY"}))
     session.add_all([
         models.Account(id=1, client_id=1, name="depreciation", account_type="expense"),
-        models.Account(id=2, client_id=1, name="equipment", account_type="item"),
+        models.Account(id=2, client_id=1, name="equipment", account_type="asset"),
         models.Account(id=3, client_id=1, name="bank", account_type="asset"),
         models.Account(id=4, client_id=1, name="subscriptions", account_type="expense"),
     ])

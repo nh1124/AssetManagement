@@ -83,44 +83,6 @@ def account_balances_minor(db: Session, client_id: int, account_id: int) -> dict
     return {currency: int(total) for currency, total in rows if total}
 
 
-def _validate_parent(
-    db: Session,
-    client_id: int,
-    account_type: str,
-    parent_id: int | None,
-    account_id: int | None = None,
-) -> None:
-    if parent_id is None:
-        return
-    if account_id is not None and parent_id == account_id:
-        raise Invalid("Account cannot be its own parent")
-
-    parent = db.query(models.Account).filter(
-        models.Account.id == parent_id,
-        models.Account.client_id == client_id,
-        models.Account.is_active == True,
-    ).first()
-    if not parent:
-        raise NotFound("Parent account not found")
-    if parent.account_type != account_type:
-        raise Invalid("Parent account must have the same account_type")
-
-    seen = set()
-    current = parent
-    while current:
-        if current.id in seen:
-            raise Invalid("Account hierarchy cycle detected")
-        if account_id is not None and current.id == account_id:
-            raise Invalid("Account hierarchy cycle detected")
-        seen.add(current.id)
-        if current.parent_id is None:
-            break
-        current = db.query(models.Account).filter(
-            models.Account.id == current.parent_id,
-            models.Account.client_id == client_id,
-        ).first()
-
-
 def _normalize_liability_settings(payload: dict, account_type: str) -> None:
     liability_keys = {
         "liability_closing_day",
@@ -136,9 +98,9 @@ def _normalize_liability_settings(payload: dict, account_type: str) -> None:
         for key in liability_keys:
             payload.pop(key, None)
         return
-    if payload.get("liability_payment_policy") is None:
+    if "liability_payment_policy" in payload and payload["liability_payment_policy"] is None:
         payload["liability_payment_policy"] = "full"
-    if payload.get("liability_payment_month_offset") is None:
+    if "liability_payment_month_offset" in payload and payload["liability_payment_month_offset"] is None:
         payload["liability_payment_month_offset"] = 0
     for key in ("liability_closing_day", "liability_payment_day"):
         value = payload.get(key)
@@ -156,20 +118,12 @@ def _normalize_liability_settings(payload: dict, account_type: str) -> None:
             raise Invalid(f"{key} must not be negative")
 
 
-def _validate_institution(payload: dict) -> None:
-    if "institution" in payload and payload["institution"] not in {value.value for value in models.AccountInstitution}:
-        raise Invalid("制度区分が不正です")
-    age = payload.get("withdrawable_from_age")
-    if age is not None and (not isinstance(age, int) or isinstance(age, bool) or age < 0):
-        raise Invalid("引き出し可能年齢は0以上の整数で指定してください")
-
-
 def _convert_account_money(db: Session, client_id: int, payload: dict) -> None:
     client = db.get(models.Client, client_id)
     if client is None:
         raise ValueError(f"Cannot resolve client currency for client {client_id}")
     currency = settings_currency(client.general_settings)
-    for name in ("role_target_amount", "liability_minimum_payment", "liability_fixed_payment_amount"):
+    for name in ("liability_minimum_payment", "liability_fixed_payment_amount"):
         if name in payload:
             value = payload.pop(name)
             payload[f"{name}_minor"] = None if value is None else Money.from_major(str(value), currency).minor
@@ -183,9 +137,9 @@ def create_account(
         raise Invalid(
             "Journal is the source of truth. Create an opening-balance transaction instead of setting account.balance.",
         )
-    _validate_institution(payload)
+    if payload["account_type"] not in {value.value for value in models.AccountType}:
+        raise Invalid("口座の種類が不正です")
     _normalize_liability_settings(payload, payload["account_type"])
-    _validate_parent(db, client_id, payload["account_type"], payload.get("parent_id"))
     _convert_account_money(db, client_id, payload)
     account = models.Account(**payload, client_id=client_id)
     db.add(account)
@@ -211,11 +165,6 @@ def update_account(
         raise Invalid(
             "Journal is the source of truth. Use transactions to change balances.",
         )
-    if "parent_id" in update_data:
-        _validate_parent(
-            db, client_id, account.account_type, update_data["parent_id"], account_id=account.id,
-        )
-    _validate_institution(update_data)
     _normalize_liability_settings(update_data, account.account_type)
     _convert_account_money(db, client_id, update_data)
     for key, value in update_data.items():
@@ -237,13 +186,6 @@ def delete_account(
     ).first()
     if not account:
         return False
-    child_count = db.query(models.Account).filter(
-        models.Account.parent_id == account_id,
-        models.Account.client_id == client_id,
-        models.Account.is_active == True,
-    ).count()
-    if child_count:
-        raise Invalid("Account has child accounts")
 
     account.is_active = False
     if commit:

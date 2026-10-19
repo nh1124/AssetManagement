@@ -161,6 +161,7 @@ async def run_automatic_recording_loop() -> None:
     """Daily run of every automatic recording the registry switches on."""
     from .database import SessionLocal
     from .workflows.automatic_recording_workflow import process_due_all
+    from .workflows.fx_workflow import refresh_all
 
     while True:
         db = SessionLocal()
@@ -169,6 +170,11 @@ async def run_automatic_recording_loop() -> None:
         except Exception:
             db.rollback()
             logger.exception("Automatic recording cycle failed")
+        try:
+            refresh_all(db)
+        except Exception:
+            db.rollback()
+            logger.exception("FX refresh cycle failed")
         finally:
             db.close()
         await asyncio.sleep(24 * 60 * 60)

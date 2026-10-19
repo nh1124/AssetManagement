@@ -21,8 +21,6 @@ from .reporting_service import (  # noqa: F401
     get_balance_sheet,
     get_profit_loss,
     get_profit_loss_for_range,
-    get_profit_loss_rollup,
-    get_profit_loss_rollup_for_range,
     get_variance_analysis,
     get_variance_analysis_for_range,
 )

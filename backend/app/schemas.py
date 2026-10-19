@@ -24,19 +24,15 @@ AiChangeRequestStatusLiteral = Literal["draft", "pending", "approved", "applied"
 AiDataClassificationLiteral = Literal["normal", "sensitive", "secret"]
 AiMcpWriteModeLiteral = Literal["direct_write", "change_request"]
 
-AccountInstitutionLiteral = Literal["none", "nisa_tsumitate", "nisa_growth", "ideco", "dc_corporate", "tokutei_withholding", "tokutei_self", "general"]
+AccountTypeLiteral = Literal["asset", "liability", "income", "expense"]
 
 # Account Schemas
 class AccountBase(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     name: str
-    account_type: str
+    account_type: AccountTypeLiteral
     balance: float = 0
-    parent_id: Optional[int] = None
-    institution: AccountInstitutionLiteral = "none"
-    withdrawable_from_age: int | None = Field(default=None, ge=0)
-    expected_return: float | None = 0.0  # Annual return rate %
-    role: Literal["defense", "growth", "earmarked", "operating", "unassigned"] = "unassigned"
-    role_target_amount: Optional[float] = None
+    is_active: bool = True
     liability_closing_day: Optional[int] = Field(default=None, ge=1, le=31)
     liability_payment_day: Optional[int] = Field(default=None, ge=1, le=31)
     liability_payment_month_offset: int = Field(default=0, ge=0, le=24)
@@ -50,13 +46,8 @@ class AccountCreate(AccountBase):
     pass
 
 class AccountUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     name: Optional[str] = None
-    parent_id: Optional[int] = None
-    institution: AccountInstitutionLiteral | None = None
-    withdrawable_from_age: int | None = Field(default=None, ge=0)
-    expected_return: Optional[float] = None
-    role: Optional[Literal["defense", "growth", "earmarked", "operating", "unassigned"]] = None
-    role_target_amount: Optional[float] = None
     liability_closing_day: Optional[int] = Field(default=None, ge=1, le=31)
     liability_payment_day: Optional[int] = Field(default=None, ge=1, le=31)
     liability_payment_month_offset: Optional[int] = Field(default=None, ge=0, le=24)
@@ -360,18 +351,6 @@ class ExchangeRateBase(BaseModel):
     source: str = "manual"
 
 
-class ExchangeRateCreate(ExchangeRateBase):
-    pass
-
-
-class ExchangeRateUpdate(BaseModel):
-    base_currency: Optional[str] = None
-    quote_currency: Optional[str] = None
-    rate: Optional[float] = Field(default=None, gt=0)
-    as_of_date: Optional[DateType] = None
-    source: Optional[str] = None
-
-
 class ExchangeRate(ExchangeRateBase):
     id: int
     created_at: Optional[datetime] = None
@@ -515,13 +494,6 @@ class SimulationConfig(SimulationConfigBase):
     class Config:
         from_attributes = True
 
-class LockedAccount(BaseModel):
-    account_id: int
-    name: str
-    withdrawable_from_age: int
-    available_on: date
-    balances_minor: dict[str, int]
-
 
 # Analysis Response
 class AnalysisSummary(BaseModel):
@@ -533,14 +505,8 @@ class AnalysisSummary(BaseModel):
     total_funded: float
     effective_cash: Optional[float] = None
     logical_balance: Optional[float] = None
-    locked_until_age_minor: dict[str, int] = Field(default_factory=dict)
-    locked_accounts: list[LockedAccount] = Field(default_factory=list)
-    locked_as_of: date | None = None
     cfo_briefing: Optional[str] = None
     savings_rate: Optional[float] = None
-    idle_money_rate: Optional[float] = None
-    idle_money: Optional[float] = None
-    idle_money_by_role: Optional[list[dict]] = None
     liquidity_coverage_ratio: Optional[float] = None
     runway_months: Optional[float] = None
     roadmap_progression: Optional[Literal["On Track", "At Risk", "Off Track"]] = None
@@ -1127,12 +1093,10 @@ class MilestoneSimulationPreview(BaseModel):
     items: list[MilestoneCreate]
 
 
-
-
 class ReconciliationAccount(BaseModel):
     id: int
     name: str
-    account_type: str
+    account_type: AccountTypeLiteral
 
 
 class ReconciliationClaim(BaseModel):
@@ -1315,3 +1279,13 @@ class LifeScenarioAccountReturn(BaseModel):
 class LifeScenarioAccountReturns(BaseModel):
     model_config = ConfigDict(extra="forbid")
     returns: list[LifeScenarioAccountReturn]
+
+
+class FxTrackedCurrencyCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    currency: str = Field(pattern=r"^[A-Za-z]{3}$")
+
+
+class FxTrackedCurrency(FxTrackedCurrencyCreate):
+    model_config = ConfigDict(from_attributes=True)
+    created_at: datetime

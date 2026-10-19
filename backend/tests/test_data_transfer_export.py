@@ -16,7 +16,7 @@ from app.services.data_transfer_service import export_client
 
 # Freeze the file format independently of both ORM metadata and the exporter.
 FORMAT_FIELDS = {
-    "accounts": ["id","name","account_type","parent_id","expected_return","institution","withdrawable_from_age","role","role_target_amount","liability_closing_day","liability_payment_day","liability_payment_month_offset","liability_payment_policy","liability_minimum_payment","liability_fixed_payment_amount","liability_installment_months","liability_revolving_rate","is_active"],
+    "accounts": ["id","name","account_type","liability_closing_day","liability_payment_day","liability_payment_month_offset","liability_payment_policy","liability_minimum_payment","liability_fixed_payment_amount","liability_installment_months","liability_revolving_rate","is_active"],
     "products": ["id","name","category","location","last_unit_price","units_per_purchase","frequency_days","last_purchase_date","is_asset","lifespan_months","budget_account_id","funding_capsule_id","budget_treatment","purchase_price","purchase_date","depreciation_method","depreciation_annual_rate","depreciation_interval","depreciation_start_date","depreciation_expense_account_id","depreciation_asset_account_id"],
     "product_depreciations": ["id","product_id","period","transaction_id","amount_minor","created_at"],
     "simulation_configs": ["id","user_id","annual_return","tax_rate","is_nisa","monthly_savings","volatility","inflation_rate","horizon_years"],
@@ -42,6 +42,7 @@ FORMAT_FIELDS = {
     "capsule_funding_sources": ["id","capsule_id","account_id","target_amount","max_share_bp","sort_order","created_at","updated_at"],
     "capsule_rules": ["id","capsule_id","trigger_type","trigger_category","trigger_description","source_mode","source_account_id","destination_account_id","amount_type","amount_value","is_active","created_at"],
     "simulation_scenarios": ["id","life_event_id","name","description","annual_return","inflation","monthly_savings","contribution_schedule","allocation_mode","created_at","updated_at"],
+    "fx_tracked_currencies": ["currency","created_at"],
     "exchange_rates": ["id","base_currency","quote_currency","rate","as_of_date","source","created_at","updated_at"],
     "goal_baselines": ["id","scenario_id","scenario_name","reason","anchor_date","is_current","assumptions","projection","events","created_at"],
     "goal_budget_reflections": ["id","scenario_id","applied_at","start_period","end_period","options","summary","events"],
@@ -182,6 +183,9 @@ def _seed_client(db, client_id, base, marker):
         projection=[{"offset": 0, "year": 2026, "p10": 1, "p50": 2, "p90": 3}], events=[{"name": "基準"}])
     add(models.GoalBudgetReflection, 41, scenario_id=scenario.id, applied_at=STAMP, start_period="2026-10",
         end_period="2026-10", options={"months": 1}, summary={"chosen_amount": 5}, events=[{"lineage": "x", "allocation": 5}])
+    tracked = models.FxTrackedCurrency(client_id=client_id, currency="USD", created_at=STAMP)
+    db.add(tracked)
+    rows["fx_tracked_currencies"] = [tracked]
     db.commit()
     return client, rows
 
@@ -211,7 +215,7 @@ def test_every_collection_has_exact_format_columns_and_roundtrips(seeded):
     for collection, fields in FORMAT_FIELDS.items():
         exported = document["data"][collection]
         assert exported
-        assert {row["id"] for row in exported} == {row.id for row in rows[collection]}
+        assert {row.get("id", row.get("currency")) for row in exported} == {getattr(row, "id", getattr(row, "currency", None)) for row in rows[collection]}
         for row in exported:
             assert list(row) == fields, collection
     validation = validate_import_payload(document["data"], document["version"], document["manifest"])
@@ -254,7 +258,7 @@ def test_second_client_is_absent_even_from_nested_references_and_health(seeded):
     db, client, rows = seeded
     other, other_rows = _seed_client(db, 202, 20000, "foreign-client")
     document = _format_roundtrip(export_client(db, client))
-    foreign_ids = {row.id for collection in other_rows.values() for row in collection} | {other.id}
+    foreign_ids = {row.id for collection in other_rows.values() for row in collection if hasattr(row, "id")} | {other.id}
 
     def check(value):
         if isinstance(value, dict):
@@ -272,7 +276,7 @@ def test_second_client_is_absent_even_from_nested_references_and_health(seeded):
 
     check(document)
     for collection, exported in document["data"].items():
-        assert {row["id"] for row in exported} == {row.id for row in rows[collection]}
+        assert {row.get("id", row.get("currency")) for row in exported} == {getattr(row, "id", getattr(row, "currency", None)) for row in rows[collection]}
     batch = document["data"]["transaction_batches"][0]
     assert batch["input_payload"]["nested"]["account_id"] == rows["accounts"][0].id
     assert document["data"]["monthly_actions"][0]["result"]["nested"]["transaction_id"] == rows["transactions"][0].id

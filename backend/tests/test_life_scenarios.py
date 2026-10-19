@@ -23,7 +23,7 @@ from app.routers.life_scenarios import router
 from app.routers.life_events import router as events_router
 from app.services import life_scenario_service as service, life_event_graph as graph
 from app.services.data_transfer_service import export_client, import_client
-from app.services.institution_service import blended_after_tax_return
+from app.services.account_return_service import blended_return
 from app.services.ledger_service import create_account, create_transaction
 
 
@@ -47,8 +47,8 @@ def db():
     engine.dispose()
 
 
-def account(db, name="口座", client_id=1, kind="asset", rate=None, balance=0, institution="none"):
-    row = create_account(db, client_id, {"name": name, "account_type": kind, "expected_return": rate, "institution": institution})
+def account(db, name="口座", client_id=1, kind="asset", balance=0):
+    row = create_account(db, client_id, {"name": name, "account_type": kind})
     if balance:
         income = create_account(db, client_id, {"name": name + "給与", "account_type": "income"})
         create_transaction(db, client_id=client_id, date=date(2020, 1, 1), description="開始残高",
@@ -65,17 +65,6 @@ def config(db, **values):
     return row
 
 
-def test_override_expected_and_gross_precedence_including_zero_and_tax(db):
-    row = account(db, rate=10, balance=10000)
-    assert blended_after_tax_return(db, 1, gross_annual_return=20, tax_rate=25) == 7.5
-    assert blended_after_tax_return(db, 1, gross_annual_return=20, tax_rate=25, account_returns={row.id: 4}) == 3
-    assert blended_after_tax_return(db, 1, gross_annual_return=20, tax_rate=25, account_returns={row.id: 0}) == 0
-    row.expected_return = None
-    db.commit()
-    assert blended_after_tax_return(db, 1, gross_annual_return=20, tax_rate=25) == 15
-    row.institution = "nisa_growth"
-    db.commit()
-    assert blended_after_tax_return(db, 1, gross_annual_return=20, tax_rate=25, account_returns={row.id: 4}) == 4
 
 
 @pytest.mark.parametrize("invalid", ["income", "expense", "liability", "foreign", "missing", "duplicate", "nan"])
@@ -128,7 +117,7 @@ def test_database_enforces_goal_uniqueness_per_client_and_horizon(db):
 
 def test_defaults_do_not_use_config_or_account_rates_for_new_scenarios_without_goal(db):
     config(db)
-    account(db, rate=9)
+    account(db)
     scenario = service.create(db, 1, "  新規  ")
     assert scenario.name == "新規"
     assert (scenario.annual_return, scenario.inflation, scenario.horizon_years) == (5, 2, 30)
@@ -425,7 +414,7 @@ def test_v22_roundtrip_preserves_independent_graphs_and_remaps_scenario_ids(db):
     copied.target_amount_minor = 200
     db.commit()
     document = export_client(db, db.get(models.Client, 1))
-    assert document["version"] == EXPORT_VERSION == 22
+    assert document["version"] == EXPORT_VERSION == 23
     assert "life_scenario_choices" not in document["data"]
     projections = {s.name: service.project(db, 1, s)["projection"] for s in (original, clone)}
     for _ in range(2):
@@ -480,9 +469,10 @@ def test_v21_import_assigns_shared_graph_to_goal_and_copies_for_every_draft(db, 
 
 def test_legacy_graph_without_scenarios_gets_default_goal_and_expected_returns(db):
     node(db)
-    cash = account(db, rate=3.5)
+    cash = account(db)
     config(db)
     data = export_client(db, db.get(models.Client, 1))["data"]
+    next(row for row in data["accounts"] if row["id"] == cash.id)["expected_return"] = 3.5
     for key in ("life_scenarios", "life_scenario_account_returns"):
         data.pop(key)
     import_client(db, db.get(models.Client, 2), data=data, version=20, manifest=None)

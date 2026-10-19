@@ -6,7 +6,7 @@ import httpx
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
-from .. import models, schemas
+from .. import models
 from ..domain.errors import Invalid
 from ..domain.money import normalize_currency as domain_normalize_currency
 
@@ -114,8 +114,6 @@ def upsert_exchange_rate(
     rate: float,
     as_of_date: date,
     source: str,
-    *,
-    commit: bool = False,
 ) -> models.ExchangeRate:
     base = normalize_currency(base_currency)
     quote = normalize_currency(quote_currency)
@@ -139,12 +137,7 @@ def upsert_exchange_rate(
             source=source,
         )
         db.add(row)
-    # Auto-update batches rates in one transaction; manual CRUD closes its own.
-    if commit:
-        db.commit()
-        db.refresh(row)
-    else:
-        db.flush()
+    db.flush()
     return row
 
 
@@ -166,33 +159,10 @@ def list_rates(
     ).all()
 
 
-def update_rate(
-    db: Session, client_id: int, rate_id: int, payload: schemas.ExchangeRateUpdate,
-    *, commit: bool = True,
-) -> models.ExchangeRate | None:
-    rate = db.query(models.ExchangeRate).filter(
-        models.ExchangeRate.id == rate_id,
-        models.ExchangeRate.client_id == client_id,
-    ).first()
-    if not rate:
-        return None
-
-    for field, value in payload.model_dump(exclude_unset=True).items():
-        if field in ("base_currency", "quote_currency"):
-            value = normalize_currency(value)
-        setattr(rate, field, value)
-    if rate.base_currency == rate.quote_currency:
-        raise Invalid("Currencies must differ")
-    if commit:
-        db.commit()
-        db.refresh(rate)
-    else:
-        db.flush()
-    return rate
 
 
 def delete_rate(
-    db: Session, client_id: int, rate_id: int, *, commit: bool = True,
+    db: Session, client_id: int, rate_id: int,
 ) -> bool:
     rate = db.query(models.ExchangeRate).filter(
         models.ExchangeRate.id == rate_id,
@@ -201,10 +171,7 @@ def delete_rate(
     if not rate:
         return False
     db.delete(rate)
-    if commit:
-        db.commit()
-    else:
-        db.flush()
+    db.flush()
     return True
 
 
@@ -309,3 +276,32 @@ def convert_amount_with_lookup(
     if lookup is None:
         return amount or 0.0
     return lookup.convert(amount, from_currency, as_of_date)
+
+
+def list_tracked(db: Session, client_id: int) -> list[models.FxTrackedCurrency]:
+    return db.query(models.FxTrackedCurrency).filter_by(client_id=client_id).order_by(models.FxTrackedCurrency.currency).all()
+
+
+def tracked_clients(db: Session) -> list[int]:
+    return [row[0] for row in db.query(models.FxTrackedCurrency.client_id).distinct().order_by(models.FxTrackedCurrency.client_id)]
+
+
+def add_tracked(db: Session, client_id: int, currency: str) -> models.FxTrackedCurrency:
+    code = normalize_currency(currency)
+    if code == get_client_currency(db, client_id):
+        raise Invalid("基準通貨は追跡できません")
+    if db.get(models.FxTrackedCurrency, (client_id, code)):
+        raise Invalid("この通貨は追跡中です")
+    row = models.FxTrackedCurrency(client_id=client_id, currency=code)
+    db.add(row)
+    db.flush()
+    return row
+
+
+def remove_tracked(db: Session, client_id: int, currency: str) -> bool:
+    row = db.get(models.FxTrackedCurrency, (client_id, normalize_currency(currency)))
+    if row is None:
+        return False
+    db.delete(row)
+    db.flush()
+    return True

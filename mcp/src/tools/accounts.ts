@@ -7,20 +7,27 @@ import { z } from "zod";
 import { api } from "../api-client.js";
 import { toStructured } from "../utils.js";
 
-const accountRoleSchema = z.enum(["defense", "growth", "earmarked", "operating", "unassigned"]);
 
 interface Account {
   id: number;
   name: string;
   account_type: string;
   balance: number;
-  rollup_balance?: number;
-  parent_id?: number | null;
-  expected_return?: number | null;
-  role?: z.infer<typeof accountRoleSchema>;
-  role_target_amount?: number | null;
   is_active?: boolean;
 }
+
+const accountFields = {
+  name: z.string().min(1).describe("Account name"),
+  is_active: z.boolean().optional(),
+  liability_closing_day: z.number().int().min(1).max(31).nullable().optional(),
+  liability_payment_day: z.number().int().min(1).max(31).nullable().optional(),
+  liability_payment_month_offset: z.number().int().min(0).max(24).optional(),
+  liability_payment_policy: z.enum(["full", "minimum", "fixed", "installment", "revolving"]).optional(),
+  liability_minimum_payment: z.number().min(0).nullable().optional(),
+  liability_fixed_payment_amount: z.number().min(0).nullable().optional(),
+  liability_installment_months: z.number().int().min(1).max(120).nullable().optional(),
+  liability_revolving_rate: z.number().min(0).nullable().optional(),
+};
 
 export function registerAccountTools(server: McpServer): void {
   server.registerTool(
@@ -52,23 +59,15 @@ export function registerAccountTools(server: McpServer): void {
         "Creates an account. Opening balances must be created through transactions; this tool sends balance=0.",
       inputSchema: z
         .object({
-          name: z.string().min(1).describe("Account name"),
+          ...accountFields,
           account_type: z.enum(["asset", "liability", "income", "expense"]).describe("Account type"),
-          parent_id: z.number().int().min(1).optional().describe("Parent account ID"),
-          expected_return: z.number().optional().describe("Expected annual return percentage"),
-          role: accountRoleSchema.optional().describe("Planning role"),
-          role_target_amount: z.number().nullable().optional().describe("Target amount for the planning role"),
         })
         .strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    async ({ name, account_type, parent_id, expected_return, role, role_target_amount }) => {
+    async (input) => {
       try {
-        const body: Record<string, unknown> = { name, account_type, balance: 0 };
-        if (parent_id !== undefined) body.parent_id = parent_id;
-        if (expected_return !== undefined) body.expected_return = expected_return;
-        if (role !== undefined) body.role = role;
-        if (role_target_amount !== undefined) body.role_target_amount = role_target_amount;
+        const body = { ...input, balance: 0 };
         const data = await api.post<Account>("/accounts/", body);
         return {
           content: [{ type: "text", text: `Created account:\n${JSON.stringify(data, null, 2)}` }],
@@ -89,25 +88,13 @@ export function registerAccountTools(server: McpServer): void {
       inputSchema: z
         .object({
           id: z.number().int().min(1).describe("Account ID"),
-          name: z.string().min(1).optional().describe("Account name"),
-          parent_id: z.number().int().min(1).nullable().optional().describe("Parent account ID, or null for top level"),
-          expected_return: z.number().optional().describe("Expected annual return percentage"),
-          role: accountRoleSchema.optional().describe("Planning role"),
-          role_target_amount: z.number().nullable().optional().describe("Target amount for the planning role"),
-          is_active: z.boolean().optional().describe("Whether the account is active"),
+          ...z.object(accountFields).partial().shape,
         })
         .strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
-    async ({ id, name, parent_id, expected_return, role, role_target_amount, is_active }) => {
+    async ({ id, ...body }) => {
       try {
-        const body: Record<string, unknown> = {};
-        if (name !== undefined) body.name = name;
-        if (parent_id !== undefined) body.parent_id = parent_id;
-        if (expected_return !== undefined) body.expected_return = expected_return;
-        if (role !== undefined) body.role = role;
-        if (role_target_amount !== undefined) body.role_target_amount = role_target_amount;
-        if (is_active !== undefined) body.is_active = is_active;
 
         const data = await api.put<Account>(`/accounts/${id}`, body);
         return {
@@ -124,7 +111,7 @@ export function registerAccountTools(server: McpServer): void {
     "accounts_delete",
     {
       title: "Deactivate account",
-      description: "Soft-deletes an account by marking it inactive. The backend rejects accounts with active children or template references.",
+      description: "Soft-deletes an account by marking it inactive.",
       inputSchema: z.object({ id: z.number().int().min(1).describe("Account ID") }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
     },

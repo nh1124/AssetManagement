@@ -8,7 +8,7 @@ import re
 from datetime import date, datetime
 from typing import Any
 
-EXPORT_VERSION = 22
+EXPORT_VERSION = 23
 
 DATA_COLLECTIONS = [
     "accounts",
@@ -37,6 +37,7 @@ DATA_COLLECTIONS = [
     "capsule_funding_sources",
     "capsule_rules",
     "simulation_scenarios",
+    "fx_tracked_currencies",
     "exchange_rates",
     "goal_baselines",
     "goal_budget_reflections",
@@ -183,6 +184,8 @@ def validate_import_payload(
 
     id_sets: dict[str, set[int]] = {}
     for collection in DATA_COLLECTIONS:
+        if collection == "fx_tracked_currencies":
+            continue
         seen: set[int] = set()
         for index, item in enumerate(data.get(collection, [])):
             item_id = _as_int(item.get("id"))
@@ -215,16 +218,18 @@ def validate_import_payload(
                     field,
                 )
 
-    # Validate assumptions before the restore starts replacing the target's facts.
-    institutions = ("none", "nisa_tsumitate", "nisa_growth", "ideco", "dc_corporate", "tokutei_withholding", "tokutei_self", "general")
     for item in data.get("accounts", []):
-        if item.get("institution", "none") not in institutions:
-            issue("error", "invalid_institution", "Account institution is invalid.", "accounts", item.get("id"), "institution")
-        age = item.get("withdrawable_from_age")
-        if age is not None and (type(age) is not int or age < 0):
-            issue("error", "invalid_withdrawable_age", "Withdrawal age must be a nonnegative integer.", "accounts", item.get("id"), "withdrawable_from_age")
+        if "account_type" in item and item["account_type"] not in {"asset", "liability", "income", "expense"}:
+            issue("error", "invalid_account_type", "口座の種類が不正です。", "accounts", item.get("id"), "account_type")
 
-    check_ref("accounts", "parent_id", "accounts")
+    seen_currencies = set()
+    for item in data.get("fx_tracked_currencies", []):
+        currency = item.get("currency")
+        if not isinstance(currency, str) or not re.fullmatch(r"[A-Z]{3}", currency) or currency in seen_currencies:
+            issue("error", "invalid_tracked_currency", "追跡通貨が不正または重複しています。", "fx_tracked_currencies")
+        if isinstance(currency, str):
+            seen_currencies.add(currency)
+
     check_ref("products", "budget_account_id", "accounts")
     check_ref("products", "funding_capsule_id", "capsules")
     check_ref("recurring_transactions", "from_account_id", "accounts")
@@ -578,3 +583,26 @@ def remap_action_target_id(item: dict[str, Any], key_maps: dict[str, dict[int, i
     if not target_key:
         return target_id
     return key_maps.get(target_key, {}).get(target_id, target_id)
+
+
+def migrate_account_fields(data: dict, base_currency: str) -> dict:
+    """Upgrade a verified pre-WP12 payload without changing its checksum input."""
+    from copy import deepcopy
+    result = deepcopy(data)
+    returns = result.setdefault("life_scenario_account_returns", [])
+    existing = {(int(row["scenario_id"]), int(row["account_id"])) for row in returns}
+    next_id = max((row["id"] for row in returns), default=0) + 1
+    for account in result.get("accounts", []):
+        rate = account.get("expected_return")
+        if account["account_type"] == "asset" and rate is not None:
+            for scenario in result.get("life_scenarios", []):
+                key = int(scenario["id"]), int(account["id"])
+                if key not in existing:
+                    returns.append({"id": next_id, "scenario_id": key[0], "account_id": key[1], "annual_return": rate})
+                    next_id += 1
+                    existing.add(key)
+        for field in ("role", "role_target_amount", "role_target_amount_minor", "institution", "withdrawable_from_age", "parent_id", "expected_return"):
+            account.pop(field, None)
+    currencies = {code.strip().upper() for row in result.get("exchange_rates", []) for code in (row["base_currency"], row["quote_currency"])}
+    result["fx_tracked_currencies"] = [{"currency": code} for code in sorted(currencies - {base_currency})]
+    return result
