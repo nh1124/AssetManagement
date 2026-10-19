@@ -940,3 +940,29 @@ export interface AutomaticRecordings {
     recurring: AutomaticRecurringRecording[];
     depreciation: AutomaticDepreciationRecording[];
 }
+
+/** One automatic transaction a month holds: a definition's occurrence or a write-down. */
+export interface ScheduledTransaction {
+    kind: 'definition' | 'depreciation';
+    entry_id: number | null;
+    product_id: number | null;
+    name: string;
+    line_type: MonthlyPlanLineType | null;
+    amount: number;
+    /** The planned day; null for definitions without a day (every N days). */
+    date: string | null;
+    frequency: string;
+    /** auto posts on its date, manual waits for a hand, none only plans the budget. */
+    recording: 'auto' | 'manual' | 'none';
+    posted: boolean | null;
+    in_budget: boolean;
+    /** The account or subject whose budget the movement is. */
+    account_id: number | null;
+    counter_account_id: number | null;
+}
+
+export interface ScheduledTransactions {
+    period: string;
+    currency: string;
+    items: ScheduledTransaction[];
+}

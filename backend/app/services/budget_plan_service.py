@@ -327,6 +327,12 @@ def get_budget_summary(
             )
         plan_lines = _merge_registry_lines(plan_lines, registry_plan_lines(ctx, period))
         plan_lines = _merge_credit_settlement_lines(plan_lines, credit_settlement_plan_lines(ctx, period, plan_id))
+        # A definition with no saved row still has the month's postings against it.
+        for line in plan_lines:
+            if line.get("id") is None and line.get("source") == "registry":
+                actual = actual_for_plan_line(ctx, line, period)
+                line["actual"] = round(actual, 0)
+                line["variance"] = round((line.get("amount") or 0.0) - actual, 0)
 
     expense_lines = [line for line in plan_lines if line["line_type"] == "expense"]
     allocation_lines = [line for line in plan_lines if line["line_type"] == "allocation"]

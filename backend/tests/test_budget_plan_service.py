@@ -1616,6 +1616,36 @@ def test_cash_flow_uses_registry_source_when_saved_budget_line_lacks_source_acco
         db.close()
 
 
+def test_an_unsaved_definition_row_reports_the_months_actual() -> None:
+    db = _session()
+    try:
+        period = current_period_key()
+        start, _ = period_to_range(period)
+        db.add(models.Client(id=1, name="test", general_settings={}))
+        bank = models.Account(client_id=1, name="bank", account_type="asset", role="operating")
+        rent = models.Account(client_id=1, name="rent", account_type="expense")
+        db.add_all([bank, rent])
+        db.flush()
+        db.add(models.RegistryEntry(
+            client_id=1, name="rent", entry_type="service", amount_minor=to_minor(80000, "JPY"), currency="JPY",
+            frequency="Monthly", line_type="expense", budget_account_id=rent.id, source_account_id=bank.id,
+            destination_account_id=rent.id, budget_active=True, is_active=True,
+        ))
+        tx = models.Transaction(client_id=1, date=start, description="rent", amount_minor=to_minor(80000, "JPY"), currency="JPY")
+        db.add(tx)
+        db.commit()
+        process_transaction(db, tx, from_account_id=bank.id, to_account_id=rent.id)
+
+        _give_fixture_lines_a_plan(db)
+        summary = get_budget_summary(db, client_id=1, period=period)
+        line = next(line for line in summary["plan_lines"] if line["account_id"] == rent.id)
+
+        assert line["id"] is None and line["source"] == "registry"
+        assert (line["amount"], line["registry_amount"], line["actual"], line["variance"]) == (0, 80000, 80000, -80000)
+    finally:
+        db.close()
+
+
 def test_credit_expense_creates_credit_settlement_projection() -> None:
     db = _session()
     try:

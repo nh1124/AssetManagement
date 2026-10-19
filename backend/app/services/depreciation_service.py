@@ -137,6 +137,29 @@ def due_minor(db: Session, client_id: int, product: models.Product, period: str)
     return min(amount, remaining)
 
 
+def period_amount(db: Session, client_id: int, product: models.Product, period: str) -> tuple[int, bool] | None:
+    """A period's write-down and whether it is posted; None when the period writes nothing down."""
+    start = _start_date(product)
+    if (product.depreciation_method or "none") == "none" or start is None:
+        return None
+    elapsed = _months_elapsed(start, period)
+    life = int(product.lifespan_months or 0)
+    if elapsed < 0 or (life and elapsed >= life) or elapsed % _months_in(product.depreciation_interval or "monthly"):
+        return None
+    posted = db.query(models.ProductDepreciation.amount_minor).filter(
+        models.ProductDepreciation.client_id == client_id,
+        models.ProductDepreciation.product_id == product.id,
+        models.ProductDepreciation.period == period,
+    ).scalar()
+    if posted is not None:
+        return int(posted), True
+    try:
+        due = due_minor(db, client_id, product, period)
+    except Invalid:
+        return None
+    return (due, False) if due > 0 else None
+
+
 def schedule(db: Session, client_id: int, product_id: int) -> dict:
     product = _get_product(db, client_id, product_id)
     currency = get_client_currency(db, client_id)
