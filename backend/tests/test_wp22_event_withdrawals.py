@@ -122,7 +122,8 @@ def test_the_plan_earmarks_each_account_until_its_withdrawal_and_draws_it_down_t
         ("capsule", savings.id, 7500, True), ("capsule", securities.id, 5000, True)]
     goal_budget_workflow.apply(db, 1, PERIOD, PERIOD, preview["fingerprint"])
     capsule = capsule_service.goal_capsules(db, 1, [car.id])[car.id]
-    assert capsule.name == "車" and capsule.monthly_contribution_minor == 12500
+    # The earmark holds what the accounts withdraw (120,000 here), not the rest the residual pays.
+    assert (capsule.name, capsule.monthly_contribution_minor, capsule.target_amount_minor) == ("車", 12500, 120000)
     assert {(source.account_id, source.target_amount_minor) for source in capsule.funding_sources} == {(savings.id, 90000), (securities.id, 30000)}
     # In the withdrawal month the plan draws the account down for the event.
     later = goal_budget_workflow.preview(db, 1, month(months_ahead(6)), month(months_ahead(6)))
@@ -138,6 +139,7 @@ def test_the_plan_earmarks_each_account_until_its_withdrawal_and_draws_it_down_t
     goal_budget_workflow.apply(db, 1, PERIOD, PERIOD, preview["fingerprint"])
     db.refresh(capsule)
     assert {(source.account_id, source.target_amount_minor) for source in capsule.funding_sources} == {(savings.id, 90000), (securities.id, 0)}
+    assert capsule.target_amount_minor == 90000
 
 
 def test_a_copied_scenario_withdraws_for_the_copy_of_its_event(db):

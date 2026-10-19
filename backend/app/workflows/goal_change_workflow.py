@@ -80,7 +80,7 @@ def apply(db: Session, client_id: int, scenario_id: int, earmarks: str) -> model
             targets = earmark_parts(db, events)
             for event in events:
                 capsule_service.create_goal_capsule(db, client_id, event_id=event.id, name=event.name,
-                                                    target_minor=event.target_amount_minor or 0, parts=targets[event.id])
+                                                    parts=targets[event.id])
         db.commit()
     except Exception:
         db.rollback()
