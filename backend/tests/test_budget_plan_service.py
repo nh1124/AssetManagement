@@ -832,6 +832,28 @@ def test_capsule_allocation_actual_uses_current_journal_claim() -> None:
         db.close()
 
 
+def test_an_earmark_proposes_its_monthly_amount_before_any_plan_exists() -> None:
+    db = _session()
+    try:
+        account = models.Account(client_id=1, name="savings", account_type="asset")
+        db.add_all([models.Client(id=1, name="test", general_settings={}), account])
+        db.flush()
+        db.add(models.Capsule(
+            client_id=1, name="Travel", target_amount_minor=300000, monthly_contribution_minor=20000,
+            funding_sources=[models.CapsuleFundingSource(client_id=1, account_id=account.id, target_amount_minor=300000)],
+        ))
+        db.commit()
+
+        summary = get_budget_summary(db, client_id=1, period="2026-05")
+        line = next(item for item in summary["plan_lines"] if item["target_type"] == "capsule")
+
+        assert summary["plan_id"] is None
+        assert (line["id"], line["account_id"], line["budget_amount"]) == (None, account.id, 20000)
+        assert db.query(models.BudgetPlan).count() == 0
+    finally:
+        db.close()
+
+
 def test_product_reserve_capsule_allocation_exposes_suggested_amount() -> None:
     db = _session()
     try:

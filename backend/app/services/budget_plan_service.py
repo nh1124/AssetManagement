@@ -348,13 +348,13 @@ def get_budget_summary(
         for line in plan_lines
         if line.get("line_type") == "allocation" and line.get("target_type") == "capsule"
     }
-    if plan_id is not None:
-        for capsule in ctx.capsules:
-            plan_lines.extend(
-                line for line in _virtual_capsule_line(ctx, capsule, period)
-                if capsule.id not in covered_capsules
-                and (capsule.id, line["account_id"]) not in existing_capsule_ids
-            )
+    # Earmarks propose their monthly amount like definitions do, whether or not a plan exists yet.
+    for capsule in ctx.capsules:
+        plan_lines.extend(
+            line for line in _virtual_capsule_line(ctx, capsule, period)
+            if capsule.id not in covered_capsules
+            and (capsule.id, line["account_id"]) not in existing_capsule_ids
+        )
     plan_lines = _merge_registry_lines(plan_lines, registry_plan_lines(ctx, period))
     if plan_id is not None:
         plan_lines = _merge_credit_settlement_lines(plan_lines, credit_settlement_plan_lines(ctx, period, plan_id))
