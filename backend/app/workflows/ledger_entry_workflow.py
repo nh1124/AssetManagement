@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..domain.money import Money
-from ..services import ledger_service
+from ..services import depreciation_service, ledger_service
 from ..services.fx_service import get_client_currency
 from ..services.capsule_service import (
     CapsuleReservation,
@@ -81,6 +81,8 @@ def amend_entry(
         return None
     try:
         apply_capsule_rules_for_transaction(db, transaction, commit=False)
+        # A write-down edited as a plain entry keeps its record at the entry's amount.
+        depreciation_service.follow_transaction(db, client_id, transaction)
         if commit:
             db.commit()
             db.refresh(transaction)
@@ -106,6 +108,7 @@ def remove_entry(
         # its transfer too, so money leaves the earmarked account -- the UI
         # confirms that before calling this.
         retract_capsule_reservations(db, client_id, transaction_id, commit=False)
+        depreciation_service.forget_transaction(db, client_id, transaction_id)
         ledger_service.delete_transaction(db, transaction)
         if commit:
             db.commit()

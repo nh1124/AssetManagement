@@ -1,5 +1,5 @@
 // ============================================================
-// Goal tools: scenarios, life events, 積立設定, earmark tracking, goal-to-plan
+// Goal tools: scenarios, life events and loans, 積立設定, changing the goal, goal-to-plan
 // ============================================================
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -13,10 +13,13 @@ const id = z.number().int().min(1);
 
 const lifeEventFields = {
   name: z.string().min(1).describe("Life event name"),
-  direction: z.enum(["expense", "income"]).optional().describe("expense (default) or income"),
-  account_id: id.nullable().optional().describe("Account or subject the event belongs to"),
-  target_date: dateSchema.describe("Target date, YYYY-MM-DD"),
-  target_amount: z.number().min(0).describe("Target amount"),
+  direction: z.enum(["expense", "income", "borrowing", "repayment"]).optional().describe("expense (default), income, borrowing or repayment"),
+  account_id: id.nullable().optional().describe("Asset account: where an expense is set aside and drawn down, where an inflow or loan arrives, what a repayment is paid from"),
+  target_date: dateSchema.describe("Target date (a repayment's first month), YYYY-MM-DD"),
+  target_amount: z.number().min(0).describe("Amount; for a repayment, the monthly payment"),
+  interest_rate: z.number().min(0).max(100).nullable().optional().describe("Borrowing only: yearly interest %"),
+  borrowing_event_id: id.nullable().optional().describe("Repayment only: the borrowing event it repays (same scenario)"),
+  repeat_count: z.number().int().min(1).max(1200).nullable().optional().describe("Repayment only: number of monthly payments"),
   priority: z.number().int().min(1).max(3).optional().describe("Priority: 1=high, 2=medium, 3=low"),
   note: z.string().nullable().optional().describe("Optional note"),
   condition_mode: z.enum(["all", "any"]).optional().describe("How preconditions combine"),
@@ -26,7 +29,7 @@ const lifeEventUpdateSchema = z.object(lifeEventFields).partial().extend({ id: i
 const contributionFields = {
   account_id: id.describe("Asset account"),
   start_period: periodSchema.describe("First month the record applies, YYYY-MM"),
-  monthly_amount: z.number().min(0).describe("Monthly contribution from that month"),
+  monthly_amount: z.number().describe("Monthly contribution from that month; negative withdraws (取り崩し)"),
   annual_return: z.number().nullable().optional().describe("Yield % from that month; null keeps the previous one"),
   note: z.string().nullable().optional(),
 };
@@ -67,14 +70,14 @@ export function registerLifeEventTools(server: McpServer): void {
 
   server.registerTool("life_events_list", {
     title: "List life events",
-    description: "The goal scenario's events (or another scenario's) with the earmarks counted toward them and the funding those give.",
+    description: "The goal scenario's events (or another scenario's) with the earmark made for each and the funding it gives.",
     inputSchema: z.object({ scenario_id: id.optional() }).strict(), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, guarded("Life events:", async ({ scenario_id }: { scenario_id?: number }) =>
     api.get<unknown>(`/life-events/with-progress${scenario_id ? `?scenario_id=${scenario_id}` : ""}`)));
 
   server.registerTool("life_events_create", {
     title: "Create life event",
-    description: "Creates a life event in a scenario: kind, account or subject, name, target amount and date, priority, note.",
+    description: "Creates a life event in a scenario: kind (expense, income, borrowing, repayment), account, name, amount and date, priority, note; a repayment names its borrowing and number of months.",
     inputSchema: lifeEventCreateSchema, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   }, guarded("Created life event:", async (input: z.infer<typeof lifeEventCreateSchema>) => api.post<unknown>("/life-events/", only(input))));
 
@@ -87,19 +90,23 @@ export function registerLifeEventTools(server: McpServer): void {
 
   server.registerTool("life_events_delete", {
     title: "Delete life event",
-    description: "Deletes a life event with its links and conditions; the earmarks it counted stay.",
+    description: "Deletes a life event with its links and conditions; its earmark stays but no longer belongs to the goal.",
     inputSchema: z.object({ id: id.describe("Life event ID") }).strict(), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   }, guarded("Deleted life event:", async ({ id: eventId }: { id: number }) => api.delete<unknown>(`/life-events/${eventId}`)));
 
-  server.registerTool("goal_earmarks_set", {
-    title: "Set goal earmarks",
-    description: "実績管理の設定: replaces which earmarks count toward a goal event and the percent of each that counts.",
-    inputSchema: z.object({
-      event_id: id.describe("Life event ID"),
-      earmarks: z.array(z.object({ capsule_id: id, share: z.number().min(0).max(100).optional() }).strict()),
-    }).strict(), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, guarded("Goal earmarks:", async ({ event_id, earmarks }: { event_id: number; earmarks: Array<{ capsule_id: number; share?: number }> }) =>
-    api.put<unknown>(`/life-events/${event_id}/earmarks`, earmarks)));
+  server.registerTool("life_scenarios_goal_preview", {
+    title: "Preview changing the goal",
+    description: "What making a scenario the goal would do to the current goal's earmarks: which carry to the same event, and which earmarks the new goal would get.",
+    inputSchema: z.object({ id: id.describe("Scenario ID") }).strict(), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, guarded("Goal change preview:", async ({ id: scenarioId }: { id: number }) => api.get<unknown>(`/life-scenarios/${scenarioId}/goal-preview`)));
+
+  server.registerTool("life_scenarios_make_goal", {
+    title: "Make a scenario the goal",
+    description: "Makes the scenario the goal. earmarks: keep (default) leaves the old goal's earmarks; carry moves them to the same events; replace deletes them (their money returns to the accounts), retires the old goal's plan rows from this month and makes new earmarks. Ask the user before replace.",
+    inputSchema: z.object({ id: id.describe("Scenario ID"), earmarks: z.enum(["keep", "replace", "carry"]).optional() }).strict(),
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  }, guarded("Goal:", async ({ id: scenarioId, earmarks }: { id: number; earmarks?: string }) =>
+    api.post<unknown>(`/life-scenarios/${scenarioId}/goal`, { earmarks: earmarks ?? "keep" })));
 
   server.registerTool("contribution_plans_create", {
     title: "Add a contribution plan record",

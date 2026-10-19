@@ -49,7 +49,7 @@ const monthlyPlanLineApiSchema = z
     source_account_id: z.number().int().min(1).optional().describe("Source account ID"),
     name: z.string().optional().describe("Display name"),
     amount: z.number().optional().describe("Plan amount"),
-    source: z.string().optional().describe("Source marker"),
+    source: z.string().optional().describe("Source marker. A manual row adds to the automatic transactions' rows on the same account; a registry row stands for them in its month."),
     source_kind: z.string().optional().describe("Source identity kind"),
     identity_key: z.string().optional().describe("Stable source identity key"),
     manual_override: z.boolean().optional().describe("Whether this line manually overrides generated suggestions"),

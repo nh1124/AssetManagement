@@ -5,13 +5,13 @@ import type { LifeEventLink, LifeEventLinkInput } from '../../../api/lifeEventGr
 import { compare, type ProjectedLifeScenario } from '../../../api/lifeScenarios';
 import { useClient } from '../../../context/ClientContext';
 import type { LifeEvent } from '../../../types';
-import { formatCurrency } from '../../../utils/currency';
 import Overlay from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
 import { clientToday, useTimezone } from '../../datetime';
 import { assetErrorMessage, useResource } from '../../useResource';
 import { Choice, EditorActions, Feedback, Field } from '../db/Database';
 import { buttonClass, inputClass, loadAccounts, useMutation } from '../db/forms';
+import { eventAmount } from './eventKinds';
 import GoalConditions from './GoalConditions';
 import LifeEventDiagram from './LifeEventDiagram';
 import LifeEventLinkDetails from './LifeEventLinkDetails';
@@ -73,7 +73,7 @@ function EventOutline({ events, links, scenario, conditionEventIds, currency, di
                     <button type="button" disabled={disabled} onClick={() => onEdit(event)} className="rounded text-[var(--studio-accent)] hover:underline focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)]">{event.name}</button>
                     {conditionEventIds.has(event.id) && <span className="text-xs text-[var(--studio-text-muted)]">前提条件あり</span>}
                     <span className="tabular-nums">{resolved.get(event.id)?.resolved_date ?? event.target_date}</span>
-                    <span className="tabular-nums">{formatCurrency(event.target_amount, currency)}</span>
+                    <span className="tabular-nums">{eventAmount(event, currency)}</span>
                     {resolved.get(event.id)?.on_likely_path && <span className="text-xs text-[var(--studio-accent)]">多くの試行が通る</span>}
                     {shared && <span className="text-xs text-[var(--studio-text-muted)]">共通イベント</span>}
                     {edge && <button type="button" disabled={disabled} onClick={() => onDelete(edge)} aria-label={`${byId.get(edge.from_event_id)?.name}から${event.name}への接続を削除`} className={buttonClass}>接続を削除</button>}
@@ -119,7 +119,7 @@ function GraphEditor({ currency, clientName, view }: { currency: string; clientN
     };
     const deleteEvent = async (event: LifeEvent) => {
         if (disabled) return;
-        if (await confirm(`「${clientName}」のライフイベント「${event.name}」を削除します。接続・前提条件・取り置きの紐づけも削除します（取り置きは残ります）。`, '削除する')) {
+        if (await confirm(`「${clientName}」のライフイベント「${event.name}」を削除します。接続・前提条件も削除します（取り置きは残ります）。`, '削除する')) {
             void mutation.run(() => deleteGoal(event.id), 'ライフイベントを削除しました。', resource.reload);
         }
     };
@@ -171,7 +171,7 @@ function GraphEditor({ currency, clientName, view }: { currency: string; clientN
                 void mutation.run(() => createLifeEventLink(input), '接続を追加しました。', () => { setAddingLink(false); resource.reload(); });
             }} />
         </Overlay>}
-        {editing !== undefined && resource.data && clientName && <LifeEventOverlay event={editing} scenarioId={current.id} accounts={resource.data.accounts}
+        {editing !== undefined && resource.data && clientName && <LifeEventOverlay event={editing} scenarioId={current.id} events={resource.data.events} accounts={resource.data.accounts}
             currency={currency} clientName={clientName} onClose={() => setEditing(undefined)} onChanged={resource.reload} />}
         {editingLink && resource.data && clientName && <LifeEventLinkDetails edge={editingLink} events={resource.data.events} clientName={clientName} onReload={resource.reload} onClose={() => setEditingLink(null)} />}
         {conditionsEvent && clientName && <Overlay title={`「${conditionsEvent.name}」の前提条件`} busy={conditionsBusy} onClose={() => setConditionsEvent(null)}>

@@ -10,7 +10,7 @@ from app.database import Base
 
 
 # WP15 replaces milestones, baselines and account returns with contribution plans and goal earmarks.
-EXPECTED_METADATA_SHA256 = "8ec50d4fed44af6b34eda0181bf677a53c937072e30c4a8c3a9b2a2a551b3ae4"
+EXPECTED_METADATA_SHA256 = "3d5f82a1da8869572c88200bbd885bc6d0cfa2ec61c8c010594dd2205aa9e764"
 
 MODEL_NAMES = (
     "Client", "ClientMfaSetting", "ClientRecoveryCode",
@@ -20,7 +20,7 @@ MODEL_NAMES = (
     "BudgetPlan", "MonthlyPlanLine", "PeriodReview", "MonthlyAction", "PeriodClose",
     "AiOperationPolicy", "AiAuditLog", "AiChangeRequest",
     "SimulationConfig",
-    "LifeScenario", "ScenarioContributionPlan", "GoalEventEarmark", "GoalBudgetReflection",
+    "LifeScenario", "ScenarioContributionPlan", "GoalBudgetReflection",
     "Capsule", "CapsuleFundingSource", "CapsuleRule", "CapsuleDrawdown", "Notification",
     "ProductDepreciation",
 )
@@ -90,8 +90,8 @@ def _metadata_snapshot():
 
 def test_metadata_matches_the_minor_unit_schema():
     snapshot = _metadata_snapshot()
-    assert len(snapshot["table_names"]) == 35
-    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 386
+    assert len(snapshot["table_names"]) == 34
+    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 385
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == EXPECTED_METADATA_SHA256
 

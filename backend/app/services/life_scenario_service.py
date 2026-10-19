@@ -121,8 +121,8 @@ def update(db: Session, client_id: int, scenario_id: int, values: dict) -> model
     return scenario
 
 
-def make_goal(db: Session, client_id: int, scenario_id: int) -> models.LifeScenario:
-    """Choosing the goal only marks the scenario; earmarks stay where they are."""
+def make_goal(db: Session, client_id: int, scenario_id: int, *, commit: bool = True) -> models.LifeScenario:
+    """Mark the scenario as the goal. What happens to earmarks is goal_change_workflow's."""
     _lock(db, client_id)
     scenario = get(db, client_id, scenario_id)
     previous = get_goal(db, client_id)
@@ -131,7 +131,10 @@ def make_goal(db: Session, client_id: int, scenario_id: int) -> models.LifeScena
             previous.is_goal = False
             db.flush()
         scenario.is_goal = True
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
     except Exception:
         db.rollback()
         raise

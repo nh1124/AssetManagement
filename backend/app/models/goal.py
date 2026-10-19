@@ -11,12 +11,18 @@ from .money import MinorUnits, major_expression, client_currency, client_currenc
 from ..database import Base
 
 class LifeEvent(Base):
-    """A planned expense or inflow in one scenario's story; nothing about real money."""
+    """A planned expense, inflow, borrowing or repayment in one scenario's story.
+
+    account_id names the asset account the event works through: where an expense is
+    set aside and drawn down, where an inflow or a loan arrives, what a repayment
+    is paid from. A repayment names its borrowing and pays target_amount a month
+    for repeat_count months; a borrowing carries its yearly interest_rate.
+    """
     __tablename__ = "life_events"
 
     __table_args__ = (
         CheckConstraint("condition_mode IN ('all', 'any')", name="ck_life_events_condition_mode"),
-        CheckConstraint("direction IN ('expense', 'income')", name="ck_life_events_direction"),
+        CheckConstraint("direction IN ('expense', 'income', 'borrowing', 'repayment')", name="ck_life_events_direction"),
     )
 
     condition_mode = Column(String, nullable=False, default="all", server_default="all")
@@ -31,11 +37,13 @@ class LifeEvent(Base):
     target_amount_minor = Column(MinorUnits)
     priority = Column(Integer, default=2)  # 1=High, 2=Medium, 3=Low
     note = Column(String, nullable=True)
+    interest_rate = Column(Float, nullable=True)
+    borrowing_event_id = Column(Integer, ForeignKey("life_events.id", ondelete="SET NULL"), nullable=True)
+    repeat_count = Column(Integer, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     client = relationship("Client", back_populates="life_events")
     conditions = relationship("LifeEventCondition", cascade="all, delete-orphan")
-    earmarks = relationship("GoalEventEarmark", cascade="all, delete-orphan", passive_deletes=True)
     outgoing_links = relationship("LifeEventLink", foreign_keys="LifeEventLink.from_event_id", cascade="all, delete-orphan")
     incoming_links = relationship("LifeEventLink", foreign_keys="LifeEventLink.to_event_id", cascade="all, delete-orphan")
 
@@ -129,13 +137,14 @@ class LifeScenario(Base):
 class ScenarioContributionPlan(Base):
     """積立設定: from start_period on, an account receives monthly_amount and earns annual_return.
 
-    A later record for the same account replaces the amount from its month; a null
-    annual_return keeps the yield of the record before it.
+    A negative amount withdraws from the account every month (取り崩し). A later record
+    for the same account replaces the amount from its month; a null annual_return keeps
+    the yield of the record before it. The accounts with records are the scenario's
+    使用口座, the only ones the simulation grows.
     """
     __tablename__ = "scenario_contribution_plans"
     __table_args__ = (
         UniqueConstraint("scenario_id", "account_id", "start_period", name="uq_scenario_contribution_plans_month"),
-        CheckConstraint("monthly_amount_minor >= 0", name="ck_scenario_contribution_plans_amount"),
     )
 
     id = Column(Integer, primary_key=True)
@@ -146,25 +155,6 @@ class ScenarioContributionPlan(Base):
     annual_return = Column(Float, nullable=True)
     note = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
-
-
-class GoalEventEarmark(Base):
-    """実績管理の設定: how much of an earmark counts toward a goal event (share in basis points).
-
-    It belongs to the tracking of the chosen goal, not to the scenario's story, so a
-    copied scenario starts without any.
-    """
-    __tablename__ = "goal_event_earmarks"
-    __table_args__ = (
-        UniqueConstraint("life_event_id", "capsule_id", name="uq_goal_event_earmarks_pair"),
-        CheckConstraint("share_bp BETWEEN 0 AND 10000", name="ck_goal_event_earmarks_share"),
-    )
-
-    id = Column(Integer, primary_key=True)
-    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
-    life_event_id = Column(Integer, ForeignKey("life_events.id", ondelete="CASCADE"), nullable=False)
-    capsule_id = Column(Integer, ForeignKey("capsules.id", ondelete="CASCADE"), nullable=False)
-    share_bp = Column(Integer, nullable=False, default=10000, server_default="10000")
 
 
 class GoalBudgetReflection(Base):

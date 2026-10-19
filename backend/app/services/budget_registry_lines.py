@@ -209,6 +209,14 @@ def _merge_registry_lines(plan_lines: list[dict], registry_lines: list[dict]) ->
 
     matched_keys: set[tuple] = set()
     for line in plan_lines:
+        if line.get("source") == "manual":
+            # A user's row adds to the automatic transactions beside it instead of standing for them (WP19).
+            line["registry_amount"] = 0.0
+            line["product_expense_amount"] = 0.0
+            line["product_expense_items"] = []
+            if line.get("suggested_source") is None:
+                line["sync_status"] = None
+            continue
         primary_key = _plan_match_key(
             line.get("line_type"),
             line.get("target_type"),

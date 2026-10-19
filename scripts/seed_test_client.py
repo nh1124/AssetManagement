@@ -2,8 +2,10 @@
 
 Wipes the signed-in client's data with an empty import, then records a small household:
 accounts, three months of transactions, automatic transactions, a fixed asset and a consumable,
-earmarks with a rule, a tracked currency, and a goal scenario with its contribution plan and
-earmark settings. Only ever run it against the test client.
+earmarks with a rule, a tracked currency, and a goal scenario (events with their accounts, a car
+loan and its repayments, branches, preconditions, 積立設定) whose plan is made, which creates the
+goal's earmarks, and the user's own plan records for this month. Only ever run it against the
+test client.
 
     python scripts/seed_test_client.py --base http://127.0.0.1:18100 --username admin --password ...
 """
@@ -121,15 +123,15 @@ def seed_ledger(api: Api, today: date) -> dict:
         api.post("/auto-transactions/", {"currency": "JPY", "start_date": today.isoformat(), **row})
 
     capsules = {}
-    for name, target, monthly, source in (("旅行", 300000, 20000, "貯蓄口座"), ("緊急予備費", 600000, 0, "メイン銀行"),
-                                          ("結婚資金", 2000000, 30000, "貯蓄口座"), ("家電の買い替え", 0, 0, "貯蓄口座")):
+    for name, target, monthly, source in (("旅行の積み立て", 300000, 20000, "貯蓄口座"), ("緊急予備費", 600000, 0, "メイン銀行"),
+                                          ("家電の買い替え", 0, 0, "貯蓄口座")):
         capsule = api.post("/capsules/", {"name": name, "target_amount": target, "monthly_contribution": monthly})
         api.put(f"/capsules/{capsule['id']}/funding-sources", [{"account_id": accounts[source], "target_amount": target}])
         capsules[name] = capsule["id"]
-    api.post("/capsules/rules", {"capsule_id": capsules["旅行"], "trigger_type": "Income", "trigger_account_id": accounts["給与"],
+    api.post("/capsules/rules", {"capsule_id": capsules["旅行の積み立て"], "trigger_type": "Income", "trigger_account_id": accounts["給与"],
                                  "source_mode": "transaction_account", "amount_type": "percentage", "amount_value": 5})
     # What the household has set aside so far.
-    for name, amount in (("旅行", 120000), ("結婚資金", 350000), ("緊急予備費", 300000)):
+    for name, amount in (("旅行の積み立て", 120000), ("緊急予備費", 300000)):
         source = "メイン銀行" if name == "緊急予備費" else "貯蓄口座"
         api.post(f"/capsules/{capsules[name]}/contribute", {"amount": amount, "from_account_id": accounts[source]})
 
@@ -144,37 +146,40 @@ def seed_ledger(api: Api, today: date) -> dict:
     return {"accounts": accounts, "capsules": capsules}
 
 
-def seed_goal(api: Api, today: date, accounts: dict, capsules: dict) -> dict:
-    """A goal scenario with branches, preconditions, 積立設定 and 実績管理の設定; a second scenario to compare."""
+def seed_goal(api: Api, today: date, accounts: dict) -> dict:
+    """A goal scenario with branches, a loan, preconditions and 積立設定; a second scenario to compare."""
     period = today.strftime("%Y-%m")
     member = api.post("/household-members", {"name": "本人", "relation": "本人", "birth_date": "1996-05-10"})
     base = api.post("/life-scenarios", {"name": "基本"})
     api.put(f"/life-scenarios/{base['id']}", {"annual_return": 1.0, "inflation": 1.0, "horizon_years": 30})
     events = {}
-    for name, direction, account, when, amount, priority in (
-        ("ヨーロッパ旅行", "expense", "貯蓄口座", "2027-08-01", 400000, 3),
-        ("臨時収入", "income", "貯蓄口座", "2027-06-30", 500000, 3),
-        ("結婚", "expense", "貯蓄口座", "2028-10-01", 2500000, 1),
-        ("出産", "expense", "メイン銀行", "2030-10-01", 800000, 1),
-        ("住宅購入（頭金）", "expense", "証券口座", "2031-04-01", 6000000, 2),
-        ("車の買い替え", "expense", "メイン銀行", "2029-06-01", 1500000, 3),
+    for name, direction, account, when, amount, priority, extra in (
+        ("ヨーロッパ旅行", "expense", "貯蓄口座", "2027-08-01", 400000, 3, {}),
+        ("臨時収入", "income", "貯蓄口座", "2027-06-30", 500000, 3, {}),
+        ("結婚", "expense", "貯蓄口座", "2028-10-01", 2500000, 1, {}),
+        ("出産", "expense", "メイン銀行", "2030-10-01", 800000, 1, {}),
+        ("住宅購入（頭金）", "expense", "証券口座", "2031-04-01", 6000000, 2, {}),
+        ("車の買い替え", "expense", "メイン銀行", "2029-06-01", 1500000, 3, {}),
+        ("マイカーローン", "borrowing", "メイン銀行", "2029-06-01", 1000000, 3, {"interest_rate": 2.5}),
     ):
         events[name] = api.post("/life-events/", {"scenario_id": base["id"], "name": name, "direction": direction,
                                                   "account_id": accounts[account], "target_date": when,
-                                                  "target_amount": amount, "priority": priority})["id"]
-    for source, target, months in (("結婚", "出産", 24), ("結婚", "住宅購入（頭金）", 30)):
+                                                  "target_amount": amount, "priority": priority, **extra})["id"]
+    events["ローン返済"] = api.post("/life-events/", {"scenario_id": base["id"], "name": "ローン返済", "direction": "repayment",
+                                                    "account_id": accounts["メイン銀行"], "target_date": "2029-07-01", "target_amount": 30000,
+                                                    "priority": 3, "borrowing_event_id": events["マイカーローン"], "repeat_count": 36})["id"]
+    for source, target, months in (("結婚", "出産", 24), ("結婚", "住宅購入（頭金）", 30), ("車の買い替え", "マイカーローン", 0)):
         api.post("/life-events/links", {"from_event_id": events[source], "to_event_id": events[target], "kind": "after", "offset_months": months})
     api.post(f"/life-events/{events['住宅購入（頭金）']}/conditions", {"metric": "net_worth", "comparator": "gte", "threshold_minor": 5000000, "note": "頭金を払っても生活できる"})
     api.post(f"/life-events/{events['出産']}/conditions", {"metric": "member_age", "comparator": "lte", "threshold_number": 40, "reference_id": member["id"]})
     for account, start, monthly, rate, note in (
         ("貯蓄口座", period, 50000, 0.1, None), ("貯蓄口座", "2028-04", 70000, None, "昇給"),
         ("証券口座", period, 30000, 5.0, None), ("証券口座", "2030-01", 50000, None, None),
+        ("貯蓄口座", "2051-01", -100000, None, "老後の取り崩し"),
     ):
         api.post(f"/life-scenarios/{base['id']}/contribution-plans", {"account_id": accounts[account], "start_period": start,
                                                                        "monthly_amount": monthly, "annual_return": rate, "note": note})
-    api.post(f"/life-scenarios/{base['id']}/goal")
-    api.put(f"/life-events/{events['ヨーロッパ旅行']}/earmarks", [{"capsule_id": capsules["旅行"], "share": 100}])
-    api.put(f"/life-events/{events['結婚']}/earmarks", [{"capsule_id": capsules["結婚資金"], "share": 100}])
+    api.post(f"/life-scenarios/{base['id']}/goal", {"earmarks": "keep"})
     # A comparison story: the same plan, investing more after a job change.
     other = api.post(f"/life-scenarios/{base['id']}/duplicate", {"name": "転職して積立を増やす"})
     api.post(f"/life-scenarios/{other['id']}/contribution-plans", {"account_id": accounts["証券口座"], "start_period": "2027-04", "monthly_amount": 80000})
@@ -182,7 +187,23 @@ def seed_goal(api: Api, today: date, accounts: dict, capsules: dict) -> dict:
     end = date(today.year + (today.month + 4) // 12, (today.month + 4) % 12 + 1, 1).strftime("%Y-%m")
     preview = api.post("/goal-budget/preview", {"start_period": period, "end_period": end})
     applied = api.post("/goal-budget/apply", {"start_period": period, "end_period": end, "fingerprint": preview["fingerprint"]})
-    return {"scenarios": {"基本": base["id"], "転職して積立を増やす": other["id"]}, "events": events, "plan_rows": applied["applied"]}
+    # Making the plan created the goal's earmarks, named after the events; some money is already set aside.
+    goal_capsules = {row["name"]: row["id"] for row in api.get("/capsules/") if row.get("is_goal")}
+    for name, amount in (("ヨーロッパ旅行", 120000), ("結婚", 350000)):
+        api.post(f"/capsules/{goal_capsules[name]}/contribute", {"amount": amount, "from_account_id": accounts["貯蓄口座"]})
+    return {"scenarios": {"基本": base["id"], "転職して積立を増やす": other["id"]}, "events": events, "plan_rows": applied["applied"],
+            "goal_earmarks": sorted(goal_capsules)}
+
+
+def seed_budget(api: Api, today: date, accounts: dict) -> list[str]:
+    """The user's own records on the plan page this month, beside the goal's and the automatic transactions'."""
+    period = today.strftime("%Y-%m")
+    records = (("食費", "expense", 40000, None), ("日用品", "expense", 8000, None), ("娯楽", "expense", 15000, None),
+               ("住居費", "expense", 10000, "管理費"), ("現金", "allocation", 20000, "現金の補充"))
+    for account, section, amount, name in records:
+        api.post("/plan/records", {"period": period, "account_id": accounts[account], "section": section, "amount": amount,
+                                   **({"name": name} if name else {})})
+    return [account for account, *_ in records]
 
 
 def main() -> None:
@@ -202,8 +223,9 @@ def main() -> None:
     today = date.today()
     seeded = seed_ledger(api, today)
     api.post("/automatic-recordings/process-due")
-    goal = seed_goal(api, today, seeded["accounts"], seeded["capsules"])
-    print(json.dumps({"client_id": args.client_id, **seeded, **goal}, ensure_ascii=False))
+    goal = seed_goal(api, today, seeded["accounts"])
+    budget = seed_budget(api, today, seeded["accounts"])
+    print(json.dumps({"client_id": args.client_id, **seeded, **goal, "user_records": budget}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

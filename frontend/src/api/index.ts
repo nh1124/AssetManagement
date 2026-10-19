@@ -25,11 +25,11 @@ import type {
     DataHealthResult,
     DepreciationMethod,
     DataRepairResult,
+    DepreciationPreview,
     ExchangeRate,
     FxTrackedCurrency,
     ExchangeRateAutoUpdateResult,
     LoginResult,
-    GoalEarmarkLink,
     LifeEvent,
     LifeEventProgress,
     MonthlyAction,
@@ -467,7 +467,7 @@ export const getLifeEventsWithProgress = async (scenarioId?: number): Promise<Li
 };
 
 // A new event belongs to the scenario it is created in; an update never moves it.
-export type GoalPayload = Pick<LifeEvent, 'direction' | 'account_id' | 'name' | 'target_amount' | 'target_date' | 'priority' | 'note' | 'condition_mode'>;
+export type GoalPayload = Pick<LifeEvent, 'direction' | 'account_id' | 'name' | 'target_amount' | 'target_date' | 'priority' | 'note' | 'condition_mode' | 'interest_rate' | 'borrowing_event_id' | 'repeat_count'>;
 
 export const createGoal = async (event: Partial<GoalPayload> & Pick<GoalPayload, 'name' | 'target_amount' | 'target_date'> & { scenario_id: number }): Promise<LifeEvent> => {
     const response = await api.post('/life-events/', event);
@@ -481,12 +481,6 @@ export const updateGoal = async (id: number, event: Partial<GoalPayload>): Promi
 
 export const deleteGoal = async (id: number) => {
     const response = await api.delete(`/life-events/${id}`);
-    return response.data;
-};
-
-/** Replace which earmarks count toward a goal event, with their shares in percent. */
-export const setGoalEarmarks = async (id: number, rows: GoalEarmarkLink[]): Promise<GoalEarmarkLink[]> => {
-    const response = await api.put(`/life-events/${id}/earmarks`, rows.map(({ capsule_id, share }) => ({ capsule_id, share })));
     return response.data;
 };
 
@@ -541,6 +535,19 @@ export const deleteMonthlyPlanLine = async (id: number) => {
 };
 
 // Products/Inventory endpoints
+export const getDepreciationPreview = async (productId: number): Promise<DepreciationPreview> => {
+    return (await api.get('/depreciations/preview', { params: { product_id: productId } })).data;
+};
+
+/** Record a write-down by hand; amount and date left out follow the schedule. */
+export const recordDepreciation = async (payload: { product_id: number; period: string; amount?: number; date?: string; expense_account_id?: number | null; asset_account_id?: number | null }) => {
+    return (await api.post('/depreciations', payload)).data;
+};
+
+export const amendDepreciation = async (id: number, payload: { amount: number; date?: string; expense_account_id?: number | null }) => {
+    return (await api.put(`/depreciations/${id}`, payload)).data;
+};
+
 export const getProducts = async (): Promise<Product[]> => {
     const response = await api.get('/products/');
     return response.data;

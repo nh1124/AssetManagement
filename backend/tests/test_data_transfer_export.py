@@ -22,7 +22,7 @@ FORMAT_FIELDS = {
     "simulation_configs": ["id","user_id","annual_return","tax_rate","is_nisa","volatility","inflation_rate","horizon_years"],
     "registry_entries": ["id","name","kind","amount","currency","source_account_id","destination_account_id","budget_account_id","repeat_mode","frequency","frequency_days","day_of_month","month_of_year","start_date","end_date","repeat_count","next_due_date","budget_active","is_active","note","created_at","updated_at"],
     "transaction_batches": ["id","label","source","input_payload","created_at"],
-    "life_events": ["id","scenario_id","lineage","name","target_date","target_amount","priority","note","condition_mode","direction","account_id","created_at"],
+    "life_events": ["id","scenario_id","lineage","name","target_date","target_amount","priority","note","condition_mode","direction","account_id","interest_rate","borrowing_event_id","repeat_count","created_at"],
     "life_event_links": ["id","from_event_id","to_event_id","kind","offset_months","note","created_at"],
     "life_scenarios": ["id","name","annual_return","inflation","horizon_years","is_goal","created_at","updated_at"],
     "scenario_contribution_plans": ["id","scenario_id","account_id","start_period","monthly_amount_minor","annual_return","note","created_at"],
@@ -35,11 +35,10 @@ FORMAT_FIELDS = {
     "period_reviews": ["id","start_date","end_date","label","reflection","next_actions","created_at","updated_at"],
     "period_closes": ["id","period","closed_at","note"],
     "monthly_actions": ["id","source_period","target_period","proposal_id","kind","description","amount","target_id","payload","result","status","idempotency_key","created_at","applied_at"],
-    "capsules": ["id","name","target_amount","monthly_contribution","capsule_type","target_amount_source","monthly_contribution_source","created_at"],
+    "capsules": ["id","name","target_amount","monthly_contribution","capsule_type","target_amount_source","monthly_contribution_source","goal_event_id","created_at"],
     "capsule_drawdowns": ["id","capsule_id","transaction_id","kind","amount_minor","note","created_at"],
     "capsule_funding_sources": ["id","capsule_id","account_id","target_amount","max_share_bp","sort_order","created_at","updated_at"],
     "capsule_rules": ["id","capsule_id","trigger_type","trigger_category","trigger_description","trigger_account_id","source_mode","source_account_id","destination_account_id","amount_type","amount_value","is_active","created_at"],
-    "goal_event_earmarks": ["id","life_event_id","capsule_id","share_bp"],
     "fx_tracked_currencies": ["currency","created_at"],
     "exchange_rates": ["id","base_currency","quote_currency","rate","as_of_date","source","created_at","updated_at"],
     "goal_budget_reflections": ["id","scenario_id","applied_at","start_period","end_period","summary"],
@@ -153,7 +152,7 @@ def _seed_client(db, client_id, base, marker):
         models.CapsuleFundingSource, 24, client_id=client.id, capsule_id=capsule.id,
         account_id=cash.id, target_amount=250, max_share_bp=6000, sort_order=3,
     )
-    add(models.GoalEventEarmark, 21, life_event_id=goal.id, capsule_id=capsule.id, share_bp=7500)
+    capsule.goal_event_id = goal.id
     add(models.ExchangeRate, 22, base_currency="USD", quote_currency="JPY", rate=150, as_of_date=date(2026, 10, 1))
     db.flush()
     db.flush()

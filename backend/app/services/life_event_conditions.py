@@ -10,7 +10,7 @@ from ..domain.errors import NotFound
 from ..domain.money import Money
 from .analysis_service import calculate_logical_balance
 from .reporting_service import get_balance_sheet
-from .capsule_service import claimed_minor
+from .capsule_service import claimed_minor, goal_capsules
 from .fx_service import get_client_currency
 from .ledger_valuation import calculate_account_balances
 from .goal_earmark_service import events_with_progress
@@ -174,13 +174,12 @@ class _Readers:
                 self.actual_minor[key] = figures.get(self.currency, 0)
                 actual = Money(self.actual_minor[key], self.currency).to_float()
         elif row.metric == "goal_progress":
-            if reference.direction == "income":
-                return None, "収入イベントには積立進捗がありません。"
+            if reference.direction != "expense":
+                return None, "支出イベントにだけ積立進捗があります。"
             # Progress counts client-currency claims only; a foreign one makes it unknown, not smaller.
-            for link in self.db.query(models.GoalEventEarmark).filter_by(client_id=self.client_id, life_event_id=reference.id).all():
-                reason = self.foreign(self.claim(link.capsule_id))
-                if reason:
-                    break
+            capsule = goal_capsules(self.db, self.client_id, [reference.id]).get(reference.id)
+            if capsule is not None:
+                reason = self.foreign(self.claim(capsule.id))
             if reason is None:
                 if self.progress is None:
                     self.progress = {event["id"]: event for event in events_with_progress(self.db, self.client_id)}

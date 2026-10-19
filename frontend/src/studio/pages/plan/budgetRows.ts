@@ -46,7 +46,6 @@ export interface Cell {
     actual: number;
     /** False while nothing is saved and every amount is zero: shown as 未設定. */
     set: boolean;
-    goal: boolean;
     /** The account's kind is not the one this movement normally lands on. */
     mismatch: boolean;
 }
@@ -59,6 +58,8 @@ export interface AccountRow {
     cells: Cell[];
     /** The month's automatic transactions on either side of this account. */
     scheduled: ScheduledTransaction[];
+    /** The goal's plan sets part of its budget, or it funds an earmark made for a goal event. */
+    goal: boolean;
 }
 
 /** An earmark is not an account: its rows set part of a funding account's balance aside. */
@@ -71,6 +72,8 @@ export interface EarmarkRow {
     /** What the earmark holds now (its claim on the funding accounts), not the month's movement. */
     held: number;
     sources: string[];
+    /** Made for a goal event when the goal's plan was made; named after the event. */
+    goal: boolean;
 }
 
 export interface BudgetModel { accounts: AccountRow[]; earmarks: EarmarkRow[] }
@@ -101,7 +104,7 @@ export function buildModel(summary: BudgetSummary, accounts: DatabaseAccount[], 
             const account = id == null ? undefined : byId.get(id);
             row = {
                 key, accountId: id, name: account?.name ?? (id == null ? lineName(line) : line.account_name || lineName(line)),
-                kind: account?.account_type ?? null, cells: [],
+                kind: account?.account_type ?? null, cells: [], goal: false,
                 scheduled: id == null ? [] : scheduled.filter((item) => item.account_id === id || item.counter_account_id === id),
             };
             rows.set(key, row);
@@ -111,16 +114,21 @@ export function buildModel(summary: BudgetSummary, accounts: DatabaseAccount[], 
     const cellFor = (row: AccountRow, type: MonthlyPlanLineType) => {
         let cell = row.cells.find((item) => item.type === type);
         if (!cell) {
-            cell = { type, lines: [], unset: null, budget: 0, actual: 0, set: false, goal: false, mismatch: false };
+            cell = { type, lines: [], unset: null, budget: 0, actual: 0, set: false, mismatch: false };
             row.cells.push(cell);
         }
         return cell;
     };
+    const goalFunding = new Set<number>();
     for (const line of summary.plan_lines) {
         if (isEarmark(line)) {
             const key = `earmark:${line.target_id ?? lineName(line)}`;
-            const earmark = earmarks.get(key) ?? { key, capsuleId: line.target_id ?? null, name: lineName(line), lines: [], budget: 0, held: 0, sources: [] };
+            const earmark = earmarks.get(key) ?? { key, capsuleId: line.target_id ?? null, name: lineName(line), lines: [], budget: 0, held: 0, sources: [], goal: false };
             earmark.lines.push(line);
+            if (line.goal_earmark) {
+                earmark.goal = true;
+                if (line.account_id != null) goalFunding.add(line.account_id);
+            }
             earmarks.set(key, earmark);
             continue;
         }
@@ -133,9 +141,10 @@ export function buildModel(summary: BudgetSummary, accounts: DatabaseAccount[], 
             cell.budget = cell.lines.reduce((total, line) => total + (line.budget_amount ?? 0), 0);
             cell.actual = cell.lines.length ? cellActual(cell.lines) : cell.unset?.actual ?? 0;
             cell.set = cell.lines.some((line) => line.id != null || (line.budget_amount ?? 0) !== 0);
-            cell.goal = cell.lines.some((line) => lineOrigin(line) === 'ゴール');
             cell.mismatch = row.kind != null && !fits(row.kind, cell.type);
         }
+        row.goal = row.cells.some((cell) => cell.lines.some((line) => lineOrigin(line) === 'ゴール'))
+            || (row.accountId != null && goalFunding.has(row.accountId));
         row.cells.sort((a, b) => TYPES.findIndex((item) => item.type === a.type) - TYPES.findIndex((item) => item.type === b.type));
     }
     for (const earmark of earmarks.values()) {
@@ -147,9 +156,10 @@ export function buildModel(summary: BudgetSummary, accounts: DatabaseAccount[], 
     return { accounts: [...rows.values()].sort(byName), earmarks: [...earmarks.values()].sort(byName) };
 }
 
-export type Scope = 'all' | 'budget' | 'scheduled';
+export type Scope = 'all' | 'budget' | 'scheduled' | 'goal';
 export const SCOPES: Array<{ value: Scope; label: string }> = [
     { value: 'all', label: 'すべて' }, { value: 'budget', label: '予算あり' }, { value: 'scheduled', label: '取引予定あり' },
+    { value: 'goal', label: 'ゴール関係' },
 ];
 
 export function rowMatches(row: AccountRow, query: string, scope: Scope) {
@@ -157,6 +167,7 @@ export function rowMatches(row: AccountRow, query: string, scope: Scope) {
     if (needle && !row.name.toLowerCase().includes(needle)) return false;
     if (scope === 'budget') return row.cells.some((cell) => cell.budget !== 0);
     if (scope === 'scheduled') return row.scheduled.length > 0;
+    if (scope === 'goal') return row.goal;
     return true;
 }
 
@@ -165,5 +176,6 @@ export function earmarkMatches(earmark: EarmarkRow, query: string, scope: Scope)
     const needle = query.trim().toLowerCase();
     if (needle && !earmark.name.toLowerCase().includes(needle)) return false;
     if (scope === 'budget') return earmark.budget !== 0;
+    if (scope === 'goal') return earmark.goal;
     return scope !== 'scheduled';
 }

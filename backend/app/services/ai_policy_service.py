@@ -28,7 +28,6 @@ AI_OPERATION_RESOURCES = [
     "products",
     "capsules",
     "life_events",
-    "milestones",
     "exchange_rates",
     "data_transfer",
     "data_export",

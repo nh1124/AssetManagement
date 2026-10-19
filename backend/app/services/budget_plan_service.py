@@ -56,7 +56,7 @@ def expense_budget_by_account(
         models.MonthlyPlanLine.is_active.is_(True),
     ).order_by(models.MonthlyPlanLine.id).all() if plan_id is not None else []
     stored = _deduplicate_active_plan_models(db, stored)
-    fields = ("id", "line_type", "target_type", "account_id", "source_account_id", "name", "amount", "cash_treatment")
+    fields = ("id", "line_type", "target_type", "account_id", "source_account_id", "name", "amount", "cash_treatment", "source")
     budgets: dict[int, float] = {}
     for period in periods:
         lines = [{key: getattr(line, key) for key in fields} for line in stored if line.target_period == period]
@@ -314,6 +314,10 @@ def _month_lines(ctx: BudgetContext, period: str, plan_id: int | None) -> list[d
         plan_lines = _merge_credit_settlement_lines(plan_lines, credit_settlement_plan_lines(ctx, period, plan_id))
     for line in plan_lines:
         line["budget_amount"] = _budget_amount(line)
+        if line.get("target_type") == "capsule":
+            # The plan page marks an earmark made for a goal event, and the accounts funding it.
+            capsule = ctx.capsule(line.get("target_id"))
+            line["goal_earmark"] = bool(capsule is not None and capsule.goal_event_id)
         # A definition with no saved row still has the month's postings against it.
         if line.get("id") is None and line.get("source") == "registry":
             actual = actual_for_plan_line(ctx, line, period)

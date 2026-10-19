@@ -1,15 +1,20 @@
-"""Simulate a scenario account by account: contributions, yields, and which events happen.
+"""Simulate a scenario account by account: contributions, yields, loans, and which events happen.
 
-Each asset account grows from its journal balance by the yield its 積立設定 names
-and receives the contributions in force, year by year on shared seeded paths. An
-event happens on a path when the event it follows happened there and its
-preconditions hold at its date; then its amount leaves (or enters) its account, or
-the rest of net worth when it names no simulated account. The result says how
-likely each event is to happen and to be affordable, which branches most paths
-take, and the net worth and account bands that follow.
+The scenario's 使用口座 (the asset accounts its 積立設定 names) grow from their journal
+balance by the yield in force and receive the monthly amounts in force (a negative
+amount withdraws), year by year on shared seeded paths. Everything else -- other
+accounts, debts already on the books -- is the residual net worth.
 
-Amounts are in today's money: yields and the residual (debts, accounts outside the
-simulation) are deflated by inflation, contributions are fixed in real terms.
+An event happens on a path when the event it follows happened there and its
+preconditions hold at its date. An expense leaves its account (or the residual), an
+inflow arrives there. A borrowing brings cash in and opens a debt of the same size,
+so net worth does not move; its repayments pay a month at a time from their start,
+interest accruing on what is left, and happen only where the borrowing did.
+
+The result says how likely each event is to happen and, for an expense, to be
+affordable, which branches most paths take, and the net worth and account bands.
+Amounts are in today's money: yields and the residual are deflated by inflation;
+contributions, loans and repayments are fixed in real terms.
 """
 from __future__ import annotations
 
@@ -39,14 +44,21 @@ def _period(start: date, offset_months: int) -> str:
     return f"{index // 12:04d}-{index % 12 + 1:02d}"
 
 
-def _accounts(db: Session, client_id: int, plans) -> tuple[list[models.Account], dict[int, float], str]:
-    planned = {plan.account_id for plan in plans}
-    accounts = [account for account in db.query(models.Account).filter_by(client_id=client_id, account_type="asset")
-                .order_by(models.Account.id).all() if account.is_active or account.id in planned]
+def used_accounts(db: Session, client_id: int, plans) -> list[models.Account]:
+    """使用口座: the asset accounts the scenario's 積立設定 names."""
+    ids = {plan.account_id for plan in plans}
+    if not ids:
+        return []
+    return db.query(models.Account).filter(
+        models.Account.client_id == client_id, models.Account.account_type == "asset", models.Account.id.in_(ids),
+    ).order_by(models.Account.id).all()
+
+
+def _opening(db: Session, client_id: int, accounts: list[models.Account]) -> tuple[dict[int, float], str]:
     currency = get_client_currency(db, client_id)
-    values = calculate_account_balances(db, accounts)
-    return accounts, {account.id: Money(values[account.id].balances_minor.get(currency, 0), currency).to_float()
-                      for account in accounts}, currency
+    values = calculate_account_balances(db, accounts) if accounts else {}
+    return {account.id: Money(values[account.id].balances_minor.get(currency, 0), currency).to_float()
+            for account in accounts}, currency
 
 
 def _row_index(today: date, when: date | None) -> int | None:
@@ -63,8 +75,10 @@ def simulate(db: Session, client_id: int, scenario: models.LifeScenario) -> dict
     tax = (config.tax_rate if config and config.tax_rate is not None else 20.0) / 100.0
     inflation = scenario.inflation / 100.0
     plans = db.query(models.ScenarioContributionPlan).filter_by(scenario_id=scenario.id).all()
-    accounts, opening, currency = _accounts(db, client_id, plans)
+    accounts = used_accounts(db, client_id, plans)
+    opening, currency = _opening(db, client_id, accounts)
     events = walk(db, client_id, scenario.id)
+    by_id = {event.id: event for event in events}
     parents = {link.to_event_id: link.from_event_id for link in db.query(models.LifeEventLink).filter(
         models.LifeEventLink.id.in_([event.incoming_link_id for event in events if event.incoming_link_id]))}
     judge = PathJudge(db, client_id, [event.id for event in events])
@@ -72,43 +86,80 @@ def simulate(db: Session, client_id: int, scenario: models.LifeScenario) -> dict
     rng = np.random.default_rng(PROJECTION_SEED)
     balances = {account.id: np.full(PATHS, opening[account.id]) for account in accounts}
     residual = np.full(PATHS, (get_balance_sheet(db, client_id=client_id).get("net_worth", 0.0) or 0.0) - sum(opening.values()))
+    debts: dict[int, np.ndarray] = {}
+    schedules: list[tuple[ScenarioEvent, np.ndarray]] = []
     by_row: dict[int, list[ScenarioEvent]] = {}
     for event in events:
         index = _row_index(today, event.resolved_date)
         if index is not None and index <= years:
             by_row.setdefault(index, []).append(event)
-
     executed: dict[int, np.ndarray] = {}
     funded: dict[int, np.ndarray] = {}
     judged: dict[int, dict] = {}
     worth = np.empty((PATHS, years + 1))
     account_rows = {account.id: np.empty((PATHS, years + 1)) for account in accounts}
+    current_month = today.year * 12 + today.month - 1
+
+    def move(event: ScenarioEvent, amount: np.ndarray) -> None:
+        nonlocal residual
+        if event.account_id in balances:
+            balances[event.account_id] = balances[event.account_id] + amount
+        else:
+            residual = residual + amount
+
+    def net() -> np.ndarray:
+        return sum(balances.values(), residual) - sum(debts.values(), np.zeros(PATHS))
 
     def happen(index: int) -> None:
-        nonlocal residual
-        for event in by_row.get(index, []):
-            net = sum(balances.values()) + residual
-            truth, details = judge.judge(event.id, event.resolved_date, net, balances)
-            parent = parents.get(event.id)
+        # Repayments after the rest of the year, so the borrowing they repay is known.
+        row = by_row.get(index, [])
+        for event in [item for item in row if item.direction != "repayment"] + [item for item in row if item.direction == "repayment"]:
+            truth, details = judge.judge(event.id, event.resolved_date, net(), balances)
             runs = truth != -1  # unknown information does not stop the plan
+            parent = parents.get(event.id)
             if parent is not None:
                 runs &= executed.get(parent, np.zeros(PATHS, dtype=bool))
-            amount = event.target_amount if event.direction == "income" else -event.target_amount
-            if event.account_id in balances:
-                balances[event.account_id] = balances[event.account_id] + np.where(runs, amount, 0.0)
+            if event.direction == "repayment" and event.borrowing_event_id in by_id:
+                runs &= executed.get(event.borrowing_event_id, np.zeros(PATHS, dtype=bool))
+            amount = np.where(runs, event.target_amount, 0.0)
+            if event.direction == "expense":
+                move(event, -amount)
+            elif event.direction in ("income", "borrowing"):
+                move(event, amount)
+                if event.direction == "borrowing":
+                    debts[event.id] = amount
             else:
-                residual = residual + np.where(runs, amount, 0.0)
+                schedules.append((event, runs))
             executed[event.id] = runs
-            funded[event.id] = runs & (sum(balances.values()) + residual >= 0)
+            if event.direction == "expense":
+                funded[event.id] = runs & (net() >= 0)
             if judge.has_conditions(event.id):
                 judged[event.id] = {"event_id": event.id, "event_name": event.name,
                                     "judged_at": event.resolved_date.isoformat() if event.resolved_date else None,
                                     "mode": judge.modes.get(event.id, "all"),
                                     "probability": None if np.any(truth == 0) else float(np.mean(truth == 1)),
                                     "conditions": details}
+        repay(index)
+
+    def repay(index: int) -> None:
+        """Pay this calendar year's months of every running repayment, interest first."""
+        year = today.year + index
+        for event, runs in schedules:
+            start = event.resolved_date.year * 12 + event.resolved_date.month - 1
+            months = range(max(start, year * 12, current_month), min(start + (event.repeat_count or 1), (year + 1) * 12))
+            borrowing = by_id.get(event.borrowing_event_id) if event.borrowing_event_id in debts else None
+            rate = (borrowing.interest_rate or 0.0) / 100.0 / 12.0 if borrowing is not None else 0.0
+            for _ in months:
+                if borrowing is not None:
+                    due = debts[borrowing.id] * (1 + rate)
+                    pay = np.where(runs, np.minimum(event.target_amount, due), 0.0)
+                    debts[borrowing.id] = np.where(runs, due - pay, debts[borrowing.id])
+                else:
+                    pay = np.where(runs, event.target_amount, 0.0)
+                move(event, -pay)
 
     def record(index: int) -> None:
-        worth[:, index] = sum(balances.values()) + residual
+        worth[:, index] = net()
         for account_id, rows in account_rows.items():
             rows[:, index] = balances[account_id]
 

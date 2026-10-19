@@ -1,5 +1,5 @@
 """HTTP adapters for user-authored life scenarios and their 積立設定."""
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Body, Depends
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
@@ -7,6 +7,7 @@ from ..database import get_db
 from ..dependencies import get_current_client
 from ..services import contribution_plan_service as plans
 from ..services import life_scenario_service as service
+from ..workflows import goal_change_workflow
 
 router = APIRouter(prefix="/life-scenarios", tags=["life_scenarios"])
 
@@ -60,13 +61,24 @@ def update(
     return service.describe(db, current_client.id, scenario)
 
 
-@router.post("/{scenario_id}/goal")
-def goal(
+@router.get("/{scenario_id}/goal-preview")
+def goal_preview(
     scenario_id: int,
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    scenario = service.make_goal(db, current_client.id, scenario_id)
+    """What making this scenario the goal would do to the old goal's earmarks, for the choice (R11)."""
+    return goal_change_workflow.preview(db, current_client.id, scenario_id)
+
+
+@router.post("/{scenario_id}/goal")
+def goal(
+    scenario_id: int,
+    payload: schemas.GoalChange = Body(default_factory=schemas.GoalChange),
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    scenario = goal_change_workflow.apply(db, current_client.id, scenario_id, payload.earmarks)
     return service.describe(db, current_client.id, scenario)
 
 

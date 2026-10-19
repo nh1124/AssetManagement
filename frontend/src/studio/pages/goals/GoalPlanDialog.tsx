@@ -11,11 +11,15 @@ function addMonths(period: string, months: number): string {
     return `${Math.floor(index / 12)}-${String(index % 12 + 1).padStart(2, '0')}`;
 }
 
-const rowLabel = (change: GoalPlanChange) => change.kind === 'capsule'
-    ? `取り置き「${change.capsule_name ?? `#${change.capsule_id}`}」（${change.account_name ?? '資金元なし'}から）`
-    : `口座「${change.account_name ?? `#${change.account_id}`}」への積立`;
+function rowLabel(change: GoalPlanChange): string {
+    const account = change.account_name ?? `#${change.account_id}`;
+    if (change.kind === 'drawdown') return `口座「${account}」からの取り崩し`;
+    if (change.kind === 'account') return `口座「${account}」への積立`;
+    const name = change.capsule_name ?? `#${change.capsule_id}`;
+    return change.new_capsule ? `新しい取り置き「${name}」（${account}に作ります）` : `取り置き「${name}」（${account}から）`;
+}
 
-/** ゴールから計画を作成: preview the plan rows the goal's 積立設定 and 実績管理の設定 ask for, then write them. */
+/** ゴールから計画を作成: preview the plan rows the goal's 積立設定 and its events' earmarks ask for, then write them. */
 export default function GoalPlanDialog({ title = 'ゴールから計画を作成', intro, onClose }: { title?: string; intro?: string; onClose: (applied: boolean) => void }) {
     const timezone = useTimezone();
     const current = clientToday(timezone).slice(0, 7);
@@ -38,7 +42,7 @@ export default function GoalPlanDialog({ title = 'ゴールから計画を作成
     </>}>
         <div className="space-y-4">
             {intro && <p className="text-sm">{intro}</p>}
-            <p className="text-xs text-[var(--studio-text-muted)]">口座ごとの積立（積立設定の月額）から、その口座を資金元とする取り置きの月額を引いた額を配分の行にします。取り置きの月額は、実績管理の設定で紐づくライフイベントの残りの必要額を目標月までの月数で割った額です。</p>
+            <p className="text-xs text-[var(--studio-text-muted)]">口座ごとの積立（積立設定の月額）から、その口座の取り置きの月額と既存の配分（自動取引など）を引いた額を配分の行に、取り崩しの月額は取り崩しの行にします。取り置きは、取り置く口座を決めた支出のライフイベントごとに同じ名前で作り（ゴール）、残りの必要額を目標月までの月数で均等に割った額を積み立てます。</p>
             <div className="grid items-end gap-4 sm:grid-cols-3">
                 <Field label="開始月"><input type="month" required value={start} disabled={mutation.busy} onChange={(event) => { setStart(event.target.value); setPreview(null); }} className={inputClass} /></Field>
                 <Field label="終了月"><input type="month" required min={start} value={end} disabled={mutation.busy} onChange={(event) => { setEnd(event.target.value); setPreview(null); }} className={inputClass} /></Field>

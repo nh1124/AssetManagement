@@ -7,7 +7,7 @@ Nothing here computes a summary, so it sits below everything that does.
 """
 from __future__ import annotations
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -505,6 +505,25 @@ def active_lines_for_periods(
         models.MonthlyPlanLine.target_period.in_(list(periods)),
         models.MonthlyPlanLine.is_active.is_(True),
     ).order_by(models.MonthlyPlanLine.target_period, models.MonthlyPlanLine.id).all()
+
+
+def lines_written_by(
+    db: Session, client_id: int, source_kind: str, *, from_period: str | None = None, capsule_ids: Sequence[int] = (),
+) -> list[models.MonthlyPlanLine]:
+    """Active rows a source wrote, in any plan: from a month on, or aimed at these earmarks in any month."""
+    query = db.query(models.MonthlyPlanLine).filter(
+        models.MonthlyPlanLine.client_id == client_id,
+        models.MonthlyPlanLine.source_kind == source_kind,
+        models.MonthlyPlanLine.is_active.is_(True),
+    )
+    conditions = []
+    if from_period is not None:
+        conditions.append(models.MonthlyPlanLine.target_period >= from_period)
+    if capsule_ids:
+        conditions.append((models.MonthlyPlanLine.target_type == "capsule") & models.MonthlyPlanLine.target_id.in_(list(capsule_ids)))
+    if not conditions:
+        return []
+    return query.filter(or_(*conditions)).order_by(models.MonthlyPlanLine.id).all()
 
 
 def retire_plan_lines(db: Session, client_id: int, line_ids: Sequence[int], *, commit: bool = True) -> int:

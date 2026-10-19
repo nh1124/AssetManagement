@@ -31,3 +31,9 @@
     border-color: var(--studio-accent);
     box-shadow: 0 0 0 1px var(--studio-accent);
 }
+
+/* An event most simulated runs do not reach, in the simulation's copy of the diagram. */
+.life-event-diagram .life-event-node-off {
+    opacity: 0.45;
+    border-style: dashed;
+}

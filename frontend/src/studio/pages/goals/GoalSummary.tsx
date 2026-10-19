@@ -1,18 +1,16 @@
 import { useCallback, useState } from 'react';
 import { CalendarPlus, Flag, Pencil } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { getCapsules, getLifeEventsWithProgress, getNetWorthHistory } from '../../../api';
+import { getLifeEventsWithProgress, getNetWorthHistory } from '../../../api';
 import { planCheck } from '../../../api/goalPlan';
 import { compare, list } from '../../../api/lifeScenarios';
 import { useClient } from '../../../context/ClientContext';
-import type { LifeEventProgress } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
-import Overlay from '../../components/Overlay';
 import { clientToday, formatDate, useTimezone } from '../../datetime';
 import { useResource } from '../../useResource';
-import { DataTable, EditableRow, Feedback, RowTitle } from '../db/Database';
-import { buttonClass, primaryClass, useMutation } from '../db/forms';
-import GoalEarmarkEditor from './GoalEarmarkEditor';
+import { DataTable, Feedback } from '../db/Database';
+import { buttonClass, primaryClass } from '../db/forms';
+import { eventAmount, KIND_LABELS } from './eventKinds';
 import GoalPlanDialog from './GoalPlanDialog';
 import GoalProjectionChart from './GoalProjectionChart';
 import NoLifeEvents from './NoLifeEvents';
@@ -26,28 +24,22 @@ function SummaryForClient({ currency }: { currency: string }) {
         const scenarios = await list();
         const goal = scenarios.find((scenario) => scenario.is_goal);
         if (!goal) return { scenarios, goal: null };
-        const [comparison, events, history, check, capsules] = await Promise.all([
-            compare([goal.id]), getLifeEventsWithProgress(), getNetWorthHistory(60), planCheck(period), getCapsules(),
+        const [comparison, events, history, check] = await Promise.all([
+            compare([goal.id]), getLifeEventsWithProgress(), getNetWorthHistory(60), planCheck(period),
         ]);
-        return { scenarios, goal: { projected: comparison.scenarios[0], events, history, check, capsules } };
+        return { scenarios, goal: { projected: comparison.scenarios[0], events, history, check } };
     }, [period]);
     const resource = useResource(load);
-    const mutation = useMutation();
     const [planning, setPlanning] = useState(false);
-    const [linking, setLinking] = useState<LifeEventProgress | null>(null);
     const data = resource.data;
     const goal = data?.goal;
     const expenses = goal?.events.filter((event) => event.direction === 'expense') ?? [];
     const required = expenses.reduce((total, event) => total + event.target_amount, 0);
     const funded = expenses.reduce((total, event) => total + event.current_funded, 0);
     const outcomes = new Map(goal?.projected.events.map((event) => [event.id, event]));
-    // One earmark can be split across events; more than all of it would count money twice.
-    const shares = new Map<string, number>();
-    for (const event of expenses) for (const link of event.earmarks) shares.set(link.capsule_name ?? `#${link.capsule_id}`, (shares.get(link.capsule_name ?? `#${link.capsule_id}`) ?? 0) + link.share);
-    const overShared = [...shares].filter(([, share]) => share > 100).map(([name]) => name);
-    const disabled = resource.loading || mutation.busy;
+    const disabled = resource.loading;
     return <section className="space-y-5">
-        <Feedback loading={resource.loading && !data} error={resource.error} message={mutation.message} />
+        <Feedback loading={resource.loading && !data} error={resource.error} />
         {data && !goal && (data.scenarios.length === 0 ? <NoLifeEvents noScenarios />
             : <div className="space-y-4 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
                 <h2 className="font-semibold">ゴールにするシナリオが選ばれていません</h2>
@@ -81,14 +73,15 @@ function SummaryForClient({ currency }: { currency: string }) {
             </div>
             <section className="space-y-3">
                 <h3 className="font-semibold">ライフイベント</h3>
-                <DataTable columns={['名称', '目標日', '目標額', '確保額', '進捗', '起きる確率', '資金が足りる確率']}>
+                <DataTable columns={['名称', '目標日', '金額', '取り置き', '確保額', '進捗', '起きる確率', '資金が足りる確率']}>
                     {goal.events.map((event) => {
                         const outcome = outcomes.get(event.id);
                         const expense = event.direction === 'expense';
                         return <tr key={`event-${event.id}`}>
-                            <th scope="row" className="whitespace-nowrap px-5 py-3 font-medium">{event.name}{!expense && <span className="ml-2 text-xs text-[var(--studio-text-muted)]">収入</span>}</th>
+                            <th scope="row" className="whitespace-nowrap px-5 py-3 font-medium">{event.name}{!expense && <span className="ml-2 text-xs text-[var(--studio-text-muted)]">{KIND_LABELS[event.direction]}</span>}</th>
                             <td className="whitespace-nowrap px-5 py-3">{formatDate(event.target_date)}</td>
-                            <td className="whitespace-nowrap px-5 py-3 tabular-nums">{formatCurrency(event.target_amount, currency)}</td>
+                            <td className="whitespace-nowrap px-5 py-3 tabular-nums">{eventAmount(event, currency)}</td>
+                            <td className="whitespace-nowrap px-5 py-3">{!expense ? '—' : event.earmark ? event.earmark.capsule_name : event.account_id ? <span className="text-xs text-[var(--studio-text-muted)]">計画の作成で作ります</span> : <span className="text-xs text-[var(--studio-text-muted)]">口座なし</span>}</td>
                             <td className="whitespace-nowrap px-5 py-3 tabular-nums">{expense ? formatCurrency(event.current_funded, currency) : '—'}</td>
                             <td className="whitespace-nowrap px-5 py-3 tabular-nums">{expense ? `${event.progress_percentage}%` : '—'}</td>
                             <td className="whitespace-nowrap px-5 py-3 tabular-nums">{percent(outcome?.executed_probability)}</td>
@@ -96,28 +89,10 @@ function SummaryForClient({ currency }: { currency: string }) {
                         </tr>;
                     })}
                 </DataTable>
-            </section>
-            <section className="space-y-3">
-                <h3 className="font-semibold">実績管理の設定</h3>
-                <p className="text-xs text-[var(--studio-text-muted)]">ゴールのライフイベントごとに、確保額として数える取り置きと割合を決めます。確保額・不足と、ゴールから作る計画の取り置きの月額に使います。</p>
-                {overShared.length > 0 && <p role="alert" className="text-sm text-[var(--studio-warning)]">割合の合計が100%を超えている取り置きがあります：{overShared.join('、')}</p>}
-                <DataTable columns={['ライフイベント', '取り置き（割合）', '確保額', '不足']}>
-                    {expenses.map((event) => <EditableRow key={`link-${event.id}`} disabled={disabled} onEdit={() => setLinking(event)}>
-                        <RowTitle name={`${event.name}の実績管理の設定`} disabled={disabled} onEdit={() => setLinking(event)}>{event.name}</RowTitle>
-                        <td className="px-5 py-3">{event.earmarks.length ? event.earmarks.map((link) => `${link.capsule_name}（${link.share}%）`).join('、') : <span className="text-[var(--studio-text-muted)]">未設定</span>}</td>
-                        <td className="whitespace-nowrap px-5 py-3 tabular-nums">{formatCurrency(event.current_funded, currency)}</td>
-                        <td className="whitespace-nowrap px-5 py-3 tabular-nums">{formatCurrency(event.gap, currency)}</td>
-                    </EditableRow>)}
-                    {expenses.length === 0 && <tr><td colSpan={4} className="px-5 py-4 text-[var(--studio-text-muted)]">支出のライフイベントはありません。</td></tr>}
-                </DataTable>
+                <p className="text-xs text-[var(--studio-text-muted)]">支出のライフイベントは、取り置く口座を決めておくと「計画を作成」でイベントと同じ名前の取り置き（ゴール）ができ、その確保額を確保額・進捗に数えます。</p>
             </section>
         </>}
         {planning && <GoalPlanDialog onClose={(applied) => { setPlanning(false); if (applied) resource.reload(); }} />}
-        {linking && goal && <Overlay title={`「${linking.name}」の実績管理の設定`} busy={mutation.busy} onClose={() => setLinking(null)}>
-            <Feedback error={mutation.error} />
-            <GoalEarmarkEditor event={linking} capsules={goal.capsules} currency={currency} busy={mutation.busy} onCancel={() => setLinking(null)}
-                onSave={(action) => { void mutation.run(action, '実績管理の設定を保存しました。', () => { setLinking(null); resource.reload(); }); }} />
-        </Overlay>}
     </section>;
 }
 

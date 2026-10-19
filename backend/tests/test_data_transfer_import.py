@@ -91,8 +91,8 @@ def _seed(db, client_id=101, base=10000):
         end_period="2026-10", summary={"months": [{"period": "2026-10"}]})
     capsule = add(models.Capsule, 5, name="goal", target_amount=1000, monthly_contribution=10)
     next_capsule = add(models.Capsule, 33, name="next", target_amount=500, monthly_contribution=0)
-    add(models.GoalEventEarmark, 37, life_event_id=goal.id, capsule_id=capsule.id, share_bp=10000)
-    add(models.GoalEventEarmark, 39, life_event_id=next_goal.id, capsule_id=next_capsule.id, share_bp=5000)
+    capsule.goal_event_id = goal.id
+    next_capsule.goal_event_id = next_goal.id
     member = add(models.HouseholdMember, 34, name="子", relation="長女", birth_date=date(2010, 4, 1))
     add(models.LifeEventCondition, 35, life_event_id=goal.id, metric="member_age", comparator="gte",
         threshold_number=18, reference_id=member.id, note="入学")
@@ -180,7 +180,8 @@ REFERENCES = {
     "budget_account_id": "accounts",
     "product_id": "products", "registry_entry_id": "registry_entries", "batch_id": "transaction_batches",
     "from_event_id": "life_events", "to_event_id": "life_events",
-    "life_event_id": "life_events", "transaction_id": "transactions", "plan_id": "budget_plans",
+    "life_event_id": "life_events", "goal_event_id": "life_events", "borrowing_event_id": "life_events",
+    "transaction_id": "transactions", "plan_id": "budget_plans",
     "plan_line_id": "monthly_plan_lines", "capsule_id": "capsules",
     "funding_capsule_id": "capsules",
     "depreciation_expense_account_id": "accounts",

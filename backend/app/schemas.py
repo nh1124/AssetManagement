@@ -267,8 +267,54 @@ class TransactionLegRead(TransactionLeg):
     account_type: Optional[str] = None
 
 
+class TransactionDepreciation(BaseModel):
+    """The write-down an entry carries, so the ledger opens it as a depreciation."""
+    id: int
+    product_id: int
+    product_name: Optional[str] = None
+    period: str
+
+
+class DepreciationRecord(BaseModel):
+    """A write-down recorded by hand; left out, the amount and date follow the schedule."""
+    model_config = ConfigDict(extra="forbid")
+    product_id: int = Field(gt=0)
+    period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    amount: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    date: Optional[DateType] = None
+    expense_account_id: int | None = Field(default=None, gt=0)
+    asset_account_id: int | None = Field(default=None, gt=0)
+
+
+PlanRecordSection = Literal["allocation", "drawdown", "expense", "income", "debt_payment", "borrowing"]
+
+
+class PlanRecordCreate(BaseModel):
+    """A user's record in an account's month on the plan page (WP19)."""
+    model_config = ConfigDict(extra="forbid")
+    period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    account_id: int = Field(gt=0)
+    section: PlanRecordSection
+    amount: float = Field(ge=0, allow_inf_nan=False)
+    name: Optional[str] = Field(default=None, max_length=200)
+
+
+class PlanRecordUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    amount: float = Field(ge=0, allow_inf_nan=False)
+    name: Optional[str] = Field(default=None, max_length=200)
+
+
+class DepreciationAmend(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    amount: float = Field(gt=0, allow_inf_nan=False)
+    date: Optional[DateType] = None
+    expense_account_id: int | None = Field(default=None, gt=0)
+
+
 class Transaction(TransactionBase):
     id: int
+    depreciation: Optional[TransactionDepreciation] = None
     from_account_name: Optional[str] = None
     to_account_name: Optional[str] = None
     legs: Optional[List[TransactionLegRead]] = None
@@ -688,8 +734,12 @@ class LifeEventLink(LifeEventLinkCreate):
     created_at: datetime | None = None
 
 
+LifeEventKind = Literal["expense", "income", "borrowing", "repayment"]
+
+
 class LifeEventBase(BaseModel):
-    direction: Literal["expense", "income"] = "expense"
+    """target_amount is the amount; for a repayment, the monthly payment."""
+    direction: LifeEventKind = "expense"
     account_id: Optional[int] = None
     condition_mode: Literal["all", "any"] = "all"
     name: str
@@ -697,6 +747,9 @@ class LifeEventBase(BaseModel):
     target_amount: float
     priority: Literal[1, 2, 3] = 2
     note: Optional[str] = None
+    interest_rate: Optional[float] = Field(default=None, ge=0, le=100, allow_inf_nan=False)
+    borrowing_event_id: Optional[int] = None
+    repeat_count: Optional[int] = Field(default=None, ge=1, le=1200)
 
 class LifeEventCreate(LifeEventBase):
     model_config = ConfigDict(extra="forbid")
@@ -704,14 +757,17 @@ class LifeEventCreate(LifeEventBase):
 
 class LifeEventUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    direction: Literal["expense", "income"] = "expense"
+    direction: Optional[LifeEventKind] = None
     account_id: Optional[int] = None
-    condition_mode: Literal["all", "any"] = "all"
+    condition_mode: Optional[Literal["all", "any"]] = None
     name: Optional[str] = None
     target_date: Optional[date] = None
     target_amount: Optional[float] = None
     priority: Optional[Literal[1, 2, 3]] = None
     note: Optional[str] = None
+    interest_rate: Optional[float] = Field(default=None, ge=0, le=100, allow_inf_nan=False)
+    borrowing_event_id: Optional[int] = None
+    repeat_count: Optional[int] = Field(default=None, ge=1, le=1200)
 
 class LifeEvent(LifeEventBase):
     id: int
@@ -776,6 +832,9 @@ class Capsule(CapsuleBase):
     linked_products: list[dict[str, Any]] = []
     created_at: datetime
     funding_sources: list[CapsuleFundingSource] = Field(default_factory=list)
+    # The earmark made for a goal event; is_goal when that event is in the current goal.
+    goal_event_id: Optional[int] = None
+    is_goal: bool = False
 
     class Config:
         from_attributes = True
@@ -982,11 +1041,10 @@ class LifeScenarioUpdate(BaseModel):
         return values
 
 
-class GoalEventEarmarkInput(BaseModel):
-    """One earmark counted toward a goal event, and the percent of it that counts."""
+class GoalChange(BaseModel):
+    """What happens to the old goal's earmarks when another scenario becomes the goal (R11)."""
     model_config = ConfigDict(extra="forbid")
-    capsule_id: int = Field(gt=0)
-    share: float = Field(default=100, ge=0, le=100, allow_inf_nan=False)
+    earmarks: Literal["keep", "replace", "carry"] = "keep"
 
 
 class ContributionPlanInput(BaseModel):
@@ -994,7 +1052,8 @@ class ContributionPlanInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     account_id: int | None = Field(default=None, gt=0)
     start_period: str | None = Field(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
-    monthly_amount: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    # Negative withdraws from the account every month (取り崩し).
+    monthly_amount: float | None = Field(default=None, allow_inf_nan=False)
     annual_return: float | None = Field(default=None, allow_inf_nan=False)
     note: str | None = None
 

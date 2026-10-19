@@ -10,9 +10,10 @@ import { contributeToCapsule, createTransaction, getAccounts, getCapsules, recor
 import { useClient } from '../../context/ClientContext';
 import { formatCurrency, getCurrencySymbol } from '../../utils/currency';
 import type { Account, Capsule, CapsuleDrawdownKind, Transaction, TransactionLeg } from '../../types';
+import DepreciationForm from './DepreciationForm';
 
 type AccountType = Account['account_type'];
-type RecordKind = 'income' | 'expense' | 'transfer' | 'allocation' | 'purchase' | 'repayment';
+type RecordKind = 'income' | 'expense' | 'transfer' | 'allocation' | 'purchase' | 'repayment' | 'depreciation';
 interface SplitRow {
     accountId: string;
     amount: string;
@@ -26,6 +27,7 @@ const KINDS: Array<{ value: RecordKind; label: string }> = [
     { value: 'allocation', label: '用途確保' },
     { value: 'purchase', label: '物品購入' },
     { value: 'repayment', label: '元本返済' },
+    { value: 'depreciation', label: '減価償却' },
 ];
 
 const ACCOUNT_FIELDS: Record<RecordKind, {
@@ -40,6 +42,8 @@ const ACCOUNT_FIELDS: Record<RecordKind, {
     allocation: { debitLabel: '', debitTypes: [], creditLabel: '資金元口座', creditTypes: ['asset'] },
     purchase: { debitLabel: '資産または費用', debitTypes: ['asset', 'expense'], creditLabel: '支払元口座', creditTypes: ['asset', 'liability'] },
     repayment: { debitLabel: '返済する負債', debitTypes: ['liability'], creditLabel: '支払元口座', creditTypes: ['asset'] },
+    // Its accounts come from the fixed asset; DepreciationForm takes over the whole form.
+    depreciation: { debitLabel: '', debitTypes: [], creditLabel: '', creditTypes: [] },
 };
 
 const inputClass = 'w-full rounded-md border border-[var(--studio-border)] bg-[var(--studio-surface)] px-3 py-2 text-sm text-[var(--studio-text)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)]';
@@ -272,6 +276,16 @@ export default function RecordForm({ existing, onSaved, onCancel, onDelete, dele
         {submitting ? '保存しています…' : existing ? '保存' : '記録する'}
     </button>;
 
+    const kindSelect = !existing && <label className="block space-y-2 text-sm">
+        <span className="text-[var(--studio-text-muted)]">記録する内容</span>
+        <select value={kind} onChange={(event) => changeKind(event.target.value as RecordKind)} className={inputClass}>
+            {KINDS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+        </select>
+    </label>;
+    // A write-down is recorded and corrected with its fixed asset, not as free legs.
+    if (existing?.depreciation) return <DepreciationForm existing={existing} onSaved={onSaved} onCancel={onCancel} onDelete={onDelete} deleting={deleting} />;
+    if (!existing && kind === 'depreciation') return <DepreciationForm kindSelect={kindSelect} onCancel={onCancel} />;
+
     return (
         <section className={inOverlay ? 'w-full' : 'mx-auto w-full max-w-xl rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-6'}>
             {existing && !inOverlay && <h2 className="text-lg font-semibold">取引 #{existing.id}「{existing.description || '内容未入力'}」を編集</h2>}
@@ -282,12 +296,7 @@ export default function RecordForm({ existing, onSaved, onCancel, onDelete, dele
                 )}
                 {accountsLoading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">口座を読み込んでいます…</p>}
                 <fieldset disabled={submitting || deleting || accountsLoading || Boolean(accountsError) || !identified} className="space-y-5 disabled:opacity-60">
-                    {!existing && <label className="block space-y-2 text-sm">
-                        <span className="text-[var(--studio-text-muted)]">記録する内容</span>
-                        <select value={kind} onChange={(event) => changeKind(event.target.value as RecordKind)} className={inputClass}>
-                            {KINDS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                        </select>
-                    </label>}
+                    {kindSelect}
                     {(existing || kind !== 'allocation') && (
                         <label className="block space-y-2 text-sm">
                             <span className="text-[var(--studio-text-muted)]">日付</span>

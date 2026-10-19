@@ -15,7 +15,7 @@ from dateutil.relativedelta import relativedelta
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from .. import models
+from .. import models, schemas
 from ..domain.errors import Invalid
 from ..domain.journal import Leg
 from ..domain.money import Money
@@ -213,15 +213,18 @@ def validate_automatic(db: Session, client_id: int, product: models.Product) -> 
 
 def _post(
     db: Session, client_id: int, product_id: int, *, period: str,
+    amount_minor: int | None = None, posting_date: Date | None = None, expense_account_id: int | None = None,
 ) -> tuple[models.Transaction, models.ProductDepreciation]:
+    """Write one period down. A hand-recorded write-down may name its own amount, date and expense."""
     start = _validate_period(period)
     product = _get_product(db, client_id, product_id)
+    expense_account_id = expense_account_id or product.depreciation_expense_account_id
 
-    if (product.depreciation_method or "none") == "none":
+    if amount_minor is None and (product.depreciation_method or "none") == "none":
         raise Invalid("This product has no depreciation method")
-    if not product.depreciation_expense_account_id or not product.depreciation_asset_account_id:
+    if not expense_account_id or not product.depreciation_asset_account_id:
         raise Invalid("Set both the depreciation expense account and the asset account first")
-    for account_id in (product.depreciation_expense_account_id, product.depreciation_asset_account_id):
+    for account_id in (expense_account_id, product.depreciation_asset_account_id):
         if ledger_service.get_account(db, client_id, account_id) is None:
             raise Invalid(f"Account {account_id} not found for this client")
 
@@ -239,21 +242,26 @@ def _post(
     if already is not None:
         raise Invalid(f"{period} has already been posted for this product")
 
-    amount = due_minor(db, client_id, product, period)
+    remaining = int(product.purchase_price_minor or 0) - posted_minor(db, client_id, product.id)
+    if amount_minor is None:
+        amount = due_minor(db, client_id, product, period)
+    elif not 0 < amount_minor <= remaining:
+        raise Invalid("金額は0より大きく、帳簿価額以下にしてください。")
+    else:
+        amount = amount_minor
     if amount <= 0:
         raise Invalid("Nothing left to depreciate")
 
     currency = get_client_currency(db, client_id)
-    posting_date = _posting_date(period)
     transaction = ledger_service.create_transaction(
         db,
         client_id=client_id,
-        date=posting_date,
+        date=posting_date or _posting_date(period),
         description=f"減価償却：{product.name}（{period}）",
         amount_minor=amount,
         currency=currency,
         legs=[
-            Leg(product.depreciation_expense_account_id, debit=amount),
+            Leg(expense_account_id, debit=amount),
             Leg(product.depreciation_asset_account_id, credit=amount),
         ],
     )
@@ -290,3 +298,94 @@ def post_due(
         _, row = _post(db, client_id, product.id, period=period)
         rows.append(row)
     return rows
+
+
+def _account_of_type(db: Session, client_id: int, account_id: int, account_type: str, label: str) -> int:
+    account = ledger_service.get_account(db, client_id, account_id)
+    if account is None or account.account_type != account_type:
+        raise Invalid(f"同じクライアントの{label}を選んでください。")
+    return account.id
+
+
+def record(
+    db: Session, client_id: int, product_id: int, *, period: str, amount_minor: int | None = None,
+    posting_date: Date | None = None, expense_account_id: int | None = None, asset_account_id: int | None = None,
+) -> tuple[models.Transaction, models.ProductDepreciation]:
+    """A write-down recorded by hand from the ledger, linked exactly like an automatic one.
+
+    The product keeps the accounts it was missing, so the next write-down, by hand
+    or automatic, needs no second choice.
+    """
+    product = _get_product(db, client_id, product_id)
+    if not product.is_asset:
+        raise Invalid("固定資産を選んでください。")
+    if expense_account_id is not None:
+        expense_account_id = _account_of_type(db, client_id, expense_account_id, "expense", "費用科目")
+        product.depreciation_expense_account_id = product.depreciation_expense_account_id or expense_account_id
+    if asset_account_id is not None:
+        asset_account_id = _account_of_type(db, client_id, asset_account_id, "asset", "資産口座")
+        product.depreciation_asset_account_id = product.depreciation_asset_account_id or asset_account_id
+    return _post(db, client_id, product.id, period=period, amount_minor=amount_minor,
+                 posting_date=posting_date, expense_account_id=expense_account_id)
+
+
+def _record_of(db: Session, client_id: int, depreciation_id: int) -> models.ProductDepreciation:
+    row = db.query(models.ProductDepreciation).filter_by(client_id=client_id, id=depreciation_id).first()
+    if row is None:
+        raise Invalid("減価償却の記録が見つかりません。")
+    return row
+
+
+def amend(
+    db: Session, client_id: int, depreciation_id: int, *, amount_minor: int,
+    posting_date: Date | None = None, expense_account_id: int | None = None,
+) -> tuple[models.Transaction, models.ProductDepreciation]:
+    """Change a posted write-down's amount, date or expense; the entry and the record move together."""
+    row = _record_of(db, client_id, depreciation_id)
+    product = _get_product(db, client_id, row.product_id)
+    room = int(product.purchase_price_minor or 0) - posted_minor(db, client_id, product.id) + int(row.amount_minor)
+    if not 0 < amount_minor <= room:
+        raise Invalid("金額は0より大きく、帳簿価額以下にしてください。")
+    transaction = db.query(models.Transaction).filter_by(client_id=client_id, id=row.transaction_id).first()
+    # Read the legs as values: the rebuild below replaces the leg rows themselves.
+    legs = db.query(models.JournalEntry.account_id, models.JournalEntry.debit_minor).filter_by(transaction_id=transaction.id).all()
+    expense = next((account for account, debit in legs if (debit or 0) > 0), None)
+    if expense_account_id is not None:
+        expense = _account_of_type(db, client_id, expense_account_id, "expense", "費用科目")
+    credit = next((account for account, debit in legs if not debit), product.depreciation_asset_account_id)
+    amount = Money(amount_minor, transaction.currency).to_float()
+    ledger_service.update_transaction(db, transaction.id, schemas.TransactionUpdate(
+        date=posting_date or transaction.date, amount=amount,
+        legs=[schemas.TransactionLeg(account_id=expense, debit=amount), schemas.TransactionLeg(account_id=credit, credit=amount)],
+    ), client_id, commit=False)
+    row.amount_minor = amount_minor
+    db.flush()
+    return transaction, row
+
+
+def follow_transaction(db: Session, client_id: int, transaction: models.Transaction) -> None:
+    """After a generic edit of a write-down's entry, the record keeps the entry's amount."""
+    row = db.query(models.ProductDepreciation).filter_by(client_id=client_id, transaction_id=transaction.id).first()
+    if row is not None:
+        row.amount_minor = transaction.amount_minor
+
+
+def forget_transaction(db: Session, client_id: int, transaction_id: int) -> None:
+    """Deleting a write-down's entry takes its record with it, so the book value comes back."""
+    db.query(models.ProductDepreciation).filter_by(client_id=client_id, transaction_id=transaction_id).delete(synchronize_session="fetch")
+
+
+def preview(db: Session, client_id: int, product_id: int) -> dict:
+    """What recording the next write-down by hand would propose."""
+    product = _get_product(db, client_id, product_id)
+    plan = schedule(db, client_id, product_id)
+    currency = plan["currency"]
+    return {
+        "product_id": product.id, "product_name": product.name, "currency": currency,
+        "next_period": plan["next_period"],
+        "due": Money(plan["due_minor"], currency).to_float(),
+        "book_value": Money(plan["book_value_minor"], currency).to_float(),
+        "expense_account_id": product.depreciation_expense_account_id,
+        "asset_account_id": product.depreciation_asset_account_id,
+        "blocked_reason": plan["blocked_reason"],
+    }

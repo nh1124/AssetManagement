@@ -23,6 +23,9 @@ class Capsule(Base):
     capsule_type = Column(String, default="manual", server_default="manual", nullable=False)
     target_amount_source = Column(String, default="manual", server_default="manual", nullable=False)
     monthly_contribution_source = Column(String, default="manual", server_default="manual", nullable=False)
+    # Set on the earmark that making the plan from the goal created for this life
+    # event (named after it). Changing the goal decides what happens to it.
+    goal_event_id = Column(Integer, ForeignKey("life_events.id", ondelete="SET NULL"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     client = relationship("Client", back_populates="capsules")

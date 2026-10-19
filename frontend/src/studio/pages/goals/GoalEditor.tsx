@@ -1,56 +1,77 @@
 import { useId, useState, type FormEvent } from 'react';
 import { createGoal, updateGoal } from '../../../api';
-import type { LifeEvent } from '../../../types';
+import type { LifeEvent, LifeEventKind } from '../../../types';
 import { Choice, EditorActions, Feedback, Field } from '../db/Database';
-import { ACCOUNT_TYPES, buttonClass, inputClass, type DatabaseAccount } from '../db/forms';
+import { buttonClass, inputClass, type DatabaseAccount } from '../db/forms';
+import { ACCOUNT_LABELS, KIND_LABELS } from './eventKinds';
 
-/** A life event's facts: kind, account or subject, name, amount, date, priority and memo. */
-export default function GoalEditor({ goal, scenarioId, accounts, currency, busy, onSave, onCancel, onDelete }: {
-    goal: LifeEvent | null; scenarioId: number; accounts: DatabaseAccount[]; currency: string; busy: boolean;
+const ACCOUNT_HELP: Record<LifeEventKind, string> = {
+    expense: '計画の作成で、この口座にイベントと同じ名前の取り置きを作り、目標日にはこの口座から払います。未設定なら取り置きは作らず、シミュレーションでは残りの純資産から払います。',
+    income: 'シミュレーションでこの口座に入ります。未設定なら残りの純資産に入ります。',
+    borrowing: '借りたお金がこの口座に入り、同じ額の借入（負債）ができます。純資産は変わりません。',
+    repayment: '毎月の返済をこの口座から払います。未設定なら残りの純資産から払います。',
+};
+
+/** A life event: its kind, account, name, amount and date; a loan's rate, or a repayment's borrowing and months. */
+export default function GoalEditor({ goal, scenarioId, events, accounts, currency, busy, onSave, onCancel, onDelete }: {
+    goal: LifeEvent | null; scenarioId: number; events: LifeEvent[]; accounts: DatabaseAccount[]; currency: string; busy: boolean;
     onSave: (action: () => Promise<unknown>) => void; onCancel: () => void; onDelete?: () => void;
 }) {
     const formId = useId();
-    const [direction, setDirection] = useState<LifeEvent['direction']>(goal?.direction ?? 'expense');
+    const [direction, setDirection] = useState<LifeEventKind>(goal?.direction ?? 'expense');
     const [accountId, setAccountId] = useState<number | null>(goal?.account_id ?? null);
     const [name, setName] = useState(goal?.name ?? '');
     const [amount, setAmount] = useState(goal ? String(goal.target_amount) : '');
     const [target, setTarget] = useState(goal?.target_date ?? '');
     const [priority, setPriority] = useState<LifeEvent['priority']>(goal?.priority ?? 2);
     const [note, setNote] = useState(goal?.note ?? '');
+    const [rate, setRate] = useState(goal?.interest_rate != null ? String(goal.interest_rate) : '');
+    const [borrowingId, setBorrowingId] = useState<number | null>(goal?.borrowing_event_id ?? null);
+    const [count, setCount] = useState(goal?.repeat_count != null ? String(goal.repeat_count) : '12');
     const [error, setError] = useState('');
-    const choices = accounts
-        .filter((row) => (row.account_type === 'asset' || row.account_type === direction) && (row.is_active || row.id === accountId))
-        .map((row) => ({ ...row, name: `${row.name}（${ACCOUNT_TYPES[row.account_type]}）` }));
-    const chooseDirection = (value: LifeEvent['direction']) => {
-        setDirection(value);
-        // Switching kind must not silently keep a subject of the opposite type.
-        const selected = accounts.find((row) => row.id === accountId);
-        if (selected && selected.account_type !== 'asset' && selected.account_type !== value) setAccountId(null);
-    };
+    const assets = accounts.filter((row) => row.account_type === 'asset' && (row.is_active || row.id === accountId));
+    const borrowings = events.filter((event) => event.direction === 'borrowing' && event.id !== goal?.id);
     const submit = (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         const value = Number(amount);
         if (busy) return;
         if (!name.trim() || !target || amount.trim() === '' || !Number.isFinite(value) || value < 0) {
-            setError('名称・目標日と0以上の金額を入力してください。');
+            setError('名称・日付と0以上の金額を入力してください。');
+            return;
+        }
+        if (direction === 'repayment' && (!borrowingId || !Number.isInteger(Number(count)) || Number(count) < 1)) {
+            setError('返済する借入と、1以上の回数を入力してください。');
+            return;
+        }
+        if (direction === 'borrowing' && rate.trim() !== '' && !(Number(rate) >= 0)) {
+            setError('年利は0以上の数値で入力してください。');
             return;
         }
         setError('');
-        const payload = { direction, account_id: accountId, name: name.trim(), target_amount: value, target_date: target, priority, note: note.trim() || null };
+        const payload = {
+            direction, account_id: accountId, name: name.trim(), target_amount: value, target_date: target, priority, note: note.trim() || null,
+            interest_rate: direction === 'borrowing' ? Number(rate || 0) : null,
+            borrowing_event_id: direction === 'repayment' ? borrowingId : null,
+            repeat_count: direction === 'repayment' ? Number(count) : null,
+        };
         onSave(() => goal ? updateGoal(goal.id, payload) : createGoal({ ...payload, scenario_id: scenarioId }));
     };
     return <form id={formId} onSubmit={submit} className="space-y-4">
         <Feedback error={error} />
         <fieldset disabled={busy} className="grid gap-4 md:grid-cols-2">
-            <fieldset className="space-y-2"><legend className="text-sm text-[var(--studio-text-muted)]">種別</legend><div role="group" aria-label="種別" className="inline-flex overflow-hidden rounded-md border border-[var(--studio-border)]">
-                {(['expense', 'income'] as const).map((value) => <button key={value} type="button" aria-pressed={direction === value} onClick={() => chooseDirection(value)} className={`${buttonClass} rounded-none border-0 aria-pressed:bg-[var(--studio-accent-soft)] aria-pressed:text-[var(--studio-accent)]`}>{value === 'expense' ? '支出' : '収入'}</button>)}
+            <fieldset className="space-y-2 md:col-span-2"><legend className="text-sm text-[var(--studio-text-muted)]">種別</legend><div role="group" aria-label="種別" className="inline-flex overflow-hidden rounded-md border border-[var(--studio-border)]">
+                {(Object.keys(KIND_LABELS) as LifeEventKind[]).map((value) => <button key={value} type="button" aria-pressed={direction === value} onClick={() => setDirection(value)} className={`${buttonClass} rounded-none border-0 aria-pressed:bg-[var(--studio-accent-soft)] aria-pressed:text-[var(--studio-accent)]`}>{KIND_LABELS[value]}</button>)}
             </div></fieldset>
-            <Choice label="口座・科目" help="資産口座を選ぶと、シミュレーションではその口座から出入りします。科目や未設定のときは、それ以外の純資産から出入りします。" value={accountId} options={choices} onChange={setAccountId} />
             <Field label="名称"><input required value={name} onChange={(event) => setName(event.target.value)} className={inputClass} /></Field>
-            <Field label={`${direction === 'income' ? '金額' : '目標額'}（${currency}）`}><input required type="number" min="0" step="any" value={amount} onChange={(event) => setAmount(event.target.value)} className={inputClass} /></Field>
-            <Field label="目標日"><input required type="date" value={target} onChange={(event) => setTarget(event.target.value)} className={inputClass} /></Field>
+            <Choice label={ACCOUNT_LABELS[direction]} help={ACCOUNT_HELP[direction]} value={accountId} options={assets} onChange={setAccountId} />
+            {direction === 'repayment' && <Choice label="返済する借入" value={borrowingId} options={borrowings} required onChange={setBorrowingId} />}
+            <Field label={direction === 'repayment' ? `毎月の返済額（${currency}）` : direction === 'expense' ? `目標額（${currency}）` : `金額（${currency}）`}><input required type="number" min="0" step="any" value={amount} onChange={(event) => setAmount(event.target.value)} className={inputClass} /></Field>
+            <Field label={direction === 'repayment' ? '返済の開始日' : '目標日'}><input required type="date" value={target} onChange={(event) => setTarget(event.target.value)} className={inputClass} /></Field>
+            {direction === 'repayment' && <Field label="回数（か月）" help="開始日の月から毎月払います。残高を払い終えた後は払いません。"><input required type="number" min="1" max="1200" step="1" value={count} onChange={(event) => setCount(event.target.value)} className={inputClass} /></Field>}
+            {direction === 'borrowing' && <Field label="年利（%）" help="返済のたびに、残高 × 年利 ÷ 12 の利息を先に払います。"><input inputMode="decimal" value={rate} placeholder="0" onChange={(event) => setRate(event.target.value)} className={inputClass} /></Field>}
             <Field label="優先度"><select value={priority} onChange={(event) => setPriority(Number(event.target.value) as LifeEvent['priority'])} className={inputClass}><option value={1}>高</option><option value={2}>中</option><option value={3}>低</option></select></Field>
             <div className="md:col-span-2"><Field label="メモ"><textarea value={note} onChange={(event) => setNote(event.target.value)} className={inputClass} /></Field></div>
+            {direction === 'repayment' && borrowings.length === 0 && <p className="text-xs text-[var(--studio-warning)] md:col-span-2">このシナリオに借入のイベントがありません。先に借入を作ってください。</p>}
             <EditorActions form={formId} busy={busy} onCancel={onCancel} onDelete={onDelete} />
         </fieldset>
     </form>;

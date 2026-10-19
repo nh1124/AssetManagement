@@ -153,8 +153,7 @@ def test_backup_moves_old_yields_into_every_scenario_preserving_override(db):
     second = scenarios.create(db, 1, "二")
     document = export_client(db, db.get(models.Client, 1))
     # A v22 backup carried scenario yields as account returns, before contribution plans and goal earmarks.
-    for collection in ("scenario_contribution_plans", "goal_event_earmarks"):
-        document["data"].pop(collection)
+    document["data"].pop("scenario_contribution_plans")
     document["data"]["life_scenario_account_returns"] = [{"id": 1, "scenario_id": first.id, "account_id": holding.id, "annual_return": 9}]
     for row in document["data"]["accounts"]:
         row.update(role="growth", parent_id=9999, institution="removed", withdrawable_from_age=-5,
@@ -166,7 +165,7 @@ def test_backup_moves_old_yields_into_every_scenario_preserving_override(db):
     assert validate_import_payload(document["data"], 22, manifest)["error_count"] == 0
     import_client(db, db.get(models.Client, 2), data=document["data"], version=22, manifest=manifest)
     restored = export_client(db, db.get(models.Client, 2))
-    assert restored["version"] == EXPORT_VERSION == 26
+    assert restored["version"] == EXPORT_VERSION == 27
     names = {row["id"]: row["name"] for row in restored["data"]["accounts"]}
     story_names = {row["id"]: row["name"] for row in restored["data"]["life_scenarios"]}
     plans = restored["data"]["scenario_contribution_plans"]

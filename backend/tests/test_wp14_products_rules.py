@@ -97,7 +97,7 @@ def test_deleting_trigger_account_preserves_rule_and_clears_condition(db):
 def test_backup_remaps_trigger_reference_and_old_backup_defaults_to_unfiltered(db, version):
     rule(db, trigger_account_id=3)
     document = transfer.export_client(db, db.get(models.Client, 1))
-    assert document["version"] == EXPORT_VERSION == 26
+    assert document["version"] == EXPORT_VERSION == 27
     assert document["data"]["capsule_rules"][0]["trigger_account_id"] == 3
     data = deepcopy(document["data"])
     if version == 24:

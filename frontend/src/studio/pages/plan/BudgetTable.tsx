@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { formatCurrency } from '../../../utils/currency';
-import { KINDS, KIND_LABELS, TYPE_LABELS, type AccountRow, type Cell, type EarmarkRow } from './budgetRows';
+import { KINDS, KIND_LABELS, TYPE_LABELS, type AccountRow, type EarmarkRow } from './budgetRows';
 
 interface TableProps {
     accounts: AccountRow[];
@@ -28,8 +28,8 @@ function Scheduled({ row }: { row: AccountRow }) {
     return count ? <span className={muted}>{count}件</span> : <span className={faint}>—</span>;
 }
 
-function Marks({ cells }: { cells: Cell[] }) {
-    return <>{cells.some((cell) => cell.goal) && <Chip>ゴール</Chip>}{cells.some((cell) => cell.mismatch) && <Chip warn>種別を確認</Chip>}</>;
+function Marks({ row }: { row: AccountRow }) {
+    return <>{row.goal && <Chip>ゴール</Chip>}{row.cells.some((cell) => cell.mismatch) && <Chip warn>種別を確認</Chip>}</>;
 }
 
 function NameButton({ row, disabled, onOpen }: { row: AccountRow; disabled: boolean; onOpen: () => void }) {
@@ -51,7 +51,7 @@ function EarmarkTable({ earmarks, currency, disabled, onEarmark }: Pick<TablePro
             <thead className={`border-b border-[var(--studio-border)] ${muted}`}><tr>{['取り置き', '資金元', '月の予算', '確保額'].map((label) => <th key={label} scope="col" className={th}>{label}</th>)}</tr></thead>
             <tbody className="divide-y divide-[var(--studio-border)]">
                 {earmarks.map((earmark) => <tr key={earmark.key} onClick={() => { if (!disabled) onEarmark(earmark); }} className={rowClass(false, disabled)}>
-                    <th scope="row" className="px-4 py-2.5"><button type="button" disabled={disabled} aria-haspopup="dialog" onClick={(event) => { event.stopPropagation(); onEarmark(earmark); }} className="rounded text-left font-medium hover:text-[var(--studio-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)] disabled:opacity-40">{earmark.name}</button></th>
+                    <th scope="row" className="px-4 py-2.5"><button type="button" disabled={disabled} aria-haspopup="dialog" onClick={(event) => { event.stopPropagation(); onEarmark(earmark); }} className="rounded text-left font-medium hover:text-[var(--studio-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)] disabled:opacity-40">{earmark.name}</button>{earmark.goal && <Chip>ゴール</Chip>}</th>
                     <td className={`px-4 py-2.5 ${muted}`}>{earmark.sources.join('・') || '資金元の口座なし'}</td>
                     <td className={td}>{money(earmark.budget)}</td>
                     <td className={td}>{money(earmark.held)}</td>
@@ -81,7 +81,7 @@ export default function BudgetTable({ accounts, earmarks, currency, narrowed, hi
             {groups.map((group) => <tbody key={group.kind ?? 'none'} className="divide-y divide-[var(--studio-border)] border-b border-[var(--studio-border)] last:border-b-0">
                 <tr className="bg-[var(--studio-bg)]"><th scope="rowgroup" colSpan={4} className="px-4 py-2 text-sm font-semibold">{group.kind ? KIND_LABELS[group.kind] : '口座未指定'}<span className={`ml-2 font-normal ${muted}`}>{group.rows.length}件</span></th></tr>
                 {group.rows.map((row) => <tr key={row.key} onClick={() => { if (!disabled) onAccount(row); }} className={`align-top ${rowClass(row.accountId === highlight, disabled)}`}>
-                    <th scope="row" className="px-4 py-2.5"><NameButton row={row} disabled={disabled} onOpen={() => onAccount(row)} /><Marks cells={row.cells} /></th>
+                    <th scope="row" className="px-4 py-2.5"><NameButton row={row} disabled={disabled} onOpen={() => onAccount(row)} /><Marks row={row} /></th>
                     <td className={td}>{stack(row)}</td>
                     <td className={td}>{stack(row, true)}</td>
                     <td className={td}><Scheduled row={row} /></td>

@@ -166,7 +166,7 @@
     "body": "object",
     "source": "src/tools/life-events.ts",
     "path_fragment": "/life-events/",
-    "allowed_fields": ["scenario_id", "name", "direction", "account_id", "target_date", "target_amount", "priority", "note", "condition_mode"],
+    "allowed_fields": ["scenario_id", "name", "direction", "account_id", "target_date", "target_amount", "priority", "note", "condition_mode", "interest_rate", "borrowing_event_id", "repeat_count"],
     "required_fields": ["scenario_id", "name", "target_date", "target_amount"]
   },
   {
@@ -176,7 +176,7 @@
     "body": "object",
     "source": "src/tools/life-events.ts",
     "path_fragment": "/life-events/${eventId}",
-    "allowed_fields": ["name", "direction", "account_id", "target_date", "target_amount", "priority", "note", "condition_mode"],
+    "allowed_fields": ["name", "direction", "account_id", "target_date", "target_amount", "priority", "note", "condition_mode", "interest_rate", "borrowing_event_id", "repeat_count"],
     "required_fields": []
   },
   {
@@ -432,14 +432,14 @@
     "path_fragment": "/auto-transactions/${id}"
   },
   {
-    "tool": "goal_earmarks_set",
-    "method": "put",
-    "path": "/life-events/{event_id}/earmarks",
-    "body": "array",
+    "tool": "life_scenarios_make_goal",
+    "method": "post",
+    "path": "/life-scenarios/{scenario_id}/goal",
+    "body": "object",
     "source": "src/tools/life-events.ts",
-    "path_fragment": "/life-events/${event_id}/earmarks",
-    "allowed_fields": ["capsule_id", "share"],
-    "required_fields": ["capsule_id"]
+    "path_fragment": "/life-scenarios/${scenarioId}/goal",
+    "allowed_fields": ["earmarks"],
+    "required_fields": []
   },
   {
     "tool": "contribution_plans_create",
