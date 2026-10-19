@@ -14,7 +14,6 @@ class Capsule(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
-    life_event_id = Column(Integer, ForeignKey("life_events.id", ondelete="CASCADE"), nullable=True)
     name = Column(String, index=True)
     target_amount_minor = Column(MinorUnits)
     monthly_contribution_minor = Column(MinorUnits)
@@ -27,7 +26,6 @@ class Capsule(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     client = relationship("Client", back_populates="capsules")
-    life_event = relationship("LifeEvent", back_populates="capsules")
     funding_sources = relationship(
         "CapsuleFundingSource", back_populates="capsule", cascade="all, delete-orphan",
         order_by="(CapsuleFundingSource.sort_order, CapsuleFundingSource.id)",

@@ -29,11 +29,9 @@ try:
     from backend.app.services.analysis_service import get_summary
     from backend.app.services.budget_plan_store import resolve_budget_plan_id
     from backend.app.services.periods import current_period_key
-    from backend.app.services.report_service import apply_monthly_report_proposal, generate_monthly_report
+    from backend.app.services.report_service import generate_monthly_report
     from backend.app.services.accounting_service import update_transaction
     from backend.app.workflows.monthly_action_workflow import apply_action, create_action
-    from backend.app.services.strategy_service import get_roadmap_projection
-    from backend.app.services.milestone_service import apply_milestones_from_simulation, preview_milestones_from_simulation
 except ModuleNotFoundError:
     from app import models  # type: ignore[no-redef]
     from app.database import Base  # type: ignore[no-redef]
@@ -47,11 +45,9 @@ except ModuleNotFoundError:
     from app.services.analysis_service import get_summary  # type: ignore[no-redef]
     from app.services.budget_plan_store import resolve_budget_plan_id  # type: ignore[no-redef]
     from app.services.periods import current_period_key  # type: ignore[no-redef]
-    from app.services.report_service import apply_monthly_report_proposal, generate_monthly_report  # type: ignore[no-redef]
+    from app.services.report_service import generate_monthly_report  # type: ignore[no-redef]
     from app.services.accounting_service import update_transaction  # type: ignore[no-redef]
     from app.workflows.monthly_action_workflow import apply_action, create_action  # type: ignore[no-redef]
-    from app.services.strategy_service import get_roadmap_projection  # type: ignore[no-redef]
-    from app.services.milestone_service import apply_milestones_from_simulation, preview_milestones_from_simulation  # type: ignore[no-redef]
 
 
 def _session():
@@ -222,80 +218,6 @@ def test_foreign_currency_transactions_are_valued_with_exchange_rates() -> None:
 
 
 
-def test_roadmap_projection_returns_projection_and_liability_demand() -> None:
-    db = _session()
-    try:
-        today = date.today()
-        client = models.Client(id=1, name="test", general_settings={})
-        cash = models.Account(client_id=1, name="cash", account_type="asset")
-        credit = models.Account(client_id=1, name="credit", account_type="liability")
-        db.add(client)
-        db.add_all(
-            [
-                cash,
-                credit,
-                models.SimulationConfig(client_id=1, monthly_savings_minor=to_minor(50000, "JPY"), annual_return=5, inflation_rate=2),
-            ]
-        )
-        db.flush()
-        opening = models.Transaction(
-            client_id=1,
-            date=today,
-            description="Opening balances",
-            amount_minor=Money.from_major(str(0), "JPY").minor,
-            )
-        db.add(opening)
-        db.flush()
-        db.add_all(
-            [
-                models.JournalEntry(transaction_id=opening.id, account_id=cash.id, debit_minor=Money.from_major(str(500000), opening.currency).minor, credit_minor=Money.from_major(str(0), opening.currency).minor),
-                models.JournalEntry(transaction_id=opening.id, account_id=credit.id, debit_minor=Money.from_major(str(0), opening.currency).minor, credit_minor=Money.from_major(str(100000), opening.currency).minor),
-            ]
-        )
-        goal = models.LifeEvent(scenario_id=goal_scenario_id(db, 1),
-            client_id=1,
-            name="House",
-            target_date=date(today.year + 2, 12, 31),
-            target_amount_minor=to_minor(1000000, "JPY"),
-            priority=1,
-        )
-        db.add(goal)
-        db.commit()
-        db.refresh(goal)
-        db.add(
-            models.Milestone(
-                client_id=1,
-                life_event_id=goal.id,
-                date=date(today.year + 1, 12, 31),
-                target_amount_minor=to_minor(400000, "JPY"),
-                note="Halfway",
-            )
-        )
-        db.commit()
-
-        result = get_roadmap_projection(
-            db,
-            client_id=1,
-            years=3,
-            annual_return=5,
-            inflation=2,
-            monthly_savings=50000,
-        )
-
-        assert set(result) >= {"history", "projection", "liability_demand", "milestones"}
-        assert len(result["projection"]) == 4
-        assert result["projection"][0]["p50"] == 400000
-        assert result["liability_demand"][-1]["cumulative_target"] == 1000000
-        assert result["milestones"][0]["life_event_name"] == "House"
-        assert result["roadmap_progression"] in {"On Track", "At Risk", "Off Track"}
-    finally:
-        db.close()
-
-
-
-
-
-
 def test_period_pl_and_balance_sheet_respect_explicit_dates() -> None:
     db = _session()
     try:
@@ -436,60 +358,3 @@ def test_review_action_set_budget_applies_to_target_period() -> None:
     finally:
         db.close()
 
-
-def test_simulation_milestones_preview_and_apply_persist_source_snapshot() -> None:
-    db = _session()
-    try:
-        today = date.today()
-        client = models.Client(id=1, name="test", general_settings={})
-        cash = models.Account(client_id=1, name="cash", account_type="asset")
-        db.add_all(
-            [
-                client,
-                cash,
-                models.SimulationConfig(
-                    client_id=1,
-                    monthly_savings_minor=to_minor(120000, "JPY"),
-                    annual_return=5,
-                    volatility=10,
-                    inflation_rate=2,
-                ),
-            ]
-        )
-        db.flush()
-        _post_opening_balances(db, [(cash, 100000)])
-        goal = models.LifeEvent(scenario_id=goal_scenario_id(db, 1),
-            client_id=1,
-            name="House",
-            target_date=date(today.year + 2, today.month, min(today.day, 28)),
-            target_amount_minor=to_minor(1000000, "JPY"),
-            priority=1,
-        )
-        db.add(goal)
-        db.commit()
-
-        preview = preview_milestones_from_simulation(
-            db,
-            client_id=1,
-            life_event_id=goal.id,
-            basis="deterministic",
-            interval="annual",
-            mode="replace",
-        )
-        created = apply_milestones_from_simulation(
-            db,
-            client_id=1,
-            life_event_id=goal.id,
-            basis="deterministic",
-            interval="annual",
-            mode="replace",
-        )
-
-        assert preview["items"]
-        assert created
-        assert all(item.source == "simulation_deterministic" for item in created)
-        # A near goal receives its shortfall over the 24 months left, not the whole savings.
-        assert created[0].source_snapshot["allocated_monthly_savings"] == pytest.approx(1000000 / 24)
-        assert created[-1].target_amount == 1000000
-    finally:
-        db.close()

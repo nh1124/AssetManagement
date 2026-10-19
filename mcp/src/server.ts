@@ -20,7 +20,6 @@ import { registerPeriodReviewTools } from "./tools/period-reviews.js";
 import { registerProductTools } from "./tools/products.js";
 import { registerAutoTransactionTools } from "./tools/auto-transactions.js";
 import { registerReportTools } from "./tools/reports.js";
-import { registerRoadmapTools } from "./tools/roadmap.js";
 import { registerSimulationTools } from "./tools/simulation.js";
 import { registerStrategyTools } from "./tools/strategy.js";
 import { registerTransactionBatchTools } from "./tools/transaction-batches.js";
@@ -46,7 +45,6 @@ export function buildMcpServer(): McpServer {
   registerPeriodReviewTools(server);
   registerActionTools(server);
   registerAutoTransactionTools(server);
-  registerRoadmapTools(server);
   registerStrategyTools(server);
   registerProductTools(server);
   registerMonthlyPlanningTools(server);

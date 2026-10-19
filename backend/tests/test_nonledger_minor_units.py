@@ -50,10 +50,9 @@ def test_threshold_through_request_context(currency):
 
 MONEY_FIELDS = [
     (models.MonthlyPlanLine, "amount"), (models.LifeEvent, "target_amount"),
-    (models.Milestone, "target_amount"), (models.Capsule, "target_amount"),
+    (models.Capsule, "target_amount"),
     (models.Capsule, "monthly_contribution"), (models.MonthlyAction, "amount"),
     (models.Product, "last_unit_price"), (models.Product, "purchase_price"),
-    (models.SimulationConfig, "monthly_savings"), (models.SimulationScenario, "monthly_savings"),
     (models.AiOperationPolicy, "threshold_amount"),
     (models.RegistryEntry, "amount"),
 ]
@@ -120,7 +119,11 @@ def _legacy_nullable(name, column):
         return False
     if (name, column) == ("capsules", "current_balance"):
         return True
-    return Base.metadata.tables[name].c[f"{column}_minor"].nullable
+    table = Base.metadata.tables.get(name)
+    # Tables and columns retired since this migration were nullable when it ran.
+    if table is None or f"{column}_minor" not in table.c:
+        return True
+    return table.c[f"{column}_minor"].nullable
 
 
 def _old_database(currency="JPY"):
@@ -270,16 +273,12 @@ def _money_rows(db):
     db.flush()
     rows = [
         models.LifeEvent(scenario_id=goal_scenario_id(db, 1), id=1, client_id=1, target_amount_minor=1234),
-        models.Milestone(id=1, client_id=1, life_event_id=1, target_amount_minor=1234),
         models.Capsule(id=1, client_id=1, target_amount_minor=1234,
                        monthly_contribution_minor=1234),
         models.MonthlyPlanLine(id=1, client_id=1, target_period="2026-10", line_type="expense", amount_minor=1234),
         models.MonthlyAction(id=1, client_id=1, source_period="2026-10", proposal_id="read",
                              kind="set_budget", idempotency_key="read", amount_minor=1234),
         models.Product(id=1, client_id=1, last_unit_price_minor=1234, purchase_price_minor=1234),
-        models.SimulationConfig(id=1, client_id=1, monthly_savings_minor=1234),
-        models.SimulationScenario(id=1, client_id=1, life_event_id=1, name="read",
-                                  annual_return=5, inflation=2, monthly_savings_minor=1234),
         models.AiOperationPolicy(id=1, client_id=1, resource="transactions", action="create",
                                  risk="medium", mode="deny", threshold_amount_minor=1234),
         models.RegistryEntry(id=1, client_id=1, name='read', currency='JPY', amount_minor=1234, start_date=date(2026, 1, 1), repeat_mode="indefinite", frequency="Monthly"),
@@ -318,18 +317,6 @@ def test_rule_major_sql_reads_and_type_switch_clear_other_column():
         assert (rule.amount_minor, rule.percentage_bp, rule.amount_value) == (None, 250, 2.5)
         rule = update_rule(db, 1, 1, schemas.CapsuleRuleUpdate(amount_type="fixed", amount_value=12.34))
         assert (rule.amount_minor, rule.percentage_bp, rule.amount_value) == (1234, None, 12.34)
-
-
-def test_simulation_default_is_major_in_client_currency():
-    engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
-    with Session(engine) as db:
-        db.add(models.Client(id=1, name="USD default", general_settings={"currency": "USD"}))
-        db.commit()
-        config = models.SimulationConfig(client_id=1)
-        db.add(config)
-        db.commit()
-        assert (config.monthly_savings_minor, config.monthly_savings) == (10000000, 100000)
 
 
 def test_missing_owner_is_refused_for_runtime_reads_and_writes():

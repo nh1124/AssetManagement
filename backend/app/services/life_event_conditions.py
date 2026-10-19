@@ -13,7 +13,7 @@ from .reporting_service import get_balance_sheet
 from .capsule_service import claimed_minor
 from .fx_service import get_client_currency
 from .ledger_valuation import calculate_account_balances
-from .strategy_service import get_life_events_with_progress
+from .goal_earmark_service import events_with_progress
 from .goal_service import goal_events_query
 
 REFERENCE_MODELS = {
@@ -58,6 +58,22 @@ def create_condition(db: Session, client_id: int, event_id: int, payload: schema
     return row
 
 
+def update_condition(db: Session, client_id: int, event_id: int, condition_id: int,
+                     payload: schemas.LifeEventConditionCreate) -> models.LifeEventCondition:
+    _event(db, client_id, event_id)
+    row = db.query(models.LifeEventCondition).filter_by(client_id=client_id, life_event_id=event_id, id=condition_id).first()
+    if row is None:
+        raise NotFound("条件が見つかりません。")
+    model = REFERENCE_MODELS.get(payload.metric)
+    if model is not None and db.query(model).filter_by(client_id=client_id, id=payload.reference_id).first() is None:
+        raise NotFound("同じクライアントの対象を選択してください。")
+    for key, value in payload.model_dump().items():
+        setattr(row, key, value)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
 def delete_condition(db: Session, client_id: int, event_id: int, condition_id: int) -> None:
     _event(db, client_id, event_id)
     row = db.query(models.LifeEventCondition).filter_by(client_id=client_id, life_event_id=event_id, id=condition_id).first()
@@ -87,7 +103,7 @@ class _Readers:
         self.references = {
             # A current goal-progress fact always refers to the adopted plan, even in a draft's conditions.
             metric: {row.id: row for row in (
-                goal_events_query(db, client_id, include_archived=True) if metric == "goal_progress"
+                goal_events_query(db, client_id) if metric == "goal_progress"
                 else db.query(model).filter(model.client_id == client_id)
             ).all()}
             for metric, model in REFERENCE_MODELS.items()
@@ -160,14 +176,16 @@ class _Readers:
         elif row.metric == "goal_progress":
             if reference.direction == "income":
                 return None, "収入イベントには積立進捗がありません。"
-            for capsule in self.db.query(models.Capsule).filter_by(client_id=self.client_id, life_event_id=reference.id).all():
-                reason = self.foreign(self.claim(capsule.id))
+            # Progress counts client-currency claims only; a foreign one makes it unknown, not smaller.
+            for link in self.db.query(models.GoalEventEarmark).filter_by(client_id=self.client_id, life_event_id=reference.id).all():
+                reason = self.foreign(self.claim(link.capsule_id))
                 if reason:
                     break
             if reason is None:
                 if self.progress is None:
-                    self.progress = {event["id"]: event for event in get_life_events_with_progress(self.db, self.client_id, include_archived=True)}
-                actual = self.progress[reference.id]["progress_percentage"]
+                    self.progress = {event["id"]: event for event in events_with_progress(self.db, self.client_id)}
+                actual = self.progress[reference.id]["progress_percentage"] if reference.id in self.progress else None
+                reason = None if actual is not None else "ゴールのシナリオのイベントではありません。"
         elif row.metric == "member_age":
             born = reference.birth_date
             if born > self.as_of:
@@ -227,100 +245,74 @@ def evaluate(db: Session, client_id: int, life_event_id: int, *, as_of: date | N
 
 def evaluate_all(db: Session, client_id: int, *, as_of: date | None = None) -> dict[int, dict]:
     with db.no_autoflush:
-        return _evaluate(db, client_id, goal_events_query(db, client_id, include_archived=True).order_by(models.LifeEvent.id).all(), as_of)
-
-
-def _same_day_in(day: date, year: int) -> date:
-    try:
-        return day.replace(year=year)
-    except ValueError:
-        # 29 February in a non-leap year.
-        return date(year, 2, 28)
+        return _evaluate(db, client_id, goal_events_query(db, client_id).order_by(models.LifeEvent.id).all(), as_of)
 
 
 def _probability(truth: np.ndarray) -> float | None:
     return None if np.any(truth == 0) else float(np.mean(truth == 1))
 
 
-def evaluate_projection(db: Session, client_id: int, events: list, projection: list[dict], paths: np.ndarray) -> list[dict]:
-    """Report preconditions on shared paths without changing the scenario."""
-    with db.no_autoflush:
+class PathJudge:
+    """Judge an event's preconditions on simulated paths, at the moment the event would happen.
+
+    Net worth and the balances of simulated accounts are read per path; age and date
+    from the event's date; the other metrics (free cash, an earmark's claim, goal
+    progress, an account outside the simulation) from today's values.
+    """
+    PROJECTED = {"net_worth", "member_age", "date_reached"}
+
+    def __init__(self, db: Session, client_id: int, event_ids: list[int]):
+        self.db, self.client_id = db, client_id
         rows = db.query(models.LifeEvent).filter(
-            models.LifeEvent.client_id == client_id,
-            models.LifeEvent.id.in_([event.id for event in events]),
-        ).all()
-        modes = {row.id: row.condition_mode for row in rows}
+            models.LifeEvent.client_id == client_id, models.LifeEvent.id.in_(event_ids)).all()
+        self.modes = {row.id: row.condition_mode for row in rows}
         conditions = db.query(models.LifeEventCondition).filter(
             models.LifeEventCondition.client_id == client_id,
-            models.LifeEventCondition.life_event_id.in_(modes),
+            models.LifeEventCondition.life_event_id.in_(event_ids),
         ).order_by(models.LifeEventCondition.id).all()
-        if not conditions:
-            return []
-        today = date.today()
-        projected_metrics = {"net_worth", "member_age", "date_reached"}
-        current = _Readers(db, client_id, [row for row in conditions if row.metric not in projected_metrics], today)
-        grouped: dict[int, list[models.LifeEventCondition]] = {}
+        self.grouped: dict[int, list[models.LifeEventCondition]] = {}
         for condition in conditions:
-            grouped.setdefault(condition.life_event_id, []).append(condition)
-        result = []
-        by_year = {row["year"]: index for index, row in enumerate(projection)}
-        for event in events:
-            event_conditions = grouped.get(event.id, [])
-            if not event_conditions:
-                continue
-            resolved_date = event.resolved_date
-            # Use the prior year because a down payment requires wealth before the event is paid.
-            year = max(today.year, resolved_date.year - 1) if resolved_date else None
-            index = by_year.get(year)
-            # A projection row for year Y sits one whole year per step from today, so
-            # it describes today's month and day in Y -- not the end of Y.
-            judged_at = _same_day_in(today, year) if year else None
-            calendar = _Readers(
-                db, client_id,
-                [row for row in event_conditions if row.metric in {"member_age", "date_reached"}],
-                resolved_date or today,
-            )
-            values = median = None
-            if index is not None:
-                row = projection[index]
-                expense, income = row["cumulative_target"], row["cumulative_income"]
-                if resolved_date.year <= today.year:
-                    # The starting row must also precede this year's payments, including
-                    # the event's own down payment: a precondition asks what is held before paying.
-                    prior = [item for item in events if item.resolved_date and item.resolved_date.year < resolved_date.year]
-                    expense = round(sum(item.target_amount for item in prior if item.direction == "expense"), 0)
-                    income = round(sum(item.target_amount for item in prior if item.direction == "income"), 0)
-                values = paths[:, index] - expense + income
-                median = row["p50"] + row["cumulative_target"] - row["cumulative_income"] - expense + income
-            evaluated, truths = [], []
-            for condition in event_conditions:
-                projected = condition.metric in projected_metrics
-                if condition.metric == "net_worth":
-                    # Future events outside the horizon cannot borrow the last available year's wealth.
-                    detail = current.evaluate_actual(
-                        condition, median, None if median is not None else "評価日の試算がありません。",
-                    )
-                elif projected:
-                    detail = (calendar.evaluate(condition) if resolved_date else
-                              calendar.evaluate_actual(condition, None, "イベントの日付が指定されていません。"))
-                else:
-                    detail = current.evaluate(condition)
+            self.grouped.setdefault(condition.life_event_id, []).append(condition)
+        self.current = _Readers(db, client_id, [row for row in conditions if row.metric not in self.PROJECTED], date.today())
+
+    def has_conditions(self, event_id: int) -> bool:
+        return bool(self.grouped.get(event_id))
+
+    def judge(self, event_id: int, at: date | None, net_worth: np.ndarray,
+              balances: dict[int, np.ndarray]) -> tuple[np.ndarray, list[dict]]:
+        """(truth per path: 1 true, 0 unknown, -1 false; the condition details)."""
+        conditions = self.grouped.get(event_id, [])
+        paths = net_worth.shape[0]
+        if not conditions:
+            return np.ones(paths, dtype=np.int8), []
+        calendar = _Readers(self.db, self.client_id, [row for row in conditions if row.metric in {"member_age", "date_reached"}],
+                            at or date.today())
+        truths, details = [], []
+        for condition in conditions:
+            values = None
+            if condition.metric == "net_worth":
+                values = net_worth
+            elif condition.metric == "account_balance" and condition.reference_id in balances:
+                values = balances[condition.reference_id]
+            if values is not None:
+                median = float(np.median(values))
+                detail = self.current.evaluate_actual(condition, median, None)
+                truth = np.full(paths, 0, dtype=np.int8)
+                if detail["threshold"] is not None:
+                    # Equality on a continuous draw is meaningless; broadcast the median judgement.
+                    truth = (np.full(paths, 1 if detail["satisfied"] else -1, dtype=np.int8) if condition.comparator == "eq"
+                             else np.where(COMPARATORS[condition.comparator](values, detail["threshold"]), 1, -1).astype(np.int8))
+                basis = "projected"
+            else:
+                projected = condition.metric in {"member_age", "date_reached"}
+                detail = (calendar.evaluate(condition) if at else calendar.evaluate_actual(condition, None, "イベントの日付が指定されていません。")) \
+                    if projected else self.current.evaluate(condition)
                 satisfied = detail["satisfied"]
-                # Ordered false/unknown/true values let min/max apply the existing
-                # three-valued all/any rules to the same paths, preserving correlations.
-                truth = np.full(paths.shape[0], 0 if satisfied is None else 1 if satisfied else -1, dtype=np.int8)
-                # Equality on a continuous draw is meaningless; broadcast the P50 judgement.
-                # For inequalities, satisfied describes P50 while probability counts actual paths.
-                if (condition.metric == "net_worth" and condition.comparator != "eq"
-                        and values is not None and detail["threshold"] is not None):
-                    truth = np.where(COMPARATORS[condition.comparator](values, detail["threshold"]), 1, -1)
-                truths.append(truth)
-                evaluated.append({**detail, "threshold_minor": condition.threshold_minor,
-                                  "threshold_number": condition.threshold_number, "threshold_date": condition.threshold_date,
-                                  "basis": "projected" if projected else "current", "probability": _probability(truth)})
-            mode = modes[event.id]
-            combined = np.minimum.reduce(truths) if mode == "all" else np.maximum.reduce(truths)
-            result.append({"event_id": event.id, "event_name": event.name,
-                           "judged_at": judged_at.isoformat() if judged_at else None,
-                           "mode": mode, "probability": _probability(combined), "conditions": evaluated})
-        return result
+                truth = np.full(paths, 0 if satisfied is None else 1 if satisfied else -1, dtype=np.int8)
+                basis = "projected" if projected else "current"
+            truths.append(truth)
+            details.append({**detail, "threshold_minor": condition.threshold_minor, "threshold_number": condition.threshold_number,
+                            "threshold_date": condition.threshold_date, "basis": basis, "probability": _probability(truth)})
+        # Ordered false/unknown/true values let min/max apply the three-valued all/any rules per path.
+        combined = np.minimum.reduce(truths) if self.modes.get(event_id, "all") == "all" else np.maximum.reduce(truths)
+        return combined, details

@@ -182,34 +182,6 @@ def test_capsule_preview_uses_currency_precision_and_required_helper_argument(po
         capsule_service._resolve_rule_amount(rule, 12.34)
 
 
-def test_goal_return_transfer_uses_client_minor_units(posting):
-    db, client, (cash, _, reserve, _), _ = posting
-    goal = models.LifeEvent(scenario_id=goal_scenario_id(db, client.id), client_id=client.id, name="Savings", target_amount_minor=to_minor(100, "USD"))
-    db.add(goal)
-    db.flush()
-    capsule = models.Capsule(client_id=client.id, name="Savings", life_event_id=goal.id,
-                             funding_sources=[models.CapsuleFundingSource(client_id=client.id, account_id=reserve.id, target_amount_minor=to_minor(100, "USD") or 0)], target_amount_minor=to_minor(100, "USD"))
-    db.add(capsule)
-    db.flush()
-    ledger_service.create_transaction(db, client_id=client.id, date=date(2026, 10, 12), description="Reserve",
-                                      amount_minor=1234, currency="USD",
-                                      legs=[Leg(reserve.id, debit=1234, capsule_id=capsule.id), Leg(cash.id, credit=1234)])
-    db.commit()
-    assert goal_service.delete_goal(db, client.id, goal.id, transfer_account_id=cash.id)
-    tx = db.query(models.Transaction).filter(models.Transaction.description.like("Goal deleted%")).one()
-    assert (tx.currency, tx.amount_minor, tx.amount) == ("USD", 1234, 12.34)
-
-
-def test_report_allocation_uses_client_minor_units(posting):
-    db, client, _, _ = posting
-    goal = models.LifeEvent(scenario_id=goal_scenario_id(db, client.id), client_id=client.id, name="Savings", target_amount_minor=to_minor(100, "USD"))
-    db.add(goal)
-    db.flush()
-    result = report_service._apply_allocate_to_goal(
-        db, client.id, "2026-10", {"target_id": goal.id, "amount": 12.34},
-    )
-    tx = db.get(models.Transaction, result["transaction_id"])
-    assert (tx.currency, tx.amount_minor, tx.amount) == ("USD", 1234, 12.34)
 
 
 @pytest.mark.parametrize("kind", KINDS)

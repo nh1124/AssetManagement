@@ -17,7 +17,7 @@ import {
 const periodSchema = z.string().regex(/^\d{4}-\d{2}$/);
 
 const planLineTypeSchema = z.enum(["income", "expense", "allocation", "debt_payment", "borrowing", "drawdown"]);
-const planTargetTypeSchema = z.enum(["account", "capsule", "life_event", "product", "manual"]);
+const planTargetTypeSchema = z.enum(["account", "capsule", "product", "manual"]);
 const cashTreatmentSchema = z.enum(["auto", "cash", "non_cash"]);
 
 const monthlyPlanLinePayloadKeys = [

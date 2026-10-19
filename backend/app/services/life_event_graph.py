@@ -37,8 +37,6 @@ def create_link(
     source, target = events[from_event_id], events[to_event_id]
     if source.scenario_id != target.scenario_id:
         raise Refused("同じシナリオのイベントを選択してください。", status_code=422)
-    if source.archived_at or target.archived_at:
-        raise Refused("中止・アーカイブしたイベントは接続できません。", status_code=422)
     if from_event_id == to_event_id:
         raise Refused(f"「{source.name}」自身には接続できません。", status_code=422)
     if kind != "after":

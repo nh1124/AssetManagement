@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 """Exercise graph choices, resolved demand and portable edges on scratch data."""
 import asyncio
 from dataclasses import asdict
@@ -16,11 +17,10 @@ from app.dependencies import get_current_client
 from app.domain.errors import Conflict, Invalid, NotFound, Refused
 from app.domain.transfer import EXPORT_VERSION, validate_import_payload
 from app.services import life_event_graph as graph
-from app.services import life_scenario_service as saved, life_event_walk as walk
+from app.services import life_event_walk as walk
 from scenario_fixtures import goal_scenario_id
 from app.services.data_transfer_service import export_client, import_client
 from app.services.goal_service import delete_goal
-from app.services.strategy_service import aggregate_life_event_demand_by_year
 
 
 
@@ -45,14 +45,18 @@ def db():
     engine.dispose()
 
 
-def node(db, name, *, target_date=date(2030, 1, 31), amount=0, client_id=1, archived=False):
+def node(db, name, *, target_date=date(2030, 1, 31), amount=0, client_id=1):
     value = models.LifeEvent(
         scenario_id=goal_scenario_id(db, client_id), client_id=client_id, name=name, target_date=target_date,
-        target_amount_minor=amount, archived_at=datetime(2026, 1, 1) if archived else None,
+        target_amount_minor=amount,
     )
     db.add(value)
     db.commit()
     return value
+
+
+def resolved(db):
+    return SimpleNamespace(events=walk.walk(db, 1, goal_scenario_id(db, 1)))
 
 
 def link(db, source, target, kind="after", offset=0):
@@ -66,7 +70,7 @@ def test_after_chain_composes_month_offsets_and_keeps_stored_dates(db):
     link(db, a, b, offset=1)
     link(db, b, c, offset=2)
     link(db, c, d, offset=0)
-    scenarios = [saved.resolve(db, 1, saved.get_goal(db, 1))]
+    scenarios = [resolved(db)]
     assert len(scenarios) == 1
     assert [item.resolved_date for item in scenarios[0].events] == [
         date(2030, 1, 31), date(2030, 2, 28), date(2030, 4, 28), date(2030, 1, 31),
@@ -78,7 +82,7 @@ def test_missing_source_date_stays_unresolved_and_negative_offsets_are_calendar_
     a = node(db, "未定", target_date=None)
     b = node(db, "翌月")
     link(db, a, b, offset=1)
-    assert [item.resolved_date for item in saved.resolve(db, 1, saved.get_goal(db, 1)).events] == [None, None]
+    assert [item.resolved_date for item in resolved(db).events] == [None, None]
     assert walk._offset_date(date(2032, 3, 31), -1) == date(2032, 2, 29)
     with pytest.raises(Refused):
         walk._offset_date(date(2030, 1, 1), 120000)
@@ -96,14 +100,12 @@ def test_cycle_is_refused_before_writing_and_names_both_events(db):
 
 
 @pytest.mark.parametrize("which", ["source", "target"])
-@pytest.mark.parametrize("invalid", ["foreign", "archived", "missing"])
-def test_both_ends_must_belong_to_client_and_be_active(db, which, invalid):
+@pytest.mark.parametrize("invalid", ["foreign", "missing"])
+def test_both_ends_must_belong_to_client(db, which, invalid):
     a, b = node(db, "始点"), node(db, "終点")
     bad = a if which == "source" else b
     if invalid == "foreign":
         bad.client_id = 2
-    elif invalid == "archived":
-        bad.archived_at = datetime.utcnow()
     else:
         db.delete(bad)
     db.commit()
@@ -121,20 +123,6 @@ def test_self_duplicate_and_invalid_kind_are_refused(db):
     link(db, a, b)
     with pytest.raises(Conflict):
         link(db, a, b, "after")
-    assert len(graph.list_links(db, 1)) == 1
-
-
-def test_archived_nodes_and_incident_edges_are_excluded(db):
-    a, b = node(db, "A"), node(db, "B")
-    link(db, a, b, offset=12)
-    a.archived_at = datetime.utcnow()
-    node(db, "独立した中止", archived=True)
-    node(db, "別人", client_id=2)
-    db.commit()
-    scenarios = [saved.resolve(db, 1, saved.get_goal(db, 1))]
-    assert [item.id for item in scenarios[0].events] == [b.id]
-    assert scenarios[0].events[0].incoming_link_id is None
-    assert scenarios[0].events[0].resolved_date == b.target_date
     assert len(graph.list_links(db, 1)) == 1
 
 
@@ -174,7 +162,7 @@ def test_deleting_link_is_client_scoped_and_restores_root(db):
     assert graph.list_links(db, 2) == []
     graph.delete_link(db, 1, edge.id)
     assert not graph.list_links(db, 1)
-    assert [item.resolved_date for item in saved.resolve(db, 1, saved.get_goal(db, 1)).events] == [a.target_date, b.target_date]
+    assert [item.resolved_date for item in resolved(db).events] == [a.target_date, b.target_date]
 
 
 def test_merge_is_counted_once_resolved_after_sources_and_uses_lowest_active_link(db):
@@ -183,7 +171,7 @@ def test_merge_is_counted_once_resolved_after_sources_and_uses_lowest_active_lin
     b = node(db, "B", target_date=date(2040, 1, 1))
     first = link(db, b, shared, offset=12)
     link(db, a, shared, offset=12)
-    scenario = saved.resolve(db, 1, saved.get_goal(db, 1))
+    scenario = resolved(db)
     assert len(scenario.events) == 3
     assert scenario.events[-1].id == shared.id
     assert scenario.events[-1].resolved_date == date(2041, 1, 1)
@@ -197,7 +185,7 @@ def test_backup_carries_links_restore_remaps_both_ends_and_keeps_other_client(db
     db.commit()
     source, target = db.get(models.Client, 1), db.get(models.Client, 2)
     backup = export_client(db, source)
-    assert backup["version"] == EXPORT_VERSION == 25
+    assert backup["version"] == EXPORT_VERSION == 26
     assert backup["data"]["life_event_links"][0]["note"] == "判断"
     import_client(db, target, data=backup["data"], version=backup["version"], manifest=backup["manifest"])
     restored = graph.list_links(db, 2)[0]

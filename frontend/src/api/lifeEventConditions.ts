@@ -41,11 +41,11 @@ export interface HouseholdMember extends MemberInput {
 export async function getGoalConditions(id: number): Promise<ConditionEvaluation> {
     return (await api.get<ConditionEvaluation>(`/life-events/${id}/conditions`)).data;
 }
-export async function getAllConditions(): Promise<Record<number, ConditionEvaluation>> {
-    return (await api.get<Record<number, ConditionEvaluation>>('/life-events/conditions')).data;
-}
 export async function addGoalCondition(id: number, input: ConditionInput): Promise<void> {
     await api.post(`/life-events/${id}/conditions`, input);
+}
+export async function updateGoalCondition(id: number, conditionId: number, input: ConditionInput): Promise<void> {
+    await api.put(`/life-events/${id}/conditions/${conditionId}`, input);
 }
 export async function deleteGoalCondition(id: number, conditionId: number): Promise<void> {
     await api.delete(`/life-events/${id}/conditions/${conditionId}`);

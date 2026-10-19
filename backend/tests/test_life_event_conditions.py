@@ -26,7 +26,7 @@ from app.services.data_transfer_service import export_client, import_client
 from app.services.goal_service import delete_goal
 from app.services.ledger_service import create_transaction
 from app.services import life_scenario_service as saved
-from app.services.strategy_service import get_life_events_with_progress
+from app.services.goal_earmark_service import events_with_progress
 
 
 @pytest.fixture
@@ -80,7 +80,7 @@ def result(db, owner, as_of=None):
 def test_each_metric_reads_its_existing_figure(db, metric):
     owner = goal(db)
     cash, capsule = finances(db)
-    capsule.life_event_id = owner.id
+    db.add(models.GoalEventEarmark(client_id=1, life_event_id=owner.id, capsule_id=capsule.id))
     member = household_service.save_member(db, 1, schemas.HouseholdMemberCreate(name="子", birth_date=date(2010, 10, 15)))
     db.commit()
     references = {"account_balance": cash.id, "capsule_claim": capsule.id, "goal_progress": owner.id, "member_age": member.id}
@@ -90,7 +90,7 @@ def test_each_metric_reads_its_existing_figure(db, metric):
         "net_worth": get_balance_sheet(db, client_id=1)["net_worth"],
         "free_cash": calculate_logical_balance(db, 1), "account_balance": 500,
         "capsule_claim": claimed_minor(db, 1, capsule.id)["JPY"],
-        "goal_progress": get_life_events_with_progress(db, 1)[0]["progress_percentage"],
+        "goal_progress": events_with_progress(db, 1)[0]["progress_percentage"],
         "member_age": 18, "date_reached": date(2028, 10, 15),
     }
     assert actual == expected[metric]
@@ -139,7 +139,7 @@ def test_missing_or_other_client_reference_is_unknown(db, metric):
 def test_foreign_money_is_unknown_instead_of_converted_or_discarded(db, metric):
     owner = goal(db)
     cash, capsule = finances(db, currency="USD")
-    capsule.life_event_id = owner.id
+    db.add(models.GoalEventEarmark(client_id=1, life_event_id=owner.id, capsule_id=capsule.id))
     db.add(models.ExchangeRate(client_id=1, base_currency="USD", quote_currency="JPY", rate=150, as_of_date=date.today()))
     db.commit()
     add(db, owner, metric, {"account_balance": cash.id, "capsule_claim": capsule.id, "goal_progress": owner.id}.get(metric))
@@ -239,7 +239,7 @@ def test_backup_remaps_every_reference_and_preserves_dangling_without_id_collisi
     db.commit()
     source, target = db.get(models.Client, 1), db.get(models.Client, 2)
     document = export_client(db, source)
-    assert document["version"] == EXPORT_VERSION == 25
+    assert document["version"] == EXPORT_VERSION == 26
     for _ in range(2):
         import_client(db, target, data=document["data"], version=17, manifest=document["manifest"])
         restored = db.query(models.LifeEvent).filter_by(client_id=2).one()

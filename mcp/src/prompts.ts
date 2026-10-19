@@ -32,24 +32,24 @@ export function registerPrompts(server: McpServer): void {
   );
 
   server.registerPrompt(
-    "goal-roadmap-check",
+    "goal-check",
     {
-      title: "Goal roadmap check",
-      description: "Review goals, milestones, and roadmap projection before suggesting plan changes.",
+      title: "Goal check",
+      description: "Review the goal scenario, its simulation and the plan before suggesting changes.",
       argsSchema: {
-        years: z.string().optional().describe("Projection years to inspect"),
+        period: z.string().optional().describe("Month to compare with the plan, YYYY-MM"),
       },
     },
-    async ({ years }) => ({
+    async ({ period }) => ({
       messages: [
         {
           role: "user",
           content: {
             type: "text",
             text:
-              `Inspect the roadmap using life_events_list, roadmap_projection${years ? ` with years=${years}` : ""}, ` +
-              "and roadmap_milestones_list. Identify risks, missing milestones, and useful simulations. " +
-              "Preview generated milestones before applying them.",
+              "Inspect the goal using life_scenarios_list, life_scenarios_simulate for the goal scenario and life_events_list, " +
+              `then goal_plan_check${period ? ` for ${period}` : ""}. Identify events unlikely to happen or be affordable, ` +
+              "accounts whose plan falls short of the 積立設定, and preview with goal_plan_preview before any goal_plan_apply.",
           },
         },
       ],

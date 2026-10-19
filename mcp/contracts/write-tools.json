@@ -166,8 +166,8 @@
     "body": "object",
     "source": "src/tools/life-events.ts",
     "path_fragment": "/life-events/",
-    "allowed_fields": ["name", "start_date", "target_date", "target_amount", "priority", "note", "active_plan_basis", "active_plan_label", "plan_status_override"],
-    "required_fields": ["name", "target_date", "target_amount"]
+    "allowed_fields": ["scenario_id", "name", "direction", "account_id", "target_date", "target_amount", "priority", "note", "condition_mode"],
+    "required_fields": ["scenario_id", "name", "target_date", "target_amount"]
   },
   {
     "tool": "life_events_update",
@@ -175,8 +175,8 @@
     "path": "/life-events/{event_id}",
     "body": "object",
     "source": "src/tools/life-events.ts",
-    "path_fragment": "/life-events/${id}",
-    "allowed_fields": ["name", "start_date", "target_date", "target_amount", "priority", "note", "active_plan_basis", "active_plan_label", "plan_status_override"],
+    "path_fragment": "/life-events/${eventId}",
+    "allowed_fields": ["name", "direction", "account_id", "target_date", "target_amount", "priority", "note", "condition_mode"],
     "required_fields": []
   },
   {
@@ -185,35 +185,7 @@
     "path": "/life-events/{event_id}",
     "body": "none",
     "source": "src/tools/life-events.ts",
-    "path_fragment": "/life-events/${id}"
-  },
-  {
-    "tool": "roadmap_milestones_create",
-    "method": "post",
-    "path": "/roadmap/milestones",
-    "body": "object",
-    "source": "src/tools/roadmap.ts",
-    "path_fragment": "/roadmap/milestones",
-    "allowed_fields": ["life_event_id", "date", "target_amount", "note", "source", "source_snapshot", "is_active_plan"],
-    "required_fields": ["date", "target_amount"]
-  },
-  {
-    "tool": "roadmap_milestones_update",
-    "method": "patch",
-    "path": "/roadmap/milestones/{milestone_id}",
-    "body": "object",
-    "source": "src/tools/roadmap.ts",
-    "path_fragment": "/roadmap/milestones/${id}",
-    "allowed_fields": ["date", "target_amount", "note", "is_active_plan"],
-    "required_fields": []
-  },
-  {
-    "tool": "roadmap_milestones_delete",
-    "method": "delete",
-    "path": "/roadmap/milestones/{milestone_id}",
-    "body": "none",
-    "source": "src/tools/roadmap.ts",
-    "path_fragment": "/roadmap/milestones/${id}"
+    "path_fragment": "/life-events/${eventId}"
   },
   {
     "tool": "exchange_rates_delete",
@@ -248,7 +220,7 @@
     "body": "object",
     "source": "src/tools/capsules.ts",
     "path_fragment": "/capsules/${id}",
-    "allowed_fields": ["name", "target_amount", "monthly_contribution", "life_event_id", "capsule_type", "target_amount_source", "monthly_contribution_source"],
+    "allowed_fields": ["name", "target_amount", "monthly_contribution", "capsule_type", "target_amount_source", "monthly_contribution_source"],
     "required_fields": []
   },
   {
@@ -404,68 +376,14 @@
     "required_fields": ["transactions"]
   },
   {
-    "tool": "reports_apply_action",
-    "method": "post",
-    "path": "/reports/{period}/actions/{proposal_id}/apply",
-    "body": "none",
-    "source": "src/tools/reports.ts",
-    "path_fragment": "/reports/${encodeURIComponent(period)}/actions/${encodeURIComponent(proposal_id)}/apply"
-  },
-  {
-    "tool": "reports_apply_action",
-    "method": "post",
-    "path": "/reports/period/actions/{proposal_id}/apply",
-    "body": "none",
-    "source": "src/tools/reports.ts",
-    "path_fragment": "/reports/period/actions/${encodeURIComponent(proposal_id)}/apply"
-  },
-  {
-    "tool": "roadmap_milestones_apply_from_simulation",
-    "method": "post",
-    "path": "/roadmap/life-events/{life_event_id}/milestones/from-simulation",
-    "body": "object",
-    "source": "src/tools/roadmap.ts",
-    "path_fragment": "/roadmap/life-events/${life_event_id}/milestones/from-simulation",
-    "allowed_fields": ["basis", "interval", "mode", "n_simulations", "annual_return", "inflation", "monthly_savings"],
-    "required_fields": []
-  },
-  {
     "tool": "simulation_config_update",
     "method": "put",
     "path": "/simulation/config",
     "body": "object",
     "source": "src/tools/simulation.ts",
     "path_fragment": "/simulation/config",
-    "allowed_fields": ["annual_return", "tax_rate", "is_nisa", "monthly_savings", "volatility", "inflation_rate"],
+    "allowed_fields": ["annual_return", "tax_rate", "is_nisa", "volatility", "inflation_rate"],
     "required_fields": []
-  },
-  {
-    "tool": "simulation_scenarios_create",
-    "method": "post",
-    "path": "/simulation/scenarios",
-    "body": "object",
-    "source": "src/tools/simulation.ts",
-    "path_fragment": "/simulation/scenarios",
-    "allowed_fields": ["life_event_id", "name", "description", "annual_return", "inflation", "monthly_savings", "contribution_schedule", "allocation_mode"],
-    "required_fields": ["life_event_id", "name", "annual_return", "inflation"]
-  },
-  {
-    "tool": "simulation_scenarios_update",
-    "method": "put",
-    "path": "/simulation/scenarios/{scenario_id}",
-    "body": "object",
-    "source": "src/tools/simulation.ts",
-    "path_fragment": "/simulation/scenarios/${id}",
-    "allowed_fields": ["name", "description", "annual_return", "inflation", "monthly_savings", "contribution_schedule", "allocation_mode"],
-    "required_fields": []
-  },
-  {
-    "tool": "simulation_scenarios_delete",
-    "method": "delete",
-    "path": "/simulation/scenarios/{scenario_id}",
-    "body": "none",
-    "source": "src/tools/simulation.ts",
-    "path_fragment": "/simulation/scenarios/${id}"
   },
   {
     "tool": "fx_tracked_currencies_create",
@@ -512,5 +430,53 @@
     "body": "none",
     "source": "src/tools/auto-transactions.ts",
     "path_fragment": "/auto-transactions/${id}"
+  },
+  {
+    "tool": "goal_earmarks_set",
+    "method": "put",
+    "path": "/life-events/{event_id}/earmarks",
+    "body": "array",
+    "source": "src/tools/life-events.ts",
+    "path_fragment": "/life-events/${event_id}/earmarks",
+    "allowed_fields": ["capsule_id", "share"],
+    "required_fields": ["capsule_id"]
+  },
+  {
+    "tool": "contribution_plans_create",
+    "method": "post",
+    "path": "/life-scenarios/{scenario_id}/contribution-plans",
+    "body": "object",
+    "source": "src/tools/life-events.ts",
+    "path_fragment": "/life-scenarios/${scenario_id}/contribution-plans",
+    "allowed_fields": ["account_id", "start_period", "monthly_amount", "annual_return", "note"],
+    "required_fields": []
+  },
+  {
+    "tool": "contribution_plans_update",
+    "method": "put",
+    "path": "/life-scenarios/contribution-plans/{plan_id}",
+    "body": "object",
+    "source": "src/tools/life-events.ts",
+    "path_fragment": "/life-scenarios/contribution-plans/${planId}",
+    "allowed_fields": ["account_id", "start_period", "monthly_amount", "annual_return", "note"],
+    "required_fields": []
+  },
+  {
+    "tool": "contribution_plans_delete",
+    "method": "delete",
+    "path": "/life-scenarios/contribution-plans/{plan_id}",
+    "body": "none",
+    "source": "src/tools/life-events.ts",
+    "path_fragment": "/life-scenarios/contribution-plans/${planId}"
+  },
+  {
+    "tool": "goal_plan_apply",
+    "method": "post",
+    "path": "/goal-budget/apply",
+    "body": "object",
+    "source": "src/tools/life-events.ts",
+    "path_fragment": "/goal-budget/apply",
+    "allowed_fields": ["start_period", "end_period", "fingerprint"],
+    "required_fields": ["start_period", "end_period", "fingerprint"]
   }
 ]

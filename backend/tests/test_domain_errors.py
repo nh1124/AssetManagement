@@ -9,9 +9,7 @@ from backend.app.database import get_db
 from backend.app.dependencies import get_current_client
 from backend.app.domain.errors import Conflict, DomainError, Invalid, NotFound, Refused
 from backend.app.main import app
-from backend.app.routers import simulation_scenarios, transaction_batches
-from backend.app.services import simulation_scenario_service
-from backend.app.services.simulation_scenario_service import ScenarioGoalMismatch, ScenarioNameConflict
+from backend.app.routers import transaction_batches
 from backend.app.workflows.transaction_batch_workflow import BatchPostingError
 
 
@@ -50,7 +48,6 @@ def http():
             detail=payload if payload is not None else "Import payload validation failed",
         )
 
-    http_app.include_router(simulation_scenarios.router)
     http_app.include_router(transaction_batches.router)
     http_app.dependency_overrides[get_db] = lambda: None
     http_app.dependency_overrides[get_current_client] = lambda: SimpleNamespace(id=1)
@@ -113,12 +110,6 @@ def test_explicit_status_preserves_the_goal_422(http, error_type):
 
 
 @pytest.mark.parametrize("error_type,category,status_code,path,payload", [
-    (ScenarioNameConflict, Conflict, 409, "/simulation/scenarios", {
-        "life_event_id": 1, "name": "baseline", "annual_return": 5, "inflation": 2,
-    }),
-    (ScenarioGoalMismatch, Invalid, 400, "/simulation/scenarios/compare", {
-        "life_event_id": 1, "scenario_ids": [1, 2],
-    }),
     (BatchPostingError, Invalid, 400, "/transaction-batches/", {"transactions": []}),
 ])
 def test_existing_errors_reach_the_handler_through_their_routers(
@@ -130,12 +121,7 @@ def test_existing_errors_reach_the_handler_through_their_routers(
     def refuse(*args, **kwargs):
         raise error_type(message)
 
-    if error_type is ScenarioNameConflict:
-        monkeypatch.setattr(simulation_scenario_service, "create_scenario", refuse)
-    elif error_type is ScenarioGoalMismatch:
-        monkeypatch.setattr(simulation_scenario_service, "compare_scenarios", refuse)
-    else:
-        monkeypatch.setattr(transaction_batches, "post_transaction_batch", refuse)
+    monkeypatch.setattr(transaction_batches, "post_transaction_batch", refuse)
 
     domain = http.post(path, json=payload)
     equivalent = http.get(f"/http/{status_code}", params={"message": message})

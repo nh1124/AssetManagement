@@ -17,11 +17,10 @@ from app.domain.errors import DomainError, Invalid, detail_for, status_for
 from app.domain.transfer import EXPORT_VERSION, build_manifest, validate_import_payload
 from app.routers.exchange_rates import router
 from app.services import fx_service as fx, life_scenario_service as scenarios
-from app.services.account_return_service import blended_return
 from app.services.data_transfer_service import export_client, import_client
 from app.services.ledger_service import create_account
 from app.workflows import fx_workflow
-from test_life_scenarios import db, request, account
+from scenario_fixtures import db, request, account
 
 
 @pytest.fixture
@@ -146,21 +145,17 @@ def test_http_tracking_crud_refresh_and_removed_manual_endpoints(db, api, market
     assert request(api, "DELETE", f'/exchange-rates/{rate["id"]}').status_code == 200
 
 
-def test_scenario_override_zero_and_fallback_use_no_account_or_institution_assumption(db):
-    holding = account(db, balance=10000)
-    assert blended_return(db, 1, gross_annual_return=8, tax_rate=25) == 6
-    assert blended_return(db, 1, gross_annual_return=8, tax_rate=25, account_returns={holding.id: 0}) == 0
-    assert blended_return(db, 1, gross_annual_return=8, tax_rate=25, account_returns={holding.id: 4}) == 3
-
-
 def test_backup_moves_old_yields_into_every_scenario_preserving_override(db):
     holding = account(db)
     none = account(db, name="未設定")
     zero = account(db, name="ゼロ")
     first = scenarios.create(db, 1, "一")
     second = scenarios.create(db, 1, "二")
-    scenarios.replace_account_returns(db, 1, first.id, [{"account_id": holding.id, "annual_return": 9}])
     document = export_client(db, db.get(models.Client, 1))
+    # A v22 backup carried scenario yields as account returns, before contribution plans and goal earmarks.
+    for collection in ("scenario_contribution_plans", "goal_event_earmarks"):
+        document["data"].pop(collection)
+    document["data"]["life_scenario_account_returns"] = [{"id": 1, "scenario_id": first.id, "account_id": holding.id, "annual_return": 9}]
     for row in document["data"]["accounts"]:
         row.update(role="growth", parent_id=9999, institution="removed", withdrawable_from_age=-5,
                    expected_return=3.5 if row["id"] == holding.id else (0 if row["id"] == zero.id else None))
@@ -171,12 +166,14 @@ def test_backup_moves_old_yields_into_every_scenario_preserving_override(db):
     assert validate_import_payload(document["data"], 22, manifest)["error_count"] == 0
     import_client(db, db.get(models.Client, 2), data=document["data"], version=22, manifest=manifest)
     restored = export_client(db, db.get(models.Client, 2))
-    assert restored["version"] == EXPORT_VERSION == 25
+    assert restored["version"] == EXPORT_VERSION == 26
     names = {row["id"]: row["name"] for row in restored["data"]["accounts"]}
     story_names = {row["id"]: row["name"] for row in restored["data"]["life_scenarios"]}
-    assert {(story_names[row["scenario_id"]], names[row["account_id"]]): row["annual_return"] for row in restored["data"]["life_scenario_account_returns"]} == {
+    plans = restored["data"]["scenario_contribution_plans"]
+    assert {(story_names[row["scenario_id"]], names[row["account_id"]]): row["annual_return"] for row in plans} == {
         ("一", holding.name): 9, ("二", holding.name): 3.5, ("一", zero.name): 0, ("二", zero.name): 0,
     }
+    assert {(row["start_period"], row["monthly_amount_minor"]) for row in plans} == {(date.today().strftime("%Y-%m"), 0)}
     assert restored["data"]["fx_tracked_currencies"][0]["currency"] == "USD"
     assert all(not {"role", "parent_id", "expected_return", "institution"} & row.keys() for row in restored["data"]["accounts"])
 

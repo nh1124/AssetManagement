@@ -19,13 +19,13 @@ FORMAT_FIELDS = {
     "accounts": ["id","name","account_type","liability_closing_day","liability_payment_day","liability_payment_month_offset","liability_payment_policy","liability_minimum_payment","liability_fixed_payment_amount","liability_installment_months","liability_revolving_rate","is_active"],
     "products": ["id","name","category","location","last_unit_price","units_per_purchase","frequency_days","last_purchase_date","is_asset","lifespan_months","budget_account_id","funding_capsule_id","budget_treatment","purchase_price","purchase_date","auto_depreciation","depreciation_method","depreciation_annual_rate","depreciation_interval","depreciation_start_date","depreciation_expense_account_id","depreciation_asset_account_id"],
     "product_depreciations": ["id","product_id","period","transaction_id","amount_minor","created_at"],
-    "simulation_configs": ["id","user_id","annual_return","tax_rate","is_nisa","monthly_savings","volatility","inflation_rate","horizon_years"],
+    "simulation_configs": ["id","user_id","annual_return","tax_rate","is_nisa","volatility","inflation_rate","horizon_years"],
     "registry_entries": ["id","name","kind","amount","currency","source_account_id","destination_account_id","budget_account_id","repeat_mode","frequency","frequency_days","day_of_month","month_of_year","start_date","end_date","repeat_count","next_due_date","budget_active","is_active","note","created_at","updated_at"],
     "transaction_batches": ["id","label","source","input_payload","created_at"],
-    "life_events": ["id","scenario_id","lineage","name","start_date","target_date","target_amount","priority","note","condition_mode","direction","account_id","active_plan_basis","active_plan_label","plan_status_override","budget_reflection","archived_at","created_at"],
+    "life_events": ["id","scenario_id","lineage","name","target_date","target_amount","priority","note","condition_mode","direction","account_id","created_at"],
     "life_event_links": ["id","from_event_id","to_event_id","kind","offset_months","note","created_at"],
-    "life_scenarios": ["id","name","annual_return","inflation","horizon_years","monthly_savings","is_goal","created_at","updated_at"],
-    "life_scenario_account_returns": ["id","scenario_id","account_id","annual_return"],
+    "life_scenarios": ["id","name","annual_return","inflation","horizon_years","is_goal","created_at","updated_at"],
+    "scenario_contribution_plans": ["id","scenario_id","account_id","start_period","monthly_amount_minor","annual_return","note","created_at"],
     "household_members": ["id","name","relation","birth_date","created_at"],
     "life_event_conditions": ["id","life_event_id","metric","comparator","threshold_minor","threshold_number","threshold_date","reference_id","note","created_at"],
     "transactions": ["id","date","description","amount","currency","batch_id","registry_entry_id","created_at"],
@@ -35,16 +35,14 @@ FORMAT_FIELDS = {
     "period_reviews": ["id","start_date","end_date","label","reflection","next_actions","created_at","updated_at"],
     "period_closes": ["id","period","closed_at","note"],
     "monthly_actions": ["id","source_period","target_period","proposal_id","kind","description","amount","target_id","payload","result","status","idempotency_key","created_at","applied_at"],
-    "milestones": ["id","life_event_id","date","target_amount","note","source","source_snapshot","is_active_plan","created_at"],
-    "capsules": ["id","name","target_amount","monthly_contribution","life_event_id","capsule_type","target_amount_source","monthly_contribution_source","created_at"],
+    "capsules": ["id","name","target_amount","monthly_contribution","capsule_type","target_amount_source","monthly_contribution_source","created_at"],
     "capsule_drawdowns": ["id","capsule_id","transaction_id","kind","amount_minor","note","created_at"],
     "capsule_funding_sources": ["id","capsule_id","account_id","target_amount","max_share_bp","sort_order","created_at","updated_at"],
     "capsule_rules": ["id","capsule_id","trigger_type","trigger_category","trigger_description","trigger_account_id","source_mode","source_account_id","destination_account_id","amount_type","amount_value","is_active","created_at"],
-    "simulation_scenarios": ["id","life_event_id","name","description","annual_return","inflation","monthly_savings","contribution_schedule","allocation_mode","created_at","updated_at"],
+    "goal_event_earmarks": ["id","life_event_id","capsule_id","share_bp"],
     "fx_tracked_currencies": ["currency","created_at"],
     "exchange_rates": ["id","base_currency","quote_currency","rate","as_of_date","source","created_at","updated_at"],
-    "goal_baselines": ["id","scenario_id","scenario_name","reason","anchor_date","is_current","assumptions","projection","events","created_at"],
-    "goal_budget_reflections": ["id","scenario_id","applied_at","start_period","end_period","options","summary","events"],
+    "goal_budget_reflections": ["id","scenario_id","applied_at","start_period","end_period","summary"],
 }
 
 STAMP = datetime(2026, 10, 1, 12)
@@ -63,11 +61,10 @@ def _seed_client(db, client_id, base, marker):
                 values[field] = STAMP
         money_names = {
             "monthly_plan_lines": ("amount",), "life_events": ("target_amount",),
-            "milestones": ("target_amount",), "capsules": ("target_amount", "monthly_contribution"),
+            "capsules": ("target_amount", "monthly_contribution"),
             "monthly_actions": ("amount",),
             "capsule_funding_sources": ("target_amount",),
-            "products": ("last_unit_price", "purchase_price"), "simulation_configs": ("monthly_savings",),
-            "simulation_scenarios": ("monthly_savings",), "life_scenarios": ("monthly_savings",), "registry_entries": ("amount",),
+            "products": ("last_unit_price", "purchase_price"), "registry_entries": ("amount",),
         }
         if model.__tablename__ == "capsule_rules":
             values = rule_data(values, "JPY")
@@ -86,14 +83,14 @@ def _seed_client(db, client_id, base, marker):
     db.add(client)
     cash = add(models.Account, 1, name=f"{marker}-cash", account_type="asset")
     expense = add(models.Account, 2, name=f"{marker}-expense", account_type="expense")
-    scenario = add(models.LifeScenario, 36, name="保存案", annual_return=7.0, inflation=1.0, horizon_years=12, monthly_savings=30000, is_goal=True)
+    scenario = add(models.LifeScenario, 36, name="保存案", annual_return=7.0, inflation=1.0, horizon_years=12, is_goal=True)
     db.flush()
     goal = add(models.LifeEvent, 3, scenario_id=scenario.id, name=marker, target_date=date(2027, 1, 1), target_amount=1000)
     next_goal = add(models.LifeEvent, 31, scenario_id=scenario.id, name=f"{marker}-next", target_date=date(2028, 1, 1), target_amount=500)
     add(models.LifeEventLink, 32, from_event_id=goal.id, to_event_id=next_goal.id,
         kind="after", offset_months=12, note=marker)
     capsule = add(
-        models.Capsule, 4, name=marker, life_event_id=goal.id,
+        models.Capsule, 4, name=marker,
         target_amount=1000, monthly_contribution=10,
     )
     member = add(models.HouseholdMember, 34, name="子", relation="長女", birth_date=date(2010, 4, 1))
@@ -149,10 +146,6 @@ def _seed_client(db, client_id, base, marker):
         result={"nested": {"transaction_id": tx.id, "batch_id": batch.id}},
     )
     add(
-        models.Milestone, 18, life_event_id=goal.id, date=date(2027, 1, 1),
-        target_amount=1000, note=marker, source_snapshot={"nested": {"account_id": cash.id}},
-    )
-    add(
         models.CapsuleRule, 19, capsule_id=capsule.id, trigger_type="expense",
         source_account_id=cash.id, destination_account_id=cash.id, amount_value=10,
     )
@@ -160,20 +153,14 @@ def _seed_client(db, client_id, base, marker):
         models.CapsuleFundingSource, 24, client_id=client.id, capsule_id=capsule.id,
         account_id=cash.id, target_amount=250, max_share_bp=6000, sort_order=3,
     )
-    add(
-        models.SimulationScenario, 21, life_event_id=goal.id, name=marker,
-        annual_return=5, inflation=2, monthly_savings=10,
-        contribution_schedule=[{"period": PERIOD, "amount": 10, "account_id": cash.id}],
-    )
+    add(models.GoalEventEarmark, 21, life_event_id=goal.id, capsule_id=capsule.id, share_bp=7500)
     add(models.ExchangeRate, 22, base_currency="USD", quote_currency="JPY", rate=150, as_of_date=date(2026, 10, 1))
     db.flush()
     db.flush()
-    add(models.LifeScenarioAccountReturn, 38, scenario_id=scenario.id, account_id=cash.id, annual_return=3.0)
-    add(models.GoalBaseline, 40, scenario_id=scenario.id, scenario_name="保存案", reason="adopted",
-        anchor_date=date(2026, 10, 1), is_current=True, assumptions={"annual_return": 7.0},
-        projection=[{"offset": 0, "year": 2026, "p10": 1, "p50": 2, "p90": 3}], events=[{"name": "基準"}])
+    add(models.ScenarioContributionPlan, 38, scenario_id=scenario.id, account_id=cash.id, start_period=PERIOD,
+        monthly_amount_minor=30000, annual_return=3.0, note=marker)
     add(models.GoalBudgetReflection, 41, scenario_id=scenario.id, applied_at=STAMP, start_period="2026-10",
-        end_period="2026-10", options={"months": 1}, summary={"chosen_amount": 5}, events=[{"lineage": "x", "allocation": 5}])
+        end_period="2026-10", summary={"months": [{"period": "2026-10"}]})
     tracked = models.FxTrackedCurrency(client_id=client_id, currency="USD", created_at=STAMP)
     db.add(tracked)
     rows["fx_tracked_currencies"] = [tracked]

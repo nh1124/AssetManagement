@@ -12,7 +12,7 @@ function EventTotal({ scenario, direction, currency }: { scenario: ProjectedLife
     return totals.size ? [...totals].map(([code, amount]) => <span key={code} className="block whitespace-nowrap">{formatCurrency(amount, code)}（{code}）</span>) : formatCurrency(0, currency);
 }
 
-export default function ScenarioComparison({ scenarios, focusedId, currency, colourIds, onMakeGoal, busy = false }: { scenarios: ProjectedLifeScenario[]; focusedId?: number; currency: string; colourIds: number[]; onMakeGoal?: (id: number) => void; busy?: boolean }) {
+export default function ScenarioComparison({ scenarios, focusedId, currency, colourIds, onMakeGoal, busy = false }: { scenarios: ProjectedLifeScenario[]; focusedId?: number; currency: string; colourIds: number[]; onMakeGoal?: (scenario: ProjectedLifeScenario) => void; busy?: boolean }) {
     return <>
         <ScenarioProjectionChart scenarios={scenarios} focusedId={focusedId} currency={currency} colourIds={colourIds} />
         <DataTable columns={['シナリオ', '最終純資産（中央値）', '支出合計', '収入合計', '前提条件', ...(onMakeGoal ? [''] : [])]}>
@@ -24,7 +24,7 @@ export default function ScenarioComparison({ scenarios, focusedId, currency, col
                     <td className="px-5 py-3 tabular-nums"><EventTotal scenario={scenario} direction="expense" currency={currency} /></td>
                     <td className="px-5 py-3 tabular-nums"><EventTotal scenario={scenario} direction="income" currency={currency} /></td>
                     <td className="whitespace-nowrap px-5 py-3 tabular-nums">{lowest === null ? '—' : `${Math.round(lowest * 100)}%`}</td>
-                    {onMakeGoal && <td className="whitespace-nowrap px-5 py-3">{!scenario.is_goal && <button type="button" disabled={busy} onClick={() => onMakeGoal(scenario.id)} className={buttonClass}>ゴールにする</button>}</td>}
+                    {onMakeGoal && <td className="whitespace-nowrap px-5 py-3">{!scenario.is_goal && <button type="button" disabled={busy} onClick={() => onMakeGoal(scenario)} className={buttonClass}>ゴールにする</button>}</td>}
                 </tr>;
             })}
         </DataTable>

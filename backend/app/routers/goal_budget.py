@@ -1,50 +1,40 @@
-"""HTTP adapters for reflecting the goal scenario into the monthly budget."""
+"""HTTP adapters for making the plan from the goal."""
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
+from ..services import goal_plan_service
 from ..workflows import goal_budget_workflow as workflow
 
 router = APIRouter(prefix="/goal-budget", tags=["goal_budget"])
 
 
-@router.get("/status")
-def status(
+@router.get("/plan-check")
+def plan_check(
     period: str = Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$"),
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    """The savings breakdown for the month and the reasons to reflect again; nothing is saved."""
-    return workflow.status(db, current_client.id, period)
-
-
-@router.get("/savings-check")
-def savings_check(
-    period: str = Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$"),
-    db: Session = Depends(get_db),
-    current_client: models.Client = Depends(get_current_client),
-):
-    """U9: the month's budgeted savings against the monthly need, with the breakdown; nothing is saved."""
-    return workflow.savings_check(db, current_client.id, period)
+    """Per account: the goal's 積立設定 for the month against the plan; nothing is saved."""
+    return goal_plan_service.plan_check(db, current_client.id, period)
 
 
 @router.post("/preview")
 def preview(
-    payload: schemas.GoalBudgetOptions,
+    payload: schemas.GoalPlanRange,
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    """What a reflection would write; nothing is saved."""
-    return workflow.preview(db, current_client.id, payload.model_dump())
+    """What making the plan would write; nothing is saved."""
+    return workflow.preview(db, current_client.id, payload.start_period, payload.end_period)
 
 
 @router.post("/apply")
 def apply(
-    payload: schemas.GoalBudgetApply,
+    payload: schemas.GoalPlanApply,
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    options = payload.model_dump(exclude={"fingerprint", "update_baseline"})
-    return workflow.apply(db, current_client.id, options, payload.fingerprint, update_baseline=payload.update_baseline)
+    return workflow.apply(db, current_client.id, payload.start_period, payload.end_period, payload.fingerprint)

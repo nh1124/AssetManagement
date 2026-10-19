@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Bell } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import type { AppNotification } from '../../api/notifications';
-import GoalBudgetReflection from '../pages/goals/GoalBudgetReflection';
+import GoalPlanDialog from '../pages/goals/GoalPlanDialog';
 import { buttonClass, primaryClass } from '../pages/db/forms';
 import { formatDateTime, useTimezone } from '../datetime';
 import { GOAL_REFLECTION, useNotifications } from '../notificationContext';
@@ -10,7 +10,7 @@ import Overlay from './Overlay';
 
 /** Inbox groups, in this order; a kind not listed here follows under its own name. */
 const KIND_LABELS: Record<string, string> = {
-    [GOAL_REFLECTION]: 'ゴール反映',
+    [GOAL_REFLECTION]: 'ゴールの計画',
     approval_pending: '承認待ち',
     actions_due: '行動',
     unmatched: '自動取引',
@@ -39,7 +39,7 @@ export default function NotificationBell() {
     const navigate = useNavigate();
     const timezone = useTimezone();
     const [open, setOpen] = useState(false);
-    const [reflecting, setReflecting] = useState(false);
+    const [planning, setPlanning] = useState(false);
     return <>
         <button type="button" onClick={() => setOpen(true)} aria-label={`通知 ${items.length}件`} title="通知"
             className="relative rounded p-2 text-[var(--studio-text-muted)] transition-colors hover:bg-[var(--studio-accent-soft)] hover:text-[var(--studio-text)]">
@@ -64,7 +64,7 @@ export default function NotificationBell() {
                         </ul>
                         <div className="flex flex-wrap gap-2">
                             {item.kind === GOAL_REFLECTION
-                                ? <button type="button" onClick={() => { setOpen(false); setReflecting(true); }} className={primaryClass}>予算に反映</button>
+                                ? <button type="button" onClick={() => { setOpen(false); setPlanning(true); }} className={primaryClass}>計画を作成</button>
                                 : item.link && <button type="button" onClick={() => { setOpen(false); navigate(item.link as string); }} className={primaryClass}>開く</button>}
                             <button type="button" onClick={() => snooze(item.id, 1)} className={buttonClass}>明日また確認</button>
                             <button type="button" onClick={() => snooze(item.id, 7)} className={buttonClass}>1週間後に確認</button>
@@ -75,6 +75,6 @@ export default function NotificationBell() {
                 {hiddenCount > 0 && <p className="text-xs text-[var(--studio-text-muted)]">後で確認にした通知が{hiddenCount}件あります（時期が来ると表示されます）。</p>}
             </div>
         </Overlay>}
-        {reflecting && <GoalBudgetReflection onClose={() => { setReflecting(false); refresh(); }} />}
+        {planning && <GoalPlanDialog onClose={() => { setPlanning(false); refresh(); }} />}
     </>;
 }

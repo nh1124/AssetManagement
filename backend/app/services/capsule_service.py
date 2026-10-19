@@ -9,12 +9,10 @@ from typing import Protocol, Sequence
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from .life_scenario_scope import get_goal, lock_client
-
 from .money_storage import to_minor, money_client_currency, rule_amount_fields, rule_data
 
 from .. import models, schemas
-from ..domain.errors import Invalid, NotFound, Refused
+from ..domain.errors import Invalid, NotFound
 from ..domain.money import Money
 from ..domain.journal import Leg
 from . import ledger_service
@@ -45,12 +43,8 @@ def get_capsule(
 
 
 def get_product_funding_capsule(db: Session, client_id: int, capsule_id: int) -> models.Capsule | None:
-    # Product reserves must belong to their client and cannot use a goal capsule.
-    return db.query(models.Capsule).filter(
-        models.Capsule.id == capsule_id,
-        models.Capsule.client_id == client_id,
-        models.Capsule.life_event_id.is_(None),
-    ).first()
+    # Product reserves must belong to their client.
+    return get_capsule(db, client_id, capsule_id)
 
 
 def list_capsules(db: Session, client_id: int, skip: int = 0, limit: int = 100) -> list[models.Capsule]:
@@ -78,12 +72,10 @@ def _finish_write(db: Session, client_id: int, record=None, *, commit: bool) -> 
 def create_capsule(
     db: Session, client_id: int, payload: schemas.CapsuleCreate, *, commit: bool = True,
 ) -> models.Capsule:
-    _validate_goal_link(db, client_id, payload.life_event_id)
     if payload.account_id is not None and ledger_service.get_account(db, client_id, payload.account_id) is None:
         raise NotFound("Account not found")
     capsule = models.Capsule(
         client_id=client_id,
-        life_event_id=payload.life_event_id,
         name=payload.name,
         target_amount_minor=to_minor(max(0.0, payload.target_amount or 0.0), money_client_currency(db, client_id)),
         monthly_contribution_minor=to_minor(max(0.0, payload.monthly_contribution or 0.0), money_client_currency(db, client_id)),
@@ -109,8 +101,6 @@ def update_capsule(
     capsule = get_capsule(db, client_id, capsule_id)
     if capsule is None:
         return None
-    if "life_event_id" in patch.model_fields_set:
-        _validate_goal_link(db, client_id, patch.life_event_id)
     for key, value in patch.model_dump(exclude_unset=True).items():
         if key == "target_amount":
             capsule.target_amount_minor = to_minor(max(0.0, value or 0.0), money_client_currency(db, client_id))
@@ -122,20 +112,6 @@ def update_capsule(
             setattr(capsule, key, value)
     _finish_write(db, client_id, capsule, commit=commit)
     return capsule
-
-
-def _validate_goal_link(db: Session, client_id: int, life_event_id: int | None) -> None:
-    if life_event_id is None:
-        return
-    lock_client(db, client_id)
-    event = db.query(models.LifeEvent).filter_by(client_id=client_id, id=life_event_id).first()
-    if event is None:
-        raise NotFound("同じクライアントのイベントが見つかりません。")
-    scenario = get_goal(db, client_id)
-    if scenario is None or event.scenario_id != scenario.id:
-        raise Refused("取り置きはゴールのシナリオのライフイベントにだけ紐づけられます。", status_code=422)
-    if event.direction == "income":
-        raise Refused("収入イベントには積立用の取り置きを紐づけできません。", status_code=422)
 
 
 def funding_source_to_dict(source: models.CapsuleFundingSource) -> dict:
@@ -362,8 +338,6 @@ def delete_capsule(
     capsule = get_capsule(db, client_id, capsule_id)
     if capsule is None:
         return None
-    if capsule.life_event_id:
-        raise Invalid("LifeEvent capsules are managed by their LifeEvent and cannot be deleted directly")
     linked_products = db.query(models.Product.id).filter(
         models.Product.client_id == client_id,
         models.Product.funding_capsule_id == capsule.id,
@@ -498,7 +472,6 @@ def capsule_to_dict(db: Session, capsule: models.Capsule) -> dict:
     recommended_monthly = round(sum(item["recommended_monthly_reserve"] for item in linked_products), 0)
     return {
         "id": capsule.id,
-        "life_event_id": capsule.life_event_id,
         "name": capsule.name,
         "target_amount": capsule.target_amount,
         "monthly_contribution": capsule.monthly_contribution,
@@ -515,35 +488,6 @@ def capsule_to_dict(db: Session, capsule: models.Capsule) -> dict:
             funding_source_to_dict(source) for source in capsule.funding_sources
         ],
     }
-
-
-def create_capsule_for_goal(db: Session, client_id: int, goal: models.LifeEvent) -> models.Capsule:
-    _validate_goal_link(db, client_id, goal.id)
-    if goal.direction == "income":
-        raise Refused("収入イベントには積立用の取り置きを作成できません。", status_code=422)
-    existing = db.query(models.Capsule).filter(
-        models.Capsule.client_id == client_id,
-        models.Capsule.life_event_id == goal.id,
-    ).first()
-    if existing:
-        existing.capsule_type = existing.capsule_type or "life_event"
-        if existing.capsule_type == "manual":
-            existing.capsule_type = "life_event"
-        return existing
-
-    capsule = models.Capsule(
-        client_id=client_id,
-        life_event_id=goal.id,
-        name=goal.name,
-        target_amount_minor=to_minor(max(0.0, goal.target_amount or 0.0), money_client_currency(db, client_id)),
-        monthly_contribution_minor=to_minor(0.0, money_client_currency(db, client_id)),
-        capsule_type="life_event",
-        target_amount_source="life_event",
-        monthly_contribution_source="manual",
-    )
-    db.add(capsule)
-    db.flush()
-    return capsule
 
 
 # What a rule's trigger_type describes, as a statement about the entry's legs:

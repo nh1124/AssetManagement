@@ -96,21 +96,23 @@ def _seed(db, scenario, today):
     # Drive saved scenario reads with real assumptions, without granting a GET exception.
     life_scenario = models.LifeScenario(
         client_id=1, name="Guard life scenario", is_goal=True,
-        account_returns=[models.LifeScenarioAccountReturn(account_id=cash.id, annual_return=3.0)],
+        contribution_plans=[models.ScenarioContributionPlan(account_id=cash.id, start_period=today.strftime("%Y-%m"),
+                                                            monthly_amount_minor=to_minor(10000, "JPY"), annual_return=3.0)],
     )
     alternate_scenario = models.LifeScenario(client_id=1, name="Guard alternate", annual_return=7.0)
     db.add_all([life_scenario, alternate_scenario])
     db.flush()
-    goal = models.LifeEvent(scenario_id=life_scenario.id, client_id=1, name="Guard goal", start_date=today,
+    goal = models.LifeEvent(scenario_id=life_scenario.id, client_id=1, name="Guard goal",
                             target_date=today + timedelta(days=365), target_amount_minor=to_minor(200000, "JPY"),
                             priority=1)
     db.add(goal)
     db.flush()
-    capsule = models.Capsule(client_id=1, life_event_id=goal.id, name="Guard capsule",
+    capsule = models.Capsule(client_id=1, name="Guard capsule",
                              target_amount_minor=to_minor(200000, "JPY"), monthly_contribution_minor=to_minor(10000, "JPY"),
                              funding_sources=[models.CapsuleFundingSource(client_id=1, account_id=cash.id, target_amount_minor=to_minor(200000, "JPY"))])
     db.add(capsule)
     db.flush()
+    db.add(models.GoalEventEarmark(client_id=1, life_event_id=goal.id, capsule_id=capsule.id))
     credit = db.query(models.JournalEntry).filter_by(transaction_id=lunch.id, account_id=cash.id).one()
     credit.capsule_id = capsule.id
     db.add(models.CapsuleDrawdown(client_id=1, capsule_id=capsule.id,
@@ -141,11 +143,7 @@ def _seed(db, scenario, today):
                                source_account_id=cash.id),
         models.CapsuleRule(client_id=1, capsule_id=capsule.id, trigger_type="Income",
                            amount_type="fixed", **rule_amount_fields(100, "fixed", "JPY")),
-        models.Milestone(client_id=1, life_event_id=goal.id, date=goal.target_date,
-                         target_amount_minor=to_minor(200000, "JPY")),
         models.SimulationConfig(client_id=1),
-        models.SimulationScenario(client_id=1, life_event_id=goal.id, name="Guard scenario",
-                                  annual_return=5, inflation=2, monthly_savings_minor=to_minor(10000, "JPY")),
         models.PeriodReview(client_id=1, start_date=start, end_date=end, label="Guard review"),
         models.MonthlyAction(client_id=1, source_period=today.strftime("%Y-%m"),
                              proposal_id="guard", kind="review", idempotency_key="guard"),

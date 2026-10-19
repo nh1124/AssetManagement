@@ -61,24 +61,20 @@ def test_product_account_reads_preserve_type_scope_and_inactive_account_acceptan
         assert str(exc.value) == "Budget account must be an expense account for this client"
 
 
-def test_product_funding_reads_refuse_goal_other_client_and_missing_capsules(db):
-    goal = models.LifeEvent(scenario_id=goal_scenario_id(db, 1), client_id=1, name="Goal")
-    db.add(goal)
-    db.flush()
+def test_product_funding_reads_refuse_other_client_and_missing_capsules(db):
     reserve = models.Capsule(client_id=1, name="Reserve")
-    goal_capsule = models.Capsule(client_id=1, name="Goal capsule", life_event_id=goal.id)
     other = models.Capsule(client_id=2, name="Other reserve")
-    db.add_all([reserve, goal_capsule, other])
+    db.add_all([reserve, other])
     db.commit()
 
     assert capsule_service.get_product_funding_capsule(db, 1, reserve.id) is reserve
     product_workflow.validate_funding_capsule(db, 1, reserve.id)
     product_workflow.validate_funding_capsule(db, 1, None)
-    for capsule_id in (goal_capsule.id, other.id, 999999):
+    for capsule_id in (other.id, 999999):
         assert capsule_service.get_product_funding_capsule(db, 1, capsule_id) is None
         with pytest.raises(Invalid) as exc:
             product_workflow.validate_funding_capsule(db, 1, capsule_id)
-        assert str(exc.value) == "Funding capsule must be a non-LifeEvent capsule for this client"
+        assert str(exc.value) == "Funding capsule must belong to this client"
 
 
 def test_transaction_read_prevents_removing_another_clients_entry(db):

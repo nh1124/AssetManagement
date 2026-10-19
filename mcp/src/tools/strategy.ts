@@ -39,43 +39,6 @@ function withoutUndefined(input: JsonObject): JsonObject {
 
 export function registerStrategyTools(server: McpServer): void {
   server.registerTool(
-    "strategy_dashboard",
-    {
-      title: "Get strategy dashboard",
-      description: "Returns the full Strategy dashboard: goals, roadmap projection, funded progress, and unallocated assets.",
-      inputSchema: z
-        .object({
-          annual_return: z.number().optional().default(5.0),
-          inflation: z.number().optional().default(2.0),
-          monthly_savings: z.number().min(0).optional().default(50000),
-          roadmap_interval: z.enum(["auto", "monthly", "quarterly", "annual"]).optional().default("auto"),
-          allocation_mode: z.enum(["weighted", "direct"]).optional().default("weighted"),
-          contribution_schedule: z.array(z.record(z.unknown())).optional(),
-        })
-        .strict(),
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    },
-    async (input) => {
-      try {
-        const params = new URLSearchParams({
-          annual_return: String(input.annual_return),
-          inflation: String(input.inflation),
-          monthly_savings: String(input.monthly_savings),
-          roadmap_interval: input.roadmap_interval,
-          allocation_mode: input.allocation_mode,
-        });
-        if (input.contribution_schedule !== undefined) {
-          params.append("contribution_schedule", JSON.stringify(input.contribution_schedule));
-        }
-        const data = await api.get<unknown>(`/life-events/dashboard?${params.toString()}`);
-        return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }], structuredContent: toStructured(data) };
-      } catch (err) {
-        return { content: [{ type: "text", text: `Error: ${errorText(err)}` }] };
-      }
-    },
-  );
-
-  server.registerTool(
     "budget_plans_list",
     {
       title: "List budget plans",

@@ -1,24 +1,17 @@
 """Own life-event records and the shared read scope for the adopted plan.
 
 Projection consumers depend on this owner so scenario copies cannot become real goals.
+A life event is a story fact only: earmark tracking lives in goal_earmark_service.
 """
 
-from datetime import date, datetime
-from typing import Literal
-
-from sqlalchemy import func
 from sqlalchemy.orm import Query, Session
 
 from .money_storage import minor_fields, money_client_currency
 
 from .. import models, schemas
-from ..domain.errors import NotFound, Refused
-from ..domain.journal import Leg
-from ..domain.money import Money
+from ..domain.errors import NotFound
 from .cache_service import invalidate_client
-from .capsule_service import capsule_balance, claimed_minor
 from .life_scenario_scope import get as get_scenario, selected as selected_scenario
-from .ledger_service import create_transaction
 
 __all__ = [
     "list_goals",
@@ -26,34 +19,18 @@ __all__ = [
     "copy_events",
     "create_goal_record",
     "update_goal",
-    "archive_goal",
-    "unarchive_goal",
     "delete_goal",
-    "list_goal_capsules",
     "get_life_event",
-    "story_events_query",
 ]
 
 
-def goal_events_query(db: Session, client_id: int, *, include_archived: bool = False) -> Query:
+def goal_events_query(db: Session, client_id: int) -> Query:
     """Read the adopted plan without counting copies in other scenarios."""
     scenario_ids = db.query(models.LifeScenario.id).filter_by(client_id=client_id, is_goal=True)
     # A subquery also yields no events when the client has no adopted scenario.
-    query = db.query(models.LifeEvent).filter(
-        models.LifeEvent.client_id == client_id,
-        models.LifeEvent.scenario_id.in_(scenario_ids),
-    )
-    if not include_archived:
-        query = query.filter(models.LifeEvent.archived_at.is_(None))
-    return query
-
-
-def story_events_query(db: Session, client_id: int, event: models.LifeEvent) -> Query:
-    """The active events of the scenario this event belongs to -- its own story."""
     return db.query(models.LifeEvent).filter(
         models.LifeEvent.client_id == client_id,
-        models.LifeEvent.scenario_id == event.scenario_id,
-        models.LifeEvent.archived_at.is_(None),
+        models.LifeEvent.scenario_id.in_(scenario_ids),
     )
 
 
@@ -64,25 +41,18 @@ def get_life_event(db: Session, client_id: int, life_event_id: int) -> models.Li
     ).first()
 
 
-def list_goals(db: Session, client_id: int, include_archived: bool = False,
-               scenario_id: int | None = None) -> list[models.LifeEvent]:
-    if scenario_id is None:
-        return goal_events_query(db, client_id, include_archived=include_archived).all()
+def list_goals(db: Session, client_id: int, scenario_id: int | None = None) -> list[models.LifeEvent]:
     scenario = selected_scenario(db, client_id, scenario_id)
     if scenario is None:
         return []
-    query = db.query(models.LifeEvent).filter_by(client_id=client_id, scenario_id=scenario.id)
-    if not include_archived:
-        query = query.filter(models.LifeEvent.archived_at.is_(None))
-    return query.all()
+    return db.query(models.LifeEvent).filter_by(client_id=client_id, scenario_id=scenario.id).order_by(
+        models.LifeEvent.target_date, models.LifeEvent.id).all()
 
 
 def copy_events(db: Session, client_id: int, source_id: int, target_id: int) -> dict[int, int]:
-    from copy import deepcopy
-
     event_map = {}
     for source in db.query(models.LifeEvent).filter_by(client_id=client_id, scenario_id=source_id).order_by(models.LifeEvent.id):
-        values = {column.name: deepcopy(getattr(source, column.name))
+        values = {column.name: getattr(source, column.name)
                   for column in models.LifeEvent.__table__.columns if column.name not in {"id", "scenario_id"}}
         row = models.LifeEvent(**values, scenario_id=target_id)
         db.add(row)
@@ -91,74 +61,11 @@ def copy_events(db: Session, client_id: int, source_id: int, target_id: int) -> 
     return event_map
 
 
-def _set_archived(
-    db: Session, client_id: int, life_event_id: int, archived: bool, *, commit: bool,
-) -> models.LifeEvent | None:
-    event = get_life_event(db, client_id, life_event_id)
-    if event is None:
-        return None
-    # Restoring only changes the goal; earlier capsule decisions remain facts.
-    event.archived_at = (event.archived_at or datetime.utcnow()) if archived else None
-    if commit:
-        db.commit()
-        db.refresh(event)
-        invalidate_client(client_id)
-    else:
-        db.flush()
-    return event
-
-
-def archive_goal(
-    db: Session, client_id: int, life_event_id: int, *,
-    capsule_action: Literal["keep", "stop_rules", "release", "detach"] = "keep",
-    transfer_account_id: int | None = None, commit: bool = True,
-) -> models.LifeEvent | None:
-    event = db.query(models.LifeEvent).filter(
-        models.LifeEvent.id == life_event_id, models.LifeEvent.client_id == client_id,
-    ).with_for_update().first()
-    if event is None:
-        return None
-    if capsule_action not in {"keep", "stop_rules", "release", "detach"}:
-        raise Refused("Unknown capsule_action", status_code=422)
-    # Serialize releases on the goal and commit the choice with its journal movements.
-    try:
-        if capsule_action == "release":
-            if transfer_account_id is None:
-                raise Refused("transfer_account_id is required for release.", status_code=422)
-            _return_goal_claims(db, client_id, event, transfer_account_id, reason="Goal archived")
-        elif capsule_action == "detach":
-            # Change only the FK: removing from the relationship would delete
-            # the capsule through the goal's delete-orphan cascade.
-            for capsule in db.query(models.Capsule).filter(
-                models.Capsule.client_id == client_id,
-                models.Capsule.life_event_id == life_event_id,
-            ):
-                capsule.life_event_id = None
-        elif capsule_action == "stop_rules":
-            capsule_ids = [cap.id for cap in event.capsules]
-            for rule in db.query(models.CapsuleRule).filter(
-                models.CapsuleRule.client_id == client_id,
-                models.CapsuleRule.capsule_id.in_(capsule_ids),
-            ):
-                rule.is_active = False
-        _set_archived(db, client_id, life_event_id, True, commit=False)
-        if commit:
-            db.commit()
-    except Exception:
-        # A participating caller owns rollback when it also owns the commit.
-        if commit:
-            db.rollback()
-        raise
-    if commit:
-        db.refresh(event)
-        invalidate_client(client_id)
-    return event
-
-
-def unarchive_goal(
-    db: Session, client_id: int, life_event_id: int, *, commit: bool = True,
-) -> models.LifeEvent | None:
-    return _set_archived(db, client_id, life_event_id, False, commit=commit)
+def _validate_event_account(db: Session, client_id: int, account_id: int | None) -> None:
+    if account_id is not None:
+        account = db.get(models.Account, account_id)
+        if account is None or account.client_id != client_id:
+            raise NotFound("同じクライアントの口座・科目が見つかりません。")
 
 
 def create_goal_record(
@@ -174,13 +81,6 @@ def create_goal_record(
     else:
         db.flush()
     return db_event
-
-
-def _validate_event_account(db: Session, client_id: int, account_id: int | None) -> None:
-    if account_id is not None:
-        account = db.get(models.Account, account_id)
-        if account is None or account.client_id != client_id:
-            raise NotFound("同じクライアントの口座・科目が見つかりません。")
 
 
 def update_goal(
@@ -202,112 +102,12 @@ def update_goal(
     return db_event
 
 
-def list_goal_capsules(db: Session, client_id: int, life_event_id: int) -> list[dict] | None:
-    db_event = get_life_event(db, client_id, life_event_id)
-    if db_event is None:
-        return None
-    return [
-        {
-            "id": cap.id,
-            "name": cap.name,
-            "current_balance": capsule_balance(db, cap),
-            "claims": [
-                {"currency": currency, "amount_minor": minor, "amount": Money(minor, currency).to_float()}
-                for currency, minor in sorted(claimed_minor(db, client_id, cap.id).items())
-            ],
-        }
-        for cap in db_event.capsules
-    ]
-
-
-def _goal_claims(db: Session, client_id: int, event: models.LifeEvent) -> list[tuple]:
-    # Journal attribution survives funding-plan edits, so the plan is not a holdings list.
-    return db.query(
-        models.Capsule.id, models.Capsule.name, models.JournalEntry.account_id,
-        models.Transaction.currency,
-        func.sum(models.JournalEntry.debit_minor - models.JournalEntry.credit_minor).label("minor"),
-    ).join(models.JournalEntry, models.JournalEntry.capsule_id == models.Capsule.id).join(
-        models.Transaction, models.Transaction.id == models.JournalEntry.transaction_id,
-    ).filter(
-        models.Capsule.client_id == client_id, models.Capsule.life_event_id == event.id,
-        models.Transaction.client_id == client_id,
-    ).group_by(
-        models.Capsule.id, models.Capsule.name, models.JournalEntry.account_id, models.Transaction.currency,
-    ).having(func.sum(models.JournalEntry.debit_minor - models.JournalEntry.credit_minor) > 0).all()
-
-
-def _return_goal_claims(
-    db: Session, client_id: int, event: models.LifeEvent, transfer_account_id: int, *, reason: str,
-) -> None:
-    destination = db.get(models.Account, transfer_account_id)
-    if destination is None or destination.client_id != client_id:
-        raise NotFound("Transfer destination account not found")
-    if destination.account_type != "asset" or destination.is_active is False:
-        raise Refused("Transfer destination must be an active asset account.", status_code=422)
-    claims = _goal_claims(db, client_id, event)
-    client_currency = money_client_currency(db, client_id)
-    # Validate the whole release before posting any client-currency claim.
-    for _, name, _, currency, _ in claims:
-        if currency != client_currency:
-            raise Refused(
-                f"取り置き「{name}」の {currency} の確保額は、このゴールから返金できません。"
-                f"ゴールとの紐づけを解除するか、{currency} の口座へその通貨のまま取り崩してください。",
-                status_code=422,
-            )
-    for capsule_id, name, account_id, currency, minor in claims:
-        # Running reservation rules here could earmark the returned money again.
-        create_transaction(
-            db, client_id=client_id, date=date.today(),
-            description=f"{reason} – funds returned from Capsule: {name}",
-            amount_minor=int(minor), currency=currency,
-            legs=[Leg(transfer_account_id, debit=int(minor)),
-                  Leg(account_id, credit=int(minor), capsule_id=capsule_id)],
-        )
-
-
-def delete_goal(
-    db: Session, client_id: int, life_event_id: int, *,
-    transfer_account_id: int | None = None, commit: bool = True,
-) -> bool:
+def delete_goal(db: Session, client_id: int, life_event_id: int) -> bool:
+    """Delete the story fact; its links, conditions and earmark links go with it, the earmarks stay."""
     db_event = get_life_event(db, client_id, life_event_id)
     if db_event is None:
         return False
-
-    if _goal_claims(db, client_id, db_event) and transfer_account_id is None:
-        raise Refused(
-            "transfer_account_id is required because one or more capsules have a non-zero balance.",
-            status_code=422,
-        )
-
-    accounts_by_capsule = {
-        cap.id: [source.account_id for source in cap.funding_sources]
-        for cap in db_event.capsules
-    }
-    if transfer_account_id is not None:
-        _return_goal_claims(db, client_id, db_event, transfer_account_id, reason="Goal deleted")
-
-    account_ids_to_delete = {account_id for ids in accounts_by_capsule.values() for account_id in ids}
-
     db.delete(db_event)
-    db.flush()
-
-    # Removing journal history would leave each transaction's counterparty unbalanced.
-    # Keep accounts with history inactive even when no capsule claims remain.
-    for account_id in account_ids_to_delete:
-        account = db.get(models.Account, account_id)
-        if not account:
-            continue
-        has_history = db.query(models.JournalEntry).filter(
-            models.JournalEntry.account_id == account_id
-        ).first() is not None
-        if has_history:
-            account.is_active = False
-            continue
-        db.delete(account)
-
-    if commit:
-        db.commit()
-        invalidate_client(client_id)
-    else:
-        db.flush()
+    db.commit()
+    invalidate_client(client_id)
     return True

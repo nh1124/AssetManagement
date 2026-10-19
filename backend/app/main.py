@@ -25,7 +25,6 @@ from .routers import (
     clients,
     data_transfer,
     exchange_rates,
-    goal_baselines,
     goal_budget,
     notifications,
     life_events,
@@ -36,9 +35,7 @@ from .routers import (
     products,
     registry_entries,
     reports,
-    roadmap,
     simulation,
-    simulation_scenarios,
     transaction_batches,
     transactions,
 )
@@ -247,14 +244,12 @@ app.include_router(registry_entries.router, dependencies=[Depends(get_current_cl
 app.include_router(life_events.router)
 app.include_router(life_scenarios.router)
 app.include_router(goal_budget.router)
-app.include_router(goal_baselines.router)
 app.include_router(notifications.router)
 app.include_router(household_members.router)
 app.include_router(budget_plans.router, dependencies=[Depends(get_current_client)])
 app.include_router(period_reviews.router)
 app.include_router(period_closes.router)
 app.include_router(simulation.router)
-app.include_router(simulation_scenarios.router)
 app.include_router(accounts.router)
 app.include_router(actions.router, dependencies=[Depends(get_current_client)])
 app.include_router(ai_operations.router)
@@ -262,7 +257,6 @@ app.include_router(ai_change_requests.router)
 app.include_router(clients.router)
 app.include_router(data_transfer.router)
 app.include_router(auth.router)
-app.include_router(roadmap.router, dependencies=[Depends(get_current_client)])
 app.include_router(capsules.router, dependencies=[Depends(get_current_client)])
 app.include_router(reports.router, dependencies=[Depends(get_current_client)])
 app.include_router(exchange_rates.router, dependencies=[Depends(get_current_client)])

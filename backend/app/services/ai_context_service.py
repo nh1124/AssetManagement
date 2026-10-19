@@ -359,15 +359,11 @@ def _goals(db: Session, client_id: int, limit: int) -> dict[str, Any]:
             {
                 "id": row.id,
                 "name": row.name,
-                "start_date": _iso(row.start_date),
                 "target_date": _iso(row.target_date),
                 "target_amount": row.target_amount,
                 "direction": row.direction,
                 "account_id": row.account_id,
                 "priority": row.priority,
-                "active_plan_basis": row.active_plan_basis,
-                "active_plan_label": row.active_plan_label,
-                "plan_status_override": row.plan_status_override,
             }
             for row in rows
         ],

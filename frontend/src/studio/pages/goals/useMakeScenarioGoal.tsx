@@ -1,72 +1,27 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { createGoalCapsule } from '../../../api';
-import { goalPreview, makeGoal, type GoalPreview } from '../../../api/lifeScenarios';
+import { useState, type ReactNode } from 'react';
+import { makeGoal, type LifeScenario } from '../../../api/lifeScenarios';
 import { useClient } from '../../../context/ClientContext';
-import { assetErrorMessage } from '../../useResource';
+import { useConfirm } from '../../components/useConfirm';
 import { useMutation } from '../db/forms';
-import GoalBudgetReflection from './GoalBudgetReflection';
-import GoalSwitchOverlay, { type PendingGoal } from './GoalSwitchOverlay';
+import GoalPlanDialog from './GoalPlanDialog';
 
-/** Make a scenario the goal after showing what happens to real money.
+/** Make a scenario the goal, then offer to make the plan from it.
  *
- * Moves, detachments and events left without a capsule are all shown before
- * anything changes; capsules for the checked events are created right after the
- * switch, because the server only lets capsules attach to goal events. Unchecked
- * ones can still be created later from each life event.
+ * Choosing the goal only marks the scenario. 実績管理の設定 belongs to each event,
+ * so the new goal's events keep whatever earmarks were linked to them.
  */
-export function useMakeScenarioGoal(onSuccess: () => void): ReturnType<typeof useMutation> & { chooseGoal: (id: number) => void; dialog: ReactNode } {
+export function useMakeScenarioGoal(onSuccess: () => void): ReturnType<typeof useMutation> & { chooseGoal: (scenario: Pick<LifeScenario, 'id' | 'name'>) => void; dialog: ReactNode } {
     const mutation = useMutation();
+    const confirm = useConfirm();
     const { currentClient } = useClient();
-    const currency = currentClient?.general_settings?.currency || 'JPY';
-    const [pending, setPending] = useState<PendingGoal | null>(null);
-    // After a switch the budget still follows the old goal; offer the reflection right away.
-    const [reflect, setReflect] = useState(false);
-    const mounted = useRef(false);
-    useEffect(() => {
-        mounted.current = true;
-        return () => { mounted.current = false; };
-    }, []);
-    const chooseGoal = (id: number) => {
-        let preview: GoalPreview | null = null;
-        void mutation.run(async () => { preview = await goalPreview(id); }, '', () => {
-            const loaded: GoalPreview | null = preview;
-            if (loaded) setPending({ preview: loaded, create: new Set(loaded.missing.map((row) => row.event_id)) });
-        });
+    const [planning, setPlanning] = useState(false);
+    const chooseGoal = (scenario: Pick<LifeScenario, 'id' | 'name'>) => {
+        void (async () => {
+            if (!(await confirm(`「${currentClient?.name ?? ''}」のゴールを「${scenario.name}」に変更します。計画は変わりません（このあと、ゴールから計画を作成できます）。`, 'ゴールにする'))) return;
+            await mutation.run(() => makeGoal(scenario.id), 'ゴールにしました。', () => setPlanning(true));
+        })();
     };
-    const confirmGoal = () => {
-        if (!pending) return;
-        const { preview, create } = pending;
-        let partial = false;
-        void mutation.run(async () => {
-            // The overlay already showed every detachment, so confirming it is explicit.
-            await makeGoal(preview.scenario_id, preview.detach.length > 0);
-            const failed: string[] = [];
-            for (const row of preview.missing) {
-                if (!create.has(row.event_id)) continue;
-                try {
-                    await createGoalCapsule(row.event_id);
-                } catch (failure: unknown) {
-                    failed.push(`${row.event_name}（${assetErrorMessage(failure)}）`);
-                }
-            }
-            if (failed.length) {
-                partial = true;
-                throw new Error(`ゴールにしましたが、取り置きを作成できなかったライフイベントがあります：${failed.join('、')}。ライフイベントの画面から作成できます。`);
-            }
-        }, 'ゴールにしました。', () => { setPending(null); setReflect(true); }).finally(() => {
-            // The goal changed even though a capsule failed; offer the reflection anyway.
-            if (partial && mounted.current) { setPending(null); setReflect(true); }
-        });
-    };
-    const dialog = reflect && !pending ? <GoalBudgetReflection title="予算にも反映しますか？"
-        intro="ゴールを変更しました。予算は前のゴールのままです。内容を確認して反映できます。反映しない場合は閉じてください（ゴールのページや予算のページから後で反映できます）。"
-        onClose={() => { setReflect(false); onSuccess(); }} /> : pending && <GoalSwitchOverlay pending={pending} busy={mutation.busy} currency={currency}
-        onClose={() => setPending(null)} onConfirm={confirmGoal}
-        onToggle={(eventId, checked) => setPending((previous) => {
-            if (!previous) return previous;
-            const next = new Set(previous.create);
-            if (checked) next.add(eventId); else next.delete(eventId);
-            return { ...previous, create: next };
-        })} />;
+    const dialog = planning ? <GoalPlanDialog title="計画も作成しますか？" intro="ゴールを変更しました。計画は前のゴールのままです。作成しない場合は閉じてください（ゴールや計画の画面から後で作成できます）。"
+        onClose={() => { setPlanning(false); onSuccess(); }} /> : null;
     return { ...mutation, chooseGoal, dialog };
 }

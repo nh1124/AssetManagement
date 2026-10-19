@@ -22,7 +22,7 @@ from ..services import (
     notification_service, period_close_service,
 )
 from ..services.periods import add_months, period_to_range
-from . import goal_budget_workflow
+from ..services import goal_plan_service
 
 APPROVAL_PENDING = "approval_pending"
 ACTIONS_DUE = "actions_due"
@@ -94,7 +94,7 @@ def month_close_notifications(db: Session, client_id: int, period: str) -> list[
 
 
 GENERATORS: dict[str, Callable[[Session, int, str], list[dict]]] = {
-    goal_budget_workflow.REFLECTION_NOTIFICATION: goal_budget_workflow.reflection_notifications,
+    goal_plan_service.REFLECTION_NOTIFICATION: goal_plan_service.reflection_notifications,
     APPROVAL_PENDING: approval_notifications,
     ACTIONS_DUE: due_action_notifications,
     UNMATCHED: unmatched_notifications,

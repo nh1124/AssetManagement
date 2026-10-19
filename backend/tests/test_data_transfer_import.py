@@ -57,11 +57,10 @@ def _seed(db, client_id=101, base=10000):
                 values[field] = STAMP
         money_names = {
             "monthly_plan_lines": ("amount",), "life_events": ("target_amount",),
-            "milestones": ("target_amount",), "capsules": ("target_amount", "monthly_contribution"),
+            "capsules": ("target_amount", "monthly_contribution"),
             "monthly_actions": ("amount",),
             "capsule_funding_sources": ("target_amount",),
-            "products": ("last_unit_price", "purchase_price"), "simulation_configs": ("monthly_savings",),
-            "simulation_scenarios": ("monthly_savings",), "life_scenarios": ("monthly_savings",), "registry_entries": ("amount",),
+            "products": ("last_unit_price", "purchase_price"), "registry_entries": ("amount",),
         }
         if model.__tablename__ == "capsule_rules":
             values = rule_data(values, "JPY")
@@ -77,27 +76,23 @@ def _seed(db, client_id=101, base=10000):
     parent = add(models.Account, 1, name="assets", account_type="asset")
     cash = add(models.Account, 2, name="cash", account_type="asset")
     expense = add(models.Account, 3, name="food", account_type="expense")
-    scenario = add(models.LifeScenario, 36, name="保存案", annual_return=7.0, inflation=1.0, horizon_years=12, monthly_savings=30000, is_goal=True)
+    scenario = add(models.LifeScenario, 36, name="保存案", annual_return=7.0, inflation=1.0, horizon_years=12, is_goal=True)
     db.flush()
-    goal = add(models.LifeEvent, 4, scenario_id=scenario.id, name="goal", start_date=date(2026, 10, 1),
-               target_date=date(2027, 1, 1), target_amount=1000, note="goal note", archived_at=STAMP)
+    goal = add(models.LifeEvent, 4, scenario_id=scenario.id, name="goal",
+               target_date=date(2027, 1, 1), target_amount=1000, note="goal note")
     next_goal = add(models.LifeEvent, 31, scenario_id=scenario.id, name="next", target_date=date(2028, 1, 1), target_amount=500)
     add(models.LifeEventLink, 32, from_event_id=goal.id, to_event_id=next_goal.id,
         kind="after", offset_months=12, note="graph note")
-    add(models.LifeScenarioAccountReturn, 38, scenario_id=scenario.id, account_id=cash.id, annual_return=3.0)
-    add(models.GoalBaseline, 40, scenario_id=scenario.id, scenario_name="保存案", reason="adopted",
-        anchor_date=date(2026, 10, 1), is_current=True, assumptions={"annual_return": 7.0},
-        projection=[{"offset": 0, "year": 2026, "p10": 1, "p50": 2, "p90": 3}], events=[{"name": "基準"}])
+    add(models.ScenarioContributionPlan, 38, scenario_id=scenario.id, account_id=cash.id, start_period="2026-10",
+        monthly_amount_minor=30000, annual_return=3.0, note="plan note")
     # Not in the backup, but present so rollback is proven to leave it alone too.
     add(models.Notification, 42, kind="goal_reflection", dedupe_key=f"goal_reflection:{base}", title="t", body="", payload={}, status="open")
     add(models.GoalBudgetReflection, 41, scenario_id=scenario.id, applied_at=STAMP, start_period="2026-10",
-        end_period="2026-10", options={"months": 1}, summary={"chosen_amount": 5}, events=[{"lineage": "x", "allocation": 5}])
-    capsule = add(models.Capsule, 5, name="goal", life_event_id=goal.id,
-                  target_amount=1000, monthly_contribution=10,
-                  capsule_type="life_event", target_amount_source="life_event")
-    add(models.Capsule, 33, name="next", life_event_id=next_goal.id,
-        target_amount=500, monthly_contribution=0,
-        capsule_type="life_event", target_amount_source="life_event")
+        end_period="2026-10", summary={"months": [{"period": "2026-10"}]})
+    capsule = add(models.Capsule, 5, name="goal", target_amount=1000, monthly_contribution=10)
+    next_capsule = add(models.Capsule, 33, name="next", target_amount=500, monthly_contribution=0)
+    add(models.GoalEventEarmark, 37, life_event_id=goal.id, capsule_id=capsule.id, share_bp=10000)
+    add(models.GoalEventEarmark, 39, life_event_id=next_goal.id, capsule_id=next_capsule.id, share_bp=5000)
     member = add(models.HouseholdMember, 34, name="子", relation="長女", birth_date=date(2010, 4, 1))
     add(models.LifeEventCondition, 35, life_event_id=goal.id, metric="member_age", comparator="gte",
         threshold_number=18, reference_id=member.id, note="入学")
@@ -134,24 +129,18 @@ def _seed(db, client_id=101, base=10000):
                                         expense.id, cash.id, expense.id, "", "auto"], separators=(",", ":")))
     add(models.PeriodReview, 17, start_date=date(2026, 10, 1), end_date=date(2026, 11, 1),
         label="October", reflection="reflection", next_actions="actions")
-    milestone = add(models.Milestone, 18, life_event_id=goal.id, date=date(2027, 1, 1),
-                    target_amount=1000, note="milestone",
-                    source_snapshot={"nested": {"account_id": cash.id}})
     add(models.CapsuleRule, 19, capsule_id=capsule.id, trigger_type="Expense",
         source_account_id=cash.id, destination_account_id=cash.id, amount_value=10)
     add(models.CapsuleFundingSource, 24, client_id=client.id, capsule_id=capsule.id,
         account_id=cash.id, target_amount=250, max_share_bp=6000, sort_order=3)
-    add(models.SimulationScenario, 21, life_event_id=goal.id, name="scenario",
-        annual_return=5, inflation=2, monthly_savings=10,
-        contribution_schedule=[{"period": "2026-10", "amount": 10, "account_id": cash.id}])
     add(models.ExchangeRate, 22, base_currency="USD", quote_currency="JPY", rate=150,
         as_of_date=date(2026, 10, 1))
     add(models.MonthlyAction, 23, source_period="2026-10", target_period="2026-11",
-        proposal_id="allocation", kind="boost_allocation", description="allocation",
-        target_id=goal.id, idempotency_key="allocation", amount=10,
+        proposal_id="allocation", kind="change_capsule_contribution", description="allocation",
+        target_id=capsule.id, idempotency_key="allocation", amount=10,
         payload={"nested": [{"account_id": cash.id, "life_event_id": goal.id,
                              "capsule_id": capsule.id, "product_id": product.id,
-                             "plan_line_id": line.id, "milestone_id": milestone.id}]},
+                             "plan_line_id": line.id}]},
         result={"nested": {"transaction_id": tx.id, "batch_id": batch.id}}, status="applied", applied_at=STAMP)
     # Tables outside the backup format must survive a failed restore too,
     # including proposal links that a transaction deletion sets to NULL.
@@ -192,7 +181,7 @@ REFERENCES = {
     "product_id": "products", "registry_entry_id": "registry_entries", "batch_id": "transaction_batches",
     "from_event_id": "life_events", "to_event_id": "life_events",
     "life_event_id": "life_events", "transaction_id": "transactions", "plan_id": "budget_plans",
-    "plan_line_id": "monthly_plan_lines", "milestone_id": "milestones", "capsule_id": "capsules",
+    "plan_line_id": "monthly_plan_lines", "capsule_id": "capsules",
     "funding_capsule_id": "capsules",
     "depreciation_expense_account_id": "accounts",
     "depreciation_asset_account_id": "accounts",
@@ -247,7 +236,7 @@ def test_round_trip_preserves_every_collection_and_document(db):
                     identity[index] = maps["accounts"][identity[index]]
                 item["identity_key"] = json.dumps(identity, separators=(",", ":"))
             if collection == "monthly_actions":
-                item["target_id"] = maps["life_events"][item["target_id"]]
+                item["target_id"] = maps["capsules"][item["target_id"]]
                 for field, old_id in item["payload"]["nested"][0].items():
                     item["payload"]["nested"][0][field] = maps[REFERENCES[field]][old_id]
                 for field, old_id in item["result"]["nested"].items():
@@ -286,9 +275,7 @@ def test_round_trip_preserves_every_collection_and_document(db):
     assert restored == expected
     # These JSON fields are opaque in the established format, unlike action
     # payload/result. Their embedded source IDs must remain byte-for-byte.
-    for collection, field in (("transaction_batches", "input_payload"),
-                              ("milestones", "source_snapshot"), ("simulation_scenarios", "contribution_schedule")):
-        assert restored["data"][collection][0][field] == original["data"][collection][0][field]
+    assert restored["data"]["transaction_batches"][0]["input_payload"] == original["data"]["transaction_batches"][0]["input_payload"]
 
 
 def test_an_older_backup_with_quick_templates_still_restores(db):

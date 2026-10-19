@@ -1,12 +1,12 @@
-"""HTTP adapters for user-authored life scenarios."""
+"""HTTP adapters for user-authored life scenarios and their 積立設定."""
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
+from ..services import contribution_plan_service as plans
 from ..services import life_scenario_service as service
-from ..workflows.scenario_goal_workflow import choose_goal
 
 router = APIRouter(prefix="/life-scenarios", tags=["life_scenarios"])
 
@@ -60,36 +60,13 @@ def update(
     return service.describe(db, current_client.id, scenario)
 
 
-@router.put("/{scenario_id}/account-returns")
-def account_returns(
-    scenario_id: int,
-    payload: schemas.LifeScenarioAccountReturns,
-    db: Session = Depends(get_db),
-    current_client: models.Client = Depends(get_current_client),
-):
-    scenario = service.replace_account_returns(
-        db, current_client.id, scenario_id, [row.model_dump() for row in payload.returns],
-    )
-    return service.describe(db, current_client.id, scenario)
-
-
-@router.get("/{scenario_id}/goal-preview")
-def goal_preview(
-    scenario_id: int,
-    db: Session = Depends(get_db),
-    current_client: models.Client = Depends(get_current_client),
-):
-    return service.goal_preview(db, current_client.id, scenario_id)
-
-
 @router.post("/{scenario_id}/goal")
 def goal(
     scenario_id: int,
-    payload: schemas.LifeScenarioGoal = schemas.LifeScenarioGoal(),
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    scenario = choose_goal(db, current_client.id, scenario_id, confirm_detach=payload.confirm_detach)
+    scenario = service.make_goal(db, current_client.id, scenario_id)
     return service.describe(db, current_client.id, scenario)
 
 
@@ -100,4 +77,45 @@ def delete(
     current_client: models.Client = Depends(get_current_client),
 ):
     service.delete(db, current_client.id, scenario_id)
+    return {"message": "削除しました。"}
+
+
+@router.get("/{scenario_id}/contribution-plans")
+def list_contribution_plans(
+    scenario_id: int,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    return [plans.serialize(db, current_client.id, plan) for plan in plans.list_plans(db, current_client.id, scenario_id)]
+
+
+@router.post("/{scenario_id}/contribution-plans")
+def create_contribution_plan(
+    scenario_id: int,
+    payload: schemas.ContributionPlanInput,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    plan = plans.create_plan(db, current_client.id, scenario_id, payload.model_dump(exclude_unset=True))
+    return plans.serialize(db, current_client.id, plan)
+
+
+@router.put("/contribution-plans/{plan_id}")
+def update_contribution_plan(
+    plan_id: int,
+    payload: schemas.ContributionPlanInput,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    plan = plans.update_plan(db, current_client.id, plan_id, payload.model_dump(exclude_unset=True))
+    return plans.serialize(db, current_client.id, plan)
+
+
+@router.delete("/contribution-plans/{plan_id}")
+def delete_contribution_plan(
+    plan_id: int,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    plans.delete_plan(db, current_client.id, plan_id)
     return {"message": "削除しました。"}

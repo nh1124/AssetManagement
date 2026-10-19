@@ -11,11 +11,11 @@ from .transaction_batch import TransactionBatch
 from .fx import ExchangeRate, FxTrackedCurrency
 from .product import Product, ProductDepreciation
 from .registry import RegistryEntry
-from .goal import GoalBaseline, GoalBudgetReflection, LifeScenario, LifeScenarioAccountReturn, LifeEvent, LifeEventLink, Milestone, HouseholdMember, LifeEventCondition
+from .goal import GoalBudgetReflection, GoalEventEarmark, LifeScenario, LifeEvent, LifeEventLink, HouseholdMember, LifeEventCondition, ScenarioContributionPlan
 from .budget import BudgetPlan, MonthlyPlanLine
 from .planning import PeriodReview, MonthlyAction, PeriodClose
 from .ai import AiOperationPolicy, AiAuditLog, AiChangeRequest
-from .simulation import SimulationConfig, SimulationScenario
+from .simulation import SimulationConfig
 from .capsule import Capsule, CapsuleFundingSource, CapsuleRule, CapsuleDrawdown
 from .notification import Notification
 
@@ -35,15 +35,14 @@ __all__ = [
     "Product",
     "ProductDepreciation",
     "RegistryEntry",
-    "GoalBaseline",
     "GoalBudgetReflection",
+    "GoalEventEarmark",
     "LifeScenario",
-    "LifeScenarioAccountReturn",
+    "ScenarioContributionPlan",
     "LifeEvent",
     "LifeEventLink",
     "HouseholdMember",
     "LifeEventCondition",
-    "Milestone",
     "BudgetPlan",
     "MonthlyPlanLine",
     "PeriodReview",
@@ -53,7 +52,6 @@ __all__ = [
     "AiAuditLog",
     "AiChangeRequest",
     "SimulationConfig",
-    "SimulationScenario",
     "Capsule",
     "CapsuleFundingSource",
     "CapsuleRule",

@@ -470,7 +470,6 @@ class SimulationConfigBase(BaseModel):
     annual_return: float = 5.0
     tax_rate: float = 20.0
     is_nisa: bool = True
-    monthly_savings: float = 100000
     volatility: float = 15.0
     inflation_rate: float = 2.0
 
@@ -517,7 +516,6 @@ MonthlyPlanLineType = Literal[
 MonthlyPlanTargetType = Literal[
     "account",
     "capsule",
-    "life_event",
     "product",
     "manual",
 ]
@@ -695,15 +693,10 @@ class LifeEventBase(BaseModel):
     account_id: Optional[int] = None
     condition_mode: Literal["all", "any"] = "all"
     name: str
-    start_date: Optional[date] = None
     target_date: date
     target_amount: float
     priority: Literal[1, 2, 3] = 2
     note: Optional[str] = None
-    active_plan_basis: str = "milestone"
-    active_plan_label: Optional[str] = None
-    plan_status_override: Optional[str] = None
-    budget_reflection: Optional[Literal["firm", "conditional", "simulation_only"]] = None
 
 class LifeEventCreate(LifeEventBase):
     model_config = ConfigDict(extra="forbid")
@@ -715,158 +708,25 @@ class LifeEventUpdate(BaseModel):
     account_id: Optional[int] = None
     condition_mode: Literal["all", "any"] = "all"
     name: Optional[str] = None
-    start_date: Optional[date] = None
     target_date: Optional[date] = None
     target_amount: Optional[float] = None
     priority: Optional[Literal[1, 2, 3]] = None
     note: Optional[str] = None
-    active_plan_basis: Optional[str] = None
-    active_plan_label: Optional[str] = None
-    plan_status_override: Optional[str] = None
-    budget_reflection: Optional[Literal["firm", "conditional", "simulation_only"]] = None
-
-class GoalArchiveRequest(BaseModel):
-    capsule_action: Literal["keep", "stop_rules", "release", "detach"] = "keep"
-    transfer_account_id: Optional[int] = None
 
 class LifeEvent(LifeEventBase):
     id: int
     scenario_id: int
     lineage: str
-    archived_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
-    budget_reflection_effective: Literal["firm", "conditional", "simulation_only"] = "firm"
 
     class Config:
         from_attributes = True
-
-# ========== Strategy Dashboard ==========
-
-class LifeEventWithProgress(LifeEvent):
-    """Extended LifeEvent with calculated progress fields."""
-    current_funded: float = 0.0
-    projected_amount: float = 0.0
-    gap: float = 0.0
-    status: str = "Not Started"  # "On Track", "At Risk", "Off Track"
-    progress_percentage: float = 0.0
-    years_remaining: float = 0.0
-    funded_percentage: float = 0.0
-    plan_expected_amount: float = 0.0
-    plan_gap: float = 0.0
-    plan_status: str = "No Plan"
-    plan_progress_percentage: float = 0.0
-    plan_previous_milestone: Optional[dict[str, Any]] = None
-    plan_next_milestone: Optional[dict[str, Any]] = None
-    monthly_allocation: float = 0.0
-    allocation_source: Optional[str] = None
-
-class MonteCarloPercentiles(BaseModel):
-    p10: float
-    p50: float
-    p90: float
-
-
-class MonteCarloYearByYear(BaseModel):
-    p10: list[float]
-    p50: list[float]
-    p90: list[float]
-
-
-class MonteCarloResult(BaseModel):
-    life_event_id: int
-    life_event_name: str
-    target_amount: float
-    years_remaining: float
-    probability: float
-    percentiles: MonteCarloPercentiles
-    year_by_year: MonteCarloYearByYear
-    n_simulations: int
-
-# ========== Roadmap & Capsules ==========
-
-class MilestoneBase(BaseModel):
-    life_event_id: Optional[int] = None
-    date: date
-    target_amount: float
-    note: Optional[str] = None
-    source: str = "manual"
-    source_snapshot: Optional[dict[str, Any]] = None
-    is_active_plan: bool = True
-
-class MilestoneCreate(MilestoneBase):
-    pass
-
-class MilestoneUpdate(BaseModel):
-    note: Optional[str] = None
-    target_amount: Optional[float] = None
-    date: Optional[DateType] = None
-    is_active_plan: Optional[bool] = None
-
-class Milestone(MilestoneBase):
-    id: int
-    created_at: datetime
-
-    class Config:
-        from_attributes = True
-
-
-# ========== Simulation Scenarios ==========
-
-class SimulationScenarioBase(BaseModel):
-    life_event_id: int
-    name: str
-    description: Optional[str] = None
-    annual_return: float
-    inflation: float
-    monthly_savings: Optional[float] = None
-    contribution_schedule: list[dict[str, Any]] = Field(default_factory=list)
-    allocation_mode: Literal["weighted", "direct"] = "direct"
-
-
-class SimulationScenarioCreate(SimulationScenarioBase):
-    pass
-
-
-class SimulationScenarioUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    annual_return: Optional[float] = None
-    inflation: Optional[float] = None
-    monthly_savings: Optional[float] = None
-    contribution_schedule: Optional[list[dict[str, Any]]] = None
-    allocation_mode: Optional[Literal["weighted", "direct"]] = None
-
-
-class SimulationScenario(SimulationScenarioBase):
-    id: int
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-
-    class Config:
-        from_attributes = True
-
-
-class SimulationScenarioCompareRequest(BaseModel):
-    life_event_id: int
-    scenario_ids: list[int] = Field(min_length=2, max_length=2)
-
-
-class SimulationScenarioCompareItem(BaseModel):
-    scenario_id: int
-    scenario_name: str
-    target_amount: float
-    years_remaining: float
-    probability: float
-    percentiles: MonteCarloPercentiles
-    year_by_year: MonteCarloYearByYear
-    deterministic_yearly: list[dict[str, Any]]
 
 class CapsuleBase(BaseModel):
     auto_post: bool = False
     name: str
     target_amount: float
     monthly_contribution: float
-    life_event_id: Optional[int] = None
     capsule_type: str = "manual"
     target_amount_source: str = "manual"
     monthly_contribution_source: str = "manual"
@@ -880,7 +740,6 @@ class CapsuleUpdate(BaseModel):
     name: Optional[str] = None
     target_amount: Optional[float] = None
     monthly_contribution: Optional[float] = None
-    life_event_id: Optional[int] = None
     capsule_type: Optional[str] = None
     target_amount_source: Optional[str] = None
     monthly_contribution_source: Optional[str] = None
@@ -1005,37 +864,6 @@ class CapsuleRule(CapsuleRuleBase):
         from_attributes = True
 
 
-class ContributionScheduleItem(BaseModel):
-    kind: Literal["monthly", "yearly", "one_time"] = "monthly"
-    amount: float = Field(ge=0)
-    month: Optional[int] = Field(default=None, ge=1, le=12)
-    date: Optional[DateType] = None
-    start_date: Optional[DateType] = None
-    end_date: Optional[DateType] = None
-    note: Optional[str] = None
-
-
-class MilestoneSimulationRequest(BaseModel):
-    basis: Literal["annual_plan", "deterministic", "p10", "p50", "p90"] = "p50"
-    interval: Literal["annual", "semiannual", "quarterly", "target_only"] = "annual"
-    mode: Literal["add", "replace"] = "replace"
-    n_simulations: int = Field(default=1000, ge=100, le=10000)
-    annual_return: Optional[float] = None
-    inflation: Optional[float] = None
-    monthly_savings: Optional[float] = None
-    contribution_schedule: list[ContributionScheduleItem] = Field(default_factory=list)
-    allocation_mode: Literal["weighted", "direct"] = "weighted"
-
-
-class MilestoneSimulationPreview(BaseModel):
-    life_event_id: int
-    basis: str
-    interval: str
-    mode: str
-    existing_count: int
-    items: list[MilestoneCreate]
-
-
 class ReconciliationAccount(BaseModel):
     id: int
     name: str
@@ -1137,8 +965,6 @@ class LifeScenarioUpdate(BaseModel):
     annual_return: float | None = None
     inflation: float | None = None
     horizon_years: int | None = None
-    # null returns the scenario to the client-wide simulation setting.
-    monthly_savings: float | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -1153,75 +979,34 @@ class LifeScenarioUpdate(BaseModel):
                 raise ValueError("利率は有限の数値で指定してください。")
         if "horizon_years" in values and (type(values["horizon_years"]) is not int or not 1 <= values["horizon_years"] <= 60):
             raise ValueError("試算期間は1〜60年で指定してください。")
-        savings = values.get("monthly_savings")
-        if savings is not None and (type(savings) not in (int, float) or not math.isfinite(savings) or savings < 0):
-            raise ValueError("月の積立額は0以上の数値で指定してください。")
         return values
 
 
-class GoalBudgetHandover(BaseModel):
-    """Claim this much of an account for a near event's capsule (no money moves)."""
+class GoalEventEarmarkInput(BaseModel):
+    """One earmark counted toward a goal event, and the percent of it that counts."""
     model_config = ConfigDict(extra="forbid")
-    event_id: int
-    account_id: int
-    amount: float = Field(ge=0, allow_inf_nan=False)
+    capsule_id: int = Field(gt=0)
+    share: float = Field(default=100, ge=0, le=100, allow_inf_nan=False)
 
 
-class GoalBudgetOptions(BaseModel):
-    """The user's choices for reflecting the goal into the budget (Q1 and Q2)."""
+class ContributionPlanInput(BaseModel):
+    """A 積立設定 record; fields left out keep their value on update."""
     model_config = ConfigDict(extra="forbid")
-    # Q1: the scenario's monthly savings, or what the reflected events require.
-    savings_source: Literal["scenario", "required"] = "scenario"
-    # Q2: events within this many years are funded through their own capsules;
-    # null funds every event that way, however far.
-    near_years: Optional[int] = Field(default=5, ge=1, le=60)
+    account_id: int | None = Field(default=None, gt=0)
+    start_period: str | None = Field(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    monthly_amount: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    annual_return: float | None = Field(default=None, allow_inf_nan=False)
+    note: str | None = None
+
+
+class GoalPlanRange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     start_period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
-    months: int = Field(default=1, ge=1, le=12)
-    savings_account_id: Optional[int] = None
-    # Or a monthly allocation definition whose amount carries the rest of the savings.
-    savings_definition_id: Optional[int] = None
-    # Existing savings (keys from the preview) the user does not count as saving.
-    uncounted: list[str] = Field(default_factory=list)
-    create_capsules: list[int] = Field(default_factory=list)
-    # Confirmed handovers: claim part of an account for a near event's capsule.
-    handovers: list[GoalBudgetHandover] = Field(default_factory=list)
-    # U1: the order the monthly savings funds these groups in; the rest always comes last.
-    # Null keeps the default order (existing savings, products, near events).
-    funding_order: Optional[list[Literal["existing", "products", "near"]]] = None
-
-    @field_validator("funding_order")
-    @classmethod
-    def _every_group_once(cls, value):
-        if value is not None and sorted(value) != ["existing", "near", "products"]:
-            raise ValueError("funding_order must list existing, products and near once each")
-        return value
+    end_period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
 
 
-class GoalBudgetApply(GoalBudgetOptions):
+class GoalPlanApply(GoalPlanRange):
     fingerprint: str = Field(min_length=64, max_length=64)
-    # Q4: also freeze today's goal projection as the new baseline.
-    update_baseline: bool = False
-
-
-class LifeScenarioGoal(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    confirm_detach: bool = False
-
-
-class LifeScenarioAccountReturn(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    account_id: int
-    annual_return: float
-
-    @model_validator(mode="before")
-    @classmethod
-    def validate_rate(cls, values):
-        return LifeScenarioUpdate.validate_assumptions(values)
-
-
-class LifeScenarioAccountReturns(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-    returns: list[LifeScenarioAccountReturn]
 
 
 class FxTrackedCurrencyCreate(BaseModel):

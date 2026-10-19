@@ -11,7 +11,6 @@ from sqlalchemy.orm import Session
 from .. import models
 from ..domain.errors import Refused
 from .money_storage import money_client_currency
-from .strategy_service import aggregate_event_demand_by_year
 
 
 @dataclass(frozen=True)
@@ -38,12 +37,10 @@ def _offset_date(source: date | None, months: int) -> date | None:
 def walk(db: Session, client_id: int, scenario_id: int) -> list[ScenarioEvent]:
     events = {event.id: event for event in db.query(models.LifeEvent).filter(
         models.LifeEvent.client_id == client_id, models.LifeEvent.scenario_id == scenario_id,
-        models.LifeEvent.archived_at.is_(None),
     ).order_by(models.LifeEvent.id).all()}
     outgoing: dict[int, list[models.LifeEventLink]] = {event_id: [] for event_id in events}
     indegree = dict.fromkeys(events, 0)
     for link in db.query(models.LifeEventLink).filter_by(client_id=client_id).order_by(models.LifeEventLink.id).all():
-        # Archiving removes the node and its incident edges from this simulation only.
         if link.from_event_id in events and link.to_event_id in events:
             outgoing[link.from_event_id].append(link)
             indegree[link.to_event_id] += 1
@@ -80,16 +77,20 @@ def walk(db: Session, client_id: int, scenario_id: int) -> list[ScenarioEvent]:
     return list(resolved.values())
 
 
-def _subtract_demand(scenario, projection: list[dict], years: int) -> list[dict]:
-    demand = aggregate_event_demand_by_year(
-        [(event.resolved_date, event.target_amount) for event in scenario.events if event.direction == "expense"], years,
-        income_events=[(event.resolved_date, event.target_amount) for event in scenario.events if event.direction == "income"],
-    )
-    return [
-        {**row, "cumulative_target": due["cumulative_target"],
-         "cumulative_income": due["cumulative_income"],
-         **{band: row[band] - due["cumulative_target"] + due["cumulative_income"] for band in ("p10", "p50", "p90")}}
-        for row, due in zip(projection, demand)
-    ]
-
-
+def aggregate_event_demand_by_year(
+    events: list[tuple[date | None, float]], years: int = 30,
+    *, income_events: list[tuple[date | None, float]] | None = None,
+) -> list[dict]:
+    """Cumulative expense and income amounts due by each calendar year from this one."""
+    years = max(1, min(years, 60))
+    current_year = date.today().year
+    rows = []
+    for year in range(current_year, current_year + years + 1):
+        due = [amount for target_date, amount in events if target_date and target_date.year <= year]
+        rows.append({
+            "year": year,
+            "cumulative_target": round(sum(due), 0),
+            "cumulative_income": round(sum(amount for target_date, amount in (income_events or []) if target_date and target_date.year <= year), 0),
+            "event_count": len(due),
+        })
+    return rows

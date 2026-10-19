@@ -22,7 +22,7 @@ from ..domain.money import Money
 from .periods import current_period_key
 from .journal_legs import legs_in_range
 from .goal_service import goal_events_query
-from .strategy_service import calculate_overall_goal_probability
+from .goal_earmark_service import events_with_progress
 from .reporting_service import (
     get_balance_sheet,
     get_profit_loss,
@@ -78,6 +78,15 @@ def calculate_logical_balance(
     )
 
 
+def _goal_funding(db: Session, client_id: int) -> dict:
+    """The goal's expense events against what their linked earmarks hold."""
+    goals = [row for row in events_with_progress(db, client_id) if row["direction"] == "expense"]
+    total_target = sum(goal["target_amount"] for goal in goals)
+    total_funded = sum(goal["current_funded"] for goal in goals)
+    return {"goals": goals, "total_target": total_target, "total_funded": total_funded,
+            "overall_probability": round(total_funded / total_target * 100, 1) if total_target else 0.0}
+
+
 def _roadmap_progression_status(goal_data: dict) -> str:
     goals = goal_data.get("goals") or []
     total_target = goal_data.get("total_target") or 0.0
@@ -102,7 +111,7 @@ def get_summary(db: Session, client_id: int) -> dict:
     bs = get_balance_sheet(db, client_id=client_id)
     today = date.today()
     pl = get_profit_loss(db, today.year, today.month, client_id=client_id)
-    goal_data = calculate_overall_goal_probability(db, client_id=client_id)
+    goal_data = _goal_funding(db, client_id)
 
     cash_accounts = _cash_accounts(db, client_id)
     total_cash = sum(calculate_account_valued_balance(db, account) for account in cash_accounts) if cash_accounts else 0.0
@@ -182,7 +191,7 @@ def get_summary(db: Session, client_id: int) -> dict:
         "logical_balance": round(logical_balance, 0),
         "goal_probability": goal_data["overall_probability"],
         "total_goal_amount": goal_data["total_target"],
-        "total_funded": goal_data["total_projected"],
+        "total_funded": goal_data["total_funded"],
         "cfo_briefing": cfo_briefing,
         "savings_rate": round(savings_rate, 1),
         "liquidity_coverage_ratio": round(liquidity_coverage_ratio, 1),
@@ -250,9 +259,9 @@ def get_net_position(db: Session, client_id: int) -> dict:
     """Calculate Net Position = Assets - Current Debt - Future Life Event Costs for current client."""
 
     bs = get_balance_sheet(db, client_id=client_id)
-    goal_data = calculate_overall_goal_probability(db, client_id=client_id)
+    goal_data = _goal_funding(db, client_id)
 
-    future_costs = max(0.0, goal_data["total_target"] - goal_data["total_projected"])
+    future_costs = max(0.0, goal_data["total_target"] - goal_data["total_funded"])
     net_position = bs["net_worth"] - future_costs
 
     return {

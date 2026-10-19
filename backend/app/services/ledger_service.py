@@ -195,37 +195,6 @@ def delete_account(
     return True
 
 
-def get_or_create_account(
-    db: Session,
-    name: str,
-    client_id: int,
-    account_type: str = "expense",
-    *,
-    commit: bool = True,
-) -> models.Account:
-    """Get account by name or create it for a specific client."""
-    normalized = (name or "").strip().lower()
-    if not normalized:
-        normalized = "expense"
-
-    account = db.query(models.Account).filter(
-        models.Account.name == normalized,
-        models.Account.client_id == client_id,
-    ).first()
-    if not account:
-        account = models.Account(
-            name=normalized,
-            account_type=account_type,
-            client_id=client_id,
-        )
-        db.add(account)
-        if commit:
-            db.commit()
-            db.refresh(account)
-        else:
-            db.flush()
-    return account
-
 
 def _get_account_by_id(
     db: Session,

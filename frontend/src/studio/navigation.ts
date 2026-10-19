@@ -67,7 +67,7 @@ export const STUDIO_GROUPS: StudioGroup[] = [
                 tabs: [
                     { segment: '', label: 'tab.records' },
                     { segment: 'auto', label: 'tab.auto' },
-                    // The budget screen owns the plan; repeating numbers at two depths makes them drift apart.
+                    // The plan screen owns the monthly budget; repeating numbers at two depths makes them drift apart.
                 ],
             },
             {
@@ -88,12 +88,12 @@ export const STUDIO_GROUPS: StudioGroup[] = [
                 ],
             },
             {
-                path: 'budget',
-                label: 'screen.budget',
+                path: 'plan',
+                label: 'screen.plan',
                 icon: ClipboardList,
                 section: WORKSPACE,
                 tabs: [
-                    { segment: '', label: 'tab.budget' },
+                    { segment: '', label: 'tab.plan' },
                     { segment: 'actions', label: 'tab.actions' },
                 ],
             },

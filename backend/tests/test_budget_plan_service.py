@@ -184,7 +184,7 @@ def test_data_export_manifest_and_validate_include_monthly_actions() -> None:
         payload = ImportPayload(**snapshot)
         validation = validate_import_client_data(payload=payload, current_client=client)
 
-        assert snapshot["version"] == 25
+        assert snapshot["version"] == 26
         assert snapshot["manifest"]["counts"]["monthly_actions"] == 1
         assert snapshot["data"]["monthly_actions"][0]["kind"] == "set_budget"
         assert validation["status"] == "valid"
@@ -946,52 +946,6 @@ def test_expense_only_products_are_variable_budget_suggestions() -> None:
     finally:
         db.close()
 
-
-def test_life_event_allocation_is_presented_as_capsule() -> None:
-    db = _session()
-    try:
-        client = models.Client(id=1, name="test", general_settings={})
-        account = models.Account(client_id=1, name="event capsule account", account_type="asset")
-        db.add_all([client, account])
-        db.flush()
-        event = models.LifeEvent(scenario_id=goal_scenario_id(db, 1),
-            client_id=1,
-            name="Move",
-            target_date=date(2027, 4, 1),
-            target_amount_minor=to_minor(500000, "JPY"),
-            priority=2,
-        )
-        db.add(event)
-        db.flush()
-        capsule = models.Capsule(
-            client_id=1,
-            name="Move Capsule",
-            target_amount_minor=to_minor(500000, "JPY"),
-            monthly_contribution_minor=to_minor(0, "JPY"),
-            life_event_id=event.id,
-            funding_sources=[models.CapsuleFundingSource(client_id=1, account_id=account.id, target_amount_minor=to_minor(500000, "JPY") or 0)],
-        )
-        db.add(capsule)
-        db.add(models.MonthlyPlanLine(
-            client_id=1,
-            target_period="2026-05",
-            line_type="allocation",
-            target_type="life_event",
-            target_id=event.id,
-            name=event.name,
-            amount_minor=to_minor(30000, "JPY"),
-        ))
-        db.commit()
-
-        _give_fixture_lines_a_plan(db)
-        summary = get_budget_summary(db, client_id=1, period="2026-05")
-        line = next(item for item in summary["plan_lines"] if item["line_type"] == "allocation")
-
-        assert line["target_type"] == "capsule"
-        assert line["target_id"] == capsule.id
-        assert line["target_name"] == "Move Capsule"
-    finally:
-        db.close()
 
 
 def test_cash_flow_projection_warns_about_unsynced_yearly_income() -> None:

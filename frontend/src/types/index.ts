@@ -199,81 +199,35 @@ export interface AiChangeRequest extends AiChangeRequestPreview {
 }
 
 
-export interface RoadmapEntry {
-    year: number;
-    label?: string;
-    start_balance: number;
-    contribution: number;
-    investment_gain: number;
-    end_balance: number;
-    goal_coverage: number;
-}
-
-export type BudgetReflection = 'firm' | 'conditional' | 'simulation_only';
-
+/** A story fact of a scenario. Funding progress comes only from /life-events/with-progress. */
 export interface LifeEvent {
-    direction?: 'expense' | 'income';
-    account_id?: number | null;
-    condition_mode?: 'all' | 'any';
     id: number;
+    scenario_id: number;
+    lineage: string;
+    direction: 'expense' | 'income';
+    account_id: number | null;
+    condition_mode: 'all' | 'any';
     name: string;
-    start_date?: string | null;
     target_date: string;
     target_amount: number;
     priority: 1 | 2 | 3;
-    note?: string | null;
-    active_plan_basis?: string;
-    active_plan_label?: string | null;
-    plan_status_override?: string | null;
-    /** The user's choice; null follows the event (conditional with preconditions, else firm). */
-    budget_reflection?: BudgetReflection | null;
-    budget_reflection_effective?: BudgetReflection;
-    archived_at?: string | null;
-    created_at?: string;
-    current_funded?: number;
-    projected_amount?: number;
-    gap?: number;
-    weighted_return?: number;
-    gross_annual_return?: number;
-    blended_after_tax_return?: number;
-    tax_rate?: number;
-    status?: 'On Track' | 'At Risk' | 'Off Track' | 'Achieved' | 'Missed' | 'Not Started';
-    progress_percentage?: number;
-    funded_percentage?: number;
-    plan_expected_amount?: number;
-    plan_gap?: number;
-    plan_status?: 'Ahead' | 'On Track' | 'Watch' | 'Behind' | 'No Plan' | string;
-    plan_progress_percentage?: number;
-    /** This event's share of the monthly savings, as the budget reflection divides it. */
-    monthly_allocation?: number;
-    allocation_source?: 'reflection' | 'rule' | 'direct' | null;
-    plan_previous_milestone?: MilestonePlanSummary | null;
-    plan_next_milestone?: MilestonePlanSummary | null;
-    years_remaining?: number;
-    roadmap?: RoadmapEntry[];
+    note: string | null;
+    created_at?: string | null;
 }
 
-export type GoalCapsuleAction = 'keep' | 'stop_rules' | 'release' | 'detach';
-
-export interface GoalArchiveRequest {
-    capsule_action: GoalCapsuleAction;
-    transfer_account_id: number | null;
+/** An earmark counted toward a goal event (実績管理の設定), with the percent that counts. */
+export interface GoalEarmarkLink {
+    capsule_id: number;
+    capsule_name?: string;
+    share: number;
 }
 
-export interface GoalCapsule {
-    id: number;
-    name: string;
-    current_balance: number;
-    claims: Array<{ currency: string; amount_minor: number; amount: number }>;
-}
-
-export interface MilestonePlanSummary {
-    id: number;
-    date: string;
-    target_amount: number;
-    note?: string | null;
-    source?: string | null;
-    gap?: number;
+export interface LifeEventProgress extends LifeEvent {
+    current_funded: number;
+    gap: number;
+    progress_percentage: number;
+    months_remaining: number;
+    earmarks: GoalEarmarkLink[];
 }
 
 export type DepreciationMethod = 'none' | 'straight_line' | 'declining_balance';
@@ -343,7 +297,7 @@ export interface AutoTransaction extends AutoTransactionInput {
 }
 
 export type MonthlyPlanLineType = 'income' | 'expense' | 'allocation' | 'debt_payment' | 'borrowing' | 'drawdown';
-export type MonthlyPlanTargetType = 'account' | 'capsule' | 'life_event' | 'product' | 'manual';
+export type MonthlyPlanTargetType = 'account' | 'capsule' | 'product' | 'manual';
 export type MonthlyPlanCashTreatment = 'auto' | 'cash' | 'non_cash';
 
 export interface MonthlyPlanLine {
@@ -439,7 +393,7 @@ export interface MonthlyAction {
     created_at?: string | null;
 }
 
-export type ReviewActionKind = 'set_budget' | 'add_auto_transaction' | 'stop_auto_transaction' | 'boost_allocation' | 'change_capsule_contribution';
+export type ReviewActionKind = 'set_budget' | 'add_auto_transaction' | 'stop_auto_transaction' | 'change_capsule_contribution';
 
 export interface ReviewActionCreate {
     source_period: string;
@@ -475,89 +429,6 @@ export interface PeriodReview {
     next_actions: string;
     created_at: string;
     updated_at?: string | null;
-}
-
-export interface Milestone {
-    id: number;
-    life_event_id?: number;
-    date: string;
-    target_amount: number;
-    note?: string | null;
-    source?: string;
-    source_snapshot?: Record<string, unknown> | null;
-    is_active_plan?: boolean;
-}
-
-export type MilestoneSimulationBasis = 'annual_plan' | 'deterministic' | 'p10' | 'p50' | 'p90';
-export type MilestoneSimulationInterval = 'annual' | 'semiannual' | 'quarterly' | 'target_only';
-export type MilestoneSimulationMode = 'add' | 'replace';
-export type ContributionScheduleKind = 'monthly' | 'yearly' | 'one_time';
-
-export interface ContributionScheduleItem {
-    kind: ContributionScheduleKind;
-    amount: number;
-    month?: number | null;
-    date?: string | null;
-    start_date?: string | null;
-    end_date?: string | null;
-    note?: string | null;
-}
-
-export interface MilestoneSimulationRequest {
-    basis: MilestoneSimulationBasis;
-    interval: MilestoneSimulationInterval;
-    mode: MilestoneSimulationMode;
-    n_simulations: number;
-    annual_return?: number;
-    inflation?: number;
-    monthly_savings?: number;
-    contribution_schedule?: ContributionScheduleItem[];
-    allocation_mode?: 'weighted' | 'direct';
-}
-
-export interface MilestoneSimulationPreview {
-    life_event_id: number;
-    basis: MilestoneSimulationBasis;
-    interval: MilestoneSimulationInterval;
-    mode: MilestoneSimulationMode;
-    existing_count: number;
-    items: Array<Omit<Milestone, 'id'>>;
-}
-
-export interface SimulationScenario {
-    id: number;
-    life_event_id: number;
-    name: string;
-    description?: string | null;
-    annual_return: number;
-    inflation: number;
-    monthly_savings?: number | null;
-    contribution_schedule: ContributionScheduleItem[];
-    allocation_mode: 'weighted' | 'direct';
-    created_at?: string | null;
-    updated_at?: string | null;
-}
-
-export interface SimulationScenarioCreatePayload {
-    life_event_id: number;
-    name: string;
-    description?: string | null;
-    annual_return: number;
-    inflation: number;
-    monthly_savings?: number | null;
-    contribution_schedule: ContributionScheduleItem[];
-    allocation_mode: 'weighted' | 'direct';
-}
-
-export interface SimulationScenarioCompareItem {
-    scenario_id: number;
-    scenario_name: string;
-    target_amount: number;
-    years_remaining: number;
-    probability: number;
-    percentiles: { p10: number; p50: number; p90: number };
-    year_by_year: { p10: number[]; p50: number[]; p90: number[] };
-    deterministic_yearly: Array<{ year: number; end_balance: number }>;
 }
 
 export interface NetWorthHistoryPoint {
@@ -650,40 +521,6 @@ export interface AccountFlowTransactionPage {
     total: number;
 }
 
-export interface RoadmapProjectionPoint {
-    year: number;
-    p10: number;
-    p50: number;
-    p90: number;
-}
-
-export interface LiabilityDemandPoint {
-    year: number;
-    cumulative_target: number;
-    event_count: number;
-}
-
-export interface RoadmapMilestone extends Milestone {
-    life_event_name?: string;
-}
-
-export interface RoadmapProjection {
-    history: NetWorthHistoryPoint[];
-    projection: RoadmapProjectionPoint[];
-    liability_demand: LiabilityDemandPoint[];
-    milestones: RoadmapMilestone[];
-    events: LifeEvent[];
-    roadmap_progression: 'On Track' | 'At Risk' | 'Off Track';
-    roadmap_progression_pct: number;
-    params: {
-        years: number;
-        annual_return: number;
-        inflation: number;
-        monthly_savings?: number | null;
-        reference_date: string;
-    };
-}
-
 export type CapsuleDrawdownKind = 'as_intended' | 'diverted';
 
 export interface CapsuleDrawdownInput {
@@ -738,7 +575,6 @@ export type CapsuleFundingSourceInput = Pick<CapsuleFundingSource, 'account_id' 
 
 export interface Capsule {
     id: number;
-    life_event_id?: number | null;
     name: string;
     target_amount: number;
     monthly_contribution: number;
@@ -778,47 +614,6 @@ export interface CapsuleRule {
     amount_value: number;
     is_active: boolean;
     created_at: string;
-}
-
-export interface MonteCarloResult {
-    life_event_id: number;
-    life_event_name: string;
-    target_amount: number;
-    years_remaining: number;
-    probability: number;
-    percentiles: {
-        p10: number;
-        p50: number;
-        p90: number;
-    };
-    year_by_year: {
-        p10: number[];
-        p50: number[];
-        p90: number[];
-    };
-    n_simulations: number;
-}
-
-export interface BudgetPlan {
-    id: number;
-    name: string;
-    description?: string | null;
-    is_default: boolean;
-    sort_order: number;
-    created_at?: string | null;
-    updated_at?: string | null;
-}
-
-export interface BudgetPlanCashFlowRow {
-    period: string;
-    ending_cash: number;
-    net_cash: number;
-}
-
-export interface BudgetPlanCompareResult {
-    plan_id: number;
-    plan_name: string;
-    cash_flow: BudgetPlanCashFlowRow[];
 }
 
 export interface DataHealthIssue {

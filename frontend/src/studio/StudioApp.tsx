@@ -8,16 +8,14 @@ import Accounts from './pages/assets/Accounts';
 import Earmarks from './pages/earmarks/Earmarks';
 import Ledger from './pages/ledger/Ledger';
 import Flows from './pages/Flows';
-import Budget from './pages/budget/Budget';
-import Actions from './pages/budget/Actions';
+import Plan from './pages/plan/Plan';
+import Actions from './pages/plan/Actions';
 import Trends from './pages/report/Trends';
 import Breakdown from './pages/report/Monthly';
 import Review from './pages/report/Review';
 import Export from './pages/report/Export';
 import LifeEventList from './pages/goals/LifeEventList';
 import GoalSummary from './pages/goals/GoalSummary';
-import GoalPage from './pages/goals/GoalPage';
-import GoalWorkspace from './pages/goals/GoalWorkspace';
 import LifeEventGraph from './pages/goals/LifeEventGraph';
 import ScenarioLayout from './pages/goals/ScenarioLayout';
 import ScenarioList from './pages/goals/ScenarioList';
@@ -46,7 +44,7 @@ const SCREENS: Record<string, { index: ReactElement; tabs?: Record<string, React
         tabs: { auto: <Ledger automatic /> },
     },
     flows: { index: <Flows />, tabs: { accounts: <Flows subjects /> } },
-    budget: { index: <Budget />, tabs: { actions: <Actions /> } },
+    plan: { index: <Plan />, tabs: { actions: <Actions /> } },
     report: { index: <Trends />, tabs: { breakdown: <Breakdown />, review: <Review />, export: <Export /> } },
     goals: { index: <GoalSummary /> },
     assets: {
@@ -89,9 +87,8 @@ export default function StudioApp() {
                         <Route path="events" element={<LifeEventList />} />
                         <Route path="graph" element={<LifeEventGraph />} />
                         <Route path="simulation" element={<Simulation />} />
-                        <Route path="events/:goalId" element={<GoalWorkspace />} />
-                        <Route path="events/new" element={<GoalPage />} />
-                        <Route path="events/:goalId/edit" element={<GoalPage />} />
+                        {/* Events open in an overlay on the list; their old pages have no screen. */}
+                        <Route path="events/*" element={<Navigate to="../events" replace />} />
                     </Route>
                     <Route path="goals/events" element={<Navigate to="/goals/scenarios" replace />} />
                     <Route path="goals/graph" element={<Navigate to="/goals/scenarios" replace />} />
@@ -103,6 +100,9 @@ export default function StudioApp() {
                     <Route path="db/definitions/:tab" element={<LegacyAutoTransactionRedirect />} />
                     <Route path="ledger/unmatched" element={<Navigate to="/ledger/auto" replace />} />
                     <Route path="assets/earmarks" element={<Navigate to="/db/earmarks" replace />} />
+                    {/* 予算 became 計画 (WP16). */}
+                    <Route path="budget" element={<Navigate to="/plan" replace />} />
+                    <Route path="budget/actions" element={<Navigate to="/plan/actions" replace />} />
                     {STUDIO_SCREENS.map((screen) => {
                         const screenRoutes = SCREENS[screen.path];
                         return (

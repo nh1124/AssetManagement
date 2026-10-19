@@ -108,14 +108,6 @@ class BudgetContext:
         return {capsule.id: capsule for capsule in self.capsules}
 
     @cached_property
-    def capsule_by_life_event_id(self) -> dict[int, models.Capsule]:
-        return {
-            capsule.life_event_id: capsule
-            for capsule in self.capsules
-            if capsule.life_event_id
-        }
-
-    @cached_property
     def capsule_account_ids(self) -> dict[int, int | None]:
         return {capsule.id: capsule.funding_sources[0].account_id if len(capsule.funding_sources) == 1 else None
                 for capsule in self.capsules}
@@ -124,11 +116,6 @@ class BudgetContext:
         if not capsule_id:
             return None
         return self.capsule_by_id.get(capsule_id)
-
-    def capsule_for_life_event(self, life_event_id: int | None) -> models.Capsule | None:
-        if not life_event_id:
-            return None
-        return self.capsule_by_life_event_id.get(life_event_id)
 
     def capsule_balance(self, capsule: models.Capsule) -> float:
         balance = self._capsule_balances.get(capsule.id)
@@ -150,12 +137,6 @@ class BudgetContext:
 
     @cached_property
     def target_name_maps(self) -> dict[str, dict[int, str]]:
-        # Stored budget references still need their names after the goal switches scenarios.
-        life_events = (
-            self.db.query(models.LifeEvent)
-            .filter(models.LifeEvent.client_id == self.client_id)
-            .all()
-        )
         products = (
             self.db.query(models.Product)
             .filter(models.Product.client_id == self.client_id)
@@ -164,7 +145,6 @@ class BudgetContext:
         return {
             "account": {account.id: account.name for account in self.accounts.values()},
             "capsule": {capsule.id: capsule.name for capsule in self.capsules},
-            "life_event": {item.id: item.name for item in life_events},
             "product": {item.id: item.name for item in products},
         }
 

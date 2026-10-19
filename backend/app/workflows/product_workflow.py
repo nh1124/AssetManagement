@@ -27,7 +27,7 @@ def validate_funding_capsule(db: Session, client_id: int, funding_capsule_id: in
         return
     capsule = capsule_service.get_product_funding_capsule(db, client_id, funding_capsule_id)
     if not capsule:
-        raise Invalid("Funding capsule must be a non-LifeEvent capsule for this client")
+        raise Invalid("Funding capsule must belong to this client")
 
 
 def normalize_product_data(db: Session, client_id: int, data: dict) -> dict:
