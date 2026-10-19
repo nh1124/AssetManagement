@@ -25,6 +25,7 @@ import type {
     DataHealthResult,
     DepreciationMethod,
     DataRepairResult,
+    DepreciationPreview,
     ExchangeRate,
     FxTrackedCurrency,
     ExchangeRateAutoUpdateResult,
@@ -541,6 +542,19 @@ export const deleteMonthlyPlanLine = async (id: number) => {
 };
 
 // Products/Inventory endpoints
+export const getDepreciationPreview = async (productId: number): Promise<DepreciationPreview> => {
+    return (await api.get('/depreciations/preview', { params: { product_id: productId } })).data;
+};
+
+/** Record a write-down by hand; amount and date left out follow the schedule. */
+export const recordDepreciation = async (payload: { product_id: number; period: string; amount?: number; date?: string; expense_account_id?: number | null; asset_account_id?: number | null }) => {
+    return (await api.post('/depreciations', payload)).data;
+};
+
+export const amendDepreciation = async (id: number, payload: { amount: number; date?: string; expense_account_id?: number | null }) => {
+    return (await api.put(`/depreciations/${id}`, payload)).data;
+};
+
 export const getProducts = async (): Promise<Product[]> => {
     const response = await api.get('/products/');
     return response.data;

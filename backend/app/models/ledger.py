@@ -136,6 +136,9 @@ class Transaction(Base):
     # Both are still accepted as input and still reported, derived by
     # services.journal_legs.primary_accounts from the leg on each side.
     journal_entries = relationship("JournalEntry", back_populates="transaction")
+    # Set when the entry carries a fixed asset's write-down. Read-only here: the
+    # depreciation service owns the record, and the database cascades it away.
+    depreciation = relationship("ProductDepreciation", uselist=False, viewonly=True, lazy="selectin")
 
     @hybrid_property
     def amount(self) -> float:

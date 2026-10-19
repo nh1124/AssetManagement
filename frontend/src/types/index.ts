@@ -31,6 +31,21 @@ export interface Transaction {
      *  on that account, which for a compound entry is not its total. */
     matched_debit?: number | null;
     matched_credit?: number | null;
+    /** Set when the entry carries a fixed asset's write-down; the ledger opens it as one. */
+    depreciation?: { id: number; product_id: number; product_name: string | null; period: string } | null;
+}
+
+/** What recording a product's next write-down by hand would propose. */
+export interface DepreciationPreview {
+    product_id: number;
+    product_name: string;
+    currency: string;
+    next_period: string | null;
+    due: number;
+    book_value: number;
+    expense_account_id: number | null;
+    asset_account_id: number | null;
+    blocked_reason: string | null;
 }
 
 export interface TransactionProposal {

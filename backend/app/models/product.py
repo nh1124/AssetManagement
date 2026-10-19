@@ -107,3 +107,4 @@ class ProductDepreciation(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     transaction = relationship("Transaction")
+    product = relationship("Product")

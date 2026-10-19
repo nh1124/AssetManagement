@@ -99,6 +99,7 @@ LAYERS: dict[str, int] = {
     "automatic_recording_workflow": 6,
     "registry_workflow": 6,
     "fx_workflow": 6,
+    "depreciation_workflow": 6,
 }
 
 

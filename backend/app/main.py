@@ -24,6 +24,7 @@ from .routers import (
     capsules,
     clients,
     data_transfer,
+    depreciations,
     exchange_rates,
     goal_budget,
     notifications,
@@ -240,6 +241,7 @@ app.include_router(transactions.router)
 app.include_router(transaction_batches.router)
 app.include_router(products.router)
 app.include_router(automatic_recordings.router)
+app.include_router(depreciations.router)
 app.include_router(registry_entries.router, dependencies=[Depends(get_current_client)])
 app.include_router(life_events.router)
 app.include_router(life_scenarios.router)

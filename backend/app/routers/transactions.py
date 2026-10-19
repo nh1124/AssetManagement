@@ -71,6 +71,9 @@ def _serialize_transaction(tx: models.Transaction, *, account_id: int | None = N
         "from_account_name": from_account.name if from_account else None,
         "to_account_name": to_account.name if to_account else None,
         "legs": [_serialize_leg(entry) for entry in legs],
+        "depreciation": {"id": tx.depreciation.id, "product_id": tx.depreciation.product_id,
+                         "product_name": tx.depreciation.product.name if tx.depreciation.product else None,
+                         "period": tx.depreciation.period} if tx.depreciation is not None else None,
     }
     if account_id:
         # Filtered by account, the useful figure is what moved on that account.

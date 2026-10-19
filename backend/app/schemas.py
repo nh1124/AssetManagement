@@ -267,8 +267,35 @@ class TransactionLegRead(TransactionLeg):
     account_type: Optional[str] = None
 
 
+class TransactionDepreciation(BaseModel):
+    """The write-down an entry carries, so the ledger opens it as a depreciation."""
+    id: int
+    product_id: int
+    product_name: Optional[str] = None
+    period: str
+
+
+class DepreciationRecord(BaseModel):
+    """A write-down recorded by hand; left out, the amount and date follow the schedule."""
+    model_config = ConfigDict(extra="forbid")
+    product_id: int = Field(gt=0)
+    period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    amount: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    date: Optional[DateType] = None
+    expense_account_id: int | None = Field(default=None, gt=0)
+    asset_account_id: int | None = Field(default=None, gt=0)
+
+
+class DepreciationAmend(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    amount: float = Field(gt=0, allow_inf_nan=False)
+    date: Optional[DateType] = None
+    expense_account_id: int | None = Field(default=None, gt=0)
+
+
 class Transaction(TransactionBase):
     id: int
+    depreciation: Optional[TransactionDepreciation] = None
     from_account_name: Optional[str] = None
     to_account_name: Optional[str] = None
     legs: Optional[List[TransactionLegRead]] = None
