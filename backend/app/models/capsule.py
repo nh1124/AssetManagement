@@ -122,6 +122,7 @@ class CapsuleRule(Base):
     trigger_type = Column(String, nullable=False)
     trigger_category = Column(String, nullable=True)
     trigger_description = Column(String, nullable=True)
+    trigger_account_id = Column(Integer, ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True)
     source_mode = Column(String, default="transaction_account", nullable=False)
     source_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     destination_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)

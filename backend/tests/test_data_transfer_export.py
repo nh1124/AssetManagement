@@ -39,7 +39,7 @@ FORMAT_FIELDS = {
     "capsules": ["id","name","target_amount","monthly_contribution","life_event_id","capsule_type","target_amount_source","monthly_contribution_source","created_at"],
     "capsule_drawdowns": ["id","capsule_id","transaction_id","kind","amount_minor","note","created_at"],
     "capsule_funding_sources": ["id","capsule_id","account_id","target_amount","max_share_bp","sort_order","created_at","updated_at"],
-    "capsule_rules": ["id","capsule_id","trigger_type","trigger_category","trigger_description","source_mode","source_account_id","destination_account_id","amount_type","amount_value","is_active","created_at"],
+    "capsule_rules": ["id","capsule_id","trigger_type","trigger_category","trigger_description","trigger_account_id","source_mode","source_account_id","destination_account_id","amount_type","amount_value","is_active","created_at"],
     "simulation_scenarios": ["id","life_event_id","name","description","annual_return","inflation","monthly_savings","contribution_schedule","allocation_mode","created_at","updated_at"],
     "fx_tracked_currencies": ["currency","created_at"],
     "exchange_rates": ["id","base_currency","quote_currency","rate","as_of_date","source","created_at","updated_at"],

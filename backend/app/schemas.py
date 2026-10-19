@@ -968,6 +968,7 @@ class CapsuleRuleBase(BaseModel):
     trigger_type: CapsuleTriggerLiteral
     trigger_category: Optional[str] = None
     trigger_description: Optional[str] = None
+    trigger_account_id: Optional[int] = None
     source_mode: Literal["transaction_account", "fixed_account"] = "transaction_account"
     source_account_id: Optional[int] = None
     destination_account_id: Optional[int] = None
@@ -985,6 +986,7 @@ class CapsuleRuleUpdate(BaseModel):
     trigger_type: Optional[CapsuleTriggerLiteral] = None
     trigger_category: Optional[str] = None
     trigger_description: Optional[str] = None
+    trigger_account_id: Optional[int] = None
     source_mode: Optional[Literal["transaction_account", "fixed_account"]] = None
     source_account_id: Optional[int] = None
     destination_account_id: Optional[int] = None

@@ -769,6 +769,7 @@ export interface CapsuleRule {
     trigger_type: CapsuleTriggerKind;
     trigger_category?: string | null;
     trigger_description?: string | null;
+    trigger_account_id?: number | null;
     source_mode: 'transaction_account' | 'fixed_account';
     source_account_id?: number | null;
     source_account_name?: string | null;

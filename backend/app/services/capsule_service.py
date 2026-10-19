@@ -405,6 +405,7 @@ def create_rule(
     ).with_for_update().first()
     if capsule is None:
         raise NotFound("Capsule not found")
+    _validate_rule_trigger_account(db, client_id, payload.trigger_account_id)
     _validate_rule_destination(db, client_id, capsule.id, payload.destination_account_id)
     if payload.source_account_id:
         account = db.query(models.Account).filter(
@@ -440,6 +441,7 @@ def update_rule(
         db, client_id, capsule_id,
         data.get("destination_account_id", rule.destination_account_id),
     )
+    _validate_rule_trigger_account(db, client_id, data.get("trigger_account_id", rule.trigger_account_id))
     if "amount_type" in data or "amount_value" in data:
         value = data.pop("amount_value", rule.amount_value)
         data.update(rule_amount_fields(value, data.get("amount_type", rule.amount_type), money_client_currency(db, client_id)))
@@ -447,6 +449,13 @@ def update_rule(
         setattr(rule, key, value)
     _finish_write(db, client_id, rule, commit=commit)
     return rule
+
+
+def _validate_rule_trigger_account(db: Session, client_id: int, account_id: int | None) -> None:
+    if account_id is not None and db.query(models.Account.id).filter(
+        models.Account.client_id == client_id, models.Account.id == account_id,
+    ).first() is None:
+        raise NotFound("Trigger account not found")
 
 
 def _validate_rule_destination(db: Session, client_id: int, capsule_id: int, account_id: int | None) -> None:
@@ -917,6 +926,10 @@ def _triggered_legs(
     accounts: dict[int, models.Account],
 ) -> list[CapsuleEntry]:
     """The legs of this transaction that the rule's trigger describes."""
+    if rule.trigger_account_id is not None and not any(
+        entry.account_id == rule.trigger_account_id for entry in entries
+    ):
+        return []
     spec = _TRIGGER_LEGS.get(rule.trigger_type)
     if spec is None:
         return []

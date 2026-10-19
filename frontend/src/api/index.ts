@@ -901,6 +901,11 @@ export const createCapsuleRule = async (rule: Omit<CapsuleRule, 'id' | 'created_
     return response.data;
 };
 
+export const updateCapsuleRule = async (id: number, rule: Partial<Parameters<typeof createCapsuleRule>[0]>): Promise<CapsuleRule> => {
+    const response = await api.put(`/capsules/rules/${id}`, rule);
+    return response.data;
+};
+
 export const deleteCapsuleRule = async (id: number) => {
     const response = await api.delete(`/capsules/rules/${id}`);
     return response.data;

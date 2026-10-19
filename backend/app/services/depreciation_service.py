@@ -193,6 +193,24 @@ def schedule(db: Session, client_id: int, product_id: int) -> dict:
     }
 
 
+def validate_automatic(db: Session, client_id: int, product: models.Product) -> None:
+    if not product.auto_depreciation:
+        return
+    if not product.is_asset or product.depreciation_method == "none":
+        raise Invalid("Automatic depreciation needs a fixed asset and a depreciation method")
+    if not product.depreciation_interval or _start_date(product) is None:
+        raise Invalid("Set a depreciation interval and a purchase date or start date first")
+    if not product.purchase_price_minor or product.purchase_price_minor <= 0 or not product.lifespan_months or product.lifespan_months <= 0:
+        raise Invalid("Depreciation needs a purchase price and a lifespan in months")
+    if product.depreciation_method == "declining_balance" and not (product.depreciation_annual_rate or 0) > 0:
+        raise Invalid("Declining-balance depreciation needs an annual rate above zero")
+    if not product.depreciation_expense_account_id or not product.depreciation_asset_account_id:
+        raise Invalid("Set both the depreciation expense account and the asset account first")
+    for account_id in (product.depreciation_expense_account_id, product.depreciation_asset_account_id):
+        if ledger_service.get_account(db, client_id, account_id) is None:
+            raise Invalid(f"Account {account_id} not found for this client")
+
+
 def _post(
     db: Session, client_id: int, product_id: int, *, period: str,
 ) -> tuple[models.Transaction, models.ProductDepreciation]:

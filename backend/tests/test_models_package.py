@@ -9,8 +9,8 @@ from app import models
 from app.database import Base
 
 
-# WP13 unifies automatic schedules and moves the depreciation switch.
-EXPECTED_METADATA_SHA256 = "e637fa4fe862773c15ccb9a4c700ed8360515381473ee60f28f4f9d9601db355"
+# WP14 adds the optional journal account condition to earmark rules.
+EXPECTED_METADATA_SHA256 = "bf39714428812f00826edcbe6a167e21594c113692af9ff76d13c817f0463b2d"
 
 MODEL_NAMES = (
     "Client", "ClientMfaSetting", "ClientRecoveryCode",
@@ -91,7 +91,7 @@ def _metadata_snapshot():
 def test_metadata_matches_the_minor_unit_schema():
     snapshot = _metadata_snapshot()
     assert len(snapshot["table_names"]) == 37
-    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 420
+    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 421
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == EXPECTED_METADATA_SHA256
 

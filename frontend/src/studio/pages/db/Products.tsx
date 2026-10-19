@@ -1,15 +1,15 @@
 import Overlay from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
 import { useId, useState, type FormEvent } from 'react';
-import { createProduct, deleteProduct, getAutomaticDepreciation, getDepreciationSummary, getProducts,
+import { createProduct, deleteProduct, getDepreciationSummary, getProducts,
          reserveConfirmation, updateProduct } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
 import type { DepreciationMethod, Product } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import { useResource } from '../../useResource';
 import { ActiveSwitch, Choice, DataTable, EditableRow, EditorActions, Feedback, Field, OptionGroup, RowTitle } from './Database';
-import { toggleAutoDepreciation } from './autoDepreciation';
 import { buttonClass, inputClass, loadLookups, useMutation, userCancelled } from './forms';
+import { effectiveProductTreatment } from './productBudget';
 
 const loadProducts = (): Promise<Product[]> => getProducts();
 type Lookups = Awaited<ReturnType<typeof loadLookups>>;
@@ -20,16 +20,12 @@ const loadPositions = () => getDepreciationSummary().then((summary) => summary.i
 // Module-level so the loader is stable: an inline one reloads on every render and,
 // by re-rendering forever, keeps a route transition from ever committing.
 const noPositions = async (): Promise<Position[]> => [];
-// Product settings also drive the automatic transaction screen.
-type AutoRow = Awaited<ReturnType<typeof getAutomaticDepreciation>>[number];
-const loadAutomatic = () => getAutomaticDepreciation();
-const noAutomatic = async (): Promise<AutoRow[]> => [];
 const METHODS: Record<DepreciationMethod, string> = {
     none: '記帳しない', straight_line: '定額法', declining_balance: '定率法',
 };
 const TREATMENTS: Array<{ value: Treatment; label: string; description: string }> = [
     { value: 'auto', label: '自動', description: '固定資産は「固定資産の更新積立」、消耗品は購入周期 45 日以内なら「支出のみ」、それより長ければ「積立配分」になります。' },
-    { value: 'expense_only', label: '支出のみ', description: '積み立てません。予算口座に毎月の支出予算として載ります。' },
+    { value: 'expense_only', label: '支出のみ', description: '積み立てません。支出口座に毎月の支出予算として載ります。' },
     { value: 'reserve_allocation', label: '積立配分', description: '毎月（単価 × 30 ÷ 購入周期）を積立先の取り置きへ積み立て、購入時に取り崩します。' },
     { value: 'asset_replacement', label: '固定資産の更新積立', description: '取得額を、更新予定日までの残り月数で割った額を毎月積み立てます（更新日が近いほど増えます）。' },
 ];
@@ -53,6 +49,7 @@ export function ProductEditor({ product, assets, currency, lookups, busy, onSave
     onSave: (attempt: (reserveFingerprint?: string) => Promise<unknown>) => void; onDelete?: () => void; onCancel: () => void;
 }) {
     const formId = useId();
+    const confirm = useConfirm();
     const fundingCapsules = (lookups.capsules as FundingCapsule[]).filter((capsule) => capsule.life_event_id == null);
     const [name, setName] = useState(product?.name ?? '');
     const [category, setCategory] = useState(product?.category ?? '');
@@ -75,10 +72,14 @@ export function ProductEditor({ product, assets, currency, lookups, busy, onSave
     const [startDate, setStartDate] = useState(product?.depreciation_start_date ?? '');
     const [expenseAccount, setExpenseAccount] = useState<number | null>(product?.depreciation_expense_account_id ?? null);
     const [assetAccount, setAssetAccount] = useState<number | null>(product?.depreciation_asset_account_id ?? null);
-    const submit = (event: FormEvent<HTMLFormElement>) => {
+    const effectiveTreatment = effectiveProductTreatment(treatment, assets, Number(frequency));
+    const expenseOnly = effectiveTreatment === 'expense_only';
+    const submit = async (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         if (busy || !name.trim()) return;
-        // PUT replaces the product, so retain hidden fields and send no derived response values.
+        if (assets && autoDepreciation && !product?.auto_depreciation
+            && !(await confirm('減価を自動で記帳しますか？期限を迎えた分は保存時に記帳されます。', '保存して記帳する'))) return;
+        // Keep hidden choices locally; only send references used by this treatment.
         const payload = {
             name: name.trim(), category: category.trim() || 'Uncategorized', location: location.trim() || null,
             is_asset: assets, last_unit_price: assets ? product?.last_unit_price ?? Number(price) : Number(purchaseUnitPrice),
@@ -88,7 +89,7 @@ export function ProductEditor({ product, assets, currency, lookups, busy, onSave
             purchase_price: assets ? price === '' ? null : Number(price) : product?.purchase_price ?? null,
             purchase_date: assets ? date || null : product?.purchase_date ?? null,
             lifespan_months: assets ? lifespan === '' ? null : Number(lifespan) : product?.lifespan_months ?? null,
-            budget_account_id: budget, funding_capsule_id: funding, budget_treatment: treatment,
+            budget_account_id: expenseOnly ? budget : null, funding_capsule_id: expenseOnly ? null : funding, budget_treatment: treatment,
             // Only an asset is written down; a consumable keeps whatever it had.
             auto_depreciation: assets ? autoDepreciation : false,
             depreciation_method: assets ? method : product?.depreciation_method ?? 'none',
@@ -111,13 +112,13 @@ export function ProductEditor({ product, assets, currency, lookups, busy, onSave
                 <Field label="耐用月数"><input type="number" min="1" step="1" value={lifespan} onChange={(event) => setLifespan(event.target.value)} className={inputClass} /></Field>
                 <div className="flex items-center gap-3 text-sm">減価を自動で記帳<ActiveSwitch name="減価を自動で記帳" active={autoDepreciation} disabled={busy} onToggle={() => setAutoDepreciation(!autoDepreciation)} /></div>
                 <Field label="減価の方法"><select value={method} onChange={(event) => setMethod(event.target.value as DepreciationMethod)} className={inputClass}>{Object.entries(METHODS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
-                {method === 'declining_balance' && <Field label="年償却率（％）"><input type="number" min="0" max="100" step="any" value={rate} onChange={(event) => setRate(event.target.value)} className={inputClass} /></Field>}
-                {method !== 'none' && <>
+                <div className={method === 'declining_balance' ? '' : 'invisible'}><Field label="年償却率（％）"><input type="number" min="0" max="100" step="any" value={rate} onChange={(event) => setRate(event.target.value)} className={inputClass} disabled={method !== 'declining_balance'} /></Field></div>
+                <fieldset disabled={!autoDepreciation} className={`grid gap-4 md:col-span-2 md:grid-cols-2 ${autoDepreciation ? '' : 'invisible'}`}>
                     <Field label="記帳の間隔"><select value={interval} onChange={(event) => setInterval(event.target.value as 'monthly' | 'yearly')} className={inputClass}><option value="monthly">毎月</option><option value="yearly">毎年</option></select></Field>
                     <Field label="記帳の開始月（未設定なら取得日から）"><input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} className={inputClass} /></Field>
                     <Choice label="減価償却費の科目" value={expenseAccount} options={lookups.accounts} onChange={setExpenseAccount} />
                     <Choice label="取り崩す物品の口座" value={assetAccount} options={lookups.accounts} onChange={setAssetAccount} />
-                </>}
+                </fieldset>
             </> : <>
                 <Field label={`購入額（購入単位あたり・${currency}）`}><input required type="number" min="0" step="any" value={purchaseUnitPrice} onChange={(event) => setPurchaseUnitPrice(event.target.value)} className={inputClass} /></Field>
                 <Field label="購入単位（個数）"><input required type="number" min="1" step="1" value={units} onChange={(event) => setUnits(event.target.value)} className={inputClass} /></Field>
@@ -125,9 +126,15 @@ export function ProductEditor({ product, assets, currency, lookups, busy, onSave
                 <Field label="最終購入日"><input type="date" value={lastPurchase} onChange={(event) => setLastPurchase(event.target.value)} className={inputClass} /></Field>
                 <p className="text-xs text-[var(--studio-text-muted)] md:col-span-2">単価：{formatCurrency(Number(purchaseUnitPrice) / (Number(units) || 1), currency)}</p>
             </>}
-            <Choice label="予算口座" help={HELP.budget} value={budget} options={lookups.accounts.filter((account) => account.account_type === 'expense')} onChange={setBudget} />
-            <Choice label="積立先の取り置き" help={HELP.funding} value={funding} options={fundingCapsules} onChange={setFunding} />
-            <div className="md:col-span-2"><OptionGroup label="予算での扱い" help={HELP.treatment} value={treatment} options={TREATMENTS} onChange={setTreatment} /></div>
+            <div className="md:col-span-2"><OptionGroup label="予算での扱い" help={HELP.treatment} value={treatment} options={TREATMENTS} onChange={setTreatment} />
+                <p className={`mt-1 text-xs text-[var(--studio-text-muted)] ${treatment === 'auto' ? '' : 'invisible'}`}>自動：{TREATMENTS.find((option) => option.value === effectiveTreatment)?.label}</p>
+            </div>
+            {expenseOnly
+                ? <Choice label="支出口座" help={HELP.budget} value={budget} options={lookups.accounts.filter((account) => account.account_type === 'expense')} onChange={setBudget} />
+                : <Field label="支出口座"><input disabled value="この扱いでは使用しません" className={inputClass} /></Field>}
+            {!expenseOnly
+                ? <Choice label="積立先の取り置き" help={HELP.funding} value={funding} options={fundingCapsules} onChange={setFunding} />
+                : <Field label="積立先の取り置き"><input disabled value="この扱いでは使用しません" className={inputClass} /></Field>}
             <EditorActions form={formId} busy={busy} onCancel={onCancel} onDelete={onDelete} />
         </fieldset>
     </form>;
@@ -139,8 +146,6 @@ function ProductsForClient({ assets, currency }: { assets: boolean; currency: st
     const lookups = useResource(loadLookups);
     const positions = useResource(assets ? loadPositions : noPositions);
     const byProduct = new Map((positions.data ?? []).map((row) => [row.product_id, row]));
-    const automatic = useResource(assets ? loadAutomatic : noAutomatic);
-    const autoByProduct = new Map((automatic.data ?? []).map((row) => [row.product_id, row]));
     const mutation = useMutation();
     const [editor, setEditor] = useState<{ product: Product | null } | null>(null);
     const rows = resource.data?.filter((product) => assets ? product.is_asset : !product.is_asset) ?? [];
@@ -165,7 +170,7 @@ function ProductsForClient({ assets, currency }: { assets: boolean; currency: st
     };
     const save = (attempt: (reserveFingerprint?: string) => Promise<unknown>) => void mutation.run(
         () => withReserveCheck(attempt, '変更して保存'), '物品を保存しました。',
-        () => { setEditor(null); resource.reload(); positions.reload(); automatic.reload(); },
+        () => { setEditor(null); resource.reload(); positions.reload(); },
     );
     const remove = async (product: Product) => {
         if (disabled || !(await confirm(`「${product.name}」を削除しますか？`, '削除する'))) return;
@@ -177,10 +182,9 @@ function ProductsForClient({ assets, currency }: { assets: boolean; currency: st
     };
     return <section className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex gap-2"><button type="button" disabled={editorDisabled || editor !== null} onClick={() => setEditor({ product: null })} className={buttonClass}>新規作成</button></div></div>
-        {assets && <p className="text-xs text-[var(--studio-text-muted)]">更新予定は目安です。</p>}
         <Feedback loading={resource.loading || lookups.loading || positions.loading} error={mutation.error || resource.error || lookups.error || positions.error} message={mutation.message} />
         {editor && lookups.data && <Overlay title={editor.product ? `${editor.product.name}を編集` : `${assets ? '固定資産' : '消耗品'}の新規作成`} onClose={() => setEditor(null)}><Feedback error={mutation.error} /><ProductEditor key={editor.product?.id ?? 'new'} product={editor.product} assets={assets} currency={currency} lookups={lookups.data} busy={editorDisabled} onCancel={() => setEditor(null)} onSave={save} onDelete={editor.product ? () => void remove(editor.product as Product) : undefined} /></Overlay>}
-        {resource.data && <DataTable columns={assets ? ['物品', '取得額', '帳簿価額', '減価の方法', '次回の記帳', '更新予定', '自動で記帳', '積立先', '推奨月額'] : ['物品', '単価', '購入単位', '購入周期', '予算口座', '積立先', '推奨月額']}>
+        {resource.data && <DataTable columns={assets ? ['物品', '取得額', '帳簿価額', '減価の方法', '次回の記帳', '更新予定', '積立先', '推奨月額'] : ['物品', '単価', '購入単位', '購入周期', '支出口座', '積立先', '推奨月額']}>
             {rows.length ? rows.map((row) => <EditableRow key={row.id} disabled={editorDisabled || editor !== null} onEdit={() => setEditor({ product: row })}>
                 <RowTitle name={row.name} disabled={editorDisabled || editor !== null} onEdit={() => setEditor({ product: row })}>{row.name}<span className="mt-1 block text-xs font-normal text-[var(--studio-text-muted)]">{row.category === 'Uncategorized' ? '未分類' : row.category}</span></RowTitle>
                 {assets ? <>
@@ -198,16 +202,9 @@ function ProductsForClient({ assets, currency }: { assets: boolean; currency: st
                 </> : <>
                     <td className="whitespace-nowrap px-5 py-3 tabular-nums">{formatCurrency(row.unit_cost, currency)}</td><td className="px-5 py-3">{row.units_per_purchase}個</td><td className="px-5 py-3">{row.frequency_days > 0 ? `${row.frequency_days}日` : '不定期'}</td><td className="px-5 py-3">{row.budget_account_name || (row.budget_account_id == null ? '—' : lookups.data?.accounts.find((account) => account.id === row.budget_account_id)?.name ?? `#${row.budget_account_id}`)}</td>
                 </>}
-                {assets && <td className="px-5 py-3">{(() => {
-                    const auto = autoByProduct.get(row.id);
-                    if (!auto) return '—';
-                    return <ActiveSwitch name={`${row.name}の減価の自動記帳`} active={auto.auto_depreciation}
-                        disabled={disabled || automatic.loading || editor !== null}
-                        onToggle={() => void toggleAutoDepreciation(confirm, mutation, auto, () => { resource.reload(); positions.reload(); automatic.reload(); })} />;
-                })()}</td>}
                 <td className="px-5 py-3">{row.funding_capsule_name || '—'}</td>
                 <td className="whitespace-nowrap px-5 py-3 tabular-nums">{row.recommended_monthly_reserve ? formatCurrency(row.recommended_monthly_reserve, currency) : '—'}</td>
-            </EditableRow>) : <tr><td colSpan={assets ? 9 : 7} className="px-5 py-4 text-[var(--studio-text-muted)]">登録された{assets ? '固定資産' : '消耗品'}はありません。</td></tr>}
+            </EditableRow>) : <tr><td colSpan={assets ? 8 : 7} className="px-5 py-4 text-[var(--studio-text-muted)]">登録された{assets ? '固定資産' : '消耗品'}はありません。</td></tr>}
         </DataTable>}
     </section>;
 }

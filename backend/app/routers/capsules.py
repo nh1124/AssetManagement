@@ -38,6 +38,7 @@ def _rule_to_dict(rule: models.CapsuleRule) -> dict:
         "trigger_type": rule.trigger_type,
         "trigger_category": rule.trigger_category,
         "trigger_description": rule.trigger_description,
+        "trigger_account_id": rule.trigger_account_id,
         "source_mode": rule.source_mode,
         "source_account_id": rule.source_account_id,
         "destination_account_id": rule.destination_account_id,

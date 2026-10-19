@@ -50,13 +50,13 @@ export function OptionGroup<T extends string>({ label, help, value, options, onC
     </fieldset>;
 }
 
-export function Choice({ label, help, value, options, onChange, required = false }: {
+export function Choice({ label, help, value, options, onChange, required = false, disabled = false }: {
     label: string; help?: string; value: number | null | undefined;
     options: Array<{ id: number; name: string; is_active?: boolean }>;
-    onChange: (value: number | null) => void; required?: boolean;
+    onChange: (value: number | null) => void; required?: boolean; disabled?: boolean;
 }) {
     return <Field label={label} help={help}>
-        <select className={inputClass} value={value ?? ''} required={required} onChange={(event) => onChange(event.target.value ? Number(event.target.value) : null)}>
+        <select className={inputClass} value={value ?? ''} required={required} disabled={disabled} onChange={(event) => onChange(event.target.value ? Number(event.target.value) : null)}>
             <option value="">未設定</option>
             {/* Keep an existing reference visible even when its lookup is no longer available. */}
             {value != null && !options.some((row) => row.id === value) && <option value={value}>#{value}（一覧にありません）</option>}

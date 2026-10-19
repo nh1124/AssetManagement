@@ -8,7 +8,7 @@ import re
 from datetime import date, datetime
 from typing import Any
 
-EXPORT_VERSION = 24
+EXPORT_VERSION = 25
 
 DATA_COLLECTIONS = [
     "accounts",
@@ -260,6 +260,7 @@ def validate_import_payload(
     check_ref("capsule_drawdowns", "transaction_id", "transactions", required=True)
     check_ref("capsule_rules", "capsule_id", "capsules", required=True)
     check_ref("capsule_rules", "source_account_id", "accounts")
+    check_ref("capsule_rules", "trigger_account_id", "accounts")
     check_ref("simulation_scenarios", "life_event_id", "life_events", required=True)
     check_ref("monthly_plan_lines", "account_id", "accounts")
     check_ref("monthly_plan_lines", "source_account_id", "accounts")
