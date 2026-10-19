@@ -26,6 +26,15 @@ def list_automatic_recordings(
     return automatic_recording_workflow.list_recordings(db, current_client.id)
 
 
+@router.get("/scheduled")
+def list_scheduled_in_period(
+    period: str,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    return automatic_recording_workflow.scheduled_in_period(db, current_client.id, period)
+
+
 @router.post("/process-due")
 def process_due_automatic_recordings(
     db: Session = Depends(get_db),

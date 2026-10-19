@@ -8,6 +8,7 @@ import type {
     AccountFlowTransactionPage,
     AccountRole,
     AutomaticRecordings,
+    ScheduledTransactions,
     AiChangeRequest,
     AiAuditLog,
     AiExecutionSettings,
@@ -742,6 +743,11 @@ export const processRecurringTransaction = async (recurringId: number) => {
 // Automatic recordings: everything the registry switches on to post by itself.
 export const getAutomaticRecordings = async (): Promise<AutomaticRecordings> => {
     const response = await api.get('/automatic-recordings/');
+    return response.data;
+};
+
+export const getScheduledTransactions = async (period: string): Promise<ScheduledTransactions> => {
+    const response = await api.get('/automatic-recordings/scheduled', { params: { period } });
     return response.data;
 };
 

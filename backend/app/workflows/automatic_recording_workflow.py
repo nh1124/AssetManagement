@@ -11,6 +11,7 @@ transaction produced rather than record one, so they stay with the earmarks.
 """
 from __future__ import annotations
 
+import calendar
 import logging
 from datetime import date
 
@@ -20,6 +21,8 @@ from ..domain.errors import Invalid, NotFound
 from ..domain.money import Money
 from ..services import depreciation_service, product_service, recurring_service, registry_service
 from ..services.cache_service import invalidate_client
+from ..services.fx_service import get_client_currency
+from ..services.periods import period_to_range
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +94,89 @@ def list_recordings(db: Session, client_id: int, *, today: date | None = None) -
             "blocked_reason": _depreciation_blocked(product),
         })
     return {"recurring": recurring, "depreciation": depreciation}
+
+
+def _planned_date(entry, period_start: date) -> date | None:
+    """The day a monthly or yearly definition falls on in the month; other frequencies have none."""
+    if entry.frequency not in {"Monthly", "Yearly"} or not entry.day_of_month:
+        return None
+    last = calendar.monthrange(period_start.year, period_start.month)[1]
+    return period_start.replace(day=min(entry.day_of_month, last))
+
+
+def scheduled_in_period(db: Session, client_id: int, period: str) -> dict:
+    """The automatic transactions a month holds, for the budget screen (WP9). Writes nothing.
+
+    account_id is the account or subject whose budget the movement is (the same
+    side the budget's definition rows use); counter_account_id is the other side.
+    recording is auto (posts on its date), manual (waits for a hand) or none
+    (a definition that only plans the budget and records nothing).
+    """
+    try:
+        period_start, _ = period_to_range(period)
+    except (ValueError, AttributeError) as error:
+        raise Invalid("Period must be YYYY-MM") from error
+    currency = get_client_currency(db, client_id)
+    recurring_by_entry = {
+        row.source_registry_entry_id: row for row in recurring_service.list_for_client(db, client_id)
+    }
+    items = []
+    for entry in registry_service.list_entries(db, client_id):
+        if not entry.line_type:
+            continue
+        amount = registry_service.registry_entry_amount_for_period(
+            db, entry, period, period_start, client_id, budget_only=False,
+        )
+        if amount <= 0:
+            continue
+        planned = _planned_date(entry, period_start)
+        row = recurring_by_entry.get(entry.id) if entry.generate_recurring else None
+        posted = None
+        if row is not None and row.is_active and row.next_due_date is not None and planned is not None:
+            posted = planned < row.next_due_date
+        items.append({
+            "kind": "definition",
+            "entry_id": entry.id,
+            "product_id": None,
+            "name": entry.name,
+            "line_type": entry.line_type,
+            "amount": round(amount, 0),
+            "date": planned,
+            "frequency": entry.frequency,
+            "recording": ("auto" if entry.auto_post else "manual") if entry.generate_recurring else "none",
+            "posted": posted,
+            "in_budget": bool(entry.budget_active),
+            "account_id": registry_service.registry_target_account_id(entry),
+            "counter_account_id": registry_service.registry_source_account_id(entry),
+        })
+    entries = registry_service.product_entries(db, client_id)
+    for product in product_service.list_products(db, client_id, is_asset=True):
+        found = depreciation_service.period_amount(db, client_id, product, period)
+        if found is None:
+            continue
+        minor, posted = found
+        entry = entries.get(product.id)
+        items.append({
+            "kind": "depreciation",
+            "entry_id": entry.id if entry is not None else None,
+            "product_id": product.id,
+            "name": product.name,
+            "line_type": None,
+            "amount": Money(minor, currency).to_float(),
+            "date": _month_end(period_start),
+            "frequency": product.depreciation_interval or "monthly",
+            "recording": "auto" if entry is not None and entry.auto_depreciation else "manual",
+            "posted": posted,
+            "in_budget": False,
+            "account_id": product.depreciation_expense_account_id,
+            "counter_account_id": product.depreciation_asset_account_id,
+        })
+    items.sort(key=lambda item: (item["date"] is None, item["date"] or period_start, item["name"] or ""))
+    return {"period": period, "currency": currency, "items": items}
+
+
+def _month_end(period_start: date) -> date:
+    return period_start.replace(day=calendar.monthrange(period_start.year, period_start.month)[1])
 
 
 def _post_due_depreciation(db: Session, client_id: int, product_id: int, today: date) -> dict:

@@ -168,6 +168,41 @@ def test_the_definition_follows_product_edits_and_deletion_switches_it_off(db):
     assert entry.auto_depreciation is False and entry.source_product_id is None
 
 
+def test_a_month_lists_its_automatic_transactions_by_account(db):
+    product = _product(db)
+    workflow.set_auto_depreciation(db, 1, product.id, enabled=True, today=date(2026, 4, 1))
+    _definition(db, day_of_month=31)
+    _definition(db, name="rent", auto_post=False, day_of_month=10)
+    registry_service.create_entry(db, 1, dict(
+        name="plan only", entry_type="service", amount=500, frequency="Monthly", day_of_month=5,
+        line_type="expense", source_account_id=3, destination_account_id=4, generate_recurring=False,
+    ))
+    _definition(db, name="yearly", frequency="Yearly", month_of_year=7, day_of_month=1)
+    before = (db.query(models.Transaction).count(), db.query(models.ProductDepreciation).count())
+
+    april = workflow.scheduled_in_period(db, 1, "2026-04")["items"]
+
+    assert (db.query(models.Transaction).count(), db.query(models.ProductDepreciation).count()) == before
+    by_name = {item["name"]: item for item in april}
+    assert set(by_name) == {"subscription", "rent", "plan only", "laptop"}
+    # The day is clamped to the month, and next_due_date (2026-04-01) is not past it.
+    assert by_name["subscription"]["date"] == date(2026, 4, 30)
+    assert by_name["subscription"]["recording"] == "auto" and by_name["subscription"]["posted"] is False
+    assert by_name["rent"]["recording"] == "manual"
+    assert by_name["plan only"]["recording"] == "none" and by_name["plan only"]["posted"] is None
+    assert (by_name["rent"]["account_id"], by_name["rent"]["counter_account_id"]) == (4, 3)
+    laptop = by_name["laptop"]
+    assert (laptop["kind"], laptop["amount"], laptop["recording"], laptop["posted"]) == ("depreciation", 10000, "auto", False)
+    assert (laptop["account_id"], laptop["counter_account_id"]) == (1, 2)
+    march = {item["name"]: item for item in workflow.scheduled_in_period(db, 1, "2026-03")["items"]}
+    assert march["laptop"]["posted"] is True and march["subscription"]["posted"] is True
+    assert "yearly" in {item["name"] for item in workflow.scheduled_in_period(db, 1, "2026-07")["items"]}
+    # After the useful life nothing is written down.
+    assert all(item["kind"] != "depreciation" for item in workflow.scheduled_in_period(db, 1, "2028-01")["items"])
+    with pytest.raises(Invalid):
+        workflow.scheduled_in_period(db, 1, "April")
+
+
 def test_the_list_shows_what_runs_and_writes_nothing(db):
     product = _product(db)
     _definition(db, auto_post=False)

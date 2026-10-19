@@ -548,8 +548,11 @@ def registry_entry_amount_for_period(
     period: str,
     period_start: date,
     client_id: int,
+    *,
+    budget_only: bool = True,
 ) -> float:
-    if not entry.is_active or not entry.budget_active:
+    """The entry's amount in the period; budget_only=False also counts entries kept out of the budget."""
+    if not entry.is_active or (budget_only and not entry.budget_active):
         return 0.0
     if entry.start_period and period < entry.start_period:
         return 0.0
