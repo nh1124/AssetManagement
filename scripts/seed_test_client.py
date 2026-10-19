@@ -4,7 +4,8 @@ Wipes the signed-in client's data with an empty import, then records a small hou
 accounts, three months of transactions, automatic transactions, a fixed asset and a consumable,
 earmarks with a rule, a tracked currency, and a goal scenario (events with their accounts, a car
 loan and its repayments, branches, preconditions, 積立設定) whose plan is made, which creates the
-goal's earmarks. Only ever run it against the test client.
+goal's earmarks, and the user's own plan records for this month. Only ever run it against the
+test client.
 
     python scripts/seed_test_client.py --base http://127.0.0.1:18100 --username admin --password ...
 """
@@ -194,6 +195,17 @@ def seed_goal(api: Api, today: date, accounts: dict) -> dict:
             "goal_earmarks": sorted(goal_capsules)}
 
 
+def seed_budget(api: Api, today: date, accounts: dict) -> list[str]:
+    """The user's own records on the plan page this month, beside the goal's and the automatic transactions'."""
+    period = today.strftime("%Y-%m")
+    records = (("食費", "expense", 40000, None), ("日用品", "expense", 8000, None), ("娯楽", "expense", 15000, None),
+               ("住居費", "expense", 10000, "管理費"), ("現金", "allocation", 20000, "現金の補充"))
+    for account, section, amount, name in records:
+        api.post("/plan/records", {"period": period, "account_id": accounts[account], "section": section, "amount": amount,
+                                   **({"name": name} if name else {})})
+    return [account for account, *_ in records]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", required=True)
@@ -212,7 +224,8 @@ def main() -> None:
     seeded = seed_ledger(api, today)
     api.post("/automatic-recordings/process-due")
     goal = seed_goal(api, today, seeded["accounts"])
-    print(json.dumps({"client_id": args.client_id, **seeded, **goal}, ensure_ascii=False))
+    budget = seed_budget(api, today, seeded["accounts"])
+    print(json.dumps({"client_id": args.client_id, **seeded, **goal, "user_records": budget}, ensure_ascii=False))
 
 
 if __name__ == "__main__":

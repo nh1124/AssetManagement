@@ -2,9 +2,7 @@ import Overlay from '../../components/Overlay';
 import { clientToday, useTimezone } from '../../datetime';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { getBudgetSummary, getScheduledTransactions } from '../../../api';
-import { planCheck, type GoalPlanCheck } from '../../../api/goalPlan';
 import { useClient } from '../../../context/ClientContext';
-import { formatCurrency } from '../../../utils/currency';
 import { useResource } from '../../useResource';
 import { Feedback } from '../db/Database';
 import AccountEditor from '../db/AccountEditor';
@@ -67,49 +65,16 @@ function MoreMenu({ disabled, items }: { disabled: boolean; items: Array<{ label
     </details>;
 }
 
-/** ゴールの積立: what the goal's 積立設定 puts aside this month per account, beside what the plan does. */
-function GoalContribution({ check, error, currency, disabled, onCreate }: {
-    check: GoalPlanCheck | null; error: string; currency: string; disabled: boolean; onCreate: () => void;
-}) {
-    const money = (amount: number) => formatCurrency(amount, currency);
-    if (error) return <Feedback error={`ゴールの積立を取得できませんでした。${error}`} />;
-    if (!check?.goal) return null;
-    const differs = check.accounts.some((row) => Math.abs(row.difference) >= 1);
-    return <details open={differs || !check.reflected} className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-4 text-sm">
-        <summary className="cursor-pointer text-xs">
-            <span className="font-semibold">ゴールの積立</span>
-            <span className="ml-2 tabular-nums text-[var(--studio-text-muted)]">ゴール「{check.goal.name}」の積立設定 {money(check.contribution)} ／ 計画 {money(check.planned)}（差 {check.difference >= 0 ? '+' : ''}{money(check.difference)}）</span>
-            {!check.reflected && check.contribution > 0 && <span className="ml-2 text-[var(--studio-warning)]">この月はゴールから計画を作成していません</span>}
-        </summary>
-        <div className="mt-3 space-y-3">
-            {check.accounts.length ? <table className="w-full text-left text-sm">
-                <thead className="text-xs text-[var(--studio-text-muted)]"><tr>{['口座', '積立設定', '計画（配分・取り置き）', '差'].map((label) => <th key={label} scope="col" className="py-1.5 pr-4 font-medium">{label}</th>)}</tr></thead>
-                <tbody className="divide-y divide-[var(--studio-border)]">
-                    {check.accounts.map((row) => <tr key={row.account_id}>
-                        <th scope="row" className="py-1.5 pr-4 font-normal">{row.name}</th>
-                        <td className="py-1.5 pr-4 tabular-nums">{money(row.contribution)}</td>
-                        <td className="py-1.5 pr-4 tabular-nums">{money(row.planned)}</td>
-                        <td className={`py-1.5 pr-4 tabular-nums ${Math.abs(row.difference) >= 1 ? 'text-[var(--studio-warning)]' : 'text-[var(--studio-text-muted)]'}`}>{row.difference >= 0 ? '+' : ''}{money(row.difference)}</td>
-                    </tr>)}
-                </tbody>
-            </table> : <p className="text-xs text-[var(--studio-text-muted)]">この月の積立設定はありません。</p>}
-            <button type="button" disabled={disabled} onClick={onCreate} className={buttonClass}>ゴールから計画を作成</button>
-        </div>
-    </details>;
-}
-
 function MonthlyPlan({ period, currency, clientName, filters, picker, onFilters, onBusy }: {
     period: string; currency: string; clientName?: string; filters: Filters; picker: ReactNode;
     onFilters: (filters: Filters) => void; onBusy: (busy: boolean) => void;
 }) {
     const load = useCallback(() => loadSummary(period), [period]);
     const resource = useResource(load);
-    const loadCheck = useCallback(() => planCheck(period), [period]);
-    const check = useResource(loadCheck);
     const loadScheduled = useCallback(() => getScheduledTransactions(period), [period]);
     const scheduled = useResource(loadScheduled);
     const accounts = useResource(loadAccounts);
-    const refresh = () => { resource.reload(); check.reload(); };
+    const refresh = () => resource.reload();
     const mutation = useMutation();
     const notifications = useNotifications();
     const [copyBusy, setCopyBusy] = useState(false);
@@ -160,7 +125,6 @@ function MonthlyPlan({ period, currency, clientName, filters, picker, onFilters,
                 ]} />
             </div>
         </div>
-        <GoalContribution check={check.data} error={check.error} currency={currency} disabled={disabled} onCreate={() => setPlanning(true)} />
         <Feedback loading={resource.loading || accounts.loading} error={resource.error || accounts.error || (scheduled.error ? `自動取引の予定を取得できませんでした。${scheduled.error}` : '')} />
         <Feedback error={mutation.error && !adding ? mutation.error : undefined} message={message || mutation.message} />
         {model && <BudgetTable accounts={rows} earmarks={earmarks} currency={currency} narrowed={narrowed}

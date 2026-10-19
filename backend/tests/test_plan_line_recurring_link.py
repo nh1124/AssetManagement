@@ -68,6 +68,7 @@ def test_registry_generated_plan_line_reports_recurring_definition(db):
         target_id=accounts["subscriptions"],
         account_id=accounts["subscriptions"],
         source_account_id=accounts["bank"],
+        source="registry",
         source_kind="registry",
         amount_minor=to_minor(1200, "JPY"),
         name="subscription",

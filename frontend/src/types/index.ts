@@ -356,6 +356,8 @@ export interface MonthlyPlanLine {
     source?: string;
     source_kind?: string;
     manual_override?: boolean;
+    /** An earmark row whose earmark was made for a goal event. */
+    goal_earmark?: boolean;
 }
 
 

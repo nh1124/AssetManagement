@@ -160,7 +160,8 @@ def test_invalid_schedules_refused(db, changes):
 
 
 def test_client_today_uses_timezone_at_utc_boundary(db, monkeypatch):
-    import app.services.registry_service as module
+    # Patch the module object this file calls: another test may have imported a fresh copy into sys.modules.
+    module = registry
     class Clock(datetime):
         @classmethod
         def now(cls, tz=None):

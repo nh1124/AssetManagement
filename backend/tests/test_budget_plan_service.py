@@ -417,9 +417,9 @@ def test_budget_summary_combines_income_spending_allocations_and_debt() -> None:
         assert summary["total_allocation_plan"] == 50000
         assert summary["total_debt_plan"] == 20000
         assert summary["remaining_balance"] == 0
-        food_budget = next(account for account in summary["expense_accounts"] if account["name"] == "food")
-        assert food_budget["recurring_amount"] == 80000
-        assert food_budget["sync_status"] == "diff"
+        # A user's row adds to the automatic transaction on the same subject (WP19): rent stays its own row.
+        food_rows = [account for account in summary["expense_accounts"] if account["name"] == "food"]
+        assert sorted((row["source"], row["registry_amount"]) for row in food_rows) == [("manual", 0.0), ("registry", 80000)]
         nisa_line = next(line for line in summary["plan_lines"] if line["target_name"] == "NISA")
         assert nisa_line["actual"] == 50000
         assert nisa_line["variance"] == 0
@@ -2144,9 +2144,11 @@ def test_budget_amount_uses_the_saved_override_or_unsaved_definition(stored_amou
         if definition_amount is not None:
             db.add(models.RegistryEntry(client_id=1, name='weekly food', budget_account_id=food.id, amount_minor=to_minor(definition_amount, 'JPY'), kind={"service":"expense","allocation":"transfer","debt_payment":"debt"}.get('expense', 'expense'), start_date=date(2026, 1, 1), repeat_mode="indefinite", frequency="Monthly"))
         if stored_amount is not None:
+            # The month's correction of the definition is a row saved from it; a user's row would add to it (WP19).
             db.add(models.MonthlyPlanLine(client_id=1, plan_id=plan.id, target_period="2026-05",
                                           line_type="expense", target_type="account", account_id=food.id,
-                                          name="food", amount_minor=to_minor(stored_amount, "JPY")))
+                                          name="food", amount_minor=to_minor(stored_amount, "JPY"),
+                                          source="registry", source_kind="registry"))
         db.commit()
         summary = get_budget_summary(db, 1, "2026-05", cash_flow_months=1, include_unset=True)
         lines = [line for line in summary["plan_lines"] if line["line_type"] == "expense"]
@@ -2184,13 +2186,14 @@ def test_variance_counts_definitions_only_in_months_without_a_matching_saved_lin
                 account_id=other.id if match == "entry_name" else food.id,
                 source_account_id=None if match == "without_source" else bank.id,
                 name="weekly food" if match == "entry_name" else "food override",
-                amount_minor=to_minor(0 if match == "zero" else 12000, "JPY"),
+                amount_minor=to_minor(0 if match == "zero" else 12000, "JPY"), source="registry", source_kind="registry",
             ))
         # Another plan, month, movement and inactive row cannot hide the definition.
         for values in [dict(plan_id=alternate.id), dict(target_period="2026-06", is_active=False),
                        dict(target_period="2026-07"), dict(target_period="2026-06", line_type="allocation")]:
             fields = dict(client_id=1, plan_id=plan.id, target_period="2026-05", line_type="expense",
-                          target_type="account", account_id=food.id, amount_minor=to_minor(99000, "JPY"))
+                          target_type="account", account_id=food.id, amount_minor=to_minor(99000, "JPY"),
+                          source="registry", source_kind="registry")
             fields.update(values)
             db.add(models.MonthlyPlanLine(**fields))
         db.commit()

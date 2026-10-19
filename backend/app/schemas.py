@@ -286,6 +286,25 @@ class DepreciationRecord(BaseModel):
     asset_account_id: int | None = Field(default=None, gt=0)
 
 
+PlanRecordSection = Literal["allocation", "drawdown", "expense", "income", "debt_payment", "borrowing"]
+
+
+class PlanRecordCreate(BaseModel):
+    """A user's record in an account's month on the plan page (WP19)."""
+    model_config = ConfigDict(extra="forbid")
+    period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    account_id: int = Field(gt=0)
+    section: PlanRecordSection
+    amount: float = Field(ge=0, allow_inf_nan=False)
+    name: Optional[str] = Field(default=None, max_length=200)
+
+
+class PlanRecordUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    amount: float = Field(ge=0, allow_inf_nan=False)
+    name: Optional[str] = Field(default=None, max_length=200)
+
+
 class DepreciationAmend(BaseModel):
     model_config = ConfigDict(extra="forbid")
     amount: float = Field(gt=0, allow_inf_nan=False)
