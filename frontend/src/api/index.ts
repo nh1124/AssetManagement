@@ -479,12 +479,6 @@ export const updateGoal = async (id: number, event: Partial<GoalPayload>): Promi
     return response.data;
 };
 
-/** 資金の割り当て: replace which accounts pay (or receive) the event and their shares in percent. */
-export const setLifeEventFundings = async (id: number, fundings: Array<{ account_id: number; share: number }>): Promise<LifeEvent> => {
-    const response = await api.put(`/life-events/${id}/fundings`, fundings);
-    return response.data;
-};
-
 export const deleteGoal = async (id: number) => {
     const response = await api.delete(`/life-events/${id}`);
     return response.data;

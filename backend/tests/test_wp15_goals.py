@@ -52,9 +52,10 @@ def event(db, scenario, name, amount, when, direction="expense", account_id=None
                            target_date=when, direction=direction)
     db.add(row)
     db.flush()
-    if account_id is not None:
-        # 資金の割り当て (WP21): the whole event through one account.
-        db.add(models.LifeEventFunding(life_event_id=row.id, account_id=account_id, share_bp=10000))
+    if account_id is not None and direction == "expense":
+        # ライフイベントへの取り崩し (WP22): the account withdraws the whole amount in the event's month.
+        db.add(models.ScenarioContributionPlan(scenario_id=scenario.id, account_id=account_id, start_period=when.strftime("%Y-%m"),
+                                               monthly_amount_minor=-amount, life_event_id=row.id))
     db.commit()
     return row
 
@@ -334,7 +335,9 @@ def test_http_conditions_contribution_plans_earmarks_and_plan_check(db, api):
                      json={"account_id": savings.id, "start_period": PERIOD, "monthly_amount": 20000, "annual_return": 1.5})
     assert record.status_code == 200 and record.json()["account_name"] == "貯蓄"
     assert request(api, "PUT", f"/life-scenarios/contribution-plans/{record.json()['id']}", json={"monthly_amount": 25000}).json()["monthly_amount"] == 25000
-    assert [row["monthly_amount"] for row in request(api, "GET", f"/life-scenarios/{scenario.id}/contribution-plans").json()] == [25000]
+    # The event's withdrawal record (ライフイベントへの取り崩し) is listed beside the monthly one.
+    listed = request(api, "GET", f"/life-scenarios/{scenario.id}/contribution-plans").json()
+    assert [(row["monthly_amount"], row["life_event_name"]) for row in listed] == [(25000, None), (-1000, "家")]
     progress = request(api, "GET", "/life-events/with-progress").json()
     assert progress[0]["earmark"] == {"capsule_id": capsule.id, "capsule_name": "家"}
     check = request(api, "GET", f"/goal-budget/plan-check?period={PERIOD}").json()

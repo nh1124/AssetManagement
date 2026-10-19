@@ -6,7 +6,7 @@ import { buttonClass, inputClass } from '../db/forms';
 import { KIND_LABELS } from './eventKinds';
 
 /** A life event: its kind, name, amount and date; a loan's rate, or a repayment's borrowing and months.
- * Which accounts pay it is set in the scenario's simulation settings (資金の割り当て). */
+ * What an account gives toward it is a 積立設定 record of the simulation settings. */
 export default function GoalEditor({ goal, scenarioId, events, currency, busy, onSave, onCancel, onDelete }: {
     goal: LifeEvent | null; scenarioId: number; events: LifeEvent[]; currency: string; busy: boolean;
     onSave: (action: () => Promise<unknown>) => void; onCancel: () => void; onDelete?: () => void;
@@ -63,7 +63,7 @@ export default function GoalEditor({ goal, scenarioId, events, currency, busy, o
             <Field label="優先度"><select value={priority} onChange={(event) => setPriority(Number(event.target.value) as LifeEvent['priority'])} className={inputClass}><option value={1}>高</option><option value={2}>中</option><option value={3}>低</option></select></Field>
             <div className="md:col-span-2"><Field label="メモ"><textarea value={note} onChange={(event) => setNote(event.target.value)} className={inputClass} /></Field></div>
             {direction === 'repayment' && borrowings.length === 0 && <p className="text-xs text-[var(--studio-warning)] md:col-span-2">このシナリオに借入のイベントがありません。先に借入を作ってください。</p>}
-            <p className="text-xs text-[var(--studio-text-muted)] md:col-span-2">どの口座から払う（受け取る）かは、シミュレーションの設定の「ライフイベントの資金」で決めます。</p>
+            <p className="text-xs text-[var(--studio-text-muted)] md:col-span-2">どの口座からいくら払うかは、シミュレーションの「使用口座と積立設定」に「ライフイベントへの取り崩し」として記録します。</p>
             <EditorActions form={formId} busy={busy} onCancel={onCancel} onDelete={onDelete} />
         </fieldset>
     </form>;

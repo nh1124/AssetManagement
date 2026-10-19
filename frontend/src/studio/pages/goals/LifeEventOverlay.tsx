@@ -16,8 +16,8 @@ export default function LifeEventOverlay({ event, scenarioId, events, currency, 
     const done = () => { onClose(); onChanged(); };
     const remove = event ? () => {
         void (async () => {
-            // Links, preconditions and accounts go with the event; its earmark stays, no longer the goal's.
-            if (await confirm(`「${clientName}」のライフイベント「${event.name}」を削除します。接続・前提条件・資金の割り当ても削除します（取り置きは残ります）。`, '削除する')) {
+            // Links, preconditions and its withdrawal records go with the event; its earmark stays, no longer the goal's.
+            if (await confirm(`「${clientName}」のライフイベント「${event.name}」を削除します。接続・前提条件・このイベントへの取り崩しのレコードも削除します（取り置きは残ります）。`, '削除する')) {
                 await mutation.run(() => deleteGoal(event.id), '', done);
             }
         })();

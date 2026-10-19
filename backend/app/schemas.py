@@ -767,25 +767,10 @@ class LifeEventUpdate(BaseModel):
     borrowing_event_id: Optional[int] = None
     repeat_count: Optional[int] = Field(default=None, ge=1, le=1200)
 
-class LifeEventFundingInput(BaseModel):
-    """One account of an event's 資金の割り当て: its share of the event in percent."""
-    model_config = ConfigDict(extra="forbid")
-    account_id: int = Field(gt=0)
-    share: float = Field(gt=0, le=100, allow_inf_nan=False)
-
-
-class LifeEventFunding(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-    account_id: int
-    account_name: Optional[str] = None
-    share: float
-
-
 class LifeEvent(LifeEventBase):
     id: int
     scenario_id: int
     lineage: str
-    fundings: list[LifeEventFunding] = []
     created_at: Optional[datetime] = None
 
     class Config:
@@ -1069,6 +1054,8 @@ class ContributionPlanInput(BaseModel):
     monthly_amount: float | None = Field(default=None, allow_inf_nan=False)
     annual_return: float | None = Field(default=None, allow_inf_nan=False)
     note: str | None = None
+    # Names an expense of the scenario: the record withdraws -monthly_amount once, in start_period, for it.
+    life_event_id: int | None = Field(default=None, gt=0)
 
 
 class GoalPlanRange(BaseModel):

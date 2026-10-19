@@ -85,7 +85,8 @@ def _seed(db, client_id=101, base=10000):
         kind="after", offset_months=12, note="graph note")
     add(models.ScenarioContributionPlan, 38, scenario_id=scenario.id, account_id=cash.id, start_period="2026-10",
         monthly_amount_minor=30000, annual_return=3.0, note="plan note")
-    add(models.LifeEventFunding, 43, life_event_id=goal.id, account_id=cash.id, share_bp=6000)
+    add(models.ScenarioContributionPlan, 43, scenario_id=scenario.id, account_id=cash.id, start_period="2026-12",
+        monthly_amount_minor=-600, life_event_id=goal.id)
     # Not in the backup, but present so rollback is proven to leave it alone too.
     add(models.Notification, 42, kind="goal_reflection", dedupe_key=f"goal_reflection:{base}", title="t", body="", payload={}, status="open")
     add(models.GoalBudgetReflection, 41, scenario_id=scenario.id, applied_at=STAMP, start_period="2026-10",

@@ -20,10 +20,13 @@ export interface ContributionPlan {
     /** null carries the previous record's yield, else the scenario's default. */
     annual_return: number | null;
     note: string | null;
+    /** ライフイベントへの取り崩し: -monthly_amount leaves the account once, in start_period, for this expense. */
+    life_event_id: number | null;
+    life_event_name: string | null;
 }
 // monthly_amount below zero withdraws from the account every month (取り崩し).
 
-export type ContributionPlanInput = Partial<Pick<ContributionPlan, 'account_id' | 'start_period' | 'monthly_amount' | 'annual_return' | 'note'>>;
+export type ContributionPlanInput = Partial<Pick<ContributionPlan, 'account_id' | 'start_period' | 'monthly_amount' | 'annual_return' | 'note' | 'life_event_id'>>;
 
 export interface LifeScenario {
     id: number;
