@@ -63,9 +63,6 @@ WHOLE_DATABASE = "services/data_transfer_service"
 # each line is a boundary the redesign intends to close, and the test above fails
 # if a new one appears. The reason says what would have to change to remove it.
 ALLOWED: dict[str, dict[str, str]] = {
-    "capsules": {
-        "services/product_reserve_service": "a product reserve creates its own capsule",
-    },
     "clients": {
         "main": "development seeding of the default client at startup",
     },

@@ -36,17 +36,30 @@ def _payload(**changes):
     })
 
 
+def _earmark(db, name="Filter reserve"):
+    capsule = models.Capsule(client_id=1, name=name, target_amount_minor=0, monthly_contribution_minor=0)
+    db.add(capsule)
+    db.commit()
+    return capsule.id
+
+
 def test_product_create_keeps_automatic_transactions_separate(db):
     confirmed(product_workflow.create_product, db, 1, _payload())
     assert db.query(models.Product).count() == 1
     assert db.query(models.RegistryEntry).count() == 0
 
 
-def test_product_funding_link_stays_single_and_same_through_put_and_patch(db):
+def test_a_reserve_without_a_chosen_earmark_creates_none(db):
     product = confirmed(product_workflow.create_product, db, 1, _payload())
+    assert product.funding_capsule_id is None
+    assert db.query(models.Capsule).count() == 0
+
+
+def test_product_funding_link_stays_single_and_same_through_put_and_patch(db):
+    product = confirmed(product_workflow.create_product, db, 1, _payload(funding_capsule_id=_earmark(db)))
     product_id, capsule_id = product.id, product.funding_capsule_id
     capsules_before = db.query(models.Capsule).count()
-    assert capsules_before == 2
+    assert capsules_before == 1
     capsule_before = db.execute(models.Capsule.__table__.select()).all()
 
     updated = confirmed(product_workflow.update_product, db, 1, product_id, _payload(last_unit_price=9000, funding_capsule_id=capsule_id),
@@ -65,7 +78,7 @@ def test_product_funding_link_stays_single_and_same_through_put_and_patch(db):
 
 
 def test_delete_product_keeps_its_capsule(db):
-    product = confirmed(product_workflow.create_product, db, 1, _payload())
+    product = confirmed(product_workflow.create_product, db, 1, _payload(funding_capsule_id=_earmark(db)))
     product_id, capsule_id = product.id, product.funding_capsule_id
     assert confirmed(product_workflow.delete_product, db, 1, product_id)
     assert db.get(models.Product, product_id) is None

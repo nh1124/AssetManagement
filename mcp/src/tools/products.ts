@@ -188,7 +188,6 @@ export function registerProductTools(server: McpServer): void {
           reserve_preview: {
             effective_budget_treatment: treatment,
             uses_reserve: treatment === "reserve_allocation" || treatment === "asset_replacement",
-            expected_default_pool: input.is_asset ? "Fixed Asset Reserve" : "Item Reserve",
           },
           budget_account: budgetAccount
             ? { id: budgetAccount.id, name: budgetAccount.name, account_type: budgetAccount.account_type }

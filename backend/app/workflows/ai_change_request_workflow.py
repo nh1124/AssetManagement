@@ -18,7 +18,6 @@ from ..services.fx_service import get_exchange_rate
 from ..services import ai_change_request_store, mfa_service
 from ..services.fx_service import get_client_currency
 from ..services.ledger_service import (
-    ensure_default_accounts,
     create_transaction,
     find_account_ids,
     propose_transaction,
@@ -469,7 +468,6 @@ def apply_change_request(
 
 def _apply_dispatch(db: Session, client_id: int, row: models.AiChangeRequest) -> dict[str, Any]:
     if (row.resource, row.action) == ("transactions", "create"):
-        ensure_default_accounts(db, client_id=client_id, commit=False)
         data = schemas.TransactionCreate(**row.input_payload).model_dump()
         if data["currency"] is None:
             data["currency"] = get_client_currency(db, client_id)

@@ -19,10 +19,6 @@ class ClientResponse(BaseModel):
         from_attributes = True
 
 
-class ClientCreatePayload(BaseModel):
-    name: str
-    seed_defaults: bool = True
-
 
 class ClientSettingsUpdate(BaseModel):
     general_settings: dict
@@ -42,13 +38,6 @@ def get_clients(current_client: models.Client = Depends(get_current_client)):
     return [_client_response(current_client)]
 
 
-@router.post("/", response_model=ClientResponse)
-def create_client(
-    payload: ClientCreatePayload,
-    current_client: models.Client = Depends(get_current_client),
-):
-    """Create a new client."""
-    raise HTTPException(status_code=403, detail="Create a user through registration, then sign in as that user")
 
 @router.put("/{client_id}/settings")
 def update_client_settings(

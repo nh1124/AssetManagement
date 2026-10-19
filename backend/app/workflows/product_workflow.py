@@ -10,7 +10,7 @@ from ..domain.errors import Conflict, Invalid
 from ..services import capsule_service, depreciation_service, ledger_service, product_service, registry_service
 from ..services.cache_service import invalidate_client
 from ..services.product_reserve_service import (
-    capsule_amounts, ensure_default_product_reserve_pools, refresh_product_capsules,
+    capsule_amounts, refresh_product_capsules,
 )
 
 
@@ -30,12 +30,6 @@ def validate_funding_capsule(db: Session, client_id: int, funding_capsule_id: in
         raise Invalid("Funding capsule must be a non-LifeEvent capsule for this client")
 
 
-def default_funding_capsule_id(db: Session, client_id: int, is_asset: bool) -> int:
-    pools = ensure_default_product_reserve_pools(db, client_id)
-    target_name = "Fixed Asset Reserve" if is_asset else "Item Reserve"
-    return next(pool.id for pool in pools if pool.name == target_name)
-
-
 def normalize_product_data(db: Session, client_id: int, data: dict) -> dict:
     validate_budget_account(db, client_id, data.get("budget_account_id"))
     validate_funding_capsule(db, client_id, data.get("funding_capsule_id"))
@@ -47,10 +41,8 @@ def normalize_product_data(db: Session, client_id: int, data: dict) -> dict:
     else:
         data["category"] = data.get("category") or "Uncategorized"
 
-    if product_service.product_uses_reserve(data):
-        if data.get("funding_capsule_id") is None:
-            data["funding_capsule_id"] = default_funding_capsule_id(db, client_id, data.get("is_asset", False))
-    else:
+    # A reserve goes to the earmark the user chose; there is no default earmark to invent.
+    if not product_service.product_uses_reserve(data):
         data["funding_capsule_id"] = None
     return data
 

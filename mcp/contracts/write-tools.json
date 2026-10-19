@@ -316,14 +316,6 @@
     "required_fields": ["general_settings"]
   },
   {
-    "tool": "accounts_seed_defaults",
-    "method": "post",
-    "path": "/accounts/seed-defaults",
-    "body": "none",
-    "source": "src/tools/accounts.ts",
-    "path_fragment": "/accounts/seed-defaults"
-  },
-  {
     "tool": "actions_process_due",
     "method": "post",
     "path": "/actions/process-due",

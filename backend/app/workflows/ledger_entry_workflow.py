@@ -24,8 +24,6 @@ def record_entry(
     *,
     commit: bool = True,
 ) -> models.Transaction:
-    ledger_service.ensure_default_accounts(db, client_id=client_id, commit=commit)
-
     data = payload.model_dump()
     if data["currency"] is None:
         data["currency"] = get_client_currency(db, client_id)
@@ -73,7 +71,6 @@ def amend_entry(
     disagree -- so update_transaction is asked not to close the transaction and
     this function closes it once.
     """
-    ledger_service.ensure_default_accounts(db, client_id=client_id, commit=commit)
     retract_capsule_reservations(db, client_id, transaction_id, commit=False)
     transaction = ledger_service.update_transaction(
         db, transaction_id, payload, client_id, commit=False,

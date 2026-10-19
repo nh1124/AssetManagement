@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from .ledger_service import (  # noqa: F401
     DEBIT_NORMAL_TYPES,
-    DEFAULT_ACCOUNTS,
-    ensure_default_accounts,
     get_or_create_account,
     post_transaction_journal,
     process_transaction,

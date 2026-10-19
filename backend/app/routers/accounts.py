@@ -195,14 +195,3 @@ def delete_account(
     invalidate_client(current_client.id)
     return {"message": "Account deactivated"}
 
-@router.post("/seed-defaults")
-def seed_default_accounts(
-    db: Session = Depends(get_db),
-    current_client: models.Client = Depends(get_current_client)
-):
-    """Create default accounts for current client."""
-    from ..services.ledger_service import ensure_default_accounts
-    # We need to update ensure_default_accounts to accept client_id
-    ensure_default_accounts(db, client_id=current_client.id)
-    invalidate_client(current_client.id)
-    return {"message": "Default accounts seeded"}

@@ -128,26 +128,6 @@ export function registerAccountTools(server: McpServer): void {
     },
   );
 
-  server.registerTool(
-    "accounts_seed_defaults",
-    {
-      title: "Seed default accounts",
-      description: "Creates any missing default accounts for the current client.",
-      inputSchema: z.object({}).strict(),
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    },
-    async () => {
-      try {
-        const data = await api.post<unknown>("/accounts/seed-defaults", {});
-        return {
-          content: [{ type: "text", text: `Seeded default accounts:\n${JSON.stringify(data, null, 2)}` }],
-          structuredContent: toStructured(data),
-        };
-      } catch (err) {
-        return { content: [{ type: "text", text: `Error: ${err instanceof Error ? err.message : String(err)}` }] };
-      }
-    },
-  );
 
   server.registerTool(
     "accounts_net_worth",

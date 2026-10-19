@@ -195,45 +195,6 @@ def delete_account(
     return True
 
 
-# Default accounts to create on startup
-DEFAULT_ACCOUNTS = [
-    # Asset accounts
-    {"name": "cash", "account_type": "asset"},
-    {"name": "bank", "account_type": "asset"},
-    {"name": "investment", "account_type": "asset"},
-    {"name": "savings", "account_type": "asset"},
-    # Liability accounts
-    {"name": "credit", "account_type": "liability"},
-    {"name": "loan", "account_type": "liability"},
-    # Income accounts
-    {"name": "salary", "account_type": "income"},
-    {"name": "bonus", "account_type": "income"},
-    {"name": "investment_income", "account_type": "income"},
-    # Expense accounts
-    {"name": "food", "account_type": "expense"},
-    {"name": "transport", "account_type": "expense"},
-    {"name": "entertainment", "account_type": "expense"},
-    {"name": "utilities", "account_type": "expense"},
-    {"name": "shopping", "account_type": "expense"},
-    {"name": "expense", "account_type": "expense"},  # Generic expense
-]
-
-
-def ensure_default_accounts(db: Session, client_id: int, *, commit: bool = True) -> None:
-    """Create default accounts for a client if they don't exist."""
-    for acc in DEFAULT_ACCOUNTS:
-        existing = db.query(models.Account).filter(
-            models.Account.name == acc["name"],
-            models.Account.client_id == client_id,
-        ).first()
-        if not existing:
-            db.add(models.Account(**acc, client_id=client_id))
-    if commit:
-        db.commit()
-    else:
-        db.flush()
-
-
 def get_or_create_account(
     db: Session,
     name: str,

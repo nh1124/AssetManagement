@@ -24,7 +24,8 @@ def posting():
     db = sessionmaker(autocommit=False, autoflush=False, bind=engine)()
     client = models.Client(id=1, name="workflow-test", general_settings={})
     db.add(client)
-    ledger.ensure_default_accounts(db, client_id=1)
+    db.add_all([models.Account(client_id=1, name=name, account_type=kind) for name, kind in (("cash", "asset"), ("food", "expense"), ("savings", "asset"))])
+    db.flush()
     cash = db.query(models.Account).filter_by(client_id=1, name="cash").one()
     food = db.query(models.Account).filter_by(client_id=1, name="food").one()
     reserve = db.query(models.Account).filter_by(client_id=1, name="savings").one()
@@ -96,9 +97,8 @@ def test_record_entry_commits_posting_legs_and_capsule_reservation_together(post
     # X3: an auto-posted reservation records a proposal as well as the
     # transfer, because the proposal is what says which entry caused it.
     expected = (2, 4, 1) if auto_post else (1, 2, 1)
-    # Default-account bootstrap still commits first; no commit may expose only
-    # part of the posting and the reservation that it triggered.
-    assert snapshots == [(0, 0, 0), expected]
+    # One commit: none may expose only part of the posting and the reservation it triggered.
+    assert snapshots == [expected]
     assert _counts(db) == expected
     assert sorted((leg.account_id, leg.debit, leg.credit) for leg in tx.journal_entries) == sorted([
         (cash.id, 0, 1000), (food.id, 1000, 0),
@@ -138,7 +138,7 @@ def test_record_entry_rolls_back_posting_legs_and_proposals_when_capsule_posting
         workflow.record_entry(db, client.id, _payload(posting))
 
     assert calls == 2
-    assert snapshots == [(0, 0, 0)]
+    assert snapshots == []
     assert _counts(db) == (0, 0, 0)
     for account in (cash, food, reserve):
         db.refresh(account)
@@ -197,7 +197,8 @@ def entries(posting):
     ]]
     other = models.Client(id=2, name="other-client", general_settings={})
     db.add(other)
-    ledger.ensure_default_accounts(db, client_id=2)
+    db.add_all([models.Account(client_id=2, name=name, account_type=kind) for name, kind in (("cash", "asset"), ("food", "expense"), ("savings", "asset"))])
+    db.flush()
     other_accounts = db.query(models.Account).filter_by(client_id=2).all()
     workflow.record_entry(db, other.id, schemas.TransactionCreate(
         date=WHEN, description="Other Lunch", amount=200,

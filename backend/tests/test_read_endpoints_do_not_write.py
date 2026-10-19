@@ -28,7 +28,7 @@ from app.database import Base, get_db
 from app.main import app
 from app.services.cache_service import invalidate_client
 from app.services.fx_service import get_client_currency
-from app.services.ledger_service import ensure_default_accounts, create_transaction
+from app.services.ledger_service import create_transaction
 from app.utils.jwt import create_access_token
 
 
@@ -79,8 +79,6 @@ def _get_routes():
 def _seed(db, scenario, today):
     db.add(models.Client(id=1, name="GET guard", username="get-guard", general_settings={"currency": "JPY"}))
     db.flush()
-    if scenario != "missing_default_accounts":
-        ensure_default_accounts(db, 1)
     cash = models.Account(client_id=1, name="Guard cash", account_type="asset")
     expense = models.Account(client_id=1, name="Guard food", account_type="expense")
     income = models.Account(client_id=1, name="Guard salary", account_type="income")
@@ -303,7 +301,7 @@ def read_scan():
         if f"GET {route.path}" in UNDRIVABLE_GETS:
             continue
         scenarios = ("existing_plan",) if route.path == "/budget-plans/compare" else (
-            "existing_plan", "no_plan", "missing_default_accounts",
+            "existing_plan", "no_plan",
         )
         # Different resources share one route but dispatch into different
         # services. Summary must not disappear behind an accounts-only case.

@@ -22,7 +22,7 @@ from app.services.budget_credit_settlement import (
 from app.services.budget_plan_store import find_budget_plan_id
 from app.services.budget_projection import planned_cash_outflow_remaining
 from app.services.cache_service import invalidate_client
-from app.services.ledger_service import DEFAULT_ACCOUNTS, create_transaction
+from app.services.ledger_service import create_transaction
 from app.utils.jwt import create_access_token
 
 
@@ -88,7 +88,7 @@ def test_analysis_without_default_accounts(database, path, params):
         assert db.query(models.Account).count() == before
 
 
-def test_registration_seeds_only_new_client(database):
+def test_registration_creates_no_accounts(database):
     with database() as db:
         db.add(models.Account(client_id=1, name="Existing custom account", account_type="asset"))
         db.commit()
@@ -101,9 +101,8 @@ def test_registration_seeds_only_new_client(database):
     assert client_id != 1
     with database() as db:
         accounts = db.query(models.Account).filter_by(client_id=client_id).all()
-        assert len(accounts) == len(DEFAULT_ACCOUNTS) == 15
-        assert {(a.name, a.account_type) for a in accounts} == {
-            (a["name"], a["account_type"]) for a in DEFAULT_ACCOUNTS}
+        # Accounts are the user's own: registration invents none.
+        assert accounts == []
         assert db.execute(select(models.Account.__table__).where(
             models.Account.client_id == 1)).all() == before
 

@@ -171,7 +171,6 @@ async def startup_event():
     from .database import SessionLocal
     from . import models
     from .utils.password import hash_password
-    from .services.ledger_service import ensure_default_accounts
 
     settings.validate_production_settings()
     run_alembic_migrations()
@@ -210,30 +209,6 @@ async def startup_event():
                     default_client.username = "admin"
                     default_client.password_hash = hash_password("adminadmin")
                     db.commit()
-
-            # 2. Cleanup: Assign any orphan data to Default Client in development only.
-            # This keeps legacy local resets usable without creating production tenants implicitly.
-            for table in [
-                "accounts",
-                "transactions",
-                "transaction_batches",
-                "products",
-                "registry_entries",
-                "life_events",
-                "simulation_configs",
-                "monthly_plan_lines",
-                "period_reviews",
-                "milestones",
-                "capsules",
-                "exchange_rates",
-            ]:
-                try:
-                    db.execute(text(f"UPDATE {table} SET client_id = 1 WHERE client_id IS NULL"))
-                except Exception:
-                    pass
-            db.commit()
-            ensure_default_accounts(db, client_id=1)
-
 
     finally:
         db.close()
