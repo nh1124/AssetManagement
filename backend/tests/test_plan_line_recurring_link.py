@@ -11,7 +11,8 @@ from app import models, schemas
 from app.database import Base
 from app.services.budget_plan_service import get_budget_summary
 from app.services.budget_plan_store import resolve_budget_plan_id
-from app.services.registry_service import upsert_registry_from_recurring_payload
+from datetime import date
+from app.services.registry_service import create_entry
 
 
 @pytest.fixture
@@ -46,19 +47,17 @@ def db():
 
 def test_registry_generated_plan_line_reports_recurring_definition(db):
     accounts = {row.name: row.id for row in db.query(models.Account).all()}
-    recurring = upsert_registry_from_recurring_payload(
+    entry = create_entry(
         db=db,
         client_id=1,
-        payload=dict(
+        data=dict(
             name="subscription",
             amount=1200,
-            frequency="Monthly",
-            from_account_id=accounts["bank"],
-            to_account_id=accounts["subscriptions"],
+            frequency="Monthly", start_date=date(2026, 10, 1), repeat_mode="indefinite", kind="expense", currency="JPY", is_active=True,
+            source_account_id=accounts["bank"],
+            destination_account_id=accounts["subscriptions"],
         ),
     )
-    entry = db.get(models.RegistryEntry, recurring.source_registry_entry_id)
-    assert entry.generate_recurring is True
     # Exercise the stored-line merge as well as the registry's virtual projection.
     db.add(models.MonthlyPlanLine(
         client_id=1,
@@ -78,8 +77,7 @@ def test_registry_generated_plan_line_reports_recurring_definition(db):
     lines = get_budget_summary(db, 1, "2026-10")["plan_lines"]
     line = next(line for line in lines if entry.id in line.get("registry_entry_ids", []))
     assert line["id"] is not None
-    assert line["recurring_transaction_id"] == recurring.id
-    assert schemas.MonthlyPlanLine.model_validate(line).recurring_transaction_id == recurring.id
+    assert schemas.MonthlyPlanLine.model_validate(line).registry_entry_ids == [entry.id]
 
 
 def test_plan_line_without_registry_reports_no_recurring_definition(db):
@@ -96,8 +94,7 @@ def test_plan_line_without_registry_reports_no_recurring_definition(db):
     db.commit()
     lines = get_budget_summary(db, 1, "2026-10")["plan_lines"]
     line = next(line for line in lines if line["name"] == "manual expense")
-    assert line["recurring_transaction_id"] is None
-    assert schemas.MonthlyPlanLine.model_validate(line).recurring_transaction_id is None
+    assert not schemas.MonthlyPlanLine.model_validate(line).registry_entry_ids
 
 
 def test_plan_line_create_rejects_recurring_transaction_id():

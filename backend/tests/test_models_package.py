@@ -9,14 +9,14 @@ from app import models
 from app.database import Base
 
 
-# WP12 drops six account columns and adds tracked FX currencies.
-EXPECTED_METADATA_SHA256 = "bef1607e5d76177d38a08d9a4c1372b4ec21a11c24c4f0278a0dabe0b5afa6af"
+# WP13 unifies automatic schedules and moves the depreciation switch.
+EXPECTED_METADATA_SHA256 = "e637fa4fe862773c15ccb9a4c700ed8360515381473ee60f28f4f9d9601db355"
 
 MODEL_NAMES = (
     "Client", "ClientMfaSetting", "ClientRecoveryCode",
     "Account", "JournalEntry", "Transaction", "TransactionProposal",
     "TransactionBatch", "ExchangeRate", "FxTrackedCurrency", "Product",
-    "RecurringTransaction", "RegistryEntry", "LifeEvent", "LifeEventLink", "Milestone", "HouseholdMember", "LifeEventCondition",
+    "RegistryEntry", "LifeEvent", "LifeEventLink", "Milestone", "HouseholdMember", "LifeEventCondition",
     "BudgetPlan", "MonthlyPlanLine", "PeriodReview", "MonthlyAction", "PeriodClose",
     "AiOperationPolicy", "AiAuditLog", "AiChangeRequest",
     "SimulationConfig", "SimulationScenario",
@@ -90,8 +90,8 @@ def _metadata_snapshot():
 
 def test_metadata_matches_the_minor_unit_schema():
     snapshot = _metadata_snapshot()
-    assert len(snapshot["table_names"]) == 38
-    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 442
+    assert len(snapshot["table_names"]) == 37
+    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 420
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == EXPECTED_METADATA_SHA256
 

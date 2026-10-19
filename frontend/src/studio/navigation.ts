@@ -66,7 +66,7 @@ export const STUDIO_GROUPS: StudioGroup[] = [
                 section: WORKSPACE,
                 tabs: [
                     { segment: '', label: 'tab.records' },
-                    { segment: 'unmatched', label: 'tab.unmatched' },
+                    { segment: 'auto', label: 'tab.auto' },
                     // The budget screen owns the plan; repeating numbers at two depths makes them drift apart.
                 ],
             },
@@ -122,15 +122,15 @@ export const STUDIO_GROUPS: StudioGroup[] = [
             { path: 'db/accounts', label: 'screen.accounts', icon: Landmark, section: DATABASE },
             { path: 'db/fx', label: 'screen.fx', icon: Coins, section: DATABASE },
             {
-                path: 'db/definitions',
-                label: 'screen.definitions',
+                path: 'db/auto-transactions',
+                label: 'screen.autoTransactions',
                 icon: Repeat,
                 section: DATABASE,
                 tabs: [
                     { segment: '', label: 'tab.services' },
                     { segment: 'income', label: 'tab.income' },
                     { segment: 'repayment', label: 'tab.repayment' },
-                    { segment: 'allocation', label: 'tab.allocation' },
+                    { segment: 'allocation', label: 'tab.transfer' },
                 ],
             },
             { path: 'db/fixed-assets', label: 'screen.fixedAssets', icon: Boxes, section: DATABASE },

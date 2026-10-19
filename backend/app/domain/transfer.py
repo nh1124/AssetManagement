@@ -8,14 +8,13 @@ import re
 from datetime import date, datetime
 from typing import Any
 
-EXPORT_VERSION = 23
+EXPORT_VERSION = 24
 
 DATA_COLLECTIONS = [
     "accounts",
     "products",
     "product_depreciations",
     "simulation_configs",
-    "recurring_transactions",
     "registry_entries",
     "transaction_batches",
     "life_events",
@@ -46,7 +45,7 @@ DATA_COLLECTIONS = [
 # Collections a later version stopped keeping, with the export version that
 # dropped them. Older exports still carry them: their manifest checksums still
 # verify, but the rows are never imported.
-RETIRED_COLLECTIONS = {"life_scenario_choices": 22, "quick_templates": None}
+RETIRED_COLLECTIONS = {"recurring_transactions": 24, "life_scenario_choices": 22, "quick_templates": None}
 
 
 def _retired(version: int | None) -> set[str]:
@@ -232,15 +231,12 @@ def validate_import_payload(
 
     check_ref("products", "budget_account_id", "accounts")
     check_ref("products", "funding_capsule_id", "capsules")
-    check_ref("recurring_transactions", "from_account_id", "accounts")
-    check_ref("recurring_transactions", "to_account_id", "accounts")
     # Definitions without a restorable registry owner are skipped during import.
     check_ref("registry_entries", "budget_account_id", "accounts")
     check_ref("registry_entries", "source_account_id", "accounts")
     check_ref("registry_entries", "destination_account_id", "accounts")
-    check_ref("registry_entries", "funding_capsule_id", "capsules")
-    check_ref("registry_entries", "source_product_id", "products")
-    check_ref("registry_entries", "source_recurring_transaction_id", "recurring_transactions")
+    if version and version >= 24:
+        check_ref("transactions", "registry_entry_id", "registry_entries")
     # Only present in a v6 or older payload, where the columns still existed.
     check_ref("transactions", "from_account_id", "accounts")
     check_ref("transactions", "to_account_id", "accounts")
@@ -575,7 +571,7 @@ def remap_action_target_id(item: dict[str, Any], key_maps: dict[str, dict[int, i
     payload = item.get("payload") or {}
     target_key = {
         "set_budget": "account_id",
-        "pause_recurring": "recurring_id",
+        "stop_auto_transaction": "registry_entry_id",
         "change_capsule_contribution": "capsule_id",
     }.get(kind)
     if kind == "boost_allocation":

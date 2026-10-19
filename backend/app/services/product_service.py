@@ -122,6 +122,7 @@ def enrich_product(product: models.Product) -> dict:
         "purchase_date": product.purchase_date,
         # The response is built field by field, so a column added to the model is
         # invisible to every caller until it is named here.
+        "auto_depreciation": product.auto_depreciation,
         "depreciation_method": product.depreciation_method or "none",
         "depreciation_annual_rate": product.depreciation_annual_rate,
         "depreciation_interval": product.depreciation_interval or "monthly",

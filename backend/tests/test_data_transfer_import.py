@@ -62,7 +62,6 @@ def _seed(db, client_id=101, base=10000):
             "capsule_funding_sources": ("target_amount",),
             "products": ("last_unit_price", "purchase_price"), "simulation_configs": ("monthly_savings",),
             "simulation_scenarios": ("monthly_savings",), "life_scenarios": ("monthly_savings",), "registry_entries": ("amount",),
-            "recurring_transactions": ("amount",),
         }
         if model.__tablename__ == "capsule_rules":
             values = rule_data(values, "JPY")
@@ -112,18 +111,13 @@ def _seed(db, client_id=101, base=10000):
                   depreciation_expense_account_id=expense.id,
                   depreciation_asset_account_id=cash.id)
     add(models.SimulationConfig, 7, user_id=client.id)
-    registry = add(models.RegistryEntry, 8, name="food", amount=100, line_type="expense",
+    registry = add(models.RegistryEntry, 8, name="food", amount=100, kind="expense", frequency="Monthly", repeat_mode="indefinite", start_date=date(2026, 1, 1), next_due_date=date(2026, 10, 31),
                    budget_account_id=expense.id, source_account_id=cash.id,
-                   destination_account_id=expense.id, funding_capsule_id=capsule.id,
-                   source_product_id=product.id, generate_recurring=True, note="registry note")
-    recurring = add(models.RecurringTransaction, 9, name="food", amount=100, frequency="Monthly",
-                    from_account_id=cash.id, to_account_id=expense.id,
-                    source_registry_entry_id=registry.id, next_due_date=date(2026, 10, 31))
-    registry.source_recurring_transaction_id = recurring.id
+                   destination_account_id=expense.id, note="registry note")
     batch = add(models.TransactionBatch, 11, label="batch",
                 input_payload={"nested": {"account_id": cash.id, "life_event_id": goal.id}})
     tx = add(models.Transaction, 12, date=date(2026, 10, 2), description="food", amount_minor=100,
-             batch_id=batch.id, recurring_transaction_id=recurring.id)
+             batch_id=batch.id, registry_entry_id=registry.id)
     add(models.JournalEntry, 13, transaction_id=tx.id, account_id=expense.id,
         debit_minor=100, credit_minor=0, memo="debit", sort_order=0)
     add(models.JournalEntry, 14, transaction_id=tx.id, account_id=cash.id,
@@ -157,7 +151,6 @@ def _seed(db, client_id=101, base=10000):
         target_id=goal.id, idempotency_key="allocation", amount=10,
         payload={"nested": [{"account_id": cash.id, "life_event_id": goal.id,
                              "capsule_id": capsule.id, "product_id": product.id,
-                             "recurring_id": recurring.id, "plan_id": plan.id,
                              "plan_line_id": line.id, "milestone_id": milestone.id}]},
         result={"nested": {"transaction_id": tx.id, "batch_id": batch.id}}, status="applied", applied_at=STAMP)
     # Tables outside the backup format must survive a failed restore too,
@@ -196,9 +189,7 @@ REFERENCES = {
     "account_id": "accounts", "from_account_id": "accounts",
     "to_account_id": "accounts", "source_account_id": "accounts", "destination_account_id": "accounts",
     "budget_account_id": "accounts",
-    "source_product_id": "products", "product_id": "products", "source_registry_entry_id": "registry_entries",
-    "source_recurring_transaction_id": "recurring_transactions", "recurring_transaction_id": "recurring_transactions",
-    "recurring_id": "recurring_transactions", "batch_id": "transaction_batches",
+    "product_id": "products", "registry_entry_id": "registry_entries", "batch_id": "transaction_batches",
     "from_event_id": "life_events", "to_event_id": "life_events",
     "life_event_id": "life_events", "transaction_id": "transactions", "plan_id": "budget_plans",
     "plan_line_id": "monthly_plan_lines", "milestone_id": "milestones", "capsule_id": "capsules",
@@ -262,15 +253,8 @@ def test_round_trip_preserves_every_collection_and_document(db):
                 for field, old_id in item["result"]["nested"].items():
                     item["result"]["nested"][field] = maps[REFERENCES[field]][old_id]
 
-    # Reconnecting the registry's recurring and capsule links triggers the
-    # existing ORM onupdate timestamp; this is not an import-time rewrite.
-    # It fires on whichever side the flush happens to touch, so comparing the
-    # two exports against each other is a race -- it failed about once in five
-    # full runs. Both are bounded below by the seeded stamp, which is what
-    # actually says the timestamp was not zeroed or moved backwards.
-    new_registry = restored["data"]["registry_entries"][0]
-    assert datetime.fromisoformat(new_registry["updated_at"]) >= STAMP
-    expected["data"]["registry_entries"][0]["updated_at"] = new_registry["updated_at"]
+
+
     # Restore targets the authenticated client and never restores its identity
     # or settings. Hashes necessarily change with remapped IDs and timestamps.
     assert restored["client"] == {

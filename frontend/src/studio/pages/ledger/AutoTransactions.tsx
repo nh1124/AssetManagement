@@ -1,9 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
-import { approveTransactionProposal, getAccounts, rejectTransactionProposal } from '../../../api';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { approveTransactionProposal, deleteTransaction, getAccounts, getGeneratedTransactions, rejectTransactionProposal } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
 import type { Account, TransactionProposal } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import { assetErrorMessage, useResource } from '../../useResource';
+import { useSearchParams } from 'react-router-dom';
+import { clientToday, useTimezone } from '../../datetime';
+import { useConfirm } from '../../components/useConfirm';
+import { DataTable, EditableRow, Feedback, RowTitle } from '../db/Database';
+import { RecordEditor } from './Records';
+import MonthPicker from './MonthPicker';
+
 
 async function loadAccountNames(): Promise<Map<number, string>> {
     // Pending proposals can still refer to an account that has been archived.
@@ -13,7 +20,7 @@ async function loadAccountNames(): Promise<Map<number, string>> {
     return new Map([...inactive, ...active].map((account) => [account.id, account.name]));
 }
 
-export default function Unmatched({ proposals, loading, error, onDecided }: {
+function PendingProposals({ proposals, loading, error, onDecided }: {
     proposals: TransactionProposal[] | null;
     loading: boolean;
     error: string;
@@ -90,7 +97,7 @@ export default function Unmatched({ proposals, loading, error, onDecided }: {
                                         </td>
                                         <td className="px-5 py-3 align-top">
                                             <div className="flex flex-wrap gap-2">
-                                                <button type="button" onClick={() => void decide(proposal, true)} disabled={disabled} aria-label={`${proposal.description}を承認して記帳`} className="whitespace-nowrap rounded-md bg-[var(--studio-accent)] px-3 py-1.5 text-xs text-[var(--studio-accent-text)] hover:opacity-90 disabled:opacity-40">承認して記帳</button>
+                                                <button type="button" onClick={() => void decide(proposal, true)} disabled={disabled} aria-label={`${proposal.description}を承認して記帳`} className="whitespace-nowrap rounded-md bg-[var(--studio-accent)] px-3 py-1.5 text-xs text-[var(--studio-accent-text)] hover:opacity-90 disabled:opacity-40">記帳</button>
                                                 <button type="button" onClick={() => void decide(proposal, false)} disabled={disabled} aria-label={`${proposal.description}を却下`} className="rounded-md border border-[var(--studio-border)] px-3 py-1.5 text-xs text-[var(--studio-danger)] hover:bg-[var(--studio-bg)] disabled:opacity-40">却下</button>
                                                 {decidingId === proposal.id && <span role="status" className="text-xs text-[var(--studio-text-muted)]">処理中…</span>}
                                             </div>
@@ -101,7 +108,39 @@ export default function Unmatched({ proposals, loading, error, onDecided }: {
                         </tbody>
                     </table>
                 </div>
-            ) : !loading && !error && <p className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-6 text-sm text-[var(--studio-text-muted)]">未照合の明細はありません。</p>)}
+            ) : !loading && !error && <p className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-6 text-sm text-[var(--studio-text-muted)]">未反映の候補はありません。</p>)}
         </section>
     );
+}
+
+export default function AutoTransactions(props: Parameters<typeof PendingProposals>[0]) {
+    const timezone = useTimezone();
+    const [params, setParams] = useSearchParams();
+    const requested = params.get('month') ?? '';
+    const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(requested) ? requested : clientToday(timezone).slice(0, 7);
+    const load = useCallback(() => getGeneratedTransactions(month), [month]);
+    const resource = useResource(load);
+    const confirm = useConfirm();
+    const [editing, setEditing] = useState<number | null>(null);
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState('');
+    return <div className="space-y-6">
+        <MonthPicker value={month} onChange={(value) => setParams({ month: value })} disabled={busy} />
+        <section className="space-y-3"><h2 className="text-sm font-semibold">未反映</h2><PendingProposals {...props} onDecided={(id) => { props.onDecided(id); resource.reload(); }} /></section>
+        <section className="space-y-3"><h2 className="text-sm font-semibold">発生した自動取引</h2>
+            <Feedback loading={resource.loading} error={error || resource.error} />
+            <DataTable columns={['日付', '摘要', '金額', '生成元']}>
+                {resource.data?.map((row) => <EditableRow key={row.id} disabled={busy} onEdit={() => setEditing(row.id)}>
+                    <td className="px-5 py-3">{row.date}</td><RowTitle name={row.description} disabled={busy} onEdit={() => setEditing(row.id)}>{row.description}</RowTitle>
+                    <td className="px-5 py-3 tabular-nums">{formatCurrency(row.amount, row.currency)}</td><td className="px-5 py-3">{row.source}</td>
+                </EditableRow>)}
+                {!resource.loading && !resource.data?.length && <tr><td colSpan={4} className="px-5 py-4 text-[var(--studio-text-muted)]">この月の自動取引はありません。</td></tr>}
+            </DataTable>
+        </section>
+        {editing !== null && <RecordEditor key={editing} transactionId={editing} busy={busy} error={error} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); resource.reload(); }} onDelete={async (transaction) => {
+            if (busy || !(await confirm(`「${transaction.description}」を削除しますか？`, '削除する'))) return;
+            setBusy(true); setError('');
+            try { await deleteTransaction(transaction.id); setEditing(null); resource.reload(); } catch (failure) { setError(assetErrorMessage(failure)); } finally { setBusy(false); }
+        }} />}
+    </div>;
 }

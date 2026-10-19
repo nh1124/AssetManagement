@@ -36,18 +36,10 @@ def _payload(**changes):
     })
 
 
-def test_product_create_defers_registry_sync_and_repeated_sync_creates_one_entry_per_product_identity(db):
-    product = confirmed(product_workflow.create_product, db, 1, _payload())
+def test_product_create_keeps_automatic_transactions_separate(db):
+    confirmed(product_workflow.create_product, db, 1, _payload())
     assert db.query(models.Product).count() == 1
     assert db.query(models.RegistryEntry).count() == 0
-    first = registry_service.sync_registry_from_product(db, product)
-    db.commit()
-    first_id = first.id
-    second = registry_service.sync_registry_from_product(db, product)
-    db.commit()
-    assert second.id == first_id
-    assert db.query(models.RegistryEntry).count() == 1
-    assert (second.source_product_id, second.funding_capsule_id) == (product.id, product.funding_capsule_id)
 
 
 def test_product_funding_link_stays_single_and_same_through_put_and_patch(db):
@@ -72,46 +64,15 @@ def test_product_funding_link_stays_single_and_same_through_put_and_patch(db):
     assert [row.id for row in db.execute(models.Capsule.__table__.select()).all()] == [row.id for row in capsule_before]
 
 
-@pytest.mark.parametrize("has_registry", [False, True])
-def test_delete_product_deactivates_and_detaches_registry_but_keeps_capsules_and_recurring(db, has_registry):
+def test_delete_product_keeps_its_capsule(db):
     product = confirmed(product_workflow.create_product, db, 1, _payload())
     product_id, capsule_id = product.id, product.funding_capsule_id
-    if has_registry:
-        entry = registry_service.sync_registry_from_product(db, product)
-        db.flush()
-        recurring = models.RecurringTransaction(
-            client_id=1, name="Existing recurrence", amount_minor=to_minor(123, "JPY"), frequency="Monthly",
-            source_registry_entry_id=entry.id, next_due_date=date(2026, 11, 1),
-        )
-        db.add(recurring)
-        db.flush()
-        entry.generate_recurring = True
-        entry.budget_active = True
-        entry.source_recurring_transaction_id = recurring.id
-        db.commit()
-        entry_id = entry.id
-    capsules_before = db.execute(models.Capsule.__table__.select()).all()
-    recurring_before = db.execute(models.RecurringTransaction.__table__.select()).all()
-
     assert confirmed(product_workflow.delete_product, db, 1, product_id)
-    db.expire_all()
     assert db.get(models.Product, product_id) is None
-    # The capsules stay; one left without products keeps its amounts, now managed by hand.
-    after = {row.id: row for row in db.execute(models.Capsule.__table__.select()).all()}
-    assert set(after) == {row.id for row in capsules_before}
     pool = db.get(models.Capsule, capsule_id)
     assert (pool.target_amount, pool.monthly_contribution) == (6000, 1000)
     assert pool.target_amount_source == pool.monthly_contribution_source == "manual"
-    assert db.execute(models.RecurringTransaction.__table__.select()).all() == recurring_before
-    if has_registry:
-        entry = db.get(models.RegistryEntry, entry_id)
-        assert entry is not None
-        assert (entry.is_active, entry.budget_active, entry.source_product_id) == (False, False, None)
-        assert entry.generate_recurring is True
-        assert entry.source_recurring_transaction_id == recurring_before[0].id
-        assert entry.funding_capsule_id is not None
-    else:
-        assert db.query(models.RegistryEntry).count() == 0
+    assert db.query(models.RegistryEntry).count() == 0
 
 
 def test_product_reads_are_client_scoped_and_preserve_unit_economics(db):

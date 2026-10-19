@@ -24,18 +24,14 @@ from ..services.ledger_service import get_account, create_transaction
 from ..domain.journal import Leg
 from ..domain.money import Money
 from ..services.ledger_valuation import calculate_account_valued_balance
-from ..services.registry_service import (
-    get_entry,
-    get_recurring_transaction,
-    sync_recurring_from_registry,
-    upsert_registry_from_recurring_payload,
-)
+from ..services.registry_service import get_entry, create_entry, update_entry
+
 
 
 ACTION_KINDS = {
     "set_budget",
-    "add_recurring",
-    "pause_recurring",
+    "add_auto_transaction",
+    "stop_auto_transaction",
     "boost_allocation",
     "change_capsule_contribution",
 }
@@ -95,7 +91,7 @@ def _action_fields(
         kind=kind,
         description=description or kind.replace("_", " "),
         amount=payload.get("amount") or payload.get("monthly_contribution"),
-        target_id=payload.get("account_id") or payload.get("recurring_id") or payload.get("life_event_id") or payload.get("capsule_id"),
+        target_id=payload.get("account_id") or payload.get("registry_entry_id") or payload.get("life_event_id") or payload.get("capsule_id"),
         payload=payload,
     )
 
@@ -192,35 +188,19 @@ def _apply_set_budget(db: Session, action: models.MonthlyAction) -> dict:
     return {"plan_line_id": plan_line.id, "target_period": target_period, "plan_id": plan_id}
 
 
-def _apply_add_recurring(db: Session, action: models.MonthlyAction) -> dict:
-    payload = action.payload or {}
-    recurring_payload = {
-        "name": payload["name"],
-        "amount": float(payload["amount"]),
-        "currency": payload.get("currency"),
-        "from_account_id": payload.get("from_account_id"),
-        "to_account_id": payload.get("to_account_id"),
-        "frequency": payload.get("frequency", "Monthly"),
-        "day_of_month": int(payload.get("day_of_month") or 1),
-        "month_of_year": payload.get("month_of_year"),
-        "is_active": True,
-    }
-    recurring = upsert_registry_from_recurring_payload(db, action.client_id, recurring_payload)
-    return {"recurring_id": recurring.id}
+def _apply_add_automatic(db: Session, action: models.MonthlyAction) -> dict:
+    from ..schemas import RegistryEntryCreate
+    payload = RegistryEntryCreate(**(action.payload or {})).model_dump()
+    entry = create_entry(db, action.client_id, payload)
+    return {"registry_entry_id": entry.id}
 
 
-def _apply_pause_recurring(db: Session, action: models.MonthlyAction) -> dict:
-    recurring_id = int((action.payload or {})["recurring_id"])
-    recurring = get_recurring_transaction(db, action.client_id, recurring_id)
-    if not recurring:
-        raise ValueError("Recurring transaction not found")
-    entry = get_entry(db, action.client_id, recurring.source_registry_entry_id)
+def _apply_stop_automatic(db: Session, action: models.MonthlyAction) -> dict:
+    entry_id = int((action.payload or {})["registry_entry_id"])
+    entry = update_entry(db, action.client_id, entry_id, {"is_active": False})
     if entry is None:
-        raise ValueError("Recurring transaction not found")
-    # A paused definition moves no money, so its entry must stop forecasting it too.
-    entry.is_active = False
-    sync_recurring_from_registry(db, entry)
-    return {"recurring_id": recurring.id, "is_active": False}
+        raise ValueError("Automatic transaction not found")
+    return {"registry_entry_id": entry.id, "is_active": False}
 
 
 def _apply_boost_allocation(db: Session, action: models.MonthlyAction) -> dict:
@@ -287,8 +267,8 @@ def _apply_change_capsule_contribution(db: Session, action: models.MonthlyAction
 
 DISPATCH = {
     "set_budget": _apply_set_budget,
-    "add_recurring": _apply_add_recurring,
-    "pause_recurring": _apply_pause_recurring,
+    "add_auto_transaction": _apply_add_automatic,
+    "stop_auto_transaction": _apply_stop_automatic,
     "boost_allocation": _apply_boost_allocation,
     "change_capsule_contribution": _apply_change_capsule_contribution,
 }

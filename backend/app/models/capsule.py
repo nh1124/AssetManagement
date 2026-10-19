@@ -19,7 +19,7 @@ class Capsule(Base):
     target_amount_minor = Column(MinorUnits)
     monthly_contribution_minor = Column(MinorUnits)
     # The capsule decides whether its reservations need a decision; the vocabulary
-    # deliberately matches RecurringTransaction.auto_post.
+    # A rule may reserve automatically or leave a transaction proposal.
     auto_post = Column(Boolean, default=False, server_default="false", nullable=False)
     capsule_type = Column(String, default="manual", server_default="manual", nullable=False)
     target_amount_source = Column(String, default="manual", server_default="manual", nullable=False)

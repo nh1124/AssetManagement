@@ -30,7 +30,8 @@ from .data_health_service import check_data_health
 from .budget_lines import assign_plan_line_identity
 from .cache_service import invalidate_client
 from .capsule_service import create_capsule_for_goal
-from .registry_service import account_entry_type, account_line_type
+from ..domain.automatic_migration import migrate_automatic_data
+from copy import deepcopy
 from .life_scenario_service import seed_legacy_goal, copy_graph, get_goal
 
 
@@ -99,6 +100,7 @@ def export_client(db: Session, client: models.Client) -> dict:
                         "budget_treatment",
                         "purchase_price",
                         "purchase_date",
+                        "auto_depreciation",
                         "depreciation_method",
                         "depreciation_annual_rate",
                         "depreciation_interval",
@@ -140,71 +142,11 @@ def export_client(db: Session, client: models.Client) -> dict:
                 .order_by(models.SimulationConfig.id)
                 .all()
             ],
-            "recurring_transactions": [
-                row_fields(
-                    item,
-                    [
-                        "id",
-                        "name",
-                        "amount",
-                        "currency",
-                        "from_account_id",
-                        "to_account_id",
-                        "frequency",
-                        "day_of_month",
-                        "month_of_year",
-                        "next_due_date",
-                        "start_period",
-                        "end_period",
-                        "auto_post",
-                        "is_active",
-                        "source_registry_entry_id",
-                        "created_at",
-                    ],
-                )
-                for item in db.query(models.RecurringTransaction)
-                .filter(models.RecurringTransaction.client_id == client.id)
-                .order_by(models.RecurringTransaction.id)
-                .all()
-            ],
             "registry_entries": [
-                row_fields(
-                    item,
-                    [
-                        "id",
-                        "name",
-                        "entry_type",
-                        "category",
-                        "amount",
-                        "currency",
-                        "frequency",
-                        "frequency_days",
-                        "day_of_month",
-                        "month_of_year",
-                        "line_type",
-                        "budget_account_id",
-                        "source_account_id",
-                        "destination_account_id",
-                        "funding_capsule_id",
-                        "budget_treatment",
-                        "generate_recurring",
-                        "auto_post",
-                        "auto_depreciation",
-                        "budget_active",
-                        "is_active",
-                        "source_product_id",
-                        "source_recurring_transaction_id",
-                        "note",
-                        "start_period",
-                        "end_period",
-                        "created_at",
-                        "updated_at",
-                    ],
-                )
-                for item in db.query(models.RegistryEntry)
-                .filter(models.RegistryEntry.client_id == client.id)
-                .order_by(models.RegistryEntry.id)
-                .all()
+                row_fields(item, ["id", "name", "kind", "amount", "currency", "source_account_id", "destination_account_id",
+                                  "budget_account_id", "repeat_mode", "frequency", "frequency_days", "day_of_month", "month_of_year",
+                                  "start_date", "end_date", "repeat_count", "next_due_date", "budget_active", "is_active", "note", "created_at", "updated_at"])
+                for item in db.query(models.RegistryEntry).filter(models.RegistryEntry.client_id == client.id).order_by(models.RegistryEntry.id).all()
             ],
             "transaction_batches": [
                 row_fields(
@@ -284,7 +226,7 @@ def export_client(db: Session, client: models.Client) -> dict:
                         "amount",
                         "currency",
                         "batch_id",
-                        "recurring_transaction_id",
+                        "registry_entry_id",
                         "created_at",
                     ],
                 )
@@ -557,6 +499,14 @@ def import_client(
             },
         )
 
+    data = deepcopy(data)
+    if version is None or version < 24:
+        moves = migrate_automatic_data(data)
+        for code, count in moves.items():
+            if count:
+                validation["issues"].append({"severity": "warning", "code": code, "detail": f"WP13: {count} rows", "count": count})
+                validation["warning_count"] += 1
+
     legacy_account_returns = {int(row["id"]): row["expected_return"] for row in data.get("accounts", [])
                               if row.get("account_type") == "asset" and row.get("expected_return") is not None}
     if version is None or version < 23:
@@ -568,7 +518,6 @@ def import_client(
     transaction_map: dict[int, int] = {}
     batch_map: dict[int, int] = {}
     event_map: dict[int, int] = {}
-    recurring_map: dict[int, int] = {}
     capsule_map: dict[int, int] = {}
     budget_plan_map: dict[int, int] = {}
 
@@ -608,7 +557,6 @@ def import_client(
             models.FxTrackedCurrency,
             models.Milestone,
             models.RegistryEntry,
-            models.RecurringTransaction,
             models.SimulationScenario,
             models.SimulationConfig,
             models.Product,
@@ -679,6 +627,7 @@ def import_client(
                 budget_treatment=item.get("budget_treatment") or "auto",
                 purchase_price_minor=to_minor(item.get("purchase_price"), money_client_currency(db, client.id)),
                 purchase_date=parse_date(item.get("purchase_date")),
+                auto_depreciation=item.get("auto_depreciation", False),
                 depreciation_method=item.get("depreciation_method") or "none",
                 depreciation_annual_rate=item.get("depreciation_annual_rate"),
                 depreciation_interval=item.get("depreciation_interval") or "monthly",
@@ -708,119 +657,17 @@ def import_client(
             )
 
         registry_map: dict[int, int] = {}
-        registry_funding_updates: list[tuple[models.RegistryEntry, int]] = []
         for item in data.get("registry_entries", []):
-            old_id = int(item["id"])
-            entry = models.RegistryEntry(
-                client_id=client.id,
-                name=item["name"],
-                entry_type=item.get("entry_type") or "service",
-                category=item.get("category"),
-                amount_minor=to_minor(item.get("amount") or 0, item.get("currency") or "JPY"),
-                # Restore the backup's denomination; today's settings would rewrite history.
-                currency=item.get("currency") or "JPY",
-                frequency=item.get("frequency") or "Monthly",
-                frequency_days=item.get("frequency_days"),
-                day_of_month=item.get("day_of_month") or 1,
-                month_of_year=item.get("month_of_year"),
-                line_type=item.get("line_type") or "expense",
-                budget_account_id=account_map.get(item.get("budget_account_id")),
-                source_account_id=account_map.get(item.get("source_account_id")),
-                destination_account_id=account_map.get(item.get("destination_account_id")),
-                funding_capsule_id=capsule_map.get(item.get("funding_capsule_id")),
-                budget_treatment=item.get("budget_treatment") or "expense_only",
-                generate_recurring=item.get("generate_recurring", False),
-                auto_post=item.get("auto_post", True),
-                auto_depreciation=item.get("auto_depreciation", False),
-                budget_active=item.get("budget_active", True),
-                is_active=item.get("is_active", True),
-                source_product_id=product_map.get(item.get("source_product_id")),
-                note=item.get("note"),
-                start_period=item.get("start_period"),
-                end_period=item.get("end_period"),
-                created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
-                updated_at=parse_datetime(item.get("updated_at")),
-            )
+            values = {key: item.get(key) for key in ("name", "kind", "frequency", "frequency_days", "day_of_month", "month_of_year", "repeat_mode", "repeat_count", "note")}
+            values.update({key: parse_date(item.get(key)) for key in ("start_date", "end_date", "next_due_date")})
+            values.update({key: account_map.get(item.get(key)) for key in ("source_account_id", "destination_account_id", "budget_account_id")})
+            entry = models.RegistryEntry(client_id=client.id, **values,
+                amount_minor=to_minor(item.get("amount") or 0, item.get("currency") or "JPY"), currency=item.get("currency") or "JPY",
+                budget_active=item.get("budget_active", True), is_active=item.get("is_active", True),
+                created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(), updated_at=parse_datetime(item.get("updated_at")))
             db.add(entry)
             db.flush()
-            registry_map[old_id] = entry.id
-            if item.get("funding_capsule_id"):
-                registry_funding_updates.append((entry, int(item["funding_capsule_id"])))
-
-        backfilled_recurring = 0
-        for item in data.get("recurring_transactions", []):
-            old_id = int(item["id"])
-            source_registry_id = registry_map.get(item.get("source_registry_entry_id"))
-            backfilled_entry = None
-            if source_registry_id is None:
-                source_id = account_map.get(item.get("from_account_id"))
-                destination_id = account_map.get(item.get("to_account_id"))
-                source = db.get(models.Account, source_id) if source_id else None
-                destination = db.get(models.Account, destination_id) if destination_id else None
-                line_type = account_line_type(source, destination)
-                backfilled_entry = models.RegistryEntry(
-                    client_id=client.id,
-                    name=item["name"],
-                    amount_minor=to_minor(item.get("amount") or 0, item.get("currency") or "JPY"),
-                    currency=item.get("currency") or "JPY",
-                    frequency=item["frequency"],
-                    day_of_month=item.get("day_of_month") or 1,
-                    month_of_year=item.get("month_of_year"),
-                    start_period=item.get("start_period"),
-                    end_period=item.get("end_period"),
-                    source_account_id=source_id,
-                    destination_account_id=destination_id,
-                    line_type=line_type,
-                    entry_type=account_entry_type(source, destination),
-                    budget_account_id=destination_id if line_type in {"expense", "debt_payment"} else None,
-                    generate_recurring=True,
-                    auto_post=item.get("auto_post", True),
-                    budget_active=True,
-                    is_active=item.get("is_active", True),
-                )
-                db.add(backfilled_entry)
-                db.flush()
-                source_registry_id = backfilled_entry.id
-                backfilled_recurring += 1
-            recurring = models.RecurringTransaction(
-                client_id=client.id,
-                source_registry_entry_id=source_registry_id,
-                name=item["name"],
-                amount_minor=to_minor(item.get("amount") or 0, item.get("currency") or "JPY"),
-                currency=item.get("currency") or "JPY",
-                from_account_id=account_map.get(item.get("from_account_id")),
-                to_account_id=account_map.get(item.get("to_account_id")),
-                frequency=item["frequency"],
-                day_of_month=item.get("day_of_month") or 1,
-                month_of_year=item.get("month_of_year"),
-                next_due_date=parse_date(item.get("next_due_date")),
-                start_period=item.get("start_period"),
-                end_period=item.get("end_period"),
-                auto_post=item.get("auto_post", True),
-                is_active=item.get("is_active", True),
-                created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
-            )
-            db.add(recurring)
-            db.flush()
-            recurring_map[old_id] = recurring.id
-            if backfilled_entry is not None:
-                backfilled_entry.source_recurring_transaction_id = recurring.id
-
-        for item in data.get("registry_entries", []):
-            entry = db.get(models.RegistryEntry, registry_map[int(item["id"])])
-            entry.source_recurring_transaction_id = recurring_map.get(item.get("source_recurring_transaction_id"))
-            # Older exports kept the manual-approval choice on the recurring row only.
-            if "auto_post" not in item and entry.source_recurring_transaction_id is not None:
-                entry.auto_post = db.get(models.RecurringTransaction, entry.source_recurring_transaction_id).auto_post
-
-        if backfilled_recurring:
-            validation["issues"].append({
-                "severity": "warning",
-                "code": "recurring_without_registry_backfilled",
-                "detail": f"Created registry entries for {backfilled_recurring} recurring definitions without a restorable registry entry.",
-                "collection": "recurring_transactions",
-            })
-            validation["warning_count"] += 1
+            registry_map[int(item["id"])] = entry.id
 
         # Older exports carry quick_templates and a batch's quick_template_id;
         # the feature is gone, so both are left behind.
@@ -928,7 +775,7 @@ def import_client(
                 # ignored: the journal_entries below are the accounts, and they
                 # were already required to balance.
                 batch_id=batch_map.get(item.get("batch_id")),
-                recurring_transaction_id=recurring_map.get(item.get("recurring_transaction_id")),
+                registry_entry_id=registry_map.get(item.get("registry_entry_id")),
                 created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
             )
             db.add(transaction)
@@ -1061,8 +908,7 @@ def import_client(
         for product, old_capsule_id in product_funding_updates:
             product.funding_capsule_id = capsule_map.get(old_capsule_id)
 
-        for registry_entry, old_capsule_id in registry_funding_updates:
-            registry_entry.funding_capsule_id = capsule_map.get(old_capsule_id)
+
 
         if version is None or version < 21:
             # Only older formats need capsule repair. V21+ restores the exact
@@ -1236,10 +1082,8 @@ def import_client(
             "source_account_id": account_map,
             "destination_account_id": account_map,
             "budget_account_id": account_map,
-            "recurring_id": recurring_map,
-            "recurring_transaction_id": recurring_map,
-            "source_recurring_transaction_id": recurring_map,
             "life_event_id": event_map,
+            "registry_entry_id": registry_map,
             "capsule_id": capsule_map,
             "funding_capsule_id": capsule_map,
             "product_id": product_map,

@@ -23,7 +23,7 @@ AI_OPERATION_RESOURCES = [
     "accounts",
     "monthly_plan_lines",
     "budget_plans",
-    "recurring_transactions",
+    "auto_transactions",
     "registry_entries",
     "products",
     "capsules",

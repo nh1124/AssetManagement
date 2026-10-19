@@ -54,7 +54,7 @@ MONEY_FIELDS = [
     (models.Capsule, "monthly_contribution"), (models.MonthlyAction, "amount"),
     (models.Product, "last_unit_price"), (models.Product, "purchase_price"),
     (models.SimulationConfig, "monthly_savings"), (models.SimulationScenario, "monthly_savings"),
-    (models.AiOperationPolicy, "threshold_amount"), (models.RecurringTransaction, "amount"),
+    (models.AiOperationPolicy, "threshold_amount"),
     (models.RegistryEntry, "amount"),
 ]
 
@@ -114,6 +114,8 @@ def _migration():
 
 
 def _legacy_nullable(name, column):
+    if name == "recurring_transactions":
+        return True
     if name == "capsule_holdings":
         return False
     if (name, column) == ("capsules", "current_balance"):
@@ -280,8 +282,7 @@ def _money_rows(db):
                                   annual_return=5, inflation=2, monthly_savings_minor=1234),
         models.AiOperationPolicy(id=1, client_id=1, resource="transactions", action="create",
                                  risk="medium", mode="deny", threshold_amount_minor=1234),
-        models.RegistryEntry(id=1, client_id=1, name="read", currency="JPY", amount_minor=1234),
-        models.RecurringTransaction(id=1, client_id=1, currency="JPY", amount_minor=1234, source_registry_entry_id=1),
+        models.RegistryEntry(id=1, client_id=1, name='read', currency='JPY', amount_minor=1234, start_date=date(2026, 1, 1), repeat_mode="indefinite", frequency="Monthly"),
         models.CapsuleRule(id=1, client_id=1, capsule_id=1, trigger_type="Expense", amount_type="fixed", amount_minor=1234),
         models.CapsuleRule(id=2, client_id=1, capsule_id=1, trigger_type="Expense", amount_type="percentage", percentage_bp=250),
     ]
@@ -296,7 +297,7 @@ def test_major_reads_and_sql_expressions_keep_currency(model, field):
     Base.metadata.create_all(engine)
     with Session(engine) as db:
         row = _money_rows(db)[model]
-        expected = 1234 if model in (models.RegistryEntry, models.RecurringTransaction) else 12.34
+        expected = 1234 if model in (models.RegistryEntry,) else 12.34
         assert getattr(row, field) == expected
         assert db.query(getattr(model, field)).filter(model.id == row.id).scalar() == expected
         alias = aliased(model)

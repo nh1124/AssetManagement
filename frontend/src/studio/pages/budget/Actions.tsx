@@ -13,17 +13,17 @@ import MonthPicker from '../ledger/MonthPicker';
 import ActionEditor from './ActionEditor';
 
 const STATES: Record<MonthlyAction['status'], string> = { pending: '未実行', applied: '実行済み', skipped: '見送り', failed: '失敗' };
-const KINDS: Record<string, string> = { set_budget: '支出予算を設定', add_recurring: '定常収支を追加', pause_recurring: '定常収支を停止', boost_allocation: 'ライフイベントへの確保額を変更', change_capsule_contribution: '取り置きの月額積立を変更' };
+const KINDS: Record<string, string> = { set_budget: '支出予算を設定', add_auto_transaction: '自動取引を追加', stop_auto_transaction: '自動取引を停止', boost_allocation: 'ライフイベントへの確保額を変更', change_capsule_contribution: '取り置きの月額積立を変更' };
 
 function RelatedBudget({ action, currency }: { action: MonthlyAction; currency: string }) {
     const payload = action.payload;
     const code = typeof payload.currency === 'string' ? payload.currency : currency;
-    const accountId = payload.account_id ?? payload.to_account_id;
+    const accountId = payload.account_id ?? payload.destination_account_id;
     const label = action.kind === 'set_budget' ? `支出予算・勘定科目 #${String(accountId ?? '—')}`
         : action.kind === 'boost_allocation' ? `ライフイベント #${String(payload.life_event_id ?? '—')}・口座 #${String(accountId ?? '—')}`
             : action.kind === 'change_capsule_contribution' ? `取り置き #${String(action.target_id ?? '—')}`
-                : action.kind === 'pause_recurring' ? `定常収支 #${String(payload.recurring_id ?? action.target_id ?? '—')}`
-                    : action.kind === 'add_recurring' ? `${String(payload.name ?? '定常収支')}・${String(payload.from_account_id ?? '—')} → ${String(payload.to_account_id ?? '—')}` : '—';
+                : action.kind === 'stop_auto_transaction' ? `自動取引 #${String(payload.registry_entry_id ?? action.target_id ?? '—')}`
+                    : action.kind === 'add_auto_transaction' ? `${String(payload.name ?? '自動取引')}・${String(payload.source_account_id ?? '—')} → ${String(payload.destination_account_id ?? '—')}` : '—';
     const amount = payload.amount ?? payload.monthly_contribution ?? action.amount;
     return <div className="space-y-1 text-xs"><p>{label}</p>
         {typeof amount === 'number' && <p className="tabular-nums">{formatCurrency(amount, code)}（{code}）</p>}
@@ -58,7 +58,7 @@ function MonthlyActions({ sourcePeriod, currency, clientName }: { sourcePeriod: 
     const decide = async (action: MonthlyAction, apply: boolean) => {
         if (disabled || adding || action.status !== 'pending') return;
         const verb = apply ? '実行' : '見送り';
-        if (!(await confirm(`「${clientName}」の「${action.description || KINDS[action.kind] || action.kind}」を${verb}にしますか？${apply ? '\n関連する予算・定義・確保額に変更を反映します。予定月が将来でも、今すぐ実行します。' : ''}`, apply ? '実行する' : '見送る'))) return;
+        if (!(await confirm(`「${clientName}」の「${action.description || KINDS[action.kind] || action.kind}」を${verb}にしますか？${apply ? '\n関連する予算・自動取引・確保額に変更を反映します。予定月が将来でも、今すぐ実行します。' : ''}`, apply ? '実行する' : '見送る'))) return;
         let updated: MonthlyAction | null = null;
         void mutation.run(async () => { updated = await (apply ? applyReviewAction(action.id) : skipReviewAction(action.id)); }, `行動を${verb}にしました。`, () => {
             const result = updated;
@@ -68,7 +68,7 @@ function MonthlyActions({ sourcePeriod, currency, clientName }: { sourcePeriod: 
         });
     };
     const processDue = async () => {
-        if (disabled || adding || !(await confirm(`「${clientName}」の期限が到来した行動を実行しますか？\n表示中の記録月にかかわらず、全期間の未実行・失敗した行動を対象に、関連する予算・定義・確保額へ反映します。`, '実行する'))) return;
+        if (disabled || adding || !(await confirm(`「${clientName}」の期限が到来した行動を実行しますか？\n表示中の記録月にかかわらず、全期間の未実行・失敗した行動を対象に、関連する予算・自動取引・確保額へ反映します。`, '実行する'))) return;
         let rows: MonthlyAction[] = [];
         void mutation.run(async () => { rows = (await processDueMonthlyActions()).processed; }, '期限が到来した行動の処理が完了しました。', () => { setProcessed(rows); resource.reload(); });
     };

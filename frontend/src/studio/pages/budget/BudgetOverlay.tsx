@@ -45,7 +45,7 @@ function useLineActions({ period, currency, clientName, planId, onChanged }: Ove
         if (mutation.busy || line.id == null || !clientName) return;
         const id = line.id;
         const generated = line.source !== 'manual' || Boolean(line.registry_entry_ids?.length);
-        if (!(await confirm(`「${clientName}」の${period}「${lineName(line)}」の予算行を削除しますか？\n${generated ? '定義から作られた項目は、削除後も表示される場合があります。' : '削除は取り消せません。'}`, '削除する'))) return;
+        if (!(await confirm(`「${clientName}」の${period}「${lineName(line)}」の予算行を削除しますか？\n${generated ? '自動取引から作られた項目は、削除後も表示される場合があります。' : '削除は取り消せません。'}`, '削除する'))) return;
         void mutation.run(() => deleteMonthlyPlanLine(id), '予算行を削除しました。', onChanged);
     };
     return { mutation, save, remove, disabled: mutation.busy || !clientName };
@@ -78,23 +78,22 @@ function LineItem({ line, label, currency, editing, disabled, onEdit, onCancel, 
     </li>;
 }
 
-const RECORDING = { auto: '自動記帳', manual: '記帳待ち', none: '予算のみ' };
 
 function ScheduledTable({ items, accountId, context }: { items: ScheduledTransaction[]; accountId: number | null; context: OverlayContext }) {
     const money = (amount: number) => formatCurrency(amount, context.currency);
     if (!items.length) return <p className="text-sm text-[var(--studio-text-muted)]">この月の自動取引はありません。</p>;
     return <div className="overflow-x-auto"><table className="w-full text-left text-sm">
-        <thead className="text-xs text-[var(--studio-text-muted)]"><tr>{['予定日', '定義', '種別', '相手', '金額', '記帳'].map((label) => <th key={label} scope="col" className="whitespace-nowrap py-1 pr-4 font-medium">{label}</th>)}</tr></thead>
+        <thead className="text-xs text-[var(--studio-text-muted)]"><tr>{['予定日', '自動取引', '種別', '相手', '金額', '記帳'].map((label) => <th key={label} scope="col" className="whitespace-nowrap py-1 pr-4 font-medium">{label}</th>)}</tr></thead>
         <tbody className="divide-y divide-[var(--studio-border)]">
             {items.map((item, index) => {
                 const other = item.account_id === accountId ? item.counter_account_id : item.account_id;
                 return <tr key={`${item.kind}:${item.entry_id ?? item.product_id}:${index}`}>
-                    <td className="whitespace-nowrap py-2 pr-4 tabular-nums">{item.date ? item.date.slice(5).replace('-', '/') : '日付なし'}</td>
+                    <td className="whitespace-nowrap py-2 pr-4 tabular-nums">{item.date.slice(5).replace('-', '/')}</td>
                     <th scope="row" className="py-2 pr-4 font-normal">{item.name}</th>
                     <td className="whitespace-nowrap py-2 pr-4">{item.kind === 'depreciation' ? '減価' : item.line_type ? TYPE_LABELS[item.line_type] : '—'}</td>
                     <td className="py-2 pr-4 text-[var(--studio-text-muted)]">{context.accountName(other)}</td>
                     <td className="whitespace-nowrap py-2 pr-4 text-right tabular-nums">{money(item.amount)}</td>
-                    <td className="whitespace-nowrap py-2 text-xs">{RECORDING[item.recording]}{item.posted ? '・記帳済み' : ''}{item.kind === 'definition' && !item.in_budget ? '（予算外）' : ''}</td>
+                    <td className="whitespace-nowrap py-2 text-xs">自動{item.posted ? '・記帳済み' : ''}{item.kind === 'automatic_transaction' && !item.in_budget ? '（予算外）' : ''}</td>
                 </tr>;
             })}
         </tbody>
@@ -120,7 +119,7 @@ export function AccountOverlay({ row, context, onClose }: { row: AccountRow; con
                             <span className="font-medium">{TYPE_LABELS[cell.type]}</span>
                             <span className="text-xs tabular-nums text-[var(--studio-text-muted)]">予算 {cell.set ? money(cell.budget) : '未設定'} ／ 実績 {money(cell.actual)}</span>
                         </div>
-                        {cell.mismatch && row.kind && <p className="mt-1 text-xs text-[var(--studio-warning)]">{KIND_LABELS[row.kind]}の{noun}に{TYPE_LABELS[cell.type]}の予算があります。定義の種別か口座を確認してください。</p>}
+                        {cell.mismatch && row.kind && <p className="mt-1 text-xs text-[var(--studio-warning)]">{KIND_LABELS[row.kind]}の{noun}に{TYPE_LABELS[cell.type]}の予算があります。自動取引の種別か口座を確認してください。</p>}
                         <ul className="divide-y divide-[var(--studio-border)]">
                             {lines.map((line, index) => {
                                 const key = `${cell.type}:${lineKey(line, index)}`;
@@ -136,7 +135,7 @@ export function AccountOverlay({ row, context, onClose }: { row: AccountRow; con
             <section className="space-y-3">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
                     <h3 className="text-sm font-semibold">この月の自動取引</h3>
-                    <Link to="/db/definitions" className="text-xs text-[var(--studio-accent)] hover:underline">収支・配分の定義で変更</Link>
+                    <Link to="/db/auto-transactions" className="text-xs text-[var(--studio-accent)] hover:underline">自動取引で変更</Link>
                 </div>
                 <ScheduledTable items={row.scheduled} accountId={row.accountId} context={context} />
             </section>

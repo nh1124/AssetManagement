@@ -88,18 +88,9 @@ def card_plan(monkeypatch):
 
 def test_a_posted_occurrence_is_counted_once(card_plan):
     db, card, subs = card_plan
-    registry_entry = models.RegistryEntry(
-        client_id=1,
-        name="recurring owner",
-    )
+    registry_entry = models.RegistryEntry(client_id=1, name='automatic subscription', source_account_id=card.id, destination_account_id=subs.id, amount_minor=3000, frequency='Monthly', day_of_month=11, start_date=date(2026, 1, 1), repeat_mode="indefinite")
     db.add(registry_entry)
     db.flush()
-    db.add(models.RecurringTransaction(
-        client_id=1, name="subscription", amount_minor=to_minor(3000, "JPY"), currency="JPY",
-        source_registry_entry_id=registry_entry.id,
-        from_account_id=card.id, to_account_id=subs.id, frequency="Monthly",
-        day_of_month=11, next_due_date=date(2026, 10, 11), is_active=True,
-    ))
     _post(db, card, subs, 3000)
     db.commit()
     assert credit_settlement_plan_lines(BudgetContext(db, 1), "2026-11")[0]["suggested_amount"] == 3000

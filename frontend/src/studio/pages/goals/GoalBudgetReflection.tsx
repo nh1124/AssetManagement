@@ -15,7 +15,7 @@ import GoalHandovers from './GoalHandovers';
 import { REFLECTIONS } from './presentation';
 
 const NEAR_YEARS = [1, 3, 5, 10];
-const EXISTING_KINDS = { definition: '定義', manual: '手入力', capsule: '取り置き' };
+const EXISTING_KINDS = { definition: '自動取引', manual: '手入力', capsule: '取り置き' };
 const DEFAULT_ORDER: GoalBudgetFundingGroup[] = ['existing', 'products', 'near'];
 const GROUPS: Record<GoalBudgetFundingGroup, string> = { existing: '予算にある積立', products: '消耗品・固定資産', near: '近いライフイベントの取り置き' };
 const sectionClass = 'space-y-3 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-bg)] p-4';
@@ -190,7 +190,7 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
                         <optgroup label="口座（ゴールの積立として予算に入れる）">
                             {accounts.map((row) => <option key={`a-${row.id}`} value={`a:${row.id}`}>{row.name}</option>)}
                         </optgroup>
-                        {definitions.length > 0 && <optgroup label="定義（毎月の金額を書き換える）">
+                        {definitions.length > 0 && <optgroup label="自動取引（毎月の金額を書き換える）">
                             {definitions.map((row) => <option key={`d-${row.id}`} value={`d:${row.id}`}>{row.name}</option>)}
                         </optgroup>}
                     </select></Field>
@@ -227,7 +227,7 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
                             {savings.groups.filter((group) => group.amount < group.need).map((group) => <li key={group.key}>{GROUPS[group.key]}：{formatCurrency(group.need, currency)} のうち {formatCurrency(group.amount, currency)}{group.key === 'existing' ? 'だけを積立に数えます（予算の行は書き換えません）' : 'を予算に入れます（行ごとに金額の割合で按分）'}</li>)}
                         </ul>
                     </div>}
-                    {savings.definition_differences.length > 0 && <p role="note" className="text-xs text-[var(--studio-warning)]">定義は毎月同じ金額のため、初月の残り {formatCurrency(savings.account_amount, currency)} に揃えます。2か月目以降は本来の額との差があります：{savings.definition_differences.map((row) => `${row.period} ${row.difference > 0 ? '+' : ''}${formatCurrency(row.difference, currency)}`).join('、')}</p>}
+                    {savings.definition_differences.length > 0 && <p role="note" className="text-xs text-[var(--studio-warning)]">自動取引は毎月同じ金額のため、初月の残り {formatCurrency(savings.account_amount, currency)} に揃えます。2か月目以降は本来の額との差があります：{savings.definition_differences.map((row) => `${row.period} ${row.difference > 0 ? '+' : ''}${formatCurrency(row.difference, currency)}`).join('、')}</p>}
                     {savings.account_required && <p className="text-xs text-[var(--studio-text-muted)]">残りの積立先を選ぶと、残りの {formatCurrency(savings.account_amount, currency)} も予算に入ります。</p>}
                     {preview.existing.length > 0 && <>
                         <p className="text-xs text-[var(--studio-text-muted)]">予算に既にある積立は、毎月の積立額の一部として差し引きます（同じお金を二重に計画しないため）。積立ではない移動は外してください。</p>
@@ -280,8 +280,8 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
                     {changed.length ? <DataTable columns={['月', '項目', '口座', '現在', '反映後']}>
                         {changed.map((row, index) => <tr key={`change-${row.period}-${row.kind}-${row.line_id ?? index}`}>
                             <td className="whitespace-nowrap px-5 py-3">{row.kind === 'definition' ? `${row.period}以降の毎月` : row.period}</td>
-                            <th scope="row" className="px-5 py-3 font-medium">{row.kind === 'retire' ? `${row.name}（以前の行を取り消す）` : row.kind === 'savings' ? 'ゴールの積立' : row.kind === 'definition' ? `定義：${row.name}` : row.kind === 'definition_row' ? `定義：${row.name}（保存済みの月）` : row.kind === 'claim' ? `確保：${row.name}（引き継ぎ）` : `取り置き：${row.name}`}
-                                {row.kind === 'savings' && (row.includes_definitions ?? 0) > 0 && <span className="block text-xs font-normal text-[var(--studio-text-muted)]">この口座への定義 {formatCurrency(row.includes_definitions ?? 0, currency)} を含みます（予算では1行にまとまるため）</span>}</th>
+                            <th scope="row" className="px-5 py-3 font-medium">{row.kind === 'retire' ? `${row.name}（以前の行を取り消す）` : row.kind === 'savings' ? 'ゴールの積立' : row.kind === 'definition' ? `自動取引：${row.name}` : row.kind === 'definition_row' ? `自動取引：${row.name}（保存済みの月）` : row.kind === 'claim' ? `確保：${row.name}（引き継ぎ）` : `取り置き：${row.name}`}
+                                {row.kind === 'savings' && (row.includes_definitions ?? 0) > 0 && <span className="block text-xs font-normal text-[var(--studio-text-muted)]">この口座への自動取引 {formatCurrency(row.includes_definitions ?? 0, currency)} を含みます（予算では1行にまとまるため）</span>}</th>
                             <td className="px-5 py-3">{row.kind === 'capsule' && row.account_id === null ? '口座の指定なし' : accountName(row.account_id)}</td>
                             <td className="whitespace-nowrap px-5 py-3 tabular-nums">{row.current_amount === null ? '未設定' : formatCurrency(row.current_amount, currency)}</td>
                             <td className="whitespace-nowrap px-5 py-3 tabular-nums">{row.kind === 'retire' ? '削除' : formatCurrency(row.new_amount, currency)}</td>
@@ -291,7 +291,7 @@ export default function GoalBudgetReflection({ title = 'ゴールを予算に反
                         <input type="checkbox" className="mt-1" disabled={busy} checked={updateBaseline} onChange={(event) => setUpdateBaseline(event.target.checked)} />
                         <span>基準線も今のゴールの予測で作り直す<span className="block text-xs text-[var(--studio-text-muted)]">実績と比べる基準線は、ゴールに採用したときのままです。計画を見直した場合に選んでください（以前の基準線は履歴に残ります）。</span></span>
                     </label>
-                    {changed.some((row) => row.kind === 'definition') && <p role="note" className="text-xs text-[var(--studio-warning)]">定義の金額を書き換えると、反映する期間に関係なく以後の毎月の予算に使われ、定義から自動作成される取引の金額も変わります。</p>}
+                    {changed.some((row) => row.kind === 'definition') && <p role="note" className="text-xs text-[var(--studio-warning)]">自動取引の金額を書き換えると、反映する期間に関係なく以後の毎月の予算に使われ、自動取引から自動作成される取引の金額も変わります。</p>}
                 </section>
             </>}
         </div>

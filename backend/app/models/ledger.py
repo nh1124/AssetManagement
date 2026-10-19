@@ -121,9 +121,9 @@ class Transaction(Base):
     currency = Column(String, default='JPY')
     batch_id = Column(Integer, ForeignKey("transaction_batches.id"), nullable=True)
     # NULL means entered by hand or posted before provenance was recorded.
-    recurring_transaction_id = Column(
+    registry_entry_id = Column(
         Integer,
-        ForeignKey("recurring_transactions.id", ondelete="SET NULL"),
+        ForeignKey("registry_entries.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -131,7 +131,7 @@ class Transaction(Base):
     
     client = relationship("Client", back_populates="transactions")
     batch = relationship("TransactionBatch", back_populates="transactions")
-    recurring_transaction = relationship("RecurringTransaction", foreign_keys=[recurring_transaction_id])
+    registry_entry = relationship("RegistryEntry", foreign_keys=[registry_entry_id])
     # No from_account_id / to_account_id columns: the legs are the accounts.
     # Both are still accepted as input and still reported, derived by
     # services.journal_legs.primary_accounts from the leg on each side.

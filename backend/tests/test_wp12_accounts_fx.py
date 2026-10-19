@@ -171,7 +171,7 @@ def test_backup_moves_old_yields_into_every_scenario_preserving_override(db):
     assert validate_import_payload(document["data"], 22, manifest)["error_count"] == 0
     import_client(db, db.get(models.Client, 2), data=document["data"], version=22, manifest=manifest)
     restored = export_client(db, db.get(models.Client, 2))
-    assert restored["version"] == EXPORT_VERSION == 23
+    assert restored["version"] == EXPORT_VERSION == 24
     names = {row["id"]: row["name"] for row in restored["data"]["accounts"]}
     story_names = {row["id"]: row["name"] for row in restored["data"]["life_scenarios"]}
     assert {(story_names[row["scenario_id"]], names[row["account_id"]]): row["annual_return"] for row in restored["data"]["life_scenario_account_returns"]} == {

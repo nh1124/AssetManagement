@@ -108,23 +108,11 @@ def test_logical_balance_follows_the_plan_and_ignores_the_recurring_definition()
         rent = models.Account(client_id=1, name="rent", account_type="expense")
         db.add(rent)
         db.flush()
-        registry_entry = models.RegistryEntry(
-            client_id=1,
-            name="recurring owner",
-        )
+        registry_entry = models.RegistryEntry(client_id=1, name='recurring owner', start_date=date(2026, 1, 1), repeat_mode="indefinite", frequency="Monthly")
         db.add(registry_entry)
         db.flush()
         db.add(
-            models.RecurringTransaction(
-                client_id=1,
-                source_registry_entry_id=registry_entry.id,
-                name="Rent",
-                amount_minor=to_minor(50000, "JPY"),
-                frequency="Monthly",
-                next_due_date=date.today() + timedelta(days=10),
-                is_active=True,
-                to_account_id=rent.id,
-            )
+            models.RegistryEntry(client_id=1, name='Rent', amount_minor=to_minor(50000, 'JPY'), frequency='Monthly', next_due_date=date.today() + timedelta(days=10), is_active=True, destination_account_id=rent.id, start_date=date(2026, 1, 1), repeat_mode="indefinite")
         )
         db.commit()
 

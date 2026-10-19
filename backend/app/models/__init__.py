@@ -10,7 +10,7 @@ from .ledger import AccountType, Account, JournalEntry, Transaction, Transaction
 from .transaction_batch import TransactionBatch
 from .fx import ExchangeRate, FxTrackedCurrency
 from .product import Product, ProductDepreciation
-from .registry import RecurringTransaction, RegistryEntry
+from .registry import RegistryEntry
 from .goal import GoalBaseline, GoalBudgetReflection, LifeScenario, LifeScenarioAccountReturn, LifeEvent, LifeEventLink, Milestone, HouseholdMember, LifeEventCondition
 from .budget import BudgetPlan, MonthlyPlanLine
 from .planning import PeriodReview, MonthlyAction, PeriodClose
@@ -34,7 +34,6 @@ __all__ = [
     "FxTrackedCurrency",
     "Product",
     "ProductDepreciation",
-    "RecurringTransaction",
     "RegistryEntry",
     "GoalBaseline",
     "GoalBudgetReflection",

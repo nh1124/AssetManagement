@@ -35,7 +35,6 @@ from .routers import (
     period_closes,
     products,
     registry_entries,
-    recurring,
     reports,
     roadmap,
     simulation,
@@ -143,20 +142,6 @@ def ensure_no_default_admin_password(db) -> None:
         raise RuntimeError("Invalid production configuration: default admin password is still active")
 
 
-def backfill_recurring_next_due_dates(db, today: date | None = None) -> int:
-    from .services.schedule_rules import ensure_next_due_date
-
-    rows = db.query(models.RecurringTransaction).filter(
-        models.RecurringTransaction.is_active.is_(True),
-        models.RecurringTransaction.next_due_date.is_(None),
-    ).all()
-    for recurring_row in rows:
-        ensure_next_due_date(recurring_row, today or date.today())
-    if rows:
-        db.commit()
-    return len(rows)
-
-
 async def run_automatic_recording_loop() -> None:
     """Daily run of every automatic recording the registry switches on."""
     from .database import SessionLocal
@@ -236,7 +221,6 @@ async def startup_event():
                 "registry_entries",
                 "life_events",
                 "simulation_configs",
-                "recurring_transactions",
                 "monthly_plan_lines",
                 "period_reviews",
                 "milestones",
@@ -250,7 +234,6 @@ async def startup_event():
             db.commit()
             ensure_default_accounts(db, client_id=1)
 
-        backfill_recurring_next_due_dates(db)
 
     finally:
         db.close()
@@ -304,7 +287,6 @@ app.include_router(ai_change_requests.router)
 app.include_router(clients.router)
 app.include_router(data_transfer.router)
 app.include_router(auth.router)
-app.include_router(recurring.router, dependencies=[Depends(get_current_client)])
 app.include_router(roadmap.router, dependencies=[Depends(get_current_client)])
 app.include_router(capsules.router, dependencies=[Depends(get_current_client)])
 app.include_router(reports.router, dependencies=[Depends(get_current_client)])

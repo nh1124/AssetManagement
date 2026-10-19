@@ -27,8 +27,8 @@ router = APIRouter(prefix="/ai", tags=["ai-operations"])
 SUPPORTED_CHANGE_REQUEST_OPERATIONS = [
     "transactions:create",
     "monthly_plan_lines:update",
-    "recurring_transactions:create",
-    "recurring_transactions:update",
+    "auto_transactions:create",
+    "auto_transactions:update",
 ]
 
 

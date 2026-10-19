@@ -18,7 +18,7 @@ import { registerLifeEventTools } from "./tools/life-events.js";
 import { registerMonthlyPlanningTools } from "./tools/monthly-planning.js";
 import { registerPeriodReviewTools } from "./tools/period-reviews.js";
 import { registerProductTools } from "./tools/products.js";
-import { registerRecurringTools } from "./tools/recurring.js";
+import { registerAutoTransactionTools } from "./tools/auto-transactions.js";
 import { registerReportTools } from "./tools/reports.js";
 import { registerRoadmapTools } from "./tools/roadmap.js";
 import { registerSimulationTools } from "./tools/simulation.js";
@@ -45,7 +45,7 @@ export function buildMcpServer(): McpServer {
   registerReportTools(server);
   registerPeriodReviewTools(server);
   registerActionTools(server);
-  registerRecurringTools(server);
+  registerAutoTransactionTools(server);
   registerRoadmapTools(server);
   registerStrategyTools(server);
   registerProductTools(server);

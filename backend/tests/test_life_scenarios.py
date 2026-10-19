@@ -414,7 +414,7 @@ def test_v22_roundtrip_preserves_independent_graphs_and_remaps_scenario_ids(db):
     copied.target_amount_minor = 200
     db.commit()
     document = export_client(db, db.get(models.Client, 1))
-    assert document["version"] == EXPORT_VERSION == 23
+    assert document["version"] == EXPORT_VERSION == 24
     assert "life_scenario_choices" not in document["data"]
     projections = {s.name: service.project(db, 1, s)["projection"] for s in (original, clone)}
     for _ in range(2):

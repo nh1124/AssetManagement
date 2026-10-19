@@ -27,7 +27,6 @@ class Client(Base):
     products = relationship("Product", back_populates="client")
     life_events = relationship("LifeEvent", back_populates="client")
     simulation_configs = relationship("SimulationConfig", back_populates="client")
-    recurring_transactions = relationship("RecurringTransaction", back_populates="client")
     registry_entries = relationship("RegistryEntry", back_populates="client")
     milestones = relationship("Milestone", back_populates="client")
     capsules = relationship("Capsule", back_populates="client")

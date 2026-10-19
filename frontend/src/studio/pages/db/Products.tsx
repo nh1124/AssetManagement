@@ -1,8 +1,7 @@
 import Overlay from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
 import { useId, useState, type FormEvent } from 'react';
-import { Link } from 'react-router-dom';
-import { createProduct, deleteProduct, getAutomaticRecordings, getDepreciationSummary, getProducts,
+import { createProduct, deleteProduct, getAutomaticDepreciation, getDepreciationSummary, getProducts,
          reserveConfirmation, updateProduct } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
 import type { DepreciationMethod, Product } from '../../../types';
@@ -21,9 +20,9 @@ const loadPositions = () => getDepreciationSummary().then((summary) => summary.i
 // Module-level so the loader is stable: an inline one reloads on every render and,
 // by re-rendering forever, keeps a route transition from ever committing.
 const noPositions = async (): Promise<Position[]> => [];
-// The automatic write-down is a registry setting (U3); this screen only operates it.
-type AutoRow = Awaited<ReturnType<typeof getAutomaticRecordings>>['depreciation'][number];
-const loadAutomatic = () => getAutomaticRecordings().then((recordings) => recordings.depreciation);
+// Product settings also drive the automatic transaction screen.
+type AutoRow = Awaited<ReturnType<typeof getAutomaticDepreciation>>[number];
+const loadAutomatic = () => getAutomaticDepreciation();
 const noAutomatic = async (): Promise<AutoRow[]> => [];
 const METHODS: Record<DepreciationMethod, string> = {
     none: '記帳しない', straight_line: '定額法', declining_balance: '定率法',
@@ -49,7 +48,7 @@ function replacementDate(product: Product) {
     return date.toLocaleDateString('sv-SE');
 }
 
-function ProductEditor({ product, assets, currency, lookups, busy, onSave, onDelete, onCancel }: {
+export function ProductEditor({ product, assets, currency, lookups, busy, onSave, onDelete, onCancel }: {
     product: Product | null; assets: boolean; currency: string; lookups: Lookups; busy: boolean;
     onSave: (attempt: (reserveFingerprint?: string) => Promise<unknown>) => void; onDelete?: () => void; onCancel: () => void;
 }) {
@@ -69,6 +68,7 @@ function ProductEditor({ product, assets, currency, lookups, busy, onSave, onDel
     const [budget, setBudget] = useState<number | null>(product?.budget_account_id ?? null);
     const [funding, setFunding] = useState<number | null>(product?.funding_capsule_id ?? null);
     const [treatment, setTreatment] = useState<Treatment>(product?.budget_treatment ?? 'auto');
+    const [autoDepreciation, setAutoDepreciation] = useState(product?.auto_depreciation ?? false);
     const [method, setMethod] = useState<DepreciationMethod>(product?.depreciation_method ?? 'none');
     const [rate, setRate] = useState(product?.depreciation_annual_rate == null ? '' : String(product.depreciation_annual_rate));
     const [interval, setInterval] = useState<'monthly' | 'yearly'>(product?.depreciation_interval ?? 'monthly');
@@ -90,6 +90,7 @@ function ProductEditor({ product, assets, currency, lookups, busy, onSave, onDel
             lifespan_months: assets ? lifespan === '' ? null : Number(lifespan) : product?.lifespan_months ?? null,
             budget_account_id: budget, funding_capsule_id: funding, budget_treatment: treatment,
             // Only an asset is written down; a consumable keeps whatever it had.
+            auto_depreciation: assets ? autoDepreciation : false,
             depreciation_method: assets ? method : product?.depreciation_method ?? 'none',
             depreciation_annual_rate: assets ? (rate === '' ? null : Number(rate)) : product?.depreciation_annual_rate ?? null,
             depreciation_interval: assets ? interval : product?.depreciation_interval ?? 'monthly',
@@ -108,6 +109,7 @@ function ProductEditor({ product, assets, currency, lookups, busy, onSave, onDel
                 <Field label={`取得額（${currency}）`}><input type="number" min="0" step="any" value={price} onChange={(event) => setPrice(event.target.value)} className={inputClass} /></Field>
                 <Field label="取得日"><input type="date" value={date} onChange={(event) => setDate(event.target.value)} className={inputClass} /></Field>
                 <Field label="耐用月数"><input type="number" min="1" step="1" value={lifespan} onChange={(event) => setLifespan(event.target.value)} className={inputClass} /></Field>
+                <div className="flex items-center gap-3 text-sm">減価を自動で記帳<ActiveSwitch name="減価を自動で記帳" active={autoDepreciation} disabled={busy} onToggle={() => setAutoDepreciation(!autoDepreciation)} /></div>
                 <Field label="減価の方法"><select value={method} onChange={(event) => setMethod(event.target.value as DepreciationMethod)} className={inputClass}>{Object.entries(METHODS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
                 {method === 'declining_balance' && <Field label="年償却率（％）"><input type="number" min="0" max="100" step="any" value={rate} onChange={(event) => setRate(event.target.value)} className={inputClass} /></Field>}
                 {method !== 'none' && <>
@@ -175,7 +177,7 @@ function ProductsForClient({ assets, currency }: { assets: boolean; currency: st
     };
     return <section className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex gap-2"><button type="button" disabled={editorDisabled || editor !== null} onClick={() => setEditor({ product: null })} className={buttonClass}>新規作成</button></div></div>
-        {assets && <p className="text-xs text-[var(--studio-text-muted)]">更新予定は目安です。減価の手動の記帳は<Link to="/db/definitions" className="text-[var(--studio-accent)] hover:underline">収支・配分の定義</Link>で行います。</p>}
+        {assets && <p className="text-xs text-[var(--studio-text-muted)]">更新予定は目安です。</p>}
         <Feedback loading={resource.loading || lookups.loading || positions.loading} error={mutation.error || resource.error || lookups.error || positions.error} message={mutation.message} />
         {editor && lookups.data && <Overlay title={editor.product ? `${editor.product.name}を編集` : `${assets ? '固定資産' : '消耗品'}の新規作成`} onClose={() => setEditor(null)}><Feedback error={mutation.error} /><ProductEditor key={editor.product?.id ?? 'new'} product={editor.product} assets={assets} currency={currency} lookups={lookups.data} busy={editorDisabled} onCancel={() => setEditor(null)} onSave={save} onDelete={editor.product ? () => void remove(editor.product as Product) : undefined} /></Overlay>}
         {resource.data && <DataTable columns={assets ? ['物品', '取得額', '帳簿価額', '減価の方法', '次回の記帳', '更新予定', '自動で記帳', '積立先', '推奨月額'] : ['物品', '単価', '購入単位', '購入周期', '予算口座', '積立先', '推奨月額']}>
@@ -200,8 +202,8 @@ function ProductsForClient({ assets, currency }: { assets: boolean; currency: st
                     const auto = autoByProduct.get(row.id);
                     if (!auto) return '—';
                     return <ActiveSwitch name={`${row.name}の減価の自動記帳`} active={auto.auto_depreciation}
-                        disabled={disabled || automatic.loading || editor !== null || (!auto.auto_depreciation && Boolean(auto.blocked_reason))}
-                        onToggle={() => void toggleAutoDepreciation(confirm, mutation, auto, () => { positions.reload(); automatic.reload(); })} />;
+                        disabled={disabled || automatic.loading || editor !== null}
+                        onToggle={() => void toggleAutoDepreciation(confirm, mutation, auto, () => { resource.reload(); positions.reload(); automatic.reload(); })} />;
                 })()}</td>}
                 <td className="px-5 py-3">{row.funding_capsule_name || '—'}</td>
                 <td className="whitespace-nowrap px-5 py-3 tabular-nums">{row.recommended_monthly_reserve ? formatCurrency(row.recommended_monthly_reserve, currency) : '—'}</td>

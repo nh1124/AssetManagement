@@ -1,13 +1,5 @@
-"""The registry side of a month: what the source of truth says should happen.
-
-The registry is the source of truth for recurring cash flow, so these lines
-are derived, never stored. Products that have no registry entry yet are
-projected as virtual entries so they still show up in a plan, and lines that
-describe the same movement are aggregated into one.
-"""
+"""Automatic schedules and product proposals, aggregated by the saved budget identity."""
 from __future__ import annotations
-
-from types import SimpleNamespace
 
 from .. import models
 from .budget_context import BudgetContext
@@ -18,6 +10,7 @@ from .registry_service import (
     product_budget_active,
     product_line_type,
     product_unit_amount,
+    LINE_TYPES,
     registry_entry_amount_for_period,
     registry_source_account_id,
     registry_target_account_id,
@@ -34,7 +27,7 @@ def _registry_plan_line(
     amount = registry_entry_amount_for_period(ctx.db, entry, period, period_start, entry.client_id)
     if amount <= 0:
         return None
-    line_type = entry.line_type or "expense"
+    line_type = LINE_TYPES[entry.kind]
     account_id = registry_target_account_id(entry)
     source_account_id = registry_source_account_id(entry)
     target_type = "account" if account_id else "manual"
@@ -65,63 +58,41 @@ def _registry_plan_line(
             "name": entry.name,
             "amount": round(amount, 0),
             "source": "registry",
-            "entry_type": entry.entry_type,
+            "kind": entry.kind,
         }],
-        "recurring_transaction_ids": [entry.source_recurring_transaction_id]
-        if entry.source_recurring_transaction_id else [],
-        "product_expense_amount": round(amount, 0) if entry.source_product_id else 0.0,
-        "product_expense_items": [{
-            "id": entry.source_product_id,
-            "name": entry.name,
-            "amount": round(amount, 0),
-        }] if entry.source_product_id else [],
+        "product_expense_amount": 0.0,
+        "product_expense_items": [],
         "source": "registry",
         "source_kind": "registry",
         "identity_key": "",
         "manual_override": False,
         "cash_treatment": "auto",
-        "recurring_transaction_id": entry.source_recurring_transaction_id,
         "sync_status": "missing",
         "is_active": True,
     }
 
 
-def _virtual_registry_entries(ctx: BudgetContext) -> list[SimpleNamespace]:
-    linked_rows = ctx.db.query(
-        models.RegistryEntry.source_product_id,
-        models.RegistryEntry.source_recurring_transaction_id,
-    ).filter(models.RegistryEntry.client_id == ctx.client_id).all()
-    existing_product_ids = {product_id for product_id, _ in linked_rows if product_id}
-    entries: list[SimpleNamespace] = []
-
-    products = ctx.db.query(models.Product).filter(models.Product.client_id == ctx.client_id).all()
-    for product in products:
-        if product.id in existing_product_ids or not product_budget_active(product):
+def _product_plan_lines(ctx: BudgetContext, period: str) -> list[dict]:
+    # Products propose a monthly consumption cost; they never create automatic transactions.
+    from .fx_service import convert_amount
+    period_start, _ = period_to_range(period)
+    lines = []
+    for product in ctx.db.query(models.Product).filter(models.Product.client_id == ctx.client_id).all():
+        if not product_budget_active(product) or not product.frequency_days or product.frequency_days <= 0:
             continue
-        entries.append(SimpleNamespace(
-            id=-product.id,
-            client_id=ctx.client_id,
-            name=product.name,
-            entry_type="asset" if product.is_asset else "item",
-            amount=product_unit_amount(product),
-            currency=get_client_currency(ctx.db, ctx.client_id),
-            frequency="EveryNDays" if product.frequency_days and product.frequency_days > 0 else "Irregular",
-            frequency_days=product.frequency_days or None,
-            day_of_month=None,
-            month_of_year=None,
-            line_type=product_line_type(product),
-            budget_account_id=product.budget_account_id,
-            source_account_id=None,
-            destination_account_id=None,
-            source_recurring_transaction_id=None,
-            source_product_id=product.id,
-            is_active=True,
-            budget_active=True,
-            start_period=None,
-            end_period=None,
-        ))
-
-    return entries
+        amount = convert_amount(ctx.db, ctx.client_id, product_unit_amount(product) * 30 / product.frequency_days,
+                                get_client_currency(ctx.db, ctx.client_id), as_of_date=period_start)
+        account_id = product.budget_account_id
+        name = ctx.target_name_maps["account"].get(account_id, product.name)
+        lines.append({"id": None, "target_period": period, "line_type": product_line_type(product),
+                      "target_type": "account", "target_id": None, "account_id": account_id, "source_account_id": None,
+                      "name": name, "target_name": name, "account_name": name, "amount": 0, "actual": 0, "variance": 0,
+                      "recurring_amount": amount, "suggested_amount": amount, "registry_amount": amount,
+                      "suggested_source": "registry", "suggested_status": "missing", "registry_entry_ids": [], "registry_items": [],
+                      "product_expense_amount": amount, "product_expense_items": [{"id": product.id, "name": product.name, "amount": amount}],
+                      "source": "registry", "source_kind": "registry", "identity_key": "", "manual_override": False,
+                      "cash_treatment": "auto", "sync_status": "missing", "is_active": True})
+    return lines
 
 
 def registry_plan_lines(ctx: BudgetContext, period: str) -> list[dict]:
@@ -134,8 +105,8 @@ def _build_registry_plan_lines(ctx: BudgetContext, period: str) -> list[dict]:
         models.RegistryEntry.is_active.is_(True),
         models.RegistryEntry.budget_active.is_(True),
     ).all()
-    entries = [*entries, *_virtual_registry_entries(ctx)]
     lines = [line for entry in entries if (line := _registry_plan_line(ctx, entry, period)) is not None]
+    lines.extend(_product_plan_lines(ctx, period))
     aggregated: dict[tuple, dict] = {}
     for line in lines:
         key = _plan_match_key(
@@ -165,10 +136,6 @@ def _build_registry_plan_lines(ctx: BudgetContext, period: str) -> list[dict]:
             *existing.get("registry_items", []),
             *line.get("registry_items", []),
         ]
-        existing["recurring_transaction_ids"] = [
-            *existing.get("recurring_transaction_ids", []),
-            *line.get("recurring_transaction_ids", []),
-        ]
         existing["product_expense_amount"] = round(
             (existing.get("product_expense_amount") or 0.0)
             + (line.get("product_expense_amount") or 0.0),
@@ -178,7 +145,6 @@ def _build_registry_plan_lines(ctx: BudgetContext, period: str) -> list[dict]:
             *existing.get("product_expense_items", []),
             *line.get("product_expense_items", []),
         ]
-        existing["recurring_transaction_id"] = existing.get("recurring_transaction_id") or line.get("recurring_transaction_id")
     return list(aggregated.values())
 
 
@@ -283,7 +249,6 @@ def _merge_registry_lines(plan_lines: list[dict], registry_lines: list[dict]) ->
             line["registry_amount"] = registry_amount
             line["registry_entry_ids"] = registry_line.get("registry_entry_ids", [])
             line["registry_items"] = registry_line.get("registry_items", [])
-            line["recurring_transaction_ids"] = registry_line.get("recurring_transaction_ids", [])
             if not line.get("source_account_id") and registry_line.get("source_account_id"):
                 line["source_account_id"] = registry_line.get("source_account_id")
             line["product_expense_amount"] = registry_line.get("product_expense_amount", 0.0)
@@ -291,7 +256,6 @@ def _merge_registry_lines(plan_lines: list[dict], registry_lines: list[dict]) ->
             line["recurring_amount"] = registry_amount
             line["suggested_amount"] = registry_amount
             line["suggested_source"] = "registry"
-            line["recurring_transaction_id"] = line.get("recurring_transaction_id") or registry_line.get("recurring_transaction_id")
             line["sync_status"] = (
                 "synced"
                 if line.get("source") == "registry" and round(line.get("amount") or 0.0, 0) == registry_amount
@@ -299,7 +263,6 @@ def _merge_registry_lines(plan_lines: list[dict], registry_lines: list[dict]) ->
             )
         else:
             line["registry_amount"] = 0.0
-            line["recurring_transaction_ids"] = []
             line["product_expense_amount"] = 0.0
             line["product_expense_items"] = []
             if line.get("suggested_source") is None:

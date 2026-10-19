@@ -12,10 +12,9 @@ const aiContextResourceSchema = z.enum([
   "accounts",
   "transactions_recent",
   "monthly_plan",
-  "recurring_transactions",
   "goals",
   "products",
-  "registry_entries",
+  "auto_transactions",
   "settings",
   "audit_logs",
 ]);

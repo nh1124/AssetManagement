@@ -1,5 +1,5 @@
 import { useId, useState, type FormEvent, type ReactNode } from 'react';
-import { getCapsules, getLifeEvents, getRecurringTransactions } from '../../../api';
+import { getCapsules, getLifeEvents, getAutoTransactions } from '../../../api';
 import type { LifeEvent, MonthlyAction, ReviewActionCreate, ReviewActionKind } from '../../../types';
 import { useResource } from '../../useResource';
 import { Choice, Feedback, Field } from '../db/Database';
@@ -7,14 +7,14 @@ import { buttonClass, inputClass, loadAccounts, primaryClass } from '../db/forms
 import { OverlayFooter } from '../../components/Overlay';
 
 const KINDS: Record<ReviewActionKind, string> = {
-    set_budget: '支出予算を設定', add_recurring: '定常収支を追加', pause_recurring: '定常収支を停止',
+    set_budget: '支出予算を設定', add_auto_transaction: '自動取引を追加', stop_auto_transaction: '自動取引を停止',
     boost_allocation: 'ライフイベントへの確保額を変更', change_capsule_contribution: '取り置きの月額積立を変更',
 };
 
 async function loadActionLookups() {
     // The editor needs reference identities, never journal attribution columns.
     const [accounts, recurring, goals, capsules] = await Promise.all([
-        loadAccounts(), getRecurringTransactions(), getLifeEvents() as Promise<LifeEvent[]>,
+        loadAccounts(), getAutoTransactions(), getLifeEvents() as Promise<LifeEvent[]>,
         getCapsules() as Promise<Array<{ id: number; name: string }>>,
     ]);
     return { accounts, recurring, goals, capsules };
@@ -44,9 +44,9 @@ export default function ActionEditor({ sourcePeriod, currency, busy, action, onS
         const [year, month] = sourcePeriod.split('-').map(Number);
         return `${month === 12 ? year + 1 : year}-${String(month === 12 ? 1 : month + 1).padStart(2, '0')}`;
     });
-    const [accountId, setAccountId] = useState(numberValue(kind === 'add_recurring' ? payload.from_account_id : payload.account_id));
-    const [destinationId, setDestinationId] = useState(numberValue(payload.to_account_id));
-    const [referenceId, setReferenceId] = useState(numberValue(kind === 'pause_recurring' ? payload.recurring_id ?? action?.target_id
+    const [accountId, setAccountId] = useState(numberValue(kind === 'add_auto_transaction' ? payload.source_account_id : payload.account_id));
+    const [destinationId, setDestinationId] = useState(numberValue(payload.destination_account_id));
+    const [referenceId, setReferenceId] = useState(numberValue(kind === 'stop_auto_transaction' ? payload.registry_entry_id ?? action?.target_id
         : kind === 'boost_allocation' ? payload.life_event_id : payload.capsule_id ?? action?.target_id));
     const [amount, setAmount] = useState(() => {
         const value = kind === 'boost_allocation' ? payload.delta_percent ?? payload.percent : payload.amount ?? payload.monthly_contribution ?? action?.amount;
@@ -62,20 +62,20 @@ export default function ActionEditor({ sourcePeriod, currency, busy, action, onS
         event.preventDefault();
         if (disabled || !onSave || !isActionKind(kind) || !description.trim() || !targetPeriod) return;
         const numeric = Number(amount);
-        if (kind !== 'pause_recurring' && (amount.trim() === '' || !Number.isFinite(numeric))) return;
+        if (kind !== 'stop_auto_transaction' && (amount.trim() === '' || !Number.isFinite(numeric))) return;
         let payload: Record<string, unknown>;
         switch (kind) {
             case 'set_budget':
                 if (!accountId || numeric < 0) return;
                 payload = { account_id: accountId, amount: numeric };
                 break;
-            case 'add_recurring':
+            case 'add_auto_transaction':
                 if (!accountId || !destinationId || accountId === destinationId || !name.trim() || numeric <= 0) return;
-                payload = { name: name.trim(), amount: numeric, currency: entryCurrency, from_account_id: accountId, to_account_id: destinationId, frequency: action?.kind === kind ? action.payload.frequency ?? 'Monthly' : 'Monthly', day_of_month: Number(day) };
+                payload = { name: name.trim(), amount: numeric, currency: entryCurrency, kind: accounts.find((a) => a.id === accountId)?.account_type === 'income' ? 'income' : accounts.find((a) => a.id === destinationId)?.account_type === 'expense' ? 'expense' : accounts.find((a) => a.id === destinationId)?.account_type === 'liability' ? 'debt' : 'transfer', source_account_id: accountId, destination_account_id: destinationId, start_date: `${targetPeriod}-01`, repeat_mode: 'indefinite', frequency: action?.kind === kind ? action.payload.frequency ?? 'Monthly' : 'Monthly', day_of_month: Number(day) };
                 break;
-            case 'pause_recurring':
+            case 'stop_auto_transaction':
                 if (!referenceId) return;
-                payload = { recurring_id: referenceId };
+                payload = { registry_entry_id: referenceId };
                 break;
             case 'boost_allocation':
                 if (!referenceId || !accountId || numeric < -100 || numeric > 100) return;
@@ -100,16 +100,16 @@ export default function ActionEditor({ sourcePeriod, currency, busy, action, onS
             <Field label="種類"><select value={kind} onChange={(event) => { setKind(event.target.value); setAccountId(null); setDestinationId(null); setReferenceId(null); setAmount(''); }} className={inputClass}>{!isActionKind(kind) && <option value={kind}>未対応の種類（{kind}）</option>}{Object.entries(KINDS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
             <Field label="予定月"><input required type="month" value={targetPeriod} onChange={(event) => setTargetPeriod(event.target.value)} className={inputClass} /></Field>
             {kind === 'set_budget' && <Choice label="支出の勘定科目" value={accountId} required options={accounts.filter((row) => row.account_type === 'expense')} onChange={setAccountId} />}
-            {kind === 'add_recurring' && <>
-                <Field label="定常収支の名称"><input required value={name} onChange={(event) => setName(event.target.value)} className={inputClass} /></Field>
+            {kind === 'add_auto_transaction' && <>
+                <Field label="自動取引の名称"><input required value={name} onChange={(event) => setName(event.target.value)} className={inputClass} /></Field>
                 <Choice label="出金元・収入科目" value={accountId} required options={accounts} onChange={setAccountId} />
                 <Choice label="入金先・支出科目・返済先" value={destinationId} required options={accounts.filter((row) => row.id !== accountId)} onChange={setDestinationId} />
                 <Field label="通貨"><input required pattern="[A-Z]{3}" maxLength={3} value={entryCurrency} onChange={(event) => setEntryCurrency(event.target.value.toUpperCase())} className={inputClass} /></Field>
                 <Field label="毎月の予定日"><input required type="number" min="1" max="31" step="1" value={day} onChange={(event) => setDay(event.target.value)} className={inputClass} /></Field>
             </>}
-            {kind === 'pause_recurring' && <>
-                <Choice label="停止する定常収支" value={referenceId} required options={lookups.data?.recurring.filter((row) => action || row.is_active) ?? []} onChange={setReferenceId} />
-                <p className="text-xs text-[var(--studio-warning)] md:col-span-2">実行すると定義を無効にし、自動記帳と予算への反映を停止します。自動で再開する予定は設定されません。</p>
+            {kind === 'stop_auto_transaction' && <>
+                <Choice label="停止する自動取引" value={referenceId} required options={lookups.data?.recurring.filter((row) => action || row.is_active) ?? []} onChange={setReferenceId} />
+                <p className="text-xs text-[var(--studio-warning)] md:col-span-2">実行すると自動取引を無効にし、自動記帳と予算への反映を停止します。自動で再開する予定は設定されません。</p>
             </>}
             {kind === 'boost_allocation' && <>
                 <Choice label="ライフイベント" value={referenceId} required options={lookups.data?.goals ?? []} onChange={setReferenceId} />
@@ -117,8 +117,8 @@ export default function ActionEditor({ sourcePeriod, currency, busy, action, onS
                 <p className="text-xs text-[var(--studio-text-muted)] md:col-span-2">指定口座の残高に対する割合でライフイベントの確保額を変更します。負の割合は確保額を減らします。</p>
             </>}
             {kind === 'change_capsule_contribution' && <Choice label="取り置き" value={referenceId} required options={lookups.data?.capsules ?? []} onChange={setReferenceId} />}
-            {kind !== 'pause_recurring' && <Field label={kind === 'boost_allocation' ? '確保額の変更割合（%）' : `金額（${kind === 'add_recurring' ? entryCurrency : currency}）`}>
-                <input required type="number" min={kind === 'boost_allocation' ? '-100' : kind === 'add_recurring' ? '0.01' : '0'} max={kind === 'boost_allocation' ? '100' : undefined} step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} className={inputClass} />
+            {kind !== 'stop_auto_transaction' && <Field label={kind === 'boost_allocation' ? '確保額の変更割合（%）' : `金額（${kind === 'add_auto_transaction' ? entryCurrency : currency}）`}>
+                <input required type="number" min={kind === 'boost_allocation' ? '-100' : kind === 'add_auto_transaction' ? '0.01' : '0'} max={kind === 'boost_allocation' ? '100' : undefined} step="0.01" value={amount} onChange={(event) => setAmount(event.target.value)} className={inputClass} />
             </Field>}
         </fieldset>
         {!readOnly && onSave && <OverlayFooter fallback={<div className="flex justify-end gap-2">

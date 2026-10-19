@@ -6,7 +6,8 @@ import type {
     AccountFlowAnalysis,
     AccountFlowGrain,
     AccountFlowTransactionPage,
-    AutomaticRecordings,
+    AutomaticDepreciationRecording,
+    GeneratedTransaction,
     ScheduledTransactions,
     AiChangeRequest,
     AiAuditLog,
@@ -43,8 +44,9 @@ import type {
     MilestoneSimulationRequest,
     PeriodReview,
     NetWorthHistoryPoint,
-    RecurringTransaction,
-    RegistryEntry,
+    Product,
+    AutoTransaction,
+    AutoTransactionInput,
     ReviewActionCreate,
     RoadmapProjection,
     Transaction,
@@ -583,7 +585,7 @@ export const deleteMonthlyPlanLine = async (id: number) => {
 };
 
 // Products/Inventory endpoints
-export const getProducts = async () => {
+export const getProducts = async (): Promise<Product[]> => {
     const response = await api.get('/products/');
     return response.data;
 };
@@ -627,27 +629,31 @@ export const getDepreciationSummary = async (): Promise<{
     return response.data;
 };
 
+export const patchProduct = async (id: number, product: Partial<Product>) => {
+    return (await api.patch(`/products/${id}`, product)).data;
+};
+
 export const deleteProduct = async (id: number, reserveFingerprint?: string) => {
     await api.delete(`/products/${id}`, reserveParams(reserveFingerprint));
 };
 
-export const getRegistryEntries = async (): Promise<RegistryEntry[]> => {
-    const response = await api.get('/registry-entries/');
+export const getAutoTransactions = async (): Promise<AutoTransaction[]> => {
+    const response = await api.get('/auto-transactions/');
     return response.data;
 };
 
-export const createRegistryEntry = async (entry: Partial<RegistryEntry>) => {
-    const response = await api.post('/registry-entries/', entry);
+export const createAutoTransaction = async (entry: AutoTransactionInput) => {
+    const response = await api.post('/auto-transactions/', entry);
     return response.data;
 };
 
-export const updateRegistryEntry = async (id: number, entry: Partial<RegistryEntry>) => {
-    const response = await api.put(`/registry-entries/${id}`, entry);
+export const updateAutoTransaction = async (id: number, entry: AutoTransactionInput) => {
+    const response = await api.put(`/auto-transactions/${id}`, entry);
     return response.data;
 };
 
-export const deleteRegistryEntry = async (id: number) => {
-    await api.delete(`/registry-entries/${id}`);
+export const deleteAutoTransaction = async (id: number) => {
+    await api.delete(`/auto-transactions/${id}`);
 };
 
 // Client management
@@ -713,22 +719,12 @@ export const autoUpdateExchangeRates = async (): Promise<ExchangeRateAutoUpdateR
     return response.data;
 };
 
-// Recurring Transactions endpoints
-export const getRecurringTransactions = async (): Promise<RecurringTransaction[]> => {
-    const response = await api.get('/recurring/');
-    return response.data;
+export const getAutomaticDepreciation = async (): Promise<AutomaticDepreciationRecording[]> => {
+    return (await api.get('/automatic-recordings/depreciation')).data;
 };
 
-// Posts one occurrence of a definition that waits to be posted by hand.
-export const processRecurringTransaction = async (recurringId: number) => {
-    const response = await api.post(`/recurring/${recurringId}/process`);
-    return response.data as { transaction_id: number; next_due_date: string | null };
-};
-
-// Automatic recordings: everything the registry switches on to post by itself.
-export const getAutomaticRecordings = async (): Promise<AutomaticRecordings> => {
-    const response = await api.get('/automatic-recordings/');
-    return response.data;
+export const getGeneratedTransactions = async (period: string): Promise<GeneratedTransaction[]> => {
+    return (await api.get('/automatic-recordings/generated', { params: { period } })).data;
 };
 
 export const getScheduledTransactions = async (period: string): Promise<ScheduledTransactions> => {
@@ -739,17 +735,6 @@ export const getScheduledTransactions = async (period: string): Promise<Schedule
 export const processDueAutomaticRecordings = async () => {
     const response = await api.post('/automatic-recordings/process-due');
     return response.data;
-};
-
-// Writes down by hand the ended periods not yet recorded (up to 24 at a time).
-export const postDueDepreciation = async (productId: number) => {
-    const response = await api.post(`/automatic-recordings/depreciation/${productId}/post-due`);
-    return response.data as { product_id: number; posted_periods: string[] };
-};
-
-export const setAutoDepreciation = async (productId: number, enabled: boolean) => {
-    const response = await api.put(`/automatic-recordings/depreciation/${productId}`, { enabled });
-    return response.data as { product_id: number; auto_depreciation: boolean; posted_periods: string[]; skipped: string | null };
 };
 
 // Roadmap endpoints

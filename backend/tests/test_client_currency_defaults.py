@@ -16,15 +16,14 @@ from backend.app import models, schemas
 from backend.app.domain.errors import Invalid
 from backend.app.database import Base, get_db
 from backend.app.dependencies import get_current_client
-from backend.app.routers import recurring, registry_entries, transaction_batches, transactions
+from backend.app.routers import registry_entries, transaction_batches, transactions
 from backend.app.services import (
     capsule_service, fx_service, goal_service, ledger_service,
     registry_service, report_service,
 )
 from backend.app.services.budget_context import BudgetContext
-from backend.app.services.budget_registry_lines import _virtual_registry_entries, registry_plan_lines
+from backend.app.services.budget_registry_lines import registry_plan_lines
 from backend.app.workflows import ai_change_request_workflow as ai, ledger_entry_workflow
-from backend.app.workflows.monthly_action_workflow import _apply_add_recurring
 
 
 @pytest.fixture
@@ -44,7 +43,7 @@ def posting():
         db.add_all([client, other, cash, food, reserve, income])
         db.commit()
         app = FastAPI()
-        for router in (transactions.router, recurring.router, registry_entries.router,
+        for router in (transactions.router, registry_entries.router,
                        transaction_batches.router):
             app.include_router(router)
         app.dependency_overrides[get_db] = lambda: db
@@ -54,10 +53,10 @@ def posting():
     engine.dispose()
 
 
-KINDS = ("transaction", "recurring", "registry")
+KINDS = ("transaction", "registry")
 PATHS = {
-    "transaction": "/transactions/", "recurring": "/recurring/",
-    "registry": "/registry-entries/",
+    "transaction": "/transactions/",
+    "registry": "/auto-transactions/",
 }
 
 
@@ -65,11 +64,9 @@ def _payload(kind, accounts, amount=12.34):
     cash, food, *_ = accounts
     if kind == "transaction":
         return dict(date="2026-10-12", amount=amount, from_account_id=cash.id, to_account_id=food.id)
-    if kind == "recurring":
-        return dict(name="Lunch", amount=amount, frequency="Monthly",
-                    from_account_id=cash.id, to_account_id=food.id)
-    return dict(name="Lunch", amount=amount, source_account_id=cash.id,
-                destination_account_id=food.id, budget_account_id=food.id, generate_recurring=True)
+    return dict(name="Lunch", amount=amount, kind="expense", start_date="2026-10-01", repeat_mode="indefinite", frequency="Monthly",
+                source_account_id=cash.id, destination_account_id=food.id, budget_account_id=food.id)
+
 
 
 @pytest.mark.parametrize("kind", KINDS)
@@ -90,7 +87,6 @@ def test_http_creation_defaults_only_absent_currency(posting, kind, stated, expe
         assert sum(leg.credit_minor for leg in tx.journal_entries) == tx.amount_minor
     elif kind in {"registry", "recurring"}:
         assert db.query(models.RegistryEntry).one().currency == expected
-        assert db.query(models.RecurringTransaction).one().currency == expected
 
 
 @pytest.mark.parametrize("kind", KINDS)
@@ -156,49 +152,12 @@ def test_ledger_rejects_unstated_denomination_without_writing(posting, operation
     assert db.query(models.JournalEntry).count() == 0
 
 
-def test_monthly_recurring_action_uses_client_currency(posting):
-    db, client, accounts, _ = posting
-    action = models.MonthlyAction(client_id=client.id, payload=_payload("recurring", accounts))
-    result = _apply_add_recurring(db, action)
-    row = db.get(models.RecurringTransaction, result["recurring_id"])
-    assert row.currency == row.source_registry_entry.currency == "USD"
 
 
-def test_product_registry_defaults_and_preserves_existing_currency(posting):
-    db, client, (cash, food, *_), _ = posting
-    product = models.Product(client_id=client.id, name="Coffee", last_unit_price_minor=to_minor(12.34, "USD"),
-                             frequency_days=30, budget_account_id=food.id)
-    db.add(product)
-    db.flush()
-    entry = registry_service.sync_registry_from_product(db, product)
-    assert entry.currency == "USD"
-    entry.currency = "EUR"
-    db.flush()
-    assert registry_service.sync_registry_from_product(db, product).currency == "EUR"
 
 
-def test_virtual_product_budget_entry_uses_client_currency(posting):
-    db, client, (_, food, *_), _ = posting
-    db.add(models.Product(client_id=client.id, name="Coffee", last_unit_price_minor=to_minor(12.34, "USD"),
-                          frequency_days=30, budget_account_id=food.id))
-    db.flush()
-    ctx = BudgetContext(db, client.id)
-    assert _virtual_registry_entries(ctx)[0].currency == "USD"
-    lines = registry_plan_lines(ctx, "2026-10")
-    assert lines[0]["registry_amount"] > 0
-    assert db.query(models.RegistryEntry).count() == 0
 
 
-def test_registry_sync_caller_supplies_currency_when_entry_has_none(posting):
-    db, client, (cash, food, *_), _ = posting
-    entry = registry_service.create_entry(db, client.id, dict(
-        name="Lunch", amount=12.34, source_account_id=cash.id,
-        destination_account_id=food.id, generate_recurring=True,
-    ))
-    entry.currency = None
-    registry_service.sync_recurring_from_registry(db, entry)
-    assert db.get(models.RecurringTransaction, entry.source_recurring_transaction_id).currency == "USD"
-    db.rollback()
 
 
 def test_capsule_preview_uses_currency_precision_and_required_helper_argument(posting):
@@ -257,7 +216,7 @@ def test_report_allocation_uses_client_minor_units(posting):
 def test_currency_is_client_scoped_and_not_cached(posting, kind):
     db, client, accounts, http = posting
     if kind == "registry":
-        assert registry_service.create_entry(db, 2, dict(name="Other")).currency == "EUR"
+        assert fx_service.get_client_currency(db, 2) == "EUR"
     else:
         assert fx_service.get_client_currency(db, 2) == "EUR"
     first = http.post(PATHS[kind], json=_payload(kind, accounts))
@@ -289,7 +248,7 @@ def test_an_unsupported_setting_is_refused_the_moment_it_is_read(posting, kind):
     assert db.query(models.Transaction).count() == 0
 
 
-@pytest.mark.parametrize("kind", ["recurring", "registry"])
+@pytest.mark.parametrize("kind", ["registry"])
 def test_update_omission_preserves_existing_currency(posting, kind):
     _, _, accounts, http = posting
     payload = _payload(kind, accounts)
@@ -300,20 +259,20 @@ def test_update_omission_preserves_existing_currency(posting, kind):
     assert updated.json()["currency"] == "EUR"
 
 
-@pytest.mark.parametrize("kind", ["transaction", "recurring"])
+@pytest.mark.parametrize("kind", ["transaction", "registry"])
 def test_ai_preview_and_apply_resolve_and_pin_omitted_currency(posting, kind):
     db, client, accounts, _ = posting
     payload = _payload(kind, accounts)
     preview = (ai._preview_transaction_create(db, client.id, payload) if kind == "transaction"
-               else ai._preview_recurring_create(db, client.id, payload))
+               else ai._preview_automatic_create(db, client.id, payload))
     assert preview["input_payload"]["currency"] == preview["after_snapshot"]["currency"] == "USD"
     client.general_settings = {"currency": "EUR"}
     db.commit()
-    row = models.AiChangeRequest(resource="transactions" if kind == "transaction" else "recurring_transactions",
+    row = models.AiChangeRequest(resource="transactions" if kind == "transaction" else "auto_transactions",
                                  action="create", input_payload=preview["input_payload"], risk="medium")
     result = ai._apply_dispatch(db, client.id, row)
     saved = (db.get(models.TransactionProposal, result["proposal_id"]) if kind == "transaction"
-             else db.get(models.RecurringTransaction, result["recurring_transaction_id"]))
+             else db.get(models.RegistryEntry, result["registry_entry_id"]))
     assert saved.currency == "USD"
     if kind == "transaction":
         assert saved.amount_minor == 1234
@@ -321,22 +280,20 @@ def test_ai_preview_and_apply_resolve_and_pin_omitted_currency(posting, kind):
 
 def test_ai_recurring_update_preview_preserves_currency(posting):
     db, client, accounts, _ = posting
-    existing = registry_service.upsert_registry_from_recurring_payload(
-        db, client.id, {**_payload("recurring", accounts), "currency": "EUR"}, commit=True,
-    )
-    preview = ai._preview_recurring_update(db, client.id, {"id": existing.id}, _payload("recurring", accounts))
+    existing = registry_service.create_entry(db, client.id, {**_payload('registry', accounts), 'currency': 'EUR', 'start_date': date(2026, 10, 1), "repeat_mode": "indefinite"})
+    preview = ai._preview_automatic_update(db, client.id, {"id": existing.id}, _payload("registry", accounts))
     assert preview["input_payload"]["currency"] == preview["after_snapshot"]["currency"] == "EUR"
 
 
-@pytest.mark.parametrize("kind", ["transaction", "recurring"])
+@pytest.mark.parametrize("kind", ["transaction", "registry"])
 def test_ai_apply_resolves_none_before_creating_legacy_request(posting, kind):
     db, client, accounts, _ = posting
-    row = models.AiChangeRequest(resource="transactions" if kind == "transaction" else "recurring_transactions",
+    row = models.AiChangeRequest(resource="transactions" if kind == "transaction" else "auto_transactions",
                                  action="create", input_payload={**_payload(kind, accounts), "currency": None},
                                  risk="medium")
     result = ai._apply_dispatch(db, client.id, row)
     saved = (db.get(models.TransactionProposal, result["proposal_id"]) if kind == "transaction"
-             else db.get(models.RecurringTransaction, result["recurring_transaction_id"]))
+             else db.get(models.RegistryEntry, result["registry_entry_id"]))
     assert saved.currency == "USD"
     if kind == "transaction":
         assert saved.amount_minor == 1234

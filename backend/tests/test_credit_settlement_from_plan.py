@@ -171,18 +171,7 @@ def test_capsule_allocation_subtracts_month_movement_not_balance(card_plan, monk
 @pytest.mark.parametrize("posted", [0, 2000, 5000])
 def test_inferred_card_source_settles_only_remaining_plan(card_plan, posted):
     db, card, subs = card_plan
-    db.add(models.RegistryEntry(
-        client_id=1,
-        name="subscriptions",
-        amount_minor=to_minor(5000, "JPY"),
-        frequency="Monthly",
-        line_type="expense",
-        source_account_id=card.id,
-        destination_account_id=subs.id,
-        budget_account_id=subs.id,
-        budget_active=True,
-        is_active=True,
-    ))
+    db.add(models.RegistryEntry(client_id=1, name='subscriptions', amount_minor=to_minor(5000, 'JPY'), frequency='Monthly', source_account_id=card.id, destination_account_id=subs.id, budget_account_id=subs.id, budget_active=True, is_active=True, kind={"service":"expense","allocation":"transfer","debt_payment":"debt"}.get('expense', 'expense'), start_date=date(2026, 1, 1), repeat_mode="indefinite"))
     plan = _plan(db, card, subs)
     plan.source_account_id = None
     if posted:

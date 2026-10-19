@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { formatCurrency } from '../../../utils/currency';
-import { KINDS, KIND_LABELS, TYPE_LABELS, isTransaction, type AccountRow, type Cell, type EarmarkRow } from './budgetRows';
+import { KINDS, KIND_LABELS, TYPE_LABELS, type AccountRow, type Cell, type EarmarkRow } from './budgetRows';
 
 interface TableProps {
     accounts: AccountRow[];
@@ -26,7 +26,7 @@ function Chip({ children, warn = false }: { children: ReactNode; warn?: boolean 
 }
 
 function Scheduled({ row }: { row: AccountRow }) {
-    const count = row.scheduled.filter(isTransaction).length;
+    const count = row.scheduled.length;
     return count ? <span className={muted}>{count}件</span> : <span className={faint}>—</span>;
 }
 

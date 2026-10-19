@@ -3,7 +3,7 @@ import { formatCurrency } from '../../../utils/currency';
 import { savingsHeadline } from './budgetRows';
 
 const LABELS: Record<SavingsCheckGroup['key'], string> = {
-    existing: 'ユーザー指定の積立（定義・手入力・ゴール外の取り置き）',
+    existing: 'ユーザー指定の積立（自動取引・手入力・ゴール外の取り置き）',
     products: '消耗品・固定資産の取り置き',
     near: '近いライフイベントの取り置き',
     rest: 'ゴールの積立（遠いイベント・残り）',

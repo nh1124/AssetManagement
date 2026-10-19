@@ -53,6 +53,7 @@ LAYERS: dict[str, int] = {
     "account_return_service": 2,  # Scenario yields weighted by journal holdings.
     "reconciliation_service": 2,  # Attributed corrections also enforce capsule claims.
     "registry_service": 2,
+    "automatic_recording_service": 3,
     # L3 - generated from the registry. The budget_* modules are one feature
     # split across files: the loader and the line vocabulary at the bottom,
     # the summary that assembles everything at the top.
@@ -65,7 +66,6 @@ LAYERS: dict[str, int] = {
     "budget_projection": 3,
     "budget_registry_lines": 3,
     "budget_warnings": 3,
-    "recurring_service": 3,
     # L4 - statements and variance, which need the adopted plan
     "reporting_service": 4,
     # L5 - composition over everything below
@@ -103,6 +103,7 @@ LAYERS: dict[str, int] = {
     "capsule_workflow": 6,
     "simulation_workflow": 6,
     "automatic_recording_workflow": 6,
+    "registry_workflow": 6,
     "fx_workflow": 6,
 }
 

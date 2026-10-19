@@ -12,7 +12,6 @@ from ..services.cache_service import invalidate_client
 from ..services.product_reserve_service import (
     capsule_amounts, ensure_default_product_reserve_pools, refresh_product_capsules,
 )
-from ..services.registry_service import detach_product, get_product_entry, refresh_product_entry
 
 
 def validate_budget_account(db: Session, client_id: int, budget_account_id: int | None) -> None:
@@ -115,7 +114,6 @@ def update_product(
     data = normalize_product_data(db, client_id, payload.model_dump())
     before = capsule_amounts(db, client_id, [previous_capsule_id, data["funding_capsule_id"]])
     product = product_service.update_product(db, client_id, product_id, data, commit=False)
-    refresh_product_entry(db, product)
     refresh_product_capsules(db, client_id, [previous_capsule_id, product.funding_capsule_id])
     confirm_reserve_changes(db, client_id, before, reserve_fingerprint)
     if commit:
@@ -148,7 +146,6 @@ def patch_product(
         changes["funding_capsule_id"] = merged.get("funding_capsule_id")
     before = capsule_amounts(db, client_id, [previous_capsule_id, merged.get("funding_capsule_id")])
     product = product_service.update_product(db, client_id, product_id, changes, commit=False)
-    refresh_product_entry(db, product)
     refresh_product_capsules(db, client_id, [previous_capsule_id, product.funding_capsule_id])
     confirm_reserve_changes(db, client_id, before, reserve_fingerprint)
     if commit:
@@ -167,9 +164,6 @@ def delete_product(
         return False
     capsule_id = product.funding_capsule_id
     before = capsule_amounts(db, client_id, [capsule_id])
-    registry = get_product_entry(db, client_id, product.id)
-    if registry:
-        detach_product(db, registry)
     product_service.delete_product(db, client_id, product_id, commit=False)
     refresh_product_capsules(db, client_id, [capsule_id])
     confirm_reserve_changes(db, client_id, before, reserve_fingerprint)

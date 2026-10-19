@@ -239,7 +239,7 @@ def test_backup_remaps_every_reference_and_preserves_dangling_without_id_collisi
     db.commit()
     source, target = db.get(models.Client, 1), db.get(models.Client, 2)
     document = export_client(db, source)
-    assert document["version"] == EXPORT_VERSION == 23
+    assert document["version"] == EXPORT_VERSION == 24
     for _ in range(2):
         import_client(db, target, data=document["data"], version=17, manifest=document["manifest"])
         restored = db.query(models.LifeEvent).filter_by(client_id=2).one()

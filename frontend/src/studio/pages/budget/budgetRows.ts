@@ -32,7 +32,7 @@ export const lineName = (line: MonthlyPlanLine) => line.target_name || line.name
 export function lineOrigin(line: MonthlyPlanLine): string {
     if (line.source_kind === 'goal' || line.source === 'goal') return 'ゴール';
     if (line.target_type === 'capsule' || line.target_type === 'life_event') return '取り置き';
-    if (line.source === 'registry' || line.registry_entry_ids?.length) return '定義';
+    if (line.source === 'registry' || line.registry_entry_ids?.length) return '自動取引';
     if (line.source === 'credit_settlement' || line.source_kind === 'credit_settlement') return 'カード請求';
     return '手入力';
 }
@@ -78,7 +78,6 @@ export interface EarmarkRow {
 export interface BudgetModel { accounts: AccountRow[]; earmarks: EarmarkRow[] }
 
 const isEarmark = (line: MonthlyPlanLine) => line.target_type === 'capsule' || line.target_type === 'life_event';
-export const isTransaction = (item: ScheduledTransaction) => item.recording !== 'none';
 
 function fits(kind: AccountKind, type: MonthlyPlanLineType) {
     const expected = TYPES.find((item) => item.type === type)?.kind;
@@ -159,7 +158,7 @@ export function rowMatches(row: AccountRow, query: string, scope: Scope) {
     const needle = query.trim().toLowerCase();
     if (needle && !row.name.toLowerCase().includes(needle)) return false;
     if (scope === 'budget') return row.cells.some((cell) => cell.budget !== 0);
-    if (scope === 'scheduled') return row.scheduled.some(isTransaction);
+    if (scope === 'scheduled') return row.scheduled.length > 0;
     return true;
 }
 

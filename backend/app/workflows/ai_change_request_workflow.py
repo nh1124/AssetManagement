@@ -6,6 +6,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
 from uuid import uuid4
+from types import SimpleNamespace
 
 from sqlalchemy.orm import Session
 
@@ -26,7 +27,8 @@ from ..services.ledger_service import (
 from ..services.budget_plan_store import get_plan_line, update_plan_lines
 from ..services.cache_service import invalidate_client
 from ..services.capsule_service import apply_capsule_rules_for_transaction
-from ..services.registry_service import get_recurring_transaction, upsert_registry_from_recurring_payload
+from ..services.registry_service import get_entry, create_entry, update_entry, validate_account_refs, normalize_schedule, client_today, SCHEDULE_FIELDS
+from ..services.schedule_rules import next_occurrence
 from ..services.ai_policy_service import (
     AiOperationContext,
     evaluate_ai_operation,
@@ -39,8 +41,8 @@ from ..services.ai_policy_service import (
 SUPPORTED_OPERATIONS = {
     ("transactions", "create"),
     ("monthly_plan_lines", "update"),
-    ("recurring_transactions", "create"),
-    ("recurring_transactions", "update"),
+    ("auto_transactions", "create"),
+    ("auto_transactions", "update"),
 }
 
 
@@ -82,23 +84,7 @@ MONTHLY_PLAN_LINE_FIELDS = [
     "plan_id",
 ]
 
-RECURRING_TRANSACTION_FIELDS = [
-    "id",
-    "name",
-    "amount",
-    "currency",
-    "from_account_id",
-    "to_account_id",
-    "frequency",
-    "day_of_month",
-    "month_of_year",
-    "next_due_date",
-    "start_period",
-    "end_period",
-    "auto_post",
-    "is_active",
-    "source_registry_entry_id",
-]
+REGISTRY_ENTRY_FIELDS = ["id", "name", "kind", "amount", "currency", "source_account_id", "destination_account_id", "budget_account_id", "repeat_mode", "frequency", "frequency_days", "day_of_month", "month_of_year", "start_date", "end_date", "repeat_count", "next_due_date", "budget_active", "is_active", "note"]
 
 
 def _diff(before: dict[str, Any], after: dict[str, Any]) -> dict[str, Any]:
@@ -126,16 +112,6 @@ def _validate_transaction_create(db: Session, client_id: int, payload: dict[str,
             raise ValueError(f"Account not found: {missing[0]}")
 
     return parsed.model_dump(mode="json")
-
-
-def _validate_account_refs(db: Session, client_id: int, payload: dict[str, Any]) -> None:
-    account_ids = [value for value in [payload.get("from_account_id"), payload.get("to_account_id")] if value is not None]
-    if not account_ids:
-        return
-    found_ids = find_account_ids(db, client_id, account_ids)
-    missing = [account_id for account_id in account_ids if account_id not in found_ids]
-    if missing:
-        raise ValueError(f"Account not found: {missing[0]}")
 
 
 def _preview_transaction_create(db: Session, client_id: int, payload: dict[str, Any]) -> dict[str, Any]:
@@ -175,17 +151,22 @@ def _preview_monthly_plan_lines_update(db: Session, client_id: int, target_ref: 
     }
 
 
-def _preview_recurring_create(db: Session, client_id: int, payload: dict[str, Any]) -> dict[str, Any]:
-    data = schemas.RecurringTransactionUpdate(**payload).model_dump(exclude_unset=True, mode="json")
-    if data.get("currency") is None:
-        data["currency"] = get_client_currency(db, client_id)
-    if "amount" in data and data["amount"] is not None and data["amount"] <= 0:
-        raise ValueError("Recurring transaction amount must be positive")
-    _validate_account_refs(db, client_id, data)
-    after = dict(data)
-    after["id"] = None
+def _automatic_input(db: Session, client_id: int, payload: dict[str, Any], currency: str | None = None):
+    parsed = schemas.RegistryEntryCreate(**payload)
+    parsed.currency = parsed.currency or currency or get_client_currency(db, client_id)
+    data = parsed.model_dump()
+    validate_account_refs(db, client_id, data)
+    schedule = SimpleNamespace(**data)
+    normalize_schedule(schedule)
+    return schedule, {key: _jsonable(getattr(schedule, key)) for key in data}
+
+
+def _preview_automatic_create(db: Session, client_id: int, payload: dict[str, Any]) -> dict[str, Any]:
+    schedule, data = _automatic_input(db, client_id, payload)
+    due = next_occurrence(schedule, client_today(db, client_id)) if schedule.is_active else None
+    after = {**data, "id": None, "next_due_date": _jsonable(due)}
     return {
-        "target_ref": {"resource": "recurring_transactions"},
+        "target_ref": {"resource": "auto_transactions"},
         "input_payload": data,
         "before_snapshot": {},
         "after_snapshot": after,
@@ -195,21 +176,21 @@ def _preview_recurring_create(db: Session, client_id: int, payload: dict[str, An
     }
 
 
-def _preview_recurring_update(db: Session, client_id: int, target_ref: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+def _preview_automatic_update(db: Session, client_id: int, target_ref: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
     recurring_id = int(target_ref.get("id") or payload.get("id") or 0)
     if not recurring_id:
-        raise ValueError("Recurring transaction id is required")
-    recurring = get_recurring_transaction(db, client_id, recurring_id)
+        raise ValueError("Automatic transaction id is required")
+    recurring = get_entry(db, client_id, recurring_id)
     if not recurring:
-        raise ValueError("Recurring transaction not found")
-    data = schemas.RecurringTransactionCreate(**payload).model_dump(mode="json")
-    if data["currency"] is None:
-        data["currency"] = recurring.currency
-    if data["amount"] <= 0:
-        raise ValueError("Recurring transaction amount must be positive")
-    _validate_account_refs(db, client_id, data)
-    before = _model_dict(recurring, RECURRING_TRANSACTION_FIELDS)
+        raise ValueError("Automatic transaction not found")
+    schedule, data = _automatic_input(db, client_id, payload, recurring.currency)
+    before = _model_dict(recurring, REGISTRY_ENTRY_FIELDS)
     after = {**before, **data, "id": recurring_id}
+    changed = any(before.get(key) != data.get(key) for key in SCHEDULE_FIELDS)
+    if not schedule.is_active:
+        after["next_due_date"] = None
+    elif not recurring.is_active or changed:
+        after["next_due_date"] = _jsonable(next_occurrence(schedule, client_today(db, client_id)))
     return {
         "target_ref": {"id": recurring_id},
         "input_payload": data,
@@ -236,10 +217,10 @@ def preview_change_request(
             preview = _preview_transaction_create(db, client_id, payload.input_payload)
         elif (resource, action) == ("monthly_plan_lines", "update"):
             preview = _preview_monthly_plan_lines_update(db, client_id, payload.target_ref, payload.input_payload)
-        elif (resource, action) == ("recurring_transactions", "create"):
-            preview = _preview_recurring_create(db, client_id, payload.input_payload)
+        elif (resource, action) == ("auto_transactions", "create"):
+            preview = _preview_automatic_create(db, client_id, payload.input_payload)
         else:
-            preview = _preview_recurring_update(db, client_id, payload.target_ref, payload.input_payload)
+            preview = _preview_automatic_update(db, client_id, payload.target_ref, payload.input_payload)
     except ValueError as exc:
         raise Invalid(str(exc)) from exc
 
@@ -540,22 +521,22 @@ def _apply_dispatch(db: Session, client_id: int, row: models.AiChangeRequest) ->
         saved = update_plan_lines(db, client_id, [payload], commit=False)
         return {"ids": [line.id for line in saved]}
 
-    if (row.resource, row.action) == ("recurring_transactions", "create"):
-        data = schemas.RecurringTransactionCreate(**row.input_payload).model_dump()
-        recurring = upsert_registry_from_recurring_payload(db, client_id, data)
-        return {"recurring_transaction_id": recurring.id}
+    if (row.resource, row.action) == ("auto_transactions", "create"):
+        data = schemas.RegistryEntryCreate(**row.input_payload).model_dump()
+        recurring = create_entry(db, client_id, data)
+        return {"registry_entry_id": recurring.id}
 
-    if (row.resource, row.action) == ("recurring_transactions", "update"):
+    if (row.resource, row.action) == ("auto_transactions", "update"):
         recurring_id = int(row.target_ref.get("id") or row.input_payload.get("id") or 0)
         if not recurring_id:
-            raise ValueError("Recurring transaction id is required")
-        recurring = get_recurring_transaction(db, client_id, recurring_id)
+            raise ValueError("Automatic transaction id is required")
+        recurring = get_entry(db, client_id, recurring_id)
         if not recurring:
-            raise ValueError("Recurring transaction not found")
-        data = schemas.RecurringTransactionUpdate(**row.input_payload).model_dump(exclude_unset=True)
-        recurring = upsert_registry_from_recurring_payload(db, client_id, data, recurring)
+            raise ValueError("Automatic transaction not found")
+        data = schemas.RegistryEntryCreate(**row.input_payload).model_dump(exclude_unset=True)
+        recurring = update_entry(db, client_id, recurring_id, data)
         db.flush()
-        return {"recurring_transaction_id": recurring.id}
+        return {"registry_entry_id": recurring.id}
 
     raise ValueError(f"Unsupported change request operation: {row.resource}:{row.action}")
 

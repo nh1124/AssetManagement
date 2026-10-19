@@ -197,7 +197,7 @@ def test_backup_carries_links_restore_remaps_both_ends_and_keeps_other_client(db
     db.commit()
     source, target = db.get(models.Client, 1), db.get(models.Client, 2)
     backup = export_client(db, source)
-    assert backup["version"] == EXPORT_VERSION == 23
+    assert backup["version"] == EXPORT_VERSION == 24
     assert backup["data"]["life_event_links"][0]["note"] == "判断"
     import_client(db, target, data=backup["data"], version=backup["version"], manifest=backup["manifest"])
     restored = graph.list_links(db, 2)[0]

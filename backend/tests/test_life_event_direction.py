@@ -419,7 +419,7 @@ def test_v21_backup_round_trips_income_account_and_horizon_without_auto_capsules
     db.add(models.SimulationConfig(client_id=1, horizon_years=17))
     db.commit()
     document = export_client(db, db.get(models.Client, 1))
-    assert document["version"] == EXPORT_VERSION == 23
+    assert document["version"] == EXPORT_VERSION == 24
     assert document["data"]["life_events"][0]["direction"] == "income"
     assert document["data"]["life_events"][0]["account_id"] == linked.id
     assert document["data"]["simulation_configs"][0]["horizon_years"] == 17

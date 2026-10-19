@@ -9,9 +9,8 @@ from backend.app.database import get_db
 from backend.app.dependencies import get_current_client
 from backend.app.domain.errors import Conflict, DomainError, Invalid, NotFound, Refused
 from backend.app.main import app
-from backend.app.routers import recurring, simulation_scenarios, transaction_batches
+from backend.app.routers import simulation_scenarios, transaction_batches
 from backend.app.services import simulation_scenario_service
-from backend.app.services.recurring_service import RecurringNotPostable
 from backend.app.services.simulation_scenario_service import ScenarioGoalMismatch, ScenarioNameConflict
 from backend.app.workflows.transaction_batch_workflow import BatchPostingError
 
@@ -51,7 +50,6 @@ def http():
             detail=payload if payload is not None else "Import payload validation failed",
         )
 
-    http_app.include_router(recurring.router)
     http_app.include_router(simulation_scenarios.router)
     http_app.include_router(transaction_batches.router)
     http_app.dependency_overrides[get_db] = lambda: None
@@ -115,7 +113,6 @@ def test_explicit_status_preserves_the_goal_422(http, error_type):
 
 
 @pytest.mark.parametrize("error_type,category,status_code,path,payload", [
-    (RecurringNotPostable, Conflict, 409, "/recurring/1/process", None),
     (ScenarioNameConflict, Conflict, 409, "/simulation/scenarios", {
         "life_event_id": 1, "name": "baseline", "annual_return": 5, "inflation": 2,
     }),
@@ -133,10 +130,7 @@ def test_existing_errors_reach_the_handler_through_their_routers(
     def refuse(*args, **kwargs):
         raise error_type(message)
 
-    if error_type is RecurringNotPostable:
-        monkeypatch.setattr(recurring, "get_for_client", lambda *args: object())
-        monkeypatch.setattr(recurring, "process_one", refuse)
-    elif error_type is ScenarioNameConflict:
+    if error_type is ScenarioNameConflict:
         monkeypatch.setattr(simulation_scenario_service, "create_scenario", refuse)
     elif error_type is ScenarioGoalMismatch:
         monkeypatch.setattr(simulation_scenario_service, "compare_scenarios", refuse)

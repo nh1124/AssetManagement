@@ -25,6 +25,13 @@ const productInputSchema = z
       .enum(["auto", "expense_only", "reserve_allocation", "asset_replacement"])
       .optional()
       .describe("How this product participates in budget/reserve planning"),
+    auto_depreciation: z.boolean().optional(),
+    depreciation_method: z.enum(["none", "straight_line", "declining_balance"]).optional(),
+    depreciation_annual_rate: z.number().min(0).max(100).nullable().optional(),
+    depreciation_interval: z.enum(["monthly", "yearly"]).optional(),
+    depreciation_start_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
+    depreciation_expense_account_id: z.number().int().positive().nullable().optional(),
+    depreciation_asset_account_id: z.number().int().positive().nullable().optional(),
     purchase_price: z.number().min(0).optional().describe("Original purchase price for fixed assets"),
     purchase_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional().describe("Original purchase date, YYYY-MM-DD"),
   })
@@ -69,6 +76,8 @@ const productPayloadKeys = [
   "funding_capsule_id",
   "budget_treatment",
   "purchase_price",
+  "auto_depreciation", "depreciation_method", "depreciation_annual_rate", "depreciation_interval",
+  "depreciation_start_date", "depreciation_expense_account_id", "depreciation_asset_account_id",
   "purchase_date",
 ] as const;
 

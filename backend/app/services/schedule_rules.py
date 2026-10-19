@@ -1,89 +1,80 @@
-"""Pure scheduling rules for recurring transactions.
-
-Leaf module (layer 0): depends only on the ORM models, never on a Session or
-another service. Lives apart from `recurring_service` so that `registry_service`
-can reuse the due-date arithmetic without importing its own downstream consumer.
-"""
+"""Pure occurrence arithmetic. Every consumer uses the same inclusive dates."""
 from __future__ import annotations
 
 import calendar
-from datetime import date
-
-from .. import models
-
-
-def _month_due(year: int, month: int, day_of_month: int | None) -> date:
-    day = max(1, min(day_of_month or 1, calendar.monthrange(year, month)[1]))
-    return date(year, month, day)
+from datetime import date, timedelta
+from itertools import islice
 
 
-def _parse_period(period: str | None) -> tuple[int, int] | None:
-    if not period:
-        return None
-    try:
-        year_text, month_text = period.split("-", 1)
-        year, month = int(year_text), int(month_text)
-        if 1 <= month <= 12:
-            return year, month
-    except (TypeError, ValueError):
-        pass
-    return None
+def _month_due(year: int, month: int, day: int) -> date:
+    return date(year, month, max(1, min(day, calendar.monthrange(year, month)[1])))
 
 
-def compute_next_due_date(recurring: models.RecurringTransaction, today: date) -> date:
-    """Return the first scheduled due date on or after today and start_period."""
-    start = _parse_period(recurring.start_period)
-    minimum_month = (today.year, today.month)
-    if start and start > minimum_month:
-        minimum_month = start
+def occurrences(entry, on_or_after: date, through: date = date.max):
+    """Yield scheduled dates, anchored at start_date, bounded by count/end_date.
 
-    if recurring.frequency == "Yearly":
-        month = recurring.month_of_year or (start[1] if start else today.month)
-        year = minimum_month[0]
-        candidate = _month_due(year, month, recurring.day_of_month)
-        minimum_date = max(today, date(minimum_month[0], minimum_month[1], 1))
-        if candidate < minimum_date:
-            candidate = _month_due(year + 1, month, recurring.day_of_month)
-        return candidate
-
-    year, month = minimum_month
-    candidate = _month_due(year, month, recurring.day_of_month)
-    if candidate < today:
-        month += 1
-        if month > 12:
-            year, month = year + 1, 1
-        candidate = _month_due(year, month, recurring.day_of_month)
-    return candidate
-
-
-def ensure_next_due_date(recurring: models.RecurringTransaction, today: date) -> None:
-    """Initialize next_due_date without overwriting an existing progression state."""
-    if recurring.next_due_date is None:
-        recurring.next_due_date = compute_next_due_date(recurring, today)
-
-
-def advance_next_due_date(recurring: models.RecurringTransaction) -> None:
-    """Advance one period while restoring the configured day after month-end clamping."""
-    if recurring.next_due_date is None:
-        ensure_next_due_date(recurring, date.today())
-    current = recurring.next_due_date
-    if current is None:
+    Month ends clamp independently, so February never shifts March's day.
+    Seeking skips whole cycles without iterating years of old occurrences.
+    """
+    start = entry.start_date
+    lower = max(start, on_or_after)
+    upper = min(through, entry.end_date or date.max)
+    if lower > upper:
         return
-
-    if recurring.frequency == "Yearly":
-        recurring.next_due_date = _month_due(
-            current.year + 1,
-            recurring.month_of_year or current.month,
-            recurring.day_of_month,
-        )
+    if entry.repeat_mode == "once":
+        if lower <= start <= upper:
+            yield start
         return
+    frequency = entry.frequency
+    if frequency == "EveryNDays":
+        days = entry.frequency_days
+        if not days or days < 1:
+            return
+        first = start
+        index = max(0, (lower - first).days // days)
+        def at(i):
+            return first + timedelta(days=days * i)
+    elif frequency == "Yearly":
+        month = entry.month_of_year or start.month
+        day = entry.day_of_month or start.day
+        year = start.year + (_month_due(start.year, month, day) < start)
+        first = _month_due(year, month, day)
+        index = max(0, lower.year - first.year)
+        def at(i):
+            return _month_due(first.year + i, month, day)
+    elif frequency == "Monthly":
+        day = entry.day_of_month or start.day
+        base = start.year * 12 + start.month - 1
+        if _month_due(start.year, start.month, day) < start:
+            base += 1
+        index = max(0, lower.year * 12 + lower.month - 1 - base)
+        def at(i):
+            year, month = divmod(base + i, 12)
+            return _month_due(year, month + 1, day)
+    else:
+        return
+    count = entry.repeat_count if entry.repeat_mode == "count" else None
+    while count is None or index < count:
+        try:
+            candidate = at(index)
+        except (OverflowError, ValueError):
+            return
+        if candidate > upper:
+            return
+        if candidate >= lower:
+            yield candidate
+        index += 1
 
-    year, month = current.year, current.month + 1
-    if month > 12:
-        year, month = year + 1, 1
-    recurring.next_due_date = _month_due(year, month, recurring.day_of_month)
+
+def next_occurrence(entry, on_or_after: date) -> date | None:
+    return next(occurrences(entry, on_or_after), None)
 
 
-def is_past_end_period(recurring: models.RecurringTransaction, due: date) -> bool:
-    end = _parse_period(recurring.end_period)
-    return bool(end and (due.year, due.month) > end)
+def count_end_date(entry) -> date | None:
+    # Ignore the previous computed end when changing a count schedule.
+    from types import SimpleNamespace
+    schedule = SimpleNamespace(**{key: getattr(entry, key) for key in (
+        "start_date", "repeat_mode", "frequency", "frequency_days", "day_of_month", "month_of_year", "repeat_count",
+    )}, end_date=None)
+    result = list(islice(occurrences(schedule, schedule.start_date), schedule.repeat_count))
+    return result[-1] if len(result) == schedule.repeat_count else None

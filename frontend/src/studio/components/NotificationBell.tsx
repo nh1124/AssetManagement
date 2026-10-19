@@ -13,10 +13,9 @@ const KIND_LABELS: Record<string, string> = {
     [GOAL_REFLECTION]: 'ゴール反映',
     approval_pending: '承認待ち',
     actions_due: '行動',
-    unmatched: '未照合',
+    unmatched: '自動取引',
     data_health: 'データ健全性',
     month_close: '月次締め',
-    recording_due: '記帳待ち',
 };
 const KIND_ORDER = Object.keys(KIND_LABELS);
 

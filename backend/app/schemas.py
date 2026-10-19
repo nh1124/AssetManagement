@@ -11,9 +11,6 @@ from .domain.money import Money
 # liability, Transfer asset to asset. See capsule_service._TRIGGER_LEGS.
 CapsuleTriggerLiteral = Literal['Income', 'Expense', 'CreditExpense', 'Transfer']
 ProductBudgetTreatmentLiteral = Literal["auto", "expense_only", "reserve_allocation", "asset_replacement"]
-RegistryEntryTypeLiteral = Literal["asset", "item", "service", "income", "allocation", "debt"]
-RegistryFrequencyLiteral = Literal["Monthly", "Yearly", "EveryNDays", "Irregular"]
-RegistryLineTypeLiteral = Literal["income", "expense", "allocation", "debt_payment", "borrowing", "drawdown"]
 MonthlyPlanCashTreatmentLiteral = Literal["auto", "cash", "non_cash"]
 LiabilityPaymentPolicyLiteral = Literal["full", "minimum", "fixed", "installment", "revolving"]
 AiOperationRiskLiteral = Literal["low", "medium", "high", "critical"]
@@ -379,6 +376,7 @@ class ProductBase(BaseModel):
     budget_treatment: ProductBudgetTreatmentLiteral = "auto"
     purchase_price: Optional[float] = None
     purchase_date: Optional[date] = None
+    auto_depreciation: bool = False
     depreciation_method: DepreciationMethodLiteral = "none"
     depreciation_annual_rate: Optional[float] = Field(default=None, ge=0, le=100)
     depreciation_interval: DepreciationIntervalLiteral = "monthly"
@@ -405,6 +403,7 @@ class ProductUpdate(BaseModel):
     budget_treatment: Optional[ProductBudgetTreatmentLiteral] = None
     purchase_price: Optional[float] = None
     purchase_date: Optional[date] = None
+    auto_depreciation: bool = False
     depreciation_method: Optional[DepreciationMethodLiteral] = None
     depreciation_annual_rate: Optional[float] = Field(default=None, ge=0, le=100)
     depreciation_interval: Optional[DepreciationIntervalLiteral] = None
@@ -430,32 +429,24 @@ class Product(ProductBase):
 
 
 class RegistryEntryBase(BaseModel):
-    name: str
-    entry_type: RegistryEntryTypeLiteral = "service"
-    category: Optional[str] = None
-    amount: float = 0.0
+    name: str = Field(min_length=1)
+    kind: Literal["income", "expense", "debt", "transfer"] = "expense"
+    amount: float = Field(default=0, ge=0, allow_inf_nan=False)
     currency: str | None = None
-    frequency: RegistryFrequencyLiteral = "Monthly"
-    frequency_days: Optional[int] = None
-    day_of_month: int = 1
-    month_of_year: Optional[int] = None
-    line_type: RegistryLineTypeLiteral = "expense"
-    budget_account_id: Optional[int] = None
-    source_account_id: Optional[int] = None
-    destination_account_id: Optional[int] = None
-    funding_capsule_id: Optional[int] = None
-    budget_treatment: ProductBudgetTreatmentLiteral = "expense_only"
-    generate_recurring: bool = False
-    # Null keeps the stored setting: a client that predates them sends none.
-    auto_post: Optional[bool] = None
-    auto_depreciation: Optional[bool] = None
+    source_account_id: int | None = None
+    destination_account_id: int | None = None
+    budget_account_id: int | None = None
+    repeat_mode: Literal["once", "count", "indefinite"] = "indefinite"
+    frequency: Literal["Monthly", "Yearly", "EveryNDays"] | None = None
+    frequency_days: int | None = Field(default=None, ge=1)
+    day_of_month: int | None = Field(default=None, ge=1, le=31)
+    month_of_year: int | None = Field(default=None, ge=1, le=12)
+    start_date: date
+    end_date: date | None = None
+    repeat_count: int | None = Field(default=None, ge=1, le=100000)
     budget_active: bool = True
     is_active: bool = True
-    source_product_id: Optional[int] = None
-    source_recurring_transaction_id: Optional[int] = None
-    note: Optional[str] = None
-    start_period: Optional[str] = None
-    end_period: Optional[str] = None
+    note: str | None = None
 
 
 class RegistryEntryCreate(RegistryEntryBase):
@@ -464,16 +455,14 @@ class RegistryEntryCreate(RegistryEntryBase):
 
 class RegistryEntry(RegistryEntryBase):
     id: int
-    budget_account_name: Optional[str] = None
-    source_account_name: Optional[str] = None
-    destination_account_name: Optional[str] = None
-    funding_capsule_name: Optional[str] = None
-    recurring_transaction_id: Optional[int] = None
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+    next_due_date: date | None = None
+    budget_account_name: str | None = None
+    source_account_name: str | None = None
+    destination_account_name: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    model_config = ConfigDict(from_attributes=True)
 
-    class Config:
-        from_attributes = True
 
 # Simulation Config
 class SimulationConfigBase(BaseModel):
@@ -513,52 +502,6 @@ class AnalysisSummary(BaseModel):
     monthly_transaction_count: Optional[int] = None
     total_goal_count: Optional[int] = None
     budget_usage_rate: Optional[float] = None
-
-# Recurring Transaction Schemas
-class RecurringTransactionBase(BaseModel):
-    name: str
-    amount: float
-    currency: str | None = None
-    from_account_id: Optional[int] = None
-    to_account_id: Optional[int] = None
-    frequency: Literal['Monthly', 'Yearly']
-    day_of_month: int = 1
-    month_of_year: Optional[int] = None  # Used for Yearly frequency
-    next_due_date: Optional[date] = None  # Calculated by system
-    start_period: Optional[str] = None
-    end_period: Optional[str] = None
-    auto_post: bool = True
-    is_active: bool = True
-    source_registry_entry_id: Optional[int] = None
-
-class RecurringTransactionCreate(RecurringTransactionBase):
-    model_config = ConfigDict(extra="forbid")
-
-
-class RecurringTransactionUpdate(BaseModel):
-    name: Optional[str] = None
-    amount: Optional[float] = None
-    currency: Optional[str] = None
-    from_account_id: Optional[int] = None
-    to_account_id: Optional[int] = None
-    frequency: Optional[Literal['Monthly', 'Yearly']] = None
-    day_of_month: Optional[int] = None
-    month_of_year: Optional[int] = None
-    next_due_date: Optional[date] = None
-    start_period: Optional[str] = None
-    end_period: Optional[str] = None
-    auto_post: Optional[bool] = None
-    is_active: Optional[bool] = None
-    source_registry_entry_id: Optional[int] = None
-
-    model_config = ConfigDict(extra="forbid")
-
-class RecurringTransaction(RecurringTransactionBase):
-    id: int
-    source_registry_entry_name: Optional[str] = None
-
-    class Config:
-        from_attributes = True
 
 # ========== Life Events ==========
 
@@ -627,8 +570,6 @@ class MonthlyPlanLineUpdate(BaseModel):
 
 
 class MonthlyPlanLine(MonthlyPlanLineBase):
-    # The registry entry supplies this link rather than a plan-line column.
-    recurring_transaction_id: Optional[int] = None
     id: int
     target_name: Optional[str] = None
     account_name: Optional[str] = None

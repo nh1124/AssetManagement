@@ -1,5 +1,5 @@
 import type { ReactElement } from 'react';
-import { BrowserRouter, Navigate, Outlet, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, useParams, Navigate, Outlet, Route, Routes } from 'react-router-dom';
 import StudioLayout from './components/StudioLayout';
 import ScreenTabs from './components/ScreenTabs';
 import Record from './pages/Record';
@@ -29,7 +29,7 @@ import Audit from './pages/automation/Audit';
 import DataHealth from './pages/debug/DataHealth';
 import DatabaseAccounts from './pages/db/Accounts';
 import Fx from './pages/db/Fx';
-import Definitions from './pages/db/Definitions';
+import AutoTransactions from './pages/db/AutoTransactions';
 import Products from './pages/db/Products';
 import Settings from './pages/Settings';
 import { SETTINGS_PATH, STUDIO_EDITOR_PATHS, STUDIO_HOME, STUDIO_SCREENS } from './navigation';
@@ -43,7 +43,7 @@ import './theme.css';
 const SCREENS: Record<string, { index: ReactElement; tabs?: Record<string, ReactElement> }> = {
     ledger: {
         index: <Ledger />,
-        tabs: { unmatched: <Ledger unmatched /> },
+        tabs: { auto: <Ledger automatic /> },
     },
     flows: { index: <Flows />, tabs: { accounts: <Flows subjects /> } },
     budget: { index: <Budget />, tabs: { actions: <Actions /> } },
@@ -59,11 +59,11 @@ const SCREENS: Record<string, { index: ReactElement; tabs?: Record<string, React
     'debug/data-health': { index: <DataHealth /> },
     'db/accounts': { index: <DatabaseAccounts /> },
     'db/fx': { index: <Fx /> },
-    'db/definitions': {
-        index: <Definitions />,
+    'db/auto-transactions': {
+        index: <AutoTransactions />,
         tabs: {
-            income: <Definitions tab="income" />, repayment: <Definitions tab="repayment" />,
-            allocation: <Definitions tab="allocation" />,
+            income: <AutoTransactions tab="income" />, repayment: <AutoTransactions tab="repayment" />,
+            allocation: <AutoTransactions tab="allocation" />,
         },
     },
     'db/fixed-assets': { index: <Products assets /> },
@@ -99,6 +99,9 @@ export default function StudioApp() {
                     {/* Events live inside a scenario now; flat event URLs have no scenario to edit. */}
                     <Route path="goals/events/*" element={<Navigate to="/goals/scenarios" replace />} />
                     {/* Earmarks left the assets tabs for their own database screen (U4). */}
+                    <Route path="db/definitions" element={<Navigate to="/db/auto-transactions" replace />} />
+                    <Route path="db/definitions/:tab" element={<LegacyAutoTransactionRedirect />} />
+                    <Route path="ledger/unmatched" element={<Navigate to="/ledger/auto" replace />} />
                     <Route path="assets/earmarks" element={<Navigate to="/db/earmarks" replace />} />
                     {STUDIO_SCREENS.map((screen) => {
                         const screenRoutes = SCREENS[screen.path];
@@ -131,3 +134,5 @@ export default function StudioApp() {
         </BrowserRouter>
     );
 }
+
+function LegacyAutoTransactionRedirect() { const { tab } = useParams(); return <Navigate to={`/db/auto-transactions/${tab ?? ""}`} replace />; }

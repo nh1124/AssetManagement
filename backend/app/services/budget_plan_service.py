@@ -100,7 +100,6 @@ def _serialize_plan_line(
         "identity_key": line.identity_key or plan_line_identity_key(line),
         "manual_override": bool(line.manual_override),
         "cash_treatment": line.cash_treatment or "auto",
-        "recurring_transaction_id": None,
         "sync_status": None,
     }
 
@@ -141,7 +140,6 @@ def _virtual_capsule_line(
             "identity_key": "",
             "manual_override": False,
             "cash_treatment": "cash",
-            "recurring_transaction_id": None,
             "sync_status": None,
         }
         actual = actual_for_plan_line(ctx, line, period)
@@ -434,8 +432,7 @@ def get_budget_summary(
                 "id": line.get("id")
                 or (
                     -(line.get("registry_entry_ids") or [0])[0]
-                    if line.get("registry_entry_ids")
-                    else line.get("account_id") or -(line.get("recurring_transaction_id") or 0)
+                    if line.get("registry_entry_ids") else line.get("account_id") or 0
                 ),
                 "account_id": line["account_id"],
                 "source_account_id": line.get("source_account_id"),
@@ -449,7 +446,6 @@ def get_budget_summary(
                 "registry_amount": line.get("registry_amount", 0.0),
                 "registry_entry_ids": line.get("registry_entry_ids", []),
                 "registry_items": line.get("registry_items", []),
-                "recurring_transaction_ids": line.get("recurring_transaction_ids", []),
                 "product_expense_amount": line.get("product_expense_amount", 0.0),
                 "product_expense_items": line.get("product_expense_items", []),
                 "suggested_amount": line.get("suggested_amount", 0.0),
@@ -460,7 +456,6 @@ def get_budget_summary(
                 "manual_override": line.get("manual_override", False),
                 "cash_treatment": line.get("cash_treatment", "auto"),
                 "sync_status": line.get("sync_status"),
-                "recurring_transaction_id": line.get("recurring_transaction_id"),
             }
             for line in expense_lines
         ],

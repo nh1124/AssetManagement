@@ -420,7 +420,7 @@ def _apply_plan_line_data(db: Session, client_id: int, line: models.MonthlyPlanL
             models.RegistryEntry.client_id == client_id,
             models.RegistryEntry.is_active.is_(True),
             models.RegistryEntry.name == line.name,
-            models.RegistryEntry.line_type == line.line_type,
+            models.RegistryEntry.kind == {"allocation": "transfer", "debt_payment": "debt"}.get(line.line_type, line.line_type),
         ).first()
         if registry_entry:
             resolved = registry_target_account_id(registry_entry)

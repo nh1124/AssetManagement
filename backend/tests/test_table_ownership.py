@@ -21,7 +21,6 @@ OWNERS: dict[str, str] = {
     "transaction_proposals": "services/ledger_service",
     "transaction_batches": "services/transaction_batch_service",
     "registry_entries": "services/registry_service",
-    "recurring_transactions": "services/registry_service",
     "budget_plans": "services/budget_plan_store",
     "monthly_plan_lines": "services/budget_plan_store",
     "monthly_actions": "services/monthly_action_store",

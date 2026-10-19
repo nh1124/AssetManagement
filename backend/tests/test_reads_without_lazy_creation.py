@@ -124,8 +124,7 @@ def seed_actuals_and_orphan(db):
     # Virtual allocations and registry suggestions must not invent a plan either.
     db.add_all([orphan,
                 models.Capsule(client_id=1, name="Reserve", monthly_contribution_minor=200),
-                models.RegistryEntry(client_id=1, name="Subscription", amount_minor=300,
-                                     budget_account_id=food.id, source_account_id=cash.id)])
+                models.RegistryEntry(client_id=1, name='Subscription', amount_minor=300, budget_account_id=food.id, source_account_id=cash.id, start_date=date(2026, 1, 1), repeat_mode="indefinite", frequency="Monthly")])
     db.commit()
     return orphan.id
 

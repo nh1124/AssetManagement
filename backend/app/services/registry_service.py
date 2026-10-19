@@ -1,214 +1,136 @@
 from __future__ import annotations
 
-from datetime import date
+import calendar
+from datetime import date, datetime, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from sqlalchemy.orm import Session
 
-from .money_storage import to_minor, minor_fields, money_client_currency
-
 from .. import models
 from ..domain.errors import Invalid
-from ..domain.money import Money
+from .money_storage import minor_fields
 from .fx_service import convert_amount, get_client_currency
 from .product_reserve_service import effective_budget_treatment
-from .periods import current_period_key
-from .schedule_rules import ensure_next_due_date
+from .schedule_rules import occurrences, next_occurrence, count_end_date
 
 
-OUTFLOW_TRANSACTION_TYPES = {"Expense", "CreditExpense", "Transfer", "CreditAssetPurchase", "LiabilityPayment"}
+SCHEDULE_FIELDS = ("repeat_mode", "frequency", "frequency_days", "day_of_month", "month_of_year", "start_date", "end_date", "repeat_count")
+LINE_TYPES = {"income": "income", "expense": "expense", "debt": "debt_payment", "transfer": "allocation"}
+
+
+def client_today(db: Session, client_id: int) -> date:
+    client = db.get(models.Client, client_id)
+    zone = (client.general_settings or {}).get("timezone", "UTC") if client else "UTC"
+    try:
+        target = ZoneInfo(zone)
+    except (ZoneInfoNotFoundError, ValueError, TypeError):
+        target = timezone.utc
+    return datetime.now(timezone.utc).astimezone(target).date()
 
 
 def validate_account_refs(db: Session, client_id: int, data: dict) -> None:
-    # This read-only FK check enforces client ownership, which the database's
-    # account-id foreign keys do not enforce; accounts remain ledger-owned.
     for key in ("budget_account_id", "source_account_id", "destination_account_id"):
         account_id = data.get(key)
         if account_id is None:
             continue
         account = db.query(models.Account).filter(
-            models.Account.id == account_id,
-            models.Account.client_id == client_id,
+            models.Account.id == account_id, models.Account.client_id == client_id,
         ).first()
         if not account:
             raise Invalid(f"{key} must belong to this client")
-
-
-def get_recurring_transaction(
-    db: Session, client_id: int, recurring_id: int,
-) -> models.RecurringTransaction | None:
-    return db.query(models.RecurringTransaction).filter(
-        models.RecurringTransaction.id == recurring_id,
-        models.RecurringTransaction.client_id == client_id,
-    ).first()
+    if data.get("source_account_id") == data.get("destination_account_id"):
+        raise Invalid("出金元と入金先は別の口座を選んでください")
+    if not data.get("source_account_id") or not data.get("destination_account_id"):
+        raise Invalid("出金元と入金先を選んでください")
 
 
 def get_entry(db: Session, client_id: int, entry_id: int) -> models.RegistryEntry | None:
     return db.query(models.RegistryEntry).filter(
-        models.RegistryEntry.id == entry_id,
-        models.RegistryEntry.client_id == client_id,
+        models.RegistryEntry.id == entry_id, models.RegistryEntry.client_id == client_id,
     ).first()
 
 
 def list_entries(db: Session, client_id: int) -> list[models.RegistryEntry]:
-    return db.query(models.RegistryEntry).filter(
-        models.RegistryEntry.client_id == client_id,
-    ).order_by(models.RegistryEntry.entry_type, models.RegistryEntry.name).all()
+    return db.query(models.RegistryEntry).filter(models.RegistryEntry.client_id == client_id).order_by(
+        models.RegistryEntry.kind, models.RegistryEntry.name,
+    ).all()
 
 
-AUTOMATIC_SETTINGS = ("auto_post", "auto_depreciation")
+def normalize_schedule(entry) -> None:
+    if entry.repeat_mode == "once":
+        entry.frequency = entry.frequency_days = entry.day_of_month = entry.month_of_year = None
+        entry.repeat_count = entry.end_date = None
+    else:
+        if entry.frequency not in {"Monthly", "Yearly", "EveryNDays"}:
+            raise Invalid("周期を選んでください")
+        if entry.frequency == "EveryNDays":
+            if not entry.frequency_days or entry.frequency_days < 1:
+                raise Invalid("日数は1以上を指定してください")
+            entry.day_of_month = entry.month_of_year = None
+        else:
+            entry.frequency_days = None
+            entry.day_of_month = entry.day_of_month or entry.start_date.day
+            entry.month_of_year = (entry.month_of_year or entry.start_date.month) if entry.frequency == "Yearly" else None
+        if entry.repeat_mode == "count":
+            if not entry.repeat_count or entry.repeat_count < 1:
+                raise Invalid("回数は1以上を指定してください")
+            entry.end_date = count_end_date(entry)
+            if entry.end_date is None:
+                raise Invalid("回数が日付の範囲を超えています")
+        else:
+            entry.repeat_count = None
+    if entry.end_date and entry.end_date < entry.start_date:
+        raise Invalid("終了日は開始日以降にしてください")
 
 
-def _without_unset_settings(data: dict) -> dict:
-    """Drop automatic-recording settings the caller left out.
-
-    A definition is replaced whole on PUT, but a client that predates these
-    settings sends none: reading that as "off" would silently turn a manual
-    approval into automatic posting, or stop a write-down nobody touched.
-    """
-    return {key: value for key, value in data.items() if key not in AUTOMATIC_SETTINGS or value is not None}
-
-
-def create_entry(
-    db: Session, client_id: int, data: dict, *, commit: bool = True,
-) -> models.RegistryEntry:
-    if data.get("currency") is None:
-        data = {**data, "currency": get_client_currency(db, client_id)}
+def create_entry(db: Session, client_id: int, data: dict, *, today: date | None = None) -> models.RegistryEntry:
+    data = {"kind": "expense", "repeat_mode": "indefinite", "budget_active": True, "is_active": True, **data, "currency": data.get("currency") or get_client_currency(db, client_id)}
     validate_account_refs(db, client_id, data)
-    data = _without_unset_settings(data)
-    entry = models.RegistryEntry(**minor_fields(data, data["currency"], 'amount'), client_id=client_id)
+    entry = models.RegistryEntry(**minor_fields(data, data["currency"], "amount"), client_id=client_id)
+    normalize_schedule(entry)
+    entry.next_due_date = next_occurrence(entry, today or client_today(db, client_id)) if entry.is_active else None
     db.add(entry)
     db.flush()
-    normalise_registry_flags(entry)
-    sync_recurring_from_registry(db, entry)
-    if commit:
-        db.commit()
-        db.refresh(entry)
-    else:
-        db.flush()
     return entry
 
 
-def update_entry(
-    db: Session, client_id: int, entry_id: int, data: dict, *, commit: bool = True,
-) -> models.RegistryEntry | None:
-    entry = db.query(models.RegistryEntry).filter(
-        models.RegistryEntry.id == entry_id,
-        models.RegistryEntry.client_id == client_id,
-    ).first()
-    if not entry:
+def update_entry(db: Session, client_id: int, entry_id: int, data: dict, *, today: date | None = None) -> models.RegistryEntry | None:
+    entry = get_entry(db, client_id, entry_id)
+    if entry is None:
         return None
-    if "currency" in data and data["currency"] is None:
-        data = {**data, "currency": entry.currency}
-    validate_account_refs(db, client_id, data)
-    currency = data.get("currency", entry.currency)
+    merged = {c.name: getattr(entry, c.name) for c in entry.__table__.columns}
+    merged.update(data)
+    validate_account_refs(db, client_id, merged)
+    was_active = entry.is_active
+    previous = tuple(getattr(entry, key) for key in SCHEDULE_FIELDS)
+    currency = data.get("currency") or entry.currency
+    data = {**data, "currency": currency}
     if currency != entry.currency and "amount" not in data:
-        data = {**data, "amount": entry.amount}
-    data = _without_unset_settings(data)
+        data["amount"] = entry.amount
     for key, value in minor_fields(data, currency, "amount").items():
         setattr(entry, key, value)
-    normalise_registry_flags(entry)
-    sync_recurring_from_registry(db, entry)
-    if commit:
-        db.commit()
-        db.refresh(entry)
-    else:
-        db.flush()
+    normalize_schedule(entry)
+    if not entry.is_active:
+        entry.next_due_date = None
+    elif not was_active or previous != tuple(getattr(entry, key) for key in SCHEDULE_FIELDS):
+        entry.next_due_date = next_occurrence(entry, today or client_today(db, client_id))
+    db.flush()
     return entry
 
 
-def delete_entry(
-    db: Session, client_id: int, entry_id: int, *, commit: bool = True,
-) -> bool:
-    entry = db.query(models.RegistryEntry).filter(
-        models.RegistryEntry.id == entry_id,
-        models.RegistryEntry.client_id == client_id,
-    ).first()
-    if not entry:
+def delete_entry(db: Session, client_id: int, entry_id: int) -> bool:
+    entry = get_entry(db, client_id, entry_id)
+    if entry is None:
         return False
-    # X2: DELETE removes the definition. It used to drop three flags and leave
-    # the row, which every reader filters out anyway, so the entry became
-    # unreachable data that still occupied its (client, name) identity. The
-    # recurring rows go with it -- the registry owns them -- and the postings
-    # they already produced stay in the journal with their provenance nulled,
-    # exactly as before: deleting a definition must not rewrite history.
-    for recurring in linked_recurring_transactions(db, entry):
-        db.delete(recurring)
-    entry.source_recurring_transaction_id = None
-    db.flush()
+    # Preserve journal history on SQLite fixtures as well as PostgreSQL FK actions.
+    db.query(models.Transaction).filter(models.Transaction.registry_entry_id == entry.id).update({"registry_entry_id": None})
     db.delete(entry)
-    if commit:
-        db.commit()
-    else:
-        db.flush()
+    db.flush()
     return True
 
 
-def get_product_entry(db: Session, client_id: int, product_id: int) -> models.RegistryEntry | None:
-    # Product deletion detaches its client's linked definition even if inactive.
-    return db.query(models.RegistryEntry).filter(
-        models.RegistryEntry.client_id == client_id,
-        models.RegistryEntry.source_product_id == product_id,
-    ).first()
-
-
-def detach_product(
-    db: Session, entry: models.RegistryEntry, *, commit: bool = False,
-) -> None:
-    # Generic registry updates also synchronize recurring rows. Product deletion
-    # has never done that; sharing that path would change its behavior.
-    entry.budget_active = False
-    entry.is_active = False
-    entry.auto_depreciation = False
-    entry.source_product_id = None
-    if commit:
-        db.commit()
-
-
-def account_line_type(
-    source: models.Account | None,
-    destination: models.Account | None,
-) -> str:
-    """The budget line type implied by the accounts a definition moves between.
-
-    Liability to asset is the one pair that two ledger types used to share:
-    drawing on a loan brings money in (borrowing), while buying something on a
-    card moves money between places you own (allocation). The liability's own
-    kind is what tells them apart.
-    """
-    if source is not None and source.account_type == "income":
-        return "income"
-    if destination is not None:
-        if destination.account_type == "expense":
-            return "expense"
-        if destination.account_type == "liability":
-            return "debt_payment"
-        if destination.account_type in {"asset"}:
-            if source is not None and source.account_type == "liability":
-                return "borrowing" if source.liability_kind == "loan" else "allocation"
-            return "allocation"
-    return "expense"
-
-
-def account_entry_type(
-    source: models.Account | None,
-    destination: models.Account | None,
-) -> str:
-    """What kind of thing a registry entry describes, from the same two accounts."""
-    if source is not None and source.account_type == "income":
-        return "income"
-    if destination is not None:
-        if destination.account_type == "liability":
-            return "debt"
-        if destination.account_type in {"asset"}:
-            return "allocation"
-    return "service"
-
-
 def product_line_type(product: models.Product) -> str:
-    treatment = effective_budget_treatment(product)
-    if product.is_asset or treatment in {"reserve_allocation", "asset_replacement"}:
-        return "allocation"
-    return "expense"
+    return "allocation" if product.is_asset or effective_budget_treatment(product) in {"reserve_allocation", "asset_replacement"} else "expense"
 
 
 def product_budget_active(product: models.Product) -> bool:
@@ -216,371 +138,32 @@ def product_budget_active(product: models.Product) -> bool:
 
 
 def product_unit_amount(product: models.Product) -> float:
-    units = product.units_per_purchase or 1
-    return (product.last_unit_price or 0.0) / units if units else (product.last_unit_price or 0.0)
+    return (product.last_unit_price or 0) / (product.units_per_purchase or 1)
 
 
-def sync_registry_from_product(db: Session, product: models.Product) -> models.RegistryEntry:
-    entry = db.query(models.RegistryEntry).filter(
-        models.RegistryEntry.client_id == product.client_id,
-        models.RegistryEntry.source_product_id == product.id,
-    ).first()
-    if not entry:
-        entry = models.RegistryEntry(client_id=product.client_id, source_product_id=product.id, is_active=True)
-        db.add(entry)
-
-    entry.name = product.name
-    entry.entry_type = "asset" if product.is_asset else "item"
-    entry.category = product.budget_account.name if product.budget_account else product.category
-    if entry.currency is None:
-        entry.currency = money_client_currency(db, product.client_id)
-    entry.amount_minor = to_minor(product_unit_amount(product), entry.currency)
-    entry.frequency = "EveryNDays" if product.frequency_days and product.frequency_days > 0 else "Irregular"
-    entry.frequency_days = product.frequency_days or None
-    entry.line_type = product_line_type(product)
-    entry.budget_account_id = product.budget_account_id
-    entry.funding_capsule_id = product.funding_capsule_id
-    entry.budget_treatment = product.budget_treatment or "auto"
-    entry.generate_recurring = False
-    entry.budget_active = product_budget_active(product)
-    # Whether the definition is switched on is the user's choice, kept across
-    # product edits; only an asset can be written down.
-    if not product.is_asset:
-        entry.auto_depreciation = False
-    return entry
-
-
-def refresh_product_entry(db: Session, product: models.Product) -> None:
-    """Carry a product edit into its definition, when it has one.
-
-    A product's definition is created lazily (repair, or switching on its
-    automatic write-down); once it exists the budget reads it instead of the
-    product, so it has to follow the product or the budget goes stale.
-    """
-    if get_product_entry(db, product.client_id, product.id) is not None:
-        sync_registry_from_product(db, product)
-
-
-def set_auto_depreciation(
-    db: Session, product: models.Product, enabled: bool,
-) -> models.RegistryEntry:
-    """Switch a product's automatic write-down, creating its definition if needed."""
-    entry = get_product_entry(db, product.client_id, product.id) or sync_registry_from_product(db, product)
-    entry.auto_depreciation = bool(enabled) and bool(product.is_asset)
-    db.flush()
-    return entry
-
-
-def product_entries(db: Session, client_id: int) -> dict[int, models.RegistryEntry]:
-    return {
-        entry.source_product_id: entry
-        for entry in db.query(models.RegistryEntry).filter(
-            models.RegistryEntry.client_id == client_id,
-            models.RegistryEntry.source_product_id.isnot(None),
-        )
-    }
-
-
-def auto_depreciation_entries(db: Session, client_id: int) -> list[models.RegistryEntry]:
-    return db.query(models.RegistryEntry).filter(
-        models.RegistryEntry.client_id == client_id,
-        models.RegistryEntry.auto_depreciation.is_(True),
-        models.RegistryEntry.is_active.is_(True),
-        models.RegistryEntry.source_product_id.isnot(None),
-    ).order_by(models.RegistryEntry.id).all()
-
-
-def clients_with_auto_depreciation(db: Session) -> set[int]:
-    return {client_id for (client_id,) in db.query(models.RegistryEntry.client_id).filter(
-        models.RegistryEntry.auto_depreciation.is_(True),
-        models.RegistryEntry.is_active.is_(True),
-        models.RegistryEntry.source_product_id.isnot(None),
-    ).distinct()}
-
-
-def upsert_registry_from_recurring_payload(
-    db: Session,
-    client_id: int,
-    payload: dict,
-    recurring: models.RecurringTransaction | None = None,
-    *,
-    commit: bool = False,
-) -> models.RecurringTransaction:
-    if recurring is not None and recurring.client_id != client_id:
-        raise ValueError("Recurring transaction belongs to another client")
-    defaults = {
-        "name": None, "amount": 0.0, "currency": None,
-        "from_account_id": None, "to_account_id": None,
-        "frequency": "Monthly", "day_of_month": 1, "month_of_year": None,
-        "start_period": None, "end_period": None,
-        "is_active": True,
-    }
-    data = {
-        key: payload.get(key, getattr(recurring, key) if recurring is not None else default)
-        for key, default in defaults.items()
-    }
-    if data["currency"] is None:
-        data["currency"] = recurring.currency if recurring is not None else get_client_currency(db, client_id)
-    entry = None
-    if recurring is not None:
-        if recurring.source_registry_entry_id:
-            entry = db.query(models.RegistryEntry).filter(
-                models.RegistryEntry.id == recurring.source_registry_entry_id,
-                models.RegistryEntry.client_id == client_id,
-            ).first()
-        if entry is None:
-            entry = db.query(models.RegistryEntry).filter(
-                models.RegistryEntry.client_id == client_id,
-                models.RegistryEntry.source_recurring_transaction_id == recurring.id,
-            ).first()
-    if entry is None:
-        entry = models.RegistryEntry(client_id=client_id)
-        db.add(entry)
-    # The entry owns the choice; a recurring-shaped payload that omits it keeps it.
-    auto_post = payload.get("auto_post")
-    if auto_post is None:
-        if entry.auto_post is not None:
-            auto_post = entry.auto_post
-        else:
-            # A recurring row without an entry still carries its old choice.
-            auto_post = recurring.auto_post if recurring is not None else True
-
-    accounts = db.query(models.Account).filter(
-        models.Account.client_id == client_id,
-        models.Account.id.in_([data["from_account_id"], data["to_account_id"]]),
-    ).all()
-    accounts_by_id = {account.id: account for account in accounts}
-    source = accounts_by_id.get(data["from_account_id"])
-    destination = accounts_by_id.get(data["to_account_id"])
-    entry.amount_minor = to_minor(data["amount"], data["currency"])
-    for key in ("name", "currency", "frequency", "day_of_month",
-                "month_of_year", "start_period", "end_period"):
-        setattr(entry, key, data[key])
-    entry.day_of_month = data["day_of_month"] or 1
-    entry.frequency_days = None
-    entry.source_account_id = data["from_account_id"]
-    entry.destination_account_id = data["to_account_id"]
-    entry.line_type = account_line_type(source, destination)
-    entry.entry_type = account_entry_type(source, destination)
-    entry.budget_account_id = data["to_account_id"] if entry.line_type in {"expense", "debt_payment"} else None
-    entry.generate_recurring = True
-    entry.budget_active = True
-    entry.is_active = bool(data["is_active"])
-    entry.auto_post = bool(auto_post)
-    if recurring is not None:
-        entry.source_recurring_transaction_id = recurring.id
-    db.flush()
-    sync_recurring_from_registry(db, entry)
-    db.flush()
-    linked = db.query(models.RecurringTransaction).filter(
-        models.RecurringTransaction.id == entry.source_recurring_transaction_id,
-        models.RecurringTransaction.client_id == client_id,
-    ).first()
-    if linked is None:
-        raise ValueError("Registry entry did not produce a recurring transaction")
-    # The registry does not schedule individual occurrences; a caller may move one.
-    if "next_due_date" in payload:
-        linked.next_due_date = payload["next_due_date"]
-    db.flush()
-    if commit:
-        db.commit()
-        db.refresh(linked)
-    return linked
-
-
-def linked_recurring_transactions(db: Session, entry: models.RegistryEntry) -> list[models.RecurringTransaction]:
-    """All recurring transactions tied to this registry entry via either link direction."""
-    rows = db.query(models.RecurringTransaction).filter(
-        models.RecurringTransaction.client_id == entry.client_id,
-        models.RecurringTransaction.source_registry_entry_id == entry.id,
-    ).all()
-    if entry.source_recurring_transaction_id and entry.source_recurring_transaction_id not in {row.id for row in rows}:
-        forward = db.query(models.RecurringTransaction).filter(
-            models.RecurringTransaction.id == entry.source_recurring_transaction_id,
-            models.RecurringTransaction.client_id == entry.client_id,
-        ).first()
-        # A forward link to a recurring owned by another entry is stale; do not steal it.
-        if forward and not (forward.source_registry_entry_id and forward.source_registry_entry_id != entry.id):
-            rows.append(forward)
-    return rows
-
-
-def registry_to_recurring_data(entry: models.RegistryEntry, *, currency: str) -> dict:
-    return {
-        "name": entry.name,
-        "amount": Money(entry.amount_minor or 0, currency).to_float(),
-        "currency": currency,
-        "from_account_id": entry.source_account_id,
-        "to_account_id": entry.destination_account_id or entry.budget_account_id,
-        "frequency": entry.frequency if entry.frequency in {"Monthly", "Yearly"} else "Monthly",
-        "day_of_month": entry.day_of_month or 1,
-        "month_of_year": entry.month_of_year if entry.frequency == "Yearly" else None,
-        "start_period": entry.start_period,
-        "end_period": entry.end_period,
-        "is_active": entry.is_active and (not entry.end_period or entry.end_period >= current_period_key()),
-        # The registry owns it now, so writing it on every sync keeps the choice.
-        "auto_post": entry.auto_post is not False,
-        "source_registry_entry_id": entry.id,
-    }
-
-
-def normalise_registry_flags(entry: models.RegistryEntry) -> None:
-    """An entry that posts automatically has to appear in the budget.
-
-    Otherwise money moves on a schedule that nothing forecasts: the plan would
-    not carry the line, and the card settlement projection -- which reads the
-    plan -- would not know the charge is coming.
-    """
-    if entry.generate_recurring:
-        entry.budget_active = True
-    # Only a product has an asset to write down.
-    if entry.source_product_id is None:
-        entry.auto_depreciation = False
-
-
-def sync_recurring_from_registry(db: Session, entry: models.RegistryEntry) -> None:
-    """Enforce the registry entry onto its generated recurring transaction (registry is the source of truth)."""
-    linked = linked_recurring_transactions(db, entry)
-    if not entry.generate_recurring:
-        entry.source_recurring_transaction_id = None
-        for recurring in linked:
-            db.delete(recurring)
-        return
-    recurring = next(
-        (row for row in linked if row.id == entry.source_recurring_transaction_id),
-        None,
-    ) or (max(linked, key=lambda row: row.id) if linked else None)
-    for row in linked:
-        if recurring is None or row.id != recurring.id:
-            db.delete(row)
-    if not recurring:
-        recurring = models.RecurringTransaction(
-            client_id=entry.client_id,
-            source_registry_entry_id=entry.id,
-        )
-        db.add(recurring)
-        db.flush()
-    entry.source_recurring_transaction_id = recurring.id
-    currency = entry.currency if entry.currency is not None else get_client_currency(db, entry.client_id)
-    data = registry_to_recurring_data(entry, currency=currency)
-    schedule_fields = {"frequency", "day_of_month", "month_of_year", "start_period"}
-    schedule_changed = any(getattr(recurring, key, None) != data[key] for key in schedule_fields)
-    for key, value in minor_fields(data, currency, "amount").items():
-        setattr(recurring, key, value)
-    if schedule_changed:
-        recurring.next_due_date = None
-    ensure_next_due_date(recurring, date.today())
-
-
-def reconcile_registry_recurring_links(db: Session, client_id: int) -> dict[str, int]:
-    """Re-apply registry state onto generated recurrings: dedupe, relink, create missing ones."""
-    removed = 0
-    created = 0
-    entries = db.query(models.RegistryEntry).filter(models.RegistryEntry.client_id == client_id).all()
-    for entry in entries:
-        linked = linked_recurring_transactions(db, entry)
-        expected = 1 if entry.generate_recurring else 0
-        if len(linked) > expected:
-            removed += len(linked) - expected
-        if entry.generate_recurring and not linked:
-            created += 1
-        sync_recurring_from_registry(db, entry)
-    return {"removed": removed, "created": created}
-
-
-def detach_registry_from_recurring(db: Session, recurring: models.RecurringTransaction) -> None:
-    entry = None
-    if recurring.source_registry_entry_id:
-        entry = db.query(models.RegistryEntry).filter(
-            models.RegistryEntry.id == recurring.source_registry_entry_id,
-            models.RegistryEntry.client_id == recurring.client_id,
-        ).first()
-    if not entry:
-        entry = db.query(models.RegistryEntry).filter(
-            models.RegistryEntry.client_id == recurring.client_id,
-            models.RegistryEntry.source_recurring_transaction_id == recurring.id,
-        ).first()
-    if entry:
-        entry.generate_recurring = False
-        entry.source_recurring_transaction_id = None
-    recurring.source_registry_entry_id = None
-
-
-def delete_recurring(
-    db: Session, recurring: models.RecurringTransaction, *, commit: bool = True,
-) -> None:
-    # The registry entry outlives this row and must not retain a dangling link.
-    detach_registry_from_recurring(db, recurring)
-    db.delete(recurring)
-    if commit:
-        db.commit()
-    else:
-        db.flush()
-
-
-def ensure_registry_entries(db: Session, client_id: int) -> None:
-    changed = False
-    products = db.query(models.Product).filter(models.Product.client_id == client_id).all()
-    for product in products:
-        if not db.query(models.RegistryEntry).filter(
-            models.RegistryEntry.client_id == client_id,
-            models.RegistryEntry.source_product_id == product.id,
-        ).first():
-            sync_registry_from_product(db, product)
-            changed = True
-
-    recurring_rows = db.query(models.RecurringTransaction).filter(models.RecurringTransaction.client_id == client_id).all()
-    for recurring in recurring_rows:
-        if not recurring.source_registry_entry_id and not db.query(models.RegistryEntry).filter(
-            models.RegistryEntry.client_id == client_id,
-            models.RegistryEntry.source_recurring_transaction_id == recurring.id,
-        ).first():
-            upsert_registry_from_recurring_payload(db, client_id, {}, recurring)
-            changed = True
-
-    if changed:
-        db.commit()
-
-
-def registry_entry_amount_for_period(
-    db: Session,
-    entry: models.RegistryEntry,
-    period: str,
-    period_start: date,
-    client_id: int,
-    *,
-    budget_only: bool = True,
-) -> float:
-    """The entry's amount in the period; budget_only=False also counts entries kept out of the budget."""
+def registry_entry_amount_for_period(db: Session, entry, period: str, period_start: date, client_id: int, *, budget_only: bool = True) -> float:
     if not entry.is_active or (budget_only and not entry.budget_active):
         return 0.0
-    if entry.start_period and period < entry.start_period:
-        return 0.0
-    if entry.end_period and period > entry.end_period:
-        return 0.0
-
-    frequency = entry.frequency or "Monthly"
-    amount = entry.amount or 0.0
-    if frequency == "Monthly":
-        raw = amount
-    elif frequency == "Yearly":
-        raw = amount if (entry.month_of_year or period_start.month) == period_start.month else 0.0
-    elif frequency == "EveryNDays":
-        raw = amount * (30 / entry.frequency_days) if entry.frequency_days and entry.frequency_days > 0 else 0.0
-    else:
-        raw = 0.0
-    if raw <= 0:
-        return 0.0
-    return convert_amount(db, client_id, raw, entry.currency, as_of_date=period_start)
+    last = period_start.replace(day=calendar.monthrange(period_start.year, period_start.month)[1])
+    raw = entry.amount * sum(1 for _ in occurrences(entry, period_start, last))
+    return convert_amount(db, client_id, raw, entry.currency, as_of_date=period_start) if raw else 0.0
 
 
 def registry_target_account_id(entry: models.RegistryEntry) -> int | None:
-    if entry.line_type in {"income", "borrowing", "drawdown"}:
-        return entry.source_account_id or entry.destination_account_id
-    return entry.budget_account_id or entry.destination_account_id
+    return entry.budget_account_id or (entry.source_account_id if entry.kind == "income" else entry.destination_account_id)
 
 
 def registry_source_account_id(entry: models.RegistryEntry) -> int | None:
-    if entry.line_type in {"income", "borrowing", "drawdown"}:
-        return entry.destination_account_id
-    return entry.source_account_id
+    return entry.destination_account_id if entry.kind == "income" else entry.source_account_id
+
+
+def due_entries(db: Session, client_id: int, today: date) -> list[models.RegistryEntry]:
+    return db.query(models.RegistryEntry).filter(
+        models.RegistryEntry.client_id == client_id, models.RegistryEntry.is_active.is_(True),
+        models.RegistryEntry.next_due_date <= today,
+    ).with_for_update(skip_locked=True).all()
+
+
+def automatic_client_ids(db: Session) -> list[int]:
+    return sorted({row[0] for row in db.query(models.RegistryEntry.client_id).filter(models.RegistryEntry.is_active.is_(True))}
+                  | {row[0] for row in db.query(models.Product.client_id).filter(models.Product.auto_depreciation.is_(True)) if row[0] is not None})

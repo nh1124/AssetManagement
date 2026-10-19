@@ -301,6 +301,7 @@ export interface Product {
     recommended_monthly_reserve?: number;
     purchase_price?: number;
     purchase_date?: string;
+    auto_depreciation?: boolean;
     depreciation_method?: DepreciationMethod;
     depreciation_annual_rate?: number | null;
     depreciation_interval?: DepreciationInterval;
@@ -311,43 +312,34 @@ export interface Product {
     next_purchase_date?: string;
 }
 
-export type RegistryEntryType = 'asset' | 'item' | 'service' | 'income' | 'allocation' | 'debt';
-export type RegistryFrequency = 'Monthly' | 'Yearly' | 'EveryNDays' | 'Irregular';
-
-export interface RegistryEntry {
-    id: number;
+export type AutoTransactionKind = 'income' | 'expense' | 'debt' | 'transfer';
+export type AutoFrequency = 'Monthly' | 'Yearly' | 'EveryNDays';
+export interface AutoTransactionInput {
     name: string;
-    entry_type: RegistryEntryType;
-    category?: string | null;
+    kind: AutoTransactionKind;
     amount: number;
     currency: string;
-    frequency: RegistryFrequency;
-    frequency_days?: number | null;
-    day_of_month: number;
-    month_of_year?: number | null;
-    line_type: MonthlyPlanLineType;
-    budget_account_id?: number | null;
-    budget_account_name?: string | null;
-    source_account_id?: number | null;
-    source_account_name?: string | null;
-    destination_account_id?: number | null;
-    destination_account_name?: string | null;
-    funding_capsule_id?: number | null;
-    funding_capsule_name?: string | null;
-    budget_treatment?: 'auto' | 'expense_only' | 'reserve_allocation' | 'asset_replacement';
-    generate_recurring: boolean;
-    /** Posts on its due date; false waits to be posted by hand. */
-    auto_post: boolean;
-    /** A product definition writes its asset down each ended period. */
-    auto_depreciation: boolean;
+    source_account_id: number | null;
+    destination_account_id: number | null;
+    budget_account_id: number | null;
+    repeat_mode: 'once' | 'count' | 'indefinite';
+    frequency: AutoFrequency | null;
+    frequency_days: number | null;
+    day_of_month: number | null;
+    month_of_year: number | null;
+    start_date: string;
+    end_date: string | null;
+    repeat_count: number | null;
     budget_active: boolean;
     is_active: boolean;
-    source_product_id?: number | null;
-    source_recurring_transaction_id?: number | null;
-    recurring_transaction_id?: number | null;
-    note?: string | null;
-    start_period?: string | null;
-    end_period?: string | null;
+    note: string | null;
+}
+export interface AutoTransaction extends AutoTransactionInput {
+    id: number;
+    next_due_date: string | null;
+    source_account_name: string | null;
+    destination_account_name: string | null;
+    budget_account_name: string | null;
 }
 
 export type MonthlyPlanLineType = 'income' | 'expense' | 'allocation' | 'debt_payment' | 'borrowing' | 'drawdown';
@@ -388,7 +380,7 @@ export interface MonthlyPlanLine {
         name: string;
         amount: number;
         source?: string;
-        entry_type?: string;
+        kind?: AutoTransactionKind;
     }>;
     is_active?: boolean;
     source?: string;
@@ -396,24 +388,6 @@ export interface MonthlyPlanLine {
     manual_override?: boolean;
 }
 
-export interface RecurringTransaction {
-    id: number;
-    name: string;
-    amount: number;
-    currency: string;
-    from_account_id?: number | null;
-    to_account_id?: number | null;
-    frequency: 'Monthly' | 'Yearly';
-    day_of_month: number;
-    month_of_year?: number | null;
-    next_due_date?: string | null;
-    start_period?: string | null;
-    end_period?: string | null;
-    auto_post: boolean;
-    is_active: boolean;
-    source_registry_entry_id?: number | null;
-    source_registry_entry_name?: string | null;
-}
 
 export interface AnalysisSummary {
     net_worth: number;
@@ -465,7 +439,7 @@ export interface MonthlyAction {
     created_at?: string | null;
 }
 
-export type ReviewActionKind = 'set_budget' | 'add_recurring' | 'pause_recurring' | 'boost_allocation' | 'change_capsule_contribution';
+export type ReviewActionKind = 'set_budget' | 'add_auto_transaction' | 'stop_auto_transaction' | 'boost_allocation' | 'change_capsule_contribution';
 
 export interface ReviewActionCreate {
     source_period: string;
@@ -871,28 +845,9 @@ export interface DataRepairResult {
 
 export type { ReconciliationAdjustment, ReconciliationComparison } from './reconciliation';
 
-/** What records on its own, as the definitions screen lists it (WP7). */
-export interface AutomaticRecurringRecording {
-    entry_id: number;
-    entry_type: RegistryEntryType;
-    recurring_transaction_id: number | null;
-    name: string;
-    amount: number;
-    currency: string;
-    frequency: RegistryFrequency;
-    day_of_month: number;
-    month_of_year?: number | null;
-    source_account_name?: string | null;
-    destination_account_name?: string | null;
-    is_active: boolean;
-    auto_post: boolean;
-    next_due_date: string | null;
-    is_due: boolean;
-}
-
+/** Fixed-asset schedules shown beside automatic transactions. */
 export interface AutomaticDepreciationRecording {
     product_id: number;
-    entry_id: number | null;
     name: string;
     method: DepreciationMethod;
     interval: DepreciationInterval;
@@ -900,33 +855,24 @@ export interface AutomaticDepreciationRecording {
     next_amount: number;
     book_value: number;
     currency: string;
-    expense_account_id: number | null;
-    asset_account_id: number | null;
-    pending_periods: number;
     auto_depreciation: boolean;
-    is_active: boolean;
-    blocked_reason: string | null;
 }
 
-export interface AutomaticRecordings {
-    recurring: AutomaticRecurringRecording[];
-    depreciation: AutomaticDepreciationRecording[];
+export interface GeneratedTransaction {
+    id: number; date: string; description: string; amount: number; currency: string; source: string;
 }
 
-/** One automatic transaction a month holds: a definition's occurrence or a write-down. */
+/** One scheduled occurrence or write-down in a month, valued in the client currency. */
 export interface ScheduledTransaction {
-    kind: 'definition' | 'depreciation';
+    kind: 'automatic_transaction' | 'depreciation';
     entry_id: number | null;
     product_id: number | null;
     name: string;
     line_type: MonthlyPlanLineType | null;
     amount: number;
-    /** The planned day; null for definitions without a day (every N days). */
-    date: string | null;
-    frequency: string;
-    /** auto posts on its date, manual waits for a hand, none only plans the budget. */
-    recording: 'auto' | 'manual' | 'none';
-    posted: boolean | null;
+    date: string;
+    frequency: string | null;
+    posted: boolean;
     in_budget: boolean;
     /** The account or subject whose budget the movement is. */
     account_id: number | null;

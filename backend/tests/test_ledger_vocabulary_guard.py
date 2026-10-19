@@ -10,6 +10,7 @@ This file guards names removed from models in the ledger and now the budget too.
 """
 
 from __future__ import annotations
+from datetime import date
 
 import ast
 import pathlib
@@ -33,17 +34,16 @@ def test_transaction_model_has_no_summary_columns():
 
 
 def test_recurring_and_registry_do_not_name_a_ledger_type():
-    assert "type" not in models.RecurringTransaction.__table__.columns
     assert "transaction_type" not in models.RegistryEntry.__table__.columns
     # The budget keeps its own axis: line_type disagreed with the ledger type
     # on 53 of 68 entries, which is why it is a separate field.
-    assert "line_type" in models.RegistryEntry.__table__.columns
+    assert "kind" in models.RegistryEntry.__table__.columns
 
 
 def test_plan_line_does_not_store_its_own_recurring_link():
     assert "recurring_transaction_id" not in models.MonthlyPlanLine.__table__.columns
     assert not hasattr(models.MonthlyPlanLine, "recurring_transaction_id")
-    assert "recurring_transaction_id" in models.Transaction.__table__.columns
+    assert "registry_entry_id" in models.Transaction.__table__.columns
 
 
 def _transaction_attribute_reads(path: pathlib.Path) -> list[str]:
@@ -180,10 +180,13 @@ def test_recurring_update_preview_returns_before_snapshot():
             client = models.Client(name="Preview test", username="preview-test", password_hash="unused")
             db.add(client)
             db.flush()
-            payload = {"name": "Subscription", "amount": 1200, "frequency": "Monthly"}
-            recurring = registry_service.upsert_registry_from_recurring_payload(db, client.id, payload)
+            cash = models.Account(client_id=client.id, name="cash", account_type="asset")
+            expense = models.Account(client_id=client.id, name="expense", account_type="expense")
+            db.add_all([cash, expense]); db.flush()
+            payload = {"name": "Subscription", "amount": 1200, "frequency": "Monthly", "kind": "expense", "repeat_mode": "indefinite", "start_date": "2026-10-01", "source_account_id": cash.id, "destination_account_id": expense.id}
+            recurring = registry_service.create_entry(db, client.id, {**payload, "start_date": date(2026, 10, 1)})
             db.commit()
-            entry = db.get(models.RegistryEntry, recurring.source_registry_entry_id)
+            entry = recurring
             assert entry is not None
             assert entry.client_id == client.id
 
@@ -191,7 +194,7 @@ def test_recurring_update_preview_returns_before_snapshot():
                 db,
                 client.id,
                 schemas.AiChangeRequestPreviewRequest(
-                    resource="recurring_transactions",
+                    resource="auto_transactions",
                     action="update",
                     target_ref={"id": recurring.id},
                     input_payload={**payload, "amount": 1500},
@@ -200,7 +203,7 @@ def test_recurring_update_preview_returns_before_snapshot():
 
             assert preview["before_snapshot"]["id"] == recurring.id
             assert preview["before_snapshot"]["amount"] == 1200
-            assert preview["before_snapshot"]["source_registry_entry_id"] == entry.id
+            assert preview["before_snapshot"]["kind"] == "expense"
             assert preview["after_snapshot"]["amount"] == 1500
     finally:
         engine.dispose()

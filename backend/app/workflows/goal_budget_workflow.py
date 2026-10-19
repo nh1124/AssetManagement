@@ -186,8 +186,8 @@ def _existing_savings(db: Session, client_id: int, periods: list[str], plan_id: 
     # A plain monthly definition into an asset account can carry the goal savings,
     # including one the goal set to zero last time.
     for entry in entries:
-        if (entry.line_type != "allocation" or not entry.is_active or not entry.budget_active
-                or (entry.frequency or "Monthly") != "Monthly" or entry.currency != currency):
+        if (entry.kind != "transfer" or not entry.is_active or not entry.budget_active
+                or entry.repeat_mode == "once" or entry.frequency != "Monthly" or entry.currency != currency):
             continue
         account_id = registry_service.registry_target_account_id(entry)
         account = ledger_service.get_account(db, client_id, account_id) if account_id else None
@@ -641,7 +641,7 @@ def apply(db: Session, client_id: int, options: dict, fingerprint: str, *, updat
             if creates:
                 create_plan_lines(db, client_id, creates, commit=False)
             for change in definitions:
-                registry_service.update_entry(db, client_id, change["definition_id"], {"amount": change["new_amount"]}, commit=False)
+                registry_service.update_entry(db, client_id, change["definition_id"], {"amount": change["new_amount"]})
             goal_budget_record.record(
                 db, client_id, scenario_id=planned["scenario"]["id"], start_period=planned["periods"][0],
                 end_period=planned["periods"][-1], options=planned["options"], summary=planned["savings"],

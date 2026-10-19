@@ -121,9 +121,7 @@ def _seed(db, scenario, today):
                              last_unit_price_minor=to_minor(1000, "JPY"), frequency_days=30, units_per_purchase=1,
                              last_purchase_date=today, budget_account_id=expense.id,
                              budget_treatment="expense_only")
-    registry = models.RegistryEntry(client_id=1, name="Guard subscription", amount_minor=to_minor(1000, "JPY"),
-                                    budget_account_id=expense.id, source_account_id=cash.id,
-                                    generate_recurring=True)
+    registry = models.RegistryEntry(client_id=1, name='Guard subscription', amount_minor=to_minor(1000, 'JPY'), budget_account_id=expense.id, source_account_id=cash.id, start_date=date(2026, 1, 1), repeat_mode="indefinite", frequency="Monthly")
     db.add_all([product, registry])
     db.flush()
     plan = None
@@ -143,10 +141,6 @@ def _seed(db, scenario, today):
                                target_period=today.strftime("%Y-%m"), line_type="expense",
                                name="Guard food", amount_minor=to_minor(3000, "JPY"), account_id=expense.id,
                                source_account_id=cash.id),
-        models.RecurringTransaction(client_id=1, name=registry.name, amount_minor=to_minor(1000, "JPY"),
-                                    frequency="Monthly", day_of_month=today.day,
-                                    from_account_id=cash.id, to_account_id=expense.id,
-                                    next_due_date=today, source_registry_entry_id=registry.id),
         models.CapsuleRule(client_id=1, capsule_id=capsule.id, trigger_type="Income",
                            amount_type="fixed", **rule_amount_fields(100, "fixed", "JPY")),
         models.Milestone(client_id=1, life_event_id=goal.id, date=goal.target_date,
@@ -314,7 +308,7 @@ def read_scan():
         # Different resources share one route but dispatch into different
         # services. Summary must not disappear behind an accounts-only case.
         resources = ("summary", "accounts", "transactions_recent", "monthly_plan",
-                     "recurring_transactions", "goals", "products", "registry_entries",
+                     "auto_transactions", "goals", "products",
                      "settings", "audit_logs") if "{resource}" in route.path else (None,)
         for scenario in scenarios:
             for resource in resources:

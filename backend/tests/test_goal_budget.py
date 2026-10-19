@@ -239,14 +239,8 @@ def test_every_range_funds_far_events_through_capsules_too(db, story):
 def existing_savings(db, story):
     bank = create_account(db, 1, {"name": "給与口座", "account_type": "asset"})
     db.commit()
-    definition = registry_service.create_entry(db, 1, {
-        "name": "投資積立", "amount": 20000, "currency": "JPY", "frequency": "Monthly",
-        "line_type": "allocation", "source_account_id": bank.id, "destination_account_id": story["savings"].id,
-    })
-    yearly = registry_service.create_entry(db, 1, {
-        "name": "年払いの積立", "amount": 12000, "currency": "JPY", "frequency": "Yearly", "month_of_year": 11,
-        "line_type": "allocation", "source_account_id": bank.id, "destination_account_id": story["other"].id,
-    })
+    definition = registry_service.create_entry(db, 1, {'name': '投資積立', 'amount': 20000, 'currency': 'JPY', 'frequency': 'Monthly', 'source_account_id': bank.id, 'destination_account_id': story['savings'].id, "start_date": date(2026, 1, 1), "repeat_mode": "indefinite", "kind": {"allocation":"transfer","debt_payment":"debt","service":"expense"}.get('allocation', 'allocation')})
+    yearly = registry_service.create_entry(db, 1, {'name': '年払いの積立', 'amount': 12000, 'currency': 'JPY', 'frequency': 'Yearly', 'month_of_year': 11, 'source_account_id': bank.id, 'destination_account_id': story['other'].id, "start_date": date(2026, 1, 1), "repeat_mode": "indefinite", "kind": {"allocation":"transfer","debt_payment":"debt","service":"expense"}.get('allocation', 'allocation')})
     # A capsule funded from an account shows in the budget, so it counts.
     loose = capsule_service.create_capsule(db, 1, schemas.CapsuleCreate(name="予備費", target_amount=100000, monthly_contribution=5000,
                                                                          account_id=story["other"].id))

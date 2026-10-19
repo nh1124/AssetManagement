@@ -193,8 +193,8 @@ def schedule(db: Session, client_id: int, product_id: int) -> dict:
     }
 
 
-def post(
-    db: Session, client_id: int, product_id: int, *, period: str, commit: bool = True,
+def _post(
+    db: Session, client_id: int, product_id: int, *, period: str,
 ) -> tuple[models.Transaction, models.ProductDepreciation]:
     start = _validate_period(period)
     product = _get_product(db, client_id, product_id)
@@ -227,70 +227,30 @@ def post(
 
     currency = get_client_currency(db, client_id)
     posting_date = _posting_date(period)
-    try:
-        transaction = ledger_service.create_transaction(
-            db,
-            client_id=client_id,
-            date=posting_date,
-            description=f"減価償却：{product.name}（{period}）",
-            amount_minor=amount,
-            currency=currency,
-            legs=[
-                Leg(product.depreciation_expense_account_id, debit=amount),
-                Leg(product.depreciation_asset_account_id, credit=amount),
-            ],
-        )
-        row = models.ProductDepreciation(
-            client_id=client_id, product_id=product.id, period=period,
-            transaction_id=transaction.id, amount_minor=amount,
-        )
-        db.add(row)
-        if commit:
-            db.commit()
-            db.refresh(row)
-        else:
-            db.flush()
-        return transaction, row
-    except Exception:
-        db.rollback()
-        raise
-
-
-def list_postings(db: Session, client_id: int, product_id: int) -> list[models.ProductDepreciation]:
-    return db.query(models.ProductDepreciation).filter(
-        models.ProductDepreciation.client_id == client_id,
-        models.ProductDepreciation.product_id == product_id,
-    ).order_by(models.ProductDepreciation.period.desc()).all()
+    transaction = ledger_service.create_transaction(
+        db,
+        client_id=client_id,
+        date=posting_date,
+        description=f"減価償却：{product.name}（{period}）",
+        amount_minor=amount,
+        currency=currency,
+        legs=[
+            Leg(product.depreciation_expense_account_id, debit=amount),
+            Leg(product.depreciation_asset_account_id, credit=amount),
+        ],
+    )
+    row = models.ProductDepreciation(
+        client_id=client_id, product_id=product.id, period=period,
+        transaction_id=transaction.id, amount_minor=amount,
+    )
+    db.add(row)
+    db.flush()
+    return transaction, row
 
 
 # How many periods one automatic run writes down per product. A schedule switched
 # on long after the purchase catches up over several runs, as recurring does.
 CATCH_UP_LIMIT = 24
-
-
-def pending_periods(db: Session, client_id: int, product: models.Product, today: Date) -> int:
-    """Periods that have ended and are not written down yet, within the useful life."""
-    if (product.depreciation_method or "none") == "none":
-        return 0
-    start = _start_date(product)
-    if start is None or int(product.purchase_price_minor or 0) - posted_minor(db, client_id, product.id) <= 0:
-        return 0
-    life = int(product.lifespan_months or 0)
-    posted = {row.period for row in db.query(models.ProductDepreciation.period).filter(
-        models.ProductDepreciation.client_id == client_id,
-        models.ProductDepreciation.product_id == product.id,
-    )}
-    step = _months_in(product.depreciation_interval or "monthly")
-    cursor = start.replace(day=1)
-    count = 0
-    for _ in range(1200 // step + 1):
-        key = _period_key(cursor)
-        if _posting_date(key) > today or (life and _months_elapsed(start, key) >= life):
-            break
-        if key not in posted:
-            count += 1
-        cursor += relativedelta(months=step)
-    return count
 
 
 def post_due(
@@ -309,6 +269,6 @@ def post_due(
             break
         if due_minor(db, client_id, product, period) <= 0:
             break
-        _, row = post(db, client_id, product.id, period=period, commit=False)
+        _, row = _post(db, client_id, product.id, period=period)
         rows.append(row)
     return rows

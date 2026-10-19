@@ -36,7 +36,7 @@ back is a plain Transfer from that account.
 
 Important write tools:
 - transactions_create / transactions_update: posts journal entries and changes balances. Pass legs for a compound entry.
-- recurring_create: creates a definition only; no real transaction is posted until recurring_process.
+- auto_transactions_create: saves an automatic posting schedule.
 - transaction_batches_create: posts multiple transactions at once.
 - products_create / products_update: updates Product/Item registry and reserve planning metadata.
 - data_import_replace_current_client and delete tools are destructive.`,
@@ -91,23 +91,15 @@ Product/Item registry is separate from Transaction.
 - For fixed assets, set is_asset=true, purchase_price, purchase_date, and lifespan_months when known.
 - Do not invent prices or account IDs. Ask or list accounts/products first.`,
   },
-  "asset-management://guide/recurring": {
-    title: "Recurring transaction guide",
-    description: "Rules for recurring transaction definitions.",
-    text: `# Recurring Transaction Guide
-
-recurring_create creates a schedule definition only. It does not post a real transaction.
-
-Use the same account sides as a normal transaction: from_account_id is
-credited and to_account_id debited. An expense is funded from an asset or a
-card, income lands from an income account into an asset, and a repayment is
-funded from an asset into the liability.
-
-Before recurring_create:
-1. Call recurring_preview with the intended fields.
-2. Confirm next_due_date, frequency, day_of_month, and account IDs.
-3. Use recurring_process only when the due transaction should actually be posted.`,
+  "asset-management://guide/auto-transactions": {
+    title: "Automatic transactions", description: "Schedules and posting rules.",
+    text: `# Automatic transactions
+Use auto_transactions_list/create/update/delete. Kinds are income, expense, debt and transfer.
+Schedules are once, count or indefinite; cycles are Monthly, Yearly or EveryNDays.
+Every active occurrence posts automatically. Creating or re-activating starts on or after today.
+Deleting a schedule preserves posted journal history. Products own their auto_depreciation switch.`,
   },
+
   "asset-management://guide/product-reserve": {
     title: "Product reserve guide",
     description: "Product/Item and reserve planning behavior.",
@@ -131,7 +123,7 @@ Treat these as high-risk:
 - data_import_replace_current_client: replaces current client data.
 - transactions_delete: reverts journal entries and changes balances.
 - products_delete, accounts_delete, exchange_rates_delete, simulation_scenarios_delete.
-- recurring_process: posts a real transaction when due.
+- Active automatic transactions post on due dates.
 - actions_apply / actions_process_due / reports_apply_action: applies generated proposals.
 
 For high-risk operations, explain the expected effect, call preview/list tools first, and require explicit user confirmation.`,

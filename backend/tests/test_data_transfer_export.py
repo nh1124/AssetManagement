@@ -17,11 +17,10 @@ from app.services.data_transfer_service import export_client
 # Freeze the file format independently of both ORM metadata and the exporter.
 FORMAT_FIELDS = {
     "accounts": ["id","name","account_type","liability_closing_day","liability_payment_day","liability_payment_month_offset","liability_payment_policy","liability_minimum_payment","liability_fixed_payment_amount","liability_installment_months","liability_revolving_rate","is_active"],
-    "products": ["id","name","category","location","last_unit_price","units_per_purchase","frequency_days","last_purchase_date","is_asset","lifespan_months","budget_account_id","funding_capsule_id","budget_treatment","purchase_price","purchase_date","depreciation_method","depreciation_annual_rate","depreciation_interval","depreciation_start_date","depreciation_expense_account_id","depreciation_asset_account_id"],
+    "products": ["id","name","category","location","last_unit_price","units_per_purchase","frequency_days","last_purchase_date","is_asset","lifespan_months","budget_account_id","funding_capsule_id","budget_treatment","purchase_price","purchase_date","auto_depreciation","depreciation_method","depreciation_annual_rate","depreciation_interval","depreciation_start_date","depreciation_expense_account_id","depreciation_asset_account_id"],
     "product_depreciations": ["id","product_id","period","transaction_id","amount_minor","created_at"],
     "simulation_configs": ["id","user_id","annual_return","tax_rate","is_nisa","monthly_savings","volatility","inflation_rate","horizon_years"],
-    "recurring_transactions": ["id","name","amount","currency","from_account_id","to_account_id","frequency","day_of_month","month_of_year","next_due_date","start_period","end_period","auto_post","is_active","source_registry_entry_id","created_at"],
-    "registry_entries": ["id","name","entry_type","category","amount","currency","frequency","frequency_days","day_of_month","month_of_year","line_type","budget_account_id","source_account_id","destination_account_id","funding_capsule_id","budget_treatment","generate_recurring","auto_post","auto_depreciation","budget_active","is_active","source_product_id","source_recurring_transaction_id","note","start_period","end_period","created_at","updated_at"],
+    "registry_entries": ["id","name","kind","amount","currency","source_account_id","destination_account_id","budget_account_id","repeat_mode","frequency","frequency_days","day_of_month","month_of_year","start_date","end_date","repeat_count","next_due_date","budget_active","is_active","note","created_at","updated_at"],
     "transaction_batches": ["id","label","source","input_payload","created_at"],
     "life_events": ["id","scenario_id","lineage","name","start_date","target_date","target_amount","priority","note","condition_mode","direction","account_id","active_plan_basis","active_plan_label","plan_status_override","budget_reflection","archived_at","created_at"],
     "life_event_links": ["id","from_event_id","to_event_id","kind","offset_months","note","created_at"],
@@ -29,7 +28,7 @@ FORMAT_FIELDS = {
     "life_scenario_account_returns": ["id","scenario_id","account_id","annual_return"],
     "household_members": ["id","name","relation","birth_date","created_at"],
     "life_event_conditions": ["id","life_event_id","metric","comparator","threshold_minor","threshold_number","threshold_date","reference_id","note","created_at"],
-    "transactions": ["id","date","description","amount","currency","batch_id","recurring_transaction_id","created_at"],
+    "transactions": ["id","date","description","amount","currency","batch_id","registry_entry_id","created_at"],
     "journal_entries": ["id","transaction_id","account_id","capsule_id","debit","credit","memo","sort_order"],
     "budget_plans": ["id","name","description","is_default","sort_order","created_at","updated_at"],
     "monthly_plan_lines": ["id","target_period","line_type","target_type","target_id","account_id","source_account_id","name","amount","source","source_kind","identity_key","manual_override","cash_treatment","plan_id","is_active","created_at","updated_at"],
@@ -69,7 +68,6 @@ def _seed_client(db, client_id, base, marker):
             "capsule_funding_sources": ("target_amount",),
             "products": ("last_unit_price", "purchase_price"), "simulation_configs": ("monthly_savings",),
             "simulation_scenarios": ("monthly_savings",), "life_scenarios": ("monthly_savings",), "registry_entries": ("amount",),
-            "recurring_transactions": ("amount",),
         }
         if model.__tablename__ == "capsule_rules":
             values = rule_data(values, "JPY")
@@ -113,23 +111,16 @@ def _seed_client(db, client_id, base, marker):
     registry = add(
         models.RegistryEntry, 7, name=marker, amount=100, budget_account_id=expense.id,
         source_account_id=cash.id, destination_account_id=expense.id,
-        funding_capsule_id=capsule.id, source_product_id=product.id, generate_recurring=True,
+        kind="expense", frequency="Monthly", repeat_mode="indefinite", start_date=date(2026, 1, 1), next_due_date=date(2026, 10, 31),
     )
     db.flush()
-    recurring = add(
-        models.RecurringTransaction, 8, name=marker, amount=100, frequency="Monthly",
-        from_account_id=cash.id, to_account_id=expense.id, source_registry_entry_id=registry.id,
-        next_due_date=date(2026, 10, 31),
-    )
-    db.flush()
-    registry.source_recurring_transaction_id = recurring.id
     batch = add(
         models.TransactionBatch, 10, label=marker,
         input_payload={"nested": {"account_id": cash.id, "life_event_id": goal.id}},
     )
     tx = add(
         models.Transaction, 11, date=date(2026, 10, 2), description=marker, amount_minor=100,
-        batch_id=batch.id, recurring_transaction_id=recurring.id,
+        batch_id=batch.id, registry_entry_id=registry.id,
     )
     db.flush()
     add(models.JournalEntry, 12, transaction_id=tx.id, account_id=expense.id, debit_minor=100, credit_minor=0, memo=marker, sort_order=0)

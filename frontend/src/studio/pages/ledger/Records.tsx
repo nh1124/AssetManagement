@@ -26,7 +26,7 @@ function accountLabel(transaction: Transaction): string {
     return `${transaction.from_account_name || name('credit')} → ${transaction.to_account_name || name('debit')}`;
 }
 
-function RecordEditor({ transactionId, busy, error, onClose, onSaved, onDelete }: {
+export function RecordEditor({ transactionId, busy, error, onClose, onSaved, onDelete }: {
     transactionId: number;
     busy: boolean;
     error: string;

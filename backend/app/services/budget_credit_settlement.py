@@ -81,7 +81,6 @@ def _credit_settlement_plan_line(
         "identity_key": "",
         "manual_override": False,
         "cash_treatment": "cash",
-        "recurring_transaction_id": None,
         "sync_status": "missing",
         "is_active": True,
     }

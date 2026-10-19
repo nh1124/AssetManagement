@@ -81,27 +81,6 @@ def test_product_funding_reads_refuse_goal_other_client_and_missing_capsules(db)
         assert str(exc.value) == "Funding capsule must be a non-LifeEvent capsule for this client"
 
 
-def test_product_registry_read_finds_inactive_definition_and_scopes_detachment(db):
-    product = confirmed(product_workflow.create_product, db, 1, schemas.ProductCreate(
-        name="Supplies", last_unit_price=100, frequency_days=30,
-        budget_treatment="expense_only",
-    ))
-    entry = models.RegistryEntry(
-        client_id=1, name="Inactive definition", source_product_id=product.id,
-        is_active=False, budget_active=True,
-    )
-    db.add(entry)
-    db.commit()
-    assert registry_service.get_product_entry(db, 1, product.id) is entry
-    assert registry_service.get_product_entry(db, 2, product.id) is None
-    assert registry_service.get_product_entry(db, 1, 999999) is None
-    assert confirmed(product_workflow.delete_product, db, 2, product.id) is False
-    assert entry.source_product_id == product.id
-    assert confirmed(product_workflow.delete_product, db, 1, product.id) is True
-    db.refresh(entry)
-    assert (entry.source_product_id, entry.budget_active, entry.is_active) == (None, False, False)
-
-
 def test_transaction_read_prevents_removing_another_clients_entry(db):
     cash = ledger_service.create_account(db, 1, {"name": "Cash", "account_type": "asset"})
     expense = ledger_service.create_account(db, 1, {"name": "Supplies", "account_type": "expense"})
