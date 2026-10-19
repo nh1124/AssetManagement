@@ -6,7 +6,7 @@ import '@xyflow/react/dist/style.css';
 import './lifeEventDiagram.css';
 import type { LifeEventLink, ScenarioEvent } from '../../../api/lifeEventGraph';
 import type { LifeEvent } from '../../../types';
-import { formatCurrency } from '../../../utils/currency';
+import { eventAmount } from './eventKinds';
 import { layout } from './graphLayout';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 import { useScenario } from './scenarioContext';
@@ -19,17 +19,19 @@ type EventData = {
     currency: string;
     hasConditions: boolean;
     onPath: boolean;
+    dim: boolean;
+    amountText: string;
 };
 type EventNode = Node<EventData, 'lifeEvent'>;
 type LinkEdge = Edge<{ link: LifeEventLink }>;
 
 function LifeEventNode({ data, isConnectable }: NodeProps<EventNode>) {
-    return <div className={`life-event-node ${data.onPath ? 'life-event-node-path' : ''}`}>
+    return <div className={`life-event-node ${data.onPath ? 'life-event-node-path' : ''} ${data.dim ? 'life-event-node-off' : ''}`}>
         <Handle type="target" position={Position.Left} isConnectable={isConnectable} aria-label={`${data.name}への接続`} title="接続先" />
         <span title={data.name} className="line-clamp-2 font-medium">{data.name}</span>
         <div className="mt-auto space-y-1 tabular-nums">
             <div>{data.resolved_date ?? '日付未設定'}</div>
-            <div>{formatCurrency(data.amount, data.currency)}</div>
+            <div>{data.amountText}</div>
         </div>
         <div className="min-h-4 text-xs text-[var(--studio-text-muted)]">
             {data.hasConditions && <span>前提条件あり</span>}
@@ -71,13 +73,15 @@ const flowStyle = {
 
 type MenuTarget = { type: 'pane' } | { type: 'node'; event: LifeEvent } | { type: 'edge'; edge: LifeEventLink };
 
-export default function LifeEventDiagram({ events, links, scenario, pathEventIds, pathLinkIds, conditionEventIds, currency, disabled, onAddEvent, onEditEvent, onDeleteEvent, onConditions, onDeleteEdge, onConnect, onEdgeClick }: {
+export default function LifeEventDiagram({ events, links, scenario, pathEventIds, pathLinkIds, conditionEventIds, currency, disabled, dimOffPath = false, onAddEvent, onEditEvent, onDeleteEvent, onConditions, onDeleteEdge, onConnect, onEdgeClick }: {
     events: LifeEvent[]; links: LifeEventLink[];
     // Only for its resolved dates: a link offset moves an event off its stored date.
     scenario?: { events: ScenarioEvent[] };
     // The branches most simulated paths take.
     pathEventIds: ReadonlySet<number>; pathLinkIds: ReadonlySet<number>;
     conditionEventIds: ReadonlySet<number>; currency: string; disabled: boolean;
+    // The simulation's read-only copy greys the events most runs do not reach (R9).
+    dimOffPath?: boolean;
     onAddEvent: (sourceId?: number, handleType?: 'source' | 'target') => void;
     onEditEvent: (event: LifeEvent) => void; onDeleteEvent: (event: LifeEvent) => void; onDeleteEdge: (edge: LifeEventLink) => void;
     onConditions: (event: LifeEvent) => void;
@@ -116,6 +120,7 @@ export default function LifeEventDiagram({ events, links, scenario, pathEventIds
             id: event.id, name: event.name,
             resolved_date: resolved.has(event.id) ? resolved.get(event.id) ?? null : event.target_date || null,
             amount: event.target_amount, currency, hasConditions: conditionEventIds.has(event.id), onPath: pathEventIds.has(event.id),
+            dim: dimOffPath && !pathEventIds.has(event.id), amountText: eventAmount(event, currency),
         })), links);
         return {
             nodes: graph.nodes.map((node): EventNode => ({
@@ -141,7 +146,7 @@ export default function LifeEventDiagram({ events, links, scenario, pathEventIds
                 ariaLabel: `${events.find((event) => event.id === edge.data.from_event_id)?.name}から${events.find((event) => event.id === edge.data.to_event_id)?.name}・必ず続く・${edge.data.offset_months}か月`,
             })),
         };
-    }, [events, links, scenario, pathEventIds, pathLinkIds, conditionEventIds, currency, disabled, onEdgeClick]);
+    }, [events, links, scenario, pathEventIds, pathLinkIds, conditionEventIds, currency, disabled, dimOffPath, onEdgeClick]);
 
     const signature = `${nodes.map((node) => node.id).join()}|${edges.map((edge) => edge.id).join()}`;
     return <div ref={container} tabIndex={-1} onContextMenu={(event) => event.preventDefault()}

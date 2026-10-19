@@ -21,6 +21,7 @@ export interface ContributionPlan {
     annual_return: number | null;
     note: string | null;
 }
+// monthly_amount below zero withdraws from the account every month (取り崩し).
 
 export type ContributionPlanInput = Partial<Pick<ContributionPlan, 'account_id' | 'start_period' | 'monthly_amount' | 'annual_return' | 'note'>>;
 
@@ -67,9 +68,9 @@ export interface ScenarioConditions {
 }
 
 export interface ProjectedEvent extends ScenarioEvent {
-    /** Share of paths on which the event happens: its preceding event happened and its preconditions held. */
+    /** Share of paths on which the event happens: its preceding event (and, for a repayment, its borrowing) happened and its preconditions held. */
     executed_probability: number | null;
-    /** Share of paths on which it happens and net worth stays non-negative after it. */
+    /** Expenses only: share of paths on which it happens and net worth stays non-negative after it. */
     funded_probability: number | null;
     /** Happens on at least half of the paths. */
     on_likely_path: boolean;
@@ -104,8 +105,22 @@ export async function update(id: number, input: LifeScenarioUpdate): Promise<Lif
     return (await api.put<LifeScenario>(`/life-scenarios/${id}`, input)).data;
 }
 
-export async function makeGoal(id: number): Promise<LifeScenario> {
-    return (await api.post<LifeScenario>(`/life-scenarios/${id}/goal`)).data;
+/** What happens to the old goal's earmarks when another scenario becomes the goal (R11). */
+export type GoalEarmarkChoice = 'keep' | 'replace' | 'carry';
+
+export interface GoalChangePreview {
+    scenario: { id: number; name: string };
+    current_goal: { id: number; name: string } | null;
+    capsules: Array<{ capsule_id: number; capsule_name: string; event_name: string; claim: number; carry_to: string | null }>;
+    create: Array<{ event_id: number; name: string; account_name: string | null }>;
+}
+
+export async function goalPreview(id: number): Promise<GoalChangePreview> {
+    return (await api.get<GoalChangePreview>(`/life-scenarios/${id}/goal-preview`)).data;
+}
+
+export async function makeGoal(id: number, earmarks: GoalEarmarkChoice = 'keep'): Promise<LifeScenario> {
+    return (await api.post<LifeScenario>(`/life-scenarios/${id}/goal`, { earmarks })).data;
 }
 
 export async function remove(id: number): Promise<void> {

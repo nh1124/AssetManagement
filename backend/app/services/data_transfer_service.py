@@ -26,6 +26,7 @@ from ..domain.transfer import (
     remap_action_target_id,
     migrate_account_fields,
     migrate_goal_fields,
+    migrate_goal_v2,
 )
 from .data_health_service import check_data_health
 from .budget_lines import assign_plan_line_identity
@@ -179,6 +180,9 @@ def export_client(db: Session, client: models.Client) -> dict:
                         "condition_mode",
                         "direction",
                         "account_id",
+                        "interest_rate",
+                        "borrowing_event_id",
+                        "repeat_count",
                         "created_at",
                     ],
                 )
@@ -337,7 +341,7 @@ def export_client(db: Session, client: models.Client) -> dict:
                     **row_fields(capsule, ["id", "name", "target_amount", "monthly_contribution"]),
                     **row_fields(capsule, [
                         "capsule_type", "target_amount_source",
-                        "monthly_contribution_source", "created_at",
+                        "monthly_contribution_source", "goal_event_id", "created_at",
                     ]),
                 }
                 for capsule in db.query(models.Capsule)
@@ -382,10 +386,6 @@ def export_client(db: Session, client: models.Client) -> dict:
                 .filter(models.CapsuleRule.client_id == client.id)
                 .order_by(models.CapsuleRule.id)
                 .all()
-            ],
-            "goal_event_earmarks": [
-                row_fields(row, ["id", "life_event_id", "capsule_id", "share_bp"])
-                for row in db.query(models.GoalEventEarmark).filter_by(client_id=client.id).order_by(models.GoalEventEarmark.id).all()
             ],
             "fx_tracked_currencies": [
                 row_fields(row, ["currency", "created_at"])
@@ -465,6 +465,8 @@ def import_client(
         data = migrate_account_fields(data, money_client_currency(db, client.id))
     if version is None or version < 26:
         data = migrate_goal_fields(data, date.today().strftime("%Y-%m"))
+    if version is None or version < 27:
+        data = migrate_goal_v2(data)
 
     link_map: dict[int, int] = {}
     scenario_map: dict[int, int] = {}
@@ -494,7 +496,6 @@ def import_client(
         ).delete(synchronize_session=False)
 
         for model in [
-            models.GoalEventEarmark,
             models.GoalBudgetReflection,
             models.LifeEventCondition,
             models.HouseholdMember,
@@ -679,11 +680,17 @@ def import_client(
                 condition_mode=item.get("condition_mode", "all"),
                 direction=item.get("direction", "expense"),
                 account_id=account_map.get(item.get("account_id")),
+                interest_rate=item.get("interest_rate"),
+                repeat_count=item.get("repeat_count"),
                 created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
             )
             db.add(event)
             db.flush()
             event_map[old_id] = event.id
+        # A repayment names its borrowing, which may come later in the payload.
+        for item in data.get("life_events", []):
+            if item.get("borrowing_event_id") is not None:
+                db.get(models.LifeEvent, event_map[int(item["id"])]).borrowing_event_id = event_map.get(_int_or_none(item.get("borrowing_event_id")))
 
         for item in data.get("life_event_links", []):
             if legacy_graph and item["kind"] == "alternative":
@@ -763,6 +770,7 @@ def import_client(
                 capsule_type=item.get("capsule_type") or "manual",
                 target_amount_source=item.get("target_amount_source") or "manual",
                 monthly_contribution_source=item.get("monthly_contribution_source") or "manual",
+                goal_event_id=event_map.get(_int_or_none(item.get("goal_event_id"))),
                 created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
             )
             db.add(capsule)
@@ -808,12 +816,6 @@ def import_client(
             product.funding_capsule_id = capsule_map.get(old_capsule_id)
 
 
-
-        for item in data.get("goal_event_earmarks", []):
-            event_id, capsule_id = event_map.get(_int_or_none(item.get("life_event_id"))), capsule_map.get(_int_or_none(item.get("capsule_id")))
-            if event_id and capsule_id:
-                db.add(models.GoalEventEarmark(client_id=client.id, life_event_id=event_id, capsule_id=capsule_id,
-                                               share_bp=item.get("share_bp", 10000)))
 
         for item in data.get("capsule_drawdowns", []):
             db.add(models.CapsuleDrawdown(

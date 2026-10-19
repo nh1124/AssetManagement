@@ -94,6 +94,56 @@ def create_capsule(
     return capsule
 
 
+def create_goal_capsule(
+    db: Session, client_id: int, *, event_id: int, name: str, target_minor: int, account_id: int,
+    monthly_minor: int = 0, commit: bool = False,
+) -> models.Capsule:
+    """The earmark made for a goal event: named after it, set aside in the event's account."""
+    capsule = models.Capsule(
+        client_id=client_id, name=name, target_amount_minor=max(0, target_minor), monthly_contribution_minor=max(0, monthly_minor),
+        auto_post=False, capsule_type="manual", target_amount_source="manual", monthly_contribution_source="manual",
+        goal_event_id=event_id,
+    )
+    db.add(capsule)
+    db.flush()
+    set_funding_sources(db, client_id, capsule.id, [schemas.CapsuleFundingSourceInput(
+        account_id=account_id, target_amount=Money(capsule.target_amount_minor, money_client_currency(db, client_id)).to_float(),
+    )], commit=False)
+    _finish_write(db, client_id, capsule, commit=commit)
+    return capsule
+
+
+def goal_capsules(db: Session, client_id: int, event_ids) -> dict[int, models.Capsule]:
+    """{event_id: the earmark made for it} for the given events."""
+    ids = list(event_ids)
+    if not ids:
+        return {}
+    rows = db.query(models.Capsule).filter(
+        models.Capsule.client_id == client_id, models.Capsule.goal_event_id.in_(ids),
+    ).order_by(models.Capsule.id).all()
+    found: dict[int, models.Capsule] = {}
+    for capsule in rows:
+        found.setdefault(capsule.goal_event_id, capsule)
+    return found
+
+
+def relink_goal_capsule(db: Session, client_id: int, capsule_id: int, event_id: int | None) -> None:
+    """Hand a goal earmark to another event (the same event in the new goal), or release it."""
+    capsule = get_capsule(db, client_id, capsule_id)
+    if capsule is None:
+        raise NotFound("Capsule not found")
+    capsule.goal_event_id = event_id
+    db.flush()
+
+
+def set_goal_capsule_monthly(db: Session, client_id: int, capsule_id: int, monthly_minor: int) -> None:
+    """Keep a goal earmark's monthly figure at what the plan made from the goal sets aside now."""
+    capsule = get_capsule(db, client_id, capsule_id)
+    if capsule is not None:
+        capsule.monthly_contribution_minor = max(0, monthly_minor)
+        db.flush()
+
+
 def update_capsule(
     db: Session, client_id: int, capsule_id: int, patch: schemas.CapsuleUpdate,
     *, commit: bool = True,
@@ -484,6 +534,11 @@ def capsule_to_dict(db: Session, capsule: models.Capsule) -> dict:
         "linked_products": linked_products,
         "created_at": capsule.created_at,
         "progress_pct": round(progress_pct, 1),
+        "goal_event_id": capsule.goal_event_id,
+        # Made for an event of the current goal: the plan and the earmark list mark it ゴール.
+        "is_goal": capsule.goal_event_id is not None and db.query(models.LifeEvent.id).join(
+            models.LifeScenario, models.LifeScenario.id == models.LifeEvent.scenario_id,
+        ).filter(models.LifeEvent.id == capsule.goal_event_id, models.LifeScenario.is_goal.is_(True)).first() is not None,
         "funding_sources": [
             funding_source_to_dict(source) for source in capsule.funding_sources
         ],

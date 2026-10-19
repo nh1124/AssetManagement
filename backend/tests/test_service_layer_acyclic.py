@@ -76,7 +76,7 @@ LAYERS: dict[str, int] = {
     "goal_budget_record": 0,  # The applied reflections; models only.
     "notification_service": 0,  # Notification rows and the user's decisions; models only.
     "goal_service": 5,
-    "goal_earmark_service": 5,  # Which earmarks count toward goal events, and their progress.
+    "goal_earmark_service": 5,  # The progress the earmark made for each goal event gives.
     "contribution_plan_service": 5,  # 積立設定 records and their month-by-month resolution.
     "scenario_simulation": 5,  # Account-by-account paths, event execution and branches.
     "life_event_conditions": 5,  # Current assumptions compose existing readers.
@@ -100,6 +100,7 @@ LAYERS: dict[str, int] = {
     "registry_workflow": 6,
     "fx_workflow": 6,
     "depreciation_workflow": 6,
+    "goal_change_workflow": 6,
 }
 
 

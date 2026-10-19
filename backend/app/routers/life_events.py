@@ -128,18 +128,6 @@ def update_life_event(
     return updated
 
 
-@router.put("/{event_id}/earmarks")
-def replace_earmarks(
-    event_id: int,
-    payload: list[schemas.GoalEventEarmarkInput],
-    db: Session = Depends(get_db),
-    current_client: models.Client = Depends(get_current_client),
-):
-    """Replace which earmarks count toward this event, with their shares (percent)."""
-    goal_earmark_service.replace_links(db, current_client.id, event_id, [row.model_dump() for row in payload])
-    return goal_earmark_service.links(db, current_client.id, [event_id]).get(event_id, [])
-
-
 @router.delete("/{event_id}")
 def delete_life_event(
     event_id: int,

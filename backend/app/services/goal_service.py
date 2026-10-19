@@ -1,7 +1,7 @@
 """Own life-event records and the shared read scope for the adopted plan.
 
 Projection consumers depend on this owner so scenario copies cannot become real goals.
-A life event is a story fact only: earmark tracking lives in goal_earmark_service.
+A life event is a story fact; the earmark made for a goal event is the capsule service's.
 """
 
 from sqlalchemy.orm import Query, Session
@@ -9,7 +9,7 @@ from sqlalchemy.orm import Query, Session
 from .money_storage import minor_fields, money_client_currency
 
 from .. import models, schemas
-from ..domain.errors import NotFound
+from ..domain.errors import NotFound, Refused
 from .cache_service import invalidate_client
 from .life_scenario_scope import get as get_scenario, selected as selected_scenario
 
@@ -50,30 +50,53 @@ def list_goals(db: Session, client_id: int, scenario_id: int | None = None) -> l
 
 
 def copy_events(db: Session, client_id: int, source_id: int, target_id: int) -> dict[int, int]:
+    """Copy a scenario's events; a copied repayment repays the copy of its borrowing."""
     event_map = {}
+    copies = []
     for source in db.query(models.LifeEvent).filter_by(client_id=client_id, scenario_id=source_id).order_by(models.LifeEvent.id):
         values = {column.name: getattr(source, column.name)
-                  for column in models.LifeEvent.__table__.columns if column.name not in {"id", "scenario_id"}}
+                  for column in models.LifeEvent.__table__.columns if column.name not in {"id", "scenario_id", "borrowing_event_id"}}
         row = models.LifeEvent(**values, scenario_id=target_id)
         db.add(row)
         db.flush()
         event_map[source.id] = row.id
+        copies.append((source, row))
+    for source, row in copies:
+        row.borrowing_event_id = event_map.get(source.borrowing_event_id)
+    db.flush()
     return event_map
 
 
-def _validate_event_account(db: Session, client_id: int, account_id: int | None) -> None:
-    if account_id is not None:
-        account = db.get(models.Account, account_id)
-        if account is None or account.client_id != client_id:
-            raise NotFound("同じクライアントの口座・科目が見つかりません。")
+# Fields a patch may not clear: sent as null they mean "unchanged".
+_REQUIRED = {"direction", "condition_mode", "name", "target_date", "target_amount", "priority"}
+
+
+def _settle(db: Session, client_id: int, event: models.LifeEvent) -> None:
+    """Check the event as it will be saved, and clear what its kind does not use."""
+    if event.account_id is not None:
+        account = db.get(models.Account, event.account_id)
+        if account is None or account.client_id != client_id or account.account_type != "asset":
+            raise NotFound("同じクライアントの資産口座を選んでください。")
+    event.interest_rate = (event.interest_rate or 0.0) if event.direction == "borrowing" else None
+    if event.direction == "repayment":
+        borrowing = get_life_event(db, client_id, event.borrowing_event_id) if event.borrowing_event_id else None
+        if borrowing is None or borrowing.direction != "borrowing" or borrowing.scenario_id != event.scenario_id or borrowing.id == event.id:
+            raise Refused("同じシナリオの借入イベントを選んでください。", status_code=422)
+        event.repeat_count = event.repeat_count or 1
+    else:
+        event.borrowing_event_id = None
+        event.repeat_count = None
+    if event.id is not None and event.direction != "borrowing" and db.query(models.LifeEvent.id).filter_by(
+            client_id=client_id, borrowing_event_id=event.id).first():
+        raise Refused("この借入を返す返済イベントがあります。先に返済イベントを変更してください。", status_code=422)
 
 
 def create_goal_record(
     db: Session, client_id: int, payload: schemas.LifeEventCreate, *, commit: bool = True,
 ) -> models.LifeEvent:
     get_scenario(db, client_id, payload.scenario_id)
-    _validate_event_account(db, client_id, payload.account_id)
     db_event = models.LifeEvent(**minor_fields(payload.model_dump(), money_client_currency(db, client_id), 'target_amount'), client_id=client_id)
+    _settle(db, client_id, db_event)
     db.add(db_event)
     if commit:
         db.commit()
@@ -90,9 +113,15 @@ def update_goal(
     db_event = get_life_event(db, client_id, life_event_id)
     if db_event is None:
         return None
-    _validate_event_account(db, client_id, patch.account_id)
-    for key, value in minor_fields(patch.model_dump(exclude_unset=True), money_client_currency(db, client_id), "target_amount").items():
+    values = {key: value for key, value in patch.model_dump(exclude_unset=True).items()
+              if not (key in _REQUIRED and value is None)}
+    for key, value in minor_fields(values, money_client_currency(db, client_id), "target_amount").items():
         setattr(db_event, key, value)
+    try:
+        _settle(db, client_id, db_event)
+    except Exception:
+        db.rollback()
+        raise
     if commit:
         db.commit()
         db.refresh(db_event)

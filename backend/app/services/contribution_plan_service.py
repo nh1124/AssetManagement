@@ -1,4 +1,4 @@
-"""Own each scenario's 積立設定: per-account monthly contributions and yields over time."""
+"""Own each scenario's 積立設定: per-account monthly contributions or withdrawals and yields over time."""
 from __future__ import annotations
 
 import math
@@ -53,8 +53,9 @@ def _values(db: Session, client_id: int, values: dict) -> dict:
         result["start_period"] = values["start_period"]
     if "monthly_amount" in values:
         amount = values["monthly_amount"]
-        if isinstance(amount, bool) or not isinstance(amount, (int, float)) or not math.isfinite(amount) or amount < 0:
-            raise Refused("月額は0以上の数値で指定してください。", status_code=422)
+        # A negative amount withdraws from the account every month (取り崩し).
+        if isinstance(amount, bool) or not isinstance(amount, (int, float)) or not math.isfinite(amount):
+            raise Refused("月額は数値で指定してください。", status_code=422)
         result["monthly_amount_minor"] = Money.from_major(str(amount), money_client_currency(db, client_id)).minor
     if "annual_return" in values:
         rate = values["annual_return"]

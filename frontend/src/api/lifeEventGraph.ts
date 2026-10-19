@@ -21,9 +21,12 @@ export interface ScenarioEvent {
     resolved_date: string | null;
     target_amount: number;
     currency: string;
-    direction: 'expense' | 'income';
+    direction: 'expense' | 'income' | 'borrowing' | 'repayment';
     account_id: number | null;
     incoming_link_id: number | null;
+    interest_rate: number | null;
+    borrowing_event_id: number | null;
+    repeat_count: number | null;
 }
 
 export async function getLifeEventLinks(scenarioId?: number): Promise<LifeEventLink[]> {

@@ -20,8 +20,8 @@ from app.domain.transfer import migrate_goal_fields
 from app.routers.goal_budget import router as goal_budget_router
 from app.routers.life_events import router as events_router
 from app.routers.life_scenarios import router as scenarios_router
+from app.services import capsule_service
 from app.services import contribution_plan_service as plans
-from app.services import goal_earmark_service as earmarks
 from app.services import goal_plan_service, life_event_graph, life_scenario_service as scenarios
 from app.services.ledger_service import create_transaction
 from app.workflows import goal_budget_workflow
@@ -100,32 +100,6 @@ def test_contribution_plans_validate_account_period_and_uniqueness(db):
     assert (plan.monthly_amount_minor, plan.annual_return) == (40000, None)
 
 
-def test_goal_earmarks_give_progress_by_share_and_refuse_income_and_foreign(db):
-    scenario = goal(db)
-    savings = account(db, "貯蓄", balance=500000)
-    income = account(db, "臨時収入", kind="income")
-    wedding = event(db, scenario, "結婚", 300000, in_years(2))
-    bonus = event(db, scenario, "賞与", 100000, in_years(1), direction="income")
-    capsule = earmark(db, "結婚資金", savings)
-    create_transaction(db, client_id=1, date=TODAY, description="確保", amount_minor=200000, currency="JPY",
-                       legs=[Leg(savings.id, debit=200000, capsule_id=capsule.id), Leg(savings.id, credit=200000)])
-    db.commit()
-    earmarks.replace_links(db, 1, wedding.id, [{"capsule_id": capsule.id, "share": 50}])
-    row = next(item for item in earmarks.events_with_progress(db, 1) if item["id"] == wedding.id)
-    assert (row["current_funded"], row["gap"], row["progress_percentage"]) == (100000, 200000, 33.3)
-    assert row["earmarks"] == [{"capsule_id": capsule.id, "capsule_name": "結婚資金", "share": 50}]
-    with pytest.raises(Refused):
-        earmarks.replace_links(db, 1, bonus.id, [{"capsule_id": capsule.id}])
-    with pytest.raises(NotFound):
-        earmarks.replace_links(db, 2, wedding.id, [{"capsule_id": capsule.id}])
-    other = models.Capsule(client_id=2, name="他人", target_amount_minor=0, monthly_contribution_minor=0)
-    db.add(other)
-    db.commit()
-    with pytest.raises(NotFound):
-        earmarks.replace_links(db, 1, wedding.id, [{"capsule_id": other.id}])
-    assert income.account_type == "income"
-
-
 def test_duplicating_copies_the_story_and_contributions_not_earmarks_and_goal_only_flags(db):
     original = goal(db)
     savings = account(db, "貯蓄")
@@ -133,8 +107,8 @@ def test_duplicating_copies_the_story_and_contributions_not_earmarks_and_goal_on
     life_event_graph.create_link(db, 1, from_event_id=first.id, to_event_id=second.id, kind="after", offset_months=6)
     db.add(models.LifeEventCondition(client_id=1, life_event_id=second.id, metric="net_worth", comparator="gte", threshold_minor=10))
     plans.create_plan(db, 1, original.id, {"account_id": savings.id, "start_period": PERIOD, "monthly_amount": 5000})
-    capsule = earmark(db, "A資金", savings)
-    earmarks.replace_links(db, 1, first.id, [{"capsule_id": capsule.id}])
+    capsule = capsule_service.create_goal_capsule(db, 1, event_id=first.id, name="A", target_minor=1000, account_id=savings.id)
+    db.commit()
 
     copy = scenarios.duplicate(db, 1, original.id, "複製")
     copied = db.query(models.LifeEvent).filter_by(scenario_id=copy.id).order_by(models.LifeEvent.id).all()
@@ -142,12 +116,13 @@ def test_duplicating_copies_the_story_and_contributions_not_earmarks_and_goal_on
     assert db.query(models.LifeEventLink).filter(models.LifeEventLink.from_event_id == copied[0].id).one().offset_months == 6
     assert db.query(models.LifeEventCondition).filter_by(life_event_id=copied[1].id).count() == 1
     assert [(row.account_id, row.monthly_amount_minor) for row in db.query(models.ScenarioContributionPlan).filter_by(scenario_id=copy.id)] == [(savings.id, 5000)]
-    assert db.query(models.GoalEventEarmark).filter(models.GoalEventEarmark.life_event_id.in_([row.id for row in copied])).count() == 0
+    # A copied story makes no earmarks: they belong to the goal, not to the story.
+    assert db.query(models.Capsule).filter(models.Capsule.goal_event_id.in_([row.id for row in copied])).count() == 0
 
     scenarios.make_goal(db, 1, copy.id)
     assert (db.get(models.LifeScenario, copy.id).is_goal, db.get(models.LifeScenario, original.id).is_goal) == (True, False)
-    # The earmark link stays with the original story's event.
-    assert db.query(models.GoalEventEarmark).one().life_event_id == first.id
+    # Marking the goal alone moves no earmark.
+    assert db.get(models.Capsule, capsule.id).goal_event_id == first.id
 
 
 def test_simulation_runs_events_only_where_their_branch_and_preconditions_hold(db):
@@ -179,6 +154,7 @@ def test_a_branch_most_paths_take_reports_its_link(db):
     still(db)
     scenario = goal(db)
     savings = account(db, "貯蓄", balance=5_000_000)
+    plans.create_plan(db, 1, scenario.id, {"account_id": savings.id, "start_period": PERIOD, "annual_return": 0})
     parent = event(db, scenario, "転職", 0, in_years(1))
     child = event(db, scenario, "引越し", 300000, in_years(2), account_id=savings.id)
     link = life_event_graph.create_link(db, 1, from_event_id=parent.id, to_event_id=child.id, kind="after")
@@ -188,26 +164,32 @@ def test_a_branch_most_paths_take_reports_its_link(db):
 
 
 def plan_setup(db):
+    """A goal with a 30000 monthly contribution to savings and one event set aside there."""
     scenario = goal(db)
     savings = account(db, "貯蓄")
     plans.create_plan(db, 1, scenario.id, {"account_id": savings.id, "start_period": PERIOD, "monthly_amount": 30000})
-    capsule = earmark(db, "家電", savings, target=120000)
-    appliance = event(db, scenario, "家電の買い替え", 120000, months_ahead(12))
-    earmarks.replace_links(db, 1, appliance.id, [{"capsule_id": capsule.id}])
-    return scenario, savings, capsule
+    appliance = event(db, scenario, "家電の買い替え", 120000, months_ahead(12), account_id=savings.id)
+    return scenario, savings, appliance
 
 
 def test_the_plan_takes_earmarks_out_of_the_account_contribution_and_applies_once(db):
-    scenario, savings, capsule = plan_setup(db)
+    scenario, savings, appliance = plan_setup(db)
     assert goal_plan_service.reflection_notifications(db, 1, PERIOD)[0]["dedupe_key"] == f"goal_reflection:{scenario.id}:{PERIOD}"
     preview = goal_budget_workflow.preview(db, 1, PERIOD, PERIOD)
     assert {(row["kind"], row["new"]) for row in preview["changes"]} == {("capsule", 10000), ("account", 20000)}
+    made = next(row for row in preview["changes"] if row["kind"] == "capsule")
+    assert (made["new_capsule"], made["capsule_name"], made["event_id"]) == (True, "家電の買い替え", appliance.id)
     assert preview["warnings"] == []
     with pytest.raises(Conflict):
         goal_budget_workflow.apply(db, 1, PERIOD, PERIOD, "0" * 64)
     assert goal_budget_workflow.apply(db, 1, PERIOD, PERIOD, preview["fingerprint"])["applied"] == 2
+    # Applying made the event's earmark, named after it, in its account.
+    capsule = db.query(models.Capsule).filter_by(goal_event_id=appliance.id).one()
+    assert (capsule.name, capsule.target_amount_minor, capsule.monthly_contribution_minor, [source.account_id for source in capsule.funding_sources]) == (
+        "家電の買い替え", 120000, 10000, [savings.id])
     rows = db.query(models.MonthlyPlanLine).filter_by(client_id=1, is_active=True, source_kind="goal").all()
-    assert {(row.target_type, row.account_id, row.amount_minor) for row in rows} == {("capsule", savings.id, 10000), ("account", savings.id, 20000)}
+    assert {(row.target_type, row.target_id if row.target_type == "capsule" else None, row.account_id, row.amount_minor) for row in rows} == {
+        ("capsule", capsule.id, savings.id, 10000), ("account", None, savings.id, 20000)}
     again = goal_budget_workflow.preview(db, 1, PERIOD, PERIOD)
     assert not any(row["changed"] for row in again["changes"])
     check = goal_plan_service.plan_check(db, 1, PERIOD)
@@ -217,7 +199,7 @@ def test_the_plan_takes_earmarks_out_of_the_account_contribution_and_applies_onc
 
 
 def test_the_plan_warns_when_earmarks_exceed_the_contribution(db):
-    scenario, savings, capsule = plan_setup(db)
+    scenario, savings, appliance = plan_setup(db)
     plan_row = plans.list_plans(db, 1, scenario.id)[0]
     plans.update_plan(db, 1, plan_row.id, {"monthly_amount": 4000})
     preview = goal_budget_workflow.preview(db, 1, PERIOD, PERIOD)
@@ -235,7 +217,7 @@ def test_the_plan_warns_when_earmarks_exceed_the_contribution(db):
 
 def test_the_plan_counts_what_the_account_already_receives_and_keeps_those_rows(db):
     from app.services.budget_plan_store import create_plan_lines, resolve_budget_plan_id
-    scenario, savings, capsule = plan_setup(db)
+    scenario, savings, appliance = plan_setup(db)
     plan_id = resolve_budget_plan_id(db, 1)
     # A transfer the user planned by hand already covers part of the contribution.
     manual = create_plan_lines(db, 1, [{"plan_id": plan_id, "target_period": PERIOD, "line_type": "allocation", "target_type": "account",
@@ -337,8 +319,9 @@ def api(db):
 def test_http_conditions_contribution_plans_earmarks_and_plan_check(db, api):
     scenario = goal(db)
     savings = account(db, "貯蓄")
-    house = event(db, scenario, "家", 1000, in_years(2))
-    capsule = earmark(db, "頭金", savings)
+    house = event(db, scenario, "家", 1000, in_years(2), account_id=savings.id)
+    capsule = capsule_service.create_goal_capsule(db, 1, event_id=house.id, name="家", target_minor=1000, account_id=savings.id)
+    db.commit()
     created = request(api, "POST", f"/life-events/{house.id}/conditions", json={"metric": "net_worth", "comparator": "gte", "threshold_minor": 100})
     updated = request(api, "PUT", f"/life-events/{house.id}/conditions/{created.json()['id']}",
                       json={"metric": "net_worth", "comparator": "lte", "threshold_minor": 50, "note": "上限"})
@@ -348,11 +331,12 @@ def test_http_conditions_contribution_plans_earmarks_and_plan_check(db, api):
     assert record.status_code == 200 and record.json()["account_name"] == "貯蓄"
     assert request(api, "PUT", f"/life-scenarios/contribution-plans/{record.json()['id']}", json={"monthly_amount": 25000}).json()["monthly_amount"] == 25000
     assert [row["monthly_amount"] for row in request(api, "GET", f"/life-scenarios/{scenario.id}/contribution-plans").json()] == [25000]
-    linked = request(api, "PUT", f"/life-events/{house.id}/earmarks", json=[{"capsule_id": capsule.id, "share": 40}])
-    assert linked.json() == [{"capsule_id": capsule.id, "capsule_name": "頭金", "share": 40}]
-    assert request(api, "PUT", f"/life-events/{house.id}/earmarks", json=[{"capsule_id": capsule.id, "share": 140}]).status_code == 422
+    progress = request(api, "GET", "/life-events/with-progress").json()
+    assert progress[0]["earmark"] == {"capsule_id": capsule.id, "capsule_name": "家"}
     check = request(api, "GET", f"/goal-budget/plan-check?period={PERIOD}").json()
     assert (check["contribution"], check["planned"], check["reflected"]) == (25000, 0, False)
     assert request(api, "DELETE", f"/life-scenarios/contribution-plans/{record.json()['id']}").status_code == 200
     assert request(api, "DELETE", f"/life-events/{house.id}").status_code == 200
-    assert db.get(models.Capsule, capsule.id) is not None
+    # The earmark outlives its event; it simply stops belonging to the goal.
+    db.expire_all()
+    assert db.get(models.Capsule, capsule.id).goal_event_id is None

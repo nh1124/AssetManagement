@@ -214,12 +214,16 @@ export interface AiChangeRequest extends AiChangeRequestPreview {
 }
 
 
-/** A story fact of a scenario. Funding progress comes only from /life-events/with-progress. */
+export type LifeEventKind = 'expense' | 'income' | 'borrowing' | 'repayment';
+
+/** A story fact of a scenario. Funding progress comes only from /life-events/with-progress.
+ *  account_id is the asset account the event works through; for a repayment target_amount
+ *  is the monthly payment, repeated repeat_count times, repaying borrowing_event_id. */
 export interface LifeEvent {
     id: number;
     scenario_id: number;
     lineage: string;
-    direction: 'expense' | 'income';
+    direction: LifeEventKind;
     account_id: number | null;
     condition_mode: 'all' | 'any';
     name: string;
@@ -227,14 +231,10 @@ export interface LifeEvent {
     target_amount: number;
     priority: 1 | 2 | 3;
     note: string | null;
+    interest_rate: number | null;
+    borrowing_event_id: number | null;
+    repeat_count: number | null;
     created_at?: string | null;
-}
-
-/** An earmark counted toward a goal event (実績管理の設定), with the percent that counts. */
-export interface GoalEarmarkLink {
-    capsule_id: number;
-    capsule_name?: string;
-    share: number;
 }
 
 export interface LifeEventProgress extends LifeEvent {
@@ -242,7 +242,8 @@ export interface LifeEventProgress extends LifeEvent {
     gap: number;
     progress_percentage: number;
     months_remaining: number;
-    earmarks: GoalEarmarkLink[];
+    /** The earmark the plan made for the event (named after it), once it exists. */
+    earmark: { capsule_id: number; capsule_name: string } | null;
 }
 
 export type DepreciationMethod = 'none' | 'straight_line' | 'declining_balance';
@@ -606,6 +607,9 @@ export interface Capsule {
         recommended_monthly_reserve: number;
     }>;
     funding_sources?: CapsuleFundingSource[];
+    goal_event_id?: number | null;
+    /** Made for an event of the current goal: shown with ゴール. */
+    is_goal?: boolean;
 }
 
 /** What a capsule rule fires on. It reads as a statement about an entry's

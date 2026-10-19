@@ -112,7 +112,7 @@ def _seed(db, scenario, today):
                              funding_sources=[models.CapsuleFundingSource(client_id=1, account_id=cash.id, target_amount_minor=to_minor(200000, "JPY"))])
     db.add(capsule)
     db.flush()
-    db.add(models.GoalEventEarmark(client_id=1, life_event_id=goal.id, capsule_id=capsule.id))
+    capsule.goal_event_id = goal.id
     credit = db.query(models.JournalEntry).filter_by(transaction_id=lunch.id, account_id=cash.id).one()
     credit.capsule_id = capsule.id
     db.add(models.CapsuleDrawdown(client_id=1, capsule_id=capsule.id,

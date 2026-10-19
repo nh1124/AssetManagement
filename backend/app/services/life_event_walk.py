@@ -23,6 +23,9 @@ class ScenarioEvent:
     incoming_link_id: int | None
     direction: str = "expense"
     account_id: int | None = None
+    interest_rate: float | None = None
+    borrowing_event_id: int | None = None
+    repeat_count: int | None = None
 
 
 def _offset_date(source: date | None, months: int) -> date | None:
@@ -70,6 +73,7 @@ def walk(db: Session, client_id: int, scenario_id: int) -> list[ScenarioEvent]:
         resolved[event_id] = ScenarioEvent(
             event.id, event.name, resolved_date, event.target_amount or 0.0, currency,
             link.id if link else None, event.direction, event.account_id,
+            event.interest_rate, event.borrowing_event_id, event.repeat_count,
         )
         for edge in outgoing[event_id]:
             if edge.to_event_id not in incoming or edge.id < incoming[edge.to_event_id].id:

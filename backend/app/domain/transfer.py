@@ -8,7 +8,7 @@ import re
 from datetime import date, datetime
 from typing import Any
 
-EXPORT_VERSION = 26
+EXPORT_VERSION = 27
 
 DATA_COLLECTIONS = [
     "accounts",
@@ -34,7 +34,6 @@ DATA_COLLECTIONS = [
     "capsule_drawdowns",
     "capsule_funding_sources",
     "capsule_rules",
-    "goal_event_earmarks",
     "fx_tracked_currencies",
     "exchange_rates",
     "goal_budget_reflections",
@@ -44,7 +43,8 @@ DATA_COLLECTIONS = [
 # dropped them. Older exports still carry them: their manifest checksums still
 # verify, but the rows are never imported.
 RETIRED_COLLECTIONS = {"recurring_transactions": 24, "life_scenario_choices": 22, "quick_templates": None,
-                       "life_scenario_account_returns": 26, "milestones": 26, "simulation_scenarios": 26, "goal_baselines": 26}
+                       "life_scenario_account_returns": 26, "milestones": 26, "simulation_scenarios": 26, "goal_baselines": 26,
+                       "goal_event_earmarks": 27}
 
 
 def _retired(version: int | None) -> set[str]:
@@ -260,8 +260,8 @@ def validate_import_payload(
     check_ref("capsule_rules", "trigger_account_id", "accounts")
     check_ref("scenario_contribution_plans", "scenario_id", "life_scenarios", required=True)
     check_ref("scenario_contribution_plans", "account_id", "accounts", required=True)
-    check_ref("goal_event_earmarks", "life_event_id", "life_events", required=True)
-    check_ref("goal_event_earmarks", "capsule_id", "capsules", required=True)
+    check_ref("capsules", "goal_event_id", "life_events")
+    check_ref("life_events", "borrowing_event_id", "life_events")
     check_ref("monthly_plan_lines", "account_id", "accounts")
     check_ref("monthly_plan_lines", "source_account_id", "accounts")
     check_ref("monthly_plan_lines", "plan_id", "budget_plans")
@@ -293,17 +293,10 @@ def validate_import_payload(
         key = (_as_int(item.get("scenario_id")), _as_int(item.get("account_id")), item.get("start_period"))
         amount, rate = item.get("monthly_amount_minor"), item.get("annual_return")
         valid = isinstance(key[2], str) and re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", key[2]) is not None and key not in plan_keys
-        valid = valid and type(amount) is int and amount >= 0 and (rate is None or (type(rate) in (int, float) and math.isfinite(rate)))
+        valid = valid and type(amount) is int and (rate is None or (type(rate) in (int, float) and math.isfinite(rate)))
         if not valid:
             issue("error", "invalid_contribution_plan", "積立設定のレコードが不正または重複しています。", "scenario_contribution_plans", item.get("id"))
         plan_keys.add(key)
-    earmark_pairs = set()
-    for item in data.get("goal_event_earmarks", []):
-        pair = (_as_int(item.get("life_event_id")), _as_int(item.get("capsule_id")))
-        share = item.get("share_bp")
-        if type(share) is not int or not 0 <= share <= 10000 or pair in earmark_pairs:
-            issue("error", "invalid_goal_earmark", "実績管理の設定が不正または重複しています。", "goal_event_earmarks", item.get("id"))
-        earmark_pairs.add(pair)
     pairs = set()
     accounts_by_id = {_as_int(row.get("id")): row for row in data.get("accounts", [])}
     for item in data.get("life_scenario_account_returns", []):
@@ -335,8 +328,8 @@ def validate_import_payload(
         if type(horizon) is not int or not 1 <= horizon <= 60:
             issue("error", "invalid_horizon_years", "試算期間は1〜60年で指定してください。", "simulation_configs", item.get("id"))
     for item in data.get("life_events", []):
-        if item.get("direction", "expense") not in {"expense", "income"}:
-            issue("error", "invalid_direction", "収支の種類は expense または income を指定してください。", "life_events", item.get("id"))
+        if item.get("direction", "expense") not in {"expense", "income", "borrowing", "repayment"}:
+            issue("error", "invalid_direction", "イベントの種別は expense・income・borrowing・repayment のいずれかです。", "life_events", item.get("id"))
         if item.get("condition_mode", "all") not in {"all", "any"}:
             issue("error", "invalid_condition_mode", "Condition mode must be all or any.", "life_events", item.get("id"))
     reference_collections = {"account_balance": "accounts", "capsule_claim": "capsules", "goal_progress": "life_events", "member_age": "household_members"}
@@ -668,4 +661,25 @@ def migrate_goal_fields(data: dict, period: str) -> dict:
         row.pop("events", None)
     for collection in ("life_scenario_account_returns", "milestones", "simulation_scenarios", "goal_baselines"):
         result.pop(collection, None)
+    return result
+
+
+def migrate_goal_v2(data: dict) -> dict:
+    """Upgrade a verified pre-v27 payload the way migration 20261019_0079 upgrades the database.
+
+    An earmark linked to goal events (実績管理の設定) becomes the earmark made for its first
+    linked event; an event's account that is not an asset account is dropped.
+    """
+    from copy import deepcopy
+    result = deepcopy(data)
+    first: dict[int, int] = {}
+    for link in sorted(result.pop("goal_event_earmarks", []), key=lambda row: _as_int(row.get("id")) or 0):
+        if (link.get("share_bp") or 0) > 0:
+            first.setdefault(_as_int(link.get("capsule_id")), _as_int(link.get("life_event_id")))
+    for capsule in result.get("capsules", []):
+        capsule["goal_event_id"] = first.get(_as_int(capsule.get("id")))
+    assets = {_as_int(row.get("id")) for row in result.get("accounts", []) if row.get("account_type") == "asset"}
+    for event in result.get("life_events", []):
+        if _as_int(event.get("account_id")) not in assets:
+            event["account_id"] = None
     return result

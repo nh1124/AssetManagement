@@ -54,6 +54,7 @@ function EarmarksForClient({ currency, clientName }: { currency: string; clientN
                                 <button type="button" disabled={disabled || editor !== null} onClick={(event) => { event.stopPropagation(); setSelectedId(capsule.id); }} aria-haspopup="dialog" aria-label={`${capsule.name}を開く`} className="rounded text-left hover:text-[var(--studio-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)] disabled:opacity-40">
                                     {capsule.name}
                                 </button>
+                                {capsule.is_goal && <span className="ml-2 rounded bg-[var(--studio-bg)] px-1.5 py-0.5 text-[11px] font-normal text-[var(--studio-text-muted)]">ゴール</span>}
                             </th>
                             <td className="whitespace-nowrap px-5 py-3 text-right tabular-nums">{formatCurrency(capsule.current_balance, currency)}</td>
                             <td className="whitespace-nowrap px-5 py-3 text-right tabular-nums">{formatCurrency(capsule.target_amount, currency)}</td>

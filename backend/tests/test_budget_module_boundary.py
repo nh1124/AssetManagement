@@ -44,6 +44,8 @@ PUBLIC: dict[str, set[str]] = {
         "active_lines_for_periods",
         # It also retires the rows a reflection replaces, without revalidating them.
         "retire_plan_lines",
+        # A goal change retires the old goal's rows from this month on and those of its deleted earmarks.
+        "lines_written_by",
         "create_plan",
         "create_plan_line",
         "create_plan_lines",
