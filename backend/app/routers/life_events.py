@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
-from ..services import goal_earmark_service, life_event_conditions, life_event_graph
+from ..services import event_funding_service, goal_earmark_service, life_event_conditions, life_event_graph
 from ..services.goal_service import create_goal_record, delete_goal, list_goals, update_goal
 
 router = APIRouter(prefix="/life-events", tags=["life_events"])
@@ -102,7 +102,7 @@ def get_life_events_progress(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
-    """Events with their linked earmarks (実績管理の設定) and the funding those give."""
+    """Events with the earmark made for each goal event and what it holds."""
     return goal_earmark_service.events_with_progress(db, current_client.id, scenario_id)
 
 
@@ -126,6 +126,17 @@ def update_life_event(
     if updated is None:
         raise HTTPException(status_code=404, detail="Life event not found")
     return updated
+
+
+@router.put("/{event_id}/fundings", response_model=schemas.LifeEvent)
+def set_life_event_fundings(
+    event_id: int,
+    fundings: list[schemas.LifeEventFundingInput],
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    """資金の割り当て: which asset accounts pay (or receive) the event, by share; replaces the list."""
+    return event_funding_service.set_fundings(db, current_client.id, event_id, fundings)
 
 
 @router.delete("/{event_id}")

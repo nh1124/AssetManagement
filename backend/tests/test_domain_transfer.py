@@ -48,7 +48,7 @@ def _checksum_sample(amount=12.5):
 EMPTY_TABLE_DIGEST = "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
 SAMPLE_DIGEST = "b0af7658403f3086011bd58bd60d0e583d974b3fd2530c69b845a2f300682108"
 # Quick templates left the format (E4); the sample data byte digest stays fixed.
-PAYLOAD_DIGEST = "3da2fbc5526906217d44c093745c6ce6fe40e27a6f1391546a09607ee9a1bf0c"
+PAYLOAD_DIGEST = "e63e45c2db84058acb3d33ee044b7f663556b82c1776909ea550c3cc468d7ed2"
 # The same sample as exported while quick_templates was still a collection.
 PRE_E4_PAYLOAD_DIGEST = "8ce363d73785ffbc2a3c6d9e1b53da7bbda72874400f841d84c1c4ecba0e5d14"
 TABLE_DIGESTS = {
@@ -59,6 +59,7 @@ TABLE_DIGESTS = {
     "registry_entries": EMPTY_TABLE_DIGEST,
     "transaction_batches": EMPTY_TABLE_DIGEST,
     "life_events": EMPTY_TABLE_DIGEST,
+    "life_event_fundings": EMPTY_TABLE_DIGEST,
     "life_event_links": EMPTY_TABLE_DIGEST,
     "life_scenarios": EMPTY_TABLE_DIGEST,
     "scenario_contribution_plans": EMPTY_TABLE_DIGEST,
@@ -101,9 +102,9 @@ def test_checksums_match_existing_backups_byte_for_byte():
     assert _sha256({"data": sample, "checksums": checksums}) == PAYLOAD_DIGEST
 
 
-def test_export_version_is_27_with_goal_event_earmarks_retired():
-    # Earmarks link to goal events themselves (capsules.goal_event_id) instead of a separate table.
-    assert EXPORT_VERSION == 27
+def test_export_version_is_28_with_event_fundings():
+    # An event's accounts and shares (資金の割り当て) replace the account an event named itself.
+    assert EXPORT_VERSION == 28
 
 
 @pytest.mark.parametrize("value, expected", [
@@ -157,7 +158,7 @@ def test_malformed_dates_raise_instead_of_becoming_null(parser, value):
 def test_manifest_uses_only_supplied_metadata_and_format_checksums():
     sample = _checksum_sample()
     assert build_manifest(7, sample, "2026-10-05T06:07:08", "revision-123") == {
-        "export_version": 27,
+        "export_version": 28,
         "exported_at": "2026-10-05T06:07:08",
         "application": "AssetManagement",
         "alembic_revision": "revision-123",
@@ -178,7 +179,7 @@ def test_export_rows_serialize_dates_and_keep_other_values():
 def test_valid_payload_accepts_balanced_journal_and_matching_manifest():
     sample = _checksum_sample()
     manifest = {"counts": SAMPLE_COUNTS, "checksums": TABLE_DIGESTS, "payload_checksum": PAYLOAD_DIGEST}
-    assert validate_import_payload(sample, 27, manifest) == {
+    assert validate_import_payload(sample, 28, manifest) == {
         "status": "valid", "error_count": 0, "warning_count": 0,
         "counts": SAMPLE_COUNTS, "issues": [],
     }
@@ -187,69 +188,69 @@ def test_valid_payload_accepts_balanced_journal_and_matching_manifest():
 def test_a_manifest_from_before_quick_templates_were_removed_still_verifies():
     sample = _checksum_sample()
     # A v23 manifest names the collections of its day, not those added or retired since.
-    added = {"fx_tracked_currencies", "scenario_contribution_plans"}
+    added = {"fx_tracked_currencies", "scenario_contribution_plans", "life_event_fundings"}
     retired = ("recurring_transactions", "quick_templates", "life_scenario_account_returns", "milestones", "simulation_scenarios", "goal_baselines")
     checksums = {**{key: value for key, value in TABLE_DIGESTS.items() if key not in added}, **dict.fromkeys(retired, EMPTY_TABLE_DIGEST)}
     counts = {**{key: value for key, value in SAMPLE_COUNTS.items() if key not in added}, **dict.fromkeys(retired, 0)}
     manifest = {"counts": counts, "checksums": checksums, "payload_checksum": PRE_E4_PAYLOAD_DIGEST}
     assert [row["code"] for row in validate_import_payload(sample, 23, manifest)["issues"]] == ["older_version"]
     # Rows in the retired collection are not reported, and never counted.
-    result = validate_import_payload({"quick_templates": [{"id": 1, "default_from_account_id": 99}]}, 27)
+    result = validate_import_payload({"quick_templates": [{"id": 1, "default_from_account_id": 99}]}, 28)
     assert (result["issues"], "quick_templates" in result["counts"]) == ([], False)
 
 
 @pytest.mark.parametrize("data, version, manifest, expected", [
-    pytest.param({"unknown": []}, 27, None, {
+    pytest.param({"unknown": []}, 28, None, {
         "severity": "warning", "code": "unknown_collection",
         "detail": "This collection is not imported by this application version.", "collection": "unknown",
     }, id="unknown-collection"),
-    pytest.param({}, 28, None, {
+    pytest.param({}, 29, None, {
         "severity": "error", "code": "unsupported_version",
-        "detail": "Export version 28 is newer than supported version 27.",
+        "detail": "Export version 29 is newer than supported version 28.",
     }, id="unsupported-version"),
     pytest.param({}, 7, None, {
         "severity": "warning", "code": "older_version",
         "detail": "Export version 7 will be imported with compatibility defaults.",
     }, id="older-version"),
-    pytest.param({"accounts": [{}]}, 27, None, {
+    pytest.param({"accounts": [{}]}, 28, None, {
         "severity": "error", "code": "missing_id", "detail": "Row 0 is missing a valid id.",
         "collection": "accounts", "field": "id",
     }, id="missing-id"),
-    pytest.param({"accounts": [{"id": 1}, {"id": "1"}]}, 27, None, {
+    pytest.param({"accounts": [{"id": 1}, {"id": "1"}]}, 28, None, {
         "severity": "error", "code": "duplicate_id", "detail": "Duplicate id 1.",
         "collection": "accounts", "item_id": 1, "field": "id",
     }, id="duplicate-id"),
-    pytest.param({"capsule_rules": [{"id": 1, "capsule_id": "bad"}]}, 27, None, {
+    pytest.param({"capsule_rules": [{"id": 1, "capsule_id": "bad"}]}, 28, None, {
         "severity": "error", "code": "invalid_reference", "detail": "capsule_id is not a valid integer id.",
         "collection": "capsule_rules", "item_id": 1, "field": "capsule_id",
     }, id="invalid-reference"),
-    pytest.param({"capsule_rules": [{"id": 1}]}, 27, None, {
+    pytest.param({"capsule_rules": [{"id": 1}]}, 28, None, {
         "severity": "error", "code": "missing_reference", "detail": "capsule_id is required.",
         "collection": "capsule_rules", "item_id": 1, "field": "capsule_id",
     }, id="required-reference"),
-    pytest.param({"transactions": [{"id": 10, "amount": 12.5}]}, 27, None, {
+    pytest.param({"transactions": [{"id": 10, "amount": 12.5}]}, 28, None, {
         "severity": "error", "code": "journal_entries_missing",
         "detail": "Each transaction must have at least two journal entries.",
         "collection": "transactions", "item_id": 10,
     }, id="missing-journal"),
-    pytest.param(_checksum_sample(amount="bad"), 27, None, {
+    pytest.param(_checksum_sample(amount="bad"), 28, None, {
         "severity": "error", "code": "journal_amount_invalid",
         "detail": "Transaction and journal amounts must be numeric.", "collection": "transactions", "item_id": 10,
     }, id="nonnumeric-amount"),
-    pytest.param(_checksum_sample(amount=13), 27, None, {
+    pytest.param(_checksum_sample(amount=13), 28, None, {
         "severity": "error", "code": "journal_unbalanced",
         "detail": "Journal totals must satisfy debit=credit=amount; got debit=12.5, credit=12.5, amount=13.0.",
         "collection": "transactions", "item_id": 10,
     }, id="unbalanced-journal"),
-    pytest.param({"monthly_plan_lines": [{"id": 1, "target_type": "product", "target_id": 99}]}, 27, None, {
+    pytest.param({"monthly_plan_lines": [{"id": 1, "target_type": "product", "target_id": 99}]}, 28, None, {
         "severity": "error", "code": "missing_reference", "detail": "target_id points to missing products id 99.",
         "collection": "monthly_plan_lines", "item_id": 1, "field": "target_id",
     }, id="dangling-plan-target"),
-    pytest.param({}, 27, {"counts": {"accounts": 1}}, {
+    pytest.param({}, 28, {"counts": {"accounts": 1}}, {
         "severity": "error", "code": "count_mismatch", "detail": "Manifest count 1 does not match payload count 0.",
         "collection": "accounts",
     }, id="count-mismatch"),
-    pytest.param({}, 27, {"checksums": {"accounts": "bad"}}, {
+    pytest.param({}, 28, {"checksums": {"accounts": "bad"}}, {
         "severity": "warning", "code": "checksum_mismatch",
         "detail": "Collection checksum does not match the export manifest. This can happen with older exports after JSON number normalization.",
         "collection": "accounts",
@@ -258,12 +259,12 @@ def test_a_manifest_from_before_quick_templates_were_removed_still_verifies():
         {"id": 1, "scenario_id": 1, "lineage": "00000000-0000-4000-8000-000000000001"},
         {"id": 2, "scenario_id": 1, "lineage": "00000000-0000-4000-8000-000000000002"}], "life_event_links": [
         {"id": 1, "from_event_id": 1, "to_event_id": 2, "kind": "after", "adopted": "false"},
-    ]}, 27, None, {
+    ]}, 28, None, {
         "severity": "error", "code": "invalid_event_link",
         "detail": "Event link adoption must be a boolean.",
         "collection": "life_event_links", "item_id": 1,
     }, id="non-boolean-adoption"),
-    pytest.param({}, 27, {"payload_checksum": "bad"}, {
+    pytest.param({}, 28, {"payload_checksum": "bad"}, {
         "severity": "warning", "code": "payload_checksum_mismatch",
         "detail": "Payload checksum does not match the export manifest. This can happen with older exports after JSON number normalization.",
     }, id="payload-checksum-mismatch"),

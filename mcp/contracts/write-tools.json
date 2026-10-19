@@ -166,7 +166,7 @@
     "body": "object",
     "source": "src/tools/life-events.ts",
     "path_fragment": "/life-events/",
-    "allowed_fields": ["scenario_id", "name", "direction", "account_id", "target_date", "target_amount", "priority", "note", "condition_mode", "interest_rate", "borrowing_event_id", "repeat_count"],
+    "allowed_fields": ["scenario_id", "name", "direction", "target_date", "target_amount", "priority", "note", "condition_mode", "interest_rate", "borrowing_event_id", "repeat_count"],
     "required_fields": ["scenario_id", "name", "target_date", "target_amount"]
   },
   {
@@ -176,8 +176,18 @@
     "body": "object",
     "source": "src/tools/life-events.ts",
     "path_fragment": "/life-events/${eventId}",
-    "allowed_fields": ["name", "direction", "account_id", "target_date", "target_amount", "priority", "note", "condition_mode", "interest_rate", "borrowing_event_id", "repeat_count"],
+    "allowed_fields": ["name", "direction", "target_date", "target_amount", "priority", "note", "condition_mode", "interest_rate", "borrowing_event_id", "repeat_count"],
     "required_fields": []
+  },
+  {
+    "tool": "life_events_fundings_set",
+    "method": "put",
+    "path": "/life-events/{event_id}/fundings",
+    "body": "array",
+    "source": "src/tools/life-events.ts",
+    "path_fragment": "/life-events/${eventId}/fundings",
+    "allowed_fields": ["account_id", "share"],
+    "required_fields": ["account_id", "share"]
   },
   {
     "tool": "life_events_delete",

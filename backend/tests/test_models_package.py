@@ -9,14 +9,14 @@ from app import models
 from app.database import Base
 
 
-# WP15 replaces milestones, baselines and account returns with contribution plans and goal earmarks.
-EXPECTED_METADATA_SHA256 = "3d5f82a1da8869572c88200bbd885bc6d0cfa2ec61c8c010594dd2205aa9e764"
+# WP21 moves an event's account into life_event_fundings (資金の割り当て).
+EXPECTED_METADATA_SHA256 = "d4ec53f8ebcda25914ac4e3ff23992a554fcf6f2f72bd54298af358d633b96d4"
 
 MODEL_NAMES = (
     "Client", "ClientMfaSetting", "ClientRecoveryCode",
     "Account", "JournalEntry", "Transaction", "TransactionProposal",
     "TransactionBatch", "ExchangeRate", "FxTrackedCurrency", "Product",
-    "RegistryEntry", "LifeEvent", "LifeEventLink", "HouseholdMember", "LifeEventCondition",
+    "RegistryEntry", "LifeEvent", "LifeEventFunding", "LifeEventLink", "HouseholdMember", "LifeEventCondition",
     "BudgetPlan", "MonthlyPlanLine", "PeriodReview", "MonthlyAction", "PeriodClose",
     "AiOperationPolicy", "AiAuditLog", "AiChangeRequest",
     "SimulationConfig",
@@ -90,8 +90,8 @@ def _metadata_snapshot():
 
 def test_metadata_matches_the_minor_unit_schema():
     snapshot = _metadata_snapshot()
-    assert len(snapshot["table_names"]) == 34
-    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 385
+    assert len(snapshot["table_names"]) == 35
+    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 388
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == EXPECTED_METADATA_SHA256
 

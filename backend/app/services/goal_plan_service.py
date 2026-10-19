@@ -1,11 +1,11 @@
 """Compute the plan the goal asks for, from its 積立設定 and its events' earmark settings.
 
 For every month of the range:
-- each goal expense event with an account gets an earmark row: the rest of what it
-  needs (target − what its earmark holds − what earlier months of the range already
-  plan), spread evenly over the months left to its date (R8), set aside in the
-  event's account. The earmark is the one made for the event (capsules.goal_event_id);
-  apply creates it, named after the event, when it does not exist yet;
+- each goal expense event with a 資金の割り当て gets an earmark row per account: the rest
+  of that account's part (its share of the target − what the earmark holds there − what
+  earlier months of the range already plan), spread evenly over the months left to its
+  date (R8). The earmark is the one made for the event (capsules.goal_event_id); apply
+  creates it, named after the event, with a funding source per account;
 - each 使用口座 with a positive monthly amount gets an allocation row: the amount less
   what its earmarks take and less what the plan already puts into it otherwise
   (automatic transfers, rows typed by hand, earmarks the goal does not make), so the
@@ -31,6 +31,7 @@ from .budget_plan_service import month_plan_lines
 from .budget_plan_store import active_lines_for_periods
 from .capsule_service import claimed_minor, goal_capsules
 from .contribution_plan_service import resolve
+from .event_funding_service import parts, shares
 from .goal_service import list_goals
 from .life_scenario_scope import get_goal
 from .money_storage import money_client_currency
@@ -68,9 +69,16 @@ def _goal(db: Session, client_id: int) -> models.LifeScenario:
 
 
 def earmarked_events(db: Session, client_id: int, goal: models.LifeScenario) -> list[models.LifeEvent]:
-    """The goal's expense events that set money aside in an account."""
-    return [event for event in list_goals(db, client_id, goal.id)
-            if event.direction == "expense" and event.target_date and event.account_id]
+    """The goal's expense events that set money aside: those with a 資金の割り当て."""
+    events = [event for event in list_goals(db, client_id, goal.id) if event.direction == "expense" and event.target_date]
+    funded = shares(db, [event.id for event in events])
+    return [event for event in events if funded.get(event.id)]
+
+
+def earmark_parts(db: Session, events: list[models.LifeEvent]) -> dict[int, dict[int, int]]:
+    """{event_id: {account_id: minor}}: each event's target split by its accounts' shares."""
+    funded = shares(db, [event.id for event in events])
+    return {event.id: parts(event.target_amount_minor or 0, funded.get(event.id, [])) for event in events}
 
 
 def _other_allocations(db: Session, client_id: int, period: str, plan_id: int | None, tracked: set[int], currency: str) -> dict[int, int]:
@@ -105,12 +113,14 @@ def plan(db: Session, client_id: int, start: str, end: str, plan_id: int | None)
     names = {account.id: account.name for account in db.query(models.Account).filter_by(client_id=client_id).all()}
     capsule_names = {capsule.id: capsule.name for capsule in db.query(models.Capsule).filter_by(client_id=client_id).all()}
     events = earmarked_events(db, client_id, goal)
+    targets = earmark_parts(db, events)
     existing = goal_capsules(db, client_id, [event.id for event in events])
     tracked = {capsule.id for capsule in existing.values()}
-    claims = {event.id: claimed_minor(db, client_id, existing[event.id].id).get(currency, 0) if event.id in existing else 0
-              for event in events}
+    claims = {(event.id, account_id): claimed_minor(db, client_id, existing[event.id].id, account_id).get(currency, 0)
+              if event.id in existing else 0
+              for event in events for account_id in targets[event.id]}
     stored = [line for line in active_lines_for_periods(db, client_id, plan_id, periods) if line.source_kind == GOAL_SOURCE]
-    planned: dict[int, int] = {}
+    planned: dict[tuple[int, int], int] = {}
     changes, months = [], []
     warned: dict[str, list[str]] = {}
     for period in periods:
@@ -121,14 +131,16 @@ def plan(db: Session, client_id: int, start: str, end: str, plan_id: int | None)
             left = _index(event.target_date.strftime("%Y-%m")) - _index(period)
             if left < 0:
                 continue
-            remaining = max(0, (event.target_amount_minor or 0) - claims[event.id] - planned.get(event.id, 0))
-            monthly = remaining // max(1, left)
-            planned[event.id] = planned.get(event.id, 0) + monthly
             capsule = existing.get(event.id)
-            key = ("capsule", str(capsule.id) if capsule is not None else f"event:{event.id}", event.account_id)
-            wanted[key] = monthly
-            made_for[key] = event
-            taken[event.account_id] = taken.get(event.account_id, 0) + monthly
+            for account_id, target in targets[event.id].items():
+                part = (event.id, account_id)
+                remaining = max(0, target - claims[part] - planned.get(part, 0))
+                monthly = remaining // max(1, left)
+                planned[part] = planned.get(part, 0) + monthly
+                key = ("capsule", str(capsule.id) if capsule is not None else f"event:{event.id}", account_id)
+                wanted[key] = monthly
+                made_for[key] = event
+                taken[account_id] = taken.get(account_id, 0) + monthly
         contribution_total = 0
         other = _other_allocations(db, client_id, period, plan_id, tracked, currency)
         for account_id in sorted({plan.account_id for plan in plans}):

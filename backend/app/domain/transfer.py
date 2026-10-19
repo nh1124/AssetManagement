@@ -8,7 +8,7 @@ import re
 from datetime import date, datetime
 from typing import Any
 
-EXPORT_VERSION = 27
+EXPORT_VERSION = 28
 
 DATA_COLLECTIONS = [
     "accounts",
@@ -18,6 +18,7 @@ DATA_COLLECTIONS = [
     "registry_entries",
     "transaction_batches",
     "life_events",
+    "life_event_fundings",
     "life_event_links",
     "life_scenarios",
     "scenario_contribution_plans",
@@ -244,7 +245,10 @@ def validate_import_payload(
     check_ref("journal_entries", "account_id", "accounts", required=True)
     check_ref("journal_entries", "capsule_id", "capsules")
     check_ref("life_event_conditions", "life_event_id", "life_events", required=True)
+    # Only present before v28, when an event named one account itself.
     check_ref("life_events", "account_id", "accounts", required=False)
+    check_ref("life_event_fundings", "life_event_id", "life_events", required=True)
+    check_ref("life_event_fundings", "account_id", "accounts", required=True)
     check_ref("life_event_links", "from_event_id", "life_events", required=True)
     check_ref("life_event_links", "to_event_id", "life_events", required=True)
     if not legacy:
@@ -332,6 +336,19 @@ def validate_import_payload(
             issue("error", "invalid_direction", "イベントの種別は expense・income・borrowing・repayment のいずれかです。", "life_events", item.get("id"))
         if item.get("condition_mode", "all") not in {"all", "any"}:
             issue("error", "invalid_condition_mode", "Condition mode must be all or any.", "life_events", item.get("id"))
+    funding_pairs: set[tuple] = set()
+    funding_totals: dict[int | None, int] = {}
+    asset_ids = {_as_int(row.get("id")) for row in data.get("accounts", []) if row.get("account_type") == "asset"}
+    for item in data.get("life_event_fundings", []):
+        pair = (_as_int(item.get("life_event_id")), _as_int(item.get("account_id")))
+        share = item.get("share_bp")
+        if type(share) is not int or not 0 < share <= 10000 or pair in funding_pairs or pair[1] not in asset_ids:
+            issue("error", "invalid_event_funding", "資金の割り当ては資産口座ごとに 1 件、割合は 0 より大きく 100% 以下にしてください。", "life_event_fundings", item.get("id"))
+        funding_pairs.add(pair)
+        funding_totals[pair[0]] = funding_totals.get(pair[0], 0) + (share if type(share) is int else 0)
+    for event_id, total in funding_totals.items():
+        if total > 10000:
+            issue("error", "invalid_event_funding_total", "1 つのイベントの資金の割り当ては合計 100% 以下にしてください。", "life_event_fundings", event_id)
     reference_collections = {"account_balance": "accounts", "capsule_claim": "capsules", "goal_progress": "life_events", "member_age": "household_members"}
     for item in data.get("life_event_conditions", []):
         metric = item.get("metric")
@@ -682,4 +699,22 @@ def migrate_goal_v2(data: dict) -> dict:
     for event in result.get("life_events", []):
         if _as_int(event.get("account_id")) not in assets:
             event["account_id"] = None
+    return result
+
+
+def migrate_event_fundings(data: dict) -> dict:
+    """Upgrade a verified pre-v28 payload the way migration 20261020_0081 upgrades the database.
+
+    An event's own asset account becomes its 資金の割り当て for the whole event.
+    """
+    from copy import deepcopy
+    result = deepcopy(data)
+    assets = {_as_int(row.get("id")) for row in result.get("accounts", []) if row.get("account_type") == "asset"}
+    fundings = result.setdefault("life_event_fundings", [])
+    next_id = max((_as_int(row.get("id")) or 0 for row in fundings), default=0)
+    for event in result.get("life_events", []):
+        account_id = _as_int(event.pop("account_id", None))
+        if account_id in assets:
+            next_id += 1
+            fundings.append({"id": next_id, "life_event_id": _as_int(event.get("id")), "account_id": account_id, "share_bp": 10000})
     return result

@@ -82,6 +82,7 @@ LAYERS: dict[str, int] = {
     "life_event_conditions": 5,  # Current assumptions compose existing readers.
     "life_event_walk": 5,  # Shared graph resolution and event cash-flow application.
     "life_scenario_scope": 0,  # Ownership reads and the shared client lock.
+    "event_funding_service": 0,  # 資金の割り当て of life events; models only.
     "life_scenario_service": 5,  # Owns user-authored scenario assumptions and choices.
     "life_event_graph": 5,  # Resolves graph branches over the shared strategy projector.
     "report_service": 5,

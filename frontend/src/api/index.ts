@@ -467,7 +467,7 @@ export const getLifeEventsWithProgress = async (scenarioId?: number): Promise<Li
 };
 
 // A new event belongs to the scenario it is created in; an update never moves it.
-export type GoalPayload = Pick<LifeEvent, 'direction' | 'account_id' | 'name' | 'target_amount' | 'target_date' | 'priority' | 'note' | 'condition_mode' | 'interest_rate' | 'borrowing_event_id' | 'repeat_count'>;
+export type GoalPayload = Pick<LifeEvent, 'direction' | 'name' | 'target_amount' | 'target_date' | 'priority' | 'note' | 'condition_mode' | 'interest_rate' | 'borrowing_event_id' | 'repeat_count'>;
 
 export const createGoal = async (event: Partial<GoalPayload> & Pick<GoalPayload, 'name' | 'target_amount' | 'target_date'> & { scenario_id: number }): Promise<LifeEvent> => {
     const response = await api.post('/life-events/', event);
@@ -476,6 +476,12 @@ export const createGoal = async (event: Partial<GoalPayload> & Pick<GoalPayload,
 
 export const updateGoal = async (id: number, event: Partial<GoalPayload>): Promise<LifeEvent> => {
     const response = await api.put(`/life-events/${id}`, event);
+    return response.data;
+};
+
+/** 資金の割り当て: replace which accounts pay (or receive) the event and their shares in percent. */
+export const setLifeEventFundings = async (id: number, fundings: Array<{ account_id: number; share: number }>): Promise<LifeEvent> => {
+    const response = await api.put(`/life-events/${id}/fundings`, fundings);
     return response.data;
 };
 

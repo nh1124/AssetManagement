@@ -17,7 +17,9 @@ from ..services.budget_plan_store import (
     update_plan_lines,
 )
 from ..services.cache_service import invalidate_client
-from ..services.goal_plan_service import GOAL_DRAWDOWN_NAME, GOAL_LINE_NAME, GOAL_SOURCE, REFLECTION_NOTIFICATION, earmarked_events, plan
+from ..services.goal_plan_service import (
+    GOAL_DRAWDOWN_NAME, GOAL_LINE_NAME, GOAL_SOURCE, REFLECTION_NOTIFICATION, earmark_parts, earmarked_events, plan,
+)
 from ..services.life_scenario_scope import get_goal, lock_client
 
 
@@ -35,18 +37,29 @@ def apply(db: Session, client_id: int, start_period: str, end_period: str, finge
             raise Conflict("ゴールか計画の内容が確認後に変わりました。もう一度確認してください。")
         plan_id = existing_plan if existing_plan is not None else resolve_budget_plan_id(db, client_id, commit=False)
         changed = [change for change in planned["changes"] if change["changed"]]
-        # The earmark an event is planned into is made once, named after the event, in its account.
-        made: dict[int, int] = {}
+        # The earmark an event is planned into is made once, named after the event, with a source per account;
+        # an existing one follows the event's target and accounts.
         events = {event.id: event for event in earmarked_events(db, client_id, get_goal(db, client_id))}
+        targets = earmark_parts(db, list(events.values()))
+        existing = capsule_service.goal_capsules(db, client_id, list(events))
+        for event_id, capsule in existing.items():
+            capsule_service.sync_goal_capsule(db, client_id, capsule.id, events[event_id].target_amount_minor or 0, targets[event_id])
+        first = planned["periods"][0]
+        monthly: dict[int, int] = {}
+        for change in planned["changes"]:
+            if change["kind"] == "capsule" and change["period"] == first and not change["retire"] and change["event_id"] is not None:
+                monthly[change["event_id"]] = monthly.get(change["event_id"], 0) + change["new_minor"]
+        made: dict[int, int] = {}
         for change in planned["changes"]:
             if change["new_capsule"] and not change["retire"] and change["event_id"] not in made:
                 event = events[change["event_id"]]
                 made[event.id] = capsule_service.create_goal_capsule(
                     db, client_id, event_id=event.id, name=event.name, target_minor=event.target_amount_minor or 0,
-                    account_id=event.account_id, monthly_minor=change["new_minor"],
+                    parts=targets[event.id], monthly_minor=monthly.get(event.id, 0),
                 ).id
-            elif change["kind"] == "capsule" and change["capsule_id"] and change["period"] == planned["periods"][0] and not change["retire"]:
-                capsule_service.set_goal_capsule_monthly(db, client_id, change["capsule_id"], change["new_minor"])
+        for event_id, capsule in existing.items():
+            if event_id in monthly:
+                capsule_service.set_goal_capsule_monthly(db, client_id, capsule.id, monthly[event_id])
         retires = [change["line_id"] for change in changed if change["retire"] and change["line_id"] is not None]
         updates = [{"id": change["line_id"], "amount": change["new"], "manual_override": False}
                    for change in changed if not change["retire"] and change["line_id"] is not None]

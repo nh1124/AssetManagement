@@ -12,7 +12,7 @@ from app import models, schemas
 from app.domain.errors import NotFound, Refused
 from app.domain.journal import Leg
 from app.domain.transfer import migrate_goal_v2
-from app.services import capsule_service
+from app.services import capsule_service, event_funding_service
 from app.services import contribution_plan_service as plans
 from app.services import goal_earmark_service, goal_service, life_scenario_service as scenarios
 from app.services.ledger_service import create_transaction
@@ -44,9 +44,13 @@ def still(db):
     db.commit()
 
 
-def create(db, scenario, name, amount, when, **values):
-    return goal_service.create_goal_record(db, 1, schemas.LifeEventCreate(
+def create(db, scenario, name, amount, when, account_id=None, **values):
+    row = goal_service.create_goal_record(db, 1, schemas.LifeEventCreate(
         scenario_id=scenario.id, name=name, target_amount=amount, target_date=when, **values))
+    if account_id is not None:
+        # 資金の割り当て (WP21): the whole event through one account.
+        row = event_funding_service.set_fundings(db, 1, row.id, [schemas.LifeEventFundingInput(account_id=account_id, share=100)])
+    return row
 
 
 def test_an_event_works_through_an_asset_account_and_a_repayment_names_a_borrowing(db):
@@ -130,8 +134,8 @@ def _funded_goal(db):
     savings = account(db, "貯蓄", balance=500_000)
     trip = create(db, scenario, "旅行", 100000, months_ahead(10), account_id=savings.id)
     only = create(db, scenario, "車", 50000, months_ahead(10), account_id=savings.id)
-    capsule = capsule_service.create_goal_capsule(db, 1, event_id=trip.id, name="旅行", target_minor=100000, account_id=savings.id)
-    lone = capsule_service.create_goal_capsule(db, 1, event_id=only.id, name="車", target_minor=50000, account_id=savings.id)
+    capsule = capsule_service.create_goal_capsule(db, 1, event_id=trip.id, name="旅行", target_minor=100000, parts={savings.id: 100000})
+    lone = capsule_service.create_goal_capsule(db, 1, event_id=only.id, name="車", target_minor=50000, parts={savings.id: 50000})
     create_transaction(db, client_id=1, date=TODAY, description="確保", amount_minor=40000, currency="JPY",
                        legs=[Leg(savings.id, debit=40000, capsule_id=capsule.id), Leg(savings.id, credit=40000)])
     db.commit()

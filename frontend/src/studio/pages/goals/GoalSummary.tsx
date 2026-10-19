@@ -81,7 +81,7 @@ function SummaryForClient({ currency }: { currency: string }) {
                             <th scope="row" className="whitespace-nowrap px-5 py-3 font-medium">{event.name}{!expense && <span className="ml-2 text-xs text-[var(--studio-text-muted)]">{KIND_LABELS[event.direction]}</span>}</th>
                             <td className="whitespace-nowrap px-5 py-3">{formatDate(event.target_date)}</td>
                             <td className="whitespace-nowrap px-5 py-3 tabular-nums">{eventAmount(event, currency)}</td>
-                            <td className="whitespace-nowrap px-5 py-3">{!expense ? '—' : event.earmark ? event.earmark.capsule_name : event.account_id ? <span className="text-xs text-[var(--studio-text-muted)]">計画の作成で作ります</span> : <span className="text-xs text-[var(--studio-text-muted)]">口座なし</span>}</td>
+                            <td className="whitespace-nowrap px-5 py-3">{!expense ? '—' : event.earmark ? event.earmark.capsule_name : event.fundings.length ? <span className="text-xs text-[var(--studio-text-muted)]">計画の作成で作ります</span> : <span className="text-xs text-[var(--studio-text-muted)]">口座なし</span>}</td>
                             <td className="whitespace-nowrap px-5 py-3 tabular-nums">{expense ? formatCurrency(event.current_funded, currency) : '—'}</td>
                             <td className="whitespace-nowrap px-5 py-3 tabular-nums">{expense ? `${event.progress_percentage}%` : '—'}</td>
                             <td className="whitespace-nowrap px-5 py-3 tabular-nums">{percent(outcome?.executed_probability)}</td>
@@ -89,7 +89,7 @@ function SummaryForClient({ currency }: { currency: string }) {
                         </tr>;
                     })}
                 </DataTable>
-                <p className="text-xs text-[var(--studio-text-muted)]">支出のライフイベントは、取り置く口座を決めておくと「計画を作成」でイベントと同じ名前の取り置き（ゴール）ができ、その確保額を確保額・進捗に数えます。</p>
+                <p className="text-xs text-[var(--studio-text-muted)]">支出のライフイベントは、シミュレーションの設定で払う口座（ライフイベントの資金）を決めておくと「計画を作成」でイベントと同じ名前の取り置き（ゴール）が口座ごとの割合でできます。その確保額を確保額・進捗に数えます。</p>
             </section>
         </>}
         {planning && <GoalPlanDialog onClose={(applied) => { setPlanning(false); if (applied) resource.reload(); }} />}

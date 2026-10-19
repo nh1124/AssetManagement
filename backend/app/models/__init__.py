@@ -11,7 +11,7 @@ from .transaction_batch import TransactionBatch
 from .fx import ExchangeRate, FxTrackedCurrency
 from .product import Product, ProductDepreciation
 from .registry import RegistryEntry
-from .goal import GoalBudgetReflection, LifeScenario, LifeEvent, LifeEventLink, HouseholdMember, LifeEventCondition, ScenarioContributionPlan
+from .goal import GoalBudgetReflection, LifeScenario, LifeEvent, LifeEventFunding, LifeEventLink, HouseholdMember, LifeEventCondition, ScenarioContributionPlan
 from .budget import BudgetPlan, MonthlyPlanLine
 from .planning import PeriodReview, MonthlyAction, PeriodClose
 from .ai import AiOperationPolicy, AiAuditLog, AiChangeRequest
@@ -39,6 +39,7 @@ __all__ = [
     "LifeScenario",
     "ScenarioContributionPlan",
     "LifeEvent",
+    "LifeEventFunding",
     "LifeEventLink",
     "HouseholdMember",
     "LifeEventCondition",

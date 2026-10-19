@@ -10,7 +10,7 @@ import { useConfirm } from '../../components/useConfirm';
 import { clientToday, useTimezone } from '../../datetime';
 import { assetErrorMessage, useResource } from '../../useResource';
 import { Choice, EditorActions, Feedback, Field } from '../db/Database';
-import { buttonClass, inputClass, loadAccounts, useMutation } from '../db/forms';
+import { buttonClass, inputClass, useMutation } from '../db/forms';
 import { eventAmount } from './eventKinds';
 import GoalConditions from './GoalConditions';
 import LifeEventDiagram from './LifeEventDiagram';
@@ -88,13 +88,13 @@ function GraphEditor({ currency, clientName, view }: { currency: string; clientN
     const timezone = useTimezone();
     const { scenario: current } = useScenario();
     const load = useCallback(async () => {
-        const [events, links, comparison, accounts] = await Promise.all([
-            getLifeEvents(current.id), getLifeEventLinks(current.id), compare([current.id]), loadAccounts(),
+        const [events, links, comparison] = await Promise.all([
+            getLifeEvents(current.id), getLifeEventLinks(current.id), compare([current.id]),
         ]);
         // The projection carries resolved dates, which events have preconditions and the likely path.
         const projected = comparison.scenarios[0];
         return {
-            events, links, projected, accounts,
+            events, links, projected,
             conditionEventIds: new Set(projected?.conditions.map((row) => row.event_id) ?? []),
             pathEventIds: new Set(projected?.likely_path.event_ids ?? []),
             pathLinkIds: new Set(projected?.likely_path.link_ids ?? []),
@@ -171,7 +171,7 @@ function GraphEditor({ currency, clientName, view }: { currency: string; clientN
                 void mutation.run(() => createLifeEventLink(input), '接続を追加しました。', () => { setAddingLink(false); resource.reload(); });
             }} />
         </Overlay>}
-        {editing !== undefined && resource.data && clientName && <LifeEventOverlay event={editing} scenarioId={current.id} events={resource.data.events} accounts={resource.data.accounts}
+        {editing !== undefined && resource.data && clientName && <LifeEventOverlay event={editing} scenarioId={current.id} events={resource.data.events}
             currency={currency} clientName={clientName} onClose={() => setEditing(undefined)} onChanged={resource.reload} />}
         {editingLink && resource.data && clientName && <LifeEventLinkDetails edge={editingLink} events={resource.data.events} clientName={clientName} onReload={resource.reload} onClose={() => setEditingLink(null)} />}
         {conditionsEvent && clientName && <Overlay title={`「${conditionsEvent.name}」の前提条件`} busy={conditionsBusy} onClose={() => setConditionsEvent(null)}>

@@ -95,10 +95,10 @@ def create_capsule(
 
 
 def create_goal_capsule(
-    db: Session, client_id: int, *, event_id: int, name: str, target_minor: int, account_id: int,
+    db: Session, client_id: int, *, event_id: int, name: str, target_minor: int, parts: dict[int, int],
     monthly_minor: int = 0, commit: bool = False,
 ) -> models.Capsule:
-    """The earmark made for a goal event: named after it, set aside in the event's account."""
+    """The earmark made for a goal event: named after it, set aside in its accounts by their parts."""
     capsule = models.Capsule(
         client_id=client_id, name=name, target_amount_minor=max(0, target_minor), monthly_contribution_minor=max(0, monthly_minor),
         auto_post=False, capsule_type="manual", target_amount_source="manual", monthly_contribution_source="manual",
@@ -106,11 +106,29 @@ def create_goal_capsule(
     )
     db.add(capsule)
     db.flush()
-    set_funding_sources(db, client_id, capsule.id, [schemas.CapsuleFundingSourceInput(
-        account_id=account_id, target_amount=Money(capsule.target_amount_minor, money_client_currency(db, client_id)).to_float(),
-    )], commit=False)
+    sync_goal_capsule(db, client_id, capsule.id, target_minor, parts)
     _finish_write(db, client_id, capsule, commit=commit)
     return capsule
+
+
+def sync_goal_capsule(db: Session, client_id: int, capsule_id: int, target_minor: int, parts: dict[int, int]) -> None:
+    """Keep a goal earmark's target and accounts at its event's: one funding source per account part.
+
+    An account the event no longer uses stays as a source with no target while the
+    earmark still holds money there, so nothing it holds is orphaned.
+    """
+    capsule = get_capsule(db, client_id, capsule_id)
+    if capsule is None:
+        raise NotFound("Capsule not found")
+    currency = money_client_currency(db, client_id)
+    capsule.target_amount_minor = max(0, target_minor)
+    held = [source.account_id for source in capsule.funding_sources
+            if source.account_id not in parts and claimed_minor(db, client_id, capsule.id, source.account_id).get(currency, 0)]
+    set_funding_sources(db, client_id, capsule.id, [
+        schemas.CapsuleFundingSourceInput(account_id=account_id, target_amount=Money(minor, currency).to_float(), sort_order=index)
+        for index, (account_id, minor) in enumerate([*parts.items(), *((account_id, 0) for account_id in held)])
+    ], commit=False)
+    db.flush()
 
 
 def goal_capsules(db: Session, client_id: int, event_ids) -> dict[int, models.Capsule]:

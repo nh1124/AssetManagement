@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from ..domain.errors import Refused
+from .event_funding_service import shares
 from .money_storage import money_client_currency
 
 
@@ -22,7 +23,8 @@ class ScenarioEvent:
     currency: str
     incoming_link_id: int | None
     direction: str = "expense"
-    account_id: int | None = None
+    # 資金の割り当て: (account_id, share in basis points); the rest is the residual's.
+    fundings: tuple[tuple[int, int], ...] = ()
     interest_rate: float | None = None
     borrowing_event_id: int | None = None
     repeat_count: int | None = None
@@ -63,6 +65,7 @@ def walk(db: Session, client_id: int, scenario_id: int) -> list[ScenarioEvent]:
     resolved: dict[int, ScenarioEvent] = {}
     incoming: dict[int, models.LifeEventLink] = {}
     currency = money_client_currency(db, client_id)
+    funding = shares(db, events)
     # The lowest incoming link id determines a merge date; each event counts once.
     for event_id in order:
         event = events[event_id]
@@ -72,7 +75,7 @@ def walk(db: Session, client_id: int, scenario_id: int) -> list[ScenarioEvent]:
             resolved_date = _offset_date(resolved[link.from_event_id].resolved_date, link.offset_months)
         resolved[event_id] = ScenarioEvent(
             event.id, event.name, resolved_date, event.target_amount or 0.0, currency,
-            link.id if link else None, event.direction, event.account_id,
+            link.id if link else None, event.direction, tuple(funding.get(event.id, ())),
             event.interest_rate, event.borrowing_event_id, event.repeat_count,
         )
         for edge in outgoing[event_id]:

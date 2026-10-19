@@ -46,7 +46,8 @@ def events_with_progress(db: Session, client_id: int, scenario_id: int | None = 
         capsule = capsules.get(event.id)
         rows.append({
             "id": event.id, "scenario_id": event.scenario_id, "lineage": event.lineage, "name": event.name,
-            "direction": event.direction, "account_id": event.account_id, "target_date": event.target_date,
+            "direction": event.direction, "target_date": event.target_date,
+            "fundings": [{"account_id": row.account_id, "account_name": row.account_name, "share": row.share} for row in event.fundings],
             "target_amount": target, "priority": event.priority, "note": event.note,
             "condition_mode": event.condition_mode, "interest_rate": event.interest_rate,
             "borrowing_event_id": event.borrowing_event_id, "repeat_count": event.repeat_count,

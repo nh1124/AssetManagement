@@ -14,7 +14,6 @@ const id = z.number().int().min(1);
 const lifeEventFields = {
   name: z.string().min(1).describe("Life event name"),
   direction: z.enum(["expense", "income", "borrowing", "repayment"]).optional().describe("expense (default), income, borrowing or repayment"),
-  account_id: id.nullable().optional().describe("Asset account: where an expense is set aside and drawn down, where an inflow or loan arrives, what a repayment is paid from"),
   target_date: dateSchema.describe("Target date (a repayment's first month), YYYY-MM-DD"),
   target_amount: z.number().min(0).describe("Amount; for a repayment, the monthly payment"),
   interest_rate: z.number().min(0).max(100).nullable().optional().describe("Borrowing only: yearly interest %"),
@@ -26,6 +25,13 @@ const lifeEventFields = {
 };
 const lifeEventCreateSchema = z.object({ scenario_id: id.describe("Scenario that owns the event"), ...lifeEventFields }).strict();
 const lifeEventUpdateSchema = z.object(lifeEventFields).partial().extend({ id: id.describe("Life event ID") }).strict();
+const fundingSchema = z.object({
+  id: id.describe("Life event ID"),
+  fundings: z.array(z.object({
+    account_id: id.describe("Asset account"),
+    share: z.number().gt(0).max(100).describe("Share of the event in %"),
+  }).strict()).describe("Accounts and shares, at most 100% in total; an empty list clears them"),
+}).strict();
 const contributionFields = {
   account_id: id.describe("Asset account"),
   start_period: periodSchema.describe("First month the record applies, YYYY-MM"),
@@ -77,7 +83,7 @@ export function registerLifeEventTools(server: McpServer): void {
 
   server.registerTool("life_events_create", {
     title: "Create life event",
-    description: "Creates a life event in a scenario: kind (expense, income, borrowing, repayment), account, name, amount and date, priority, note; a repayment names its borrowing and number of months.",
+    description: "Creates a life event in a scenario: kind (expense, income, borrowing, repayment), name, amount and date, priority, note; a repayment names its borrowing and number of months. Which accounts pay it is set with life_events_fundings_set.",
     inputSchema: lifeEventCreateSchema, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   }, guarded("Created life event:", async (input: z.infer<typeof lifeEventCreateSchema>) => api.post<unknown>("/life-events/", only(input))));
 
@@ -87,6 +93,13 @@ export function registerLifeEventTools(server: McpServer): void {
     inputSchema: lifeEventUpdateSchema, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, guarded("Updated life event:", async ({ id: eventId, ...patch }: z.infer<typeof lifeEventUpdateSchema>) =>
     api.put<unknown>(`/life-events/${eventId}`, only(patch))));
+
+  server.registerTool("life_events_fundings_set", {
+    title: "Set a life event's accounts",
+    description: "資金の割り当て: which asset accounts pay the event (or receive it, for income and borrowing) and by what share, e.g. 証券口座 60% and 貯蓄口座 40%. The rest is the residual net worth. Replaces the event's list. Making the plan from the goal earmarks an expense's share in each account.",
+    inputSchema: fundingSchema, annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, guarded("Life event accounts:", async ({ id: eventId, fundings }: z.infer<typeof fundingSchema>) =>
+    api.put<unknown>(`/life-events/${eventId}/fundings`, fundings)));
 
   server.registerTool("life_events_delete", {
     title: "Delete life event",

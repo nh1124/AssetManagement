@@ -11,6 +11,7 @@ from .. import models
 from ..domain.errors import Conflict, Refused
 from .cache_service import invalidate_client
 from .contribution_plan_service import copy_plans, list_plans, serialize as serialize_plan
+from .event_funding_service import copy_fundings
 from .goal_service import copy_events
 from .life_event_conditions import copy_conditions
 from .life_event_graph import copy_links
@@ -174,4 +175,5 @@ def copy_graph(db: Session, client_id: int, source_id: int, target_id: int) -> d
     event_map = copy_events(db, client_id, source_id, target_id)
     copy_links(db, client_id, event_map)
     copy_conditions(db, client_id, event_map)
+    copy_fundings(db, event_map)
     return event_map

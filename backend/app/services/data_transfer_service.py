@@ -25,6 +25,7 @@ from ..domain.transfer import (
     remap_nested_ids,
     remap_action_target_id,
     migrate_account_fields,
+    migrate_event_fundings,
     migrate_goal_fields,
     migrate_goal_v2,
 )
@@ -179,7 +180,6 @@ def export_client(db: Session, client: models.Client) -> dict:
                         "note",
                         "condition_mode",
                         "direction",
-                        "account_id",
                         "interest_rate",
                         "borrowing_event_id",
                         "repeat_count",
@@ -190,6 +190,11 @@ def export_client(db: Session, client: models.Client) -> dict:
                 .filter(models.LifeEvent.client_id == client.id)
                 .order_by(models.LifeEvent.id)
                 .all()
+            ],
+            "life_event_fundings": [
+                row_fields(row, ["id", "life_event_id", "account_id", "share_bp"])
+                for row in db.query(models.LifeEventFunding).join(models.LifeEvent, models.LifeEvent.id == models.LifeEventFunding.life_event_id)
+                .filter(models.LifeEvent.client_id == client.id).order_by(models.LifeEventFunding.id).all()
             ],
             "life_event_links": [
                 row_fields(link, ["id", "from_event_id", "to_event_id", "kind", "offset_months", "note", "created_at"])
@@ -467,6 +472,8 @@ def import_client(
         data = migrate_goal_fields(data, date.today().strftime("%Y-%m"))
     if version is None or version < 27:
         data = migrate_goal_v2(data)
+    if version is None or version < 28:
+        data = migrate_event_fundings(data)
 
     link_map: dict[int, int] = {}
     scenario_map: dict[int, int] = {}
@@ -679,7 +686,6 @@ def import_client(
                 note=item.get("note"),
                 condition_mode=item.get("condition_mode", "all"),
                 direction=item.get("direction", "expense"),
-                account_id=account_map.get(item.get("account_id")),
                 interest_rate=item.get("interest_rate"),
                 repeat_count=item.get("repeat_count"),
                 created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
@@ -687,6 +693,9 @@ def import_client(
             db.add(event)
             db.flush()
             event_map[old_id] = event.id
+        for item in data.get("life_event_fundings", []):
+            db.add(models.LifeEventFunding(life_event_id=event_map[int(item["life_event_id"])],
+                                           account_id=account_map[int(item["account_id"])], share_bp=int(item["share_bp"])))
         # A repayment names its borrowing, which may come later in the payload.
         for item in data.get("life_events", []):
             if item.get("borrowing_event_id") is not None:
