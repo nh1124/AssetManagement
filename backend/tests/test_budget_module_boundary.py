@@ -31,7 +31,11 @@ FAMILY = {
 # seventeenth entry has to be argued for rather than imported.
 PUBLIC: dict[str, set[str]] = {
     "budget_context": {"BudgetContext"},
-    "budget_plan_service": {"get_budget_summary"},
+    "budget_plan_service": {
+        "get_budget_summary",
+        # Reports share definition matching without building actuals and projections.
+        "expense_budget_by_account",
+    },
     "budget_plan_store": {
         # The goal reflection reads the rows it may replace before it confirms.
         "active_lines_for_periods",

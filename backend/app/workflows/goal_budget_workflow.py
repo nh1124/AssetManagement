@@ -128,8 +128,6 @@ def _budget_rows(db: Session, client_id: int, period: str, plan_id: int | None) 
     capsules' own amounts are each counted once, exactly as the budget page lists them.
     A definition not yet saved for the month runs at its own amount.
     """
-    if plan_id is None:
-        return []
     summary = get_budget_summary(db, client_id, period, plan_id=plan_id, cash_flow_months=1)
     rows = []
     for line in summary.get("plan_lines", []):
@@ -139,10 +137,7 @@ def _budget_rows(db: Session, client_id: int, period: str, plan_id: int | None) 
             account = ledger_service.get_account(db, client_id, line["account_id"]) if line.get("account_id") else None
             if account is None or account.account_type != "asset":
                 continue
-        amount = float(line.get("amount") or 0.0)
-        if line.get("id") is None and not amount:
-            amount = float(line.get("recurring_amount") or 0.0)
-        rows.append({**line, "resolved_amount": amount})
+        rows.append({**line, "resolved_amount": line["budget_amount"]})
     return rows
 
 

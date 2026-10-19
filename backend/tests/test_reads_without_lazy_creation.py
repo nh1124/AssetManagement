@@ -138,14 +138,22 @@ def test_reads_without_budget_plan_preserve_actuals(database, path):
     with database() as db:
         orphan_id = seed_actuals_and_orphan(db)
         assert db.query(models.BudgetPlan).count() == 0
+        before = {table.name: db.execute(select(table)).all() for table in Base.metadata.tables.values()}
     response = request("GET", path)
     assert response.status_code == 200, response.text
     body = response.json()
-    if path in ("/budget-plans", "/budget-plans/lines"):
+    if path == "/budget-plans":
         assert body == []
-    elif path == "/budget-plans/summary":
+    elif path in ("/budget-plans/summary", "/budget-plans/lines"):
+        lines = body["plan_lines"] if path == "/budget-plans/summary" else body
+        # WP11 counts the definition without creating a plan or adopting the orphan.
+        assert len(lines) == 1
+        assert lines[0]["id"] is None and lines[0]["source"] == "registry"
+        assert lines[0]["amount"] == 0
+        assert lines[0]["budget_amount"] == lines[0]["registry_amount"] == 300
+        assert lines[0]["actual"] == 100
+    if path == "/budget-plans/summary":
         assert body["plan_id"] is None
-        assert body["plan_lines"] == []
         for key in ("total_expected_inflow", "total_variable_budget", "total_allocation_plan", "total_debt_plan"):
             assert body[key] == 0
         assert len(body["cash_flow_projection"]) == len(body["balance_projection"]) == 12
@@ -153,18 +161,20 @@ def test_reads_without_budget_plan_preserve_actuals(database, path):
         assert all(row["total_assets"] == row["net_worth"] == 900 for row in body["balance_projection"])
     elif path == "/analysis/summary":
         assert body["monthly_pl"] == body["effective_cash"] == body["logical_balance"] == 900
-        assert body["budget_usage_rate"] == 0
+        assert body["budget_usage_rate"] == 33.3
     elif path == "/analysis/variance":
         assert body["plan_id"] is None
-        assert body["total_budget"] == 0
+        assert body["total_budget"] == 300
         assert body["total_actual"] == 100
-        assert all(item["budget"] == 0 for item in body["items"])
+        assert body["total_variance"] == 200
+        assert next(item for item in body["items"] if item["category"] == "Custom food")["budget"] == 300
     elif path == "/reports/monthly":
         assert body["summary"]["monthly_pl"] == body["summary"]["net_worth"] == 900
         assert body["anomalies"] == []
     with database() as db:
         assert db.query(models.BudgetPlan).count() == 0
         assert db.get(models.MonthlyPlanLine, orphan_id).plan_id is None
+        assert {table.name: db.execute(select(table)).all() for table in Base.metadata.tables.values()} == before
 
 
 @pytest.mark.parametrize("case", ["defaults", "sorted", "none"])

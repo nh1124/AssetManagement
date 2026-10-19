@@ -28,7 +28,7 @@ function useLineActions({ period, currency, clientName, planId, onChanged }: Ove
         if (mutation.busy || !clientName) return;
         const name = lineName(line);
         const effect = line.target_type === 'capsule' ? '\n取り置きの月額積立計画にも反映されます。' : '';
-        const before = line.id == null && line.amount === 0 ? '未設定' : formatCurrency(line.amount, currency);
+        const before = line.id == null && !line.budget_amount ? '未設定' : formatCurrency(line.budget_amount ?? 0, currency);
         if (!(await confirm(`「${clientName}」の${period}「${name}」を ${before} → ${formatCurrency(amount, currency)}（${currency}）に変更しますか？${effect}`, '変更する'))) return;
         // Send only writable fields; summary actuals and synchronization state are server-owned.
         const payload: MonthlyPlanLinePayload = {
@@ -55,8 +55,8 @@ function LineItem({ line, label, currency, editing, disabled, onEdit, onCancel, 
     line: MonthlyPlanLine; label: string; currency: string; editing: boolean; disabled: boolean;
     onEdit: () => void; onCancel: () => void; onSave: (amount: number) => void; onRemove: () => void;
 }) {
-    const [amount, setAmount] = useState(String(line.amount));
-    const unsaved = line.id == null && line.amount === 0;
+    const [amount, setAmount] = useState(String(line.budget_amount ?? 0));
+    const unsaved = line.id == null && !line.budget_amount;
     const submit = (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         if (disabled || amount.trim() === '' || !Number.isFinite(Number(amount)) || Number(amount) < 0) return;
@@ -71,7 +71,7 @@ function LineItem({ line, label, currency, editing, disabled, onEdit, onCancel, 
                 <button type="button" onClick={onCancel} className={buttonClass}>取消</button>
             </form>
             : <>
-                <span className={`w-28 text-right tabular-nums ${unsaved ? 'text-[var(--studio-text-faint)]' : ''}`}>{unsaved ? '未設定' : formatCurrency(line.amount, currency)}</span>
+                <span className={`w-28 text-right tabular-nums ${unsaved ? 'text-[var(--studio-text-faint)]' : ''}`}>{unsaved ? '未設定' : formatCurrency(line.budget_amount ?? 0, currency)}</span>
                 <button type="button" disabled={disabled} onClick={onEdit} className={buttonClass}>編集</button>
                 {line.id != null && <button type="button" disabled={disabled} onClick={onRemove} className={`${buttonClass} text-[var(--studio-danger)]`}>削除</button>}
             </>}
@@ -121,7 +121,6 @@ export function AccountOverlay({ row, context, onClose }: { row: AccountRow; con
                             <span className="text-xs tabular-nums text-[var(--studio-text-muted)]">予算 {cell.set ? money(cell.budget) : '未設定'} ／ 実績 {money(cell.actual)}</span>
                         </div>
                         {cell.mismatch && row.kind && <p className="mt-1 text-xs text-[var(--studio-warning)]">{KIND_LABELS[row.kind]}の{noun}に{TYPE_LABELS[cell.type]}の予算があります。定義の種別か口座を確認してください。</p>}
-                        {cell.defined > 0 && !cell.set && <p className="mt-1 text-xs text-[var(--studio-text-muted)]">定義の予定額 {money(cell.defined)}。予算は未設定です。</p>}
                         <ul className="divide-y divide-[var(--studio-border)]">
                             {lines.map((line, index) => {
                                 const key = `${cell.type}:${lineKey(line, index)}`;
