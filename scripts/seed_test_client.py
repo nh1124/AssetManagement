@@ -78,7 +78,8 @@ def seed_ledger(api: Api, today: date) -> dict:
 
     # The journal is the only balance: opening amounts are transactions from an opening subject.
     opening = date(2026, 3, 31)
-    for name, amount in (("メイン銀行", 800000), ("貯蓄口座", 400000), ("証券口座", 1500000), ("現金", 30000)):
+    # 貯蓄口座 holds what its earmarks (旅行の積み立て and the goal's) claim, so data health stays clean.
+    for name, amount in (("メイン銀行", 800000), ("貯蓄口座", 1000000), ("証券口座", 1500000), ("現金", 30000)):
         tx(opening, "開始残高", amount, "開始残高", name)
     tx(opening, "奨学金の借入", 1200000, "奨学金", "メイン銀行")
     tx(date(2026, 4, 1), "ノートPC 購入", 240000, "メイン銀行", "備品")
@@ -124,7 +125,7 @@ def seed_ledger(api: Api, today: date) -> dict:
 
     capsules = {}
     for name, target, monthly, source in (("旅行の積み立て", 300000, 20000, "貯蓄口座"), ("緊急予備費", 600000, 0, "メイン銀行"),
-                                          ("家電の買い替え", 0, 0, "貯蓄口座")):
+                                          ("家電の買い替え", 240000, 0, "貯蓄口座")):
         capsule = api.post("/capsules/", {"name": name, "target_amount": target, "monthly_contribution": monthly})
         api.put(f"/capsules/{capsule['id']}/funding-sources", [{"account_id": accounts[source], "target_amount": target}])
         capsules[name] = capsule["id"]
