@@ -377,6 +377,7 @@ export interface MonthlyPlanLine {
     target_name?: string | null;
     account_name?: string | null;
     amount: number;
+    budget_amount?: number;
     cash_treatment?: MonthlyPlanCashTreatment;
     actual?: number;
     variance?: number;

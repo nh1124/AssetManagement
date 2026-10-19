@@ -37,6 +37,38 @@ from .product_reserve_service import effective_budget_treatment, product_reserve
 from .money_storage import money_client_currency
 
 
+def _budget_amount(line: dict) -> float:
+    if line.get("id") is None and line.get("source") == "registry":
+        return float(line.get("registry_amount") or 0.0)
+    # Capsules and card settlements already carry their virtual budget in amount.
+    return float(line.get("amount") or 0.0)
+
+
+def expense_budget_by_account(
+    db: Session, client_id: int | None, periods: list[str], plan_id: int | None,
+) -> dict[int, float]:
+    """Expense budgets for reports, with the summary's definition matching and no projections."""
+    ctx = BudgetContext(db, client_id)
+    stored = db.query(models.MonthlyPlanLine).filter(
+        models.MonthlyPlanLine.client_id == client_id,
+        models.MonthlyPlanLine.plan_id == plan_id,
+        models.MonthlyPlanLine.target_period.in_(periods),
+        models.MonthlyPlanLine.line_type == "expense",
+        models.MonthlyPlanLine.is_active.is_(True),
+    ).order_by(models.MonthlyPlanLine.id).all() if plan_id is not None else []
+    stored = _deduplicate_active_plan_models(db, stored)
+    fields = ("id", "line_type", "target_type", "account_id", "source_account_id", "name", "amount", "cash_treatment")
+    budgets: dict[int, float] = {}
+    for period in periods:
+        lines = [{key: getattr(line, key) for key in fields} for line in stored if line.target_period == period]
+        definitions = [line for line in registry_plan_lines(ctx, period) if line["line_type"] == "expense"]
+        for line in _merge_registry_lines(lines, definitions):
+            if line.get("account_id"):
+                account_id = line["account_id"]
+                budgets[account_id] = budgets.get(account_id, 0.0) + _budget_amount(line)
+    return budgets
+
+
 def _serialize_plan_line(
     ctx: BudgetContext,
     line: models.MonthlyPlanLine,
@@ -209,6 +241,7 @@ def _unset_account_lines(ctx: BudgetContext, plan_lines: list[dict], period: str
                 "target_name": account.name,
                 "account_name": None,
                 "amount": 0.0,
+                "budget_amount": 0.0,
                 "source": "manual",
                 "source_kind": "manual",
                 "manual_override": False,
@@ -325,14 +358,16 @@ def get_budget_summary(
                 if capsule.id not in covered_capsules
                 and (capsule.id, line["account_id"]) not in existing_capsule_ids
             )
-        plan_lines = _merge_registry_lines(plan_lines, registry_plan_lines(ctx, period))
+    plan_lines = _merge_registry_lines(plan_lines, registry_plan_lines(ctx, period))
+    if plan_id is not None:
         plan_lines = _merge_credit_settlement_lines(plan_lines, credit_settlement_plan_lines(ctx, period, plan_id))
+    for line in plan_lines:
+        line["budget_amount"] = _budget_amount(line)
         # A definition with no saved row still has the month's postings against it.
-        for line in plan_lines:
-            if line.get("id") is None and line.get("source") == "registry":
-                actual = actual_for_plan_line(ctx, line, period)
-                line["actual"] = round(actual, 0)
-                line["variance"] = round((line.get("amount") or 0.0) - actual, 0)
+        if line.get("id") is None and line.get("source") == "registry":
+            actual = actual_for_plan_line(ctx, line, period)
+            line["actual"] = round(actual, 0)
+            line["variance"] = round(line["budget_amount"] - actual, 0)
 
     expense_lines = [line for line in plan_lines if line["line_type"] == "expense"]
     allocation_lines = [line for line in plan_lines if line["line_type"] == "allocation"]

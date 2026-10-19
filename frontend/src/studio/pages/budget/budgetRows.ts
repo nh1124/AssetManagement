@@ -46,8 +46,6 @@ export interface Cell {
     unset: MonthlyPlanLine | null;
     budget: number;
     actual: number;
-    /** What the definitions plan for the month, whether or not a row is saved. */
-    defined: number;
     /** False while nothing is saved and every amount is zero: shown as 未設定. */
     set: boolean;
     goal: boolean;
@@ -116,7 +114,7 @@ export function buildModel(summary: BudgetSummary, accounts: DatabaseAccount[], 
     const cellFor = (row: AccountRow, type: MonthlyPlanLineType) => {
         let cell = row.cells.find((item) => item.type === type);
         if (!cell) {
-            cell = { type, lines: [], unset: null, budget: 0, actual: 0, defined: 0, set: false, goal: false, mismatch: false };
+            cell = { type, lines: [], unset: null, budget: 0, actual: 0, set: false, goal: false, mismatch: false };
             row.cells.push(cell);
         }
         return cell;
@@ -135,17 +133,16 @@ export function buildModel(summary: BudgetSummary, accounts: DatabaseAccount[], 
 
     for (const row of rows.values()) {
         for (const cell of row.cells) {
-            cell.budget = cell.lines.reduce((total, line) => total + line.amount, 0);
+            cell.budget = cell.lines.reduce((total, line) => total + (line.budget_amount ?? 0), 0);
             cell.actual = cell.lines.length ? cellActual(cell.lines) : cell.unset?.actual ?? 0;
-            cell.defined = cell.lines.reduce((total, line) => total + (line.registry_amount ?? 0), 0);
-            cell.set = cell.lines.some((line) => line.id != null || line.amount !== 0);
+            cell.set = cell.lines.some((line) => line.id != null || (line.budget_amount ?? 0) !== 0);
             cell.goal = cell.lines.some((line) => lineOrigin(line) === 'ゴール');
             cell.mismatch = row.kind != null && !fits(row.kind, cell.type);
         }
         row.cells.sort((a, b) => TYPES.findIndex((item) => item.type === a.type) - TYPES.findIndex((item) => item.type === b.type));
     }
     for (const earmark of earmarks.values()) {
-        earmark.budget = earmark.lines.reduce((total, line) => total + line.amount, 0);
+        earmark.budget = earmark.lines.reduce((total, line) => total + (line.budget_amount ?? 0), 0);
         earmark.held = earmark.lines.reduce((total, line) => total + (line.actual ?? 0), 0);
         earmark.sources = [...new Set(earmark.lines.map((line) => line.account_name).filter((name): name is string => Boolean(name)))];
     }
@@ -173,15 +170,6 @@ export function earmarkMatches(earmark: EarmarkRow, query: string, scope: Scope)
     if (scope === 'budget') return earmark.budget !== 0;
     return scope !== 'scheduled';
 }
-
-// WP9 prototypes: three ways to lay the same account rows out. The owner picks
-// one on the page; the others are deleted once the choice is made.
-export type Variant = 'A' | 'B' | 'C';
-export const VARIANTS: Array<{ value: Variant; label: string; hint: string }> = [
-    { value: 'A', label: 'A 種別ごと', hint: '6 種別の見出しの下に口座・科目。取り置きは配分の中に別枠' },
-    { value: 'B', label: 'B 口座ごと', hint: '口座の種類ごとに 1 口座 1 行。動きは行の中、取り置きは表の下' },
-    { value: 'C', label: 'C 6種別の表', hint: '1 口座 1 行、6 種別を列に。取り置きは 1 行にまとめる' },
-];
 
 /** U9 in one sentence: the month's budgeted savings against the whole monthly need. */
 export function savingsHeadline(check: SavingsCheck, currency: string) {

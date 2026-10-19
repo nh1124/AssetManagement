@@ -14,6 +14,7 @@ from dateutil.relativedelta import relativedelta
 from sqlalchemy.orm import Session
 
 from .. import models
+from .budget_plan_service import expense_budget_by_account
 from .budget_plan_store import find_budget_plan_id
 from .fx_service import (
     build_rate_lookup,
@@ -204,17 +205,7 @@ def get_variance_analysis_for_range(
         models.Account.is_active.is_(True),
     ).all()
 
-    monthly_plan_lines = db.query(models.MonthlyPlanLine).filter(
-        models.MonthlyPlanLine.client_id == client_id,
-        models.MonthlyPlanLine.plan_id == resolved_plan_id,
-        models.MonthlyPlanLine.target_period.in_(month_keys),
-        models.MonthlyPlanLine.line_type == "expense",
-        models.MonthlyPlanLine.is_active.is_(True),
-    ).all() if resolved_plan_id is not None else []
-    budget_map: dict[int, float] = {}
-    for line in monthly_plan_lines:
-        if line.account_id:
-            budget_map[line.account_id] = budget_map.get(line.account_id, 0.0) + line.amount
+    budget_map = expense_budget_by_account(db, client_id, month_keys, resolved_plan_id)
 
     # Every expense leg names its own account, so the category fallback and the
     # orphan bucket it produced are gone. A leg on an inactive expense account

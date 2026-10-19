@@ -16,10 +16,10 @@ import MonthPicker from '../ledger/MonthPicker';
 import MonthCopy from './MonthCopy';
 import SavingsCheck from './SavingsCheck';
 import { AccountOverlay, EarmarkOverlay, type OverlayContext } from './BudgetOverlay';
-import { SCOPES, VARIANTS, buildModel, earmarkMatches, needByName, rowMatches, savingsHeadline, type BudgetSummary, type Scope, type Variant } from './budgetRows';
-import { ByAccount, Matrix, TypeBlocks } from './BudgetVariants';
+import { SCOPES, buildModel, earmarkMatches, needByName, rowMatches, savingsHeadline, type BudgetSummary, type Scope } from './budgetRows';
+import BudgetTable from './BudgetTable';
 
-interface Filters { query: string; scope: Scope; variant: Variant }
+interface Filters { query: string; scope: Scope }
 const FILTERS_KEY = 'studio.budget.filters';
 
 function storedFilters(): Filters {
@@ -28,10 +28,9 @@ function storedFilters(): Filters {
         return {
             query: '',
             scope: SCOPES.some((scope) => scope.value === stored.scope) ? stored.scope as Scope : 'all',
-            variant: VARIANTS.some((variant) => variant.value === stored.variant) ? stored.variant as Variant : 'A',
         };
     } catch {
-        return { query: '', scope: 'all', variant: 'A' };
+        return { query: '', scope: 'all' };
     }
 }
 
@@ -144,7 +143,6 @@ function MonthlyBudget({ period, currency, clientName, filters, picker, onFilter
         resource.reload();
     });
     const reflect = <button type="button" disabled={disabled} onClick={() => setReflecting(true)} className={buttonClass}>ゴールから更新</button>;
-    const View = filters.variant === 'B' ? ByAccount : filters.variant === 'C' ? Matrix : TypeBlocks;
 
     return <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
@@ -161,17 +159,10 @@ function MonthlyBudget({ period, currency, clientName, filters, picker, onFilter
                 ]} />
             </div>
         </div>
-        <div role="group" aria-label="試作の切替" className="flex flex-wrap items-center gap-2 text-xs text-[var(--studio-text-muted)]">
-            試作
-            <div className="inline-flex overflow-hidden rounded-md border border-dashed border-[var(--studio-border)]">
-                {VARIANTS.map((variant) => <button key={variant.value} type="button" aria-pressed={filters.variant === variant.value} onClick={() => onFilters({ ...filters, variant: variant.value })} className={`${buttonClass} rounded-none border-0 aria-pressed:bg-[var(--studio-accent-soft)] aria-pressed:text-[var(--studio-accent)]`}>{variant.label}</button>)}
-            </div>
-            <span>{VARIANTS.find((variant) => variant.value === filters.variant)?.hint}</span>
-        </div>
         <Notices check={check.data} checkError={check.error} currency={currency} reflect={reflect} />
         <Feedback loading={resource.loading || accounts.loading} error={resource.error || accounts.error || (scheduled.error ? `自動取引の予定を取得できませんでした。${scheduled.error}` : '')} />
         <Feedback error={mutation.error && !adding ? mutation.error : undefined} message={message || mutation.message} />
-        {model && <View accounts={rows} earmarks={earmarks} currency={currency} narrowed={narrowed} shortfall={check.data?.shortfall ?? 0} need={need}
+        {model && <BudgetTable accounts={rows} earmarks={earmarks} currency={currency} narrowed={narrowed} shortfall={check.data?.shortfall ?? 0} need={need}
             highlight={created} disabled={disabled} onAccount={(row) => setOpenAccount(row.key)} onEarmark={(earmark) => setOpenEarmark(earmark.key)} />}
         {accountRow && <AccountOverlay key={accountRow.key} row={accountRow} context={context} onClose={() => setOpenAccount(null)} />}
         {earmarkRow && <EarmarkOverlay key={earmarkRow.key} earmark={earmarkRow} need={need.get(earmarkRow.name)} context={context} onClose={() => setOpenEarmark(null)} />}
@@ -191,8 +182,8 @@ export default function Budget() {
     const currency = currentClient?.general_settings?.currency || 'JPY';
     const changeFilters = (next: Filters) => {
         setFilters(next);
-        // The search is per visit; the scope and the prototype stay for the next one.
-        try { localStorage.setItem(FILTERS_KEY, JSON.stringify({ scope: next.scope, variant: next.variant })); } catch { /* storage unavailable */ }
+        // The search is per visit; the scope stays for the next one.
+        try { localStorage.setItem(FILTERS_KEY, JSON.stringify({ scope: next.scope })); } catch { /* storage unavailable */ }
     };
     return <section>
         <MonthlyBudget key={`${clientId}:${period}:${currency}`} period={period} currency={currency} clientName={currentClient?.id === clientId ? currentClient.name : undefined}

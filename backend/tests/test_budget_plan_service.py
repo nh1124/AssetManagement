@@ -724,6 +724,7 @@ def test_budget_summary_lists_unset_accounts_with_their_actuals() -> None:
         }
         travel_row = rows[("expense", "travel")]
         assert travel_row["id"] is None and travel_row["amount"] == 0
+        assert travel_row["budget_amount"] == 0
         assert travel_row["target_type"] == "account" and travel_row["account_id"] == travel.id
         assert travel_row["actual"] == 12000 and travel_row["variance"] == -12000
         assert summary["total_variable_budget"] == 30000
@@ -1641,7 +1642,7 @@ def test_an_unsaved_definition_row_reports_the_months_actual() -> None:
         line = next(line for line in summary["plan_lines"] if line["account_id"] == rent.id)
 
         assert line["id"] is None and line["source"] == "registry"
-        assert (line["amount"], line["registry_amount"], line["actual"], line["variance"]) == (0, 80000, 80000, -80000)
+        assert (line["amount"], line["budget_amount"], line["actual"], line["variance"]) == (0, 80000, 80000, 0)
     finally:
         db.close()
 
@@ -2235,5 +2236,108 @@ def test_copy_period_full_replace_only_affects_selected_plan() -> None:
         assert len(house_targets) == 1
         assert house_targets[0].name == "house source"
         assert house_targets[0].amount == 15000
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("stored_amount,definition_amount,with_plan", [
+    (12000, None, True), (None, 8000, True), (12000, 8000, True),
+    (0, 8000, True), (None, 8000, False),
+])
+def test_budget_amount_uses_the_saved_override_or_unsaved_definition(stored_amount, definition_amount, with_plan):
+    db = _session()
+    try:
+        client = models.Client(id=1, name="test", general_settings={})
+        food = models.Account(client_id=1, name="food", account_type="expense")
+        plan = models.BudgetPlan(client_id=1, name="Baseline", is_default=True) if with_plan else None
+        db.add_all([client, food, *([plan] if plan else [])])
+        db.flush()
+        if definition_amount is not None:
+            db.add(models.RegistryEntry(client_id=1, name="weekly food", line_type="expense",
+                                        budget_account_id=food.id, amount_minor=to_minor(definition_amount, "JPY")))
+        if stored_amount is not None:
+            db.add(models.MonthlyPlanLine(client_id=1, plan_id=plan.id, target_period="2026-05",
+                                          line_type="expense", target_type="account", account_id=food.id,
+                                          name="food", amount_minor=to_minor(stored_amount, "JPY")))
+        db.commit()
+        summary = get_budget_summary(db, 1, "2026-05", cash_flow_months=1, include_unset=True)
+        lines = [line for line in summary["plan_lines"] if line["line_type"] == "expense"]
+        assert len(lines) == 1
+        line = lines[0]
+        assert line["budget_amount"] == (stored_amount if stored_amount is not None else definition_amount)
+        assert line["amount"] == (stored_amount or 0)
+        assert (line["id"] is not None) == (stored_amount is not None)
+        assert line["registry_amount"] == (definition_amount or 0)
+        assert len(line.get("registry_entry_ids", [])) == (1 if definition_amount is not None else 0)
+        assert db.query(models.MonthlyPlanLine).count() == (1 if stored_amount is not None else 0)
+        assert db.query(models.BudgetPlan).count() == int(with_plan)
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("match", ["none", "exact", "without_source", "entry_name", "zero"])
+def test_variance_counts_definitions_only_in_months_without_a_matching_saved_line(match):
+    db = _session()
+    try:
+        client = models.Client(id=1, name="test", general_settings={})
+        bank = models.Account(client_id=1, name="bank", account_type="asset")
+        food = models.Account(client_id=1, name="food", account_type="expense")
+        other = models.Account(client_id=1, name="other", account_type="expense")
+        plan = models.BudgetPlan(client_id=1, name="Baseline", is_default=True)
+        alternate = models.BudgetPlan(client_id=1, name="Alternate")
+        db.add_all([client, bank, food, other, plan, alternate])
+        db.flush()
+        # Two definitions aggregate into one account movement before matching.
+        for name, amount in [("weekly food", 5000), ("other food", 3000)]:
+            db.add(models.RegistryEntry(client_id=1, name=name, line_type="expense", budget_account_id=food.id,
+                                        source_account_id=bank.id, amount_minor=to_minor(amount, "JPY")))
+        if match != "none":
+            db.add(models.MonthlyPlanLine(
+                client_id=1, plan_id=plan.id, target_period="2026-05", line_type="expense", target_type="account",
+                account_id=other.id if match == "entry_name" else food.id,
+                source_account_id=None if match == "without_source" else bank.id,
+                name="weekly food" if match == "entry_name" else "food override",
+                amount_minor=to_minor(0 if match == "zero" else 12000, "JPY"),
+            ))
+        # Another plan, month, movement and inactive row cannot hide the definition.
+        for values in [dict(plan_id=alternate.id), dict(target_period="2026-06", is_active=False),
+                       dict(target_period="2026-07"), dict(target_period="2026-06", line_type="allocation")]:
+            fields = dict(client_id=1, plan_id=plan.id, target_period="2026-05", line_type="expense",
+                          target_type="account", account_id=food.id, amount_minor=to_minor(99000, "JPY"))
+            fields.update(values)
+            db.add(models.MonthlyPlanLine(**fields))
+        db.commit()
+        create_transaction(db, client_id=1, date=date(2026, 5, 10), amount_minor=2000, currency="JPY",
+                           description="food", from_account_id=bank.id, to_account_id=food.id)
+        db.commit()
+        result = get_variance_analysis_for_range(db, date(2026, 5, 1), date(2026, 6, 30), 1, plan.id)
+        may = 8000 if match == "none" else 0 if match == "zero" else 12000
+        assert result["budget_months"] == ["2026-05", "2026-06"]
+        assert result["total_budget"] == may + 8000
+        assert result["total_actual"] == 2000
+        assert result["total_variance"] == may + 8000 - 2000
+        budgets = {item["category"]: item["budget"] for item in result["items"]}
+        assert budgets["food"] == (8000 if match == "entry_name" else may + 8000)
+        assert budgets["other"] == (12000 if match == "entry_name" else 0)
+        assert get_variance_analysis_for_range(db, date(2026, 5, 1), date(2026, 5, 31), 1, alternate.id)["total_budget"] == 99000
+    finally:
+        db.close()
+
+
+def test_variance_counts_definitions_without_creating_a_plan():
+    db = _session()
+    try:
+        db.add(models.Client(id=1, name="test", general_settings={}))
+        food = models.Account(client_id=1, name="food", account_type="expense")
+        db.add(food)
+        db.flush()
+        db.add(models.RegistryEntry(client_id=1, name="food", line_type="expense", budget_account_id=food.id,
+                                    amount_minor=8000))
+        db.commit()
+        result = get_variance_analysis_for_range(db, date(2026, 5, 1), date(2026, 5, 31), 1)
+        assert result["plan_id"] is None
+        assert result["total_budget"] == 8000
+        assert db.query(models.BudgetPlan).count() == 0
+        assert db.query(models.MonthlyPlanLine).count() == 0
     finally:
         db.close()
