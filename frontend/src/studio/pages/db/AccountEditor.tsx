@@ -1,6 +1,7 @@
 import { useId, useState, type FormEvent } from 'react';
 import { createAccount, updateAccount } from '../../../api';
-import { EditorActions, Field } from './Database';
+import { OverlayHeaderAction } from '../../components/Overlay';
+import { ActiveSwitch, EditorActions, Field } from './Database';
 import { ACCOUNT_TYPES, inputClass, type DatabaseAccount } from './forms';
 
 const CARD_NUMBERS = [
@@ -30,6 +31,7 @@ export default function AccountEditor({ account, initialType = 'asset', currency
         onSave(() => account ? updateAccount(account.id, payload) : createAccount({ ...payload, account_type: type }));
     };
     return <form id={formId} onSubmit={submit} className="space-y-4">
+        <OverlayHeaderAction><ActiveSwitch name={name || '口座・勘定科目'} active={active} disabled={busy} onToggle={() => setActive(!active)} /></OverlayHeaderAction>
         <fieldset disabled={busy} className="grid gap-4 md:grid-cols-2">
             <Field label="名称"><input required value={name} onChange={(event) => setName(event.target.value)} className={inputClass} /></Field>
             <Field label="種類"><select disabled={Boolean(account)} value={type} onChange={(event) => setType(event.target.value as DatabaseAccount['account_type'])} className={inputClass}>{Object.entries(ACCOUNT_TYPES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
@@ -37,7 +39,6 @@ export default function AccountEditor({ account, initialType = 'asset', currency
                 <Field label="支払方法"><select value={policy} onChange={(event) => setPolicy(event.target.value as typeof policy)} className={inputClass}>{Object.entries({ full: '全額', minimum: '最低額', fixed: '定額', installment: '分割', revolving: 'リボ' }).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></Field>
                 {CARD_NUMBERS.map(([key, label, min, max]) => <Field key={key} label={`${label}${key === 'liability_minimum_payment' || key === 'liability_fixed_payment_amount' ? `（${currency}）` : ''}`}><input type="number" min={min} max={max} step={key.includes('amount') || key.includes('minimum') || key.includes('rate') ? 'any' : 1} value={card[key]} onChange={(event) => setCard((previous) => ({ ...previous, [key]: event.target.value }))} className={inputClass} /></Field>)}
             </>}
-            <Field label="有効"><input type="checkbox" checked={active} onChange={(event) => setActive(event.target.checked)} /></Field>
             <EditorActions form={formId} busy={busy} onCancel={onCancel} />
         </fieldset>
     </form>;

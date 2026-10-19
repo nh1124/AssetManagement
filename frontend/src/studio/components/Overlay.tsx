@@ -1,12 +1,19 @@
 import { useContext, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
-import { OverlayFooterContext } from './overlayContext';
+import { OverlayFooterContext, OverlayHeaderContext } from './overlayContext';
 
 export function OverlayFooter({ children, fallback }: { children: ReactNode; fallback?: ReactNode }) {
     const host = useContext(OverlayFooterContext);
     // Portalling actions keeps their form's validation and busy state with the editor.
     if (host === undefined) return fallback ?? children;
+    return host ? createPortal(children, host) : null;
+}
+
+/** Lets an editor rendered inside an Overlay put a control (the active switch) beside the × button. */
+export function OverlayHeaderAction({ children }: { children: ReactNode }) {
+    const host = useContext(OverlayHeaderContext);
+    if (host === undefined) return children;
     return host ? createPortal(children, host) : null;
 }
 
@@ -34,6 +41,7 @@ export default function Overlay({ title, children, footer, headerAction, describ
     const titleId = useId();
     const panel = useRef<HTMLDialogElement>(null);
     const [footerHost, setFooterHost] = useState<HTMLElement | null>(null);
+    const [headerHost, setHeaderHost] = useState<HTMLElement | null>(null);
 
     useEffect(() => {
         const dialog = panel.current;
@@ -77,11 +85,13 @@ export default function Overlay({ title, children, footer, headerAction, describ
         <div className="flex max-h-[calc(100dvh-2rem)] flex-col">
             <header className="flex shrink-0 items-center justify-between gap-4 border-b border-[var(--studio-border)] px-5 py-4">
                 <h2 id={titleId} className="text-base font-semibold">{title}</h2>
-                <div className="flex items-center gap-3">{headerAction}<button type="button" aria-label={`${title}を閉じる`} disabled={busy} onClick={() => { if (!busy) onClose(); }} className="rounded-md p-2 text-[var(--studio-text-muted)] hover:bg-[var(--studio-accent-soft)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)] disabled:opacity-40"><X size={18} aria-hidden="true" /></button></div>
+                <div className="flex items-center gap-3">{headerAction}<span ref={setHeaderHost} className="contents" /><button type="button" aria-label={`${title}を閉じる`} disabled={busy} onClick={() => { if (!busy) onClose(); }} className="rounded-md p-2 text-[var(--studio-text-muted)] hover:bg-[var(--studio-accent-soft)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)] disabled:opacity-40"><X size={18} aria-hidden="true" /></button></div>
             </header>
-            <OverlayFooterContext.Provider value={footerHost}>
-                <div className="min-h-0 overflow-y-auto overscroll-contain p-5">{children}</div>
-            </OverlayFooterContext.Provider>
+            <OverlayHeaderContext.Provider value={headerHost}>
+                <OverlayFooterContext.Provider value={footerHost}>
+                    <div className="min-h-0 overflow-y-auto overscroll-contain p-5">{children}</div>
+                </OverlayFooterContext.Provider>
+            </OverlayHeaderContext.Provider>
             <footer ref={setFooterHost} className="flex shrink-0 flex-wrap items-center justify-end gap-3 border-t border-[var(--studio-border)] px-5 py-4 empty:hidden">
                 {footer}
             </footer>

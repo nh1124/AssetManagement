@@ -52,7 +52,8 @@ export function ProductEditor({ product, assets, currency, lookups, busy, onSave
     const confirm = useConfirm();
     const fundingCapsules = (lookups.capsules as FundingCapsule[]).filter((capsule) => capsule.life_event_id == null);
     const [name, setName] = useState(product?.name ?? '');
-    const [category, setCategory] = useState(product?.category ?? '');
+    // 'Uncategorized' is the stored placeholder for no category; the field shows it empty.
+    const [category, setCategory] = useState(product?.category === 'Uncategorized' ? '' : product?.category ?? '');
     const [location, setLocation] = useState(product?.location ?? '');
     const [price, setPrice] = useState(product?.purchase_price == null ? '' : String(product.purchase_price));
     const [date, setDate] = useState(product?.purchase_date ?? '');
