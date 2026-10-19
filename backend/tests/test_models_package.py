@@ -9,22 +9,22 @@ from app import models
 from app.database import Base
 
 
-# E4 removes quick templates and the batch link to them.
-EXPECTED_METADATA_SHA256 = "cb1feadff63f119eefb4ac88eb08bd020e3e7d8a2fff3555b6afc32718aa8a8d"
+# WP15 replaces milestones, baselines and account returns with contribution plans and goal earmarks.
+EXPECTED_METADATA_SHA256 = "8ec50d4fed44af6b34eda0181bf677a53c937072e30c4a8c3a9b2a2a551b3ae4"
 
 MODEL_NAMES = (
     "Client", "ClientMfaSetting", "ClientRecoveryCode",
     "Account", "JournalEntry", "Transaction", "TransactionProposal",
-    "TransactionBatch", "ExchangeRate", "Product",
-    "RecurringTransaction", "RegistryEntry", "LifeEvent", "LifeEventLink", "Milestone", "HouseholdMember", "LifeEventCondition",
+    "TransactionBatch", "ExchangeRate", "FxTrackedCurrency", "Product",
+    "RegistryEntry", "LifeEvent", "LifeEventLink", "HouseholdMember", "LifeEventCondition",
     "BudgetPlan", "MonthlyPlanLine", "PeriodReview", "MonthlyAction", "PeriodClose",
     "AiOperationPolicy", "AiAuditLog", "AiChangeRequest",
-    "SimulationConfig", "SimulationScenario",
-    "LifeScenario", "LifeScenarioAccountReturn", "GoalBaseline", "GoalBudgetReflection",
+    "SimulationConfig",
+    "LifeScenario", "ScenarioContributionPlan", "GoalEventEarmark", "GoalBudgetReflection",
     "Capsule", "CapsuleFundingSource", "CapsuleRule", "CapsuleDrawdown", "Notification",
     "ProductDepreciation",
 )
-ENUM_NAMES = ("AccountType", "AccountRole", "AccountInstitution")
+ENUM_NAMES = ("AccountType",)
 
 
 def _metadata_snapshot():
@@ -90,8 +90,8 @@ def _metadata_snapshot():
 
 def test_metadata_matches_the_minor_unit_schema():
     snapshot = _metadata_snapshot()
-    assert len(snapshot["table_names"]) == 37
-    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 445
+    assert len(snapshot["table_names"]) == 35
+    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 386
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == EXPECTED_METADATA_SHA256
 

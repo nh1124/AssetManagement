@@ -25,7 +25,6 @@ from .routers import (
     clients,
     data_transfer,
     exchange_rates,
-    goal_baselines,
     goal_budget,
     notifications,
     life_events,
@@ -35,11 +34,8 @@ from .routers import (
     period_closes,
     products,
     registry_entries,
-    recurring,
     reports,
-    roadmap,
     simulation,
-    simulation_scenarios,
     transaction_batches,
     transactions,
 )
@@ -143,24 +139,11 @@ def ensure_no_default_admin_password(db) -> None:
         raise RuntimeError("Invalid production configuration: default admin password is still active")
 
 
-def backfill_recurring_next_due_dates(db, today: date | None = None) -> int:
-    from .services.schedule_rules import ensure_next_due_date
-
-    rows = db.query(models.RecurringTransaction).filter(
-        models.RecurringTransaction.is_active.is_(True),
-        models.RecurringTransaction.next_due_date.is_(None),
-    ).all()
-    for recurring_row in rows:
-        ensure_next_due_date(recurring_row, today or date.today())
-    if rows:
-        db.commit()
-    return len(rows)
-
-
 async def run_automatic_recording_loop() -> None:
     """Daily run of every automatic recording the registry switches on."""
     from .database import SessionLocal
     from .workflows.automatic_recording_workflow import process_due_all
+    from .workflows.fx_workflow import refresh_all
 
     while True:
         db = SessionLocal()
@@ -169,6 +152,11 @@ async def run_automatic_recording_loop() -> None:
         except Exception:
             db.rollback()
             logger.exception("Automatic recording cycle failed")
+        try:
+            refresh_all(db)
+        except Exception:
+            db.rollback()
+            logger.exception("FX refresh cycle failed")
         finally:
             db.close()
         await asyncio.sleep(24 * 60 * 60)
@@ -180,7 +168,6 @@ async def startup_event():
     from .database import SessionLocal
     from . import models
     from .utils.password import hash_password
-    from .services.ledger_service import ensure_default_accounts
 
     settings.validate_production_settings()
     run_alembic_migrations()
@@ -220,32 +207,6 @@ async def startup_event():
                     default_client.password_hash = hash_password("adminadmin")
                     db.commit()
 
-            # 2. Cleanup: Assign any orphan data to Default Client in development only.
-            # This keeps legacy local resets usable without creating production tenants implicitly.
-            for table in [
-                "accounts",
-                "transactions",
-                "transaction_batches",
-                "products",
-                "registry_entries",
-                "life_events",
-                "simulation_configs",
-                "recurring_transactions",
-                "monthly_plan_lines",
-                "period_reviews",
-                "milestones",
-                "capsules",
-                "exchange_rates",
-            ]:
-                try:
-                    db.execute(text(f"UPDATE {table} SET client_id = 1 WHERE client_id IS NULL"))
-                except Exception:
-                    pass
-            db.commit()
-            ensure_default_accounts(db, client_id=1)
-
-        backfill_recurring_next_due_dates(db)
-
     finally:
         db.close()
 
@@ -283,14 +244,12 @@ app.include_router(registry_entries.router, dependencies=[Depends(get_current_cl
 app.include_router(life_events.router)
 app.include_router(life_scenarios.router)
 app.include_router(goal_budget.router)
-app.include_router(goal_baselines.router)
 app.include_router(notifications.router)
 app.include_router(household_members.router)
 app.include_router(budget_plans.router, dependencies=[Depends(get_current_client)])
 app.include_router(period_reviews.router)
 app.include_router(period_closes.router)
 app.include_router(simulation.router)
-app.include_router(simulation_scenarios.router)
 app.include_router(accounts.router)
 app.include_router(actions.router, dependencies=[Depends(get_current_client)])
 app.include_router(ai_operations.router)
@@ -298,8 +257,6 @@ app.include_router(ai_change_requests.router)
 app.include_router(clients.router)
 app.include_router(data_transfer.router)
 app.include_router(auth.router)
-app.include_router(recurring.router, dependencies=[Depends(get_current_client)])
-app.include_router(roadmap.router, dependencies=[Depends(get_current_client)])
 app.include_router(capsules.router, dependencies=[Depends(get_current_client)])
 app.include_router(reports.router, dependencies=[Depends(get_current_client)])
 app.include_router(exchange_rates.router, dependencies=[Depends(get_current_client)])

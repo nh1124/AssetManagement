@@ -28,7 +28,7 @@ from app.database import Base, get_db
 from app.main import app
 from app.services.cache_service import invalidate_client
 from app.services.fx_service import get_client_currency
-from app.services.ledger_service import ensure_default_accounts, create_transaction
+from app.services.ledger_service import create_transaction
 from app.utils.jwt import create_access_token
 
 
@@ -79,11 +79,9 @@ def _get_routes():
 def _seed(db, scenario, today):
     db.add(models.Client(id=1, name="GET guard", username="get-guard", general_settings={"currency": "JPY"}))
     db.flush()
-    if scenario != "missing_default_accounts":
-        ensure_default_accounts(db, 1)
-    cash = models.Account(client_id=1, name="Guard cash", account_type="asset", role="operating")
+    cash = models.Account(client_id=1, name="Guard cash", account_type="asset")
     expense = models.Account(client_id=1, name="Guard food", account_type="expense")
-    income = models.Account(client_id=1, name="Guard salary", account_type="revenue")
+    income = models.Account(client_id=1, name="Guard salary", account_type="income")
     db.add_all([cash, expense, income])
     db.flush()
     currency = get_client_currency(db, 1)
@@ -98,21 +96,23 @@ def _seed(db, scenario, today):
     # Drive saved scenario reads with real assumptions, without granting a GET exception.
     life_scenario = models.LifeScenario(
         client_id=1, name="Guard life scenario", is_goal=True,
-        account_returns=[models.LifeScenarioAccountReturn(account_id=cash.id, annual_return=3.0)],
+        contribution_plans=[models.ScenarioContributionPlan(account_id=cash.id, start_period=today.strftime("%Y-%m"),
+                                                            monthly_amount_minor=to_minor(10000, "JPY"), annual_return=3.0)],
     )
     alternate_scenario = models.LifeScenario(client_id=1, name="Guard alternate", annual_return=7.0)
     db.add_all([life_scenario, alternate_scenario])
     db.flush()
-    goal = models.LifeEvent(scenario_id=life_scenario.id, client_id=1, name="Guard goal", start_date=today,
+    goal = models.LifeEvent(scenario_id=life_scenario.id, client_id=1, name="Guard goal",
                             target_date=today + timedelta(days=365), target_amount_minor=to_minor(200000, "JPY"),
                             priority=1)
     db.add(goal)
     db.flush()
-    capsule = models.Capsule(client_id=1, life_event_id=goal.id, name="Guard capsule",
+    capsule = models.Capsule(client_id=1, name="Guard capsule",
                              target_amount_minor=to_minor(200000, "JPY"), monthly_contribution_minor=to_minor(10000, "JPY"),
                              funding_sources=[models.CapsuleFundingSource(client_id=1, account_id=cash.id, target_amount_minor=to_minor(200000, "JPY"))])
     db.add(capsule)
     db.flush()
+    db.add(models.GoalEventEarmark(client_id=1, life_event_id=goal.id, capsule_id=capsule.id))
     credit = db.query(models.JournalEntry).filter_by(transaction_id=lunch.id, account_id=cash.id).one()
     credit.capsule_id = capsule.id
     db.add(models.CapsuleDrawdown(client_id=1, capsule_id=capsule.id,
@@ -121,9 +121,7 @@ def _seed(db, scenario, today):
                              last_unit_price_minor=to_minor(1000, "JPY"), frequency_days=30, units_per_purchase=1,
                              last_purchase_date=today, budget_account_id=expense.id,
                              budget_treatment="expense_only")
-    registry = models.RegistryEntry(client_id=1, name="Guard subscription", amount_minor=to_minor(1000, "JPY"),
-                                    budget_account_id=expense.id, source_account_id=cash.id,
-                                    generate_recurring=True)
+    registry = models.RegistryEntry(client_id=1, name='Guard subscription', amount_minor=to_minor(1000, 'JPY'), budget_account_id=expense.id, source_account_id=cash.id, start_date=date(2026, 1, 1), repeat_mode="indefinite", frequency="Monthly")
     db.add_all([product, registry])
     db.flush()
     plan = None
@@ -143,17 +141,9 @@ def _seed(db, scenario, today):
                                target_period=today.strftime("%Y-%m"), line_type="expense",
                                name="Guard food", amount_minor=to_minor(3000, "JPY"), account_id=expense.id,
                                source_account_id=cash.id),
-        models.RecurringTransaction(client_id=1, name=registry.name, amount_minor=to_minor(1000, "JPY"),
-                                    frequency="Monthly", day_of_month=today.day,
-                                    from_account_id=cash.id, to_account_id=expense.id,
-                                    next_due_date=today, source_registry_entry_id=registry.id),
         models.CapsuleRule(client_id=1, capsule_id=capsule.id, trigger_type="Income",
                            amount_type="fixed", **rule_amount_fields(100, "fixed", "JPY")),
-        models.Milestone(client_id=1, life_event_id=goal.id, date=goal.target_date,
-                         target_amount_minor=to_minor(200000, "JPY")),
         models.SimulationConfig(client_id=1),
-        models.SimulationScenario(client_id=1, life_event_id=goal.id, name="Guard scenario",
-                                  annual_return=5, inflation=2, monthly_savings_minor=to_minor(10000, "JPY")),
         models.PeriodReview(client_id=1, start_date=start, end_date=end, label="Guard review"),
         models.MonthlyAction(client_id=1, source_period=today.strftime("%Y-%m"),
                              proposal_id="guard", kind="review", idempotency_key="guard"),
@@ -309,12 +299,12 @@ def read_scan():
         if f"GET {route.path}" in UNDRIVABLE_GETS:
             continue
         scenarios = ("existing_plan",) if route.path == "/budget-plans/compare" else (
-            "existing_plan", "no_plan", "missing_default_accounts",
+            "existing_plan", "no_plan",
         )
         # Different resources share one route but dispatch into different
         # services. Summary must not disappear behind an accounts-only case.
         resources = ("summary", "accounts", "transactions_recent", "monthly_plan",
-                     "recurring_transactions", "goals", "products", "registry_entries",
+                     "auto_transactions", "goals", "products",
                      "settings", "audit_logs") if "{resource}" in route.path else (None,)
         for scenario in scenarios:
             for resource in resources:

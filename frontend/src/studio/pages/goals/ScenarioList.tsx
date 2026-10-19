@@ -88,7 +88,7 @@ function ScenariosForClient({ currency, clientName }: { currency: string; client
         {menu && !disabled && <ContextMenu viewport label="シナリオの操作" x={menu.x} y={menu.y} onClose={closeMenu} items={[
             { label: '名前を変更', onSelect: () => setDialog({ mode: 'rename', scenario: menu.scenario }) },
             { label: '複製', onSelect: () => setDialog({ mode: 'duplicate', scenario: menu.scenario }) },
-            ...(!menu.scenario.is_goal ? [{ label: 'ゴールにする', onSelect: () => goal.chooseGoal(menu.scenario.id) }] : []),
+            ...(!menu.scenario.is_goal ? [{ label: 'ゴールにする', onSelect: () => goal.chooseGoal(menu.scenario) }] : []),
             { label: '削除', onSelect: () => {
                 const scenario = menu.scenario;
                 void (async () => {

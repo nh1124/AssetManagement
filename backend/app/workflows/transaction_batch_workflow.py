@@ -5,7 +5,6 @@ from sqlalchemy.orm import Session
 from .. import models, schemas
 from ..domain.errors import Invalid
 from ..services import transaction_batch_service
-from ..services.ledger_service import ensure_default_accounts
 from .ledger_entry_workflow import record_entry
 
 
@@ -19,7 +18,6 @@ def post_transaction_batch(
     if not payload.transactions:
         raise BatchPostingError("At least one transaction is required")
 
-    ensure_default_accounts(db, client_id=client_id)
     batch = transaction_batch_service.create_batch(
         db, client_id, payload.model_dump(exclude={"transactions"}), commit=False,
     )

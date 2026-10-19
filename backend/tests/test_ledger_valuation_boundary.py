@@ -23,7 +23,7 @@ def test_fx_service_references_only_rate_and_client_models():
         and isinstance(node.value, ast.Name)
         and node.value.id == "models"
     }
-    allowed = {"ExchangeRate", "Client"}
+    allowed = {"ExchangeRate", "FxTrackedCurrency", "Client"}
     assert referenced == allowed, (
         f"fx_service model boundary leaked: {sorted(referenced - allowed)}; "
         f"missing expected models: {sorted(allowed - referenced)}"

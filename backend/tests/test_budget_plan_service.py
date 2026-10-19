@@ -184,7 +184,7 @@ def test_data_export_manifest_and_validate_include_monthly_actions() -> None:
         payload = ImportPayload(**snapshot)
         validation = validate_import_client_data(payload=payload, current_client=client)
 
-        assert snapshot["version"] == 22
+        assert snapshot["version"] == 26
         assert snapshot["manifest"]["counts"]["monthly_actions"] == 1
         assert snapshot["data"]["monthly_actions"][0]["kind"] == "set_budget"
         assert validation["status"] == "valid"
@@ -297,22 +297,10 @@ def test_data_import_backfills_plan_line_source_identity_for_legacy_payload() ->
         food = models.Account(client_id=1, name="food", account_type="expense")
         source_db.add_all([source_client, cash, food])
         source_db.flush()
-        registry_entry = models.RegistryEntry(
-            client_id=1,
-            name="recurring owner",
-        )
+        registry_entry = models.RegistryEntry(client_id=1, name='recurring owner', start_date=date(2026, 1, 1), repeat_mode="indefinite", frequency="Monthly")
         source_db.add(registry_entry)
         source_db.flush()
-        recurring = models.RecurringTransaction(
-            client_id=1,
-            source_registry_entry_id=registry_entry.id,
-            name="food",
-            amount_minor=to_minor(10000, "JPY"),
-            from_account_id=cash.id,
-            to_account_id=food.id,
-            frequency="Monthly",
-            is_active=True,
-        )
+        recurring = models.RegistryEntry(client_id=1, name='food', amount_minor=to_minor(10000, 'JPY'), source_account_id=cash.id, destination_account_id=food.id, frequency='Monthly', is_active=True, start_date=date(2026, 1, 1), repeat_mode="indefinite")
         source_db.add(recurring)
         source_db.flush()
         line = models.MonthlyPlanLine(
@@ -347,7 +335,8 @@ def test_data_import_backfills_plan_line_source_identity_for_legacy_payload() ->
         target_db.commit()
         result = import_client_data(payload=ImportPayload(**snapshot), db=target_db, current_client=target_client)
         imported_line = target_db.query(models.MonthlyPlanLine).filter_by(client_id=2, name="food").one()
-        imported_recurring = target_db.query(models.RecurringTransaction).filter_by(client_id=2, name="food").one()
+        imported_entry = target_db.query(models.RegistryEntry).filter_by(client_id=2, name="food").one()
+        assert imported_entry.name == "food"
 
         assert result["status"] == "ok"
         assert imported_line.source_kind == "recurring"
@@ -365,26 +354,12 @@ def test_budget_summary_combines_income_spending_allocations_and_debt() -> None:
         salary = models.Account(client_id=1, name="salary", account_type="income")
         cash = models.Account(client_id=1, name="cash", account_type="asset")
         food = models.Account(client_id=1, name="food", account_type="expense")
-        nisa = models.Account(client_id=1, name="NISA", account_type="asset", role="growth")
+        nisa = models.Account(client_id=1, name="NISA", account_type="asset")
         loan = models.Account(client_id=1, name="loan", account_type="liability")
         db.add_all([client, salary, cash, food, nisa, loan])
         db.flush()
-        registry_service.upsert_registry_from_recurring_payload(db, 1, {
-            "name": "salary",
-            "amount": 200000,
-            "from_account_id": salary.id,
-            "to_account_id": cash.id,
-            "frequency": "Monthly",
-            "is_active": True,
-        })
-        registry_service.upsert_registry_from_recurring_payload(db, 1, {
-            "name": "rent",
-            "amount": 80000,
-            "from_account_id": cash.id,
-            "to_account_id": food.id,
-            "frequency": "Monthly",
-            "is_active": True,
-        })
+        registry_service.create_entry(db, 1, {'name': 'salary', 'amount': 200000, 'source_account_id': salary.id, 'destination_account_id': cash.id, 'frequency': 'Monthly', 'is_active': True, "start_date": date(2026, 1, 1), "repeat_mode": "indefinite", "kind": "income" if db.get(models.Account, salary.id).account_type == "income" else {"expense":"expense", "liability":"debt"}.get(db.get(models.Account, cash.id).account_type, "transfer")})
+        registry_service.create_entry(db, 1, {'name': 'rent', 'amount': 80000, 'source_account_id': cash.id, 'destination_account_id': food.id, 'frequency': 'Monthly', 'is_active': True, "start_date": date(2026, 1, 1), "repeat_mode": "indefinite", "kind": "income" if db.get(models.Account, cash.id).account_type == "income" else {"expense":"expense", "liability":"debt"}.get(db.get(models.Account, food.id).account_type, "transfer")})
         db.add_all([
             models.MonthlyPlanLine(
                 client_id=1,
@@ -550,7 +525,7 @@ def test_create_plan_lines_updates_capsule_contribution_and_monthly_plan_line() 
         client = models.Client(id=1, name="test", general_settings={})
         cash = models.Account(client_id=1, name="cash", account_type="asset")
         food = models.Account(client_id=1, name="food", account_type="expense")
-        cap_account = models.Account(client_id=1, name="house capsule", account_type="asset", role="earmarked")
+        cap_account = models.Account(client_id=1, name="house capsule", account_type="asset")
         db.add_all([client, cash, food, cap_account])
         db.flush()
         capsule = models.Capsule(
@@ -691,12 +666,12 @@ def test_budget_summary_lists_unset_accounts_with_their_actuals() -> None:
     db = _session()
     try:
         client = models.Client(id=1, name="test", general_settings={})
-        bank = models.Account(client_id=1, name="bank", account_type="asset", role="operating")
+        bank = models.Account(client_id=1, name="bank", account_type="asset")
         food = models.Account(client_id=1, name="food", account_type="expense")
         travel = models.Account(client_id=1, name="travel", account_type="expense")
         old = models.Account(client_id=1, name="old", account_type="expense", is_active=False)
         salary = models.Account(client_id=1, name="salary", account_type="income")
-        nisa = models.Account(client_id=1, name="NISA", account_type="asset", role="growth")
+        nisa = models.Account(client_id=1, name="NISA", account_type="asset")
         card = models.Account(client_id=1, name="card", account_type="liability", liability_kind="card")
         loan = models.Account(client_id=1, name="loan", account_type="liability", liability_kind="loan")
         db.add_all([client, bank, food, travel, old, salary, nisa, card, loan])
@@ -720,6 +695,7 @@ def test_budget_summary_lists_unset_accounts_with_their_actuals() -> None:
 
         assert set(rows) == {
             ("income", "salary"), ("expense", "travel"), ("allocation", "NISA"),
+            ("allocation", "bank"), ("drawdown", "bank"),
             ("debt_payment", "card"), ("debt_payment", "loan"), ("borrowing", "loan"), ("drawdown", "NISA"),
         }
         travel_row = rows[("expense", "travel")]
@@ -856,6 +832,28 @@ def test_capsule_allocation_actual_uses_current_journal_claim() -> None:
         db.close()
 
 
+def test_an_earmark_proposes_its_monthly_amount_before_any_plan_exists() -> None:
+    db = _session()
+    try:
+        account = models.Account(client_id=1, name="savings", account_type="asset")
+        db.add_all([models.Client(id=1, name="test", general_settings={}), account])
+        db.flush()
+        db.add(models.Capsule(
+            client_id=1, name="Travel", target_amount_minor=300000, monthly_contribution_minor=20000,
+            funding_sources=[models.CapsuleFundingSource(client_id=1, account_id=account.id, target_amount_minor=300000)],
+        ))
+        db.commit()
+
+        summary = get_budget_summary(db, client_id=1, period="2026-05")
+        line = next(item for item in summary["plan_lines"] if item["target_type"] == "capsule")
+
+        assert summary["plan_id"] is None
+        assert (line["id"], line["account_id"], line["budget_amount"]) == (None, account.id, 20000)
+        assert db.query(models.BudgetPlan).count() == 0
+    finally:
+        db.close()
+
+
 def test_product_reserve_capsule_allocation_exposes_suggested_amount() -> None:
     db = _session()
     try:
@@ -949,52 +947,6 @@ def test_expense_only_products_are_variable_budget_suggestions() -> None:
         db.close()
 
 
-def test_life_event_allocation_is_presented_as_capsule() -> None:
-    db = _session()
-    try:
-        client = models.Client(id=1, name="test", general_settings={})
-        account = models.Account(client_id=1, name="event capsule account", account_type="asset")
-        db.add_all([client, account])
-        db.flush()
-        event = models.LifeEvent(scenario_id=goal_scenario_id(db, 1),
-            client_id=1,
-            name="Move",
-            target_date=date(2027, 4, 1),
-            target_amount_minor=to_minor(500000, "JPY"),
-            priority=2,
-        )
-        db.add(event)
-        db.flush()
-        capsule = models.Capsule(
-            client_id=1,
-            name="Move Capsule",
-            target_amount_minor=to_minor(500000, "JPY"),
-            monthly_contribution_minor=to_minor(0, "JPY"),
-            life_event_id=event.id,
-            funding_sources=[models.CapsuleFundingSource(client_id=1, account_id=account.id, target_amount_minor=to_minor(500000, "JPY") or 0)],
-        )
-        db.add(capsule)
-        db.add(models.MonthlyPlanLine(
-            client_id=1,
-            target_period="2026-05",
-            line_type="allocation",
-            target_type="life_event",
-            target_id=event.id,
-            name=event.name,
-            amount_minor=to_minor(30000, "JPY"),
-        ))
-        db.commit()
-
-        _give_fixture_lines_a_plan(db)
-        summary = get_budget_summary(db, client_id=1, period="2026-05")
-        line = next(item for item in summary["plan_lines"] if item["line_type"] == "allocation")
-
-        assert line["target_type"] == "capsule"
-        assert line["target_id"] == capsule.id
-        assert line["target_name"] == "Move Capsule"
-    finally:
-        db.close()
-
 
 def test_cash_flow_projection_warns_about_unsynced_yearly_income() -> None:
     db = _session()
@@ -1004,15 +956,7 @@ def test_cash_flow_projection_warns_about_unsynced_yearly_income() -> None:
         cash = models.Account(client_id=1, name="cash", account_type="asset")
         db.add_all([client, salary, cash])
         db.flush()
-        registry_service.upsert_registry_from_recurring_payload(db, 1, {
-            "name": "summer bonus",
-            "amount": 600000,
-            "from_account_id": salary.id,
-            "to_account_id": cash.id,
-            "frequency": "Yearly",
-            "month_of_year": 6,
-            "is_active": True,
-        })
+        registry_service.create_entry(db, 1, {'name': 'summer bonus', 'amount': 600000, 'source_account_id': salary.id, 'destination_account_id': cash.id, 'frequency': 'Yearly', 'month_of_year': 6, 'is_active': True, "start_date": date(2026, 1, 1), "repeat_mode": "indefinite", "kind": "income" if db.get(models.Account, salary.id).account_type == "income" else {"expense":"expense", "liability":"debt"}.get(db.get(models.Account, cash.id).account_type, "transfer")})
         db.commit()
 
         summary = get_budget_summary(db, client_id=1, period="2026-05")
@@ -1297,22 +1241,10 @@ def test_auto_cash_treatment_excludes_credit_expense_and_projects_card_payment()
         subscription = models.Account(client_id=1, name="subscription", account_type="expense")
         db.add_all([client, cash, credit, subscription])
         db.flush()
-        registry_entry = models.RegistryEntry(
-            client_id=1,
-            name="recurring owner",
-        )
+        registry_entry = models.RegistryEntry(client_id=1, name='recurring owner', start_date=date(2026, 1, 1), repeat_mode="indefinite", frequency="Monthly")
         db.add(registry_entry)
         db.flush()
-        recurring = models.RecurringTransaction(
-            client_id=1,
-            source_registry_entry_id=registry_entry.id,
-            name="subscription",
-            amount_minor=to_minor(10000, "JPY"),
-            from_account_id=credit.id,
-            to_account_id=subscription.id,
-            frequency="Monthly",
-            is_active=True,
-        )
+        recurring = models.RegistryEntry(client_id=1, name='subscription', amount_minor=to_minor(10000, 'JPY'), source_account_id=credit.id, destination_account_id=subscription.id, frequency='Monthly', is_active=True, start_date=date(2026, 1, 1), repeat_mode="indefinite")
         db.add(recurring)
         db.flush()
         db.add(models.MonthlyPlanLine(
@@ -1354,7 +1286,7 @@ def test_cash_flow_splits_same_expense_account_by_source_account_bucket() -> Non
     try:
         next_period = add_months(current_period_key(), 1)
         client = models.Client(id=1, name="test", general_settings={})
-        cash = models.Account(client_id=1, name="cash", account_type="asset", role="operating")
+        cash = models.Account(client_id=1, name="cash", account_type="asset")
         loan = models.Account(client_id=1, name="medical loan", account_type="liability")
         beauty = models.Account(client_id=1, name="beauty", account_type="expense")
         db.add_all([client, cash, loan, beauty])
@@ -1398,7 +1330,7 @@ def test_cash_flow_splits_same_expense_account_by_source_account_bucket() -> Non
         assert summary["total_variable_budget"] == 600000
         assert row["expense"] == 100000
         assert row["non_cash_budget"] == 500000
-        assert row["operating_flow"] == -100000
+        assert row["asset_flow"] == -100000
         assert row["net_cash"] == -100000
     finally:
         db.close()
@@ -1451,8 +1383,8 @@ def test_income_direct_to_asset_counts_as_allocation_actual_without_remaining_ca
         current_period = current_period_key()
         client = models.Client(id=1, name="test", general_settings={})
         salary = models.Account(client_id=1, name="salary", account_type="income")
-        bank = models.Account(client_id=1, name="bank", account_type="asset", role="operating")
-        stock = models.Account(client_id=1, name="employee stock", account_type="asset", role="growth")
+        bank = models.Account(client_id=1, name="bank", account_type="asset")
+        stock = models.Account(client_id=1, name="employee stock", account_type="asset")
         db.add_all([client, salary, bank, stock])
         db.flush()
         line = models.MonthlyPlanLine(
@@ -1484,12 +1416,12 @@ def test_income_direct_to_asset_counts_as_allocation_actual_without_remaining_ca
 
         assert plan_line["actual"] == 54515
         assert plan_line["variance"] == -4515
-        assert row["planned_allocation"] == 54515
-        assert row["actual_allocation"] == 54515
+        assert row["planned_allocation"] == 0
+        assert row["actual_allocation"] == 0
         assert row["remaining_allocation"] == 0
         assert row["allocation"] == 0
         assert row["net_cash"] == 0
-        assert balance_row["growth_assets"] == 54515
+        assert balance_row["total_assets"] == 54515
     finally:
         db.close()
 
@@ -1500,9 +1432,9 @@ def test_balance_projection_tracks_debt_payment_and_liability_asset_purchase() -
         next_period = add_months(current_period_key(), 1)
         client = models.Client(id=1, name="test", general_settings={})
         salary = models.Account(client_id=1, name="salary", account_type="income")
-        cash = models.Account(client_id=1, name="cash", account_type="asset", role="operating")
+        cash = models.Account(client_id=1, name="cash", account_type="asset")
         loan = models.Account(client_id=1, name="loan", account_type="liability")
-        nisa = models.Account(client_id=1, name="NISA", account_type="asset", role="growth")
+        nisa = models.Account(client_id=1, name="NISA", account_type="asset")
         db.add_all([client, salary, cash, loan, nisa])
         db.flush()
         opening = models.Transaction(
@@ -1552,10 +1484,9 @@ def test_balance_projection_tracks_debt_payment_and_liability_asset_purchase() -
         balance_row = summary["balance_projection"][0]
 
         assert cash_row["debt"] == 30000
-        assert cash_row["net_cash"] == -30000
-        assert cash_row["growth_flow"] == 50000
-        assert balance_row["operating_assets"] == 70000
-        assert balance_row["growth_assets"] == 50000
+        assert cash_row["net_cash"] == 20000
+        assert cash_row["asset_flow"] == 20000
+        assert balance_row["total_assets"] == 120000
         assert balance_row["liabilities"] == 120000
         assert balance_row["net_worth"] == 0
     finally:
@@ -1571,20 +1502,7 @@ def test_cash_flow_uses_registry_source_when_saved_budget_line_lacks_source_acco
         beauty = models.Account(client_id=1, name="beauty", account_type="expense")
         db.add_all([client, loan, beauty])
         db.flush()
-        db.add(models.RegistryEntry(
-            client_id=1,
-            name="beauty",
-            entry_type="service",
-            amount_minor=to_minor(500000, "JPY"),
-            currency="JPY",
-            frequency="Monthly",
-            line_type="expense",
-            budget_account_id=beauty.id,
-            source_account_id=loan.id,
-            destination_account_id=beauty.id,
-            budget_active=True,
-            is_active=True,
-        ))
+        db.add(models.RegistryEntry(client_id=1, name='beauty', amount_minor=to_minor(500000, 'JPY'), currency='JPY', frequency='Monthly', budget_account_id=beauty.id, source_account_id=loan.id, destination_account_id=beauty.id, budget_active=True, is_active=True, kind={"service":"expense","allocation":"transfer","debt_payment":"debt"}.get('service', 'service'), start_date=date(2026, 1, 1), repeat_mode="indefinite"))
         db.add(models.MonthlyPlanLine(
             client_id=1,
             target_period=next_period,
@@ -1623,15 +1541,11 @@ def test_an_unsaved_definition_row_reports_the_months_actual() -> None:
         period = current_period_key()
         start, _ = period_to_range(period)
         db.add(models.Client(id=1, name="test", general_settings={}))
-        bank = models.Account(client_id=1, name="bank", account_type="asset", role="operating")
+        bank = models.Account(client_id=1, name="bank", account_type="asset")
         rent = models.Account(client_id=1, name="rent", account_type="expense")
         db.add_all([bank, rent])
         db.flush()
-        db.add(models.RegistryEntry(
-            client_id=1, name="rent", entry_type="service", amount_minor=to_minor(80000, "JPY"), currency="JPY",
-            frequency="Monthly", line_type="expense", budget_account_id=rent.id, source_account_id=bank.id,
-            destination_account_id=rent.id, budget_active=True, is_active=True,
-        ))
+        db.add(models.RegistryEntry(client_id=1, name='rent', amount_minor=to_minor(80000, 'JPY'), currency='JPY', frequency='Monthly', budget_account_id=rent.id, source_account_id=bank.id, destination_account_id=rent.id, budget_active=True, is_active=True, kind={"service":"expense","allocation":"transfer","debt_payment":"debt"}.get('service', 'service'), start_date=date(2026, 1, 1), repeat_mode="indefinite"))
         tx = models.Transaction(client_id=1, date=start, description="rent", amount_minor=to_minor(80000, "JPY"), currency="JPY")
         db.add(tx)
         db.commit()
@@ -1653,7 +1567,7 @@ def test_credit_expense_creates_credit_settlement_projection() -> None:
         period = current_period_key()
         start, _ = period_to_range(period)
         client = models.Client(id=1, name="test", general_settings={})
-        cash = models.Account(client_id=1, name="cash", account_type="asset", role="operating")
+        cash = models.Account(client_id=1, name="cash", account_type="asset")
         card = models.Account(client_id=1, name="credit card", account_type="liability", liability_kind="card")
         food = models.Account(client_id=1, name="food", account_type="expense")
         db.add_all([client, cash, card, food])
@@ -1830,15 +1744,15 @@ def test_credit_settlement_spreads_installment_policy_across_future_months() -> 
         db.close()
 
 
-def test_cash_flow_reports_asset_role_movements() -> None:
+def test_cash_flow_reports_asset_transfers_as_internal_movements() -> None:
     db = _session()
     try:
         next_period = add_months(current_period_key(), 1)
         client = models.Client(id=1, name="test", general_settings={})
-        cash = models.Account(client_id=1, name="cash", account_type="asset", role="operating")
-        nisa = models.Account(client_id=1, name="NISA", account_type="asset", role="growth")
-        reserve = models.Account(client_id=1, name="Trip Reserve", account_type="asset", role="earmarked")
-        defense = models.Account(client_id=1, name="Emergency", account_type="asset", role="defense")
+        cash = models.Account(client_id=1, name="cash", account_type="asset")
+        nisa = models.Account(client_id=1, name="NISA", account_type="asset")
+        reserve = models.Account(client_id=1, name="Trip Reserve", account_type="asset")
+        defense = models.Account(client_id=1, name="Emergency", account_type="asset")
         db.add_all([client, cash, nisa, reserve, defense])
         db.flush()
         for account, amount in [(nisa, 50000), (reserve, 20000), (defense, 10000)]:
@@ -1864,12 +1778,10 @@ def test_cash_flow_reports_asset_role_movements() -> None:
         )
         row = summary["cash_flow_projection"][0]
 
-        assert row["allocation"] == 80000
-        assert row["operating_flow"] == -80000
-        assert row["growth_flow"] == 50000
-        assert row["earmarked_flow"] == 20000
-        assert row["defense_flow"] == 10000
-        assert row["net_cash"] == -80000
+        assert row["allocation"] == 0
+        assert row["asset_flow"] == 0
+        assert row["internal_transfer"] == 80000
+        assert row["net_cash"] == 0
     finally:
         db.close()
 
@@ -1946,14 +1858,7 @@ def test_cash_flow_summary_reports_buffer_and_shortfall_month() -> None:
         rent = models.Account(client_id=1, name="rent", account_type="expense")
         db.add_all([client, cash, rent])
         db.flush()
-        registry_service.upsert_registry_from_recurring_payload(db, 1, {
-            "name": "rent",
-            "amount": 80000,
-            "from_account_id": cash.id,
-            "to_account_id": rent.id,
-            "frequency": "Monthly",
-            "is_active": True,
-        })
+        registry_service.create_entry(db, 1, {'name': 'rent', 'amount': 80000, 'source_account_id': cash.id, 'destination_account_id': rent.id, 'frequency': 'Monthly', 'is_active': True, "start_date": date(2026, 1, 1), "repeat_mode": "indefinite", "kind": "income" if db.get(models.Account, cash.id).account_type == "income" else {"expense":"expense", "liability":"debt"}.get(db.get(models.Account, rent.id).account_type, "transfer")})
         db.commit()
 
         summary = get_budget_summary(db, client_id=1, period="2026-05")
@@ -1986,24 +1891,8 @@ def test_recurring_budget_context_converts_currency_to_client_currency() -> None
             as_of_date=date(2026, 5, 1),
             source="manual",
         ))
-        registry_service.upsert_registry_from_recurring_payload(db, 1, {
-            "name": "AI Subscription",
-            "amount": 20,
-            "currency": "USD",
-            "from_account_id": cash.id,
-            "to_account_id": subscription.id,
-            "frequency": "Monthly",
-            "is_active": True,
-        })
-        registry_service.upsert_registry_from_recurring_payload(db, 1, {
-            "name": "Storage Subscription",
-            "amount": 1000,
-            "currency": "JPY",
-            "from_account_id": cash.id,
-            "to_account_id": subscription.id,
-            "frequency": "Monthly",
-            "is_active": True,
-        })
+        registry_service.create_entry(db, 1, {'name': 'AI Subscription', 'amount': 20, 'currency': 'USD', 'source_account_id': cash.id, 'destination_account_id': subscription.id, 'frequency': 'Monthly', 'is_active': True, "start_date": date(2026, 1, 1), "repeat_mode": "indefinite", "kind": "income" if db.get(models.Account, cash.id).account_type == "income" else {"expense":"expense", "liability":"debt"}.get(db.get(models.Account, subscription.id).account_type, "transfer")})
+        registry_service.create_entry(db, 1, {'name': 'Storage Subscription', 'amount': 1000, 'currency': 'JPY', 'source_account_id': cash.id, 'destination_account_id': subscription.id, 'frequency': 'Monthly', 'is_active': True, "start_date": date(2026, 1, 1), "repeat_mode": "indefinite", "kind": "income" if db.get(models.Account, cash.id).account_type == "income" else {"expense":"expense", "liability":"debt"}.get(db.get(models.Account, subscription.id).account_type, "transfer")})
         db.commit()
 
         _give_fixture_lines_a_plan(db)
@@ -2014,7 +1903,7 @@ def test_recurring_budget_context_converts_currency_to_client_currency() -> None
         assert len(subscription_accounts) == 1
         assert account["recurring_amount"] == 4000
         assert account["sync_status"] == "missing"
-        assert len(account["recurring_transaction_ids"]) == 2
+        assert len(account["registry_entry_ids"]) == 2
     finally:
         db.close()
 
@@ -2253,8 +2142,7 @@ def test_budget_amount_uses_the_saved_override_or_unsaved_definition(stored_amou
         db.add_all([client, food, *([plan] if plan else [])])
         db.flush()
         if definition_amount is not None:
-            db.add(models.RegistryEntry(client_id=1, name="weekly food", line_type="expense",
-                                        budget_account_id=food.id, amount_minor=to_minor(definition_amount, "JPY")))
+            db.add(models.RegistryEntry(client_id=1, name='weekly food', budget_account_id=food.id, amount_minor=to_minor(definition_amount, 'JPY'), kind={"service":"expense","allocation":"transfer","debt_payment":"debt"}.get('expense', 'expense'), start_date=date(2026, 1, 1), repeat_mode="indefinite", frequency="Monthly"))
         if stored_amount is not None:
             db.add(models.MonthlyPlanLine(client_id=1, plan_id=plan.id, target_period="2026-05",
                                           line_type="expense", target_type="account", account_id=food.id,
@@ -2289,8 +2177,7 @@ def test_variance_counts_definitions_only_in_months_without_a_matching_saved_lin
         db.flush()
         # Two definitions aggregate into one account movement before matching.
         for name, amount in [("weekly food", 5000), ("other food", 3000)]:
-            db.add(models.RegistryEntry(client_id=1, name=name, line_type="expense", budget_account_id=food.id,
-                                        source_account_id=bank.id, amount_minor=to_minor(amount, "JPY")))
+            db.add(models.RegistryEntry(client_id=1, name=name, budget_account_id=food.id, source_account_id=bank.id, amount_minor=to_minor(amount, 'JPY'), kind={"service":"expense","allocation":"transfer","debt_payment":"debt"}.get('expense', 'expense'), start_date=date(2026, 1, 1), repeat_mode="indefinite", frequency="Monthly"))
         if match != "none":
             db.add(models.MonthlyPlanLine(
                 client_id=1, plan_id=plan.id, target_period="2026-05", line_type="expense", target_type="account",
@@ -2331,8 +2218,7 @@ def test_variance_counts_definitions_without_creating_a_plan():
         food = models.Account(client_id=1, name="food", account_type="expense")
         db.add(food)
         db.flush()
-        db.add(models.RegistryEntry(client_id=1, name="food", line_type="expense", budget_account_id=food.id,
-                                    amount_minor=8000))
+        db.add(models.RegistryEntry(client_id=1, name='food', budget_account_id=food.id, amount_minor=8000, kind={"service":"expense","allocation":"transfer","debt_payment":"debt"}.get('expense', 'expense'), start_date=date(2026, 1, 1), repeat_mode="indefinite", frequency="Monthly"))
         db.commit()
         result = get_variance_analysis_for_range(db, date(2026, 5, 1), date(2026, 5, 31), 1)
         assert result["plan_id"] is None

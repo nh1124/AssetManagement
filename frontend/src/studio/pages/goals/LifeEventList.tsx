@@ -1,55 +1,44 @@
 import { useCallback, useState } from 'react';
-import { Archive } from 'lucide-react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { getLifeEventsWithProgress } from '../../../api';
+import { getLifeEvents } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
+import type { LifeEvent } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
-import Overlay from '../../components/Overlay';
 import { formatDate } from '../../datetime';
 import { useResource } from '../../useResource';
-import { DataTable, Feedback } from '../db/Database';
-import { buttonClass, useMutation } from '../db/forms';
-import GoalEditor from './GoalEditor';
+import { DataTable, EditableRow, Feedback, RowTitle } from '../db/Database';
+import { buttonClass, loadAccounts } from '../db/forms';
+import LifeEventOverlay from './LifeEventOverlay';
 import { useScenario } from './scenarioContext';
-import { goalPercent, goalPlanStatus } from './presentation';
+
+const PRIORITIES = { 1: '高', 2: '中', 3: '低' } as const;
 
 function LifeEventListForClient({ currency, clientName }: { currency: string; clientName?: string }) {
-    const navigate = useNavigate();
     const { scenario } = useScenario();
-    const eventBase = `/goals/scenarios/${scenario.id}/events`;
-    const [search, setSearch] = useSearchParams();
-    const includeArchived = search.get('archived') === 'true';
-    const load = useCallback(() => getLifeEventsWithProgress(includeArchived, scenario.id), [includeArchived, scenario.id]);
+    const load = useCallback(async () => {
+        const [events, accounts] = await Promise.all([getLifeEvents(scenario.id), loadAccounts()]);
+        return { events: [...events].sort((a, b) => a.target_date.localeCompare(b.target_date) || a.id - b.id), accounts };
+    }, [scenario.id]);
     const resource = useResource(load);
-    const mutation = useMutation();
-    const [editing, setEditing] = useState(false);
-    const closeEditor = () => setEditing(false);
+    // undefined: closed; null: a new event.
+    const [editing, setEditing] = useState<LifeEvent | null | undefined>(undefined);
+    const names = new Map(resource.data?.accounts.map((row) => [row.id, row.name]));
+    const disabled = !clientName || resource.loading || Boolean(resource.error);
     return <section className="space-y-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-            <button type="button" disabled={!clientName || editing} onClick={() => setEditing(true)} className={buttonClass}>新しいライフイベント</button>
-            <button type="button" aria-pressed={includeArchived} title="アーカイブを表示" aria-label="アーカイブを表示" onClick={() => {
-                const next = new URLSearchParams(search);
-                if (includeArchived) next.delete('archived'); else next.set('archived', 'true');
-                setSearch(next, { replace: true });
-            }} className={`${buttonClass} aria-pressed:bg-[var(--studio-accent-soft)] aria-pressed:text-[var(--studio-accent)]`}><Archive size={18} aria-hidden="true" /></button>
-        </div>
+        <div><button type="button" disabled={disabled} onClick={() => setEditing(null)} className={buttonClass}>新しいライフイベント</button></div>
         <Feedback loading={resource.loading} error={resource.error} />
-        {editing && <Overlay title="新しいライフイベント" busy={mutation.busy} onClose={closeEditor}>
-            <Feedback error={mutation.error} />
-            <GoalEditor goal={null} scenarioId={scenario.id} currency={currency} embedded busy={mutation.busy || !clientName} onCancel={closeEditor}
-                onSave={(action) => { if (clientName) void mutation.run(action, 'ライフイベントを保存しました。', () => { setEditing(false); resource.reload(); }); }} />
-        </Overlay>}
-        {resource.data && <DataTable columns={['名称', '種別', '目標額', '目標日', '確保額', '進捗', '計画の状態']}>
-            {resource.data.length ? resource.data.map((goal) => <tr key={goal.id} className="cursor-pointer hover:bg-[var(--studio-accent-soft)]" onClick={() => navigate(`${eventBase}/${goal.id}`)}>
-                <th scope="row" className="px-5 py-3 font-medium"><Link to={`${eventBase}/${goal.id}`} onClick={(event) => event.stopPropagation()} className="rounded text-[var(--studio-accent)] hover:underline focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)]">{goal.name}</Link></th>
-                <td className="whitespace-nowrap px-5 py-3">{goal.direction === 'income' ? '収入' : '支出'}</td>
-                <td className="whitespace-nowrap px-5 py-3 tabular-nums">{formatCurrency(goal.target_amount, currency)}</td>
-                <td className="whitespace-nowrap px-5 py-3">{formatDate(goal.target_date)}</td>
-                <td className="whitespace-nowrap px-5 py-3 tabular-nums">{goal.direction === 'income' || goal.current_funded == null ? '—' : formatCurrency(goal.current_funded, currency)}</td>
-                <td className="whitespace-nowrap px-5 py-3 tabular-nums">{goal.direction === 'income' ? '—' : goalPercent(goal.funded_percentage)}</td>
-                <td className="whitespace-nowrap px-5 py-3">{goal.direction === 'income' ? '—' : goal.archived_at ? 'アーカイブ済み' : goalPlanStatus(goal)}</td>
-            </tr>) : <tr><td colSpan={7} className="px-5 py-4 text-[var(--studio-text-muted)]">ライフイベントはありません。</td></tr>}
+        {resource.data && <DataTable columns={['名称', '種別', '口座・科目', '金額', '目標日', '優先度']}>
+            {resource.data.events.map((event) => <EditableRow key={event.id} disabled={disabled} onEdit={() => setEditing(event)}>
+                <RowTitle name={event.name} disabled={disabled} onEdit={() => setEditing(event)}>{event.name}</RowTitle>
+                <td className="whitespace-nowrap px-5 py-3">{event.direction === 'income' ? '収入' : '支出'}</td>
+                <td className="whitespace-nowrap px-5 py-3">{event.account_id ? names.get(event.account_id) ?? `#${event.account_id}` : '—'}</td>
+                <td className="whitespace-nowrap px-5 py-3 tabular-nums">{formatCurrency(event.target_amount, currency)}</td>
+                <td className="whitespace-nowrap px-5 py-3">{formatDate(event.target_date)}</td>
+                <td className="whitespace-nowrap px-5 py-3">{PRIORITIES[event.priority]}</td>
+            </EditableRow>)}
+            {resource.data.events.length === 0 && <tr><td colSpan={6} className="px-5 py-4 text-[var(--studio-text-muted)]">ライフイベントはありません。</td></tr>}
         </DataTable>}
+        {editing !== undefined && resource.data && clientName && <LifeEventOverlay event={editing} scenarioId={scenario.id} accounts={resource.data.accounts}
+            currency={currency} clientName={clientName} onClose={() => setEditing(undefined)} onChanged={resource.reload} />}
     </section>;
 }
 

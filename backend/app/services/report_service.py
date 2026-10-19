@@ -1,19 +1,11 @@
 from __future__ import annotations
 
 import re
-from datetime import date, datetime
+from datetime import date
 
 from dateutil.relativedelta import relativedelta
 from sqlalchemy.orm import Session
 
-from .money_storage import to_minor, money_client_currency
-
-from .. import models
-from ..domain.errors import Refused
-from ..domain.money import Money
-from ..domain.journal import Leg
-from .ledger_service import get_or_create_account, create_transaction
-from .fx_service import get_client_currency
 from .reporting_service import (
     get_balance_sheet,
     get_profit_loss,
@@ -21,9 +13,7 @@ from .reporting_service import (
     get_variance_analysis,
     get_variance_analysis_for_range,
 )
-from .capsule_service import create_capsule_for_goal, set_funding_sources
-from ..schemas import CapsuleFundingSourceInput
-from .strategy_service import get_life_events_with_progress
+from .goal_earmark_service import events_with_progress
 
 ANOMALY_THRESHOLD_PCT = 150
 HIGH_SEVERITY_PCT = 200
@@ -35,49 +25,8 @@ def _slug(text: str) -> str:
     return re.sub(r"_+", "_", text).strip("_")
 
 
-def _next_period(period: str) -> str:
-    year, month = [int(part) for part in period.split("-")]
-    if month == 12:
-        return f"{year + 1}-01"
-    return f"{year}-{month + 1:02d}"
-
-
-def _action_key(period: str, proposal_id: str) -> str:
-    return f"monthly_report:{period}:{proposal_id}"
-
-
 def _period_key(start_date: date, end_date: date) -> str:
     return f"{start_date.isoformat()}..{end_date.isoformat()}"
-
-
-def _next_month_period_from_date(reference: date) -> str:
-    next_month = reference + relativedelta(months=1)
-    return f"{next_month.year}-{next_month.month:02d}"
-
-
-def _attach_action_status(
-    db: Session,
-    client_id: int,
-    period: str,
-    proposals: list[dict],
-) -> list[dict]:
-    if not proposals:
-        return proposals
-
-    ids = [proposal["id"] for proposal in proposals]
-    actions = db.query(models.MonthlyAction).filter(
-        models.MonthlyAction.client_id == client_id,
-        models.MonthlyAction.source_period == period,
-        models.MonthlyAction.proposal_id.in_(ids),
-    ).all()
-    by_proposal_id = {action.proposal_id: action for action in actions}
-
-    for proposal in proposals:
-        action = by_proposal_id.get(proposal["id"])
-        proposal["action_status"] = action.status if action else "pending"
-        proposal["applied"] = bool(action and action.status == "applied")
-        proposal["monthly_action_id"] = action.id if action else None
-    return proposals
 
 
 def generate_monthly_report(db: Session, client_id: int, year: int, month: int) -> dict:
@@ -114,16 +63,8 @@ def generate_monthly_report(db: Session, client_id: int, year: int, month: int) 
                     }
                 )
 
-    current_events = get_life_events_with_progress(
-        db,
-        client_id,
-        reference_date=current_period_end,
-    )
-    previous_events = get_life_events_with_progress(
-        db,
-        client_id,
-        reference_date=previous_period_end,
-    )
+    current_events = events_with_progress(db, client_id, reference_date=current_period_end)
+    previous_events = events_with_progress(db, client_id, reference_date=previous_period_end)
     current_events = [event for event in current_events if event.get("direction", "expense") == "expense"]
     previous_by_id = {event["id"]: event for event in previous_events if event.get("direction", "expense") == "expense"}
 
@@ -143,33 +84,11 @@ def generate_monthly_report(db: Session, client_id: int, year: int, month: int) 
                 "probability_current": round(current_probability, 1),
                 "probability_last_month": round(previous_probability, 1),
                 "delta": delta,
-                "status": event["status"],
             }
         )
 
     period = f"{year}-{month:02d}"
     action_proposals = []
-    surplus = pl["net_profit_loss"]
-    if surplus > 0 and current_events:
-        worst_event = min(current_events, key=lambda e: e["progress_percentage"])
-        amount = round(surplus, 0)
-        proposal_id = f"{period}_allocate_to_goal_{worst_event['id']}_{int(amount)}"
-        action_proposals.append(
-            {
-                "id": proposal_id,
-                "kind": "allocate_to_goal",
-                "type": "invest_surplus",
-                "description": (
-                    f"Monthly surplus JPY {surplus:,.0f} can be allocated to "
-                    f"{worst_event['name']} to improve success probability."
-                ),
-                "amount": amount,
-                "target_id": worst_event["id"],
-                "target_life_event_id": worst_event["id"],
-                "auto_executable": True,
-            }
-        )
-
     for anomaly in anomalies:
         overage = anomaly["actual"] - anomaly["budget"]
         proposal_id = f"{period}_review_budget_{_slug(anomaly['category'])}"
@@ -184,12 +103,8 @@ def generate_monthly_report(db: Session, client_id: int, year: int, month: int) 
                 ),
                 "amount": round(overage, 0),
                 "target_id": None,
-                "target_life_event_id": None,
-                "auto_executable": False,
-                "navigation_target": "strategy",
             }
         )
-    action_proposals = _attach_action_status(db, client_id, period, action_proposals)
 
     return {
         "period": period,
@@ -238,8 +153,8 @@ def generate_period_report(db: Session, client_id: int, start_date: date, end_da
                     }
                 )
 
-    current_events = get_life_events_with_progress(db, client_id, reference_date=end_date)
-    previous_events = get_life_events_with_progress(db, client_id, reference_date=previous_period_end)
+    current_events = events_with_progress(db, client_id, reference_date=end_date)
+    previous_events = events_with_progress(db, client_id, reference_date=previous_period_end)
     current_events = [event for event in current_events if event.get("direction", "expense") == "expense"]
     previous_by_id = {event["id"]: event for event in previous_events if event.get("direction", "expense") == "expense"}
 
@@ -257,31 +172,10 @@ def generate_period_report(db: Session, client_id: int, start_date: date, end_da
                 "probability_current": round(current_probability, 1),
                 "probability_previous_period": round(previous_probability, 1),
                 "delta": round(current_probability - previous_probability, 1),
-                "status": event["status"],
             }
         )
 
     action_proposals = []
-    if period_pl > 0 and current_events:
-        worst_event = min(current_events, key=lambda e: e["progress_percentage"])
-        amount = round(period_pl, 0)
-        proposal_id = f"{_slug(period)}_allocate_to_goal_{worst_event['id']}_{int(amount)}"
-        action_proposals.append(
-            {
-                "id": proposal_id,
-                "kind": "allocate_to_goal",
-                "type": "invest_surplus",
-                "description": (
-                    f"Period surplus JPY {period_pl:,.0f} can be allocated to "
-                    f"{worst_event['name']} to improve success probability."
-                ),
-                "amount": amount,
-                "target_id": worst_event["id"],
-                "target_life_event_id": worst_event["id"],
-                "auto_executable": True,
-            }
-        )
-
     for anomaly in anomalies:
         overage = anomaly["actual"] - anomaly["budget"]
         proposal_id = f"{_slug(period)}_review_budget_{_slug(anomaly['category'])}"
@@ -296,12 +190,8 @@ def generate_period_report(db: Session, client_id: int, start_date: date, end_da
                 ),
                 "amount": round(overage, 0),
                 "target_id": None,
-                "target_life_event_id": None,
-                "auto_executable": False,
-                "navigation_target": "strategy",
             }
         )
-    action_proposals = _attach_action_status(db, client_id, period, action_proposals)
 
     return {
         "period": period,
@@ -320,196 +210,3 @@ def generate_period_report(db: Session, client_id: int, start_date: date, end_da
         "action_proposals": action_proposals,
     }
 
-
-def _apply_allocate_to_goal(
-    db: Session,
-    client_id: int,
-    period: str,
-    proposal: dict,
-) -> dict:
-    target_id = proposal.get("target_id") or proposal.get("target_life_event_id")
-    amount = float(proposal.get("amount") or 0.0)
-    if amount <= 0:
-        raise ValueError("Proposal amount must be positive")
-
-    goal = db.query(models.LifeEvent).filter(
-        models.LifeEvent.id == target_id,
-        models.LifeEvent.client_id == client_id,
-    ).first()
-    if not goal:
-        raise LookupError("Target goal not found")
-    if goal.direction == "income":
-        raise Refused("収入イベントには積立を配分できません。", status_code=422)
-
-    cash_account = get_or_create_account(db, "cash", client_id, "asset", commit=False)
-    savings_account = get_or_create_account(db, "savings", client_id, "asset", commit=False)
-    currency = get_client_currency(db, client_id)
-
-    capsule = create_capsule_for_goal(db, client_id, goal)
-    transaction = create_transaction(
-        db,
-        client_id=client_id,
-        date=date.today(),
-        description=f"Monthly action allocation {period}: {goal.name}",
-        amount_minor=Money.from_major(str(amount), currency).minor,
-        currency=currency,
-        legs=[Leg(savings_account.id, debit=Money.from_major(str(amount), currency).minor, capsule_id=capsule.id),
-              Leg(cash_account.id, credit=Money.from_major(str(amount), currency).minor)],
-    )
-    db.flush()
-
-    if not capsule.funding_sources:
-        # An unbound goal capsule declares the existing savings destination in its plan.
-        set_funding_sources(db, client_id, capsule.id, [CapsuleFundingSourceInput(
-            account_id=savings_account.id, target_amount=capsule.target_amount or 0.0,
-        )], commit=False)
-    return {
-        "transaction_id": transaction.id,
-        "goal_id": goal.id,
-        "account_id": savings_account.id,
-        "capsule_id": capsule.id,
-        "allocated_amount": amount,
-    }
-
-
-def apply_monthly_report_proposal(
-    db: Session,
-    client_id: int,
-    period: str,
-    proposal_id: str,
-) -> dict:
-    year, month = [int(part) for part in period.split("-")]
-    report = generate_monthly_report(db, client_id, year, month)
-    proposal = next(
-        (item for item in report["action_proposals"] if item.get("id") == proposal_id),
-        None,
-    )
-    if not proposal:
-        raise LookupError("Proposal not found")
-    if not proposal.get("auto_executable"):
-        raise ValueError("Proposal is not auto executable")
-
-    idempotency_key = _action_key(period, proposal_id)
-    action = db.query(models.MonthlyAction).filter(
-        models.MonthlyAction.client_id == client_id,
-        models.MonthlyAction.idempotency_key == idempotency_key,
-    ).with_for_update().first()
-    if action and action.status == "applied":
-        return {
-            "status": "already_applied",
-            "action": _monthly_action_to_dict(action),
-        }
-
-    if not action:
-        action = models.MonthlyAction(
-            client_id=client_id,
-            source_period=period,
-            target_period=_next_period(period),
-            proposal_id=proposal_id,
-            kind=proposal["kind"],
-            description=proposal["description"],
-            amount_minor=to_minor(proposal.get("amount"), money_client_currency(db, client_id)),
-            target_id=proposal.get("target_id"),
-            payload=proposal,
-            status="pending",
-            idempotency_key=idempotency_key,
-        )
-        db.add(action)
-        db.flush()
-
-    try:
-        if proposal["kind"] == "allocate_to_goal":
-            result = _apply_allocate_to_goal(db, client_id, period, proposal)
-        else:
-            raise ValueError(f"Unsupported proposal kind: {proposal['kind']}")
-
-        action.status = "applied"
-        action.applied_at = datetime.utcnow()
-        action.result = result
-        db.commit()
-        db.refresh(action)
-        return {
-            "status": "applied",
-            "action": _monthly_action_to_dict(action),
-        }
-    except Exception:
-        db.rollback()
-        raise
-
-
-def apply_period_report_proposal(
-    db: Session,
-    client_id: int,
-    start_date: date,
-    end_date: date,
-    proposal_id: str,
-) -> dict:
-    report = generate_period_report(db, client_id, start_date, end_date)
-    period = report["period"]
-    proposal = next(
-        (item for item in report["action_proposals"] if item.get("id") == proposal_id),
-        None,
-    )
-    if not proposal:
-        raise LookupError("Proposal not found")
-    if not proposal.get("auto_executable"):
-        raise ValueError("Proposal is not auto executable")
-
-    idempotency_key = _action_key(period, proposal_id)
-    action = db.query(models.MonthlyAction).filter(
-        models.MonthlyAction.client_id == client_id,
-        models.MonthlyAction.idempotency_key == idempotency_key,
-    ).with_for_update().first()
-    if action and action.status == "applied":
-        return {"status": "already_applied", "action": _monthly_action_to_dict(action)}
-
-    if not action:
-        action = models.MonthlyAction(
-            client_id=client_id,
-            source_period=period,
-            target_period=_next_month_period_from_date(end_date),
-            proposal_id=proposal_id,
-            kind=proposal["kind"],
-            description=proposal["description"],
-            amount_minor=to_minor(proposal.get("amount"), money_client_currency(db, client_id)),
-            target_id=proposal.get("target_id"),
-            payload=proposal,
-            status="pending",
-            idempotency_key=idempotency_key,
-        )
-        db.add(action)
-        db.flush()
-
-    try:
-        if proposal["kind"] == "allocate_to_goal":
-            result = _apply_allocate_to_goal(db, client_id, period, proposal)
-        else:
-            raise ValueError(f"Unsupported proposal kind: {proposal['kind']}")
-
-        action.status = "applied"
-        action.applied_at = datetime.utcnow()
-        action.result = result
-        db.commit()
-        db.refresh(action)
-        return {"status": "applied", "action": _monthly_action_to_dict(action)}
-    except Exception:
-        db.rollback()
-        raise
-
-
-def _monthly_action_to_dict(action: models.MonthlyAction) -> dict:
-    return {
-        "id": action.id,
-        "source_period": action.source_period,
-        "target_period": action.target_period,
-        "proposal_id": action.proposal_id,
-        "kind": action.kind,
-        "description": action.description,
-        "amount": action.amount,
-        "target_id": action.target_id,
-        "payload": action.payload or {},
-        "result": action.result or {},
-        "status": action.status,
-        "applied_at": action.applied_at.isoformat() if action.applied_at else None,
-        "created_at": action.created_at.isoformat() if action.created_at else None,
-    }

@@ -1,7 +1,6 @@
 """Analysis service - CFO logic and financial calculations."""
 from __future__ import annotations
 
-from collections import defaultdict
 from datetime import date
 
 from dateutil.relativedelta import relativedelta
@@ -19,12 +18,11 @@ from .budget_plan_store import find_budget_plan_id
 from .budget_projection import planned_cash_outflow_remaining
 from . import depreciation_service
 from .fx_service import get_client_currency
-from .institution_service import locked_accounts, locked_until_age_minor
 from ..domain.money import Money
 from .periods import current_period_key
 from .journal_legs import legs_in_range
 from .goal_service import goal_events_query
-from .strategy_service import calculate_overall_goal_probability
+from .goal_earmark_service import events_with_progress
 from .reporting_service import (
     get_balance_sheet,
     get_profit_loss,
@@ -32,14 +30,11 @@ from .reporting_service import (
 )
 
 
-LIQUID_ACCOUNT_NAMES = {"cash", "bank", "savings"}
-ACCOUNT_ROLES = ("defense", "growth", "earmarked", "operating", "unassigned")
-
-
 def _cash_accounts(db: Session, client_id: int) -> list[models.Account]:
     return db.query(models.Account).filter(
         models.Account.client_id == client_id,
-        models.Account.name.in_(LIQUID_ACCOUNT_NAMES),
+        models.Account.account_type == "asset",
+        models.Account.is_active.is_(True),
     ).all()
 
 
@@ -65,92 +60,14 @@ def _sum_capsule_balance(db: Session, client_id: int) -> float:
     return sum(capsule_balance(db, capsule) for capsule in capsules)
 
 
-def _asset_accounts(db: Session, client_id: int) -> list[models.Account]:
-    return db.query(models.Account).filter(
-        models.Account.client_id == client_id,
-        models.Account.account_type == "asset",
-        models.Account.is_active.is_(True),
-    ).all()
-
-
-def calculate_idle_money(db: Session, client_id: int) -> dict:
-    accounts = _asset_accounts(db, client_id)
-    by_role = defaultdict(float)
-    targets_by_role = defaultdict(float)
-    balances = calculate_account_valued_balances(db, accounts)
-
-    for account in accounts:
-        role = account.role or "unassigned"
-        if role not in ACCOUNT_ROLES:
-            role = "unassigned"
-        by_role[role] += balances.get(account.id, 0.0)
-        if account.role_target_amount:
-            targets_by_role[role] += account.role_target_amount
-
-    total_liquid = sum(by_role.values())
-    defense_target = targets_by_role["defense"]
-    defense_excess = max(0.0, by_role["defense"] - defense_target) if defense_target > 0 else 0.0
-    idle_money = by_role["unassigned"] + defense_excess
-    role_rows = []
-
-    for role in ACCOUNT_ROLES:
-        balance = by_role[role]
-        target = targets_by_role[role] or None
-        idle_component = 0.0
-        if role == "unassigned":
-            status = "Idle" if balance > 0 else "OK"
-            idle_component = balance
-        elif role == "defense" and target:
-            excess = balance - target
-            if excess > 0:
-                status = "Over"
-                idle_component = excess
-            elif excess < 0:
-                status = "Short"
-            else:
-                status = "OK"
-        elif role == "earmarked":
-            status = "Tied to goals"
-        else:
-            status = "OK"
-
-        role_rows.append(
-            {
-                "role": role,
-                "balance": round(balance, 0),
-                "target": round(target, 0) if target is not None else None,
-                "status": status,
-                "idle_component": round(idle_component, 0),
-            }
-        )
-
-    return {
-        "by_role": {role: round(by_role[role], 0) for role in ACCOUNT_ROLES},
-        "by_role_rows": role_rows,
-        "idle_money": round(idle_money, 0),
-        "idle_money_rate": round((idle_money / total_liquid * 100) if total_liquid > 0 else 0.0, 1),
-        "total_liquid": round(total_liquid, 0),
-    }
-
-
 def calculate_logical_balance(
     db: Session,
     client_id: int,
     *,
     ctx: BudgetContext | None = None,
-    as_of: date | None = None,
 ) -> float:
     if ctx is None:
         ctx = BudgetContext(db, client_id)
-    currency = get_client_currency(db, client_id)
-    # Subtract only what the liquid total actually counted. The liquid figure is
-    # a named set of accounts, and a retirement account is not in it, so taking
-    # its balance off as well would remove money this sum never added.
-    liquid_ids = {account.id for account in _cash_accounts(db, client_id)}
-    locked = locked_until_age_minor([
-        row for row in locked_accounts(db, client_id, as_of=as_of)
-        if row["account_id"] in liquid_ids
-    ])
     return (
         _sum_liquid_assets(db, client_id)
         - _sum_unpaid_liabilities(db, client_id)
@@ -158,8 +75,16 @@ def calculate_logical_balance(
         # covered by the whole outstanding liability balance above.
         - planned_cash_outflow_remaining(ctx, current_period_key())
         - _sum_capsule_balance(db, client_id)
-        - Money(locked.get(currency, 0), currency).to_float()
     )
+
+
+def _goal_funding(db: Session, client_id: int) -> dict:
+    """The goal's expense events against what their linked earmarks hold."""
+    goals = [row for row in events_with_progress(db, client_id) if row["direction"] == "expense"]
+    total_target = sum(goal["target_amount"] for goal in goals)
+    total_funded = sum(goal["current_funded"] for goal in goals)
+    return {"goals": goals, "total_target": total_target, "total_funded": total_funded,
+            "overall_probability": round(total_funded / total_target * 100, 1) if total_target else 0.0}
 
 
 def _roadmap_progression_status(goal_data: dict) -> str:
@@ -186,7 +111,7 @@ def get_summary(db: Session, client_id: int) -> dict:
     bs = get_balance_sheet(db, client_id=client_id)
     today = date.today()
     pl = get_profit_loss(db, today.year, today.month, client_id=client_id)
-    goal_data = calculate_overall_goal_probability(db, client_id=client_id)
+    goal_data = _goal_funding(db, client_id)
 
     cash_accounts = _cash_accounts(db, client_id)
     total_cash = sum(calculate_account_valued_balance(db, account) for account in cash_accounts) if cash_accounts else 0.0
@@ -210,7 +135,6 @@ def get_summary(db: Session, client_id: int) -> dict:
 
     effective_cash = total_cash - cc_unpaid - next_month_budget - total_capsule_balance
     logical_balance = calculate_logical_balance(db, client_id)
-    locked = locked_accounts(db, client_id, as_of=today)
 
     total_income = pl["total_income"]
     total_expense = pl["total_expenses"]
@@ -232,7 +156,6 @@ def get_summary(db: Session, client_id: int) -> dict:
     forecast_3m = avg_monthly_expense * 3
     liquidity_coverage_ratio = (liquid_assets / forecast_3m * 100) if forecast_3m > 0 else 100.0
 
-    idle_money = calculate_idle_money(db, client_id)
     roadmap_progression = _roadmap_progression_status(goal_data)
 
     variance = get_variance_analysis(db, today.year, today.month, client_id=client_id)
@@ -266,17 +189,11 @@ def get_summary(db: Session, client_id: int) -> dict:
         "liability_total": bs["total_liabilities"],
         "effective_cash": round(effective_cash, 0),
         "logical_balance": round(logical_balance, 0),
-        "locked_until_age_minor": locked_until_age_minor(locked),
-        "locked_accounts": locked,
-        "locked_as_of": today.isoformat(),
         "goal_probability": goal_data["overall_probability"],
         "total_goal_amount": goal_data["total_target"],
-        "total_funded": goal_data["total_projected"],
+        "total_funded": goal_data["total_funded"],
         "cfo_briefing": cfo_briefing,
         "savings_rate": round(savings_rate, 1),
-        "idle_money_rate": idle_money["idle_money_rate"],
-        "idle_money": idle_money["idle_money"],
-        "idle_money_by_role": idle_money["by_role_rows"],
         "liquidity_coverage_ratio": round(liquidity_coverage_ratio, 1),
         "runway_months": round(runway_months, 1) if runway_months is not None else None,
         "roadmap_progression": roadmap_progression,
@@ -342,9 +259,9 @@ def get_net_position(db: Session, client_id: int) -> dict:
     """Calculate Net Position = Assets - Current Debt - Future Life Event Costs for current client."""
 
     bs = get_balance_sheet(db, client_id=client_id)
-    goal_data = calculate_overall_goal_probability(db, client_id=client_id)
+    goal_data = _goal_funding(db, client_id)
 
-    future_costs = max(0.0, goal_data["total_target"] - goal_data["total_projected"])
+    future_costs = max(0.0, goal_data["total_target"] - goal_data["total_funded"])
     net_position = bs["net_worth"] - future_costs
 
     return {

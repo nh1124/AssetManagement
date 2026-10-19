@@ -381,7 +381,7 @@ def test_a_batch_can_carry_a_compound_entry() -> None:
     try:
         client = _client(db)
         card, food, advance = _accounts(db)
-        cash = models.Account(client_id=1, name="cash", account_type="asset", role="operating")
+        cash = models.Account(client_id=1, name="cash", account_type="asset")
         db.add(cash)
         db.commit()
 

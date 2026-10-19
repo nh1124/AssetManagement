@@ -141,10 +141,7 @@ def test_logical_balance_subtracts_the_plan_remainder_not_the_recurring_definiti
         db.add(subscription_account)
         db.flush()
         due_date = date.today() + timedelta(days=10)
-        registry_entry = models.RegistryEntry(
-            client_id=1,
-            name="recurring owner",
-        )
+        registry_entry = models.RegistryEntry(client_id=1, name='recurring owner', start_date=date(2026, 1, 1), repeat_mode="indefinite", frequency="Monthly")
         db.add(registry_entry)
         db.flush()
         db.add_all(
@@ -157,17 +154,7 @@ def test_logical_balance_subtracts_the_plan_remainder_not_the_recurring_definiti
                     as_of_date=date.today(),
                     source="manual",
                 ),
-                models.RecurringTransaction(
-                    client_id=1,
-                    source_registry_entry_id=registry_entry.id,
-                    name="USD subscription",
-                    amount_minor=to_minor(10, "USD"),
-                    currency="USD",
-                    frequency="Monthly",
-                    next_due_date=due_date,
-                    is_active=True,
-                    to_account_id=subscription_account.id,
-                ),
+                models.RegistryEntry(client_id=1, name='USD subscription', amount_minor=to_minor(10, 'USD'), currency='USD', frequency='Monthly', next_due_date=due_date, is_active=True, destination_account_id=subscription_account.id, start_date=date(2026, 1, 1), repeat_mode="indefinite"),
             ]
         )
         db.commit()

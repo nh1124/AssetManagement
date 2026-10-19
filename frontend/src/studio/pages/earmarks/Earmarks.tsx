@@ -1,7 +1,7 @@
 import Overlay, { OverlayFooter } from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
 import { useState } from 'react';
-import { deleteCapsule, getCapsules, getLifeEvents } from '../../../api';
+import { deleteCapsule, getCapsules } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
 import type { Capsule } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
@@ -14,13 +14,11 @@ import EarmarkEditor from './EarmarkEditor';
 import CapsuleRules from './CapsuleRules';
 
 const loadCapsules = (): Promise<Capsule[]> => getCapsules();
-const loadGoals = () => getLifeEvents();
 const percentFormat = new Intl.NumberFormat('ja-JP', { maximumFractionDigits: 2 });
 
 function EarmarksForClient({ currency, clientName }: { currency: string; clientName?: string }) {
     const confirm = useConfirm();
     const { data: capsules, loading, error, reload } = useResource(loadCapsules);
-    const goals = useResource(loadGoals);
     const mutation = useMutation();
     const [editor, setEditor] = useState<{ capsule: Capsule | null } | null>(null);
     const [deleteResult, setDeleteResult] = useState<Awaited<ReturnType<typeof deleteCapsule>> | null>(null);
@@ -40,11 +38,11 @@ function EarmarksForClient({ currency, clientName }: { currency: string; clientN
     return (
         <section className="space-y-4">
             <div className="flex items-center justify-between gap-4">
-                <div className="flex gap-2"><button type="button" disabled={disabled || editor !== null || goals.loading || Boolean(goals.error)} onClick={() => { setDeleteResult(null); setEditor({ capsule: null }); }} className={buttonClass}>新しい取り置き</button></div>
+                <div className="flex gap-2"><button type="button" disabled={disabled || editor !== null} onClick={() => { setDeleteResult(null); setEditor({ capsule: null }); }} className={buttonClass}>新しい取り置き</button></div>
             </div>
             {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">取り置きを読み込んでいます…</p>}
             {error && <p role="alert" className="text-sm text-[var(--studio-danger)]">取り置きを取得できませんでした。{error}</p>}
-            <Feedback error={goals.error || mutation.error} message={mutation.message} />
+            <Feedback error={mutation.error} message={mutation.message} />
             {deleteResult && <Feedback message={`「${deleteResult.capsule_name || '取り置き'}」と規則${deleteResult.rules_deleted}件を削除しました。${deleteResult.retained_account_id !== null ? `口座「${deleteResult.retained_account_name || '名称未設定'}」（#${deleteResult.retained_account_id}）の残高・履歴は残っています。` : '応答に保持した口座の指定はありません。口座の残高・履歴は変更していません。'}`} />}
             {capsules && (capsules.length ? (
                 <DataTable columns={['用途', '確保額', '目標', '進捗']}>
@@ -88,14 +86,14 @@ function EarmarksForClient({ currency, clientName }: { currency: string; clientN
                             <div className="max-h-64 overflow-y-auto"><Drawdowns capsule={selectedCapsule} currency={currency} onRecorded={reload} /></div>
                         </section>
                     </fieldset>
-                    {selectedCapsule.life_event_id ? <p className="text-xs text-[var(--studio-text-muted)]">ライフイベントの中止・削除はライフイベント画面から行えます。</p> : Boolean(selectedCapsule.linked_products?.length) && <p className="text-xs text-[var(--studio-text-muted)]">削除するには物品の紐づけを解除してください。</p>}
+                    {Boolean(selectedCapsule.linked_products?.length) && <p className="text-xs text-[var(--studio-text-muted)]">削除するには物品の紐づけを解除してください。</p>}
                     <OverlayFooter><div className="flex w-full items-center justify-between gap-3">
-                        <button type="button" disabled={disabled || editor !== null || Boolean(selectedCapsule.life_event_id) || Boolean(selectedCapsule.linked_products?.length)} onClick={() => remove(selectedCapsule)} className={`${buttonClass} text-[var(--studio-danger)]`}>削除</button>
+                        <button type="button" disabled={disabled || editor !== null || Boolean(selectedCapsule.linked_products?.length)} onClick={() => remove(selectedCapsule)} className={`${buttonClass} text-[var(--studio-danger)]`}>削除</button>
                         <button type="button" disabled={disabled || editor !== null} onClick={() => { setDeleteResult(null); setEditor({ capsule: selectedCapsule }); }} className={primaryClass}>編集</button>
                     </div></OverlayFooter>
                 </div>
             </Overlay>}
-            {editor && <Overlay title={editor.capsule ? `${editor.capsule.name}を編集` : '新しい取り置き'} onClose={() => setEditor(null)}><Feedback error={mutation.error} /><EarmarkEditor key={editor.capsule?.id ?? 'new'} capsule={editor.capsule} capsules={capsules ?? []} goals={goals.data ?? []} currency={currency} busy={disabled} onSave={(action) => {
+            {editor && <Overlay title={editor.capsule ? `${editor.capsule.name}を編集` : '新しい取り置き'} onClose={() => setEditor(null)}><Feedback error={mutation.error} /><EarmarkEditor key={editor.capsule?.id ?? 'new'} capsule={editor.capsule} currency={currency} busy={disabled} onSave={(action) => {
                 if (disabled) return;
                 setDeleteResult(null);
                 void mutation.run(action, '取り置きを保存しました。', () => { setEditor(null); reload(); });

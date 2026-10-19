@@ -233,14 +233,6 @@ def test_update_preserves_account_and_validates_explicit_changes(db):
     assert db.get(models.MonthlyPlanLine, line.id).account_id == 3
 
 
-def test_legacy_life_event_row_keeps_named_funding_account(db):
-    funding(db)
-    goal_id = goal_for_capsule(db)
-    db.commit()
-    saved = stored(db, 3, 667, target_type="life_event", target_id=goal_id)
-    result = rows(db)
-    assert [(r["account_id"], r["id"]) for r in result] == [(3, saved.id), (2, None)]
-
 
 @pytest.mark.parametrize("reverse", [False, True])
 def test_monthly_contribution_sums_active_rows_in_period_and_plan(db, reverse):
@@ -293,30 +285,6 @@ def test_product_pool_warnings_name_each_plan_account_and_its_share(db):
     ]
 
 
-def test_report_creates_one_funding_source_and_reports_claim(db):
-    goal = models.LifeEvent(scenario_id=goal_scenario_id(db, 1), client_id=1, name="Goal", target_amount_minor=30000,
-                            target_date=date(2027, 10, 12), priority=1)
-    db.add(goal)
-    db.commit()
-    result = report_service._apply_allocate_to_goal(db, 1, PERIOD, {"target_id": goal.id, "amount": 500})
-    cap = db.get(models.Capsule, result["capsule_id"])
-    assert "account_id" not in capsule_service.capsule_to_dict(db, cap)
-    assert [(s.account_id, s.target_amount_minor) for s in cap.funding_sources] == [(result["account_id"], 30000)]
-    report_service._apply_allocate_to_goal(db, 1, PERIOD, {"target_id": goal.id, "amount": 100})
-    assert len(cap.funding_sources) == 1
-    assert "account_id" not in capsule_service.capsule_to_dict(db, cap)
-
-
-@pytest.mark.parametrize("has_plan", [False, True])
-def test_report_preserves_existing_funding(db, has_plan):
-    if has_plan:
-        funding(db)
-    goal_id = goal_for_capsule(db)
-    cap = db.get(models.Capsule, 1)
-    db.commit()
-    report_service._apply_allocate_to_goal(db, 1, PERIOD, {"target_id": goal_id, "amount": 500})
-    assert "account_id" not in capsule_service.capsule_to_dict(db, cap)
-    assert [s.account_id for s in cap.funding_sources] == ([2, 3] if has_plan else [4])
 
 
 def goal_for_capsule(db):
@@ -329,56 +297,7 @@ def goal_for_capsule(db):
     return goal.id
 
 
-def test_goal_delete_returns_two_accounts_claims_and_preserves_history(db):
-    funding(db)
-    goal_id = goal_for_capsule(db)
-    post_claim(db, 2, 3000)
-    post_claim(db, 3, 2000)
-    # Unattributed cash on a shared funding account must stay there.
-    ledger_service.create_transaction(db, client_id=1, date=date(2026, 10, 12),
-        description="Other cash", amount_minor=7000, currency="JPY",
-        legs=[Leg(2, debit=7000), Leg(1, credit=7000)])
-    db.commit()
-    before = [(e.id, e.debit_minor, e.credit_minor) for e in db.query(models.JournalEntry).all()]
-    assert goal_service.delete_goal(db, 1, goal_id, transfer_account_id=4)
-    returns = db.query(models.Transaction).filter(models.Transaction.description.like("Goal deleted%")).all()
-    assert sorted(t.amount_minor for t in returns) == [2000, 3000]
-    def balance(account_id):
-        return sum(e.debit_minor - e.credit_minor for e in db.query(models.JournalEntry).filter_by(account_id=account_id))
-    assert balance(2) == 7000
-    assert balance(3) == 0
-    assert balance(4) == 5000
-    assert not db.get(models.Account, 2).is_active and not db.get(models.Account, 3).is_active
-    assert db.get(models.Account, 4).is_active
-    for entry_id, debit, credit in before:
-        entry = db.get(models.JournalEntry, entry_id)
-        assert (entry.debit_minor, entry.credit_minor, entry.capsule_id) == (debit, credit, None)
-    assert db.get(models.Capsule, 1) is None
-    assert db.query(models.CapsuleFundingSource).count() == 0
-    for transaction in db.query(models.Transaction).all():
-        assert sum(e.debit_minor for e in transaction.journal_entries) == sum(e.credit_minor for e in transaction.journal_entries)
 
-
-def test_goal_delete_refuses_without_destination_even_without_legacy_account(db):
-    funding(db)
-    goal_id = goal_for_capsule(db)
-    post_claim(db, 2, 3000)
-    with pytest.raises(Refused) as error:
-        goal_service.delete_goal(db, 1, goal_id)
-    assert error.value.status_code == 422
-    assert str(error.value) == "transfer_account_id is required because one or more capsules have a non-zero balance."
-    assert db.get(models.LifeEvent, goal_id) is not None
-    assert db.query(models.Transaction).count() == 1
-
-
-def test_goal_delete_removes_empty_plan_accounts_and_keeps_other_accounts(db):
-    funding(db)
-    goal_id = goal_for_capsule(db)
-    db.commit()
-    assert goal_service.delete_goal(db, 1, goal_id)
-    assert db.get(models.Account, 2) is None
-    assert db.get(models.Account, 3) is None
-    assert db.get(models.Account, 4) is not None
 
 
 def test_a_stored_capsule_row_without_an_account_is_not_joined_by_a_duplicate(db):

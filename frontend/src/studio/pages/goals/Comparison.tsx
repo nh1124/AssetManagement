@@ -12,7 +12,7 @@ import { scenarioSelection } from './scenarioSimulation';
 import { useMakeScenarioGoal } from './useMakeScenarioGoal';
 
 function ComparisonPlot({ ids, scenarios, focusedId, currency, busy, onMakeGoal }: {
-    ids: string; scenarios: LifeScenario[]; focusedId?: number; currency: string; busy: boolean; onMakeGoal: (id: number) => void;
+    ids: string; scenarios: LifeScenario[]; focusedId?: number; currency: string; busy: boolean; onMakeGoal: (scenario: Pick<LifeScenario, 'id' | 'name'>) => void;
 }) {
     const load = useCallback(() => scenariosApi.compare(ids.split(',').map(Number)), [ids]);
     const resource = useResource(load);

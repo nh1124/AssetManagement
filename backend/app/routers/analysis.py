@@ -17,8 +17,6 @@ from ..services.reporting_service import (
     get_balance_sheet,
     get_profit_loss,
     get_profit_loss_for_range,
-    get_profit_loss_rollup,
-    get_profit_loss_rollup_for_range,
     get_variance_analysis,
     get_variance_analysis_for_range,
 )
@@ -64,14 +62,11 @@ def get_pl(
     month: int = Query(default=None),
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
-    rollup: bool = Query(default=False),
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
     """Get Profit & Loss for current client."""
     if start_date and end_date:
-        if rollup:
-            return get_profit_loss_rollup_for_range(db, start_date, end_date, client_id=current_client.id)
         return get_profit_loss_for_range(db, start_date, end_date, client_id=current_client.id)
 
     if year is None:
@@ -79,8 +74,6 @@ def get_pl(
     if month is None:
         month = date.today().month
     
-    if rollup:
-        return get_profit_loss_rollup(db, year, month, client_id=current_client.id)
     return get_profit_loss(db, year, month, client_id=current_client.id)
 
 @router.get("/variance")

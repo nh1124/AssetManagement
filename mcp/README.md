@@ -93,14 +93,14 @@ Tools cover:
 - transaction batches
 - analysis
 - reports and period reviews
-- monthly planning and monthly reviews
+- monthly planning, budget plans and monthly reviews
 - action bridges
-- recurring transactions
-- roadmap and milestones
+- automatic transactions (the settings of recurring and one-off transactions)
 - products and unit economics
-- capsules, life events, and financial calculators
-- simulation config, Monte Carlo runs, and saved scenarios
-- exchange rates
+- capsules (earmarks), their rules and funding sources
+- goals: life scenarios and their simulation, life events, contribution plans, goal earmarks, and making the plan from the goal
+- financial calculators and the simulation config
+- exchange rates and tracked currencies
 - client settings, data export/import, and AI helper endpoints
 
 Resources:
@@ -108,7 +108,7 @@ Resources:
 - `asset-management://guide/overview`
 - `asset-management://guide/accounting-rules`
 - `asset-management://guide/data-entry`
-- `asset-management://guide/recurring`
+- `asset-management://guide/auto-transactions`
 - `asset-management://guide/product-reserve`
 - `asset-management://guide/dangerous-operations`
 - `asset-management://summary`
@@ -117,18 +117,17 @@ Resources:
 Prompts:
 
 - `monthly-finance-review`
-- `goal-roadmap-check`
+- `goal-check`
 
 ## Safety Notes
 
-Some tools write data: creating transactions, processing recurring transactions, applying report actions, updating reviews, and generating milestones. Read tool annotations before allowing automatic tool use.
+Some tools write data: creating transactions, saving automatic transactions (active ones are recorded when due), applying planned actions, updating reviews, and writing plan rows from the goal. Read tool annotations before allowing automatic tool use.
 
 For agent safety, prefer these before write operations:
 
-- `help_choose_transaction_type`
 - `validate_transaction_payload`
 - `transactions_preview`
-- `recurring_preview`
 - `transaction_batches_preview`
 - `products_preview`
 - `monthly_plan_lines_preview`
+- `goal_plan_preview`

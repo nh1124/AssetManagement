@@ -110,7 +110,7 @@ def infer_from_registry(db: Session, line: models.MonthlyPlanLine) -> SourceCand
             models.RegistryEntry.client_id == line.client_id,
             models.RegistryEntry.is_active.is_(True),
             models.RegistryEntry.budget_active.is_(True),
-            models.RegistryEntry.line_type == line.line_type,
+            models.RegistryEntry.kind == {"allocation": "transfer", "debt_payment": "debt"}.get(line.line_type, line.line_type),
             models.RegistryEntry.budget_account_id == line.account_id,
             models.RegistryEntry.source_account_id.isnot(None),
         )

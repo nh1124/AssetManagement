@@ -8,20 +8,19 @@ import re
 from datetime import date, datetime
 from typing import Any
 
-EXPORT_VERSION = 22
+EXPORT_VERSION = 26
 
 DATA_COLLECTIONS = [
     "accounts",
     "products",
     "product_depreciations",
     "simulation_configs",
-    "recurring_transactions",
     "registry_entries",
     "transaction_batches",
     "life_events",
     "life_event_links",
     "life_scenarios",
-    "life_scenario_account_returns",
+    "scenario_contribution_plans",
     "household_members",
     "life_event_conditions",
     "transactions",
@@ -31,21 +30,21 @@ DATA_COLLECTIONS = [
     "period_reviews",
     "period_closes",
     "monthly_actions",
-    "milestones",
     "capsules",
     "capsule_drawdowns",
     "capsule_funding_sources",
     "capsule_rules",
-    "simulation_scenarios",
+    "goal_event_earmarks",
+    "fx_tracked_currencies",
     "exchange_rates",
-    "goal_baselines",
     "goal_budget_reflections",
 ]
 
 # Collections a later version stopped keeping, with the export version that
 # dropped them. Older exports still carry them: their manifest checksums still
 # verify, but the rows are never imported.
-RETIRED_COLLECTIONS = {"life_scenario_choices": 22, "quick_templates": None}
+RETIRED_COLLECTIONS = {"recurring_transactions": 24, "life_scenario_choices": 22, "quick_templates": None,
+                       "life_scenario_account_returns": 26, "milestones": 26, "simulation_scenarios": 26, "goal_baselines": 26}
 
 
 def _retired(version: int | None) -> set[str]:
@@ -183,6 +182,8 @@ def validate_import_payload(
 
     id_sets: dict[str, set[int]] = {}
     for collection in DATA_COLLECTIONS:
+        if collection == "fx_tracked_currencies":
+            continue
         seen: set[int] = set()
         for index, item in enumerate(data.get(collection, [])):
             item_id = _as_int(item.get("id"))
@@ -215,27 +216,26 @@ def validate_import_payload(
                     field,
                 )
 
-    # Validate assumptions before the restore starts replacing the target's facts.
-    institutions = ("none", "nisa_tsumitate", "nisa_growth", "ideco", "dc_corporate", "tokutei_withholding", "tokutei_self", "general")
     for item in data.get("accounts", []):
-        if item.get("institution", "none") not in institutions:
-            issue("error", "invalid_institution", "Account institution is invalid.", "accounts", item.get("id"), "institution")
-        age = item.get("withdrawable_from_age")
-        if age is not None and (type(age) is not int or age < 0):
-            issue("error", "invalid_withdrawable_age", "Withdrawal age must be a nonnegative integer.", "accounts", item.get("id"), "withdrawable_from_age")
+        if "account_type" in item and item["account_type"] not in {"asset", "liability", "income", "expense"}:
+            issue("error", "invalid_account_type", "口座の種類が不正です。", "accounts", item.get("id"), "account_type")
 
-    check_ref("accounts", "parent_id", "accounts")
+    seen_currencies = set()
+    for item in data.get("fx_tracked_currencies", []):
+        currency = item.get("currency")
+        if not isinstance(currency, str) or not re.fullmatch(r"[A-Z]{3}", currency) or currency in seen_currencies:
+            issue("error", "invalid_tracked_currency", "追跡通貨が不正または重複しています。", "fx_tracked_currencies")
+        if isinstance(currency, str):
+            seen_currencies.add(currency)
+
     check_ref("products", "budget_account_id", "accounts")
     check_ref("products", "funding_capsule_id", "capsules")
-    check_ref("recurring_transactions", "from_account_id", "accounts")
-    check_ref("recurring_transactions", "to_account_id", "accounts")
     # Definitions without a restorable registry owner are skipped during import.
     check_ref("registry_entries", "budget_account_id", "accounts")
     check_ref("registry_entries", "source_account_id", "accounts")
     check_ref("registry_entries", "destination_account_id", "accounts")
-    check_ref("registry_entries", "funding_capsule_id", "capsules")
-    check_ref("registry_entries", "source_product_id", "products")
-    check_ref("registry_entries", "source_recurring_transaction_id", "recurring_transactions")
+    if version and version >= 24:
+        check_ref("transactions", "registry_entry_id", "registry_entries")
     # Only present in a v6 or older payload, where the columns still existed.
     check_ref("transactions", "from_account_id", "accounts")
     check_ref("transactions", "to_account_id", "accounts")
@@ -245,21 +245,23 @@ def validate_import_payload(
     check_ref("journal_entries", "capsule_id", "capsules")
     check_ref("life_event_conditions", "life_event_id", "life_events", required=True)
     check_ref("life_events", "account_id", "accounts", required=False)
-    check_ref("milestones", "life_event_id", "life_events")
     check_ref("life_event_links", "from_event_id", "life_events", required=True)
     check_ref("life_event_links", "to_event_id", "life_events", required=True)
     if not legacy:
         check_ref("life_events", "scenario_id", "life_scenarios", required=True)
     check_ref("life_scenario_account_returns", "scenario_id", "life_scenarios", required=True)
     check_ref("life_scenario_account_returns", "account_id", "accounts", required=True)
-    check_ref("capsules", "life_event_id", "life_events")
     check_ref("capsule_funding_sources", "capsule_id", "capsules", required=True)
     check_ref("capsule_funding_sources", "account_id", "accounts", required=True)
     check_ref("capsule_drawdowns", "capsule_id", "capsules", required=True)
     check_ref("capsule_drawdowns", "transaction_id", "transactions", required=True)
     check_ref("capsule_rules", "capsule_id", "capsules", required=True)
     check_ref("capsule_rules", "source_account_id", "accounts")
-    check_ref("simulation_scenarios", "life_event_id", "life_events", required=True)
+    check_ref("capsule_rules", "trigger_account_id", "accounts")
+    check_ref("scenario_contribution_plans", "scenario_id", "life_scenarios", required=True)
+    check_ref("scenario_contribution_plans", "account_id", "accounts", required=True)
+    check_ref("goal_event_earmarks", "life_event_id", "life_events", required=True)
+    check_ref("goal_event_earmarks", "capsule_id", "capsules", required=True)
     check_ref("monthly_plan_lines", "account_id", "accounts")
     check_ref("monthly_plan_lines", "source_account_id", "accounts")
     check_ref("monthly_plan_lines", "plan_id", "budget_plans")
@@ -286,6 +288,22 @@ def validate_import_payload(
                 value = item.get(field, default)
                 if type(value) not in (int, float) or not math.isfinite(value):
                     issue("error", "invalid_scenario_rate", "利率は有限の数値で指定してください。", collection, item.get("id"), field)
+    plan_keys = set()
+    for item in data.get("scenario_contribution_plans", []):
+        key = (_as_int(item.get("scenario_id")), _as_int(item.get("account_id")), item.get("start_period"))
+        amount, rate = item.get("monthly_amount_minor"), item.get("annual_return")
+        valid = isinstance(key[2], str) and re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", key[2]) is not None and key not in plan_keys
+        valid = valid and type(amount) is int and amount >= 0 and (rate is None or (type(rate) in (int, float) and math.isfinite(rate)))
+        if not valid:
+            issue("error", "invalid_contribution_plan", "積立設定のレコードが不正または重複しています。", "scenario_contribution_plans", item.get("id"))
+        plan_keys.add(key)
+    earmark_pairs = set()
+    for item in data.get("goal_event_earmarks", []):
+        pair = (_as_int(item.get("life_event_id")), _as_int(item.get("capsule_id")))
+        share = item.get("share_bp")
+        if type(share) is not int or not 0 <= share <= 10000 or pair in earmark_pairs:
+            issue("error", "invalid_goal_earmark", "実績管理の設定が不正または重複しています。", "goal_event_earmarks", item.get("id"))
+        earmark_pairs.add(pair)
     pairs = set()
     accounts_by_id = {_as_int(row.get("id")): row for row in data.get("accounts", [])}
     for item in data.get("life_scenario_account_returns", []):
@@ -309,11 +327,6 @@ def validate_import_payload(
                 issue("error", "invalid_event_lineage", "イベントの系統はシナリオ内で重複しないUUIDで指定してください。", "life_events", item.get("id"), "lineage")
             if valid:
                 lineages.add(pair)
-        goal_ids = {_as_int(row.get("id")) for row in data.get("life_scenarios", []) if row.get("is_goal") is True}
-        for item in data.get("capsules", []):
-            event = events_by_id.get(_as_int(item.get("life_event_id")))
-            if event is not None and _as_int(event.get("scenario_id")) not in goal_ids:
-                issue("error", "capsule_outside_goal", "取り置きはゴールのシナリオのライフイベントにだけ紐づけられます。", "capsules", item.get("id"), "life_event_id")
 
     link_pairs = set()
     graph: dict[int, list[int]] = {}
@@ -567,14 +580,92 @@ def remap_action_target_id(item: dict[str, Any], key_maps: dict[str, dict[int, i
     if target_id is None:
         return None
     kind = item.get("kind")
-    payload = item.get("payload") or {}
     target_key = {
         "set_budget": "account_id",
-        "pause_recurring": "recurring_id",
+        "stop_auto_transaction": "registry_entry_id",
         "change_capsule_contribution": "capsule_id",
     }.get(kind)
-    if kind == "boost_allocation":
-        target_key = "account_id" if payload.get("account_id") else "life_event_id"
     if not target_key:
         return target_id
     return key_maps.get(target_key, {}).get(target_id, target_id)
+
+
+def migrate_account_fields(data: dict, base_currency: str) -> dict:
+    """Upgrade a verified pre-WP12 payload without changing its checksum input."""
+    from copy import deepcopy
+    result = deepcopy(data)
+    returns = result.setdefault("life_scenario_account_returns", [])
+    existing = {(int(row["scenario_id"]), int(row["account_id"])) for row in returns}
+    next_id = max((row["id"] for row in returns), default=0) + 1
+    for account in result.get("accounts", []):
+        rate = account.get("expected_return")
+        if account["account_type"] == "asset" and rate is not None:
+            for scenario in result.get("life_scenarios", []):
+                key = int(scenario["id"]), int(account["id"])
+                if key not in existing:
+                    returns.append({"id": next_id, "scenario_id": key[0], "account_id": key[1], "annual_return": rate})
+                    next_id += 1
+                    existing.add(key)
+        for field in ("role", "role_target_amount", "role_target_amount_minor", "institution", "withdrawable_from_age", "parent_id", "expected_return"):
+            account.pop(field, None)
+    currencies = {code.strip().upper() for row in result.get("exchange_rates", []) for code in (row["base_currency"], row["quote_currency"])}
+    result["fx_tracked_currencies"] = [{"currency": code} for code in sorted(currencies - {base_currency})]
+    return result
+
+
+LIFE_EVENT_RETIRED_FIELDS = ("start_date", "active_plan_basis", "active_plan_label", "plan_status_override", "budget_reflection", "archived_at")
+
+
+def migrate_goal_fields(data: dict, period: str) -> dict:
+    """Upgrade a verified pre-v26 payload the way migration 20261019_0078 upgrades the database.
+
+    Scenario account yields become 積立設定 records from this month with no amount,
+    an event's capsule becomes a full-share goal earmark, a plan row typed as the
+    event moves to that capsule (or retires), and archived events are dropped with
+    their links and conditions.
+    """
+    from copy import deepcopy
+    result = deepcopy(data)
+    archived = {_as_int(row.get("id")) for row in result.get("life_events", []) if row.get("archived_at")}
+    result["life_events"] = [row for row in result.get("life_events", []) if _as_int(row.get("id")) not in archived]
+    for row in result["life_events"]:
+        for field in LIFE_EVENT_RETIRED_FIELDS:
+            row.pop(field, None)
+    result["life_event_links"] = [row for row in result.get("life_event_links", [])
+                                  if not {_as_int(row.get("from_event_id")), _as_int(row.get("to_event_id"))} & archived]
+    result["life_event_conditions"] = [row for row in result.get("life_event_conditions", [])
+                                       if _as_int(row.get("life_event_id")) not in archived]
+    result["scenario_contribution_plans"] = [
+        {"id": index, "scenario_id": row["scenario_id"], "account_id": row["account_id"], "start_period": period,
+         "monthly_amount_minor": 0, "annual_return": row["annual_return"], "note": None}
+        for index, row in enumerate(result.get("life_scenario_account_returns", []), 1)
+    ]
+    capsule_by_event: dict[int, int] = {}
+    earmarks = []
+    for capsule in result.get("capsules", []):
+        event_id = _as_int(capsule.pop("life_event_id", None))
+        if capsule.get("capsule_type") == "life_event":
+            capsule["capsule_type"] = "manual"
+        if capsule.get("target_amount_source") == "life_event":
+            capsule["target_amount_source"] = "manual"
+        if event_id is not None and event_id not in archived:
+            capsule_by_event.setdefault(event_id, _as_int(capsule["id"]))
+            earmarks.append({"id": len(earmarks) + 1, "life_event_id": event_id, "capsule_id": capsule["id"], "share_bp": 10000})
+    result["goal_event_earmarks"] = earmarks
+    for line in result.get("monthly_plan_lines", []):
+        if line.get("target_type") == "life_event":
+            capsule_id = capsule_by_event.get(_as_int(line.get("target_id")))
+            if capsule_id is None:
+                line["is_active"] = False
+            else:
+                line["target_type"], line["target_id"] = "capsule", capsule_id
+    for row in result.get("life_scenarios", []):
+        row.pop("monthly_savings", None)
+    for row in result.get("simulation_configs", []):
+        row.pop("monthly_savings", None)
+    for row in result.get("goal_budget_reflections", []):
+        row.pop("options", None)
+        row.pop("events", None)
+    for collection in ("life_scenario_account_returns", "milestones", "simulation_scenarios", "goal_baselines"):
+        result.pop(collection, None)
+    return result

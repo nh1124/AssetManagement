@@ -22,7 +22,7 @@ from app.services.budget_credit_settlement import (
 from app.services.budget_plan_store import find_budget_plan_id
 from app.services.budget_projection import planned_cash_outflow_remaining
 from app.services.cache_service import invalidate_client
-from app.services.ledger_service import DEFAULT_ACCOUNTS, create_transaction
+from app.services.ledger_service import create_transaction
 from app.utils.jwt import create_access_token
 
 
@@ -88,7 +88,7 @@ def test_analysis_without_default_accounts(database, path, params):
         assert db.query(models.Account).count() == before
 
 
-def test_registration_seeds_only_new_client(database):
+def test_registration_creates_no_accounts(database):
     with database() as db:
         db.add(models.Account(client_id=1, name="Existing custom account", account_type="asset"))
         db.commit()
@@ -101,15 +101,14 @@ def test_registration_seeds_only_new_client(database):
     assert client_id != 1
     with database() as db:
         accounts = db.query(models.Account).filter_by(client_id=client_id).all()
-        assert len(accounts) == len(DEFAULT_ACCOUNTS) == 15
-        assert {(a.name, a.account_type) for a in accounts} == {
-            (a["name"], a["account_type"]) for a in DEFAULT_ACCOUNTS}
+        # Accounts are the user's own: registration invents none.
+        assert accounts == []
         assert db.execute(select(models.Account.__table__).where(
             models.Account.client_id == 1)).all() == before
 
 
 def seed_actuals_and_orphan(db):
-    cash = models.Account(client_id=1, name="cash", account_type="asset", role="operating")
+    cash = models.Account(client_id=1, name="cash", account_type="asset")
     salary = models.Account(client_id=1, name="Custom salary", account_type="income")
     food = models.Account(client_id=1, name="Custom food", account_type="expense")
     db.add_all([cash, salary, food])
@@ -124,8 +123,7 @@ def seed_actuals_and_orphan(db):
     # Virtual allocations and registry suggestions must not invent a plan either.
     db.add_all([orphan,
                 models.Capsule(client_id=1, name="Reserve", monthly_contribution_minor=200),
-                models.RegistryEntry(client_id=1, name="Subscription", amount_minor=300,
-                                     budget_account_id=food.id, source_account_id=cash.id)])
+                models.RegistryEntry(client_id=1, name='Subscription', amount_minor=300, budget_account_id=food.id, source_account_id=cash.id, start_date=date(2026, 1, 1), repeat_mode="indefinite", frequency="Monthly")])
     db.commit()
     return orphan.id
 

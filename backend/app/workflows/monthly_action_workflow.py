@@ -12,31 +12,16 @@ from ..domain.errors import NotFound, Refused
 from ..services import monthly_action_store
 from ..services.budget_lines import assign_plan_line_identity
 from ..services.budget_plan_store import create_plan_line, find_expense_plan_line, resolve_budget_plan_id
-from ..services.capsule_service import (
-    capsule_balance,
-    create_capsule_for_goal,
-    get_capsule,
-    claimed_minor,
-    account_claimed_minor,
-)
-from ..services.goal_service import get_life_event
-from ..services.ledger_service import get_account, create_transaction
-from ..domain.journal import Leg
-from ..domain.money import Money
-from ..services.ledger_valuation import calculate_account_valued_balance
-from ..services.registry_service import (
-    get_entry,
-    get_recurring_transaction,
-    sync_recurring_from_registry,
-    upsert_registry_from_recurring_payload,
-)
+from ..services.capsule_service import get_capsule
+from ..services.ledger_service import get_account
+from ..services.registry_service import create_entry, update_entry
+
 
 
 ACTION_KINDS = {
     "set_budget",
-    "add_recurring",
-    "pause_recurring",
-    "boost_allocation",
+    "add_auto_transaction",
+    "stop_auto_transaction",
     "change_capsule_contribution",
 }
 
@@ -95,7 +80,7 @@ def _action_fields(
         kind=kind,
         description=description or kind.replace("_", " "),
         amount=payload.get("amount") or payload.get("monthly_contribution"),
-        target_id=payload.get("account_id") or payload.get("recurring_id") or payload.get("life_event_id") or payload.get("capsule_id"),
+        target_id=payload.get("account_id") or payload.get("registry_entry_id") or payload.get("capsule_id"),
         payload=payload,
     )
 
@@ -192,88 +177,19 @@ def _apply_set_budget(db: Session, action: models.MonthlyAction) -> dict:
     return {"plan_line_id": plan_line.id, "target_period": target_period, "plan_id": plan_id}
 
 
-def _apply_add_recurring(db: Session, action: models.MonthlyAction) -> dict:
-    payload = action.payload or {}
-    recurring_payload = {
-        "name": payload["name"],
-        "amount": float(payload["amount"]),
-        "currency": payload.get("currency"),
-        "from_account_id": payload.get("from_account_id"),
-        "to_account_id": payload.get("to_account_id"),
-        "frequency": payload.get("frequency", "Monthly"),
-        "day_of_month": int(payload.get("day_of_month") or 1),
-        "month_of_year": payload.get("month_of_year"),
-        "is_active": True,
-    }
-    recurring = upsert_registry_from_recurring_payload(db, action.client_id, recurring_payload)
-    return {"recurring_id": recurring.id}
+def _apply_add_automatic(db: Session, action: models.MonthlyAction) -> dict:
+    from ..schemas import RegistryEntryCreate
+    payload = RegistryEntryCreate(**(action.payload or {})).model_dump()
+    entry = create_entry(db, action.client_id, payload)
+    return {"registry_entry_id": entry.id}
 
 
-def _apply_pause_recurring(db: Session, action: models.MonthlyAction) -> dict:
-    recurring_id = int((action.payload or {})["recurring_id"])
-    recurring = get_recurring_transaction(db, action.client_id, recurring_id)
-    if not recurring:
-        raise ValueError("Recurring transaction not found")
-    entry = get_entry(db, action.client_id, recurring.source_registry_entry_id)
+def _apply_stop_automatic(db: Session, action: models.MonthlyAction) -> dict:
+    entry_id = int((action.payload or {})["registry_entry_id"])
+    entry = update_entry(db, action.client_id, entry_id, {"is_active": False})
     if entry is None:
-        raise ValueError("Recurring transaction not found")
-    # A paused definition moves no money, so its entry must stop forecasting it too.
-    entry.is_active = False
-    sync_recurring_from_registry(db, entry)
-    return {"recurring_id": recurring.id, "is_active": False}
-
-
-def _apply_boost_allocation(db: Session, action: models.MonthlyAction) -> dict:
-    """Earmark a larger share of one account for a goal.
-
-    Apply delta_percent to the account balance, then post a balanced entry
-    at the same account. The attributed leg changes the capsule claim; its
-    unattributed counterparty preserves the account balance.
-    """
-    payload = action.payload or {}
-    life_event_id = int(payload["life_event_id"])
-    account_id = int(payload["account_id"])
-    delta_percent = float(payload.get("delta_percent") or payload.get("percent") or 0)
-
-    goal = get_life_event(db, action.client_id, life_event_id)
-    if not goal:
-        raise ValueError("Life event not found")
-    account = _require_account(db, action.client_id, account_id)
-
-    capsule = create_capsule_for_goal(db, action.client_id, goal)
-    db.flush()
-
-    balance = calculate_account_valued_balance(db, account)
-    requested = balance * delta_percent / 100.0
-
-    # An account cannot have more earmarked against it than it holds, counting
-    # what other capsules already claim.
-    currency = money_client_currency(db, action.client_id)
-    claimed = Money(account_claimed_minor(db, action.client_id, account_id).get(currency, 0), currency).to_float()
-    headroom = max(0.0, balance - float(claimed))
-    applied = min(requested, headroom) if requested > 0 else requested
-
-    current_claim = claimed_minor(db, action.client_id, capsule.id, account_id).get(currency, 0)
-    delta = Money.from_major(str(applied), currency).minor
-    delta = max(delta, -max(0, current_claim))
-    applied = Money(delta, currency).to_float()
-    if delta:
-        create_transaction(db, client_id=action.client_id, date=date.today(),
-            description=f"boost_allocation {delta_percent:+g}% ({action.source_period})",
-            amount_minor=abs(delta), currency=currency,
-            legs=[Leg(account_id, debit=max(0, delta), credit=max(0, -delta), capsule_id=capsule.id),
-                  Leg(account_id, debit=max(0, -delta), credit=max(0, delta))])
-    db.flush()
-    return {
-        "capsule_id": capsule.id,
-        "account_id": account_id,
-        "delta_percent": delta_percent,
-        "requested_amount": round(requested, 2),
-        "applied_amount": round(applied, 2),
-        "clamped": applied < requested,
-        "claimed_amount": Money(claimed_minor(db, action.client_id, capsule.id, account_id).get(currency, 0), currency).to_float(),
-        "capsule_balance": round(capsule_balance(db, capsule), 2),
-    }
+        raise ValueError("Automatic transaction not found")
+    return {"registry_entry_id": entry.id, "is_active": False}
 
 
 def _apply_change_capsule_contribution(db: Session, action: models.MonthlyAction) -> dict:
@@ -287,9 +203,8 @@ def _apply_change_capsule_contribution(db: Session, action: models.MonthlyAction
 
 DISPATCH = {
     "set_budget": _apply_set_budget,
-    "add_recurring": _apply_add_recurring,
-    "pause_recurring": _apply_pause_recurring,
-    "boost_allocation": _apply_boost_allocation,
+    "add_auto_transaction": _apply_add_automatic,
+    "stop_auto_transaction": _apply_stop_automatic,
     "change_capsule_contribution": _apply_change_capsule_contribution,
 }
 

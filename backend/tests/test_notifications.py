@@ -134,7 +134,7 @@ def unclosed_month(db, client_id):
 @pytest.mark.parametrize("kind, seed, link", [
     (workflow.APPROVAL_PENDING, approval, "/automation/approvals"),
     (workflow.ACTIONS_DUE, due_action, "/budget/actions"),
-    (workflow.UNMATCHED, unmatched, "/ledger/unmatched"),
+    (workflow.UNMATCHED, unmatched, "/ledger/auto"),
     (workflow.MONTH_CLOSE, unclosed_month, "/ledger?month=2026-09"),
 ])
 def test_each_kind_notifies_while_its_reasons_hold(db, kind, seed, link):
@@ -161,7 +161,7 @@ def test_a_new_reason_is_a_new_notification_and_long_lists_end_in_a_count(db):
                                           amount_minor=100, legs=[], idempotency_key=f"k{index}"))
     db.flush()
     (first,) = workflow.unmatched_notifications(db, 1, PERIOD)
-    assert first["title"] == "未照合の明細が12件あります" and first["body"].splitlines()[-1] == "ほか2件"
+    assert first["title"] == "未反映の候補が12件あります" and first["body"].splitlines()[-1] == "ほか2件"
     db.add(models.TransactionProposal(client_id=1, origin="recurring", date=date(2026, 10, 2), description="追加",
                                       amount_minor=100, legs=[], idempotency_key="new"))
     db.flush()

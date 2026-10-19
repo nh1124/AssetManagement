@@ -47,7 +47,7 @@ def get_balance_sheet(
     balances = calculate_account_valued_balances(db, accounts, as_of_date)
     for acc in accounts:
         balance = balances.get(acc.id, 0.0)
-        if acc.account_type in ("asset", "item"):
+        if acc.account_type in ("asset",):
             assets.append({"name": acc.name, "balance": balance})
         elif acc.account_type == "liability":
             liabilities.append({"name": acc.name, "balance": abs(balance)})
@@ -113,64 +113,6 @@ def get_profit_loss(db: Session, year: int, month: int, client_id: int | None = 
     else:
         end_date = date(year, month + 1, 1)
     return get_profit_loss_for_range(db, start_date, end_date - date.resolution, client_id)
-
-
-def get_profit_loss_rollup_for_range(
-    db: Session,
-    start_date: date,
-    end_date: date,
-    client_id: int | None = None,
-) -> dict:
-    """Generate P/L grouped by top-level parent account for an inclusive date range."""
-    accounts = db.query(models.Account).filter(
-        models.Account.client_id == client_id,
-        models.Account.is_active == True,
-    ).all()
-    account_by_id = {account.id: account for account in accounts}
-
-    def root_name(account_id: int | None, fallback: str) -> str:
-        account = account_by_id.get(account_id or -1)
-        if not account:
-            return fallback or "Other"
-        seen = set()
-        current = account
-        while current.parent_id and current.parent_id not in seen and current.parent_id in account_by_id:
-            seen.add(current.id)
-            current = account_by_id[current.parent_id]
-        return current.name or fallback or "Other"
-
-    income_by_category: dict[str, float] = {}
-    expense_by_category: dict[str, float] = {}
-    for leg in legs_in_range(
-        db, client_id, start_date, end_date, account_types={"income", "expense"}
-    ):
-        category = root_name(leg.account.id, leg.account.name or "Other")
-        bucket = income_by_category if leg.account_type == "income" else expense_by_category
-        bucket[category] = bucket.get(category, 0.0) + leg.signed
-
-    total_income = sum(income_by_category.values())
-    total_expense = sum(expense_by_category.values())
-    return {
-        "period": f"{start_date.isoformat()}..{end_date.isoformat()}",
-        "start_date": start_date.isoformat(),
-        "end_date": end_date.isoformat(),
-        "income": [{"category": k, "amount": v} for k, v in income_by_category.items()],
-        "expenses": [{"category": k, "amount": v} for k, v in expense_by_category.items()],
-        "total_income": total_income,
-        "total_expenses": total_expense,
-        "net_profit_loss": total_income - total_expense,
-        "rollup": True,
-    }
-
-
-def get_profit_loss_rollup(db: Session, year: int, month: int, client_id: int | None = None) -> dict:
-    """Generate P/L grouped by top-level parent account when hierarchy exists."""
-    start_date = date(year, month, 1)
-    if month == 12:
-        end_date = date(year + 1, 1, 1)
-    else:
-        end_date = date(year, month + 1, 1)
-    return get_profit_loss_rollup_for_range(db, start_date, end_date - date.resolution, client_id)
 
 
 def _period_months(start_date: date, end_date: date) -> list[str]:
@@ -538,7 +480,7 @@ def _calc_net_worth_at(db: Session, client_id: int, as_of: date) -> dict:
     balances = calculate_account_valued_balances(db, accounts, as_of_date=as_of)
     for account in accounts:
         balance = balances.get(account.id, 0.0)
-        if account.account_type in ("asset", "item"):
+        if account.account_type in ("asset",):
             assets += balance
         elif account.account_type == "liability":
             liabilities += abs(balance)
@@ -595,7 +537,7 @@ def get_net_worth_history(db: Session, client_id: int, months: int = 36) -> list
         liabilities = 0.0
         for account in accounts:
             balance = balances.get(account.id, 0.0)
-            if account.account_type in ("asset", "item"):
+            if account.account_type in ("asset",):
                 assets += balance
             elif account.account_type == "liability":
                 liabilities += abs(balance)

@@ -50,9 +50,9 @@ LAYERS: dict[str, int] = {
     "depreciation_service": 1,  # Writes assets down with ledger primitives only.
     # L2 - the source of truth for recurring cash flow, and its bucket model
     "capsule_service": 2,
-    "institution_service": 2,  # Reads holdings and household facts for projection assumptions.
     "reconciliation_service": 2,  # Attributed corrections also enforce capsule claims.
     "registry_service": 2,
+    "automatic_recording_service": 3,
     # L3 - generated from the registry. The budget_* modules are one feature
     # split across files: the loader and the line vocabulary at the bottom,
     # the summary that assembles everything at the top.
@@ -65,7 +65,6 @@ LAYERS: dict[str, int] = {
     "budget_projection": 3,
     "budget_registry_lines": 3,
     "budget_warnings": 3,
-    "recurring_service": 3,
     # L4 - statements and variance, which need the adopted plan
     "reporting_service": 4,
     # L5 - composition over everything below
@@ -73,21 +72,19 @@ LAYERS: dict[str, int] = {
     "analysis_service": 5,
     "data_health_service": 5,
     "data_transfer_service": 5,  # Backup includes L5 health; no service depends on it.
-    "goal_budget_inputs": 5,  # Reads what the goal asks of the budget; only its workflow uses it.
-    "goal_baseline_service": 5,  # Freezes the goal projection and reads month-end net worth.
+    "goal_plan_service": 5,  # The plan the goal asks for: contributions per account, earmark needs.
     "goal_budget_record": 0,  # The applied reflections; models only.
     "notification_service": 0,  # Notification rows and the user's decisions; models only.
     "goal_service": 5,
+    "goal_earmark_service": 5,  # Which earmarks count toward goal events, and their progress.
+    "contribution_plan_service": 5,  # 積立設定 records and their month-by-month resolution.
+    "scenario_simulation": 5,  # Account-by-account paths, event execution and branches.
     "life_event_conditions": 5,  # Current assumptions compose existing readers.
     "life_event_walk": 5,  # Shared graph resolution and event cash-flow application.
     "life_scenario_scope": 0,  # Ownership reads and the shared client lock.
     "life_scenario_service": 5,  # Owns user-authored scenario assumptions and choices.
     "life_event_graph": 5,  # Resolves graph branches over the shared strategy projector.
-    "milestone_service": 5,
     "report_service": 5,
-    "simulation_service": 5,
-    "simulation_scenario_service": 5,
-    "strategy_service": 5,
     # L6 - dependency runs UI -> workflow -> service; a workflow may use
     # anything below it to compose a request across features.
     "monthly_action_workflow": 6,
@@ -96,13 +93,12 @@ LAYERS: dict[str, int] = {
     "ledger_entry_workflow": 6,
     "transaction_batch_workflow": 6,
     "product_workflow": 6,
-    "goal_workflow": 6,
     "goal_budget_workflow": 6,
-    "scenario_goal_workflow": 6,
     "notification_workflow": 6,
     "capsule_workflow": 6,
-    "simulation_workflow": 6,
     "automatic_recording_workflow": 6,
+    "registry_workflow": 6,
+    "fx_workflow": 6,
 }
 
 

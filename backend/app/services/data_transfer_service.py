@@ -24,13 +24,16 @@ from ..domain.transfer import (
     validate_import_payload,
     remap_nested_ids,
     remap_action_target_id,
+    migrate_account_fields,
+    migrate_goal_fields,
 )
 from .data_health_service import check_data_health
 from .budget_lines import assign_plan_line_identity
 from .cache_service import invalidate_client
-from .capsule_service import create_capsule_for_goal
-from .registry_service import account_entry_type, account_line_type
-from .life_scenario_service import seed_legacy_goal, copy_graph, get_goal
+from ..domain.automatic_migration import migrate_automatic_data
+from copy import deepcopy
+from .life_scenario_scope import get_goal
+from .life_scenario_service import seed_legacy_goal, copy_graph
 
 
 
@@ -63,12 +66,6 @@ def export_client(db: Session, client: models.Client) -> dict:
                         "id",
                         "name",
                         "account_type",
-                        "parent_id",
-                        "expected_return",
-                        "institution",
-                        "withdrawable_from_age",
-                        "role",
-                        "role_target_amount",
                         "liability_closing_day",
                         "liability_payment_day",
                         "liability_payment_month_offset",
@@ -104,6 +101,7 @@ def export_client(db: Session, client: models.Client) -> dict:
                         "budget_treatment",
                         "purchase_price",
                         "purchase_date",
+                        "auto_depreciation",
                         "depreciation_method",
                         "depreciation_annual_rate",
                         "depreciation_interval",
@@ -134,7 +132,6 @@ def export_client(db: Session, client: models.Client) -> dict:
                         "annual_return",
                         "tax_rate",
                         "is_nisa",
-                        "monthly_savings",
                         "volatility",
                         "inflation_rate",
                         "horizon_years",
@@ -145,71 +142,11 @@ def export_client(db: Session, client: models.Client) -> dict:
                 .order_by(models.SimulationConfig.id)
                 .all()
             ],
-            "recurring_transactions": [
-                row_fields(
-                    item,
-                    [
-                        "id",
-                        "name",
-                        "amount",
-                        "currency",
-                        "from_account_id",
-                        "to_account_id",
-                        "frequency",
-                        "day_of_month",
-                        "month_of_year",
-                        "next_due_date",
-                        "start_period",
-                        "end_period",
-                        "auto_post",
-                        "is_active",
-                        "source_registry_entry_id",
-                        "created_at",
-                    ],
-                )
-                for item in db.query(models.RecurringTransaction)
-                .filter(models.RecurringTransaction.client_id == client.id)
-                .order_by(models.RecurringTransaction.id)
-                .all()
-            ],
             "registry_entries": [
-                row_fields(
-                    item,
-                    [
-                        "id",
-                        "name",
-                        "entry_type",
-                        "category",
-                        "amount",
-                        "currency",
-                        "frequency",
-                        "frequency_days",
-                        "day_of_month",
-                        "month_of_year",
-                        "line_type",
-                        "budget_account_id",
-                        "source_account_id",
-                        "destination_account_id",
-                        "funding_capsule_id",
-                        "budget_treatment",
-                        "generate_recurring",
-                        "auto_post",
-                        "auto_depreciation",
-                        "budget_active",
-                        "is_active",
-                        "source_product_id",
-                        "source_recurring_transaction_id",
-                        "note",
-                        "start_period",
-                        "end_period",
-                        "created_at",
-                        "updated_at",
-                    ],
-                )
-                for item in db.query(models.RegistryEntry)
-                .filter(models.RegistryEntry.client_id == client.id)
-                .order_by(models.RegistryEntry.id)
-                .all()
+                row_fields(item, ["id", "name", "kind", "amount", "currency", "source_account_id", "destination_account_id",
+                                  "budget_account_id", "repeat_mode", "frequency", "frequency_days", "day_of_month", "month_of_year",
+                                  "start_date", "end_date", "repeat_count", "next_due_date", "budget_active", "is_active", "note", "created_at", "updated_at"])
+                for item in db.query(models.RegistryEntry).filter(models.RegistryEntry.client_id == client.id).order_by(models.RegistryEntry.id).all()
             ],
             "transaction_batches": [
                 row_fields(
@@ -235,7 +172,6 @@ def export_client(db: Session, client: models.Client) -> dict:
                         "scenario_id",
                         "lineage",
                         "name",
-                        "start_date",
                         "target_date",
                         "target_amount",
                         "priority",
@@ -243,11 +179,6 @@ def export_client(db: Session, client: models.Client) -> dict:
                         "condition_mode",
                         "direction",
                         "account_id",
-                        "active_plan_basis",
-                        "active_plan_label",
-                        "plan_status_override",
-                        "budget_reflection",
-                        "archived_at",
                         "created_at",
                     ],
                 )
@@ -263,13 +194,13 @@ def export_client(db: Session, client: models.Client) -> dict:
                 .order_by(models.LifeEventLink.id).all()
             ],
             "life_scenarios": [
-                row_fields(row, ["id", "name", "annual_return", "inflation", "horizon_years", "monthly_savings", "is_goal", "created_at", "updated_at"])
+                row_fields(row, ["id", "name", "annual_return", "inflation", "horizon_years", "is_goal", "created_at", "updated_at"])
                 for row in db.query(models.LifeScenario).filter_by(client_id=client.id).order_by(models.LifeScenario.id).all()
             ],
-            "life_scenario_account_returns": [
-                row_fields(row, ["id", "scenario_id", "account_id", "annual_return"])
-                for row in db.query(models.LifeScenarioAccountReturn).join(models.LifeScenario, models.LifeScenario.id == models.LifeScenarioAccountReturn.scenario_id)
-                .filter(models.LifeScenario.client_id == client.id).order_by(models.LifeScenarioAccountReturn.id).all()
+            "scenario_contribution_plans": [
+                row_fields(row, ["id", "scenario_id", "account_id", "start_period", "monthly_amount_minor", "annual_return", "note", "created_at"])
+                for row in db.query(models.ScenarioContributionPlan).join(models.LifeScenario, models.LifeScenario.id == models.ScenarioContributionPlan.scenario_id)
+                .filter(models.LifeScenario.client_id == client.id).order_by(models.ScenarioContributionPlan.id).all()
             ],
             "household_members": [
                 row_fields(row, ["id", "name", "relation", "birth_date", "created_at"])
@@ -289,7 +220,7 @@ def export_client(db: Session, client: models.Client) -> dict:
                         "amount",
                         "currency",
                         "batch_id",
-                        "recurring_transaction_id",
+                        "registry_entry_id",
                         "created_at",
                     ],
                 )
@@ -401,31 +332,11 @@ def export_client(db: Session, client: models.Client) -> dict:
                 .order_by(models.MonthlyAction.id)
                 .all()
             ],
-            "milestones": [
-                row_fields(
-                    milestone,
-                    [
-                        "id",
-                        "life_event_id",
-                        "date",
-                        "target_amount",
-                        "note",
-                        "source",
-                        "source_snapshot",
-                        "is_active_plan",
-                        "created_at",
-                    ],
-                )
-                for milestone in db.query(models.Milestone)
-                .filter(models.Milestone.client_id == client.id)
-                .order_by(models.Milestone.id)
-                .all()
-            ],
             "capsules": [
                 {
                     **row_fields(capsule, ["id", "name", "target_amount", "monthly_contribution"]),
                     **row_fields(capsule, [
-                        "life_event_id", "capsule_type", "target_amount_source",
+                        "capsule_type", "target_amount_source",
                         "monthly_contribution_source", "created_at",
                     ]),
                 }
@@ -457,6 +368,7 @@ def export_client(db: Session, client: models.Client) -> dict:
                         "trigger_type",
                         "trigger_category",
                         "trigger_description",
+                        "trigger_account_id",
                         "source_mode",
                         "source_account_id",
                         "destination_account_id",
@@ -471,27 +383,13 @@ def export_client(db: Session, client: models.Client) -> dict:
                 .order_by(models.CapsuleRule.id)
                 .all()
             ],
-            "simulation_scenarios": [
-                row_fields(
-                    scenario,
-                    [
-                        "id",
-                        "life_event_id",
-                        "name",
-                        "description",
-                        "annual_return",
-                        "inflation",
-                        "monthly_savings",
-                        "contribution_schedule",
-                        "allocation_mode",
-                        "created_at",
-                        "updated_at",
-                    ],
-                )
-                for scenario in db.query(models.SimulationScenario)
-                .filter(models.SimulationScenario.client_id == client.id)
-                .order_by(models.SimulationScenario.id)
-                .all()
+            "goal_event_earmarks": [
+                row_fields(row, ["id", "life_event_id", "capsule_id", "share_bp"])
+                for row in db.query(models.GoalEventEarmark).filter_by(client_id=client.id).order_by(models.GoalEventEarmark.id).all()
+            ],
+            "fx_tracked_currencies": [
+                row_fields(row, ["currency", "created_at"])
+                for row in db.query(models.FxTrackedCurrency).filter_by(client_id=client.id).order_by(models.FxTrackedCurrency.currency)
             ],
             "exchange_rates": [
                 row_fields(
@@ -512,13 +410,8 @@ def export_client(db: Session, client: models.Client) -> dict:
                 .order_by(models.ExchangeRate.id)
                 .all()
             ],
-            "goal_baselines": [
-                row_fields(row, ["id", "scenario_id", "scenario_name", "reason", "anchor_date", "is_current",
-                                 "assumptions", "projection", "events", "created_at"])
-                for row in db.query(models.GoalBaseline).filter_by(client_id=client.id).order_by(models.GoalBaseline.id).all()
-            ],
             "goal_budget_reflections": [
-                row_fields(row, ["id", "scenario_id", "applied_at", "start_period", "end_period", "options", "summary", "events"])
+                row_fields(row, ["id", "scenario_id", "applied_at", "start_period", "end_period", "summary"])
                 for row in db.query(models.GoalBudgetReflection).filter_by(client_id=client.id).order_by(models.GoalBudgetReflection.id).all()
             ],
     }
@@ -558,13 +451,27 @@ def import_client(
             },
         )
 
+    data = deepcopy(data)
+    if version is None or version < 24:
+        moves = migrate_automatic_data(data)
+        for code, count in moves.items():
+            if count:
+                validation["issues"].append({"severity": "warning", "code": code, "detail": f"WP13: {count} rows", "count": count})
+                validation["warning_count"] += 1
+
+    legacy_account_returns = {int(row["id"]): row["expected_return"] for row in data.get("accounts", [])
+                              if row.get("account_type") == "asset" and row.get("expected_return") is not None}
+    if version is None or version < 23:
+        data = migrate_account_fields(data, money_client_currency(db, client.id))
+    if version is None or version < 26:
+        data = migrate_goal_fields(data, date.today().strftime("%Y-%m"))
+
     link_map: dict[int, int] = {}
     scenario_map: dict[int, int] = {}
     account_map: dict[int, int] = {}
     transaction_map: dict[int, int] = {}
     batch_map: dict[int, int] = {}
     event_map: dict[int, int] = {}
-    recurring_map: dict[int, int] = {}
     capsule_map: dict[int, int] = {}
     budget_plan_map: dict[int, int] = {}
 
@@ -582,12 +489,12 @@ def import_client(
             ).delete(synchronize_session=False)
 
         scenario_ids = db.query(models.LifeScenario.id).filter_by(client_id=client.id)
-        db.query(models.LifeScenarioAccountReturn).filter(
-            models.LifeScenarioAccountReturn.scenario_id.in_(scenario_ids),
+        db.query(models.ScenarioContributionPlan).filter(
+            models.ScenarioContributionPlan.scenario_id.in_(scenario_ids),
         ).delete(synchronize_session=False)
 
         for model in [
-            models.GoalBaseline,
+            models.GoalEventEarmark,
             models.GoalBudgetReflection,
             models.LifeEventCondition,
             models.HouseholdMember,
@@ -601,10 +508,8 @@ def import_client(
             models.CapsuleRule,
             models.Capsule,
             models.ExchangeRate,
-            models.Milestone,
+            models.FxTrackedCurrency,
             models.RegistryEntry,
-            models.RecurringTransaction,
-            models.SimulationScenario,
             models.SimulationConfig,
             models.Product,
             models.Transaction,
@@ -621,18 +526,12 @@ def import_client(
         db.flush()
 
         # Legacy backups may contain balance; only their journal is authoritative.
-        account_parent_updates: list[tuple[models.Account, int]] = []
         for item in data.get("accounts", []):
             old_id = int(item["id"])
             account = models.Account(
                 client_id=client.id,
                 name=item["name"],
                 account_type=item["account_type"],
-                expected_return=item.get("expected_return", 0.0),
-                institution=item.get("institution", "none"),
-                withdrawable_from_age=item.get("withdrawable_from_age"),
-                role=item.get("role", "unassigned"),
-                role_target_amount_minor=to_minor(item.get("role_target_amount"), money_client_currency(db, client.id)),
                 liability_closing_day=item.get("liability_closing_day"),
                 liability_payment_day=item.get("liability_payment_day"),
                 liability_payment_month_offset=item.get("liability_payment_month_offset") or 0,
@@ -646,12 +545,6 @@ def import_client(
             db.add(account)
             db.flush()
             account_map[old_id] = account.id
-            if item.get("parent_id"):
-                account_parent_updates.append((account, int(item["parent_id"])))
-
-        for account, old_parent_id in account_parent_updates:
-            account.parent_id = account_map.get(old_parent_id)
-
         for item in data.get("budget_plans", []):
             old_id = int(item["id"])
             plan = models.BudgetPlan(
@@ -686,6 +579,7 @@ def import_client(
                 budget_treatment=item.get("budget_treatment") or "auto",
                 purchase_price_minor=to_minor(item.get("purchase_price"), money_client_currency(db, client.id)),
                 purchase_date=parse_date(item.get("purchase_date")),
+                auto_depreciation=item.get("auto_depreciation", False),
                 depreciation_method=item.get("depreciation_method") or "none",
                 depreciation_annual_rate=item.get("depreciation_annual_rate"),
                 depreciation_interval=item.get("depreciation_interval") or "monthly",
@@ -707,7 +601,6 @@ def import_client(
                     annual_return=item.get("annual_return", 5.0),
                     tax_rate=item.get("tax_rate", 20.0),
                     is_nisa=item.get("is_nisa", True),
-                    monthly_savings_minor=to_minor(item.get("monthly_savings", 100000), money_client_currency(db, client.id)),
                     volatility=item.get("volatility", 15.0),
                     inflation_rate=item.get("inflation_rate", 2.0),
                     horizon_years=item.get("horizon_years", 30),
@@ -715,119 +608,17 @@ def import_client(
             )
 
         registry_map: dict[int, int] = {}
-        registry_funding_updates: list[tuple[models.RegistryEntry, int]] = []
         for item in data.get("registry_entries", []):
-            old_id = int(item["id"])
-            entry = models.RegistryEntry(
-                client_id=client.id,
-                name=item["name"],
-                entry_type=item.get("entry_type") or "service",
-                category=item.get("category"),
-                amount_minor=to_minor(item.get("amount") or 0, item.get("currency") or "JPY"),
-                # Restore the backup's denomination; today's settings would rewrite history.
-                currency=item.get("currency") or "JPY",
-                frequency=item.get("frequency") or "Monthly",
-                frequency_days=item.get("frequency_days"),
-                day_of_month=item.get("day_of_month") or 1,
-                month_of_year=item.get("month_of_year"),
-                line_type=item.get("line_type") or "expense",
-                budget_account_id=account_map.get(item.get("budget_account_id")),
-                source_account_id=account_map.get(item.get("source_account_id")),
-                destination_account_id=account_map.get(item.get("destination_account_id")),
-                funding_capsule_id=capsule_map.get(item.get("funding_capsule_id")),
-                budget_treatment=item.get("budget_treatment") or "expense_only",
-                generate_recurring=item.get("generate_recurring", False),
-                auto_post=item.get("auto_post", True),
-                auto_depreciation=item.get("auto_depreciation", False),
-                budget_active=item.get("budget_active", True),
-                is_active=item.get("is_active", True),
-                source_product_id=product_map.get(item.get("source_product_id")),
-                note=item.get("note"),
-                start_period=item.get("start_period"),
-                end_period=item.get("end_period"),
-                created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
-                updated_at=parse_datetime(item.get("updated_at")),
-            )
+            values = {key: item.get(key) for key in ("name", "kind", "frequency", "frequency_days", "day_of_month", "month_of_year", "repeat_mode", "repeat_count", "note")}
+            values.update({key: parse_date(item.get(key)) for key in ("start_date", "end_date", "next_due_date")})
+            values.update({key: account_map.get(item.get(key)) for key in ("source_account_id", "destination_account_id", "budget_account_id")})
+            entry = models.RegistryEntry(client_id=client.id, **values,
+                amount_minor=to_minor(item.get("amount") or 0, item.get("currency") or "JPY"), currency=item.get("currency") or "JPY",
+                budget_active=item.get("budget_active", True), is_active=item.get("is_active", True),
+                created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(), updated_at=parse_datetime(item.get("updated_at")))
             db.add(entry)
             db.flush()
-            registry_map[old_id] = entry.id
-            if item.get("funding_capsule_id"):
-                registry_funding_updates.append((entry, int(item["funding_capsule_id"])))
-
-        backfilled_recurring = 0
-        for item in data.get("recurring_transactions", []):
-            old_id = int(item["id"])
-            source_registry_id = registry_map.get(item.get("source_registry_entry_id"))
-            backfilled_entry = None
-            if source_registry_id is None:
-                source_id = account_map.get(item.get("from_account_id"))
-                destination_id = account_map.get(item.get("to_account_id"))
-                source = db.get(models.Account, source_id) if source_id else None
-                destination = db.get(models.Account, destination_id) if destination_id else None
-                line_type = account_line_type(source, destination)
-                backfilled_entry = models.RegistryEntry(
-                    client_id=client.id,
-                    name=item["name"],
-                    amount_minor=to_minor(item.get("amount") or 0, item.get("currency") or "JPY"),
-                    currency=item.get("currency") or "JPY",
-                    frequency=item["frequency"],
-                    day_of_month=item.get("day_of_month") or 1,
-                    month_of_year=item.get("month_of_year"),
-                    start_period=item.get("start_period"),
-                    end_period=item.get("end_period"),
-                    source_account_id=source_id,
-                    destination_account_id=destination_id,
-                    line_type=line_type,
-                    entry_type=account_entry_type(source, destination),
-                    budget_account_id=destination_id if line_type in {"expense", "debt_payment"} else None,
-                    generate_recurring=True,
-                    auto_post=item.get("auto_post", True),
-                    budget_active=True,
-                    is_active=item.get("is_active", True),
-                )
-                db.add(backfilled_entry)
-                db.flush()
-                source_registry_id = backfilled_entry.id
-                backfilled_recurring += 1
-            recurring = models.RecurringTransaction(
-                client_id=client.id,
-                source_registry_entry_id=source_registry_id,
-                name=item["name"],
-                amount_minor=to_minor(item.get("amount") or 0, item.get("currency") or "JPY"),
-                currency=item.get("currency") or "JPY",
-                from_account_id=account_map.get(item.get("from_account_id")),
-                to_account_id=account_map.get(item.get("to_account_id")),
-                frequency=item["frequency"],
-                day_of_month=item.get("day_of_month") or 1,
-                month_of_year=item.get("month_of_year"),
-                next_due_date=parse_date(item.get("next_due_date")),
-                start_period=item.get("start_period"),
-                end_period=item.get("end_period"),
-                auto_post=item.get("auto_post", True),
-                is_active=item.get("is_active", True),
-                created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
-            )
-            db.add(recurring)
-            db.flush()
-            recurring_map[old_id] = recurring.id
-            if backfilled_entry is not None:
-                backfilled_entry.source_recurring_transaction_id = recurring.id
-
-        for item in data.get("registry_entries", []):
-            entry = db.get(models.RegistryEntry, registry_map[int(item["id"])])
-            entry.source_recurring_transaction_id = recurring_map.get(item.get("source_recurring_transaction_id"))
-            # Older exports kept the manual-approval choice on the recurring row only.
-            if "auto_post" not in item and entry.source_recurring_transaction_id is not None:
-                entry.auto_post = db.get(models.RecurringTransaction, entry.source_recurring_transaction_id).auto_post
-
-        if backfilled_recurring:
-            validation["issues"].append({
-                "severity": "warning",
-                "code": "recurring_without_registry_backfilled",
-                "detail": f"Created registry entries for {backfilled_recurring} recurring definitions without a restorable registry entry.",
-                "collection": "recurring_transactions",
-            })
-            validation["warning_count"] += 1
+            registry_map[int(item["id"])] = entry.id
 
         # Older exports carry quick_templates and a batch's quick_template_id;
         # the feature is gone, so both are left behind.
@@ -849,8 +640,6 @@ def import_client(
                 scenario = models.LifeScenario(
                     client_id=client.id, name=item["name"], annual_return=item.get("annual_return", 5.0),
                     inflation=item.get("inflation", 2.0), horizon_years=item.get("horizon_years", 30),
-                    monthly_savings_minor=None if item.get("monthly_savings") is None
-                    else to_minor(item["monthly_savings"], money_client_currency(db, client.id)),
                     is_goal=item.get("is_goal", False),
                     created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
                     updated_at=parse_datetime(item.get("updated_at")) or datetime.utcnow(),
@@ -858,24 +647,18 @@ def import_client(
                 db.add(scenario)
                 db.flush()
                 scenario_map[int(item["id"])] = scenario.id
-            for item in data.get("life_scenario_account_returns", []):
-                db.add(models.LifeScenarioAccountReturn(
-                    scenario_id=scenario_map[int(item["scenario_id"])], account_id=account_map[int(item["account_id"])], annual_return=item["annual_return"],
+            for item in data.get("scenario_contribution_plans", []):
+                db.add(models.ScenarioContributionPlan(
+                    scenario_id=scenario_map[int(item["scenario_id"])], account_id=account_map[int(item["account_id"])],
+                    start_period=item["start_period"], monthly_amount_minor=item["monthly_amount_minor"],
+                    annual_return=item.get("annual_return"), note=item.get("note"),
+                    created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
                 ))
-        for item in data.get("goal_baselines", []):
-            db.add(models.GoalBaseline(
-                client_id=client.id, scenario_id=scenario_map.get(_int_or_none(item.get("scenario_id"))),
-                scenario_name=item["scenario_name"], reason=item["reason"], anchor_date=parse_date(item["anchor_date"]),
-                is_current=bool(item.get("is_current")), assumptions=item.get("assumptions") or {},
-                projection=item.get("projection") or [], events=item.get("events") or [],
-                created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
-            ))
         for item in data.get("goal_budget_reflections", []):
             db.add(models.GoalBudgetReflection(
                 client_id=client.id, scenario_id=scenario_map.get(_int_or_none(item.get("scenario_id"))),
                 applied_at=parse_datetime(item.get("applied_at")) or datetime.utcnow(),
-                start_period=item["start_period"], end_period=item["end_period"], options=item.get("options") or {},
-                summary=item.get("summary") or {}, events=item.get("events") or [],
+                start_period=item["start_period"], end_period=item["end_period"], summary=item.get("summary") or {},
             ))
         legacy_graph = version is None or version < 22
         restored_goal = get_goal(db, client.id)
@@ -889,7 +672,6 @@ def import_client(
                 scenario_id=restored_goal.id if legacy_graph else scenario_map[int(item["scenario_id"])],
                 lineage=str(uuid4()) if legacy_graph else item["lineage"],
                 name=item["name"],
-                start_date=parse_date(item.get("start_date")),
                 target_date=parse_date(item.get("target_date")),
                 target_amount_minor=to_minor(item.get("target_amount") or 0, money_client_currency(db, client.id)),
                 priority=item.get("priority") or 2,
@@ -897,11 +679,6 @@ def import_client(
                 condition_mode=item.get("condition_mode", "all"),
                 direction=item.get("direction", "expense"),
                 account_id=account_map.get(item.get("account_id")),
-                active_plan_basis=item.get("active_plan_basis") or "milestone",
-                active_plan_label=item.get("active_plan_label"),
-                plan_status_override=item.get("plan_status_override"),
-                budget_reflection=item.get("budget_reflection"),
-                archived_at=parse_datetime(item.get("archived_at")),
                 created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
             )
             db.add(event)
@@ -935,7 +712,7 @@ def import_client(
                 # ignored: the journal_entries below are the accounts, and they
                 # were already required to balance.
                 batch_id=batch_map.get(item.get("batch_id")),
-                recurring_transaction_id=recurring_map.get(item.get("recurring_transaction_id")),
+                registry_entry_id=registry_map.get(item.get("registry_entry_id")),
                 created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
             )
             db.add(transaction)
@@ -976,43 +753,6 @@ def import_client(
                 )
             )
 
-        milestone_map: dict[int, int] = {}
-        for item in data.get("milestones", []):
-            old_id = int(item["id"])
-            milestone = models.Milestone(
-                client_id=client.id,
-                life_event_id=event_map.get(item.get("life_event_id")),
-                date=parse_date(item.get("date")),
-                target_amount_minor=to_minor(item.get("target_amount") or 0, money_client_currency(db, client.id)),
-                note=item.get("note"),
-                source=item.get("source") or "manual",
-                source_snapshot=item.get("source_snapshot"),
-                is_active_plan=item.get("is_active_plan", True),
-                created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
-            )
-            db.add(milestone)
-            db.flush()
-            milestone_map[old_id] = milestone.id
-
-        for item in data.get("simulation_scenarios", []):
-            life_event_id = event_map.get(item.get("life_event_id"))
-            if life_event_id:
-                db.add(
-                    models.SimulationScenario(
-                        client_id=client.id,
-                        life_event_id=life_event_id,
-                        name=item["name"],
-                        description=item.get("description"),
-                        annual_return=item.get("annual_return") or 5.0,
-                        inflation=item.get("inflation") or 2.0,
-                        monthly_savings_minor=to_minor(item.get("monthly_savings"), money_client_currency(db, client.id)),
-                        contribution_schedule=item.get("contribution_schedule") or [],
-                        allocation_mode=item.get("allocation_mode") or "direct",
-                        created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
-                        updated_at=parse_datetime(item.get("updated_at")),
-                    )
-                )
-
         for item in data.get("capsules", []):
             old_id = int(item["id"])
             capsule = models.Capsule(
@@ -1020,8 +760,7 @@ def import_client(
                 name=item["name"],
                 target_amount_minor=to_minor(item.get("target_amount") or 0, money_client_currency(db, client.id)),
                 monthly_contribution_minor=to_minor(item.get("monthly_contribution") or 0, money_client_currency(db, client.id)),
-                life_event_id=event_map.get(item.get("life_event_id")),
-                capsule_type=item.get("capsule_type") or ("life_event" if item.get("life_event_id") else "manual"),
+                capsule_type=item.get("capsule_type") or "manual",
                 target_amount_source=item.get("target_amount_source") or "manual",
                 monthly_contribution_source=item.get("monthly_contribution_source") or "manual",
                 created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
@@ -1068,19 +807,13 @@ def import_client(
         for product, old_capsule_id in product_funding_updates:
             product.funding_capsule_id = capsule_map.get(old_capsule_id)
 
-        for registry_entry, old_capsule_id in registry_funding_updates:
-            registry_entry.funding_capsule_id = capsule_map.get(old_capsule_id)
 
-        if version is None or version < 21:
-            # Only older formats need capsule repair. V21+ restores the exact
-            # capsule collection, including stories with no real-money earmarks.
-            for event in (
-                db.query(models.LifeEvent)
-                .filter(models.LifeEvent.client_id == client.id, models.LifeEvent.direction == "expense",
-                        models.LifeEvent.scenario_id == (restored_goal.id if restored_goal else -1))
-                .all()
-            ):
-                create_capsule_for_goal(db, client.id, event)
+
+        for item in data.get("goal_event_earmarks", []):
+            event_id, capsule_id = event_map.get(_int_or_none(item.get("life_event_id"))), capsule_map.get(_int_or_none(item.get("capsule_id")))
+            if event_id and capsule_id:
+                db.add(models.GoalEventEarmark(client_id=client.id, life_event_id=event_id, capsule_id=capsule_id,
+                                               share_bp=item.get("share_bp", 10000)))
 
         for item in data.get("capsule_drawdowns", []):
             db.add(models.CapsuleDrawdown(
@@ -1102,6 +835,7 @@ def import_client(
                         trigger_type=item["trigger_type"],
                         trigger_category=item.get("trigger_category"),
                         trigger_description=item.get("trigger_description"),
+                        trigger_account_id=account_map.get(item.get("trigger_account_id")),
                         source_mode=item.get("source_mode") or "transaction_account",
                         source_account_id=account_map.get(item.get("source_account_id")),
                         destination_account_id=account_map.get(item.get("destination_account_id")),
@@ -1139,8 +873,6 @@ def import_client(
             target_id = item.get("target_id")
             if target_type == "capsule":
                 target_id = capsule_map.get(target_id)
-            elif target_type == "life_event":
-                target_id = event_map.get(target_id)
             elif target_type == "product":
                 target_id = product_map.get(target_id)
             elif target_type == "account":
@@ -1180,6 +912,10 @@ def import_client(
             db.flush()
             monthly_plan_line_map[old_id] = line.id
 
+        for item in data.get("fx_tracked_currencies", []):
+            db.add(models.FxTrackedCurrency(client_id=client.id, currency=item["currency"],
+                                           created_at=parse_datetime(item.get("created_at")) or datetime.utcnow()))
+
         for item in data.get("exchange_rates", []):
             db.add(
                 models.ExchangeRate(
@@ -1193,6 +929,13 @@ def import_client(
                     updated_at=parse_datetime(item.get("updated_at")),
                 )
             )
+
+        if version is None or version < 21:
+            period = date.today().strftime("%Y-%m")
+            for scenario in db.query(models.LifeScenario).filter_by(client_id=client.id):
+                for old_id, rate in legacy_account_returns.items():
+                    db.add(models.ScenarioContributionPlan(scenario_id=scenario.id, account_id=account_map[old_id],
+                                                           start_period=period, monthly_amount_minor=0, annual_return=rate))
 
         member_map: dict[int, int] = {}
         for item in data.get("household_members", []):
@@ -1234,10 +977,8 @@ def import_client(
             "source_account_id": account_map,
             "destination_account_id": account_map,
             "budget_account_id": account_map,
-            "recurring_id": recurring_map,
-            "recurring_transaction_id": recurring_map,
-            "source_recurring_transaction_id": recurring_map,
             "life_event_id": event_map,
+            "registry_entry_id": registry_map,
             "capsule_id": capsule_map,
             "funding_capsule_id": capsule_map,
             "product_id": product_map,
@@ -1248,7 +989,6 @@ def import_client(
             "plan_id": budget_plan_map,
             "plan_line_id": monthly_plan_line_map,
             "monthly_plan_line_id": monthly_plan_line_map,
-            "milestone_id": milestone_map,
         }
         for item in data.get("monthly_actions", []):
             db.add(

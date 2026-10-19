@@ -20,13 +20,13 @@ FinanceIDE MCP（backend `/` FastAPI の facade）を通じてユーザーの実
 
 - 全体把握はまず `ai_context_summary` または `analysis_summary`。個別リソースは `ai_context_resources` → `ai_context_resource` で必要なものだけ読む。
 - **財務状況の評価は `analysis_summary` + `capsules_list` を必ずセットで行う**。
-  - Capsule はメイン口座残高と別管理。口座残高 ¥0 でも Capsule に予備費が入っていることがある（実際に誤読事故あり）。
+  - 取り置き（Capsule）は口座残高の内訳（お金は口座から動かない）。口座残高のうち確保額の分は用途が決まっている。取り置きを見ずに「自由に使える額」を判断しない（実際に誤読事故あり）。
   - P/L が赤字でも、給与が月途中で未登録なだけのことがある。「収支悪化」と即断せず給与登録タイミングを確認する。
 - 取引の確認は `transactions_recent` / `transactions_list`（フィルタあり）。件数の多い一覧をそのまま全部読まない。
 
 ## 2. 書き込みの作法（preview → 実行 → 検証）
 
-1. **preview を先に呼ぶ**: `transactions_preview` / `validate_transaction_payload` / `recurring_preview` / `monthly_plan_lines_preview` / `products_preview` / `transaction_batches_preview`。`ok_to_submit` と warnings を確認してから create する。
+1. **preview を先に呼ぶ**: `transactions_preview` / `validate_transaction_payload` / `monthly_plan_lines_preview` / `products_preview` / `transaction_batches_preview`。`ok_to_submit` と warnings を確認してから create する。
 2. **取引タイプという項目はもう無い**（`transactions.type` は P7-001 で削除）。科目が取引の内容を語る。
    - クレカ購入: from=クレカ liability, to=expense（現金は動かない。明細の支払いは別の取引）
    - 現金/銀行支払い: from=asset, to=expense / 収入: from=income, to=asset
@@ -41,30 +41,31 @@ FinanceIDE MCP（backend `/` FastAPI の facade）を通じてユーザーの実
 5. **change request モード**: AI 実行設定によっては write ツールが直接書き込まず `ai_change_requests` を作成する。その場合は preview 内容を報告し、ユーザーの approve / apply（ApprovalInbox または `ai_change_requests_approve/apply`）を待つ。勝手に approve しない。
 6. 書き込み後は必ず読み直して検証する（作成 ID を `transactions_list` 等で再取得）。mutation のレスポンスだけで成功を報告しない。
 
-## 3. Registry が正（source of truth）
+## 3. 自動取引が正（source of truth）
 
-- 定常収支の定義は `registry_entries` が正本。Recurring / 月次プラン行は Registry から生成される側。
-- **定常的な収支を追加・変更するときは `registry_entries_create/update` を使い、生成物の recurring を直接編集しない**。registry と recurring のリンクは 1:1 を保つ。
-- `recurring_create/update` を直接使ってよいのは、ユーザーが recurring 単体の操作を明示的に指示した場合のみ（その場合も backend が registry entry を自動同期する）。
-- Item / 消耗品 / 耐久財のマスタは `products_*`。`budget_account_id` と `category` を一致させ、reserve 対象は `funding_capsule_id` を設定する。
+- 決まった取引（定期・一回限り）の正本は自動取引（`registry_entries`、ツールは `auto_transactions_*`）。種類は収入・支出・返済・振替、
+  繰り返しは一回限り／回数指定／指定なし（開始日・終了日）。月の計画行は「予算に反映する」自動取引の月額を数える側。
+- **有効な自動取引は期日に必ず記帳される**（日次・サインイン時。記帳待ちや手動の計上ツールは無い）。記帳した取引は `registry_entry_id` を持つ。
+  止めたいときは無効にするか終了日を入れる。次回日はシステムが進めるので手で設定しない。
+- 物品（消耗品・固定資産）のマスタは `products_*`。予算での扱いに応じて `budget_account_id`（支出口座）か `funding_capsule_id`（積立先）を設定する。
+  固定資産の減価は `auto_depreciation` がオンのときだけ自動で記帳される。
 
-## 4. Recurring（自動計上）の意味論
+## 4. ゴールと計画
 
-- `auto_post=true`: due（`next_due_date` 到来）で自動計上される対象。`false`: 手動承認用。
-- `next_due_date` はシステム計算値。原則手で設定しない。
-- `recurring_due` で due 一覧、`recurring_process` で 1 件計上（due 日で計上・仕訳同時作成）、`recurring_skip` で計上せず 1 期進める。
-- 一括処理エンドポイント（process-due）がある場合はそちらを優先する。二重計上防止のため、同じ recurring への process 連打はしない（1 回で 1 期進む）。
+- シナリオ＝ライフイベント・接続・前提条件・積立設定（口座ごとの月額・年利）。取り置きとイベントを結ぶのはゴールの実績管理の設定（`goal_earmarks_set`）だけ。
+- 計画にゴールを反映するのは `goal_plan_preview` → 内容をユーザーに見せる → `goal_plan_apply`（fingerprint）。ゴールが書いた行だけが置き換わる。
+- 計画との差は `goal_plan_check`（口座ごとに積立設定の月額と計画の配分）。
 
 ## 5. 破壊的操作
 
 - `*_delete` / `data_import_replace_current_client` / `accounts_delete` は、ユーザーの明示的な指示なしに実行しない。実行前に対象 ID と件数を提示して確認する。
-- `exchange_rates_auto_update` や `capsules_process` のような一括系も、影響範囲（何件・どの期間）を先に説明する。
+- `exchange_rates_auto_update`・`actions_process_due`・`goal_plan_apply` のような一括系も、影響範囲（何件・どの期間）を先に説明する。
 
 ## 6. 完了報告フォーマット
 
 短く、以下のみ:
 
-- 登録/変更した ID（Transaction / Product / Registry / Recurring）
+- 登録/変更した ID（Transaction / Product / 自動取引 / ライフイベント）
 - 合計金額、支払元/費目
 - change request にした場合はその ID と承認待ちである旨
 - 保留した項目と理由

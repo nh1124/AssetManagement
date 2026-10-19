@@ -30,6 +30,7 @@ const capsuleRuleInputSchema = z
       .optional()
       .describe("Optional account-name or description substring the entry must match"),
     trigger_description: z.string().nullable().optional().describe("Optional description substring"),
+    trigger_account_id: z.number().int().min(1).nullable().optional().describe("Optional account or subject belonging to the client; any journal leg on it is required to trigger"),
     source_mode: z.enum(["transaction_account", "fixed_account"]).optional(),
     source_account_id: z.number().int().min(1).nullable().optional().describe("Required when source_mode is fixed_account"),
     destination_account_id: z.number().int().min(1).nullable().optional().describe("Destination in the capsule funding plan; omitted or null splits by plan weight"),

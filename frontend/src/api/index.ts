@@ -6,8 +6,8 @@ import type {
     AccountFlowAnalysis,
     AccountFlowGrain,
     AccountFlowTransactionPage,
-    AccountRole,
-    AutomaticRecordings,
+    AutomaticDepreciationRecording,
+    GeneratedTransaction,
     ScheduledTransactions,
     AiChangeRequest,
     AiAuditLog,
@@ -15,7 +15,6 @@ import type {
     AiOperationPolicy,
     AiOperationPolicyPayload,
     AnalysisSummary,
-    ContributionScheduleItem,
     CapsuleDrawdown,
     CapsuleDrawdownInput,
     CapsuleDrawdownResult,
@@ -27,26 +26,23 @@ import type {
     DepreciationMethod,
     DataRepairResult,
     ExchangeRate,
+    FxTrackedCurrency,
     ExchangeRateAutoUpdateResult,
     LoginResult,
+    GoalEarmarkLink,
     LifeEvent,
-    GoalArchiveRequest,
-    GoalCapsule,
+    LifeEventProgress,
     MonthlyAction,
-    MonteCarloResult,
     MfaRecoveryCodes,
     MfaSetupStart,
     MfaStatus,
     MonthlyReport,
-    Milestone,
-    MilestoneSimulationPreview,
-    MilestoneSimulationRequest,
     PeriodReview,
     NetWorthHistoryPoint,
-    RecurringTransaction,
-    RegistryEntry,
+    Product,
+    AutoTransaction,
+    AutoTransactionInput,
     ReviewActionCreate,
-    RoadmapProjection,
     Transaction,
     TransactionProposal,
 } from '../types';
@@ -215,11 +211,10 @@ export const getBalanceSheet = async (year?: number, month?: number, asOf?: stri
     return response.data;
 };
 
-export const getProfitLoss = async (year?: number, month?: number, rollup: boolean = false, startDate?: string, endDate?: string) => {
+export const getProfitLoss = async (year?: number, month?: number, startDate?: string, endDate?: string) => {
     const params = new URLSearchParams();
     if (year) params.append('year', String(year));
     if (month) params.append('month', String(month));
-    if (rollup) params.append('rollup', 'true');
     if (startDate) params.append('start_date', startDate);
     if (endDate) params.append('end_date', endDate);
     const response = await api.get(`/analysis/profit-loss?${params.toString()}`);
@@ -351,14 +346,9 @@ export const getAccountEarmarks = async (accountId: number): Promise<AccountEarm
 
 export const createAccount = async (account: {
     name: string;
-    account_type: string;
+    account_type: Account['account_type'];
+    is_active?: boolean;
     balance?: number;
-    parent_id?: number | null;
-    institution?: Account['institution'];
-    withdrawable_from_age?: number | null;
-    expected_return?: number | null;
-    role?: AccountRole;
-    role_target_amount?: number | null;
     liability_closing_day?: number | null;
     liability_payment_day?: number | null;
     liability_payment_month_offset?: number;
@@ -374,12 +364,6 @@ export const createAccount = async (account: {
 
 export const updateAccount = async (id: number, data: {
     name?: string;
-    parent_id?: number | null;
-    institution?: Account['institution'];
-    withdrawable_from_age?: number | null;
-    expected_return?: number | null;
-    role?: AccountRole;
-    role_target_amount?: number | null;
     liability_closing_day?: number | null;
     liability_payment_day?: number | null;
     liability_payment_month_offset?: number;
@@ -471,27 +455,21 @@ export const deleteTransaction = async (id: number) => {
 
 // Life Events endpoints
 // Without a scenario the server answers with the goal scenario's events.
-export const getLifeEvents = async (includeArchived = false, scenarioId?: number): Promise<LifeEvent[]> => {
-    const response = await api.get('/life-events/', { params: { include_archived: includeArchived, scenario_id: scenarioId } });
+export const getLifeEvents = async (scenarioId?: number): Promise<LifeEvent[]> => {
+    const response = await api.get('/life-events/', { params: { scenario_id: scenarioId } });
     return response.data;
 };
 
-export const getLifeEventsWithProgress = async (includeArchived = false, scenarioId?: number): Promise<LifeEvent[]> => {
-    const response = await api.get('/life-events/with-progress', { params: { include_archived: includeArchived, scenario_id: scenarioId } });
+/** Events with their 実績管理の設定 and the funding it gives (the goal scenario by default). */
+export const getLifeEventsWithProgress = async (scenarioId?: number): Promise<LifeEventProgress[]> => {
+    const response = await api.get('/life-events/with-progress', { params: { scenario_id: scenarioId } });
     return response.data;
-};
-
-const appendContributionSchedule = (params: Record<string, unknown>, contribution_schedule?: ContributionScheduleItem[]) => {
-    if (contribution_schedule?.length) {
-        params.contribution_schedule = JSON.stringify(contribution_schedule);
-    }
-    return params;
 };
 
 // A new event belongs to the scenario it is created in; an update never moves it.
-export type GoalPayload = Pick<LifeEvent, 'direction' | 'account_id' | 'name' | 'target_amount' | 'target_date' | 'start_date' | 'priority' | 'note' | 'condition_mode' | 'active_plan_basis' | 'active_plan_label' | 'plan_status_override' | 'budget_reflection'> & { scenario_id?: number };
+export type GoalPayload = Pick<LifeEvent, 'direction' | 'account_id' | 'name' | 'target_amount' | 'target_date' | 'priority' | 'note' | 'condition_mode'>;
 
-export const createGoal = async (event: GoalPayload): Promise<LifeEvent> => {
+export const createGoal = async (event: Partial<GoalPayload> & Pick<GoalPayload, 'name' | 'target_amount' | 'target_date'> & { scenario_id: number }): Promise<LifeEvent> => {
     const response = await api.post('/life-events/', event);
     return response.data;
 };
@@ -501,24 +479,14 @@ export const updateGoal = async (id: number, event: Partial<GoalPayload>): Promi
     return response.data;
 };
 
-export const deleteGoal = async (id: number, transferAccountId?: number) => {
-    const params = transferAccountId != null ? `?transfer_account_id=${transferAccountId}` : '';
-    const response = await api.delete(`/life-events/${id}${params}`);
+export const deleteGoal = async (id: number) => {
+    const response = await api.delete(`/life-events/${id}`);
     return response.data;
 };
 
-export const archiveGoal = async (id: number, payload: GoalArchiveRequest = { capsule_action: 'keep', transfer_account_id: null }): Promise<LifeEvent> => {
-    const response = await api.post(`/life-events/${id}/archive`, payload);
-    return response.data;
-};
-
-export const unarchiveGoal = async (id: number): Promise<LifeEvent> => {
-    const response = await api.post(`/life-events/${id}/unarchive`);
-    return response.data;
-};
-
-export const getGoalCapsules = async (goalId: number): Promise<GoalCapsule[]> => {
-    const response = await api.get(`/life-events/${goalId}/capsules`);
+/** Replace which earmarks count toward a goal event, with their shares in percent. */
+export const setGoalEarmarks = async (id: number, rows: GoalEarmarkLink[]): Promise<GoalEarmarkLink[]> => {
+    const response = await api.put(`/life-events/${id}/earmarks`, rows.map(({ capsule_id, share }) => ({ capsule_id, share })));
     return response.data;
 };
 
@@ -566,28 +534,6 @@ export const updateMonthlyPlanLines = async (lines: Array<MonthlyPlanLinePayload
     return response.data;
 };
 
-export const runMonteCarloSimulation = async (
-    lifeEventId: number,
-    nSimulations: number = 1000,
-    params: {
-        annual_return?: number;
-        inflation?: number;
-        monthly_savings?: number;
-        contribution_schedule?: ContributionScheduleItem[];
-        allocation_mode?: 'weighted' | 'direct';
-    } = {},
-): Promise<MonteCarloResult> => {
-    const response = await api.post(`/simulation/monte-carlo/${lifeEventId}`, null, {
-        params: appendContributionSchedule({
-            n_simulations: nSimulations,
-            annual_return: params.annual_return,
-            inflation: params.inflation,
-            monthly_savings: params.monthly_savings,
-            allocation_mode: params.allocation_mode ?? 'direct',
-        }, params.contribution_schedule)
-    });
-    return response.data;
-};
 
 export const deleteMonthlyPlanLine = async (id: number) => {
     const response = await api.delete(`/budget-plans/lines/${id}`);
@@ -595,7 +541,7 @@ export const deleteMonthlyPlanLine = async (id: number) => {
 };
 
 // Products/Inventory endpoints
-export const getProducts = async () => {
+export const getProducts = async (): Promise<Product[]> => {
     const response = await api.get('/products/');
     return response.data;
 };
@@ -643,23 +589,23 @@ export const deleteProduct = async (id: number, reserveFingerprint?: string) => 
     await api.delete(`/products/${id}`, reserveParams(reserveFingerprint));
 };
 
-export const getRegistryEntries = async (): Promise<RegistryEntry[]> => {
-    const response = await api.get('/registry-entries/');
+export const getAutoTransactions = async (): Promise<AutoTransaction[]> => {
+    const response = await api.get('/auto-transactions/');
     return response.data;
 };
 
-export const createRegistryEntry = async (entry: Partial<RegistryEntry>) => {
-    const response = await api.post('/registry-entries/', entry);
+export const createAutoTransaction = async (entry: AutoTransactionInput) => {
+    const response = await api.post('/auto-transactions/', entry);
     return response.data;
 };
 
-export const updateRegistryEntry = async (id: number, entry: Partial<RegistryEntry>) => {
-    const response = await api.put(`/registry-entries/${id}`, entry);
+export const updateAutoTransaction = async (id: number, entry: AutoTransactionInput) => {
+    const response = await api.put(`/auto-transactions/${id}`, entry);
     return response.data;
 };
 
-export const deleteRegistryEntry = async (id: number) => {
-    await api.delete(`/registry-entries/${id}`);
+export const deleteAutoTransaction = async (id: number) => {
+    await api.delete(`/auto-transactions/${id}`);
 };
 
 // Client management
@@ -700,8 +646,18 @@ export const getExchangeRates = async (): Promise<ExchangeRate[]> => {
     return response.data;
 };
 
-export const createExchangeRate = async (payload: Omit<ExchangeRate, 'id' | 'created_at' | 'updated_at'>): Promise<ExchangeRate> => {
-    const response = await api.post('/exchange-rates/', payload);
+export const getTrackedCurrencies = async (): Promise<FxTrackedCurrency[]> => {
+    const response = await api.get('/exchange-rates/tracked');
+    return response.data;
+};
+
+export const trackCurrency = async (currency: string): Promise<FxTrackedCurrency> => {
+    const response = await api.post('/exchange-rates/tracked', { currency });
+    return response.data;
+};
+
+export const untrackCurrency = async (currency: string) => {
+    const response = await api.delete(`/exchange-rates/tracked/${currency}`);
     return response.data;
 };
 
@@ -715,22 +671,12 @@ export const autoUpdateExchangeRates = async (): Promise<ExchangeRateAutoUpdateR
     return response.data;
 };
 
-// Recurring Transactions endpoints
-export const getRecurringTransactions = async (): Promise<RecurringTransaction[]> => {
-    const response = await api.get('/recurring/');
-    return response.data;
+export const getAutomaticDepreciation = async (): Promise<AutomaticDepreciationRecording[]> => {
+    return (await api.get('/automatic-recordings/depreciation')).data;
 };
 
-// Posts one occurrence of a definition that waits to be posted by hand.
-export const processRecurringTransaction = async (recurringId: number) => {
-    const response = await api.post(`/recurring/${recurringId}/process`);
-    return response.data as { transaction_id: number; next_due_date: string | null };
-};
-
-// Automatic recordings: everything the registry switches on to post by itself.
-export const getAutomaticRecordings = async (): Promise<AutomaticRecordings> => {
-    const response = await api.get('/automatic-recordings/');
-    return response.data;
+export const getGeneratedTransactions = async (period: string): Promise<GeneratedTransaction[]> => {
+    return (await api.get('/automatic-recordings/generated', { params: { period } })).data;
 };
 
 export const getScheduledTransactions = async (period: string): Promise<ScheduledTransactions> => {
@@ -743,75 +689,6 @@ export const processDueAutomaticRecordings = async () => {
     return response.data;
 };
 
-// Writes down by hand the ended periods not yet recorded (up to 24 at a time).
-export const postDueDepreciation = async (productId: number) => {
-    const response = await api.post(`/automatic-recordings/depreciation/${productId}/post-due`);
-    return response.data as { product_id: number; posted_periods: string[] };
-};
-
-export const setAutoDepreciation = async (productId: number, enabled: boolean) => {
-    const response = await api.put(`/automatic-recordings/depreciation/${productId}`, { enabled });
-    return response.data as { product_id: number; auto_depreciation: boolean; posted_periods: string[]; skipped: string | null };
-};
-
-// Roadmap endpoints
-export const getRoadmapProjection = async (params: {
-    years?: number;
-    annual_return?: number;
-    inflation?: number;
-    monthly_savings?: number;
-    contribution_schedule?: ContributionScheduleItem[];
-    allocation_mode?: 'weighted' | 'direct';
-    roadmap_interval?: 'auto' | 'monthly' | 'quarterly' | 'annual';
-    include_archived?: boolean;
-} = {}): Promise<RoadmapProjection> => {
-    const { contribution_schedule, ...rest } = params;
-    const response = await api.get('/roadmap/projection', {
-        params: appendContributionSchedule(rest, contribution_schedule),
-    });
-    return response.data;
-};
-
-export const getMilestones = async (lifeEventId?: number): Promise<Milestone[]> => {
-    const response = await api.get('/roadmap/milestones', {
-        params: lifeEventId ? { life_event_id: lifeEventId } : undefined,
-    });
-    return response.data;
-};
-
-export const createMilestone = async (milestone: Omit<Milestone, 'id'>): Promise<Milestone> => {
-    const response = await api.post('/roadmap/milestones', milestone);
-    return response.data;
-};
-
-export const updateMilestone = async (
-    id: number,
-    update: { note?: string | null; target_amount?: number; date?: string; is_active_plan?: boolean }
-): Promise<Milestone> => {
-    const response = await api.patch(`/roadmap/milestones/${id}`, update);
-    return response.data;
-};
-
-export const deleteMilestone = async (id: number): Promise<Milestone> => {
-    const response = await api.delete(`/roadmap/milestones/${id}`);
-    return response.data;
-};
-
-export const previewMilestonesFromSimulation = async (
-    lifeEventId: number,
-    payload: MilestoneSimulationRequest
-): Promise<MilestoneSimulationPreview> => {
-    const response = await api.post(`/roadmap/life-events/${lifeEventId}/milestones/from-simulation/preview`, payload);
-    return response.data;
-};
-
-export const applyMilestonesFromSimulation = async (
-    lifeEventId: number,
-    payload: MilestoneSimulationRequest
-): Promise<Milestone[]> => {
-    const response = await api.post(`/roadmap/life-events/${lifeEventId}/milestones/from-simulation`, payload);
-    return response.data;
-};
 
 // Capsules endpoints
 export const recordCapsuleDrawdown = async (capsuleId: number, payload: CapsuleDrawdownInput): Promise<CapsuleDrawdownResult> => {
@@ -860,15 +737,10 @@ export const contributeToCapsule = async (id: number, payload: {
     return response.data;
 };
 
-export type CapsulePayload = Pick<Capsule, 'name' | 'target_amount' | 'monthly_contribution' | 'life_event_id' | 'capsule_type' | 'target_amount_source' | 'monthly_contribution_source'> & { auto_post?: boolean; account_id?: number | null };
+export type CapsulePayload = Pick<Capsule, 'name' | 'target_amount' | 'monthly_contribution' | 'capsule_type' | 'target_amount_source' | 'monthly_contribution_source'> & { auto_post?: boolean; account_id?: number | null };
 
 export const createCapsule = async (capsule: CapsulePayload): Promise<Capsule> => {
     const response = await api.post('/capsules/', capsule);
-    return response.data;
-};
-
-export const createGoalCapsule = async (lifeEventId: number): Promise<Capsule> => {
-    const response = await api.post(`/capsules/life-events/${lifeEventId}`);
     return response.data;
 };
 
@@ -915,6 +787,11 @@ export const getCapsuleReservations = async (transactionId: number): Promise<Cap
 
 export const createCapsuleRule = async (rule: Omit<CapsuleRule, 'id' | 'created_at' | 'capsule_name' | 'source_account_name' | 'source_mode' | 'amount_type'> & { source_mode: string; amount_type: string }): Promise<CapsuleRule> => {
     const response = await api.post('/capsules/rules', rule);
+    return response.data;
+};
+
+export const updateCapsuleRule = async (id: number, rule: Partial<Parameters<typeof createCapsuleRule>[0]>): Promise<CapsuleRule> => {
+    const response = await api.put(`/capsules/rules/${id}`, rule);
     return response.data;
 };
 

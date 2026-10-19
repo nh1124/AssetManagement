@@ -61,45 +61,20 @@ def test_product_account_reads_preserve_type_scope_and_inactive_account_acceptan
         assert str(exc.value) == "Budget account must be an expense account for this client"
 
 
-def test_product_funding_reads_refuse_goal_other_client_and_missing_capsules(db):
-    goal = models.LifeEvent(scenario_id=goal_scenario_id(db, 1), client_id=1, name="Goal")
-    db.add(goal)
-    db.flush()
+def test_product_funding_reads_refuse_other_client_and_missing_capsules(db):
     reserve = models.Capsule(client_id=1, name="Reserve")
-    goal_capsule = models.Capsule(client_id=1, name="Goal capsule", life_event_id=goal.id)
     other = models.Capsule(client_id=2, name="Other reserve")
-    db.add_all([reserve, goal_capsule, other])
+    db.add_all([reserve, other])
     db.commit()
 
     assert capsule_service.get_product_funding_capsule(db, 1, reserve.id) is reserve
     product_workflow.validate_funding_capsule(db, 1, reserve.id)
     product_workflow.validate_funding_capsule(db, 1, None)
-    for capsule_id in (goal_capsule.id, other.id, 999999):
+    for capsule_id in (other.id, 999999):
         assert capsule_service.get_product_funding_capsule(db, 1, capsule_id) is None
         with pytest.raises(Invalid) as exc:
             product_workflow.validate_funding_capsule(db, 1, capsule_id)
-        assert str(exc.value) == "Funding capsule must be a non-LifeEvent capsule for this client"
-
-
-def test_product_registry_read_finds_inactive_definition_and_scopes_detachment(db):
-    product = confirmed(product_workflow.create_product, db, 1, schemas.ProductCreate(
-        name="Supplies", last_unit_price=100, frequency_days=30,
-        budget_treatment="expense_only",
-    ))
-    entry = models.RegistryEntry(
-        client_id=1, name="Inactive definition", source_product_id=product.id,
-        is_active=False, budget_active=True,
-    )
-    db.add(entry)
-    db.commit()
-    assert registry_service.get_product_entry(db, 1, product.id) is entry
-    assert registry_service.get_product_entry(db, 2, product.id) is None
-    assert registry_service.get_product_entry(db, 1, 999999) is None
-    assert confirmed(product_workflow.delete_product, db, 2, product.id) is False
-    assert entry.source_product_id == product.id
-    assert confirmed(product_workflow.delete_product, db, 1, product.id) is True
-    db.refresh(entry)
-    assert (entry.source_product_id, entry.budget_active, entry.is_active) == (None, False, False)
+        assert str(exc.value) == "Funding capsule must belong to this client"
 
 
 def test_transaction_read_prevents_removing_another_clients_entry(db):

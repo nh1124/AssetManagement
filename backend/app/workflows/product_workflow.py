@@ -7,12 +7,11 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..domain.errors import Conflict, Invalid
-from ..services import capsule_service, ledger_service, product_service
+from ..services import capsule_service, depreciation_service, ledger_service, product_service, registry_service
 from ..services.cache_service import invalidate_client
 from ..services.product_reserve_service import (
-    capsule_amounts, ensure_default_product_reserve_pools, refresh_product_capsules,
+    capsule_amounts, refresh_product_capsules,
 )
-from ..services.registry_service import detach_product, get_product_entry, refresh_product_entry
 
 
 def validate_budget_account(db: Session, client_id: int, budget_account_id: int | None) -> None:
@@ -28,13 +27,7 @@ def validate_funding_capsule(db: Session, client_id: int, funding_capsule_id: in
         return
     capsule = capsule_service.get_product_funding_capsule(db, client_id, funding_capsule_id)
     if not capsule:
-        raise Invalid("Funding capsule must be a non-LifeEvent capsule for this client")
-
-
-def default_funding_capsule_id(db: Session, client_id: int, is_asset: bool) -> int:
-    pools = ensure_default_product_reserve_pools(db, client_id)
-    target_name = "Fixed Asset Reserve" if is_asset else "Item Reserve"
-    return next(pool.id for pool in pools if pool.name == target_name)
+        raise Invalid("Funding capsule must belong to this client")
 
 
 def normalize_product_data(db: Session, client_id: int, data: dict) -> dict:
@@ -48,10 +41,8 @@ def normalize_product_data(db: Session, client_id: int, data: dict) -> dict:
     else:
         data["category"] = data.get("category") or "Uncategorized"
 
-    if product_service.product_uses_reserve(data):
-        if data.get("funding_capsule_id") is None:
-            data["funding_capsule_id"] = default_funding_capsule_id(db, client_id, data.get("is_asset", False))
-    else:
+    # A reserve goes to the earmark the user chose; there is no default earmark to invent.
+    if not product_service.product_uses_reserve(data):
         data["funding_capsule_id"] = None
     return data
 
@@ -97,6 +88,9 @@ def create_product(
     product = product_service.create_product(db, client_id, data, commit=False)
     refresh_product_capsules(db, client_id, [product.funding_capsule_id])
     confirm_reserve_changes(db, client_id, before, reserve_fingerprint)
+    depreciation_service.validate_automatic(db, client_id, product)
+    if product.auto_depreciation:
+        depreciation_service.post_due(db, client_id, product.id, today=registry_service.client_today(db, client_id))
     if commit:
         db.commit()
         db.refresh(product)
@@ -111,13 +105,16 @@ def update_product(
     product = product_service.get_product(db, client_id, product_id)
     if product is None:
         return None
+    was_automatic = product.auto_depreciation
     previous_capsule_id = product.funding_capsule_id
     data = normalize_product_data(db, client_id, payload.model_dump())
     before = capsule_amounts(db, client_id, [previous_capsule_id, data["funding_capsule_id"]])
     product = product_service.update_product(db, client_id, product_id, data, commit=False)
-    refresh_product_entry(db, product)
     refresh_product_capsules(db, client_id, [previous_capsule_id, product.funding_capsule_id])
     confirm_reserve_changes(db, client_id, before, reserve_fingerprint)
+    depreciation_service.validate_automatic(db, client_id, product)
+    if product.auto_depreciation and not was_automatic:
+        depreciation_service.post_due(db, client_id, product.id, today=registry_service.client_today(db, client_id))
     if commit:
         db.commit()
         db.refresh(product)
@@ -132,6 +129,7 @@ def patch_product(
     product = product_service.get_product(db, client_id, product_id)
     if product is None:
         return None
+    was_automatic = product.auto_depreciation
     previous_capsule_id = product.funding_capsule_id
     data = patch.model_dump(exclude_unset=True)
     merged = {
@@ -148,9 +146,11 @@ def patch_product(
         changes["funding_capsule_id"] = merged.get("funding_capsule_id")
     before = capsule_amounts(db, client_id, [previous_capsule_id, merged.get("funding_capsule_id")])
     product = product_service.update_product(db, client_id, product_id, changes, commit=False)
-    refresh_product_entry(db, product)
     refresh_product_capsules(db, client_id, [previous_capsule_id, product.funding_capsule_id])
     confirm_reserve_changes(db, client_id, before, reserve_fingerprint)
+    depreciation_service.validate_automatic(db, client_id, product)
+    if product.auto_depreciation and not was_automatic:
+        depreciation_service.post_due(db, client_id, product.id, today=registry_service.client_today(db, client_id))
     if commit:
         db.commit()
         db.refresh(product)
@@ -167,9 +167,6 @@ def delete_product(
         return False
     capsule_id = product.funding_capsule_id
     before = capsule_amounts(db, client_id, [capsule_id])
-    registry = get_product_entry(db, client_id, product.id)
-    if registry:
-        detach_product(db, registry)
     product_service.delete_product(db, client_id, product_id, commit=False)
     refresh_product_capsules(db, client_id, [capsule_id])
     confirm_reserve_changes(db, client_id, before, reserve_fingerprint)

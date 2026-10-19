@@ -53,23 +53,14 @@ export interface TransactionProposal {
     decided_by_client_id?: number | null;
 }
 
-export type AccountRole = 'defense' | 'growth' | 'earmarked' | 'operating' | 'unassigned';
 export type LiabilityPaymentPolicy = 'full' | 'minimum' | 'fixed' | 'installment' | 'revolving';
 
-export type AccountInstitution = 'none' | 'nisa_tsumitate' | 'nisa_growth' | 'ideco' | 'dc_corporate' | 'tokutei_withholding' | 'tokutei_self' | 'general';
 
 export interface Account {
     id: number;
     name: string;
     account_type: 'asset' | 'liability' | 'income' | 'expense';
     balance: number;
-    rollup_balance?: number;
-    parent_id?: number | null;
-    institution: AccountInstitution;
-    withdrawable_from_age?: number | null;
-    expected_return: number | null;
-    role: AccountRole;
-    role_target_amount?: number | null;
     liability_closing_day?: number | null;
     liability_payment_day?: number | null;
     liability_payment_month_offset?: number;
@@ -94,9 +85,7 @@ export interface ExchangeRate {
 
 export interface ExchangeRateAutoUpdateResult {
     target_currency: string;
-    detected_pairs: Array<Pick<ExchangeRate, 'base_currency' | 'quote_currency'>>;
     updated: ExchangeRate[];
-    skipped: Array<Pick<ExchangeRate, 'base_currency' | 'quote_currency'> & { reason: string }>;
     errors: Array<Pick<ExchangeRate, 'base_currency' | 'quote_currency'> & { error: string }>;
 }
 
@@ -210,81 +199,35 @@ export interface AiChangeRequest extends AiChangeRequestPreview {
 }
 
 
-export interface RoadmapEntry {
-    year: number;
-    label?: string;
-    start_balance: number;
-    contribution: number;
-    investment_gain: number;
-    end_balance: number;
-    goal_coverage: number;
-}
-
-export type BudgetReflection = 'firm' | 'conditional' | 'simulation_only';
-
+/** A story fact of a scenario. Funding progress comes only from /life-events/with-progress. */
 export interface LifeEvent {
-    direction?: 'expense' | 'income';
-    account_id?: number | null;
-    condition_mode?: 'all' | 'any';
     id: number;
+    scenario_id: number;
+    lineage: string;
+    direction: 'expense' | 'income';
+    account_id: number | null;
+    condition_mode: 'all' | 'any';
     name: string;
-    start_date?: string | null;
     target_date: string;
     target_amount: number;
     priority: 1 | 2 | 3;
-    note?: string | null;
-    active_plan_basis?: string;
-    active_plan_label?: string | null;
-    plan_status_override?: string | null;
-    /** The user's choice; null follows the event (conditional with preconditions, else firm). */
-    budget_reflection?: BudgetReflection | null;
-    budget_reflection_effective?: BudgetReflection;
-    archived_at?: string | null;
-    created_at?: string;
-    current_funded?: number;
-    projected_amount?: number;
-    gap?: number;
-    weighted_return?: number;
-    gross_annual_return?: number;
-    blended_after_tax_return?: number;
-    tax_rate?: number;
-    status?: 'On Track' | 'At Risk' | 'Off Track' | 'Achieved' | 'Missed' | 'Not Started';
-    progress_percentage?: number;
-    funded_percentage?: number;
-    plan_expected_amount?: number;
-    plan_gap?: number;
-    plan_status?: 'Ahead' | 'On Track' | 'Watch' | 'Behind' | 'No Plan' | string;
-    plan_progress_percentage?: number;
-    /** This event's share of the monthly savings, as the budget reflection divides it. */
-    monthly_allocation?: number;
-    allocation_source?: 'reflection' | 'rule' | 'direct' | null;
-    plan_previous_milestone?: MilestonePlanSummary | null;
-    plan_next_milestone?: MilestonePlanSummary | null;
-    years_remaining?: number;
-    roadmap?: RoadmapEntry[];
+    note: string | null;
+    created_at?: string | null;
 }
 
-export type GoalCapsuleAction = 'keep' | 'stop_rules' | 'release' | 'detach';
-
-export interface GoalArchiveRequest {
-    capsule_action: GoalCapsuleAction;
-    transfer_account_id: number | null;
+/** An earmark counted toward a goal event (実績管理の設定), with the percent that counts. */
+export interface GoalEarmarkLink {
+    capsule_id: number;
+    capsule_name?: string;
+    share: number;
 }
 
-export interface GoalCapsule {
-    id: number;
-    name: string;
-    current_balance: number;
-    claims: Array<{ currency: string; amount_minor: number; amount: number }>;
-}
-
-export interface MilestonePlanSummary {
-    id: number;
-    date: string;
-    target_amount: number;
-    note?: string | null;
-    source?: string | null;
-    gap?: number;
+export interface LifeEventProgress extends LifeEvent {
+    current_funded: number;
+    gap: number;
+    progress_percentage: number;
+    months_remaining: number;
+    earmarks: GoalEarmarkLink[];
 }
 
 export type DepreciationMethod = 'none' | 'straight_line' | 'declining_balance';
@@ -312,6 +255,7 @@ export interface Product {
     recommended_monthly_reserve?: number;
     purchase_price?: number;
     purchase_date?: string;
+    auto_depreciation?: boolean;
     depreciation_method?: DepreciationMethod;
     depreciation_annual_rate?: number | null;
     depreciation_interval?: DepreciationInterval;
@@ -322,47 +266,38 @@ export interface Product {
     next_purchase_date?: string;
 }
 
-export type RegistryEntryType = 'asset' | 'item' | 'service' | 'income' | 'allocation' | 'debt';
-export type RegistryFrequency = 'Monthly' | 'Yearly' | 'EveryNDays' | 'Irregular';
-
-export interface RegistryEntry {
-    id: number;
+export type AutoTransactionKind = 'income' | 'expense' | 'debt' | 'transfer';
+export type AutoFrequency = 'Monthly' | 'Yearly' | 'EveryNDays';
+export interface AutoTransactionInput {
     name: string;
-    entry_type: RegistryEntryType;
-    category?: string | null;
+    kind: AutoTransactionKind;
     amount: number;
     currency: string;
-    frequency: RegistryFrequency;
-    frequency_days?: number | null;
-    day_of_month: number;
-    month_of_year?: number | null;
-    line_type: MonthlyPlanLineType;
-    budget_account_id?: number | null;
-    budget_account_name?: string | null;
-    source_account_id?: number | null;
-    source_account_name?: string | null;
-    destination_account_id?: number | null;
-    destination_account_name?: string | null;
-    funding_capsule_id?: number | null;
-    funding_capsule_name?: string | null;
-    budget_treatment?: 'auto' | 'expense_only' | 'reserve_allocation' | 'asset_replacement';
-    generate_recurring: boolean;
-    /** Posts on its due date; false waits to be posted by hand. */
-    auto_post: boolean;
-    /** A product definition writes its asset down each ended period. */
-    auto_depreciation: boolean;
+    source_account_id: number | null;
+    destination_account_id: number | null;
+    budget_account_id: number | null;
+    repeat_mode: 'once' | 'count' | 'indefinite';
+    frequency: AutoFrequency | null;
+    frequency_days: number | null;
+    day_of_month: number | null;
+    month_of_year: number | null;
+    start_date: string;
+    end_date: string | null;
+    repeat_count: number | null;
     budget_active: boolean;
     is_active: boolean;
-    source_product_id?: number | null;
-    source_recurring_transaction_id?: number | null;
-    recurring_transaction_id?: number | null;
-    note?: string | null;
-    start_period?: string | null;
-    end_period?: string | null;
+    note: string | null;
+}
+export interface AutoTransaction extends AutoTransactionInput {
+    id: number;
+    next_due_date: string | null;
+    source_account_name: string | null;
+    destination_account_name: string | null;
+    budget_account_name: string | null;
 }
 
 export type MonthlyPlanLineType = 'income' | 'expense' | 'allocation' | 'debt_payment' | 'borrowing' | 'drawdown';
-export type MonthlyPlanTargetType = 'account' | 'capsule' | 'life_event' | 'product' | 'manual';
+export type MonthlyPlanTargetType = 'account' | 'capsule' | 'product' | 'manual';
 export type MonthlyPlanCashTreatment = 'auto' | 'cash' | 'non_cash';
 
 export interface MonthlyPlanLine {
@@ -399,7 +334,7 @@ export interface MonthlyPlanLine {
         name: string;
         amount: number;
         source?: string;
-        entry_type?: string;
+        kind?: AutoTransactionKind;
     }>;
     is_active?: boolean;
     source?: string;
@@ -407,24 +342,6 @@ export interface MonthlyPlanLine {
     manual_override?: boolean;
 }
 
-export interface RecurringTransaction {
-    id: number;
-    name: string;
-    amount: number;
-    currency: string;
-    from_account_id?: number | null;
-    to_account_id?: number | null;
-    frequency: 'Monthly' | 'Yearly';
-    day_of_month: number;
-    month_of_year?: number | null;
-    next_due_date?: string | null;
-    start_period?: string | null;
-    end_period?: string | null;
-    auto_post: boolean;
-    is_active: boolean;
-    source_registry_entry_id?: number | null;
-    source_registry_entry_name?: string | null;
-}
 
 export interface AnalysisSummary {
     net_worth: number;
@@ -435,26 +352,8 @@ export interface AnalysisSummary {
     total_funded: number;
     effective_cash?: number;
     logical_balance?: number;
-    locked_until_age_minor?: Record<string, number>;
-    locked_as_of?: string;
-    locked_accounts?: Array<{
-        account_id: number;
-        name: string;
-        withdrawable_from_age: number;
-        available_on: string;
-        balances_minor: Record<string, number>;
-    }>;
     cfo_briefing?: string;
     savings_rate?: number;
-    idle_money_rate?: number;
-    idle_money?: number;
-    idle_money_by_role?: Array<{
-        role: AccountRole;
-        balance: number;
-        target?: number | null;
-        status: string;
-        idle_component: number;
-    }>;
     liquidity_coverage_ratio?: number;
     runway_months?: number;
     roadmap_progression?: 'On Track' | 'At Risk' | 'Off Track';
@@ -494,7 +393,7 @@ export interface MonthlyAction {
     created_at?: string | null;
 }
 
-export type ReviewActionKind = 'set_budget' | 'add_recurring' | 'pause_recurring' | 'boost_allocation' | 'change_capsule_contribution';
+export type ReviewActionKind = 'set_budget' | 'add_auto_transaction' | 'stop_auto_transaction' | 'change_capsule_contribution';
 
 export interface ReviewActionCreate {
     source_period: string;
@@ -530,89 +429,6 @@ export interface PeriodReview {
     next_actions: string;
     created_at: string;
     updated_at?: string | null;
-}
-
-export interface Milestone {
-    id: number;
-    life_event_id?: number;
-    date: string;
-    target_amount: number;
-    note?: string | null;
-    source?: string;
-    source_snapshot?: Record<string, unknown> | null;
-    is_active_plan?: boolean;
-}
-
-export type MilestoneSimulationBasis = 'annual_plan' | 'deterministic' | 'p10' | 'p50' | 'p90';
-export type MilestoneSimulationInterval = 'annual' | 'semiannual' | 'quarterly' | 'target_only';
-export type MilestoneSimulationMode = 'add' | 'replace';
-export type ContributionScheduleKind = 'monthly' | 'yearly' | 'one_time';
-
-export interface ContributionScheduleItem {
-    kind: ContributionScheduleKind;
-    amount: number;
-    month?: number | null;
-    date?: string | null;
-    start_date?: string | null;
-    end_date?: string | null;
-    note?: string | null;
-}
-
-export interface MilestoneSimulationRequest {
-    basis: MilestoneSimulationBasis;
-    interval: MilestoneSimulationInterval;
-    mode: MilestoneSimulationMode;
-    n_simulations: number;
-    annual_return?: number;
-    inflation?: number;
-    monthly_savings?: number;
-    contribution_schedule?: ContributionScheduleItem[];
-    allocation_mode?: 'weighted' | 'direct';
-}
-
-export interface MilestoneSimulationPreview {
-    life_event_id: number;
-    basis: MilestoneSimulationBasis;
-    interval: MilestoneSimulationInterval;
-    mode: MilestoneSimulationMode;
-    existing_count: number;
-    items: Array<Omit<Milestone, 'id'>>;
-}
-
-export interface SimulationScenario {
-    id: number;
-    life_event_id: number;
-    name: string;
-    description?: string | null;
-    annual_return: number;
-    inflation: number;
-    monthly_savings?: number | null;
-    contribution_schedule: ContributionScheduleItem[];
-    allocation_mode: 'weighted' | 'direct';
-    created_at?: string | null;
-    updated_at?: string | null;
-}
-
-export interface SimulationScenarioCreatePayload {
-    life_event_id: number;
-    name: string;
-    description?: string | null;
-    annual_return: number;
-    inflation: number;
-    monthly_savings?: number | null;
-    contribution_schedule: ContributionScheduleItem[];
-    allocation_mode: 'weighted' | 'direct';
-}
-
-export interface SimulationScenarioCompareItem {
-    scenario_id: number;
-    scenario_name: string;
-    target_amount: number;
-    years_remaining: number;
-    probability: number;
-    percentiles: { p10: number; p50: number; p90: number };
-    year_by_year: { p10: number[]; p50: number[]; p90: number[] };
-    deterministic_yearly: Array<{ year: number; end_balance: number }>;
 }
 
 export interface NetWorthHistoryPoint {
@@ -705,40 +521,6 @@ export interface AccountFlowTransactionPage {
     total: number;
 }
 
-export interface RoadmapProjectionPoint {
-    year: number;
-    p10: number;
-    p50: number;
-    p90: number;
-}
-
-export interface LiabilityDemandPoint {
-    year: number;
-    cumulative_target: number;
-    event_count: number;
-}
-
-export interface RoadmapMilestone extends Milestone {
-    life_event_name?: string;
-}
-
-export interface RoadmapProjection {
-    history: NetWorthHistoryPoint[];
-    projection: RoadmapProjectionPoint[];
-    liability_demand: LiabilityDemandPoint[];
-    milestones: RoadmapMilestone[];
-    events: LifeEvent[];
-    roadmap_progression: 'On Track' | 'At Risk' | 'Off Track';
-    roadmap_progression_pct: number;
-    params: {
-        years: number;
-        annual_return: number;
-        inflation: number;
-        monthly_savings?: number | null;
-        reference_date: string;
-    };
-}
-
 export type CapsuleDrawdownKind = 'as_intended' | 'diverted';
 
 export interface CapsuleDrawdownInput {
@@ -793,7 +575,6 @@ export type CapsuleFundingSourceInput = Pick<CapsuleFundingSource, 'account_id' 
 
 export interface Capsule {
     id: number;
-    life_event_id?: number | null;
     name: string;
     target_amount: number;
     monthly_contribution: number;
@@ -824,6 +605,7 @@ export interface CapsuleRule {
     trigger_type: CapsuleTriggerKind;
     trigger_category?: string | null;
     trigger_description?: string | null;
+    trigger_account_id?: number | null;
     source_mode: 'transaction_account' | 'fixed_account';
     source_account_id?: number | null;
     source_account_name?: string | null;
@@ -832,47 +614,6 @@ export interface CapsuleRule {
     amount_value: number;
     is_active: boolean;
     created_at: string;
-}
-
-export interface MonteCarloResult {
-    life_event_id: number;
-    life_event_name: string;
-    target_amount: number;
-    years_remaining: number;
-    probability: number;
-    percentiles: {
-        p10: number;
-        p50: number;
-        p90: number;
-    };
-    year_by_year: {
-        p10: number[];
-        p50: number[];
-        p90: number[];
-    };
-    n_simulations: number;
-}
-
-export interface BudgetPlan {
-    id: number;
-    name: string;
-    description?: string | null;
-    is_default: boolean;
-    sort_order: number;
-    created_at?: string | null;
-    updated_at?: string | null;
-}
-
-export interface BudgetPlanCashFlowRow {
-    period: string;
-    ending_cash: number;
-    net_cash: number;
-}
-
-export interface BudgetPlanCompareResult {
-    plan_id: number;
-    plan_name: string;
-    cash_flow: BudgetPlanCashFlowRow[];
 }
 
 export interface DataHealthIssue {
@@ -900,28 +641,9 @@ export interface DataRepairResult {
 
 export type { ReconciliationAdjustment, ReconciliationComparison } from './reconciliation';
 
-/** What records on its own, as the definitions screen lists it (WP7). */
-export interface AutomaticRecurringRecording {
-    entry_id: number;
-    entry_type: RegistryEntryType;
-    recurring_transaction_id: number | null;
-    name: string;
-    amount: number;
-    currency: string;
-    frequency: RegistryFrequency;
-    day_of_month: number;
-    month_of_year?: number | null;
-    source_account_name?: string | null;
-    destination_account_name?: string | null;
-    is_active: boolean;
-    auto_post: boolean;
-    next_due_date: string | null;
-    is_due: boolean;
-}
-
+/** Fixed-asset schedules shown beside automatic transactions. */
 export interface AutomaticDepreciationRecording {
     product_id: number;
-    entry_id: number | null;
     name: string;
     method: DepreciationMethod;
     interval: DepreciationInterval;
@@ -929,33 +651,24 @@ export interface AutomaticDepreciationRecording {
     next_amount: number;
     book_value: number;
     currency: string;
-    expense_account_id: number | null;
-    asset_account_id: number | null;
-    pending_periods: number;
     auto_depreciation: boolean;
-    is_active: boolean;
-    blocked_reason: string | null;
 }
 
-export interface AutomaticRecordings {
-    recurring: AutomaticRecurringRecording[];
-    depreciation: AutomaticDepreciationRecording[];
+export interface GeneratedTransaction {
+    id: number; date: string; description: string; amount: number; currency: string; source: string;
 }
 
-/** One automatic transaction a month holds: a definition's occurrence or a write-down. */
+/** One scheduled occurrence or write-down in a month, valued in the client currency. */
 export interface ScheduledTransaction {
-    kind: 'definition' | 'depreciation';
+    kind: 'automatic_transaction' | 'depreciation';
     entry_id: number | null;
     product_id: number | null;
     name: string;
     line_type: MonthlyPlanLineType | null;
     amount: number;
-    /** The planned day; null for definitions without a day (every N days). */
-    date: string | null;
-    frequency: string;
-    /** auto posts on its date, manual waits for a hand, none only plans the budget. */
-    recording: 'auto' | 'manual' | 'none';
-    posted: boolean | null;
+    date: string;
+    frequency: string | null;
+    posted: boolean;
     in_budget: boolean;
     /** The account or subject whose budget the movement is. */
     account_id: number | null;
@@ -966,4 +679,10 @@ export interface ScheduledTransactions {
     period: string;
     currency: string;
     items: ScheduledTransaction[];
+}
+
+
+export interface FxTrackedCurrency {
+    currency: string;
+    created_at: string;
 }

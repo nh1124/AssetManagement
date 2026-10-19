@@ -11,14 +11,12 @@ from .money import MinorUnits, major_expression, client_currency, client_currenc
 from ..database import Base
 
 class LifeEvent(Base):
-    """Planned expenses and inflows for Personal ALM."""
+    """A planned expense or inflow in one scenario's story; nothing about real money."""
     __tablename__ = "life_events"
 
     __table_args__ = (
         CheckConstraint("condition_mode IN ('all', 'any')", name="ck_life_events_condition_mode"),
         CheckConstraint("direction IN ('expense', 'income')", name="ck_life_events_direction"),
-        CheckConstraint("budget_reflection IN ('firm', 'conditional', 'simulation_only')",
-                        name="ck_life_events_budget_reflection"),
     )
 
     condition_mode = Column(String, nullable=False, default="all", server_default="all")
@@ -29,25 +27,15 @@ class LifeEvent(Base):
     scenario_id = Column(Integer, ForeignKey("life_scenarios.id", ondelete="CASCADE"), nullable=False, index=True)
     lineage = Column(String(36), nullable=False, index=True, default=lambda: str(uuid4()))
     name = Column(String, index=True)  # e.g., "Retirement", "House"
-    start_date = Column(Date, nullable=True)
     target_date = Column(Date)
     target_amount_minor = Column(MinorUnits)
     priority = Column(Integer, default=2)  # 1=High, 2=Medium, 3=Low
     note = Column(String, nullable=True)
-    active_plan_basis = Column(String, default="milestone", server_default="milestone", nullable=False)
-    active_plan_label = Column(String, nullable=True)
-    plan_status_override = Column(String, nullable=True)
-    archived_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
-    # How the goal reaches the budget: firm (always), conditional (once its
-    # preconditions hold) or simulation_only (never). NULL follows the event:
-    # conditional when it has preconditions, firm otherwise.
-    budget_reflection = Column(String, nullable=True)
 
     client = relationship("Client", back_populates="life_events")
-    milestones = relationship("Milestone", back_populates="life_event", cascade="all, delete-orphan")
-    capsules = relationship("Capsule", back_populates="life_event", cascade="all, delete-orphan")
     conditions = relationship("LifeEventCondition", cascade="all, delete-orphan")
+    earmarks = relationship("GoalEventEarmark", cascade="all, delete-orphan", passive_deletes=True)
     outgoing_links = relationship("LifeEventLink", foreign_keys="LifeEventLink.from_event_id", cascade="all, delete-orphan")
     incoming_links = relationship("LifeEventLink", foreign_keys="LifeEventLink.to_event_id", cascade="all, delete-orphan")
 
@@ -60,12 +48,6 @@ class LifeEvent(Base):
     @target_amount.expression
     def target_amount(cls):
         return major_expression(cls.target_amount_minor, client_currency_expression(cls))
-
-    @property
-    def budget_reflection_effective(self) -> str:
-        if self.budget_reflection:
-            return self.budget_reflection
-        return "conditional" if self.conditions else "firm"
 
 
 class LifeEventLink(Base):
@@ -83,34 +65,6 @@ class LifeEventLink(Base):
     offset_months = Column(Integer, nullable=False, default=0, server_default="0")
     note = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
-
-
-class Milestone(Base):
-    __tablename__ = "milestones"
-
-    id = Column(Integer, primary_key=True, index=True)
-    client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
-    life_event_id = Column(Integer, ForeignKey("life_events.id", ondelete="CASCADE"), nullable=True)
-    date = Column(Date)
-    target_amount_minor = Column(MinorUnits)
-    note = Column(String, nullable=True)
-    source = Column(String, default="manual", server_default="manual", nullable=False)
-    source_snapshot = Column(JSON, nullable=True)
-    is_active_plan = Column(Boolean, default=True, server_default="true", nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-    client = relationship("Client", back_populates="milestones")
-    life_event = relationship("LifeEvent", back_populates="milestones")
-
-    @hybrid_property
-    def target_amount(self) -> float | None:
-        if self.target_amount_minor is None:
-            return None
-        return Money(self.target_amount_minor, client_currency(self)).to_float()
-
-    @target_amount.expression
-    def target_amount(cls):
-        return major_expression(cls.target_amount_minor, client_currency_expression(cls))
 
 
 class HouseholdMember(Base):
@@ -159,65 +113,62 @@ class LifeScenario(Base):
     id = Column(Integer, primary_key=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
     name = Column(String, nullable=False)
+    # The yield of an account whose contribution plan names none.
     annual_return = Column(Float, nullable=False, default=5.0, server_default="5.0")
     inflation = Column(Float, nullable=False, default=2.0, server_default="2.0")
     horizon_years = Column(Integer, nullable=False, default=30, server_default="30")
-    # NULL keeps the client-wide simulation setting as this scenario's monthly savings.
-    monthly_savings_minor = Column(MinorUnits, nullable=True)
     is_goal = Column(Boolean, nullable=False, default=False, server_default="false")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     client = relationship("Client")
     events = relationship("LifeEvent", cascade="all, delete-orphan", passive_deletes=True)
-    account_returns = relationship("LifeScenarioAccountReturn", cascade="all, delete-orphan")
-
-    @hybrid_property
-    def monthly_savings(self) -> float | None:
-        if self.monthly_savings_minor is None:
-            return None
-        return Money(self.monthly_savings_minor, client_currency(self)).to_float()
-
-    @monthly_savings.expression
-    def monthly_savings(cls):
-        return major_expression(cls.monthly_savings_minor, client_currency_expression(cls))
+    contribution_plans = relationship("ScenarioContributionPlan", cascade="all, delete-orphan", passive_deletes=True)
 
 
-class GoalBaseline(Base):
-    """The goal's projection frozen when it was adopted; later edits never move it.
+class ScenarioContributionPlan(Base):
+    """積立設定: from start_period on, an account receives monthly_amount and earns annual_return.
 
-    Projection rows are yearly from anchor_date (offset 0 is that day), so actual
-    month-end net worth can be compared against an interpolated band. Choosing a
-    goal, or confirming an update, makes a new current row; older rows remain as
-    history.
+    A later record for the same account replaces the amount from its month; a null
+    annual_return keeps the yield of the record before it.
     """
-    __tablename__ = "goal_baselines"
+    __tablename__ = "scenario_contribution_plans"
     __table_args__ = (
-        CheckConstraint("reason IN ('adopted', 'reflection', 'manual')", name="ck_goal_baselines_reason"),
-        Index("uq_goal_baselines_current", "client_id", unique=True,
-              postgresql_where=text("is_current"), sqlite_where=text("is_current")),
+        UniqueConstraint("scenario_id", "account_id", "start_period", name="uq_scenario_contribution_plans_month"),
+        CheckConstraint("monthly_amount_minor >= 0", name="ck_scenario_contribution_plans_amount"),
+    )
+
+    id = Column(Integer, primary_key=True)
+    scenario_id = Column(Integer, ForeignKey("life_scenarios.id", ondelete="CASCADE"), nullable=False, index=True)
+    account_id = Column(Integer, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
+    start_period = Column(String(7), nullable=False)
+    monthly_amount_minor = Column(BigInteger, nullable=False, default=0, server_default="0")
+    annual_return = Column(Float, nullable=True)
+    note = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class GoalEventEarmark(Base):
+    """実績管理の設定: how much of an earmark counts toward a goal event (share in basis points).
+
+    It belongs to the tracking of the chosen goal, not to the scenario's story, so a
+    copied scenario starts without any.
+    """
+    __tablename__ = "goal_event_earmarks"
+    __table_args__ = (
+        UniqueConstraint("life_event_id", "capsule_id", name="uq_goal_event_earmarks_pair"),
+        CheckConstraint("share_bp BETWEEN 0 AND 10000", name="ck_goal_event_earmarks_share"),
     )
 
     id = Column(Integer, primary_key=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=False, index=True)
-    scenario_id = Column(Integer, ForeignKey("life_scenarios.id", ondelete="SET NULL"), nullable=True)
-    scenario_name = Column(String, nullable=False)
-    reason = Column(String, nullable=False)
-    anchor_date = Column(Date, nullable=False)
-    is_current = Column(Boolean, nullable=False, default=False, server_default="false")
-    assumptions = Column(JSON, nullable=False)
-    projection = Column(JSON, nullable=False)
-    events = Column(JSON, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    life_event_id = Column(Integer, ForeignKey("life_events.id", ondelete="CASCADE"), nullable=False)
+    capsule_id = Column(Integer, ForeignKey("capsules.id", ondelete="CASCADE"), nullable=False)
+    share_bp = Column(Integer, nullable=False, default=10000, server_default="10000")
 
 
 class GoalBudgetReflection(Base):
-    """One applied goal reflection: what the budget was told, and how each event was funded.
-
-    Event progress reads the latest one so its monthly amounts match the budget,
-    and reminders compare it with today's goal to know when to reflect again.
-    Events are keyed by lineage, which survives backups and goal switches.
-    """
+    """One applied goal-to-plan reflection: its months, scenario and what it wrote."""
     __tablename__ = "goal_budget_reflections"
 
     id = Column(Integer, primary_key=True)
@@ -226,16 +177,4 @@ class GoalBudgetReflection(Base):
     applied_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     start_period = Column(String(7), nullable=False)
     end_period = Column(String(7), nullable=False)
-    options = Column(JSON, nullable=False)
     summary = Column(JSON, nullable=False)
-    events = Column(JSON, nullable=False)
-
-
-class LifeScenarioAccountReturn(Base):
-    __tablename__ = "life_scenario_account_returns"
-    __table_args__ = (UniqueConstraint("scenario_id", "account_id", name="uq_life_scenario_account_returns_account"),)
-
-    id = Column(Integer, primary_key=True)
-    scenario_id = Column(Integer, ForeignKey("life_scenarios.id", ondelete="CASCADE"), nullable=False)
-    account_id = Column(Integer, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
-    annual_return = Column(Float, nullable=False)

@@ -2,13 +2,12 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional, Literal
 from .. import models
-from ..schemas import AccountInstitutionLiteral
 from ..database import get_db
 from ..dependencies import get_current_client
 from ..services import capsule_service, ledger_service
 from ..services.cache_service import invalidate_client
 from ..services.ledger_valuation import AccountBalances, calculate_account_balances
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 router = APIRouter(prefix="/accounts", tags=["accounts"])
 
@@ -23,15 +22,11 @@ class AccountEarmarkResponse(BaseModel):
 
 
 class AccountCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     name: str
-    account_type: str
+    account_type: Literal["asset", "liability", "income", "expense"]
     balance: float = 0
-    parent_id: Optional[int] = None
-    institution: AccountInstitutionLiteral = "none"
-    withdrawable_from_age: int | None = Field(default=None, ge=0)
-    expected_return: float | None = 0.0
-    role: Literal["defense", "growth", "earmarked", "operating", "unassigned"] = "unassigned"
-    role_target_amount: Optional[float] = None
+    is_active: bool = True
     liability_closing_day: Optional[int] = None
     liability_payment_day: Optional[int] = None
     liability_payment_month_offset: int = 0
@@ -42,14 +37,9 @@ class AccountCreate(BaseModel):
     liability_revolving_rate: Optional[float] = None
 
 class AccountUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     name: Optional[str] = None
-    parent_id: Optional[int] = None
     balance: Optional[float] = None
-    institution: AccountInstitutionLiteral | None = None
-    withdrawable_from_age: int | None = Field(default=None, ge=0)
-    expected_return: Optional[float] = None
-    role: Optional[Literal["defense", "growth", "earmarked", "operating", "unassigned"]] = None
-    role_target_amount: Optional[float] = None
     liability_closing_day: Optional[int] = None
     liability_payment_day: Optional[int] = None
     liability_payment_month_offset: Optional[int] = None
@@ -63,15 +53,9 @@ class AccountUpdate(BaseModel):
 class AccountResponse(BaseModel):
     id: int
     name: str
-    account_type: str
+    account_type: Literal["asset", "liability", "income", "expense"]
     balance: float
     balances_minor: dict[str, int] = Field(default_factory=dict)
-    parent_id: Optional[int] = None
-    institution: AccountInstitutionLiteral = "none"
-    withdrawable_from_age: int | None = Field(default=None, ge=0)
-    expected_return: float | None = 0.0
-    role: str = "unassigned"
-    role_target_amount: Optional[float] = None
     liability_closing_day: Optional[int] = None
     liability_payment_day: Optional[int] = None
     liability_payment_month_offset: int = 0
@@ -89,7 +73,6 @@ class AccountResponse(BaseModel):
 def _serialize_account(
     account: models.Account,
     balances: AccountBalances,
-    rollup_balance: float | None = None,
 ) -> dict:
     account_balance = balances.balance
     return {
@@ -98,13 +81,6 @@ def _serialize_account(
         "account_type": account.account_type,
         "balance": account_balance,
         "balances_minor": balances.balances_minor,
-        "rollup_balance": rollup_balance if rollup_balance is not None else account_balance,
-        "parent_id": account.parent_id,
-        "institution": account.institution,
-        "withdrawable_from_age": account.withdrawable_from_age,
-        "expected_return": account.expected_return,
-        "role": account.role or "unassigned",
-        "role_target_amount": account.role_target_amount,
         "liability_closing_day": account.liability_closing_day,
         "liability_payment_day": account.liability_payment_day,
         "liability_payment_month_offset": account.liability_payment_month_offset or 0,
@@ -168,10 +144,6 @@ def get_accounts_grouped_by_type(
                 "name": acc.name,
                 "balance": balances[acc.id].balance,
                 "balances_minor": balances[acc.id].balances_minor,
-                "institution": acc.institution,
-                "withdrawable_from_age": acc.withdrawable_from_age,
-                "role": acc.role,
-                "role_target_amount": acc.role_target_amount,
                 "liability_closing_day": acc.liability_closing_day,
                 "liability_payment_day": acc.liability_payment_day,
                 "liability_payment_month_offset": acc.liability_payment_month_offset or 0,
@@ -223,14 +195,3 @@ def delete_account(
     invalidate_client(current_client.id)
     return {"message": "Account deactivated"}
 
-@router.post("/seed-defaults")
-def seed_default_accounts(
-    db: Session = Depends(get_db),
-    current_client: models.Client = Depends(get_current_client)
-):
-    """Create default accounts for current client."""
-    from ..services.ledger_service import ensure_default_accounts
-    # We need to update ensure_default_accounts to accept client_id
-    ensure_default_accounts(db, client_id=current_client.id)
-    invalidate_client(current_client.id)
-    return {"message": "Default accounts seeded"}

@@ -10,7 +10,7 @@ export default function MobileMorePage() {
         { label: 'Portfolio', status: 'Desktop deep view', icon: WalletCards },
         { label: 'Goal', status: 'Compact summary lives in Plan', icon: Flag },
         { label: 'Strategy', status: 'Desktop planning view', icon: Target },
-        { label: 'Registry', status: 'Desktop catalog view', icon: Package },
+        { label: '自動取引', status: 'Desktop catalog view', icon: Package },
         { label: 'Approval Inbox', status: 'Available in mobile AI tab', icon: Inbox },
         { label: 'Settings', status: 'Desktop admin view', icon: Settings },
     ];

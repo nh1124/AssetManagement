@@ -58,7 +58,6 @@ def recurrence_setup_warnings(
         if not matched:
             warnings.append({
                 "type": "missing_budget",
-                "recurring_transaction_id": registry_line.get("recurring_transaction_id"),
                 "registry_entry_ids": registry_line.get("registry_entry_ids", []),
                 "source": "registry",
                 "name": registry_line["name"],
@@ -68,7 +67,6 @@ def recurrence_setup_warnings(
         if round(matched.amount or 0.0, 0) != round(registry_line["registry_amount"], 0):
             warnings.append({
                 "type": "amount_diff",
-                "recurring_transaction_id": registry_line.get("recurring_transaction_id"),
                 "registry_entry_ids": registry_line.get("registry_entry_ids", []),
                 "source": "registry",
                 "name": registry_line["name"],

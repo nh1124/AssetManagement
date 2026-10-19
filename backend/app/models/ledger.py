@@ -16,44 +16,17 @@ class AccountType(str, enum.Enum):
     EXPENSE = "expense"
 
 
-class AccountRole(str, enum.Enum):
-    DEFENSE = "defense"
-    GROWTH = "growth"
-    EARMARKED = "earmarked"
-    OPERATING = "operating"
-    UNASSIGNED = "unassigned"
-
-
-class AccountInstitution(str, enum.Enum):
-    NONE = "none"
-    NISA_TSUMITATE = "nisa_tsumitate"
-    NISA_GROWTH = "nisa_growth"
-    IDECO = "ideco"
-    DC_CORPORATE = "dc_corporate"
-    TOKUTEI_WITHHOLDING = "tokutei_withholding"
-    TOKUTEI_SELF = "tokutei_self"
-    GENERAL = "general"
-
-
 class Account(Base):
     __tablename__ = "accounts"
     __table_args__ = (
         UniqueConstraint('client_id', 'name', name='_client_account_uc'),
-        CheckConstraint("institution IN ('none', 'nisa_tsumitate', 'nisa_growth', 'ideco', 'dc_corporate', 'tokutei_withholding', 'tokutei_self', 'general')", name="ck_accounts_institution"),
-        CheckConstraint("withdrawable_from_age IS NULL OR withdrawable_from_age >= 0", name="ck_accounts_withdrawable_from_age"),
+        CheckConstraint("account_type IN ('asset', 'liability', 'income', 'expense')", name="ck_accounts_type"),
     )
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
     name = Column(String, index=True)
     account_type = Column(String)  # asset, liability, income, expense
-    parent_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
-    institution = Column(String, nullable=False, default="none", server_default="none")
-    withdrawable_from_age = Column(Integer, nullable=True)
-    # Preserve explicit null so a projection can distinguish absence from a deliberate zero.
-    expected_return = Column(Float().evaluates_none(), default=0.0)  # Annual return rate % for asset accounts
-    role = Column(String, default=AccountRole.UNASSIGNED.value, server_default=AccountRole.UNASSIGNED.value, nullable=False)
-    role_target_amount_minor = Column(MinorUnits, nullable=True)
     liability_kind = Column(String, nullable=True)  # card | loan | other; only a card settles monthly
     liability_closing_day = Column(Integer, nullable=True)
     liability_payment_day = Column(Integer, nullable=True)
@@ -68,15 +41,6 @@ class Account(Base):
     client = relationship("Client", back_populates="accounts")
     entries = relationship("JournalEntry", back_populates="account")
 
-    @hybrid_property
-    def role_target_amount(self) -> float | None:
-        if self.role_target_amount_minor is None:
-            return None
-        return Money(self.role_target_amount_minor, client_currency(self)).to_float()
-
-    @role_target_amount.expression
-    def role_target_amount(cls):
-        return major_expression(cls.role_target_amount_minor, client_currency_expression(cls))
 
     @hybrid_property
     def liability_minimum_payment(self) -> float | None:
@@ -157,9 +121,9 @@ class Transaction(Base):
     currency = Column(String, default='JPY')
     batch_id = Column(Integer, ForeignKey("transaction_batches.id"), nullable=True)
     # NULL means entered by hand or posted before provenance was recorded.
-    recurring_transaction_id = Column(
+    registry_entry_id = Column(
         Integer,
-        ForeignKey("recurring_transactions.id", ondelete="SET NULL"),
+        ForeignKey("registry_entries.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -167,7 +131,7 @@ class Transaction(Base):
     
     client = relationship("Client", back_populates="transactions")
     batch = relationship("TransactionBatch", back_populates="transactions")
-    recurring_transaction = relationship("RecurringTransaction", foreign_keys=[recurring_transaction_id])
+    registry_entry = relationship("RegistryEntry", foreign_keys=[registry_entry_id])
     # No from_account_id / to_account_id columns: the legs are the accounts.
     # Both are still accepted as input and still reported, derived by
     # services.journal_legs.primary_accounts from the leg on each side.

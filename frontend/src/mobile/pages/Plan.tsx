@@ -3,24 +3,20 @@ import type { ReactNode } from 'react';
 import { Check, ChevronLeft, ChevronRight, Loader2, Plus, Trash2, X, type LucideIcon } from 'lucide-react';
 import {
     createAccount,
-    createMilestone,
     createMonthlyPlanLines,
     deleteCapsule,
-    deleteMilestone,
     deleteMonthlyPlanLine,
     getAccounts,
     getBudgetSummary,
     getCapsules,
     getLifeEventsWithProgress,
-    getMilestones,
     updateCapsule,
-    updateMilestone,
     updateMonthlyPlanLines,
     type MonthlyPlanLinePayload,
 } from '../../api';
 import { useToast } from '../../components/Toast';
 import { useClient } from '../../context/ClientContext';
-import type { Account, LifeEvent, Milestone, MonthlyPlanLine, MonthlyPlanLineType } from '../../types';
+import type { Account, LifeEventProgress, MonthlyPlanLine, MonthlyPlanLineType } from '../../types';
 import { formatCurrency } from '../../utils/currency';
 
 type PlanTab = 'goals' | 'capsules' | 'budget';
@@ -51,7 +47,7 @@ interface BudgetSummary {
 interface BudgetAccount {
     id: number;
     account_id?: number | null;
-    target_type?: 'account' | 'capsule' | 'life_event' | 'product' | 'manual' | null;
+    target_type?: 'account' | 'capsule' | 'product' | 'manual' | null;
     target_id?: number | null;
     name: string;
     amount: number;
@@ -68,11 +64,9 @@ interface CapsuleSummary {
     current_balance?: number;
     target_amount?: number;
     monthly_contribution?: number;
-    life_event_id?: number | null;
     capsule_type?: string;
 }
 
-const todayIso = () => new Date().toISOString().split('T')[0];
 const monthKey = () => new Date().toISOString().slice(0, 7);
 
 const shiftMonth = (period: string, delta: number) => {
@@ -86,11 +80,10 @@ export default function MobilePlanPage() {
     const { currentClient } = useClient();
     const [activeTab, setActiveTab] = useState<PlanTab>('goals');
     const [budgetPeriod, setBudgetPeriod] = useState(monthKey());
-    const [goals, setGoals] = useState<LifeEvent[]>([]);
+    const [goals, setGoals] = useState<LifeEventProgress[]>([]);
     const [budget, setBudget] = useState<BudgetSummary | null>(null);
     const [capsules, setCapsules] = useState<CapsuleSummary[]>([]);
     const [accounts, setAccounts] = useState<Account[]>([]);
-    const [selectedGoal, setSelectedGoal] = useState<LifeEvent | null>(null);
     const [selectedCapsule, setSelectedCapsule] = useState<CapsuleSummary | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const currentCurrency = currentClient?.general_settings?.currency || 'JPY';
@@ -104,7 +97,7 @@ export default function MobilePlanPage() {
                 getCapsules(),
                 getAccounts(),
             ]);
-            setGoals((goalData ?? []).slice(0, 20));
+            setGoals((goalData ?? []).filter((goal) => goal.direction === 'expense').slice(0, 20));
             setBudget(budgetData ?? null);
             setCapsules((capsuleData ?? []).slice(0, 30));
             setAccounts(accountData);
@@ -119,12 +112,7 @@ export default function MobilePlanPage() {
         loadPlan();
     }, [budgetPeriod]);
 
-    const sortedGoals = useMemo(() => {
-        return [...goals].sort((a, b) => {
-            const statusRank = (status?: string) => status === 'Off Track' ? 0 : status === 'At Risk' ? 1 : 2;
-            return statusRank(a.status) - statusRank(b.status);
-        });
-    }, [goals]);
+    const sortedGoals = useMemo(() => [...goals].sort((a, b) => a.target_date.localeCompare(b.target_date)), [goals]);
 
     return (
         <div className="space-y-4 p-3">
@@ -161,7 +149,6 @@ export default function MobilePlanPage() {
                                     key={goal.id}
                                     goal={goal}
                                     currency={currentCurrency}
-                                    onOpen={() => setSelectedGoal(goal)}
                                 />
                             ))}
                         </div>
@@ -200,15 +187,6 @@ export default function MobilePlanPage() {
                 />
             )}
 
-            {selectedGoal && (
-                <GoalSheet
-                    goal={selectedGoal}
-                    currency={currentCurrency}
-                    onClose={() => setSelectedGoal(null)}
-                    onChanged={loadPlan}
-                />
-            )}
-
             {selectedCapsule && (
                 <CapsuleSheet
                     capsule={selectedCapsule}
@@ -223,21 +201,17 @@ export default function MobilePlanPage() {
     );
 }
 
-function GoalCard({ goal, currency, onOpen }: { goal: LifeEvent; currency: string; onOpen: () => void }) {
-    const funded = fundedAmount(goal);
-    const progress = goal.target_amount > 0 ? Math.max(0, Math.min(100, (funded / goal.target_amount) * 100)) : 0;
-    const tone = goal.status === 'Off Track'
-        ? 'text-rose-300'
-        : goal.status === 'At Risk'
-            ? 'text-amber-300'
-            : 'text-emerald-300';
+// The goal's funding comes from its 実績管理の設定; editing it lives in the studio.
+function GoalCard({ goal, currency }: { goal: LifeEventProgress; currency: string }) {
+    const funded = goal.current_funded;
+    const progress = Math.max(0, Math.min(100, goal.progress_percentage));
 
     return (
-        <button type="button" onClick={onOpen} className="w-full border border-slate-800 bg-slate-900/70 p-3 text-left active:border-emerald-500">
+        <div className="w-full border border-slate-800 bg-slate-900/70 p-3 text-left">
             <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                     <p className="truncate text-sm font-medium text-slate-100">{goal.name}</p>
-                    <p className={`mt-1 text-[10px] ${tone}`}>{goal.status ?? 'Not Started'}</p>
+                    <p className="mt-1 text-[10px] text-slate-500">{goal.months_remaining} months left</p>
                 </div>
                 <div className="shrink-0 text-right">
                     <p className="font-mono-nums text-xs text-emerald-300">{formatCurrency(funded, currency)}</p>
@@ -251,7 +225,7 @@ function GoalCard({ goal, currency, onOpen }: { goal: LifeEvent; currency: strin
                 <span>{formatCurrency(goal.target_amount, currency)} target</span>
                 <span>{goal.target_date}</span>
             </div>
-        </button>
+        </div>
     );
 }
 
@@ -687,117 +661,6 @@ function BudgetMetric({ label, value, currency, tone }: { label: string; value: 
     );
 }
 
-function GoalSheet({ goal, currency, onClose, onChanged }: { goal: LifeEvent; currency: string; onClose: () => void; onChanged: () => Promise<void> }) {
-    const { showToast } = useToast();
-    const [milestones, setMilestones] = useState<Milestone[]>([]);
-    const [form, setForm] = useState({ id: '', date: todayIso(), target_amount: '', note: '' });
-    const [isSaving, setIsSaving] = useState(false);
-
-    const loadMilestones = async () => {
-        try {
-            setMilestones(await getMilestones(goal.id));
-        } catch {
-            showToast('Failed to load milestones', 'error');
-        }
-    };
-
-    useEffect(() => {
-        loadMilestones();
-    }, [goal.id]);
-
-    const saveMilestone = async () => {
-        if (!form.date || !Number(form.target_amount)) {
-            showToast('Date and target amount are required', 'warning');
-            return;
-        }
-        setIsSaving(true);
-        try {
-            if (form.id) {
-                await updateMilestone(Number(form.id), {
-                    date: form.date,
-                    target_amount: Number(form.target_amount),
-                    note: form.note || null,
-                });
-            } else {
-                await createMilestone({
-                    life_event_id: goal.id,
-                    date: form.date,
-                    target_amount: Number(form.target_amount),
-                    note: form.note || null,
-                    source: 'mobile',
-                });
-            }
-            setForm({ id: '', date: todayIso(), target_amount: '', note: '' });
-            await loadMilestones();
-            await onChanged();
-            showToast('Milestone saved', 'success');
-        } catch {
-            showToast('Failed to save milestone', 'error');
-        } finally {
-            setIsSaving(false);
-        }
-    };
-
-    const removeMilestone = async (id: number) => {
-        setIsSaving(true);
-        try {
-            await deleteMilestone(id);
-            await loadMilestones();
-            await onChanged();
-            showToast('Milestone deleted', 'info');
-        } catch {
-            showToast('Failed to delete milestone', 'error');
-        } finally {
-            setIsSaving(false);
-        }
-    };
-
-    return (
-        <Sheet onClose={onClose}>
-            <div className="mb-4 flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                    <p className="truncate text-lg font-semibold text-slate-100">{goal.name}</p>
-                    <p className="mt-1 text-xs text-slate-500">{formatCurrency(fundedAmount(goal), currency)} funded</p>
-                </div>
-                <IconButton icon={X} onClick={onClose} label="Close" />
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-                <input type="date" value={form.date} onChange={(event) => setForm({ ...form, date: event.target.value })} className="h-11 border border-slate-700 bg-slate-900 px-3 text-sm" />
-                <input type="number" inputMode="decimal" placeholder="Target" value={form.target_amount} onChange={(event) => setForm({ ...form, target_amount: event.target.value })} className="h-11 border border-slate-700 bg-slate-900 px-3 text-sm font-mono-nums" />
-                <input placeholder="Note" value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} className="col-span-2 h-11 border border-slate-700 bg-slate-900 px-3 text-sm" />
-                <button type="button" onClick={saveMilestone} disabled={isSaving} className="col-span-2 flex h-11 items-center justify-center gap-2 bg-emerald-600 text-sm font-semibold text-white disabled:opacity-50">
-                    {isSaving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
-                    {form.id ? 'Update Milestone' : 'Add Milestone'}
-                </button>
-            </div>
-
-            <div className="mt-4 divide-y divide-slate-800 border border-slate-800 bg-slate-900/60">
-                {milestones.length === 0 ? (
-                    <div className="px-3 py-4 text-sm text-slate-500">No milestones yet.</div>
-                ) : milestones.map((milestone) => (
-                    <div key={milestone.id} className="flex items-center justify-between gap-3 px-3 py-3">
-                        <button
-                            type="button"
-                            onClick={() => setForm({
-                                id: String(milestone.id),
-                                date: milestone.date,
-                                target_amount: String(milestone.target_amount),
-                                note: milestone.note || '',
-                            })}
-                            className="min-w-0 flex-1 text-left"
-                        >
-                            <p className="text-sm text-slate-100">{formatCurrency(milestone.target_amount, currency)}</p>
-                            <p className="mt-1 truncate text-[10px] text-slate-500">{milestone.date} {milestone.note ? `- ${milestone.note}` : ''}</p>
-                        </button>
-                        <IconButton icon={Trash2} onClick={() => removeMilestone(milestone.id)} label="Delete milestone" />
-                    </div>
-                ))}
-            </div>
-        </Sheet>
-    );
-}
-
 function CapsuleSheet({ capsule, currency, onClose, onChanged }: { capsule: CapsuleSummary; currency: string; onClose: () => void; onChanged: () => Promise<void> }) {
     const { showToast } = useToast();
     const [form, setForm] = useState({
@@ -855,7 +718,7 @@ function CapsuleSheet({ capsule, currency, onClose, onChanged }: { capsule: Caps
                     <button type="button" onClick={saveCapsule} disabled={isSaving} className="flex h-11 items-center justify-center gap-2 bg-emerald-600 text-sm font-semibold text-white disabled:opacity-50">
                         <Check size={15} /> Save
                     </button>
-                    <button type="button" onClick={removeCapsule} disabled={isSaving || Boolean(capsule.life_event_id)} className="flex h-11 items-center justify-center gap-2 border border-rose-800 text-sm text-rose-300 disabled:opacity-40">
+                    <button type="button" onClick={removeCapsule} disabled={isSaving} className="flex h-11 items-center justify-center gap-2 border border-rose-800 text-sm text-rose-300 disabled:opacity-40">
                         <Trash2 size={15} /> Delete
                     </button>
                 </div>
@@ -886,12 +749,6 @@ function IconButton({ icon: Icon, onClick, label }: { icon: LucideIcon; onClick:
             <Icon size={17} />
         </button>
     );
-}
-
-function fundedAmount(goal: LifeEvent) {
-    const direct = Number(goal.current_funded ?? 0);
-    if (direct > 0) return direct;
-    return Number(goal.target_amount || 0) * (Number(goal.progress_percentage || 0) / 100);
 }
 
 function LoadingBlock() {

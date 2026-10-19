@@ -63,7 +63,7 @@ export function ReportProposals({ report, currency, clientName, disabled, apply,
             <div className="flex flex-wrap items-center justify-between gap-3"><h4 className="text-sm font-semibold">{KINDS[proposal.kind]}</h4><span className="text-xs text-[var(--studio-text-muted)]">{proposal.applied ? '適用済み' : STATES[proposal.action_status ?? 'pending']}</span></div>
             <p className="text-sm leading-relaxed text-[var(--studio-text-muted)]">{proposalEffect(proposal, report, currency)}</p>
             {!readOnly && <div className={`studio-print-hide ${standalone ? 'flex justify-end' : ''}`}>{proposal.auto_executable ? <button type="button" className={standalone ? primaryClass : buttonClass} disabled={disabled || mutation.busy || !clientName || proposal.applied || proposal.action_status === 'applied'} onClick={() => run(proposal)}>この提案を適用</button>
-                : <Link to="/budget" className="text-sm text-[var(--studio-accent)] underline">予算で検討する</Link>}</div>}
+                : <Link to="/plan" className="text-sm text-[var(--studio-accent)] underline">計画で検討する</Link>}</div>}
         </li>)}</ul> : <p className="text-sm text-[var(--studio-text-muted)]">この期間の提案はありません。</p>}
     </Container>;
 }

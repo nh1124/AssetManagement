@@ -33,6 +33,9 @@ PUBLIC: dict[str, set[str]] = {
     "budget_context": {"BudgetContext"},
     "budget_plan_service": {
         "get_budget_summary",
+        # The plan made from the goal reads a month's rows many times; the summary's
+        # cash-flow projection would make every month cost a year of projection.
+        "month_plan_lines",
         # Reports share definition matching without building actuals and projections.
         "expense_budget_by_account",
     },

@@ -21,8 +21,6 @@ from .budget_plan_store import get_or_create_default_plan
 from .periods import period_to_range
 from .cache_service import invalidate_client
 from .registry_service import (
-    ensure_registry_entries,
-    reconcile_registry_recurring_links,
     registry_entry_amount_for_period,
     registry_target_account_id,
 )
@@ -88,7 +86,7 @@ def _infer_source_from_registry(db: Session, line: models.MonthlyPlanLine) -> So
             models.RegistryEntry.client_id == line.client_id,
             models.RegistryEntry.is_active.is_(True),
             models.RegistryEntry.budget_active.is_(True),
-            models.RegistryEntry.line_type == line.line_type,
+            models.RegistryEntry.kind == {"allocation": "transfer", "debt_payment": "debt"}.get(line.line_type, line.line_type),
             models.RegistryEntry.source_account_id.isnot(None),
         )
         .all()
@@ -190,127 +188,12 @@ def _missing_source_items(db: Session, client_id: int) -> list[dict[str, Any]]:
     return items
 
 
-def _registry_recurring_items(db: Session, client_id: int) -> list[dict[str, Any]]:
-    names = _account_names(db, client_id)
-    entries = (
-        db.query(models.RegistryEntry)
-        .filter(
-            models.RegistryEntry.client_id == client_id,
-            models.RegistryEntry.is_active.is_(True),
-            models.RegistryEntry.source_recurring_transaction_id.isnot(None),
-        )
-        .order_by(models.RegistryEntry.id)
-        .all()
-    )
-    items: list[dict[str, Any]] = []
-    for entry in entries:
-        recurring = (
-            db.query(models.RecurringTransaction)
-            .filter(
-                models.RecurringTransaction.id == entry.source_recurring_transaction_id,
-                models.RecurringTransaction.client_id == client_id,
-            )
-            .first()
-        )
-        if not recurring:
-            items.append(
-                {
-                    "registry_entry_id": entry.id,
-                    "name": entry.name,
-                    "problem": "missing_recurring",
-                    "repairable": True,
-                }
-            )
-            continue
-        expected_target = recurring.to_account_id if entry.line_type in {"expense", "debt_payment"} else None
-        mismatch = (
-            entry.source_account_id != recurring.from_account_id
-            or entry.destination_account_id != recurring.to_account_id
-            or (expected_target is not None and entry.budget_account_id != expected_target)
-        )
-        if mismatch:
-            items.append(
-                {
-                    "registry_entry_id": entry.id,
-                    "name": entry.name,
-                    "problem": "account_mismatch",
-                    "source_account": _account_name(names, entry.source_account_id),
-                    "expected_source_account": _account_name(names, recurring.from_account_id),
-                    "destination_account": _account_name(names, entry.destination_account_id),
-                    "expected_destination_account": _account_name(names, recurring.to_account_id),
-                    "repairable": True,
-                }
-            )
-    return items
 
 
-def _recurring_without_registry_items(db: Session, client_id: int) -> list[dict[str, Any]]:
-    registry_ids = {
-        entry_id for (entry_id,) in db.query(models.RegistryEntry.id)
-        .filter(models.RegistryEntry.client_id == client_id).all()
-    }
-    rows = db.query(models.RecurringTransaction).filter(
-        models.RecurringTransaction.client_id == client_id,
-        models.RecurringTransaction.is_active.is_(True),
-    ).order_by(models.RecurringTransaction.id).all()
-    items: list[dict[str, Any]] = []
-    for recurring in rows:
-        if recurring.source_registry_entry_id in registry_ids:
-            continue
-        items.append({
-            "recurring_id": recurring.id,
-            "name": recurring.name,
-            "next_due_date": recurring.next_due_date.isoformat() if recurring.next_due_date else None,
-            "auto_post": recurring.auto_post,
-            "source_registry_entry_id": recurring.source_registry_entry_id,
-            "problem": "no_registry_entry" if recurring.source_registry_entry_id is None else "dangling_registry_entry",
-        })
-    return items
 
 
-def _recurring_budget_inactive_items(db: Session, client_id: int) -> list[dict[str, Any]]:
-    entries = db.query(models.RegistryEntry).filter(
-        models.RegistryEntry.client_id == client_id,
-        models.RegistryEntry.is_active.is_(True),
-        models.RegistryEntry.generate_recurring.is_(True),
-        models.RegistryEntry.budget_active.is_(False),
-    ).order_by(models.RegistryEntry.id).all()
-    return [{
-        "registry_entry_id": entry.id,
-        "name": entry.name,
-        "line_type": entry.line_type,
-        "generate_recurring": entry.generate_recurring,
-        "budget_active": entry.budget_active,
-        "problem": "auto_posts_but_not_budgeted",
-    } for entry in entries]
 
 
-def _duplicate_recurring_items(db: Session, client_id: int) -> list[dict[str, Any]]:
-    grouped: dict[int, list[models.RecurringTransaction]] = defaultdict(list)
-    for recurring in (
-        db.query(models.RecurringTransaction)
-        .filter(
-            models.RecurringTransaction.client_id == client_id,
-            models.RecurringTransaction.source_registry_entry_id.isnot(None),
-        )
-        .all()
-    ):
-        grouped[recurring.source_registry_entry_id].append(recurring)
-
-    items: list[dict[str, Any]] = []
-    for entry_id, rows in grouped.items():
-        if len(rows) <= 1:
-            continue
-        items.append(
-            {
-                "problem": "duplicate_generated_recurring",
-                "registry_entry_id": entry_id,
-                "name": rows[0].name,
-                "recurring_ids": [row.id for row in rows],
-                "repairable": True,
-            }
-        )
-    return items
 
 
 def _duplicate_plan_line_items(db: Session, client_id: int) -> list[dict[str, Any]]:
@@ -727,10 +610,6 @@ def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
         .count()
     )
     missing_source = _missing_source_items(db, client_id)
-    registry_recurring = _registry_recurring_items(db, client_id)
-    duplicate_recurring = _duplicate_recurring_items(db, client_id)
-    recurring_without_registry = _recurring_without_registry_items(db, client_id)
-    recurring_budget_inactive = _recurring_budget_inactive_items(db, client_id)
     duplicate_plan_lines = _duplicate_plan_line_items(db, client_id)
     unbalanced_journals = _unbalanced_journal_items(db, client_id)
     advance_pairs = _advance_pair_items(db, client_id)
@@ -768,24 +647,6 @@ def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
         },
         *_capsule_funding_issues(db, client_id),
         {
-            "code": "recurring_without_registry",
-            "severity": "error",
-            "title": "Recurring definitions without a registry entry",
-            "detail": "The registry owns recurring definitions. A row without a valid registry entry is written by nothing in the application.",
-            "count": len(recurring_without_registry),
-            "repairable": False,
-            "items": recurring_without_registry[:100],
-        },
-        {
-            "code": "recurring_budget_inactive",
-            "severity": "error",
-            "title": "Automatic posting excluded from the budget",
-            "detail": "A definition that posts automatically while the budget ignores it moves money nothing forecasts.",
-            "count": len(recurring_budget_inactive),
-            "repairable": False,
-            "items": recurring_budget_inactive[:100],
-        },
-        {
             "code": "budget_plan_defaults",
             "severity": "warning",
             "title": "Default budget plan links",
@@ -805,7 +666,7 @@ def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
             "code": "plan_line_sources",
             "severity": "warning",
             "title": "Plan line source accounts",
-            "detail": "Cash Flow accuracy depends on knowing whether each plan line moves cash, debt, or another asset role.",
+            "detail": "Cash Flow accuracy depends on knowing whether each plan line moves cash, debt, or another asset.",
             "count": len(missing_source),
             "repairable": any(item["repairable"] for item in missing_source),
             "items": missing_source[:100],
@@ -819,24 +680,6 @@ def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
             "count": 0,
             "repairable": False,
             "items": [],
-        },
-        {
-            "code": "registry_recurring_links",
-            "severity": "warning",
-            "title": "Registry and recurrence links",
-            "detail": "Registry entries linked to recurring transactions should share the same account flow.",
-            "count": len(registry_recurring),
-            "repairable": any(item["repairable"] for item in registry_recurring),
-            "items": registry_recurring[:100],
-        },
-        {
-            "code": "duplicate_recurring",
-            "severity": "warning",
-            "title": "Duplicate generated recurring transactions",
-            "detail": "Each registry entry should generate at most one recurring transaction.",
-            "count": len(duplicate_recurring),
-            "repairable": bool(duplicate_recurring),
-            "items": duplicate_recurring[:100],
         },
         {
             "code": "journal_unbalanced",
@@ -919,22 +762,6 @@ def repair_data_health(db: Session, client_id: int) -> dict[str, Any]:
     )
     actions.append({"code": "budget_plan_defaults", "updated": pre_null_plan_count + null_plan_count + (1 if missing_default else 0)})
 
-    before_registry_count = (
-        db.query(models.RegistryEntry)
-        .filter(models.RegistryEntry.client_id == client_id)
-        .count()
-    )
-    link_repairs = reconcile_registry_recurring_links(db, client_id)
-    ensure_registry_entries(db, client_id)
-    after_registry_count = (
-        db.query(models.RegistryEntry)
-        .filter(models.RegistryEntry.client_id == client_id)
-        .count()
-    )
-    actions.append({"code": "registry_entries", "updated": max(0, after_registry_count - before_registry_count)})
-    actions.append({"code": "duplicate_recurring", "updated": link_repairs["removed"]})
-    actions.append({"code": "missing_generated_recurring", "updated": link_repairs["created"]})
-
     source_updates = 0
     identity_updates = 0
     plan_lines = (
@@ -960,41 +787,6 @@ def repair_data_health(db: Session, client_id: int) -> dict[str, Any]:
 
     # Preserve the legacy response slot; journal-derived balances have no cache to repair.
     actions.append({"code": "account_balances", "updated": 0})
-
-    registry_updates = 0
-    entries = (
-        db.query(models.RegistryEntry)
-        .filter(
-            models.RegistryEntry.client_id == client_id,
-            models.RegistryEntry.is_active.is_(True),
-            models.RegistryEntry.source_recurring_transaction_id.isnot(None),
-        )
-        .all()
-    )
-    for entry in entries:
-        recurring = (
-            db.query(models.RecurringTransaction)
-            .filter(
-                models.RecurringTransaction.id == entry.source_recurring_transaction_id,
-                models.RecurringTransaction.client_id == client_id,
-            )
-            .first()
-        )
-        if not recurring:
-            continue
-        changed = False
-        if entry.source_account_id != recurring.from_account_id:
-            entry.source_account_id = recurring.from_account_id
-            changed = True
-        if entry.destination_account_id != recurring.to_account_id:
-            entry.destination_account_id = recurring.to_account_id
-            changed = True
-        if entry.line_type in {"expense", "debt_payment"} and entry.budget_account_id != recurring.to_account_id:
-            entry.budget_account_id = recurring.to_account_id
-            changed = True
-        if changed:
-            registry_updates += 1
-    actions.append({"code": "registry_recurring_links", "updated": registry_updates})
 
     duplicate_updates = 0
     grouped: dict[tuple, list[models.MonthlyPlanLine]] = defaultdict(list)

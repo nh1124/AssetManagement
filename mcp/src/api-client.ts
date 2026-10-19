@@ -81,7 +81,6 @@ function isWriteRequest(path: string, init: RequestInit): boolean {
   if (path.startsWith("/ai/execution-settings")) return false;
   if (path === "/ai/evaluate") return false;
   if (path.includes("/preview")) return false;
-  if (path.includes("/monte-carlo")) return false;
   return true;
 }
 

@@ -1,19 +1,9 @@
-"""The record of applied goal reflections: what the budget was last told.
-
-Event progress reads the latest record so an event's monthly amount is the one
-the budget carries, and reminders compare it with today's goal.
-"""
+"""The record of applied goal-to-plan reflections: which months the plan was made for."""
 from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
 from .. import models
-
-
-def latest(db: Session, client_id: int) -> models.GoalBudgetReflection | None:
-    return db.query(models.GoalBudgetReflection).filter_by(client_id=client_id).order_by(
-        models.GoalBudgetReflection.applied_at.desc(), models.GoalBudgetReflection.id.desc(),
-    ).first()
 
 
 def covering(db: Session, client_id: int, period: str) -> models.GoalBudgetReflection | None:
@@ -25,21 +15,12 @@ def covering(db: Session, client_id: int, period: str) -> models.GoalBudgetRefle
     ).order_by(models.GoalBudgetReflection.applied_at.desc(), models.GoalBudgetReflection.id.desc()).first()
 
 
-def history(db: Session, client_id: int) -> list[models.GoalBudgetReflection]:
-    """Every applied reflection, oldest first."""
-    return db.query(models.GoalBudgetReflection).filter_by(client_id=client_id).order_by(
-        models.GoalBudgetReflection.applied_at, models.GoalBudgetReflection.id,
-    ).all()
-
-
 def record(
-    db: Session, client_id: int, *, scenario_id: int, start_period: str, end_period: str,
-    options: dict, summary: dict, events: list[dict],
+    db: Session, client_id: int, *, scenario_id: int, start_period: str, end_period: str, summary: dict,
 ) -> models.GoalBudgetReflection:
     """Add one record in the caller's transaction."""
     row = models.GoalBudgetReflection(
-        client_id=client_id, scenario_id=scenario_id, start_period=start_period, end_period=end_period,
-        options=options, summary=summary, events=events,
+        client_id=client_id, scenario_id=scenario_id, start_period=start_period, end_period=end_period, summary=summary,
     )
     db.add(row)
     db.flush()

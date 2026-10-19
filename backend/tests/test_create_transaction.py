@@ -126,35 +126,19 @@ def test_caller_can_rollback(posting):
 
 def test_recurring_provenance_passes_through(posting):
     db, cash, expense, _ = posting
-    registry = models.RegistryEntry(
-        client_id=1,
-        name="Lunch owner",
-    )
+    registry = models.RegistryEntry(client_id=1, name='Lunch owner', start_date=date(2026, 1, 1), repeat_mode="indefinite", frequency="Monthly")
     db.add(registry)
-    db.flush()
-    recurring = models.RecurringTransaction(
-        client_id=1,
-        source_registry_entry_id=registry.id,
-        name="Lunch",
-        amount_minor=to_minor(1000, "JPY"),
-        currency="JPY",
-        from_account_id=cash.id,
-        to_account_id=expense.id,
-        frequency="Monthly",
-        day_of_month=10,
-    )
-    db.add(recurring)
     db.flush()
     tx = _create(
         db,
         from_account_id=cash.id,
         to_account_id=expense.id,
-        recurring_transaction_id=recurring.id,
+        registry_entry_id=registry.id,
     )
     db.flush()
     db.expire_all()
-    assert db.query(models.Transaction).one().recurring_transaction_id == recurring.id
-    assert tx.recurring_transaction is recurring
+    assert db.query(models.Transaction).one().registry_entry_id == registry.id
+    assert tx.registry_entry is registry
 
 
 def test_unbalanced_legs_still_raise(posting):

@@ -14,12 +14,11 @@ class Capsule(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     client_id = Column(Integer, ForeignKey("clients.id"), nullable=True)
-    life_event_id = Column(Integer, ForeignKey("life_events.id", ondelete="CASCADE"), nullable=True)
     name = Column(String, index=True)
     target_amount_minor = Column(MinorUnits)
     monthly_contribution_minor = Column(MinorUnits)
     # The capsule decides whether its reservations need a decision; the vocabulary
-    # deliberately matches RecurringTransaction.auto_post.
+    # A rule may reserve automatically or leave a transaction proposal.
     auto_post = Column(Boolean, default=False, server_default="false", nullable=False)
     capsule_type = Column(String, default="manual", server_default="manual", nullable=False)
     target_amount_source = Column(String, default="manual", server_default="manual", nullable=False)
@@ -27,7 +26,6 @@ class Capsule(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     client = relationship("Client", back_populates="capsules")
-    life_event = relationship("LifeEvent", back_populates="capsules")
     funding_sources = relationship(
         "CapsuleFundingSource", back_populates="capsule", cascade="all, delete-orphan",
         order_by="(CapsuleFundingSource.sort_order, CapsuleFundingSource.id)",
@@ -122,6 +120,7 @@ class CapsuleRule(Base):
     trigger_type = Column(String, nullable=False)
     trigger_category = Column(String, nullable=True)
     trigger_description = Column(String, nullable=True)
+    trigger_account_id = Column(Integer, ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True)
     source_mode = Column(String, default="transaction_account", nullable=False)
     source_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)
     destination_account_id = Column(Integer, ForeignKey("accounts.id"), nullable=True)

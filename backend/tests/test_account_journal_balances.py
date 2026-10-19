@@ -24,7 +24,7 @@ from app.services.data_transfer_service import export_client, import_client
 from app.services.ledger_valuation import calculate_account_balances, calculate_account_valued_balances
 
 DAY = date(2026, 10, 12)
-SETTINGS = ("role_target_amount", "liability_minimum_payment", "liability_fixed_payment_amount")
+SETTINGS = ("liability_minimum_payment", "liability_fixed_payment_amount")
 
 
 @pytest.fixture
@@ -83,9 +83,7 @@ def test_multicurrency_exact_holdings_and_valued_http_response(db):
     row = next(row for row in response.json() if row["id"] == wallet.id)
     assert row == {
         "id": wallet.id, "name": "wallet", "account_type": "asset", "balance": expected,
-        "balances_minor": {"EUR": 112419, "USD": 23248}, "parent_id": None,
-        "institution": "none", "withdrawable_from_age": None,
-        "expected_return": 0.0, "role": "unassigned", "role_target_amount": None,
+        "balances_minor": {"EUR": 112419, "USD": 23248},
         "liability_closing_day": None, "liability_payment_day": None,
         "liability_payment_month_offset": 0, "liability_payment_policy": "full",
         "liability_minimum_payment": None, "liability_fixed_payment_amount": None,
@@ -129,8 +127,7 @@ def test_single_currency_agrees_with_old_journal_sum(db, kind, currency):
 def test_post_update_and_delete_never_write_any_account_column(db):
     source = _account(db, "card", "liability")
     target = ledger.create_account(db, 1, {
-        "name": "bank", "account_type": "asset", "role": "defense", "role_target_amount": 600000,
-        "expected_return": 2.5,
+        "name": "bank", "account_type": "asset",
     })
     ledger.update_account(db, 1, source.id, {
         "liability_minimum_payment": 1000, "liability_fixed_payment_amount": 5000,
@@ -163,13 +160,12 @@ def test_post_update_and_delete_never_write_any_account_column(db):
 
 def test_export_omits_balance_and_a_v8_cache_still_imports(db):
     wallet, income = _account(db, "wallet"), _account(db, "income", "income")
-    ledger.update_account(db, 1, wallet.id, {"role_target_amount": 1200})
     _post(db, income, wallet, 112419, "EUR")
     _post(db, income, wallet, 23248, "USD")
     document = export_client(db, db.get(models.Client, 1))
     # R3 took the format to 13; what this test is about is that the balance
     # column is absent and that a v8 document carrying one is ignored.
-    assert document["version"] == 22
+    assert document["version"] == 26
     assert all("balance" not in row for row in document["data"]["accounts"])
     data = document["data"]
     for row in data["accounts"]:
@@ -181,7 +177,6 @@ def test_export_omits_balance_and_a_v8_cache_still_imports(db):
     db.commit()
     import_client(db, target, data=data, version=8, manifest=manifest)
     imported = db.query(models.Account).filter_by(client_id=2, name="wallet").one()
-    assert imported.role_target_amount_minor == 1200
     result = calculate_account_balances(db, [imported])[imported.id]
     assert result.balances_minor == {"EUR": 112419, "USD": 23248}
     assert result.balance == 0.0  # Missing rates cannot change exact holdings.
@@ -216,12 +211,15 @@ def _migration():
     return module
 
 
+LEGACY_SETTINGS = ("role_target_amount", *SETTINGS)
+
+
 def _old_database():
     metadata = sa.MetaData()
     clients = sa.Table("clients", metadata, sa.Column("id", sa.Integer, primary_key=True), sa.Column("general_settings", sa.JSON))
     accounts = sa.Table("accounts", metadata, sa.Column("id", sa.Integer, primary_key=True),
                         sa.Column("client_id", sa.Integer), sa.Column("account_type", sa.String),
-                        sa.Column("balance", sa.Float), *(sa.Column(name, sa.Float) for name in SETTINGS))
+                        sa.Column("balance", sa.Float), *(sa.Column(name, sa.Float) for name in LEGACY_SETTINGS))
     txs = sa.Table("transactions", metadata, sa.Column("id", sa.Integer, primary_key=True), sa.Column("currency", sa.String))
     entries = sa.Table("journal_entries", metadata, sa.Column("id", sa.Integer, primary_key=True),
                        sa.Column("account_id", sa.Integer), sa.Column("transaction_id", sa.Integer),
@@ -232,9 +230,9 @@ def _old_database():
         connection.execute(clients.insert(), [{"id": 1, "general_settings": {"currency": "JPY"}},
                                                {"id": 2, "general_settings": {"currency": "USD"}}])
         connection.execute(accounts.insert(), [
-            {"id": 1, "client_id": 1, "account_type": "asset", "balance": 9999, **dict.fromkeys(SETTINGS, 1200.0)},
-            {"id": 2, "client_id": 1, "account_type": "liability", "balance": 9999, **dict.fromkeys(SETTINGS, None)},
-            {"id": 3, "client_id": 2, "account_type": "asset", "balance": 9999, **dict.fromkeys(SETTINGS, 12.34)},
+            {"id": 1, "client_id": 1, "account_type": "asset", "balance": 9999, **dict.fromkeys(LEGACY_SETTINGS, 1200.0)},
+            {"id": 2, "client_id": 1, "account_type": "liability", "balance": 9999, **dict.fromkeys(LEGACY_SETTINGS, None)},
+            {"id": 3, "client_id": 2, "account_type": "asset", "balance": 9999, **dict.fromkeys(LEGACY_SETTINGS, 12.34)},
         ])
         connection.execute(txs.insert(), [{"id": 1, "currency": "JPY"}, {"id": 2, "currency": "JPY"},
                                          {"id": 3, "currency": "EUR"}, {"id": 4, "currency": "USD"}])
@@ -263,11 +261,11 @@ def test_migration_applied_reversed_and_recomputed(caplog):
     _run(engine, "upgrade")
     columns = {col["name"]: col for col in sa.inspect(engine).get_columns("accounts")}
     assert "balance" not in columns
-    assert all(name not in columns for name in SETTINGS)
-    assert all(isinstance(columns[f"{name}_minor"]["type"], sa.BigInteger) for name in SETTINGS)
+    assert all(name not in columns for name in LEGACY_SETTINGS)
+    assert all(isinstance(columns[f"{name}_minor"]["type"], sa.BigInteger) for name in LEGACY_SETTINGS)
     with engine.connect() as connection:
         rows = list(connection.execute(sa.text("SELECT * FROM accounts ORDER BY id")).mappings())
-    for name in SETTINGS:
+    for name in LEGACY_SETTINGS:
         assert [row[f"{name}_minor"] for row in rows] == [1200, None, 1234]
     # A downgrade must derive the current journal, not resurrect the pre-upgrade cache.
     with engine.begin() as connection:
@@ -282,7 +280,7 @@ def test_migration_applied_reversed_and_recomputed(caplog):
     assert rows[0]["balance"] == 850.0
     assert rows[1]["balance"] == pytest.approx(850 + 1124.19 + 232.48)
     assert rows[2]["balance"] == pytest.approx(1124.19 + 232.48)
-    for name in SETTINGS:
+    for name in LEGACY_SETTINGS:
         assert [row[name] for row in rows] == [1200.0, None, 12.34]
         assert f"{name}_minor" not in rows[0]
     print("Upgrade: settings JPY 1200 -> 1200, USD 12.34 -> 1234, NULL preserved; balance dropped")
@@ -319,15 +317,15 @@ def test_migration_unset_currency_all_null_succeeds_but_any_value_rolls_back():
         return columns, [dict(row) for row in rows]
 
     _run(engine, "upgrade")
-    assert all(snapshot()[1][-1][f"{name}_minor"] is None for name in SETTINGS)
+    assert all(snapshot()[1][-1][f"{name}_minor"] is None for name in LEGACY_SETTINGS)
     _run(engine, "downgrade")
-    assert all(snapshot()[1][-1][name] is None for name in SETTINGS)
+    assert all(snapshot()[1][-1][name] is None for name in LEGACY_SETTINGS)
 
     # Zero is still money: each setting alone must require a denomination.
     for direction, suffix in (("upgrade", ""), ("downgrade", "_minor")):
         if direction == "downgrade":
             _run(engine, "upgrade")
-        for name in SETTINGS:
+        for name in LEGACY_SETTINGS:
             column = f"{name}{suffix}"
             with engine.begin() as connection:
                 connection.execute(sa.text(f"UPDATE accounts SET {column} = 0 WHERE id = 4"))
@@ -338,5 +336,5 @@ def test_migration_unset_currency_all_null_succeeds_but_any_value_rolls_back():
             with engine.begin() as connection:
                 connection.execute(sa.text(f"UPDATE accounts SET {column} = NULL WHERE id = 4"))
     _run(engine, "downgrade")
-    assert all(snapshot()[1][-1][name] is None for name in SETTINGS)
+    assert all(snapshot()[1][-1][name] is None for name in LEGACY_SETTINGS)
     engine.dispose()

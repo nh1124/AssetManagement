@@ -56,7 +56,7 @@ AI_CONTEXT_CATALOG: tuple[AiContextResourceDescriptor, ...] = (
         classification="sensitive",
         available=True,
         risk="low",
-        includes=("account_id", "name", "type", "balance", "role"),
+        includes=("account_id", "name", "type", "balance"),
         excludes=SECRET_EXCLUDES,
         default_limit=200,
     ),
@@ -82,17 +82,7 @@ AI_CONTEXT_CATALOG: tuple[AiContextResourceDescriptor, ...] = (
         excludes=SECRET_EXCLUDES,
         default_limit=200,
     ),
-    AiContextResourceDescriptor(
-        resource="recurring_transactions",
-        title="Recurring transactions",
-        description="Active recurring transaction definitions.",
-        classification="sensitive",
-        available=True,
-        risk="low",
-        includes=("name", "amount", "frequency", "next_due_date", "account_refs"),
-        excludes=SECRET_EXCLUDES,
-        default_limit=100,
-    ),
+
     AiContextResourceDescriptor(
         resource="goals",
         title="Life events and goals",
@@ -116,13 +106,13 @@ AI_CONTEXT_CATALOG: tuple[AiContextResourceDescriptor, ...] = (
         default_limit=100,
     ),
     AiContextResourceDescriptor(
-        resource="registry_entries",
-        title="Registry entries",
-        description="Recurring cash-flow assumptions and budget registry entries.",
+        resource="auto_transactions",
+        title="Automatic transactions",
+        description="Automatic posting schedules and budget settings.",
         classification="sensitive",
         available=True,
         risk="low",
-        includes=("name", "entry_type", "amount", "frequency", "line_type", "budget_treatment"),
+        includes=("name", "kind", "amount", "repeat_mode", "frequency", "start_date", "end_date", "next_due_date", "budget_active"),
         excludes=SECRET_EXCLUDES,
         default_limit=100,
     ),
@@ -203,10 +193,9 @@ def get_context_resource(
         "accounts": lambda: _accounts(db, client_id, effective_limit),
         "transactions_recent": lambda: _transactions_recent(db, client_id, effective_limit),
         "monthly_plan": lambda: _monthly_plan(db, client_id, period, effective_limit),
-        "recurring_transactions": lambda: _recurring_transactions(db, client_id, effective_limit),
         "goals": lambda: _goals(db, client_id, effective_limit),
         "products": lambda: _products(db, client_id, effective_limit),
-        "registry_entries": lambda: _registry_entries(db, client_id, effective_limit),
+        "auto_transactions": lambda: _registry_entries(db, client_id, effective_limit),
         "settings": lambda: _settings_payload(_get_client(db, client_id)),
         "audit_logs": lambda: _audit_logs(db, client_id, effective_limit),
     }
@@ -283,7 +272,6 @@ def _account_ref(account: models.Account | None) -> dict[str, Any] | None:
         "id": account.id,
         "name": account.name,
         "account_type": account.account_type,
-        "role": account.role,
     }
 
 
@@ -301,10 +289,6 @@ def _accounts(db: Session, client_id: int, limit: int) -> dict[str, Any]:
                 "account_type": account.account_type,
                 "balance": balances[account.id],
                 "currency": None,
-                "parent_id": account.parent_id,
-                "expected_return": account.expected_return,
-                "role": account.role,
-                "role_target_amount": account.role_target_amount,
                 "is_active": account.is_active,
             }
             for account in rows
@@ -366,33 +350,6 @@ def _monthly_plan(db: Session, client_id: int, period: str | None, limit: int) -
     }
 
 
-def _recurring_transactions(db: Session, client_id: int, limit: int) -> dict[str, Any]:
-    rows = db.query(models.RecurringTransaction).filter(
-        models.RecurringTransaction.client_id == client_id,
-        models.RecurringTransaction.is_active.is_(True),
-    ).order_by(models.RecurringTransaction.next_due_date, models.RecurringTransaction.id).limit(limit).all()
-    return {
-        "count": len(rows),
-        "recurring_transactions": [
-            {
-                "id": row.id,
-                "name": row.name,
-                "amount": row.amount,
-                "currency": row.currency,
-                "frequency": row.frequency,
-                "day_of_month": row.day_of_month,
-                "month_of_year": row.month_of_year,
-                "next_due_date": _iso(row.next_due_date),
-                "start_period": row.start_period,
-                "end_period": row.end_period,
-                "auto_post": row.auto_post,
-                "from_account": _account_ref(row.from_account),
-                "to_account": _account_ref(row.to_account),
-            }
-            for row in rows
-        ],
-    }
-
 
 def _goals(db: Session, client_id: int, limit: int) -> dict[str, Any]:
     rows = goal_events_query(db, client_id).order_by(models.LifeEvent.target_date, models.LifeEvent.id).limit(limit).all()
@@ -402,15 +359,11 @@ def _goals(db: Session, client_id: int, limit: int) -> dict[str, Any]:
             {
                 "id": row.id,
                 "name": row.name,
-                "start_date": _iso(row.start_date),
                 "target_date": _iso(row.target_date),
                 "target_amount": row.target_amount,
                 "direction": row.direction,
                 "account_id": row.account_id,
                 "priority": row.priority,
-                "active_plan_basis": row.active_plan_basis,
-                "active_plan_label": row.active_plan_label,
-                "plan_status_override": row.plan_status_override,
             }
             for row in rows
         ],
@@ -444,34 +397,11 @@ def _products(db: Session, client_id: int, limit: int) -> dict[str, Any]:
 
 
 def _registry_entries(db: Session, client_id: int, limit: int) -> dict[str, Any]:
-    rows = db.query(models.RegistryEntry).filter(
-        models.RegistryEntry.client_id == client_id,
-        models.RegistryEntry.is_active.is_(True),
-    ).order_by(models.RegistryEntry.name).limit(limit).all()
-    return {
-        "count": len(rows),
-        "registry_entries": [
-            {
-                "id": row.id,
-                "name": row.name,
-                "entry_type": row.entry_type,
-                "category": row.category,
-                "amount": row.amount,
-                "currency": row.currency,
-                "frequency": row.frequency,
-                "day_of_month": row.day_of_month,
-                "line_type": row.line_type,
-                "budget_treatment": row.budget_treatment,
-                "budget_active": row.budget_active,
-                "start_period": row.start_period,
-                "end_period": row.end_period,
-                "budget_account": _account_ref(row.budget_account),
-                "source_account": _account_ref(row.source_account),
-                "destination_account": _account_ref(row.destination_account),
-            }
-            for row in rows
-        ],
-    }
+    rows = db.query(models.RegistryEntry).filter(models.RegistryEntry.client_id == client_id).order_by(models.RegistryEntry.id).limit(limit).all()
+    fields = ("id", "name", "kind", "amount", "currency", "repeat_mode", "frequency", "frequency_days", "day_of_month", "month_of_year", "start_date", "end_date", "repeat_count", "next_due_date", "budget_active", "is_active", "note")
+    return {"count": len(rows), "auto_transactions": [{**{key: _iso(getattr(row, key)) for key in fields},
+            "budget_account": _account_ref(row.budget_account), "source_account": _account_ref(row.source_account),
+            "destination_account": _account_ref(row.destination_account)} for row in rows]}
 
 
 def _audit_logs(db: Session, client_id: int, limit: int) -> dict[str, Any]:

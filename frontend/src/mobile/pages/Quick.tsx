@@ -89,7 +89,7 @@ export default function MobileQuickPage() {
         try {
             const [summaryData, plData, accountData, txData] = await Promise.all([
                 getAnalysisSummary(),
-                getProfitLoss(undefined, undefined, false, monthStartIso(), todayIso()),
+                getProfitLoss(undefined, undefined, monthStartIso(), todayIso()),
                 getAccounts(),
                 getTransactionsPage({ limit: 6, offset: 0 }),
             ]);

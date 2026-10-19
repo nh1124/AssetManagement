@@ -4,7 +4,7 @@ import AccountEarmarks from './AccountEarmarks';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useClient } from '../../../context/ClientContext';
 import { getAccountFlows, getAccounts, updateAccount } from '../../../api';
-import type { Account, AccountRole } from '../../../types';
+import type { Account } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import { clientToday } from '../../datetime';
 import { assetErrorMessage, useResource as useAssetData } from '../../useResource';
@@ -12,30 +12,17 @@ import AccountEditor from '../db/AccountEditor';
 import { ActiveSwitch, Feedback } from '../db/Database';
 import { buttonClass, useMutation } from '../db/forms';
 
-// Item accounts are returned by the API but omitted by the shared legacy type.
-type AssetAccount = Omit<Account, 'account_type'> & {
-    account_type: Account['account_type'] | 'item';
-};
-
-const ACCOUNT_TYPES: Array<{ value: AssetAccount['account_type']; label: string }> = [
+const ACCOUNT_TYPES: Array<{ value: Account['account_type']; label: string }> = [
     { value: 'asset', label: '資産' },
     { value: 'liability', label: '負債' },
     { value: 'income', label: '収入' },
     { value: 'expense', label: '費用' },
-    { value: 'item', label: '物品' },
 ];
-const ROLE_LABELS: Record<AccountRole, string> = {
-    defense: '生活防衛',
-    growth: '資産形成',
-    earmarked: '用途確保',
-    operating: '日常運用',
-    unassigned: '未設定',
-};
 
-async function loadAccounts(): Promise<AssetAccount[]> {
+async function loadAccounts(): Promise<Account[]> {
     // The endpoint filters by one state, so archived accounts need their own request.
     const [active, inactive] = await Promise.all([getAccounts(undefined, true), getAccounts(undefined, false)]);
-    const byId = new Map<number, AssetAccount>();
+    const byId = new Map<number, Account>();
     for (const account of [...inactive, ...active]) byId.set(account.id, account);
     return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name, 'ja'));
 }
@@ -43,7 +30,7 @@ async function loadAccounts(): Promise<AssetAccount[]> {
 const noFlows = async (): Promise<Map<number, number>> => new Map();
 
 function AccountDetails({ account, accounts, disabled, onPosted }: {
-    account: AssetAccount; accounts: AssetAccount[]; disabled: boolean; onPosted: () => void;
+    account: Account; accounts: Account[]; disabled: boolean; onPosted: () => void;
 }) {
     const [reconciling, setReconciling] = useState(false);
     const [earmarkRevision, setEarmarkRevision] = useState(0);
@@ -72,7 +59,7 @@ function AccountsForClient({ subjects, currency, timezone }: { subjects: boolean
         return new Map(flows.accounts.map((row) => [row.account_id, row.normal_balance_delta]));
     }, [month]);
     const thisMonth = useAssetData(subjects ? loadMonth : noFlows);
-    const [selectedAccount, setSelectedAccount] = useState<AssetAccount | null>(null);
+    const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
     const [creating, setCreating] = useState(false);
     const creation = useMutation();
     const [updatingId, setUpdatingId] = useState<number | null>(null);
@@ -82,9 +69,8 @@ function AccountsForClient({ subjects, currency, timezone }: { subjects: boolean
     const mounted = useRef(false);
     const types = ACCOUNT_TYPES.filter((type) => subjects
         ? ['income', 'expense'].includes(type.value)
-        : ['asset', 'liability', 'item'].includes(type.value));
+        : ['asset', 'liability'].includes(type.value));
     const visibleAccounts = accounts?.filter((account) => types.some((type) => type.value === account.account_type));
-    const columnCount = subjects ? 3 : 4;
     const disabled = loading || Boolean(error) || updatingId !== null || creation.busy;
 
     useEffect(() => {
@@ -92,7 +78,7 @@ function AccountsForClient({ subjects, currency, timezone }: { subjects: boolean
         return () => { mounted.current = false; };
     }, []);
 
-    const toggleAccount = async (account: AssetAccount) => {
+    const toggleAccount = async (account: Account) => {
         if (updateInFlight.current || loading || error) return;
         updateInFlight.current = true;
         setUpdatingId(account.id);
@@ -130,14 +116,14 @@ function AccountsForClient({ subjects, currency, timezone }: { subjects: boolean
                 <div className="overflow-x-auto rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)]">
                     <table className="w-full text-left text-sm" aria-busy={loading || updatingId !== null}>
                         <thead className="border-b border-[var(--studio-border)] text-xs text-[var(--studio-text-muted)]">
-                            <tr><th scope="col" className="px-5 py-3 font-medium">名称</th>{subjects && <th scope="col" className="px-5 py-3 text-right font-medium">今月</th>}{!subjects && <th scope="col" className="px-5 py-3 text-right font-medium">残高</th>}{!subjects && <th scope="col" className="px-5 py-3 font-medium">役割</th>}<th scope="col" className="px-5 py-3 font-medium">状態</th></tr>
+                            <tr><th scope="col" className="px-5 py-3 font-medium">名称</th>{subjects && <th scope="col" className="px-5 py-3 text-right font-medium">今月</th>}{!subjects && <th scope="col" className="px-5 py-3 text-right font-medium">残高</th>}<th scope="col" className="px-5 py-3 font-medium">状態</th></tr>
                         </thead>
                         {types.map((type) => {
                             const rows = visibleAccounts.filter((account) => account.account_type === type.value);
                             if (!rows.length) return null;
                             return (
                                 <tbody key={type.value} className="divide-y divide-[var(--studio-border)]">
-                                    <tr className="bg-[var(--studio-bg)]"><th scope="rowgroup" colSpan={columnCount} className="px-5 py-2 text-xs font-medium text-[var(--studio-text-muted)]">{type.label}</th></tr>
+                                    <tr className="bg-[var(--studio-bg)]"><th scope="rowgroup" colSpan={3} className="px-5 py-2 text-xs font-medium text-[var(--studio-text-muted)]">{type.label}</th></tr>
                                     {rows.map((account) => (
                                         <tr key={account.id} onClick={() => { if (account.account_type === 'asset' && !disabled) setSelectedAccount(account); }} className={`${account.is_active ? '' : 'opacity-50'} ${account.account_type === 'asset' && !disabled ? 'cursor-pointer hover:bg-[var(--studio-accent-soft)] focus-within:bg-[var(--studio-accent-soft)]' : ''}`}>
                                             <th scope="row" className="px-5 py-3 font-medium">{account.account_type === 'asset' ? <button type="button" disabled={disabled} aria-haspopup="dialog" aria-label={`${account.name}を開く`} onClick={(event) => { event.stopPropagation(); setSelectedAccount(account); }} className="rounded text-left hover:text-[var(--studio-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)] disabled:opacity-40">
@@ -146,7 +132,6 @@ function AccountsForClient({ subjects, currency, timezone }: { subjects: boolean
                                             {/* A subject's total since its first entry is not a balance to reconcile. */}
                                             {subjects && <td className="whitespace-nowrap px-5 py-3 text-right tabular-nums">{thisMonth.data?.has(account.id) ? formatCurrency(thisMonth.data.get(account.id) ?? 0, currency) : '—'}</td>}
                                             {!subjects && <td className="whitespace-nowrap px-5 py-3 text-right tabular-nums">{formatCurrency(account.balance, currency)}</td>}
-                                            {!subjects && <td className="whitespace-nowrap px-5 py-3 text-[var(--studio-text-muted)]">{ROLE_LABELS[account.role] ?? '未設定'}</td>}
                                             <td className="px-5 py-3">
                                                 <ActiveSwitch name={account.name} active={account.is_active} disabled={disabled} busy={updatingId === account.id} onToggle={() => void toggleAccount(account)} />
                                             </td>
@@ -163,7 +148,7 @@ function AccountsForClient({ subjects, currency, timezone }: { subjects: boolean
             </Overlay>}
             {creating && accounts && <Overlay title="口座を作成" onClose={() => setCreating(false)}>
                 <Feedback error={creation.error} />
-                <AccountEditor account={null} accounts={accounts} currency={currency} busy={disabled} onCancel={() => setCreating(false)} onSave={(action) => void creation.run(action, '口座を作成しました。', () => { setCreating(false); reloadAccounts(); })} />
+                <AccountEditor account={null} currency={currency} busy={disabled} onCancel={() => setCreating(false)} onSave={(action) => void creation.run(action, '口座を作成しました。', () => { setCreating(false); reloadAccounts(); })} />
             </Overlay>}
         </section>
     );

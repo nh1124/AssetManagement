@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from .money import Money
 
 
-DEBIT_NORMAL_TYPES = {"asset", "expense", "item"}
+DEBIT_NORMAL_TYPES = {"asset", "expense"}
 # This compares integer journal legs, not the float account cache retained until B5.
 BALANCE_TOLERANCE = 0
 

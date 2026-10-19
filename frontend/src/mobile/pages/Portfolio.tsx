@@ -61,17 +61,8 @@ export default function MobilePortfolioPage() {
             .slice(0, 5);
     }, [balanceSheet]);
 
-    const roleTotals = useMemo(() => {
-        const totals = new Map<string, number>();
-        accounts
-            .filter((account) => account.account_type === 'asset')
-            .forEach((account) => {
-                totals.set(account.role, (totals.get(account.role) ?? 0) + Number(account.balance || 0));
-            });
-        return Array.from(totals.entries())
-            .map(([role, balance]) => ({ name: role, balance }))
-            .sort((a, b) => Math.abs(b.balance) - Math.abs(a.balance));
-    }, [accounts]);
+    const assetTotals = useMemo(() => accounts.filter((account) => account.account_type === 'asset')
+        .map(({ name, balance }) => ({ name, balance })), [accounts]);
 
     const pieItems = useMemo(() => {
         const positiveAssets = topAssets.filter((item) => item.balance > 0);
@@ -118,7 +109,7 @@ export default function MobilePortfolioPage() {
 
             <PortfolioList title="Assets" items={topAssets} currency={currentCurrency} empty="No asset balances yet." />
             <PortfolioList title="Liabilities" items={topLiabilities} currency={currentCurrency} empty="No liabilities." />
-            <PortfolioList title="Roles" items={roleTotals} currency={currentCurrency} empty="No role totals yet." />
+            <PortfolioList title="口座残高" items={assetTotals} currency={currentCurrency} empty="口座はありません。" />
         </div>
     );
 }

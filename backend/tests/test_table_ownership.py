@@ -21,7 +21,6 @@ OWNERS: dict[str, str] = {
     "transaction_proposals": "services/ledger_service",
     "transaction_batches": "services/transaction_batch_service",
     "registry_entries": "services/registry_service",
-    "recurring_transactions": "services/registry_service",
     "budget_plans": "services/budget_plan_store",
     "monthly_plan_lines": "services/budget_plan_store",
     "monthly_actions": "services/monthly_action_store",
@@ -35,17 +34,16 @@ OWNERS: dict[str, str] = {
     "life_event_conditions": "services/life_event_conditions",
     "household_members": "services/household_service",
     "life_scenarios": "services/life_scenario_service",
-    "life_scenario_account_returns": "services/life_scenario_service",
-    "goal_baselines": "services/goal_baseline_service",
+    "scenario_contribution_plans": "services/contribution_plan_service",
+    "goal_event_earmarks": "services/goal_earmark_service",
     "goal_budget_reflections": "services/goal_budget_record",
     "notifications": "services/notification_service",
     "life_event_links": "services/life_event_graph",
-    "milestones": "services/milestone_service",
     "simulation_configs": "services/simulation_config_service",
-    "simulation_scenarios": "services/simulation_scenario_service",
     "products": "services/product_service",
     "product_depreciations": "services/depreciation_service",
     "exchange_rates": "services/fx_service",
+    "fx_tracked_currencies": "services/fx_service",
     "ai_change_requests": "services/ai_change_request_store",
     "ai_audit_logs": "services/ai_policy_service",
     "ai_operation_policies": "services/ai_policy_service",
@@ -63,14 +61,8 @@ WHOLE_DATABASE = "services/data_transfer_service"
 # each line is a boundary the redesign intends to close, and the test above fails
 # if a new one appears. The reason says what would have to change to remove it.
 ALLOWED: dict[str, dict[str, str]] = {
-    "capsules": {
-        "services/product_reserve_service": "a product reserve creates its own capsule",
-    },
     "clients": {
         "main": "development seeding of the default client at startup",
-    },
-    "monthly_actions": {
-        "services/report_service": "the monthly report proposes actions",
     },
 }
 

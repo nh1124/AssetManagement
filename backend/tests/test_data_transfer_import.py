@@ -57,12 +57,10 @@ def _seed(db, client_id=101, base=10000):
                 values[field] = STAMP
         money_names = {
             "monthly_plan_lines": ("amount",), "life_events": ("target_amount",),
-            "milestones": ("target_amount",), "capsules": ("target_amount", "monthly_contribution"),
+            "capsules": ("target_amount", "monthly_contribution"),
             "monthly_actions": ("amount",),
             "capsule_funding_sources": ("target_amount",),
-            "products": ("last_unit_price", "purchase_price"), "simulation_configs": ("monthly_savings",),
-            "simulation_scenarios": ("monthly_savings",), "life_scenarios": ("monthly_savings",), "registry_entries": ("amount",),
-            "recurring_transactions": ("amount",),
+            "products": ("last_unit_price", "purchase_price"), "registry_entries": ("amount",),
         }
         if model.__tablename__ == "capsule_rules":
             values = rule_data(values, "JPY")
@@ -76,29 +74,25 @@ def _seed(db, client_id=101, base=10000):
 
     add(models.PeriodClose, 30, period="2026-10", closed_at=STAMP, note="reviewed")
     parent = add(models.Account, 1, name="assets", account_type="asset")
-    cash = add(models.Account, 2, name="cash", account_type="asset",  parent_id=parent.id)
+    cash = add(models.Account, 2, name="cash", account_type="asset")
     expense = add(models.Account, 3, name="food", account_type="expense")
-    scenario = add(models.LifeScenario, 36, name="保存案", annual_return=7.0, inflation=1.0, horizon_years=12, monthly_savings=30000, is_goal=True)
+    scenario = add(models.LifeScenario, 36, name="保存案", annual_return=7.0, inflation=1.0, horizon_years=12, is_goal=True)
     db.flush()
-    goal = add(models.LifeEvent, 4, scenario_id=scenario.id, name="goal", start_date=date(2026, 10, 1),
-               target_date=date(2027, 1, 1), target_amount=1000, note="goal note", archived_at=STAMP)
+    goal = add(models.LifeEvent, 4, scenario_id=scenario.id, name="goal",
+               target_date=date(2027, 1, 1), target_amount=1000, note="goal note")
     next_goal = add(models.LifeEvent, 31, scenario_id=scenario.id, name="next", target_date=date(2028, 1, 1), target_amount=500)
     add(models.LifeEventLink, 32, from_event_id=goal.id, to_event_id=next_goal.id,
         kind="after", offset_months=12, note="graph note")
-    add(models.LifeScenarioAccountReturn, 38, scenario_id=scenario.id, account_id=cash.id, annual_return=3.0)
-    add(models.GoalBaseline, 40, scenario_id=scenario.id, scenario_name="保存案", reason="adopted",
-        anchor_date=date(2026, 10, 1), is_current=True, assumptions={"annual_return": 7.0},
-        projection=[{"offset": 0, "year": 2026, "p10": 1, "p50": 2, "p90": 3}], events=[{"name": "基準"}])
+    add(models.ScenarioContributionPlan, 38, scenario_id=scenario.id, account_id=cash.id, start_period="2026-10",
+        monthly_amount_minor=30000, annual_return=3.0, note="plan note")
     # Not in the backup, but present so rollback is proven to leave it alone too.
     add(models.Notification, 42, kind="goal_reflection", dedupe_key=f"goal_reflection:{base}", title="t", body="", payload={}, status="open")
     add(models.GoalBudgetReflection, 41, scenario_id=scenario.id, applied_at=STAMP, start_period="2026-10",
-        end_period="2026-10", options={"months": 1}, summary={"chosen_amount": 5}, events=[{"lineage": "x", "allocation": 5}])
-    capsule = add(models.Capsule, 5, name="goal", life_event_id=goal.id,
-                  target_amount=1000, monthly_contribution=10,
-                  capsule_type="life_event", target_amount_source="life_event")
-    add(models.Capsule, 33, name="next", life_event_id=next_goal.id,
-        target_amount=500, monthly_contribution=0,
-        capsule_type="life_event", target_amount_source="life_event")
+        end_period="2026-10", summary={"months": [{"period": "2026-10"}]})
+    capsule = add(models.Capsule, 5, name="goal", target_amount=1000, monthly_contribution=10)
+    next_capsule = add(models.Capsule, 33, name="next", target_amount=500, monthly_contribution=0)
+    add(models.GoalEventEarmark, 37, life_event_id=goal.id, capsule_id=capsule.id, share_bp=10000)
+    add(models.GoalEventEarmark, 39, life_event_id=next_goal.id, capsule_id=next_capsule.id, share_bp=5000)
     member = add(models.HouseholdMember, 34, name="子", relation="長女", birth_date=date(2010, 4, 1))
     add(models.LifeEventCondition, 35, life_event_id=goal.id, metric="member_age", comparator="gte",
         threshold_number=18, reference_id=member.id, note="入学")
@@ -112,18 +106,13 @@ def _seed(db, client_id=101, base=10000):
                   depreciation_expense_account_id=expense.id,
                   depreciation_asset_account_id=cash.id)
     add(models.SimulationConfig, 7, user_id=client.id)
-    registry = add(models.RegistryEntry, 8, name="food", amount=100, line_type="expense",
+    registry = add(models.RegistryEntry, 8, name="food", amount=100, kind="expense", frequency="Monthly", repeat_mode="indefinite", start_date=date(2026, 1, 1), next_due_date=date(2026, 10, 31),
                    budget_account_id=expense.id, source_account_id=cash.id,
-                   destination_account_id=expense.id, funding_capsule_id=capsule.id,
-                   source_product_id=product.id, generate_recurring=True, note="registry note")
-    recurring = add(models.RecurringTransaction, 9, name="food", amount=100, frequency="Monthly",
-                    from_account_id=cash.id, to_account_id=expense.id,
-                    source_registry_entry_id=registry.id, next_due_date=date(2026, 10, 31))
-    registry.source_recurring_transaction_id = recurring.id
+                   destination_account_id=expense.id, note="registry note")
     batch = add(models.TransactionBatch, 11, label="batch",
                 input_payload={"nested": {"account_id": cash.id, "life_event_id": goal.id}})
     tx = add(models.Transaction, 12, date=date(2026, 10, 2), description="food", amount_minor=100,
-             batch_id=batch.id, recurring_transaction_id=recurring.id)
+             batch_id=batch.id, registry_entry_id=registry.id)
     add(models.JournalEntry, 13, transaction_id=tx.id, account_id=expense.id,
         debit_minor=100, credit_minor=0, memo="debit", sort_order=0)
     add(models.JournalEntry, 14, transaction_id=tx.id, account_id=cash.id,
@@ -140,25 +129,18 @@ def _seed(db, client_id=101, base=10000):
                                         expense.id, cash.id, expense.id, "", "auto"], separators=(",", ":")))
     add(models.PeriodReview, 17, start_date=date(2026, 10, 1), end_date=date(2026, 11, 1),
         label="October", reflection="reflection", next_actions="actions")
-    milestone = add(models.Milestone, 18, life_event_id=goal.id, date=date(2027, 1, 1),
-                    target_amount=1000, note="milestone",
-                    source_snapshot={"nested": {"account_id": cash.id}})
     add(models.CapsuleRule, 19, capsule_id=capsule.id, trigger_type="Expense",
         source_account_id=cash.id, destination_account_id=cash.id, amount_value=10)
     add(models.CapsuleFundingSource, 24, client_id=client.id, capsule_id=capsule.id,
         account_id=cash.id, target_amount=250, max_share_bp=6000, sort_order=3)
-    add(models.SimulationScenario, 21, life_event_id=goal.id, name="scenario",
-        annual_return=5, inflation=2, monthly_savings=10,
-        contribution_schedule=[{"period": "2026-10", "amount": 10, "account_id": cash.id}])
     add(models.ExchangeRate, 22, base_currency="USD", quote_currency="JPY", rate=150,
         as_of_date=date(2026, 10, 1))
     add(models.MonthlyAction, 23, source_period="2026-10", target_period="2026-11",
-        proposal_id="allocation", kind="boost_allocation", description="allocation",
-        target_id=goal.id, idempotency_key="allocation", amount=10,
+        proposal_id="allocation", kind="change_capsule_contribution", description="allocation",
+        target_id=capsule.id, idempotency_key="allocation", amount=10,
         payload={"nested": [{"account_id": cash.id, "life_event_id": goal.id,
                              "capsule_id": capsule.id, "product_id": product.id,
-                             "recurring_id": recurring.id, "plan_id": plan.id,
-                             "plan_line_id": line.id, "milestone_id": milestone.id}]},
+                             "plan_line_id": line.id}]},
         result={"nested": {"transaction_id": tx.id, "batch_id": batch.id}}, status="applied", applied_at=STAMP)
     # Tables outside the backup format must survive a failed restore too,
     # including proposal links that a transaction deletion sets to NULL.
@@ -172,6 +154,9 @@ def _seed(db, client_id=101, base=10000):
         risk="critical", decision="allowed", request_summary={"marker": "audit"})
     add(models.AiChangeRequest, 29, source="test", resource="transactions", action="create",
         risk="low", idempotency_key="change-request", target_ref={"account_id": cash.id})
+    tracked = models.FxTrackedCurrency(client_id=client_id, currency="USD", created_at=STAMP)
+    db.add(tracked)
+    rows["fx_tracked_currencies"] = [tracked]
     db.commit()
     return client, rows
 
@@ -190,15 +175,13 @@ def _restore(db, client, document):
 
 REFERENCES = {
     "scenario_id": "life_scenarios", "link_id": "life_event_links",
-    "parent_id": "accounts", "account_id": "accounts", "from_account_id": "accounts",
+    "account_id": "accounts", "from_account_id": "accounts",
     "to_account_id": "accounts", "source_account_id": "accounts", "destination_account_id": "accounts",
     "budget_account_id": "accounts",
-    "source_product_id": "products", "product_id": "products", "source_registry_entry_id": "registry_entries",
-    "source_recurring_transaction_id": "recurring_transactions", "recurring_transaction_id": "recurring_transactions",
-    "recurring_id": "recurring_transactions", "batch_id": "transaction_batches",
+    "product_id": "products", "registry_entry_id": "registry_entries", "batch_id": "transaction_batches",
     "from_event_id": "life_events", "to_event_id": "life_events",
     "life_event_id": "life_events", "transaction_id": "transactions", "plan_id": "budget_plans",
-    "plan_line_id": "monthly_plan_lines", "milestone_id": "milestones", "capsule_id": "capsules",
+    "plan_line_id": "monthly_plan_lines", "capsule_id": "capsules",
     "funding_capsule_id": "capsules",
     "depreciation_expense_account_id": "accounts",
     "depreciation_asset_account_id": "accounts",
@@ -224,7 +207,7 @@ def test_round_trip_preserves_every_collection_and_document(db):
     target = _client(db, 202)
     original = export_client(db, source)
     assert list(original["data"]) == DATA_COLLECTIONS
-    assert all(original["data"].values())
+    assert all(value for key, value in original["data"].items() if key != "fx_tracked_currencies")
     result = _restore(db, target, original)
     restored = export_client(db, target)
     assert result["status"] == "ok"
@@ -232,13 +215,14 @@ def test_round_trip_preserves_every_collection_and_document(db):
     assert result["validation"]["error_count"] == result["validation"]["warning_count"] == 0
 
     maps = {
-        collection: {old["id"]: new["id"] for old, new in zip(old_rows, restored["data"][collection], strict=True)}
+        collection: {old["id"]: new["id"] for old, new in zip(old_rows, restored["data"][collection], strict=True) if "id" in old}
         for collection, old_rows in original["data"].items()
     }
     expected = copy.deepcopy(original)
     for collection, items in expected["data"].items():
         for item in items:
-            item["id"] = maps[collection][item["id"]]
+            if "id" in item:
+                item["id"] = maps[collection][item["id"]]
             for field, referenced_collection in REFERENCES.items():
                 if item.get(field) is not None:
                     item[field] = maps[referenced_collection][item[field]]
@@ -252,21 +236,14 @@ def test_round_trip_preserves_every_collection_and_document(db):
                     identity[index] = maps["accounts"][identity[index]]
                 item["identity_key"] = json.dumps(identity, separators=(",", ":"))
             if collection == "monthly_actions":
-                item["target_id"] = maps["life_events"][item["target_id"]]
+                item["target_id"] = maps["capsules"][item["target_id"]]
                 for field, old_id in item["payload"]["nested"][0].items():
                     item["payload"]["nested"][0][field] = maps[REFERENCES[field]][old_id]
                 for field, old_id in item["result"]["nested"].items():
                     item["result"]["nested"][field] = maps[REFERENCES[field]][old_id]
 
-    # Reconnecting the registry's recurring and capsule links triggers the
-    # existing ORM onupdate timestamp; this is not an import-time rewrite.
-    # It fires on whichever side the flush happens to touch, so comparing the
-    # two exports against each other is a race -- it failed about once in five
-    # full runs. Both are bounded below by the seeded stamp, which is what
-    # actually says the timestamp was not zeroed or moved backwards.
-    new_registry = restored["data"]["registry_entries"][0]
-    assert datetime.fromisoformat(new_registry["updated_at"]) >= STAMP
-    expected["data"]["registry_entries"][0]["updated_at"] = new_registry["updated_at"]
+
+
     # Restore targets the authenticated client and never restores its identity
     # or settings. Hashes necessarily change with remapped IDs and timestamps.
     assert restored["client"] == {
@@ -298,9 +275,7 @@ def test_round_trip_preserves_every_collection_and_document(db):
     assert restored == expected
     # These JSON fields are opaque in the established format, unlike action
     # payload/result. Their embedded source IDs must remain byte-for-byte.
-    for collection, field in (("transaction_batches", "input_payload"),
-                              ("milestones", "source_snapshot"), ("simulation_scenarios", "contribution_schedule")):
-        assert restored["data"][collection][0][field] == original["data"][collection][0][field]
+    assert restored["data"]["transaction_batches"][0]["input_payload"] == original["data"]["transaction_batches"][0]["input_payload"]
 
 
 def test_an_older_backup_with_quick_templates_still_restores(db):
@@ -341,7 +316,7 @@ def test_journal_failure_after_deletion_preserves_every_table_byte_for_byte(db):
     document["data"]["journal_entries"][0]["account_id"] = str(document["data"]["journal_entries"][0]["account_id"])
     assert validate_import_payload(document["data"], document["version"], document["manifest"])["error_count"] == 0
     before = _table_bytes(db)
-    assert all(json.loads(value) for value in before.values())
+    assert all(json.loads(value) for name, value in before.items() if name != "fx_tracked_currencies")
     with pytest.raises(Invalid) as caught:
         _restore(db, client, document)
     assert str(caught.value).startswith("Import failed: Transaction ")
@@ -383,11 +358,17 @@ def test_colliding_ids_are_remapped_without_touching_the_other_client(db):
     restored = export_client(db, target)
     for collection in DATA_COLLECTIONS:
         assert len(restored["data"][collection]) == len(document["data"][collection])
+        if collection == "fx_tracked_currencies":
+            assert restored["data"][collection] == document["data"][collection]
+            continue
         assert {row["id"] for row in restored["data"][collection]}.isdisjoint(
             row["id"] for row in document["data"][collection]
         ), collection
     after = {name: json.loads(value) for name, value in _table_bytes(db).items()}
     for table, original_rows in before.items():
+        if table == "fx_tracked_currencies":
+            assert all(row in after[table] for row in original_rows)
+            continue
         by_id = {row["id"]: row for row in after[table]}
         assert [by_id[row["id"]] for row in original_rows] == original_rows, table
     assert export_client(db, other)["data"] == document["data"]

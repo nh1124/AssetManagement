@@ -38,6 +38,7 @@ def _rule_to_dict(rule: models.CapsuleRule) -> dict:
         "trigger_type": rule.trigger_type,
         "trigger_category": rule.trigger_category,
         "trigger_description": rule.trigger_description,
+        "trigger_account_id": rule.trigger_account_id,
         "source_mode": rule.source_mode,
         "source_account_id": rule.source_account_id,
         "destination_account_id": rule.destination_account_id,
@@ -187,15 +188,6 @@ def process_monthly_contributions(
         "total_added": 0.0,
     }
 
-
-@router.post("/life-events/{life_event_id}", response_model=schemas.Capsule)
-def create_goal_capsule(
-    life_event_id: int,
-    db: Session = Depends(database.get_db),
-    current_client: models.Client = Depends(dependencies.get_current_client),
-):
-    capsule = capsule_workflow.create_goal_capsule(db, current_client.id, life_event_id)
-    return capsule_to_dict(db, capsule)
 
 
 @router.get("/rules", response_model=List[schemas.CapsuleRule])

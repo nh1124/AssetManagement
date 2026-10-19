@@ -158,21 +158,24 @@ def test_recurring_transaction_change_request_apply() -> None:
     db = _session()
     try:
         client = _client(db)
+        cash = models.Account(client_id=client.id, name="cash", account_type="asset")
+        expense = models.Account(client_id=client.id, name="expense", account_type="expense")
+        db.add_all([cash, expense]); db.flush()
         request = create_change_request(
             db,
             client.id,
             client.id,
             schemas.AiChangeRequestCreate(
-                resource="recurring_transactions",
+                resource="auto_transactions",
                 action="create",
                 risk="medium",
                 input_payload={
-                    "name": "Rent",
+                    "name": "Rent", "source_account_id": cash.id, "destination_account_id": expense.id,
                     "amount": 100000,
                     "currency": "JPY",
                     "frequency": "Monthly",
                     "day_of_month": 25,
-                    "auto_post": True,
+                    "kind": "expense", "repeat_mode": "indefinite", "start_date": "2026-10-01",
                     "is_active": True,
                 },
             ),
@@ -181,8 +184,8 @@ def test_recurring_transaction_change_request_apply() -> None:
         applied = apply_change_request(db, client.id, client.id, request.id)
 
         assert applied.status == "applied"
-        assert applied.result["recurring_transaction_id"]
-        assert db.query(models.RecurringTransaction).filter(models.RecurringTransaction.client_id == client.id).count() == 1
+        assert applied.result["registry_entry_id"]
+        assert db.query(models.RegistryEntry).filter(models.RegistryEntry.client_id == client.id).count() == 1
     finally:
         db.close()
 

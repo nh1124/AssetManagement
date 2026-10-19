@@ -67,10 +67,10 @@ LINE_SIDE: dict[str, str] = {
 _LINE_ACCOUNT_TYPES: dict[str, set[str]] = {
     "income": {"income"},
     "expense": {"expense"},
-    "allocation": {"asset", "item"},
+    "allocation": {"asset"},
     "debt_payment": {"liability"},
     "borrowing": {"liability"},
-    "drawdown": {"asset", "item"},
+    "drawdown": {"asset"},
 }
 
 
@@ -294,11 +294,6 @@ def _cash_flow_line_account_id(
         return (capsule.funding_sources[0].account_id
                 if capsule and len(capsule.funding_sources) == 1 else None)
 
-    if target_type == "life_event" and target_id:
-        capsule = ctx.capsule_for_life_event(target_id)
-        return (capsule.funding_sources[0].account_id
-                if capsule and len(capsule.funding_sources) == 1 else None)
-
     return None
 
 
@@ -430,7 +425,7 @@ def _balance_movement_for_amount(
 
     if from_account is None or to_account is None:
         fallback = _fallback_line_flow(_line_attr(line, "line_type"), amount)
-        movement["operating"] += fallback["operating"]
+        movement["asset"] += fallback["asset"]
         if fallback["financing"] and from_bucket != "liability" and to_bucket != "liability":
             movement["liabilities"] += fallback["financing"]
 

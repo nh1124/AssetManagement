@@ -21,7 +21,6 @@ from .budget_lines import (
     _line_source_kind,
     _sum_actual,
     _sum_lines,
-    account_flow_bucket,
     plan_line_identity_key,
 )
 from .budget_plan_store import _deduplicate_active_plan_models, find_budget_plan_id
@@ -101,7 +100,6 @@ def _serialize_plan_line(
         "identity_key": line.identity_key or plan_line_identity_key(line),
         "manual_override": bool(line.manual_override),
         "cash_treatment": line.cash_treatment or "auto",
-        "recurring_transaction_id": None,
         "sync_status": None,
     }
 
@@ -142,7 +140,6 @@ def _virtual_capsule_line(
             "identity_key": "",
             "manual_override": False,
             "cash_treatment": "cash",
-            "recurring_transaction_id": None,
             "sync_status": None,
         }
         actual = actual_for_plan_line(ctx, line, period)
@@ -205,7 +202,7 @@ def _lists_account(line_type: str, account: models.Account) -> bool:
     if line_type in {"income", "expense"}:
         return account.account_type == line_type
     if line_type in {"allocation", "drawdown"}:
-        return account.account_type == "asset" and account_flow_bucket(account) != "operating"
+        return account.account_type == "asset"
     if line_type == "debt_payment":
         return account.account_type == "liability"
     if line_type == "borrowing":
@@ -256,37 +253,9 @@ def _unset_account_lines(ctx: BudgetContext, plan_lines: list[dict], period: str
     return lines
 
 
-def get_budget_summary(
-    db: Session,
-    client_id: int,
-    period: str,
-    plan_id: int | None = None,
-    cash_flow_start_period: str | None = None,
-    cash_flow_months: int = 12,
-    goal_metrics: dict | None = None,
-    include_unset: bool = False,
-) -> dict:
-    """Build the monthly cash-flow plan summary.
-
-    goal_metrics carries the goal-derived advisory figures (goals_count /
-    total_goal_gap / required_monthly_savings). The caller supplies them --
-    see strategy_service.summarize_goal_funding_gap -- so that planning never
-    depends on the goal domain.
-
-    include_unset adds unset_lines: the active accounts no plan line covers,
-    for the budget screen that lists every account (WP5).
-    """
-    ctx = BudgetContext(db, client_id)
-    plan_id = find_budget_plan_id(db, client_id, plan_id)
-
-    goal_metrics = goal_metrics or {}
-    goals_count = int(goal_metrics.get("goals_count") or 0)
-    total_gap = float(goal_metrics.get("total_goal_gap") or 0.0)
-    required_monthly_savings = float(goal_metrics.get("required_monthly_savings") or 0.0)
-
-    recurring = registry_totals(ctx, period)
-    capsule_by_life_event_id = ctx.capsule_by_life_event_id
-
+def _month_lines(ctx: BudgetContext, period: str, plan_id: int | None) -> list[dict]:
+    """The month's plan rows: saved rows, earmarks' and definitions' unsaved rows, card settlements."""
+    db, client_id = ctx.db, ctx.client_id
     plan_models = db.query(models.MonthlyPlanLine).filter(
         models.MonthlyPlanLine.client_id == client_id,
         models.MonthlyPlanLine.target_period == period,
@@ -295,27 +264,9 @@ def get_budget_summary(
     ).order_by(models.MonthlyPlanLine.line_type, models.MonthlyPlanLine.id).all() if plan_id is not None else []
     plan_models = _deduplicate_active_plan_models(db, plan_models)
     plan_lines = [_serialize_plan_line(ctx, line) for line in plan_models]
-    for line in plan_lines:
-        if line.get("line_type") == "allocation" and line.get("target_type") == "life_event":
-            capsule = capsule_by_life_event_id.get(line.get("target_id"))
-            if capsule:
-                line["target_type"] = "capsule"
-                line["target_id"] = capsule.id
-                if line.get("account_id") is None:
-                    sources = capsule.funding_sources
-                    if len(sources) == 1:
-                        line["account_id"] = sources[0].account_id
-                line["name"] = capsule.name
-                line["target_name"] = capsule.name
-                line["account_name"] = ctx.target_name_maps["account"].get(line["account_id"])
-                actual = actual_for_plan_line(ctx, line, period)
-                line["actual"] = round(actual, 0)
-                line["variance"] = round((line.get("amount") or 0.0) - actual, 0)
-
     # A stored capsule row predating the funding plan names no account, and the
     # virtual rows are now keyed by one, so without this it would be joined by a
-    # duplicate instead of standing for its capsule. 250 such rows exist in this
-    # database; the loop above only reaches the ones still typed as life_event.
+    # duplicate instead of standing for its capsule.
     for line in plan_lines:
         if (line.get("line_type") != "allocation"
                 or line.get("target_type") != "capsule"
@@ -351,13 +302,13 @@ def get_budget_summary(
         for line in plan_lines
         if line.get("line_type") == "allocation" and line.get("target_type") == "capsule"
     }
-    if plan_id is not None:
-        for capsule in ctx.capsules:
-            plan_lines.extend(
-                line for line in _virtual_capsule_line(ctx, capsule, period)
-                if capsule.id not in covered_capsules
-                and (capsule.id, line["account_id"]) not in existing_capsule_ids
-            )
+    # Earmarks propose their monthly amount like definitions do, whether or not a plan exists yet.
+    for capsule in ctx.capsules:
+        plan_lines.extend(
+            line for line in _virtual_capsule_line(ctx, capsule, period)
+            if capsule.id not in covered_capsules
+            and (capsule.id, line["account_id"]) not in existing_capsule_ids
+        )
     plan_lines = _merge_registry_lines(plan_lines, registry_plan_lines(ctx, period))
     if plan_id is not None:
         plan_lines = _merge_credit_settlement_lines(plan_lines, credit_settlement_plan_lines(ctx, period, plan_id))
@@ -368,6 +319,46 @@ def get_budget_summary(
             actual = actual_for_plan_line(ctx, line, period)
             line["actual"] = round(actual, 0)
             line["variance"] = round(line["budget_amount"] - actual, 0)
+    return plan_lines
+
+
+def month_plan_lines(db: Session, client_id: int, period: str, plan_id: int | None = None) -> list[dict]:
+    """The rows get_budget_summary lists for a month, without its cash-flow projections."""
+    ctx = BudgetContext(db, client_id)
+    return _month_lines(ctx, period, find_budget_plan_id(db, client_id, plan_id))
+
+
+def get_budget_summary(
+    db: Session,
+    client_id: int,
+    period: str,
+    plan_id: int | None = None,
+    cash_flow_start_period: str | None = None,
+    cash_flow_months: int = 12,
+    goal_metrics: dict | None = None,
+    include_unset: bool = False,
+) -> dict:
+    """Build the monthly cash-flow plan summary.
+
+    goal_metrics carries the goal-derived advisory figures (goals_count /
+    total_goal_gap / required_monthly_savings). The caller supplies them --
+    see goal_earmark_service.funding_gap -- so that planning never
+    depends on the goal domain.
+
+    include_unset adds unset_lines: the active accounts no plan line covers,
+    for the budget screen that lists every account (WP5).
+    """
+    ctx = BudgetContext(db, client_id)
+    plan_id = find_budget_plan_id(db, client_id, plan_id)
+
+    goal_metrics = goal_metrics or {}
+    goals_count = int(goal_metrics.get("goals_count") or 0)
+    total_gap = float(goal_metrics.get("total_goal_gap") or 0.0)
+    required_monthly_savings = float(goal_metrics.get("required_monthly_savings") or 0.0)
+
+    recurring = registry_totals(ctx, period)
+
+    plan_lines = _month_lines(ctx, period, plan_id)
 
     expense_lines = [line for line in plan_lines if line["line_type"] == "expense"]
     allocation_lines = [line for line in plan_lines if line["line_type"] == "allocation"]
@@ -435,8 +426,7 @@ def get_budget_summary(
                 "id": line.get("id")
                 or (
                     -(line.get("registry_entry_ids") or [0])[0]
-                    if line.get("registry_entry_ids")
-                    else line.get("account_id") or -(line.get("recurring_transaction_id") or 0)
+                    if line.get("registry_entry_ids") else line.get("account_id") or 0
                 ),
                 "account_id": line["account_id"],
                 "source_account_id": line.get("source_account_id"),
@@ -450,7 +440,6 @@ def get_budget_summary(
                 "registry_amount": line.get("registry_amount", 0.0),
                 "registry_entry_ids": line.get("registry_entry_ids", []),
                 "registry_items": line.get("registry_items", []),
-                "recurring_transaction_ids": line.get("recurring_transaction_ids", []),
                 "product_expense_amount": line.get("product_expense_amount", 0.0),
                 "product_expense_items": line.get("product_expense_items", []),
                 "suggested_amount": line.get("suggested_amount", 0.0),
@@ -461,7 +450,6 @@ def get_budget_summary(
                 "manual_override": line.get("manual_override", False),
                 "cash_treatment": line.get("cash_treatment", "auto"),
                 "sync_status": line.get("sync_status"),
-                "recurring_transaction_id": line.get("recurring_transaction_id"),
             }
             for line in expense_lines
         ],
@@ -470,7 +458,6 @@ def get_budget_summary(
             {
                 "id": line["target_id"] or line["id"] or 0,
                 "name": line["target_name"],
-                "life_event_id": None,
                 "account_id": line["account_id"],
                 "planned": line["amount"],
                 "actual": line["actual"],

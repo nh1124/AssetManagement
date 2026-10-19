@@ -12,11 +12,6 @@ from ..domain.money import CURRENCY_EXPONENTS
 from ..models.money import client_currency
 
 
-DEFAULT_PRODUCT_RESERVE_POOLS = (
-    ("Fixed Asset Reserve", True),
-    ("Item Reserve", False),
-)
-
 RESERVE_TREATMENTS = {"reserve_allocation", "asset_replacement"}
 
 
@@ -135,33 +130,6 @@ def capsule_amounts(db: Session, client_id: int, capsule_ids: Iterable[int | Non
     } for capsule in db.query(models.Capsule).filter(
         models.Capsule.client_id == client_id, models.Capsule.id.in_(ids),
     ).all()}
-
-
-def ensure_default_product_reserve_pools(db: Session, client_id: int) -> list[models.Capsule]:
-    pools: list[models.Capsule] = []
-    for name, _is_asset in DEFAULT_PRODUCT_RESERVE_POOLS:
-        capsule = db.query(models.Capsule).filter(
-            models.Capsule.client_id == client_id,
-            models.Capsule.name == name,
-        ).first()
-        if not capsule:
-            capsule = models.Capsule(
-                client_id=client_id,
-                name=name,
-                target_amount_minor=to_minor(0.0, money_client_currency(db, client_id)),
-                monthly_contribution_minor=to_minor(0.0, money_client_currency(db, client_id)),
-                capsule_type="product_pool",
-                target_amount_source="linked_products",
-                monthly_contribution_source="linked_products",
-            )
-            db.add(capsule)
-            db.flush()
-        else:
-            capsule.capsule_type = capsule.capsule_type or "product_pool"
-            if capsule.capsule_type == "manual":
-                capsule.capsule_type = "product_pool"
-        pools.append(capsule)
-    return pools
 
 
 def reserve_totals_by_capsule(db: Session, client_id: int, reference_date: date | None = None) -> dict[int, dict]:

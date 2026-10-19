@@ -25,7 +25,8 @@ def posting():
     client = models.Client(id=1, name="batch-test", general_settings={})
     other = models.Client(id=2, name="other", general_settings={})
     db.add_all([client, other])
-    ledger.ensure_default_accounts(db, client_id=1)
+    db.add_all([models.Account(client_id=1, name=name, account_type=kind) for name, kind in (("cash", "asset"), ("food", "expense"), ("savings", "asset"))])
+    db.flush()
     accounts = {row.name: row for row in db.query(models.Account).filter_by(client_id=1)}
     try:
         yield db, client, accounts["cash"], accounts["food"], accounts["savings"]
@@ -102,7 +103,7 @@ def test_batch_posts_every_entry_and_capsule_effect_in_one_commit(posting, auto_
     # reserving a third of what the rule asked for. The auto-posting
     # case keeps its three transfers and now records them too.
     expected = (1, 6, 13, 3) if auto_post else (1, 3, 7, 3)
-    assert snapshots == [(0, 0, 0, 0), expected]
+    assert snapshots == [expected]
     assert _counts(db) == expected
     assert (batch.label, batch.source, batch.input_payload) == ("Lunch batch", "quick", {"tray": "food"})
     assert [tx.description for tx in batch.transactions] == ["entry-1", "entry-2", "entry-3"]
@@ -135,7 +136,7 @@ def test_third_entry_failure_rolls_back_all_entries_legs_capsule_effects_and_bat
         workflow.post_transaction_batch(db, client.id, _payload(posting))
     # Two entries posted before the third failed, so two reservations.
     assert failed == [(1, 5, 8, 2) if auto_post else (1, 3, 4, 2)]
-    assert snapshots == [(0, 0, 0, 0)]
+    assert snapshots == []
     assert _counts(db) == (0, 0, 0, 0)
     for account in (cash, food, reserve):
         db.refresh(account)

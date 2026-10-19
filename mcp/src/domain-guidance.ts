@@ -37,7 +37,6 @@ export interface Account {
   id: number;
   name: string;
   account_type: "asset" | "liability" | "income" | "expense" | string;
-  role?: string | null;
   liability_kind?: string | null;
   balance?: number;
   is_active?: boolean;

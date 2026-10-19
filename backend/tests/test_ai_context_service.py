@@ -58,14 +58,12 @@ def _client_with_data(db):
         client_id=client.id,
         name="Cash",
         account_type="asset",
-        role="operating",
     )
     food = models.Account(
         id=11,
         client_id=client.id,
         name="Food",
         account_type="expense",
-        role="unassigned",
     )
     db.add_all([cash, food])
     db.flush()

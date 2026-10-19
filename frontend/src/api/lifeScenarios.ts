@@ -2,34 +2,40 @@ import api from './index';
 import type { ConditionMode, ConditionResult } from './lifeEventConditions';
 import type { ScenarioEvent } from './lifeEventGraph';
 
-export interface LifeScenarioAccountReturn {
-    account_id: number;
-    annual_return: number;
-}
-
 export interface LifeScenarioUpdate {
     name?: string;
     annual_return?: number;
     inflation?: number;
     horizon_years?: number;
-    /** null returns the scenario to the client-wide simulation setting. */
-    monthly_savings?: number | null;
 }
+
+/** A 積立設定 record: from start_period on, this account receives monthly_amount and yields annual_return. */
+export interface ContributionPlan {
+    id: number;
+    scenario_id: number;
+    account_id: number;
+    account_name: string | null;
+    start_period: string;
+    monthly_amount: number;
+    /** null carries the previous record's yield, else the scenario's default. */
+    annual_return: number | null;
+    note: string | null;
+}
+
+export type ContributionPlanInput = Partial<Pick<ContributionPlan, 'account_id' | 'start_period' | 'monthly_amount' | 'annual_return' | 'note'>>;
 
 export interface LifeScenario {
     id: number;
     client_id: number;
     name: string;
+    /** The yield of accounts whose 積立設定 names none. */
     annual_return: number;
     inflation: number;
     horizon_years: number;
-    /** The scenario's own amount, or the client-wide setting when monthly_savings_is_default. */
-    monthly_savings: number;
-    monthly_savings_is_default: boolean;
     is_goal: boolean;
     created_at: string | null;
     updated_at: string | null;
-    account_returns: LifeScenarioAccountReturn[];
+    contribution_plans: ContributionPlan[];
     events: ScenarioEvent[];
 }
 
@@ -60,9 +66,22 @@ export interface ScenarioConditions {
     conditions: ProjectedCondition[];
 }
 
-export interface ProjectedLifeScenario extends LifeScenario {
+export interface ProjectedEvent extends ScenarioEvent {
+    /** Share of paths on which the event happens: its preceding event happened and its preconditions held. */
+    executed_probability: number | null;
+    /** Share of paths on which it happens and net worth stays non-negative after it. */
+    funded_probability: number | null;
+    /** Happens on at least half of the paths. */
+    on_likely_path: boolean;
+}
+
+export interface ProjectedLifeScenario extends Omit<LifeScenario, 'events'> {
+    events: ProjectedEvent[];
     projection: ScenarioProjectionRow[];
     conditions: ScenarioConditions[];
+    likely_path: { event_ids: number[]; link_ids: number[] };
+    accounts: Array<{ account_id: number; name: string; p50: number[] }>;
+    monthly_contribution: number;
 }
 
 export interface LifeScenarioComparison {
@@ -85,26 +104,8 @@ export async function update(id: number, input: LifeScenarioUpdate): Promise<Lif
     return (await api.put<LifeScenario>(`/life-scenarios/${id}`, input)).data;
 }
 
-export async function setAccountReturns(id: number, returns: LifeScenarioAccountReturn[]): Promise<LifeScenario> {
-    return (await api.put<LifeScenario>(`/life-scenarios/${id}/account-returns`, { returns })).data;
-}
-
-export interface GoalPreview {
-    scenario_id: number;
-    scenario_name: string;
-    already_goal: boolean;
-    moves: Array<{ capsule_id: number; capsule_name: string; from_event_name: string; to_event_id: number; to_event_name: string }>;
-    detach: Array<{ capsule_id: number; capsule_name: string; event_name: string }>;
-    missing: Array<{ event_id: number; event_name: string; target_amount: number }>;
-}
-
-/** What making this scenario the goal would do to capsules, without doing it. */
-export async function goalPreview(id: number): Promise<GoalPreview> {
-    return (await api.get<GoalPreview>(`/life-scenarios/${id}/goal-preview`)).data;
-}
-
-export async function makeGoal(id: number, confirm_detach = false): Promise<LifeScenario> {
-    return (await api.post<LifeScenario>(`/life-scenarios/${id}/goal`, { confirm_detach })).data;
+export async function makeGoal(id: number): Promise<LifeScenario> {
+    return (await api.post<LifeScenario>(`/life-scenarios/${id}/goal`)).data;
 }
 
 export async function remove(id: number): Promise<void> {
@@ -113,4 +114,16 @@ export async function remove(id: number): Promise<void> {
 
 export async function compare(ids: number[]): Promise<LifeScenarioComparison> {
     return (await api.get<LifeScenarioComparison>('/life-scenarios/compare', { params: { ids: ids.join(',') } })).data;
+}
+
+export async function createContributionPlan(scenarioId: number, input: ContributionPlanInput): Promise<ContributionPlan> {
+    return (await api.post<ContributionPlan>(`/life-scenarios/${scenarioId}/contribution-plans`, input)).data;
+}
+
+export async function updateContributionPlan(id: number, input: ContributionPlanInput): Promise<ContributionPlan> {
+    return (await api.put<ContributionPlan>(`/life-scenarios/contribution-plans/${id}`, input)).data;
+}
+
+export async function deleteContributionPlan(id: number): Promise<void> {
+    await api.delete(`/life-scenarios/contribution-plans/${id}`);
 }

@@ -5,13 +5,11 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
-from .. import models
 from ..domain.errors import Invalid, NotFound
 from ..domain.journal import Leg
 from ..domain.money import Money
 from ..services import capsule_service, ledger_service
 from ..services.cache_service import invalidate_client
-from ..services.goal_service import get_life_event
 from ..services.fx_service import get_client_currency
 
 
@@ -131,18 +129,3 @@ def contribute(
         "new_balance": capsule_service.capsule_balance(db, capsule),
     }
 
-
-
-
-def create_goal_capsule(
-    db: Session, client_id: int, life_event_id: int, *, commit: bool = True,
-) -> models.Capsule:
-    goal = get_life_event(db, client_id, life_event_id)
-    if not goal:
-        raise NotFound("Life event not found")
-    capsule = capsule_service.create_capsule_for_goal(db, client_id, goal)
-    if commit:
-        db.commit()
-        db.refresh(capsule)
-        invalidate_client(client_id)
-    return capsule
