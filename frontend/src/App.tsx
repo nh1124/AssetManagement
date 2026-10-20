@@ -7,10 +7,11 @@ import LoginPage from './pages/Login';
 import MobileApp from './mobile/MobileApp';
 import StudioApp from './studio/StudioApp';
 import { useShellMode } from './shared/useShellMode';
+import './studio/theme.css';
 
-/* The desktop web UI is the rebuilt studio under /studio; the old desktop UI is
- * gone. The mobile shell keeps its own path until a new one is built on the
- * studio's screens. */
+/* The desktop web UI is the studio under /studio. On a phone-sized screen the
+ * other paths are the mobile app (WP25), built on the studio's data and words,
+ * whose paths are the studio's without /studio. */
 const isStudio = () => window.location.pathname.startsWith('/studio');
 
 function ToStudio() {
@@ -24,8 +25,8 @@ function AppContent() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
-        <div className="w-8 h-8 border-4 border-emerald-500/30 border-t-emerald-500 rounded-full animate-spin" />
+      <div className="studio-root flex min-h-dvh items-center justify-center bg-[var(--studio-bg)]">
+        <div role="status" aria-label="読み込んでいます" className="h-8 w-8 animate-spin rounded-full border-4 border-[var(--studio-accent-soft)] border-t-[var(--studio-accent)]" />
       </div>
     );
   }

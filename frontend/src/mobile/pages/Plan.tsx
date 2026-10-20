@@ -1,652 +1,190 @@
-import { useEffect, useMemo, useState } from 'react';
-import type { ReactNode } from 'react';
-import { Check, ChevronLeft, ChevronRight, Loader2, Plus, Trash2, X, type LucideIcon } from 'lucide-react';
-import {
-    createAccount,
-    deleteCapsule,
-    getAccounts,
-    getBudgetSummary,
-    getCapsules,
-    getLifeEventsWithProgress,
-    updateCapsule,
-} from '../../api';
-import { addPlanRecord, amendPlanRecord, deletePlanRecord, type PlanRecordSection } from '../../api/plan';
-import { useToast } from '../../components/Toast';
+import { useCallback, useState } from 'react';
+import { Flag, Plus } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { addPlanRecord, amendPlanRecord, deletePlanRecord, getAccountMonth, type AccountMonth, type PlanRecord, type PlanSection } from '../../api/plan';
 import { useClient } from '../../context/ClientContext';
-import type { Account, LifeEventProgress, MonthlyPlanLine, MonthlyPlanLineType } from '../../types';
 import { formatCurrency } from '../../utils/currency';
+import { useConfirm } from '../../studio/components/useConfirm';
+import { clientToday, useTimezone } from '../../studio/datetime';
+import { KIND_LABELS, TYPE_LABELS, type AccountKind, type AccountRow, type Cell } from '../../studio/pages/plan/budgetRows';
+import { assetErrorMessage, useResource } from '../../studio/useResource';
+import { Screen } from '../components/Layout';
+import MonthSwitcher from '../components/MonthSwitcher';
+import { monthLabel, monthParam } from '../months';
+import { useRecording } from '../components/recording';
+import Sheet from '../components/Sheet';
+import { useSnack } from '../components/snack';
+import { Badge, Card, Empty, ErrorNote, fieldClass, focusRing, Money, primaryButton, ProgressBar, Segmented, Skeleton } from '../components/ui';
+import { loadMonth, totals } from '../data';
 
-type PlanTab = 'goals' | 'capsules' | 'budget';
-type BudgetGroup = 'income' | 'variable' | 'allocation' | 'debt';
+const KINDS: AccountKind[] = ['expense', 'income', 'asset', 'liability'];
 
-const BUDGET_GROUPS: Array<[BudgetGroup, string]> = [
-    ['income', 'INCOME'],
-    ['variable', 'VARIABLE'],
-    ['allocation', 'ALLOCATION'],
-    ['debt', 'DEBT'],
-];
-
-interface BudgetSummary {
-    period?: string;
-    monthly_income?: number;
-    required_monthly_savings?: number;
-    monthly_fixed_costs?: number;
-    total_expected_inflow?: number;
-    total_variable_budget?: number;
-    remaining_balance?: number;
-    available_cash_flow?: number;
-    free_cash_flow?: number;
-    plan_lines?: MonthlyPlanLine[];
-    others_actual?: number;
-}
-
-interface CapsuleSummary {
-    id: number;
-    name: string;
-    current_balance?: number;
-    target_amount?: number;
-    monthly_contribution?: number;
-    capsule_type?: string;
-}
-
-const monthKey = () => new Date().toISOString().slice(0, 7);
-
-const shiftMonth = (period: string, delta: number) => {
-    const [year, month] = period.split('-').map(Number);
-    const date = new Date(year, month - 1 + delta, 1);
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-};
-
-export default function MobilePlanPage() {
-    const { showToast } = useToast();
-    const { currentClient } = useClient();
-    const [activeTab, setActiveTab] = useState<PlanTab>('goals');
-    const [budgetPeriod, setBudgetPeriod] = useState(monthKey());
-    const [goals, setGoals] = useState<LifeEventProgress[]>([]);
-    const [budget, setBudget] = useState<BudgetSummary | null>(null);
-    const [capsules, setCapsules] = useState<CapsuleSummary[]>([]);
-    const [accounts, setAccounts] = useState<Account[]>([]);
-    const [selectedCapsule, setSelectedCapsule] = useState<CapsuleSummary | null>(null);
-    const [isLoading, setIsLoading] = useState(false);
-    const currentCurrency = currentClient?.general_settings?.currency || 'JPY';
-
-    const loadPlan = async () => {
-        setIsLoading(true);
-        try {
-            const [goalData, budgetData, capsuleData, accountData] = await Promise.all([
-                getLifeEventsWithProgress(),
-                getBudgetSummary(budgetPeriod, { cash_flow_start_period: budgetPeriod, cash_flow_months: 1 }),
-                getCapsules(),
-                getAccounts(),
-            ]);
-            setGoals((goalData ?? []).filter((goal) => goal.direction === 'expense').slice(0, 20));
-            setBudget(budgetData ?? null);
-            setCapsules((capsuleData ?? []).slice(0, 30));
-            setAccounts(accountData);
-        } catch {
-            showToast('Failed to load mobile plan', 'error');
-        } finally {
-            setIsLoading(false);
-        }
-    };
-
-    useEffect(() => {
-        loadPlan();
-    }, [budgetPeriod]);
-
-    const sortedGoals = useMemo(() => [...goals].sort((a, b) => a.target_date.localeCompare(b.target_date)), [goals]);
-
-    return (
-        <div className="space-y-4 p-3">
-            <div className="mx-auto flex w-fit rounded-full border border-slate-800 bg-slate-900/80 p-1">
-                {([
-                    ['goals', 'Goals'],
-                    ['capsules', 'Capsules'],
-                    ['budget', 'Budget'],
-                ] as Array<[PlanTab, string]>).map(([tab, label]) => (
-                    <button
-                        key={tab}
-                        type="button"
-                        onClick={() => setActiveTab(tab)}
-                        className={`h-8 rounded-full px-4 text-xs transition-colors ${activeTab === tab
-                            ? 'bg-emerald-500 text-slate-950'
-                            : 'text-slate-500'
-                            }`}
-                    >
-                        {label}
-                    </button>
-                ))}
-            </div>
-
-            {activeTab === 'goals' && (
-                <section className="space-y-2">
-                    {isLoading && goals.length === 0 ? (
-                        <LoadingBlock />
-                    ) : sortedGoals.length === 0 ? (
-                        <EmptyBlock text="No goals yet." />
-                    ) : (
-                        <div className="space-y-2">
-                            {sortedGoals.map((goal) => (
-                                <GoalCard
-                                    key={goal.id}
-                                    goal={goal}
-                                    currency={currentCurrency}
-                                />
-                            ))}
-                        </div>
-                    )}
-                </section>
-            )}
-
-            {activeTab === 'capsules' && (
-                <section className="space-y-2">
-                    {capsules.length === 0 ? (
-                        <EmptyBlock text="No capsules yet." />
-                    ) : (
-                        <div className="space-y-2">
-                            {capsules.map((capsule) => (
-                                <CapsuleCard
-                                    key={capsule.id}
-                                    capsule={capsule}
-                                    currency={currentCurrency}
-                                    onOpen={() => setSelectedCapsule(capsule)}
-                                />
-                            ))}
-                        </div>
-                    )}
-                </section>
-            )}
-
-            {activeTab === 'budget' && (
-                <BudgetPanel
-                    budget={budget}
-                    period={budgetPeriod}
-                    accounts={accounts}
-                    currency={currentCurrency}
-                    language={String(currentClient?.general_settings?.language || 'ja')}
-                    onPeriodChange={setBudgetPeriod}
-                    onChanged={loadPlan}
-                />
-            )}
-
-            {selectedCapsule && (
-                <CapsuleSheet
-                    capsule={selectedCapsule}
-                    currency={currentCurrency}
-                    onClose={() => setSelectedCapsule(null)}
-                    onChanged={async () => {
-                        await loadPlan();
-                    }}
-                />
-            )}
+/** One movement of an account row: actual against budget, and a bar for spending. */
+function CellLine({ cell, currency, kind }: { cell: Cell; currency: string; kind: AccountKind | null }) {
+    return <div className="space-y-1">
+        <div className="flex items-baseline justify-between gap-2 text-xs">
+            <span className="text-[var(--studio-text-muted)]">{kind === 'expense' || kind === 'income' ? '実績 / 予算' : TYPE_LABELS[cell.type]}</span>
+            <span className="tabular-nums">
+                <span className="font-semibold text-[var(--studio-text)]">{formatCurrency(cell.actual, currency)}</span>
+                <span className="text-[var(--studio-text-muted)]"> / {cell.set ? formatCurrency(cell.budget, currency) : '未設定'}</span>
+            </span>
         </div>
-    );
+        {cell.type === 'expense' && cell.set && <ProgressBar label={`${TYPE_LABELS[cell.type]}の消化`} value={cell.actual} max={cell.budget} />}
+    </div>;
 }
 
-// The goal's funding comes from its 実績管理の設定; editing it lives in the studio.
-function GoalCard({ goal, currency }: { goal: LifeEventProgress; currency: string }) {
-    const funded = goal.current_funded;
-    const progress = Math.max(0, Math.min(100, goal.progress_percentage));
-
-    return (
-        <div className="w-full border border-slate-800 bg-slate-900/70 p-3 text-left">
-            <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-slate-100">{goal.name}</p>
-                    <p className="mt-1 text-[10px] text-slate-500">{goal.months_remaining} months left</p>
-                </div>
-                <div className="shrink-0 text-right">
-                    <p className="font-mono-nums text-xs text-emerald-300">{formatCurrency(funded, currency)}</p>
-                    <p className="mt-1 text-[9px] text-slate-600">{progress.toFixed(0)}%</p>
-                </div>
-            </div>
-            <div className="mt-3 h-2 bg-slate-800">
-                <div className="h-full bg-emerald-500" style={{ width: `${progress}%` }} />
-            </div>
-            <div className="mt-2 flex justify-between text-[10px] text-slate-500">
-                <span>{formatCurrency(goal.target_amount, currency)} target</span>
-                <span>{goal.target_date}</span>
-            </div>
-        </div>
-    );
-}
-
-function CapsuleCard({ capsule, currency, onOpen }: { capsule: CapsuleSummary; currency: string; onOpen: () => void }) {
-    const current = Number(capsule.current_balance ?? 0);
-    const target = Number(capsule.target_amount ?? 0);
-    const progress = target > 0 ? Math.max(0, Math.min(100, (current / target) * 100)) : 0;
-
-    return (
-        <button type="button" onClick={onOpen} className="w-full border border-slate-800 bg-slate-900/70 p-3 text-left active:border-emerald-500">
-            <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-slate-100">{capsule.name}</p>
-                    <p className="mt-1 text-[10px] text-slate-500">+{formatCurrency(capsule.monthly_contribution ?? 0, currency)} / mo</p>
-                </div>
-                <p className="shrink-0 font-mono-nums text-xs text-cyan-300">{formatCurrency(current, currency)}</p>
-            </div>
-            <div className="mt-3 h-2 bg-slate-800">
-                <div className="h-full bg-cyan-500" style={{ width: `${progress}%` }} />
-            </div>
-            <p className="mt-2 text-right text-[10px] text-slate-500">{formatCurrency(target, currency)} target</p>
-        </button>
-    );
-}
-
-/** The group's movements and the section a new user record goes to. */
-const GROUP_TYPES: Record<BudgetGroup, MonthlyPlanLineType[]> = {
-    income: ['income', 'borrowing', 'drawdown'], variable: ['expense'], allocation: ['allocation'], debt: ['debt_payment'],
-};
-const GROUP_SECTION: Record<BudgetGroup, PlanRecordSection> = { income: 'income', variable: 'expense', allocation: 'allocation', debt: 'debt_payment' };
-const GROUP_KIND: Record<BudgetGroup, Account['account_type']> = { income: 'income', variable: 'expense', allocation: 'asset', debt: 'liability' };
-const ORIGIN_LABELS = { goal: 'Goal', registry: 'Auto', card: 'Card', earmark: 'Earmark', unassigned: 'No account' } as const;
-
-/** Where a row comes from; null is the user's own record, the only kind edited here (the server refuses the others). */
-function rowOrigin(line: MonthlyPlanLine): keyof typeof ORIGIN_LABELS | null {
-    if (line.target_type === 'capsule') return 'earmark';
-    if (line.source === 'goal' || line.source_kind === 'goal') return 'goal';
-    if (line.source === 'registry') return 'registry';
-    if (line.source === 'credit_settlement' || (line.source !== 'manual' && line.source_kind === 'credit_settlement')) return 'card';
-    if (line.account_id == null || line.id == null) return 'unassigned';
-    return null;
-}
-
-function BudgetPanel({
-    budget,
-    period,
-    accounts,
-    currency,
-    language,
-    onPeriodChange,
-    onChanged,
-}: {
-    budget: BudgetSummary | null;
-    period: string;
-    accounts: Account[];
-    currency: string;
-    language: string;
-    onPeriodChange: (period: string) => void;
-    onChanged: () => Promise<void>;
+/** A record in the account sheet; the user's own can be changed or removed. */
+function RecordLine({ record, currency, busy, onSave, onDelete }: {
+    record: PlanRecord; currency: string; busy: boolean; onSave: (amount: number) => void; onDelete: () => void;
 }) {
-    const { showToast } = useToast();
-    const [activeBudgetGroup, setActiveBudgetGroup] = useState<BudgetGroup>('variable');
-    // Typed amounts of the user's records, by record id, until saved.
-    const [edits, setEdits] = useState<Record<number, string>>({});
-    const [showAddForm, setShowAddForm] = useState(false);
-    const [addForm, setAddForm] = useState({ account_id: '', name: '', amount: '' });
-    const [isSaving, setIsSaving] = useState(false);
-    const [touchStartX, setTouchStartX] = useState<number | null>(null);
-
-    useEffect(() => { setEdits({}); }, [budget]);
-
-    const rows = useMemo(() => (budget?.plan_lines ?? [])
-        .filter((line) => GROUP_TYPES[activeBudgetGroup].includes(line.line_type))
-        .map((line, index) => {
-            const origin = rowOrigin(line);
-            return {
-                key: `line-${line.id ?? `${line.line_type}-${line.target_type}-${line.target_id ?? ''}-${line.account_id ?? line.name}-${index}`}`,
-                name: line.target_name || line.name || line.account_name || line.line_type.replace('_', ' '),
-                amount: Number(line.budget_amount ?? line.amount ?? 0),
-                actual: Number(line.actual ?? 0),
-                lineType: line.line_type,
-                accountId: line.account_id ?? null,
-                recordId: origin == null ? line.id ?? null : null,
-                origin,
-            };
-        }), [activeBudgetGroup, budget]);
-
-    const planned = (row: typeof rows[number]) => Number(row.recordId != null ? edits[row.recordId] ?? row.amount : row.amount) || 0;
-    const budgetTotal = rows.reduce((sum, row) => sum + planned(row), 0);
-    const actualTotal = rows.reduce((sum, row) => sum + Number(row.actual ?? 0), 0);
-    const varianceTotal = activeBudgetGroup === 'income' ? actualTotal - budgetTotal : budgetTotal - actualTotal;
-    const usedRate = budgetTotal > 0 ? Math.min(999, Math.round((actualTotal / budgetTotal) * 100)) : 0;
-    // One user record per account and section: an account that has one is edited in its row.
-    const recorded = new Set(rows.filter((row) => row.recordId != null && row.lineType === GROUP_SECTION[activeBudgetGroup]).map((row) => row.accountId));
-    const availableTargetAccounts = accounts.filter((account) => account.account_type === GROUP_KIND[activeBudgetGroup] && !recorded.has(account.id));
-    const isJapanese = language.toLowerCase().startsWith('ja');
-    const [periodYear, periodMonth] = period.split('-').map(Number);
-    const periodLabel = isJapanese
-        ? `${periodYear}年${periodMonth}月`
-        : `${periodYear} ${new Intl.DateTimeFormat('en-US', { month: 'long' }).format(new Date(periodYear, periodMonth - 1, 1))}`;
-
-    const handleSwipeEnd = (clientX: number) => {
-        if (touchStartX == null) return;
-        const delta = clientX - touchStartX;
-        if (Math.abs(delta) > 44) {
-            onPeriodChange(shiftMonth(period, delta < 0 ? -1 : 1));
-        }
-        setTouchStartX(null);
-    };
-
-    const saveBudget = async () => {
-        const changed = rows.filter((row) => row.recordId != null && edits[row.recordId] != null && planned(row) !== row.amount);
-        if (changed.some((row) => planned(row) < 0)) {
-            showToast('Amounts must be zero or more', 'warning');
-            return;
-        }
-        setIsSaving(true);
-        try {
-            for (const row of changed) await amendPlanRecord(row.recordId as number, { amount: planned(row) });
-            await onChanged();
-            showToast('Budget saved', 'success');
-        } catch {
-            showToast('Failed to save budget', 'error');
-        } finally {
-            setIsSaving(false);
-        }
-    };
-
-    const addBudgetLine = async () => {
-        const amount = Number(addForm.amount || 0);
-        const creating = !addForm.account_id && activeBudgetGroup === 'variable';
-        if (!amount || amount < 0 || (!addForm.account_id && !(creating && addForm.name.trim()))) {
-            showToast('Account and amount are required', 'warning');
-            return;
-        }
-        setIsSaving(true);
-        try {
-            const accountId = creating
-                ? (await createAccount({ name: addForm.name.trim(), account_type: 'expense', balance: 0 })).id
-                : Number(addForm.account_id);
-            await addPlanRecord({ period, account_id: accountId, section: GROUP_SECTION[activeBudgetGroup], amount });
-            setAddForm({ account_id: '', name: '', amount: '' });
-            setShowAddForm(false);
-            await onChanged();
-            showToast('Budget line added', 'success');
-        } catch {
-            showToast('Failed to add budget line', 'error');
-        } finally {
-            setIsSaving(false);
-        }
-    };
-
-    const removeBudgetLine = async (recordId: number) => {
-        setIsSaving(true);
-        try {
-            await deletePlanRecord(recordId);
-            await onChanged();
-            showToast('Budget line removed', 'info');
-        } catch {
-            showToast('Failed to remove budget line', 'error');
-        } finally {
-            setIsSaving(false);
-        }
-    };
-
-    return (
-        <section className="space-y-3">
-            <div
-                className="grid grid-cols-[44px_1fr_44px] items-center"
-                onTouchStart={(event) => setTouchStartX(event.touches[0]?.clientX ?? null)}
-                onTouchEnd={(event) => handleSwipeEnd(event.changedTouches[0]?.clientX ?? 0)}
-            >
-                <button type="button" onClick={() => onPeriodChange(shiftMonth(period, -1))} className="flex h-10 items-center justify-center text-slate-500 active:text-slate-100" aria-label="Previous month">
-                    <ChevronLeft size={20} />
-                </button>
-                <label className="relative flex h-10 items-center justify-center text-center">
-                    <span className="font-mono-nums text-base font-semibold text-slate-100">{periodLabel}</span>
-                    <input
-                        type="month"
-                        value={period}
-                        onChange={(event) => onPeriodChange(event.target.value || monthKey())}
-                        className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-                        aria-label="Budget month"
-                    />
-                </label>
-                <button type="button" onClick={() => onPeriodChange(shiftMonth(period, 1))} className="flex h-10 items-center justify-center text-slate-500 active:text-slate-100" aria-label="Next month">
-                    <ChevronRight size={20} />
-                </button>
-            </div>
-
-            <div className="border border-slate-800 bg-slate-900/60 px-3 py-3">
-                <div className="mb-2 flex items-center justify-between text-[10px] uppercase tracking-wide text-slate-500">
-                    <span>Usage</span>
-                    <span className="font-mono-nums">{usedRate}%</span>
-                </div>
-                <div className="h-2 bg-slate-800">
-                    <div className={`h-full ${usedRate > 100 ? 'bg-rose-500' : 'bg-emerald-500'}`} style={{ width: `${Math.min(100, usedRate)}%` }} />
-                </div>
-                <div className="mt-3 grid grid-cols-3 gap-3">
-                    <BudgetMetric label="Budget" value={budgetTotal} currency={currency} tone="text-slate-100" />
-                    <BudgetMetric label="Actual" value={actualTotal} currency={currency} tone={actualTotal > budgetTotal ? 'text-rose-300' : 'text-cyan-300'} />
-                    <BudgetMetric label="Left" value={varianceTotal} currency={currency} tone={varianceTotal < 0 ? 'text-rose-300' : 'text-emerald-300'} />
-                </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-                <div className="scrollbar-none flex min-w-0 flex-1 gap-1 overflow-x-auto">
-                    {BUDGET_GROUPS.map(([group, label]) => (
-                        <button
-                            key={group}
-                            type="button"
-                            onClick={() => {
-                                setActiveBudgetGroup(group);
-                                setShowAddForm(false);
-                                setAddForm({ account_id: '', name: '', amount: '' });
-                            }}
-                            className={`h-8 shrink-0 border-b px-2 text-[10px] font-medium tracking-wide ${activeBudgetGroup === group
-                                ? 'border-emerald-400 text-emerald-300'
-                                : 'border-slate-800 text-slate-500'
-                                }`}
-                        >
-                            {label}
-                        </button>
-                    ))}
-                </div>
-                <button
-                    type="button"
-                    onClick={() => setShowAddForm((value) => !value)}
-                    className={`flex h-8 w-8 shrink-0 items-center justify-center border ${showAddForm ? 'border-emerald-500 text-emerald-300' : 'border-slate-800 text-slate-500'}`}
-                    aria-label="Add budget line"
-                >
-                    <Plus size={15} />
-                </button>
-            </div>
-
-            {showAddForm && (
-                <div className="space-y-2 border border-slate-800 bg-slate-900/60 p-3">
-                    <select
-                        value={addForm.account_id}
-                        onChange={(event) => setAddForm({ ...addForm, account_id: event.target.value, name: event.target.value ? '' : addForm.name })}
-                        className="h-10 w-full border border-slate-700 bg-slate-950 px-3 text-sm text-slate-100"
-                    >
-                        <option value="">{activeBudgetGroup === 'variable' ? 'New expense subject...' : 'Choose an account...'}</option>
-                        {availableTargetAccounts.map((account) => (
-                            <option key={account.id} value={account.id}>{account.name}</option>
-                        ))}
-                    </select>
-                    {!addForm.account_id && activeBudgetGroup === 'variable' && (
-                        <input
-                            value={addForm.name}
-                            onChange={(event) => setAddForm({ ...addForm, name: event.target.value })}
-                            placeholder="Subject name"
-                            className="h-10 w-full border-0 border-b border-slate-700 bg-transparent px-1 text-sm text-slate-100 outline-none focus:border-emerald-400"
-                        />
-                    )}
-                    <input
-                        type="number"
-                        inputMode="decimal"
-                        value={addForm.amount}
-                        onChange={(event) => setAddForm({ ...addForm, amount: event.target.value })}
-                        placeholder="Budget amount"
-                        className="h-10 w-full border-0 border-b border-slate-700 bg-transparent px-1 text-sm font-mono-nums text-slate-100 outline-none focus:border-emerald-400"
-                    />
-                    <button type="button" onClick={addBudgetLine} disabled={isSaving} className="flex h-10 w-full items-center justify-center gap-2 bg-cyan-600 text-sm font-semibold text-white disabled:opacity-50">
-                        <Plus size={15} /> Add
-                    </button>
-                </div>
-            )}
-
-            <div className="space-y-1.5">
-                {rows.length === 0 ? (
-                    <EmptyBlock text="No budget lines for this month." />
-                ) : rows.map((row) => {
-                    const amount = planned(row);
-                    const actual = Number(row.actual || 0);
-                    const left = activeBudgetGroup === 'income' ? actual - amount : amount - actual;
-                    const usage = amount > 0 ? Math.min(100, (actual / amount) * 100) : 0;
-                    const recordId = row.recordId;
-                    return (
-                        <div key={row.key} className="border border-slate-800 bg-slate-900/70 px-3 py-2.5">
-                            <div className="flex items-center justify-between gap-3">
-                                <div className="min-w-0">
-                                    <p className="truncate text-sm font-medium text-slate-100">{row.name}</p>
-                                </div>
-                                {recordId != null
-                                    ? <button type="button" onClick={() => void removeBudgetLine(recordId)} disabled={isSaving} className="flex h-8 w-8 shrink-0 items-center justify-center text-slate-500 active:text-rose-300" aria-label="Remove budget">
-                                        <Trash2 size={15} />
-                                    </button>
-                                    : <span className="shrink-0 text-[10px] uppercase tracking-wide text-slate-500">{row.origin ? ORIGIN_LABELS[row.origin] : ''}</span>}
-                            </div>
-                            <div className="mt-2 grid grid-cols-[1fr_108px] items-end gap-3">
-                                <p className="min-w-0 font-mono-nums text-[11px] text-slate-500">
-                                    <span className={left < 0 ? 'text-rose-300' : 'text-emerald-300'}>{left < 0 ? 'Over' : 'Left'} {formatCurrency(Math.abs(left), currency)}</span>
-                                    <span className="ml-2 text-slate-600">{formatCurrency(actual, currency)} / {formatCurrency(amount, currency)}</span>
-                                </p>
-                                {recordId != null
-                                    ? <input
-                                        type="number"
-                                        inputMode="decimal"
-                                        aria-label={`${row.name} budget`}
-                                        value={edits[recordId] ?? String(row.amount)}
-                                        onChange={(event) => setEdits((prev) => ({ ...prev, [recordId]: event.target.value }))}
-                                        className="h-8 w-full border-0 border-b border-slate-600 bg-transparent px-1 text-right text-sm font-mono-nums text-slate-100 outline-none focus:border-emerald-400"
-                                    />
-                                    : <span className="h-8 text-right text-sm font-mono-nums leading-8 text-slate-400">{formatCurrency(row.amount, currency)}</span>}
-                            </div>
-                            <div className="mt-2 h-1.5 bg-slate-800">
-                                <div className={`h-full ${left < 0 ? 'bg-rose-500' : 'bg-cyan-500'}`} style={{ width: `${usage}%` }} />
-                            </div>
-                        </div>
-                    );
-                })}
-            </div>
-
-            {(budget?.others_actual ?? 0) > 0 && (
-                <div className="border border-dashed border-amber-900/60 bg-amber-950/10 px-3 py-3 text-xs text-amber-200">
-                    Uncategorized actual {formatCurrency(budget?.others_actual ?? 0, currency)}
-                </div>
-            )}
-
-            <button type="button" onClick={saveBudget} disabled={isSaving} className="flex h-11 w-full items-center justify-center gap-2 bg-emerald-600 text-sm font-semibold text-white disabled:opacity-50">
-                {isSaving ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />}
-                Save Budget
-            </button>
-        </section>
-    );
+    const [editing, setEditing] = useState(false);
+    const [amount, setAmount] = useState(String(record.amount));
+    if (!editing) return <button type="button" disabled={!record.editable || busy} onClick={() => setEditing(true)}
+        className={`flex min-h-12 w-full items-center gap-3 px-4 py-2 text-left disabled:cursor-default ${record.editable ? 'active:bg-[var(--studio-accent-soft)]' : ''} ${focusRing}`}>
+        <span className="min-w-0 flex-1">
+            <span className="block truncate text-sm">{record.name}</span>
+            <span className="text-xs text-[var(--studio-text-muted)]">{record.origin_label}{record.editable ? '・タップで変更' : ''}</span>
+        </span>
+        <Money value={record.amount} currency={currency} className="text-sm font-semibold" />
+    </button>;
+    return <form className="flex items-center gap-2 px-4 py-2" onSubmit={(event) => { event.preventDefault(); if (Number(amount) >= 0) { onSave(Number(amount)); setEditing(false); } }}>
+        <input inputMode="decimal" autoFocus value={amount} aria-label={`${record.name}の金額`} onChange={(event) => setAmount(event.target.value.replace(/[^\d.]/g, ''))} className={`${fieldClass} flex-1`} />
+        <button type="submit" disabled={busy} className={`${primaryButton} px-3`}>保存</button>
+        <button type="button" disabled={busy} onClick={onDelete} className={`min-h-11 rounded-xl px-2 text-xs font-medium text-[var(--studio-danger)] ${focusRing}`}>削除</button>
+    </form>;
 }
 
-function BudgetMetric({ label, value, currency, tone }: { label: string; value: number; currency: string; tone: string }) {
-    return (
-        <div className="min-w-0">
-            <p className="text-[9px] uppercase tracking-wide text-slate-500">{label}</p>
-            <p className={`mt-1 truncate border-b border-slate-700 pb-1 font-mono-nums text-xs ${tone}`}>{formatCurrency(value, currency)}</p>
+function SectionCard({ section, currency, busy, onAdd, onSave, onDelete }: {
+    section: PlanSection; currency: string; busy: boolean;
+    onAdd: (amount: number) => Promise<boolean>; onSave: (record: PlanRecord, amount: number) => void; onDelete: (record: PlanRecord) => void;
+}) {
+    const [adding, setAdding] = useState('');
+    return <section className="overflow-hidden rounded-2xl bg-[var(--studio-surface)] shadow-[var(--mobile-shadow)]">
+        <header className="flex items-baseline justify-between gap-2 px-4 pb-1 pt-3">
+            <h3 className="text-sm font-semibold">{section.label}</h3>
+            <span className="text-xs tabular-nums text-[var(--studio-text-muted)]">実績 {formatCurrency(section.actual, currency)} / 予算 {formatCurrency(section.total, currency)}</span>
+        </header>
+        <div className="divide-y divide-[var(--studio-border)]">
+            {section.records.map((record, index) => <RecordLine key={record.id ?? `${record.origin}-${index}`} record={record} currency={currency} busy={busy}
+                onSave={(amount) => onSave(record, amount)} onDelete={() => onDelete(record)} />)}
+            {section.records.length === 0 && <p className="px-4 py-3 text-xs text-[var(--studio-text-muted)]">レコードはありません。</p>}
+            {section.can_add && <form className="flex items-center gap-2 px-4 py-2" onSubmit={(event) => {
+                event.preventDefault();
+                // The amount stays in the field when saving fails.
+                if (Number(adding) > 0) void onAdd(Number(adding)).then((saved) => { if (saved) setAdding(''); });
+            }}>
+                <input inputMode="decimal" value={adding} placeholder="予算を追加（金額）" aria-label={`${section.label}に予算を追加`} onChange={(event) => setAdding(event.target.value.replace(/[^\d.]/g, ''))} className={`${fieldClass} flex-1`} />
+                <button type="submit" disabled={busy || !(Number(adding) > 0)} aria-label="追加" className={`${primaryButton} w-11 px-0`}><Plus size={18} aria-hidden /></button>
+            </form>}
         </div>
-    );
+    </section>;
 }
 
-function CapsuleSheet({ capsule, currency, onClose, onChanged }: { capsule: CapsuleSummary; currency: string; onClose: () => void; onChanged: () => Promise<void> }) {
-    const { showToast } = useToast();
-    const [form, setForm] = useState({
-        name: capsule.name,
-        target_amount: String(capsule.target_amount ?? 0),
-        monthly_contribution: String(capsule.monthly_contribution ?? 0),
-    });
-    const [isSaving, setIsSaving] = useState(false);
-
-    const saveCapsule = async () => {
-        setIsSaving(true);
+/** An account's month: each section's records (the user's are editable), the earmarks it funds, its automatic transactions. */
+function AccountSheet({ period, row, currency, onClose }: { period: string; row: AccountRow; currency: string; onClose: (changed: boolean) => void }) {
+    const confirm = useConfirm();
+    const snack = useSnack();
+    const load = useCallback(() => getAccountMonth(period, row.accountId as number), [period, row.accountId]);
+    const resource = useResource(load);
+    const [busy, setBusy] = useState(false);
+    const [changed, setChanged] = useState(false);
+    const run = async (action: () => Promise<AccountMonth>, message: string): Promise<boolean> => {
+        setBusy(true);
         try {
-            await updateCapsule(capsule.id, {
-                name: form.name,
-                target_amount: Number(form.target_amount || 0),
-                monthly_contribution: Number(form.monthly_contribution || 0),
-            });
-            await onChanged();
-            showToast('Capsule updated', 'success');
-        } catch {
-            showToast('Failed to update capsule', 'error');
+            resource.setData(await action());
+            setChanged(true);
+            snack(message);
+            return true;
+        } catch (failure) {
+            snack(assetErrorMessage(failure), 'error');
+            return false;
         } finally {
-            setIsSaving(false);
+            setBusy(false);
         }
     };
+    const data = resource.data;
+    return <Sheet title={`${row.name}・${monthLabel(period)}`} onClose={() => onClose(changed)} busy={busy} tall>
+        <div className="space-y-4">
+            {resource.error && <ErrorNote message={resource.error} onRetry={resource.reload} />}
+            {!data && !resource.error && <Skeleton lines={2} />}
+            {data && data.sections.map((section) => <SectionCard key={section.key} section={section} currency={currency} busy={busy}
+                onAdd={(amount) => run(() => addPlanRecord({ period, account_id: data.account.id, section: section.key, amount }), '予算を追加しました')}
+                onSave={(record, amount) => { if (record.id !== null) void run(() => amendPlanRecord(record.id as number, { amount }), '予算を変更しました'); }}
+                onDelete={(record) => void (async () => {
+                    if (record.id !== null && await confirm(`「${record.name}」の予算を削除します。`, '削除する')) await run(() => deletePlanRecord(record.id as number), '予算を削除しました');
+                })()} />)}
+            {data && data.earmarks.length > 0 && <section className="rounded-2xl bg-[var(--studio-surface)] p-4 shadow-[var(--mobile-shadow)]">
+                <h3 className="mb-2 text-sm font-semibold">この口座の取り置き</h3>
+                <ul className="space-y-1.5 text-sm">{data.earmarks.map((earmark) => <li key={`${earmark.capsule_id}-${earmark.name}`} className="flex justify-between gap-2">
+                    <span className="flex min-w-0 items-center gap-1.5"><span className="truncate">{earmark.name}</span>{earmark.goal && <Badge tone="accent">ゴール</Badge>}</span>
+                    <Money value={earmark.amount} currency={currency} /></li>)}</ul>
+            </section>}
+            {data && data.scheduled.length > 0 && <section className="rounded-2xl bg-[var(--studio-surface)] p-4 shadow-[var(--mobile-shadow)]">
+                <h3 className="mb-2 text-sm font-semibold">今月の自動取引</h3>
+                <ul className="space-y-1.5 text-sm">{data.scheduled.map((item, index) => <li key={`${item.name}-${index}`} className="flex justify-between gap-2">
+                    <span className="truncate">{item.name}</span><Money value={item.amount} currency={currency} /></li>)}</ul>
+            </section>}
+            <p className="text-xs text-[var(--studio-text-muted)]">変えられるのは自分で入れた予算です。ゴール・自動取引・カード請求の分は、それぞれの設定（PC版）で変えます。</p>
+        </div>
+    </Sheet>;
+}
 
-    const removeCapsule = async () => {
-        setIsSaving(true);
-        try {
-            await deleteCapsule(capsule.id);
-            await onChanged();
-            onClose();
-            showToast('Capsule deleted', 'info');
-        } catch {
-            showToast('Failed to delete capsule', 'error');
-        } finally {
-            setIsSaving(false);
-        }
+/** The month's plan: what is planned and what happened, account by account. */
+export default function Plan() {
+    const { currentClient } = useClient();
+    const currency = currentClient?.general_settings?.currency || 'JPY';
+    const timezone = useTimezone();
+    const current = clientToday(timezone).slice(0, 7);
+    const [params, setParams] = useSearchParams();
+    const period = monthParam(params.get('month'), current);
+    const { changed } = useRecording();
+    // The tab lives in the URL with the month, so it survives the reload after an edit.
+    const kind = (KINDS as string[]).includes(params.get('kind') ?? '') ? params.get('kind') as AccountKind : 'expense';
+    const [opened, setOpened] = useState<AccountRow | null>(null);
+    const load = useCallback(() => loadMonth(period), [period]);
+    const resource = useResource(load);
+    // A month still loading never shows the previous month's plan.
+    const model = resource.data?.summary.period === period ? resource.data.model : undefined;
+    const setParam = (key: 'month' | 'kind', value: string) => {
+        const next = new URLSearchParams(params);
+        if ((key === 'month' && value === current) || (key === 'kind' && value === 'expense')) next.delete(key); else next.set(key, value);
+        setParams(next, { replace: true });
     };
-
-    return (
-        <Sheet onClose={onClose}>
-            <div className="mb-4 flex items-start justify-between gap-3">
-                <p className="truncate text-lg font-semibold text-slate-100">{capsule.name}</p>
-                <IconButton icon={X} onClick={onClose} label="Close" />
+    const spending = model ? totals(model, 'expense') : null;
+    const income = model ? totals(model, 'income') : null;
+    const rows = model?.accounts.filter((row) => row.kind === kind && row.cells.some((cell) => cell.set || cell.actual !== 0)) ?? [];
+    const earmarks = kind === 'asset' ? model?.earmarks.filter((earmark) => earmark.budget !== 0 || earmark.held !== 0) ?? [] : [];
+    return <Screen title="計画" top>
+        <MonthSwitcher period={period} current={current} onChange={(next) => setParam('month', next)} />
+        {resource.error && <ErrorNote message={resource.error} onRetry={resource.reload} />}
+        {!model && !resource.error && <Skeleton lines={3} />}
+        {spending && income && <Card>
+            <div className="grid grid-cols-2 gap-4">
+                <div><p className="text-xs text-[var(--studio-text-muted)]">支出</p><Money value={spending.actual} currency={currency} className="text-xl font-bold" />
+                    <p className="text-xs text-[var(--studio-text-muted)]">予算 {formatCurrency(spending.budget, currency)}</p></div>
+                <div><p className="text-xs text-[var(--studio-text-muted)]">収入</p><Money value={income.actual} currency={currency} className="text-xl font-bold text-[var(--studio-positive)]" />
+                    <p className="text-xs text-[var(--studio-text-muted)]">予算 {formatCurrency(income.budget, currency)}</p></div>
             </div>
-
-            <div className="space-y-2">
-                <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} className="h-11 w-full border border-slate-700 bg-slate-900 px-3 text-sm" />
-                <div className="grid grid-cols-2 gap-2">
-                    <input type="number" inputMode="decimal" value={form.target_amount} onChange={(event) => setForm({ ...form, target_amount: event.target.value })} className="h-11 border border-slate-700 bg-slate-900 px-3 text-sm font-mono-nums" />
-                    <input type="number" inputMode="decimal" value={form.monthly_contribution} onChange={(event) => setForm({ ...form, monthly_contribution: event.target.value })} className="h-11 border border-slate-700 bg-slate-900 px-3 text-sm font-mono-nums" />
+            <div className="mt-3"><ProgressBar label="支出の予算の消化" value={spending.actual} max={spending.budget} /></div>
+        </Card>}
+        {model && <>
+            <Segmented label="口座・科目の種類" value={kind} onChange={(next) => setParam('kind', next)} options={KINDS.map((value) => ({ value, label: KIND_LABELS[value] }))} />
+            {rows.length ? <div className="space-y-2">{rows.map((row) => <button key={row.key} type="button" disabled={row.accountId === null} onClick={() => setOpened(row)}
+                className={`w-full space-y-2 rounded-2xl bg-[var(--studio-surface)] p-4 text-left shadow-[var(--mobile-shadow)] active:bg-[var(--studio-accent-soft)] ${focusRing}`}>
+                <div className="flex items-center gap-2"><span className="truncate text-sm font-semibold">{row.name}</span>{row.goal && <Badge tone="accent"><Flag size={10} className="mr-0.5" aria-hidden />ゴール</Badge>}</div>
+                {row.cells.filter((cell) => cell.set || cell.actual !== 0).map((cell) => <CellLine key={cell.type} cell={cell} currency={currency} kind={row.kind} />)}
+            </button>)}</div> : <Empty title={`${KIND_LABELS[kind]}の予算・実績はありません`} body="PC版の計画で口座・科目を追加できます。" />}
+            {earmarks.length > 0 && <section className="space-y-2">
+                <h2 className="px-1 text-xs font-semibold text-[var(--studio-text-muted)]">取り置き</h2>
+                <div className="divide-y divide-[var(--studio-border)] overflow-hidden rounded-2xl bg-[var(--studio-surface)] shadow-[var(--mobile-shadow)]">
+                    {earmarks.map((earmark) => <div key={earmark.key} className="flex items-center gap-3 px-4 py-3">
+                        <div className="min-w-0 flex-1"><p className="flex items-center gap-1.5 text-sm font-medium"><span className="truncate">{earmark.name}</span>{earmark.goal && <Badge tone="accent">ゴール</Badge>}</p>
+                            <p className="truncate text-xs text-[var(--studio-text-muted)]">{earmark.sources.join('・')}</p></div>
+                        <div className="text-right text-xs"><p className="text-sm font-semibold tabular-nums">{formatCurrency(earmark.budget, currency)}</p><p className="text-[var(--studio-text-muted)]">確保額 {formatCurrency(earmark.held, currency)}</p></div>
+                    </div>)}
                 </div>
-                <div className="grid grid-cols-2 gap-2">
-                    <button type="button" onClick={saveCapsule} disabled={isSaving} className="flex h-11 items-center justify-center gap-2 bg-emerald-600 text-sm font-semibold text-white disabled:opacity-50">
-                        <Check size={15} /> Save
-                    </button>
-                    <button type="button" onClick={removeCapsule} disabled={isSaving} className="flex h-11 items-center justify-center gap-2 border border-rose-800 text-sm text-rose-300 disabled:opacity-40">
-                        <Trash2 size={15} /> Delete
-                    </button>
-                </div>
-            </div>
-
-            <div className="mt-5 space-y-2">
-                <p className="text-xs uppercase tracking-wide text-slate-500">Capsule Claim</p>
-                <p className="font-mono-nums text-cyan-300">{formatCurrency(capsule.current_balance ?? 0, currency)}</p>
-            </div>
-        </Sheet>
-    );
-}
-
-function Sheet({ children, onClose }: { children: ReactNode; onClose: () => void }) {
-    return (
-        <div className="fixed inset-0 z-50 flex items-end bg-black/60">
-            <button type="button" className="absolute inset-0" onClick={onClose} aria-label="Close" />
-            <section className="scrollbar-none relative max-h-[88dvh] w-full overflow-y-auto border-t border-slate-700 bg-slate-950 p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] shadow-2xl">
-                {children}
-            </section>
-        </div>
-    );
-}
-
-function IconButton({ icon: Icon, onClick, label }: { icon: LucideIcon; onClick: () => void; label: string }) {
-    return (
-        <button type="button" onClick={onClick} className="flex h-9 w-9 shrink-0 items-center justify-center text-slate-500 active:text-slate-200" aria-label={label}>
-            <Icon size={17} />
-        </button>
-    );
-}
-
-function LoadingBlock() {
-    return (
-        <div className="flex items-center justify-center border border-slate-800 bg-slate-900/60 py-8 text-slate-500">
-            <Loader2 size={18} className="animate-spin" />
-        </div>
-    );
-}
-
-function EmptyBlock({ text }: { text: string }) {
-    return (
-        <div className="border border-dashed border-slate-800 bg-slate-900/40 px-3 py-5 text-sm text-slate-500">
-            {text}
-        </div>
-    );
+            </section>}
+        </>}
+        {opened && <AccountSheet period={period} row={opened} currency={currency} onClose={(edited) => { setOpened(null); if (edited) changed(); }} />}
+    </Screen>;
 }
