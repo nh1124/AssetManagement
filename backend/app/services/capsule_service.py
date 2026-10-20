@@ -17,13 +17,13 @@ from ..domain.money import Money
 from ..domain.journal import Leg
 from . import ledger_service
 from .cache_service import invalidate_client
-from .fx_service import get_client_currency
+from .fx_service import build_rate_lookup, convert_amount_with_lookup, get_client_currency, normalize_currency
 from .product_reserve_service import product_reserve_values
 
 
 def capsule_balance(db: Session, capsule: models.Capsule) -> float:
-    currency = money_client_currency(db, capsule.client_id)
-    return Money(claimed_minor(db, capsule.client_id, capsule.id).get(currency, 0), currency).to_float()
+    """The capsule's 確保額 as one amount in the client's currency (claimed_value)."""
+    return claimed_value(db, capsule.client_id, capsule.id)
 
 
 def remaining_target(db: Session, capsule: models.Capsule) -> float:
@@ -218,8 +218,8 @@ def list_account_earmarks(db: Session, client_id: int, account_id: int) -> list[
     currency = money_client_currency(db, client_id)
     earmarks = []
     for source, capsule in sources:
-        # Select the client's currency without combining foreign-currency claims.
-        claim = claimed_minor(db, client_id, capsule.id, account_id).get(currency, 0)
+        # One amount in the client's currency: foreign reservations are valued at their dates' rates.
+        claim = claimed_value_minor(db, client_id, capsule.id, account_id)
         earmarks.append({
             "capsule_id": capsule.id, "capsule_name": capsule.name,
             "claimed": Money(claim, currency).to_float(), "claimed_minor": claim,
@@ -643,6 +643,43 @@ def claimed_minor(
             query = query.filter(models.JournalEntry.account_id == account_id)
         rows = query.group_by(models.Transaction.currency).all()
         return {currency: int(total) for currency, total in rows if total}
+
+
+def claimed_value_minor(db: Session, client_id: int, capsule_id: int, account_id: int | None = None) -> int:
+    """What a capsule holds (at one account), as one amount in the client's currency, in minor units (WP24).
+
+    Movements in the client's currency add up exactly; each other one is valued at its
+    date's rate, the way the balance sheet values an account, so a dollar reservation
+    counts toward a yen target. A movement in a currency with no rate counts nothing,
+    as in the balance sheet. Only for amounts shown or compared as one figure: moving
+    money (drawdowns, adjustments, reconciliation) stays per currency with claimed_minor.
+    """
+    currency = money_client_currency(db, client_id)
+    with db.no_autoflush:
+        query = db.query(
+            models.Transaction.currency, models.Transaction.date,
+            models.JournalEntry.debit_minor - models.JournalEntry.credit_minor,
+        ).join(models.Transaction, models.Transaction.id == models.JournalEntry.transaction_id).join(
+            models.Capsule, models.Capsule.id == models.JournalEntry.capsule_id,
+        ).filter(
+            models.Transaction.client_id == client_id, models.Capsule.client_id == client_id,
+            models.JournalEntry.capsule_id == capsule_id,
+        )
+        if account_id is not None:
+            query = query.filter(models.JournalEntry.account_id == account_id)
+        rows = query.all()
+    exact = sum(minor for code, _, minor in rows if normalize_currency(code) == currency)
+    foreign = [(normalize_currency(code), when, minor) for code, when, minor in rows if minor and normalize_currency(code) != currency]
+    if not foreign:
+        return exact
+    lookup = build_rate_lookup(db, client_id, currency)
+    valued = sum(convert_amount_with_lookup(lookup, Money(minor, code).to_float(), code, when) for code, when, minor in foreign)
+    return exact + Money.from_major(str(round(valued, 6)), currency).minor
+
+
+def claimed_value(db: Session, client_id: int, capsule_id: int, account_id: int | None = None) -> float:
+    """claimed_value_minor in major units."""
+    return Money(claimed_value_minor(db, client_id, capsule_id, account_id), money_client_currency(db, client_id)).to_float()
 
 
 def account_claimed_minor(db: Session, client_id: int, account_id: int) -> dict[str, int]:

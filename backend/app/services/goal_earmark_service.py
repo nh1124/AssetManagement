@@ -7,17 +7,15 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from ..domain.money import Money
-from .capsule_service import claimed_minor, goal_capsules
+from .capsule_service import claimed_value, goal_capsules
 from .contribution_plan_service import event_withdrawals
 from .life_scenario_scope import get_goal
 from .money_storage import money_client_currency
 
 
 def funded(db: Session, client_id: int, event_ids) -> dict[int, float]:
-    """An event's 確保額: the client-currency claim of the earmark made for it."""
-    currency = money_client_currency(db, client_id)
-    return {event_id: Money(claimed_minor(db, client_id, capsule.id).get(currency, 0), currency).to_float()
-            for event_id, capsule in goal_capsules(db, client_id, event_ids).items()}
+    """An event's 確保額: what the earmark made for it holds, foreign reservations valued in the client's currency."""
+    return {event_id: claimed_value(db, client_id, capsule.id) for event_id, capsule in goal_capsules(db, client_id, event_ids).items()}
 
 
 def _months_until(today: date, target: date | None) -> int:

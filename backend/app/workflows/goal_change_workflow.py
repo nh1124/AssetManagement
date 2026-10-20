@@ -14,7 +14,6 @@ from datetime import date
 from sqlalchemy.orm import Session
 
 from .. import models
-from ..domain.money import Money
 from ..services import capsule_service, life_scenario_service
 from ..services.budget_plan_store import lines_written_by, retire_plan_lines
 from ..services.cache_service import invalidate_client
@@ -22,7 +21,6 @@ from ..services.goal_plan_service import GOAL_SOURCE, earmark_parts, earmarked_e
 from ..services.goal_service import list_goals
 from ..services.ledger_service import list_accounts
 from ..services.life_scenario_scope import get, get_goal, lock_client
-from ..services.money_storage import money_client_currency
 
 
 def _situation(db: Session, client_id: int, scenario_id: int) -> dict:
@@ -39,14 +37,13 @@ def _situation(db: Session, client_id: int, scenario_id: int) -> dict:
 def preview(db: Session, client_id: int, scenario_id: int) -> dict:
     """What each choice would touch: the old goal's earmarks, and the earmarks the new goal would get."""
     found = _situation(db, client_id, scenario_id)
-    currency = money_client_currency(db, client_id)
     names = {account.id: account.name for account in list_accounts(db, client_id, account_type="asset", ordered=False)}
     made = capsule_service.goal_capsules(db, client_id, [event.id for event in found["by_lineage"].values()])
     rows = []
     for event_id, capsule in found["capsules"].items():
         target = found["by_lineage"].get(found["old_events"][event_id].lineage)
         rows.append({"capsule_id": capsule.id, "capsule_name": capsule.name, "event_name": found["old_events"][event_id].name,
-                     "claim": Money(capsule_service.claimed_minor(db, client_id, capsule.id).get(currency, 0), currency).to_float(),
+                     "claim": capsule_service.claimed_value(db, client_id, capsule.id),
                      "carry_to": target.name if target is not None else None})
     events = [event for event in earmarked_events(db, client_id, found["scenario"]) if event.id not in made]
     targets = earmark_parts(db, events)

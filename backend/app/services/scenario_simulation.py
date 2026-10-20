@@ -68,10 +68,10 @@ def used_accounts(db: Session, client_id: int, plans) -> list[models.Account]:
 
 
 def _opening(db: Session, client_id: int, accounts: list[models.Account]) -> tuple[dict[int, float], str]:
+    """Each used account's balance as one amount in the client's currency, valued like the balance sheet (WP24)."""
     currency = get_client_currency(db, client_id)
     values = calculate_account_balances(db, accounts) if accounts else {}
-    return {account.id: Money(values[account.id].balances_minor.get(currency, 0), currency).to_float()
-            for account in accounts}, currency
+    return {account.id: values[account.id].balance for account in accounts}, currency
 
 
 def _row_index(today: date, when: date | None) -> int | None:

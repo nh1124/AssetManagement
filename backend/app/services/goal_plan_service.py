@@ -33,7 +33,7 @@ from . import goal_budget_record
 from .budget_lines import earmark_counted_shares
 from .budget_plan_service import month_plan_lines
 from .budget_plan_store import active_lines_for_periods
-from .capsule_service import claimed_minor, goal_capsules
+from .capsule_service import claimed_value_minor, goal_capsules
 from .contribution_plan_service import (
     contributed_minor, event_withdrawals, moved_minor, of_kind, occurrence_indexes, period_index, total_minor, withdrawals,
 )
@@ -148,7 +148,7 @@ def plan(db: Session, client_id: int, start: str, end: str, plan_id: int | None)
     schedule = earmark_schedule(db, events)
     existing = goal_capsules(db, client_id, [event.id for event in events])
     tracked = {capsule.id for capsule in existing.values()}
-    claims = {(event.id, account_id): claimed_minor(db, client_id, existing[event.id].id, account_id).get(currency, 0)
+    claims = {(event.id, account_id): claimed_value_minor(db, client_id, existing[event.id].id, account_id)
               if event.id in existing else 0
               for event in events for account_id in schedule[event.id]}
     taken_out = withdrawals(plans)
