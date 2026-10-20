@@ -411,12 +411,13 @@ def test_budget_summary_combines_income_spending_allocations_and_debt() -> None:
         _give_fixture_lines_a_plan(db)
         summary = get_budget_summary(db, client_id=1, period="2026-05")
 
-        assert summary["total_expected_inflow"] == 100000
+        # The totals count the automatic transactions' monthly amounts (salary 200000, rent 80000) with the saved rows.
+        assert summary["total_expected_inflow"] == 100000 + 200000
         assert summary["monthly_fixed_costs"] == 80000
-        assert summary["total_variable_budget"] == 30000
+        assert summary["total_variable_budget"] == 30000 + 80000
         assert summary["total_allocation_plan"] == 50000
         assert summary["total_debt_plan"] == 20000
-        assert summary["remaining_balance"] == 0
+        assert summary["remaining_balance"] == 300000 - 110000 - 50000 - 20000
         # A user's row adds to the automatic transaction on the same subject (WP19): rent stays its own row.
         food_rows = [account for account in summary["expense_accounts"] if account["name"] == "food"]
         assert sorted((row["source"], row["registry_amount"]) for row in food_rows) == [("manual", 0.0), ("registry", 80000)]

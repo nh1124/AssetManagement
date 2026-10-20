@@ -53,12 +53,12 @@ def test_the_plan_summary_does_not_add_an_earmark_to_the_transfer_that_funds_it(
     assert transfer.id
 
 
-def test_the_summary_takes_the_shares_on_the_amounts_it_adds_up(db):
+def test_the_summary_counts_an_unsaved_automatic_transfer_and_does_not_stack_the_earmark_on_it(db):
     savings, bank = account(db, "貯蓄"), account(db, "銀行")
     capsule = models.Capsule(client_id=1, name="旅行", target_amount_minor=300000, monthly_contribution_minor=0,
                              funding_sources=[models.CapsuleFundingSource(client_id=1, account_id=savings.id, target_amount_minor=300000)])
     db.add(capsule)
-    # An automatic transfer with no saved row: its budget is 50000, but the summary's totals add saved amounts (0 here).
+    # An automatic transfer with no saved row: the summary counts its monthly amount, as the plan page does.
     db.add(models.RegistryEntry(client_id=1, name="貯蓄への振替", amount_minor=to_minor(50000, "JPY"), currency="JPY", frequency="Monthly",
                                 source_account_id=bank.id, destination_account_id=savings.id, budget_account_id=savings.id,
                                 budget_active=True, is_active=True, kind="transfer", start_date=date(2026, 1, 1), repeat_mode="indefinite"))
@@ -68,8 +68,8 @@ def test_the_summary_takes_the_shares_on_the_amounts_it_adds_up(db):
     summary = get_budget_summary(db, 1, PERIOD, cash_flow_months=1)
     transfer = next(line for line in summary["plan_lines"] if line.get("source") == "registry" and line.get("account_id") == savings.id)
     assert (transfer["amount"], transfer["budget_amount"]) == (0, 50000)
-    # Shares taken on the budget amounts would drop the earmark from a total that never counted the transfer.
-    assert (summary["total_allocation_plan"], summary["total_capsule_plan"]) == (30000, 30000)
+    # The earmark sits inside the transfer: the account counts the larger of the two.
+    assert (summary["total_allocation_plan"], summary["total_capsule_plan"]) == (50000, 30000)
 
 
 def test_the_goal_plan_warns_when_transfers_alone_exceed_the_contribution(db):
