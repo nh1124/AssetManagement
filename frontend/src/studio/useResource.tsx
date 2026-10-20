@@ -19,15 +19,17 @@ export function assetErrorMessage(error: unknown): string {
 export function useResource<T>(load: () => Promise<T>) {
     const [data, setData] = useState<T | null>(null);
     const [loading, setLoading] = useState(true);
-    const [error, setError] = useState('');
+    const [failure, setFailure] = useState<{ load: () => Promise<T>; message: string } | null>(null);
     const [revision, setRevision] = useState(0);
+    // An error belongs to the load that failed: a new month or filter starts without it.
+    const error = failure && failure.load === load ? failure.message : '';
 
     useEffect(() => {
         let stale = false;
         void load().then((result) => {
             if (!stale) setData(result);
-        }).catch((failure: unknown) => {
-            if (!stale) setError(assetErrorMessage(failure));
+        }).catch((reason: unknown) => {
+            if (!stale) setFailure({ load, message: assetErrorMessage(reason) });
         }).finally(() => {
             if (!stale) setLoading(false);
         });
@@ -37,7 +39,7 @@ export function useResource<T>(load: () => Promise<T>) {
 
     const reload = () => {
         setLoading(true);
-        setError('');
+        setFailure(null);
         setRevision((value) => value + 1);
     };
 

@@ -43,9 +43,11 @@ function readSimple(transaction: Transaction, accounts: Account[]): { kind: Kind
     const credit = legs.find((leg) => (leg.credit ?? 0) > 0);
     if (!debit || !credit) return null;
     const type = (leg: TransactionLegRead) => leg.account_type ?? accounts.find((account) => account.id === leg.account_id)?.account_type;
-    if (type(debit) === 'expense') return { kind: 'expense', subject: debit.account_id, from: credit.account_id, to: null };
-    if (type(credit) === 'income') return { kind: 'income', subject: credit.account_id, from: null, to: debit.account_id };
-    return { kind: 'transfer', subject: null, from: credit.account_id, to: debit.account_id };
+    const money = (leg: TransactionLegRead) => ['asset', 'liability'].includes(type(leg) ?? '');
+    if (type(debit) === 'expense' && money(credit)) return { kind: 'expense', subject: debit.account_id, from: credit.account_id, to: null };
+    if (type(credit) === 'income' && type(debit) === 'asset') return { kind: 'income', subject: credit.account_id, from: null, to: debit.account_id };
+    if (money(debit) && money(credit)) return { kind: 'transfer', subject: null, from: credit.account_id, to: debit.account_id };
+    return null;
 }
 
 /** Record a 支出, 収入 or 振替 in a few taps; an existing two-leg record opens to change or delete it. */
@@ -173,7 +175,7 @@ export default function RecordSheet({ transaction, onClose, onSaved }: { transac
         {resource.error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-[var(--studio-danger)]">{resource.error}</p>}
         {!resource.data && !resource.error && <div className="h-40 animate-pulse rounded-2xl bg-[var(--studio-surface)]" />}
         {resource.data && !simple && <div className="space-y-3 rounded-2xl bg-[var(--studio-surface)] p-4 text-sm">
-            <p>この記録は、内訳が複数ある・メモや取り置き・減価償却が付いている取引です。PC版の家計簿で編集してください。</p>
+            <p>この記録（内訳が複数ある・メモや取り置き・減価償却が付いている・返金のような組み合わせ）は PC版の家計簿で編集してください。</p>
             <a href="/studio/ledger" className={`inline-flex min-h-11 items-center gap-1 font-medium text-[var(--studio-accent)] ${focusRing}`}>PC版で開く<ExternalLink size={14} aria-hidden /></a>
         </div>}
         {resource.data && simple && <form id={form} onSubmit={(event) => void submit(event)} className="space-y-5">

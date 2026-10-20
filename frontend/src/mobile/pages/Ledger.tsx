@@ -73,8 +73,11 @@ export default function Ledger() {
     // Rows loaded with もっと見る belong to the month they were loaded for.
     const [extra, setExtra] = useState<{ month: string; rows: Transaction[] }>({ month, rows: [] });
     const [loadingMore, setLoadingMore] = useState(false);
-    const shownMonth = useRef(month);
-    useEffect(() => { shownMonth.current = month; }, [month]);
+    // Every month change starts the pages again; a page asked for before it is dropped, even back on the same month.
+    const visit = useRef(0);
+    useEffect(() => {
+        visit.current += 1;
+    }, [month]);
     const load = useCallback(async () => {
         const range = monthRange(month);
         const [page, accounts, proposals, profit] = await Promise.all([
@@ -85,6 +88,12 @@ export default function Ledger() {
     const resource = useResource(load);
     // A month still loading never shows the previous month's records.
     const data = resource.data?.month === month ? resource.data : null;
+    const [seen, setSeen] = useState(month);
+    if (seen !== month) {
+        // Leaving a month forgets its extra pages, so coming back starts from the first page.
+        setSeen(month);
+        setExtra({ month, rows: [] });
+    }
     const items = useMemo(() => [...(data?.page.items ?? []), ...(extra.month === month ? extra.rows : [])], [data, extra, month]);
     const needle = query.trim().toLowerCase();
     const shown = needle ? items.filter((item) => [item.description, item.from_account_name, item.to_account_name].some((text) => text?.toLowerCase().includes(needle))) : items;
@@ -101,11 +110,11 @@ export default function Ledger() {
     const total = data?.page.total ?? 0;
     const more = async () => {
         const asked = month;
+        const ticket = visit.current;
         setLoadingMore(true);
         try {
             const next = await getTransactionsPage({ ...monthRange(asked), limit: PAGE, offset: items.length });
-            // A page for a month the user has left is dropped.
-            if (shownMonth.current === asked) setExtra((loaded) => ({ month: asked, rows: [...(loaded.month === asked ? loaded.rows : []), ...next.items] }));
+            if (visit.current === ticket) setExtra((loaded) => ({ month: asked, rows: [...(loaded.month === asked ? loaded.rows : []), ...next.items] }));
         } catch (failure) {
             snack(`続きを読み込めませんでした。${assetErrorMessage(failure)}`, 'error');
         } finally {
@@ -123,6 +132,7 @@ export default function Ledger() {
             <div className="rounded-2xl bg-[var(--studio-surface)] p-3 shadow-[var(--mobile-shadow)]"><p className="text-xs text-[var(--studio-text-muted)]">支出{needle ? '（見つかった分）' : ''}</p><p className="text-lg font-bold tabular-nums">{formatCurrency(spent, currency)}</p></div>
             <div className="rounded-2xl bg-[var(--studio-surface)] p-3 shadow-[var(--mobile-shadow)]"><p className="text-xs text-[var(--studio-text-muted)]">収入{needle ? '（見つかった分）' : ''}</p><p className="text-lg font-bold tabular-nums text-[var(--studio-positive)]">{formatCurrency(earned, currency)}</p></div>
         </div>
+        {needle && <p className="-mt-2 px-1 text-xs text-[var(--studio-text-muted)]">検索中の合計は、見つかった記録のうち{currency}の 2 行の記録（支出・収入）だけです。</p>}
         <label className="relative block">
             <span className="sr-only">記録を探す</span>
             <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--studio-text-faint)]" aria-hidden />

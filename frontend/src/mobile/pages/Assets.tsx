@@ -45,20 +45,23 @@ function AccountSheet({ account, currency, onClose }: { account: Account; curren
     </Sheet>;
 }
 
+interface BalanceSheet { total_assets: number; total_liabilities: number; net_worth: number; assets: Array<{ name: string; balance: number }>; liabilities: Array<{ name: string; balance: number }> }
+
 /** 純資産 and every asset and liability account with its balance. */
 export default function Assets() {
     const { currentClient } = useClient();
     const currency = currentClient?.general_settings?.currency || 'JPY';
-    // Totals come from the balance sheet, as on ホーム; the rows are the accounts with their balances.
+    // Rows and totals both come from today's balance sheet, as on ホーム; the accounts only say which one to open.
     const load = useCallback(async () => {
-        const [accounts, sheet] = await Promise.all([getAccounts(undefined, true),
-            getBalanceSheet() as Promise<{ total_assets: number; total_liabilities: number; net_worth: number }>]);
-        return { accounts, sheet };
+        const [accounts, sheet] = await Promise.all([getAccounts(undefined, true), getBalanceSheet() as Promise<BalanceSheet>]);
+        const byName = new Map(accounts.map((account) => [account.name, account]));
+        const rows = (items: BalanceSheet['assets']) => items.map((item) => ({ ...item, account: byName.get(item.name) ?? null }));
+        return { sheet, assets: rows(sheet.assets), liabilities: rows(sheet.liabilities) };
     }, []);
     const resource = useResource(load);
     const [opened, setOpened] = useState<Account | null>(null);
-    const assets = resource.data?.accounts.filter((account) => account.account_type === 'asset') ?? [];
-    const liabilities = resource.data?.accounts.filter((account) => account.account_type === 'liability') ?? [];
+    const assets = resource.data?.assets ?? [];
+    const liabilities = resource.data?.liabilities ?? [];
     return <Screen title="資産と口座" back={-1}>
         {resource.error && <ErrorNote message={resource.error} onRetry={resource.reload} />}
         {!resource.data && !resource.error && <Skeleton lines={4} />}
@@ -68,12 +71,12 @@ export default function Assets() {
                 <p className="mt-1 text-3xl font-bold tabular-nums">{formatCurrency(resource.data.sheet.net_worth, currency)}</p>
             </section>
             <List title={`資産 ${formatCurrency(resource.data.sheet.total_assets, currency)}`}>
-                {assets.length ? assets.map((account) => <Row key={account.id} title={account.name} onClick={() => setOpened(account)}
-                    trailing={<Money value={account.balance} currency={currency} className="font-semibold" />} />) : <Row title="資産の口座はありません" chevron={false} />}
+                {assets.length ? assets.map((row) => <Row key={row.name} title={row.name} onClick={row.account ? () => setOpened({ ...row.account as Account, balance: row.balance }) : undefined}
+                    trailing={<Money value={row.balance} currency={currency} className="font-semibold" />} />) : <Row title="資産の口座はありません" chevron={false} />}
             </List>
             <List title={`負債 ${formatCurrency(resource.data.sheet.total_liabilities, currency)}`}>
-                {liabilities.length ? liabilities.map((account) => <Row key={account.id} title={account.name} onClick={() => setOpened(account)}
-                    trailing={<Money value={Math.abs(account.balance)} currency={currency} className="font-semibold" />} />) : <Row title="負債の口座はありません" chevron={false} />}
+                {liabilities.length ? liabilities.map((row) => <Row key={row.name} title={row.name} onClick={row.account ? () => setOpened({ ...row.account as Account, balance: row.balance }) : undefined}
+                    trailing={<Money value={row.balance} currency={currency} className="font-semibold" />} />) : <Row title="負債の口座はありません" chevron={false} />}
             </List>
         </>}
         {opened && <AccountSheet account={opened} currency={currency} onClose={() => setOpened(null)} />}
