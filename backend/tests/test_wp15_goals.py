@@ -177,11 +177,12 @@ def plan_setup(db):
     return scenario, savings, appliance
 
 
-def test_the_plan_takes_earmarks_out_of_the_account_contribution_and_applies_once(db):
+def test_the_plan_puts_the_contribution_into_the_account_with_its_earmarks_inside_and_applies_once(db):
     scenario, savings, appliance = plan_setup(db)
     assert goal_plan_service.reflection_notifications(db, 1, PERIOD)[0]["dedupe_key"] == f"goal_reflection:{scenario.id}:{PERIOD}"
     preview = goal_budget_workflow.preview(db, 1, PERIOD, PERIOD)
-    assert {(row["kind"], row["new"]) for row in preview["changes"]} == {("capsule", 10000), ("account", 20000)}
+    # The earmark sets part of the account's money aside; it is not taken off the contribution as well.
+    assert {(row["kind"], row["new"]) for row in preview["changes"]} == {("capsule", 10000), ("account", 30000)}
     made = next(row for row in preview["changes"] if row["kind"] == "capsule")
     assert (made["new_capsule"], made["capsule_name"], made["event_id"]) == (True, "家電の買い替え", appliance.id)
     assert preview["warnings"] == []
@@ -194,7 +195,7 @@ def test_the_plan_takes_earmarks_out_of_the_account_contribution_and_applies_onc
         "家電の買い替え", 120000, 10000, [savings.id])
     rows = db.query(models.MonthlyPlanLine).filter_by(client_id=1, is_active=True, source_kind="goal").all()
     assert {(row.target_type, row.target_id if row.target_type == "capsule" else None, row.account_id, row.amount_minor) for row in rows} == {
-        ("capsule", capsule.id, savings.id, 10000), ("account", None, savings.id, 20000)}
+        ("capsule", capsule.id, savings.id, 10000), ("account", None, savings.id, 30000)}
     again = goal_budget_workflow.preview(db, 1, PERIOD, PERIOD)
     assert not any(row["changed"] for row in again["changes"])
     check = goal_plan_service.plan_check(db, 1, PERIOD)
@@ -208,9 +209,9 @@ def test_the_plan_warns_when_earmarks_exceed_the_contribution(db):
     plan_row = plans.list_plans(db, 1, scenario.id)[0]
     plans.update_plan(db, 1, plan_row.id, {"monthly_amount": 4000})
     preview = goal_budget_workflow.preview(db, 1, PERIOD, PERIOD)
-    # An account left with nothing after its earmarks gets no row written.
-    assert {(row["kind"], row["new"]) for row in preview["changes"]} == {("capsule", 10000)}
-    assert preview["warnings"] and "超えています" in preview["warnings"][0]
+    # The account still receives its contribution; the earmark beyond it comes from the balance.
+    assert {(row["kind"], row["new"]) for row in preview["changes"]} == {("capsule", 10000), ("account", 4000)}
+    assert preview["warnings"] == [f"{PERIOD}：「貯蓄」は取り置き¥10,000が積立設定の月額¥4,000を超えています（超える分は口座の残高から確保します）。"]
     # The same shortfall over several months is one warning naming them.
     longer = goal_budget_workflow.preview(db, 1, PERIOD, months_ahead(2).strftime("%Y-%m"))
     assert len(longer["warnings"]) == 1 and "のうち3か月" in longer["warnings"][0]
@@ -228,7 +229,7 @@ def test_the_plan_counts_what_the_account_already_receives_and_keeps_those_rows(
     manual = create_plan_lines(db, 1, [{"plan_id": plan_id, "target_period": PERIOD, "line_type": "allocation", "target_type": "account",
                                         "account_id": savings.id, "amount": 15000, "source": "manual", "source_kind": "manual"}])[0]
     preview = goal_budget_workflow.preview(db, 1, PERIOD, PERIOD)
-    assert {(row["kind"], row["new"]) for row in preview["changes"]} == {("capsule", 10000), ("account", 5000)}
+    assert {(row["kind"], row["new"]) for row in preview["changes"]} == {("capsule", 10000), ("account", 15000)}
     goal_budget_workflow.apply(db, 1, PERIOD, PERIOD, preview["fingerprint"])
     db.refresh(manual)
     assert manual.is_active and manual.amount_minor == 15000

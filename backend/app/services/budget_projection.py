@@ -23,6 +23,8 @@ from .budget_lines import (
     _empty_balance,
     _empty_flow,
     account_flow_bucket,
+    counted_amount,
+    earmark_counted_shares,
 )
 from .budget_plan_store import _deduplicate_active_plan_models, find_budget_plan_id
 from .budget_warnings import budget_setup_warnings
@@ -126,11 +128,14 @@ def _cash_flow_projection(
         period = add_months(start_period, idx)
         lines = _period_plan_lines(ctx, period, plan_id)
         projection_lines: list[models.MonthlyPlanLine | dict] = list(lines)
+        shares = earmark_counted_shares(projection_lines, lambda line: line.amount)
         planned_flow = _empty_flow()
         actual_flow = _empty_flow()
         remaining_flow = _empty_flow()
         for line in projection_lines:
             planned_amount, actual_amount, remaining_amount = _projection_amounts_for_period(ctx, line, period)
+            planned_amount = counted_amount(line, planned_amount, shares)
+            remaining_amount = counted_amount(line, remaining_amount, shares)
             _add_flow(planned_flow, plan_line_flow_for_amount(ctx, line, planned_amount))
             _add_flow(actual_flow, plan_line_flow_for_amount(ctx, line, actual_amount))
             _add_flow(remaining_flow, plan_line_flow_for_amount(ctx, line, remaining_amount))
@@ -187,9 +192,10 @@ def _balance_projection(
         period = add_months(start_period, idx)
         lines = _period_plan_lines(ctx, period, plan_id)
         projection_lines: list[models.MonthlyPlanLine | dict] = list(lines)
+        shares = earmark_counted_shares(projection_lines, lambda line: line.amount)
         for line in projection_lines:
             _, _, remaining_amount = _projection_amounts_for_period(ctx, line, period)
-            movement = _balance_movement_for_amount(ctx, line, remaining_amount)
+            movement = _balance_movement_for_amount(ctx, line, counted_amount(line, remaining_amount, shares))
             for key, value in movement.items():
                 state[key] = state.get(key, 0.0) + (value or 0.0)
         rows.append(_balance_projection_row(period, state))

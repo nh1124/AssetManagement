@@ -9,10 +9,10 @@ For every month of the range:
   source per account;
 - a withdrawal record's month gets a withdrawal row (取り崩し) for its account;
 - each 使用口座 with a positive monthly amount gets an allocation row: the amount less
-  what its earmarks take and less what the plan already puts into it otherwise
-  (automatic transfers, rows typed by hand, earmarks the goal does not make), so the
-  month's plan for the account comes to the 積立設定 (R7). Never below zero; a warning
-  says when the rest already takes more;
+  what the plan already transfers into it (automatic transfers, rows typed by hand),
+  so what reaches the account comes to the 積立設定 (R7). Earmarks set part of the
+  account's money aside and are not taken off it as well (R3: they are its breakdown).
+  Warnings say when the transfers, or the earmarks, already come to more;
 - a negative monthly amount is a withdrawal row (取り崩し) of its size.
 Only rows the goal wrote before (source "goal") are replaced; rows typed by hand stay.
 Nothing changes until the user confirms the exact preview: apply recomputes it and
@@ -29,6 +29,7 @@ from .. import models
 from ..domain.errors import Refused
 from ..domain.money import Money
 from . import goal_budget_record
+from .budget_lines import earmark_counted_shares
 from .budget_plan_service import month_plan_lines
 from .budget_plan_store import active_lines_for_periods
 from .capsule_service import claimed_minor, goal_capsules
@@ -92,17 +93,26 @@ def earmark_parts(db: Session, events: list[models.LifeEvent]) -> dict[int, dict
             for event_id, accounts in earmark_schedule(db, events).items()}
 
 
-def _other_allocations(db: Session, client_id: int, period: str, plan_id: int | None, tracked: set[int], currency: str) -> dict[int, int]:
-    """{account_id: minor} the month's plan already sets aside into each account apart from the goal's own rows."""
-    totals: dict[int, int] = {}
+def _other_allocations(db: Session, client_id: int, period: str, plan_id: int | None, tracked: set[int],
+                       currency: str) -> tuple[dict[int, int], dict[int, int]]:
+    """({account_id: minor} transferred into each account, {account_id: minor} earmarked in it) by the
+    month's plan apart from the goal's own rows."""
+    transfers: dict[int, int] = {}
+    earmarks: dict[int, int] = {}
     for line in month_plan_lines(db, client_id, period, plan_id):
         if line.get("line_type") != "allocation" or not line.get("account_id") or GOAL_SOURCE in (line.get("source"), line.get("source_kind")):
             continue
         if line.get("target_type") == "capsule" and line.get("target_id") in tracked:
             continue
-        if line.get("target_type") in {"account", "capsule"}:
-            totals[line["account_id"]] = totals.get(line["account_id"], 0) + Money.from_major(str(line.get("budget_amount") or 0), currency).minor
-    return totals
+        bucket = earmarks if line.get("target_type") == "capsule" else transfers if line.get("target_type") == "account" else None
+        if bucket is not None:
+            bucket[line["account_id"]] = bucket.get(line["account_id"], 0) + Money.from_major(str(line.get("budget_amount") or 0), currency).minor
+    return transfers, earmarks
+
+
+def _amount_text(minor: int, currency: str) -> str:
+    value = Money(minor, currency).to_float()
+    return f"¥{value:,.0f}" if currency == "JPY" else f"{value:,.2f} {currency}"
 
 
 def _warning(message: str, periods: list[str]) -> str:
@@ -158,18 +168,22 @@ def plan(db: Session, client_id: int, start: str, end: str, plan_id: int | None)
             if record.start_period == period:
                 key = ("drawdown", "", record.account_id)
                 wanted[key] = wanted.get(key, 0) - record.monthly_amount_minor
-        other = _other_allocations(db, client_id, period, plan_id, tracked, currency)
+        transfers, held = _other_allocations(db, client_id, period, plan_id, tracked, currency)
         for account_id in sorted({plan.account_id for plan in plans}):
             contribution = resolve(plans, account_id, period, goal.annual_return)[0]
             contribution_total += contribution
             if contribution < 0:
                 wanted[("drawdown", "", account_id)] = wanted.get(("drawdown", "", account_id), 0) - contribution
                 continue
-            used = taken.get(account_id, 0) + other.get(account_id, 0)
-            if used > contribution:
-                warned.setdefault(f"「{names.get(account_id, account_id)}」は取り置きと既存の配分（自動取引など）が積立設定の月額を超えています。", []).append(period)
+            name, monthly = names.get(account_id, account_id), _amount_text(contribution, currency)
+            moved = transfers.get(account_id, 0)
+            if moved > contribution:
+                warned.setdefault(f"「{name}」は既存の振替（自動取引など）{_amount_text(moved, currency)}が積立設定の月額{monthly}を超えています。", []).append(period)
+            set_aside = taken.get(account_id, 0) + held.get(account_id, 0)
+            if set_aside > contribution:
+                warned.setdefault(f"「{name}」は取り置き{_amount_text(set_aside, currency)}が積立設定の月額{monthly}を超えています（超える分は口座の残高から確保します）。", []).append(period)
             if contribution:
-                wanted[("account", "", account_id)] = max(0, contribution - used)
+                wanted[("account", "", account_id)] = max(0, contribution - moved)
         rows = {_stored_key(line): line for line in stored if line.target_period == period}
         for key in sorted(set(wanted) | set(rows), key=lambda item: (item[0], item[1], item[2] or 0)):
             kind, target, account_id = key
@@ -209,12 +223,17 @@ def plan_check(db: Session, client_id: int, period: str) -> dict:
         return {"period": period, "goal": None, "accounts": [], "contribution": 0.0, "planned": 0.0, "difference": 0.0}
     plans = db.query(models.ScenarioContributionPlan).filter_by(scenario_id=goal.id).all()
     planned: dict[int, float] = {}
-    for line in month_plan_lines(db, client_id, period):
-        if not line.get("account_id") or line.get("target_type") not in {"account", "capsule"}:
-            continue
+    lines = [line for line in month_plan_lines(db, client_id, period)
+             if line.get("account_id") and line.get("target_type") in {"account", "capsule"}]
+    # Earmarks count only beyond the transfers into their account, as the plan summary counts them.
+    shares = earmark_counted_shares(lines, lambda line: line.get("budget_amount"))
+    for line in lines:
         sign = 1 if line.get("line_type") == "allocation" else -1 if line.get("line_type") == "drawdown" else 0
         if sign:
-            planned[line["account_id"]] = planned.get(line["account_id"], 0.0) + sign * float(line.get("budget_amount") or 0.0)
+            amount = float(line.get("budget_amount") or 0.0)
+            if line.get("line_type") == "allocation" and line.get("target_type") == "capsule":
+                amount *= shares.get(line["account_id"], 1.0)
+            planned[line["account_id"]] = planned.get(line["account_id"], 0.0) + sign * amount
     accounts = {account.id: account for account in db.query(models.Account).filter_by(client_id=client_id, account_type="asset").all()}
     rows = []
     for account_id in sorted(set(planned) | {plan.account_id for plan in plans}):

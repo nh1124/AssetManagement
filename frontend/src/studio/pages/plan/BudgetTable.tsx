@@ -47,7 +47,7 @@ const Frame = ({ children }: { children: ReactNode }) => <div className="overflo
 function EarmarkTable({ earmarks, currency, disabled, onEarmark }: Pick<TableProps, 'earmarks' | 'currency' | 'disabled' | 'onEarmark'>) {
     const money = (amount: number) => formatCurrency(amount, currency);
     return <section className="space-y-2">
-        <h3 className="flex items-center gap-1.5 text-sm font-semibold">取り置き<Help label="取り置き" text="口座ではありません。資金元の口座の残高から確保し、予算では配分として数えます。" /></h3>
+        <h3 className="flex items-center gap-1.5 text-sm font-semibold">取り置き<Help label="取り置き" text="口座ではありません。資金元の口座の残高から確保します。予算では、同じ口座への振替を超える分だけを配分として数えます（振替と重ねて数えません）。" /></h3>
         <Frame><table className="w-full text-left text-sm">
             <thead className={`border-b border-[var(--studio-border)] ${muted}`}><tr>{['取り置き', '資金元', '月の予算', '確保額'].map((label) => <th key={label} scope="col" className={th}>{label}</th>)}</tr></thead>
             <tbody className="divide-y divide-[var(--studio-border)]">

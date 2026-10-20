@@ -21,6 +21,8 @@ from .budget_lines import (
     _line_source_kind,
     _sum_actual,
     _sum_lines,
+    counted_amount,
+    earmark_counted_shares,
     plan_line_identity_key,
 )
 from .budget_plan_store import _deduplicate_active_plan_models, find_budget_plan_id
@@ -377,7 +379,9 @@ def get_budget_summary(
     total_expected_inflow = total_income_plan + total_borrowing_plan + total_drawdown_plan
 
     total_variable_budget = _sum_lines(expense_lines, "expense")
-    total_allocation_plan = _sum_lines(allocation_lines, "allocation")
+    # An earmark in an account that also receives a transfer is not counted on top of it.
+    shares = earmark_counted_shares(allocation_lines, lambda line: line.get("budget_amount"))
+    total_allocation_plan = sum(counted_amount(line, line.get("amount") or 0.0, shares) for line in allocation_lines)
     total_debt_plan = _sum_lines(debt_lines, "debt_payment")
     total_capsule_plan = _sum_lines(capsule_lines, "allocation")
     total_capsule_actual = _sum_actual(capsule_lines, "allocation")

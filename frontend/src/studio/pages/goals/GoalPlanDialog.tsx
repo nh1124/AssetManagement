@@ -36,7 +36,7 @@ export default function GoalPlanDialog({ title = 'ゴールから計画を作成
         if (!preview) return;
         void mutation.run(() => applyGoalPlan(start, end, preview.fingerprint), '', () => onClose(true));
     };
-    return <Overlay title={title} help="口座ごとの積立（積立設定の月額）から、その口座の取り置きの月額と既存の配分（自動取引など）を引いた額を配分の行に、毎月の取り崩しは取り崩しの行にします。取り置きは、ライフイベントへの取り崩しのレコードがある支出イベントごとに同じ名前で作り（ゴール）、口座ごとに取り崩す額を、取り崩す月まで均等に積み立てます。取り崩す月には、その口座の取り崩しの行を作ります。「取り置きと既存の配分が積立設定の月額を超えています」は、その月その口座で、ゴールの取り置きと既存の配分の合計が積立設定の月額より多いという意味です（その口座の配分の行は 0 になります）。" busy={mutation.busy} onClose={() => onClose(false)} footer={<>
+    return <Overlay title={title} help="積立設定の月額から、その口座への既存の振替（自動取引など）を引いた額を配分の行に、毎月の取り崩しは取り崩しの行にします。取り置きは口座の中で確保するので、振替や配分の行とは重ねて数えません。取り置きは、ライフイベントへの取り崩しのレコードがある支出イベントごとに同じ名前で作り（ゴール）、口座ごとに取り崩す額を、取り崩す月まで均等に積み立てます。取り崩す月には、その口座の取り崩しの行を作ります。注意「既存の振替が積立設定の月額を超えています」は振替だけで月額を超えていること、「取り置きが積立設定の月額を超えています」は取り置きの合計が月額を超え、超える分を口座の残高から確保することを示します。" busy={mutation.busy} onClose={() => onClose(false)} footer={<>
         <button type="button" disabled={mutation.busy || !preview || changes.length === 0} onClick={apply} className={primaryClass}>{mutation.busy ? '処理中…' : '計画に反映'}</button>
         <button type="button" disabled={mutation.busy} onClick={() => onClose(false)} className={buttonClass}>閉じる</button>
     </>}>

@@ -76,6 +76,8 @@ PUBLIC: dict[str, set[str]] = {
         "assign_plan_line_identity",
         # A reflected capsule amount is split across accounts as its rows are.
         "capsule_shares",
+        # The goal's plan check counts earmarks beyond the transfers into their account, as the summary does.
+        "earmark_counted_shares",
         "line_identity_key",
         "newest_line_key",
     },
