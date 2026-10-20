@@ -15,6 +15,7 @@ function rowLabel(change: GoalPlanChange): string {
     const account = change.account_name ?? `#${change.account_id}`;
     if (change.kind === 'drawdown') return `口座「${account}」からの取り崩し`;
     if (change.kind === 'account') return `口座「${account}」への積立`;
+    if (change.kind === 'transfer') return `口座「${change.source_account_name ?? `#${change.source_account_id}`}」から「${account}」への振替`;
     const name = change.capsule_name ?? `#${change.capsule_id}`;
     return change.new_capsule ? `新しい取り置き「${name}」（${account}に作ります）` : `取り置き「${name}」（${account}から）`;
 }
@@ -36,7 +37,7 @@ export default function GoalPlanDialog({ title = 'ゴールから計画を作成
         if (!preview) return;
         void mutation.run(() => applyGoalPlan(start, end, preview.fingerprint), '', () => onClose(true));
     };
-    return <Overlay title={title} help="積立設定の月額から、その口座への既存の振替（自動取引など）を引いた額を配分の行に、毎月の取り崩しは取り崩しの行にします。取り置きは口座の中で確保するので、振替や配分の行とは重ねて数えません。取り置きは、ライフイベントへの取り崩しのレコードがある支出イベントごとに同じ名前で作り（ゴール）、口座ごとに取り崩す額を、取り崩す月まで均等に積み立てます。取り崩す月には、その口座の取り崩しの行を作ります。注意「既存の振替が積立設定の月額を超えています」は振替だけで月額を超えていること、「取り置きが積立設定の月額を超えています」は取り置きの合計が月額を超え、超える分を口座の残高から確保することを示します。" busy={mutation.busy} onClose={() => onClose(false)} footer={<>
+    return <Overlay title={title} help="積立のその月の額から、その口座への既存の振替（自動取引など）を引いた額を配分の行に、口座振替は振替元を資金元とする振替先への配分の行にします。取り置きは口座の中で確保するので、振替や配分の行とは重ねて数えません。取り置きは、ライフイベントへの取り崩しのレコードがある支出イベントごとに同じ名前で作り（ゴール）、口座ごとに取り崩す額の合計を、最初に取り崩す月まで均等に積み立てます。取り崩す月ごとに、その口座の取り崩しの行を作ります。注意「既存の振替が積立設定の月額を超えています」は振替だけで月額を超えていること、「取り置きが積立設定の月額を超えています」は取り置きの合計が月額を超え、超える分を口座の残高から確保することを示します。" busy={mutation.busy} onClose={() => onClose(false)} footer={<>
         <button type="button" disabled={mutation.busy || !preview || changes.length === 0} onClick={apply} className={primaryClass}>{mutation.busy ? '処理中…' : '計画に反映'}</button>
         <button type="button" disabled={mutation.busy} onClick={() => onClose(false)} className={buttonClass}>閉じる</button>
     </>}>
@@ -53,7 +54,7 @@ export default function GoalPlanDialog({ title = 'ゴールから計画を作成
                 {preview.warnings.length > 0 && <ul role="alert" className="list-disc space-y-1 pl-5 text-sm text-[var(--studio-warning)]">{preview.warnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>}
                 {changes.length === 0 ? <p className="text-sm text-[var(--studio-text-muted)]">計画は最新です。変更はありません。</p>
                     : <DataTable columns={['月', '計画の行', '現在', '変更後']}>
-                        {changes.map((change) => <tr key={`${change.period}:${change.kind}:${change.capsule_id ?? 0}:${change.account_id ?? 0}`}>
+                        {changes.map((change) => <tr key={`${change.period}:${change.kind}:${change.capsule_id ?? 0}:${change.source_account_id ?? 0}:${change.account_id ?? 0}`}>
                             <td className="whitespace-nowrap px-5 py-3 tabular-nums">{change.period}</td>
                             <th scope="row" className="px-5 py-3 font-normal">{rowLabel(change)}</th>
                             <td className="whitespace-nowrap px-5 py-3 tabular-nums">{change.line_id === null ? '—' : formatCurrency(change.current, preview.currency)}</td>

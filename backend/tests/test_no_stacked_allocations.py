@@ -77,11 +77,11 @@ def test_the_goal_plan_warns_when_transfers_alone_exceed_the_contribution(db):
     db.add(scenario)
     db.commit()
     savings = account(db, "貯蓄")
-    plans.create_plan(db, 1, scenario.id, {"account_id": savings.id, "start_period": PERIOD, "monthly_amount": 30000})
+    plans.create_plan(db, 1, scenario.id, {"account_id": savings.id, "start_period": PERIOD, "amount": 30000})
     event = goal_service.create_goal_record(db, 1, schemas.LifeEventCreate(
         scenario_id=scenario.id, name="家電", target_amount=120000, target_date=months_ahead(12)))
     plans.create_plan(db, 1, scenario.id, {"account_id": savings.id, "start_period": months_ahead(12).strftime("%Y-%m"),
-                                            "monthly_amount": -120000, "life_event_id": event.id})
+                                            "kind": "withdrawal", "amount": 120000, "life_event_id": event.id})
     create_plan_lines(db, 1, [{"plan_id": resolve_budget_plan_id(db, 1), "target_period": PERIOD, "line_type": "allocation",
                                "target_type": "account", "account_id": savings.id, "amount": 40000, "source": "manual", "source_kind": "manual"}])
     preview = goal_budget_workflow.preview(db, 1, PERIOD, PERIOD)

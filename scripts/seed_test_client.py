@@ -3,7 +3,8 @@
 Wipes the signed-in client's data with an empty import, then records a small household:
 accounts, three months of transactions, automatic transactions, a fixed asset and a consumable,
 earmarks with a rule, a tracked currency, and a goal scenario (events, a car loan and its
-repayments, branches, preconditions, 積立設定 with ライフイベントへの取り崩し) whose plan is made,
+repayments, branches, preconditions, 積立設定 with 積立・口座振替・ライフイベントへの取り崩し, a 老後生活
+paid by a monthly withdrawal) whose plan is made,
 which creates the goal's earmarks, and the user's own plan records for this month. Only ever run it against the
 test client.
 
@@ -162,6 +163,7 @@ def seed_goal(api: Api, today: date, accounts: dict) -> dict:
         ("住宅購入（頭金）", "expense", "2031-04-01", 6000000, 2, {}),
         ("車の買い替え", "expense", "2029-06-01", 1500000, 3, {}),
         ("マイカーローン", "borrowing", "2029-06-01", 1000000, 3, {"interest_rate": 2.5}),
+        ("老後生活", "expense", "2051-01-01", 36000000, 2, {}),
     ):
         events[name] = api.post("/life-events/", {"scenario_id": base["id"], "name": name, "direction": direction, "target_date": when,
                                                   "target_amount": amount, "priority": priority, **extra})["id"]
@@ -172,24 +174,34 @@ def seed_goal(api: Api, today: date, accounts: dict) -> dict:
         api.post("/life-events/links", {"from_event_id": events[source], "to_event_id": events[target], "kind": "after", "offset_months": months})
     api.post(f"/life-events/{events['住宅購入（頭金）']}/conditions", {"metric": "net_worth", "comparator": "gte", "threshold_minor": 5000000, "note": "頭金を払っても生活できる"})
     api.post(f"/life-events/{events['出産']}/conditions", {"metric": "member_age", "comparator": "lte", "threshold_number": 40, "reference_id": member["id"]})
-    for account, start, monthly, rate, note in (
-        ("貯蓄口座", period, 50000, 0.1, None), ("貯蓄口座", "2028-04", 70000, None, "昇給"),
-        ("証券口座", period, 30000, 5.0, None), ("証券口座", "2030-01", 50000, None, None),
-        ("貯蓄口座", "2051-01", -100000, None, "老後の取り崩し"),
+    # 積立: monthly amounts that end when the next one starts (records add up).
+    for account, start, end, amount, rate, note in (
+        ("貯蓄口座", period, "2028-03", 50000, 0.1, None), ("貯蓄口座", "2028-04", None, 70000, None, "昇給"),
+        ("証券口座", period, "2029-12", 30000, 5.0, None), ("証券口座", "2030-01", None, 50000, None, None),
     ):
-        api.post(f"/life-scenarios/{base['id']}/contribution-plans", {"account_id": accounts[account], "start_period": start,
-                                                                       "monthly_amount": monthly, "annual_return": rate, "note": note})
-    # ライフイベントへの取り崩し: which account pays how much toward an event, and when; 結婚 draws on two accounts.
-    for account, start, amount, name in (
-        ("貯蓄口座", "2027-08", 400000, "ヨーロッパ旅行"), ("貯蓄口座", "2028-10", 1750000, "結婚"), ("証券口座", "2028-10", 750000, "結婚"),
-        ("貯蓄口座", "2029-06", 500000, "車の買い替え"), ("貯蓄口座", "2030-10", 300000, "出産"), ("証券口座", "2031-03", 4000000, "住宅購入（頭金）"),
+        api.post(f"/life-scenarios/{base['id']}/contribution-plans", {"kind": "contribution", "account_id": accounts[account], "start_period": start,
+                                                                       "amount": amount, "interval_months": 1, "end_period": end,
+                                                                       "annual_return": rate, "note": note})
+    # 口座振替: every December, ten times, part of the bonus goes from the bank to securities (skipped when the bank is short).
+    api.post(f"/life-scenarios/{base['id']}/contribution-plans", {"kind": "transfer", "account_id": accounts["メイン銀行"], "to_account_id": accounts["証券口座"],
+                                                                   "start_period": f"{today.year}-12", "amount": 200000, "interval_months": 12,
+                                                                   "repeat_count": 10, "on_shortage": "skip", "note": "賞与から"})
+    # ライフイベントへの取り崩し: which account pays how much toward an event, and when; 結婚 draws on two accounts,
+    # 老後生活 is paid 100,000 a month for 30 years.
+    for account, start, amount, name, interval, times in (
+        ("貯蓄口座", "2027-08", 400000, "ヨーロッパ旅行", None, None), ("貯蓄口座", "2028-10", 1750000, "結婚", None, None),
+        ("証券口座", "2028-10", 750000, "結婚", None, None), ("貯蓄口座", "2029-06", 500000, "車の買い替え", None, None),
+        ("貯蓄口座", "2030-10", 300000, "出産", None, None), ("証券口座", "2031-03", 4000000, "住宅購入（頭金）", None, None),
+        ("貯蓄口座", "2051-01", 100000, "老後生活", 1, 360),
     ):
-        api.post(f"/life-scenarios/{base['id']}/contribution-plans", {"account_id": accounts[account], "start_period": start,
-                                                                       "monthly_amount": -amount, "life_event_id": events[name]})
+        api.post(f"/life-scenarios/{base['id']}/contribution-plans", {"kind": "withdrawal", "account_id": accounts[account], "start_period": start,
+                                                                       "amount": amount, "interval_months": interval, "repeat_count": times,
+                                                                       "on_shortage": "partial", "life_event_id": events[name]})
     api.post(f"/life-scenarios/{base['id']}/goal", {"earmarks": "keep"})
     # A comparison story: the same plan, investing more after a job change.
     other = api.post(f"/life-scenarios/{base['id']}/duplicate", {"name": "転職して積立を増やす"})
-    api.post(f"/life-scenarios/{other['id']}/contribution-plans", {"account_id": accounts["証券口座"], "start_period": "2027-04", "monthly_amount": 80000})
+    api.post(f"/life-scenarios/{other['id']}/contribution-plans", {"kind": "contribution", "account_id": accounts["証券口座"], "start_period": "2027-04",
+                                                                    "amount": 80000, "interval_months": 1, "note": "転職後の上乗せ"})
     # Make this month's and the next five months' plan from the goal, as the plan screen would.
     end = date(today.year + (today.month + 4) // 12, (today.month + 4) % 12 + 1, 1).strftime("%Y-%m")
     preview = api.post("/goal-budget/preview", {"start_period": period, "end_period": end})

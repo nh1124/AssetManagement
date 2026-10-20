@@ -49,8 +49,8 @@ def create(db, scenario, name, amount, when, account_id=None, **values):
         scenario_id=scenario.id, name=name, target_amount=amount, target_date=when, **values))
     if account_id is not None and row.direction == "expense":
         # ライフイベントへの取り崩し (WP22): the account withdraws the whole amount in the event's month.
-        plans.create_plan(db, 1, scenario.id, {"account_id": account_id, "start_period": when.strftime("%Y-%m"),
-                                                "monthly_amount": -amount, "life_event_id": row.id})
+        plans.create_plan(db, 1, scenario.id, {"kind": "withdrawal", "account_id": account_id, "start_period": when.strftime("%Y-%m"),
+                                                "amount": amount, "life_event_id": row.id})
     return row
 
 
@@ -109,23 +109,24 @@ def test_repayments_happen_only_where_their_borrowing_did(db):
     assert result["projection"][-1]["p50"] == 500_000
 
 
-def test_only_used_accounts_grow_and_a_negative_record_withdraws(db):
+def test_only_used_accounts_grow_and_a_monthly_withdrawal_pays_its_event_as_it_goes(db):
     still(db)
     scenario = goal(db)
     savings = account(db, "貯蓄", balance=600_000)
     cash = account(db, "現金", balance=100_000)
-    plans.create_plan(db, 1, scenario.id, {"account_id": savings.id, "start_period": PERIOD, "monthly_amount": -10000, "annual_return": 0})
+    plans.create_plan(db, 1, scenario.id, {"account_id": savings.id, "start_period": PERIOD, "annual_return": 0})
+    # 生活費 (like 老後生活): from this month, 10,000 a month toward an event of 1,000,000.
+    living = create(db, scenario, "生活費", 1_000_000, TODAY.replace(day=1))
+    plans.create_plan(db, 1, scenario.id, {"kind": "withdrawal", "account_id": savings.id, "start_period": PERIOD, "amount": 10000,
+                                            "interval_months": 1, "life_event_id": living.id})
     result = scenarios.project(db, 1, scenario)
     assert [row["account_id"] for row in result["accounts"]] == [savings.id]
-    assert result["accounts"][0]["p50"][:3] == [600_000, 480_000, 360_000]
-    # The unused cash stays in the rest of net worth.
-    assert result["projection"][1]["p50"] == 580_000
-    assert result["monthly_contribution"] == -10000
-    preview = goal_budget_workflow.preview(db, 1, PERIOD, PERIOD)
-    assert [(row["kind"], row["new"]) for row in preview["changes"]] == [("drawdown", 10000)]
-    goal_budget_workflow.apply(db, 1, PERIOD, PERIOD, preview["fingerprint"])
-    line = db.query(models.MonthlyPlanLine).filter_by(client_id=1, source_kind="goal", is_active=True).one()
-    assert (line.line_type, line.target_type, line.account_id, line.amount_minor) == ("drawdown", "account", savings.id, 10000)
+    first = 600_000 - 10000 * (13 - TODAY.month)
+    assert result["accounts"][0]["p50"][:3] == [first, first - 120_000, first - 240_000]
+    # Net worth falls as the instalments are paid, not all at once; the unused cash stays in the rest of it.
+    assert [row["p50"] for row in result["projection"][:2]] == [first + 100_000, first - 20_000]
+    assert result["monthly_contribution"] == 0
+    assert {row["name"]: row["funded_probability"] for row in result["events"]}["生活費"] == 1.0
     assert cash.id not in {row["account_id"] for row in result["accounts"]}
 
 
@@ -172,7 +173,7 @@ def test_changing_the_goal_previews_and_carries_earmarks_to_the_same_event(db):
 
 def test_replacing_deletes_the_old_earmarks_releases_their_money_and_makes_new_ones(db):
     scenario, copy, savings, capsule, lone = _funded_goal(db)
-    plans.create_plan(db, 1, scenario.id, {"account_id": savings.id, "start_period": PERIOD, "monthly_amount": 30000})
+    plans.create_plan(db, 1, scenario.id, {"account_id": savings.id, "start_period": PERIOD, "amount": 30000})
     preview = goal_budget_workflow.preview(db, 1, PERIOD, PERIOD)
     goal_budget_workflow.apply(db, 1, PERIOD, PERIOD, preview["fingerprint"])
     assert db.query(models.MonthlyPlanLine).filter_by(client_id=1, source_kind="goal", is_active=True).count() == 3

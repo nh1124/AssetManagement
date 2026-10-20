@@ -9,24 +9,35 @@ export interface LifeScenarioUpdate {
     horizon_years?: number;
 }
 
-/** A 積立設定 record: from start_period on, this account receives monthly_amount and yields annual_return. */
+/** 積立 into account_id, 口座振替 from account_id to to_account_id, or ライフイベントへの取り崩し from account_id toward life_event_id. */
+export type ContributionKind = 'contribution' | 'transfer' | 'withdrawal';
+/** When the account holds less: skip (取引を発生させない) or partial (ある分だけで取引する). */
+export type ShortageMode = 'skip' | 'partial';
+
+/** A 積立設定 record (WP23). Records add up. amount moves each time: once when interval_months is null,
+ * else every interval_months months from start_period, repeat_count times or until end_period. */
 export interface ContributionPlan {
     id: number;
     scenario_id: number;
+    kind: ContributionKind;
     account_id: number;
     account_name: string | null;
+    to_account_id: number | null;
+    to_account_name: string | null;
     start_period: string;
-    monthly_amount: number;
-    /** null carries the previous record's yield, else the scenario's default. */
+    amount: number;
+    interval_months: number | null;
+    repeat_count: number | null;
+    end_period: string | null;
+    on_shortage: ShortageMode | null;
+    /** 積立 only: the account's yield from start_period; null carries the previous record's, else the scenario's default. */
     annual_return: number | null;
     note: string | null;
-    /** ライフイベントへの取り崩し: -monthly_amount leaves the account once, in start_period, for this expense. */
     life_event_id: number | null;
     life_event_name: string | null;
 }
-// monthly_amount below zero withdraws from the account every month (取り崩し).
 
-export type ContributionPlanInput = Partial<Pick<ContributionPlan, 'account_id' | 'start_period' | 'monthly_amount' | 'annual_return' | 'note' | 'life_event_id'>>;
+export type ContributionPlanInput = Partial<Omit<ContributionPlan, 'id' | 'scenario_id' | 'account_name' | 'to_account_name' | 'life_event_name'>>;
 
 export interface LifeScenario {
     id: number;

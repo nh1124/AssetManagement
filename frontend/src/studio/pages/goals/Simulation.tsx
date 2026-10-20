@@ -15,6 +15,7 @@ import { DataTable, Feedback, Field, Help } from '../db/Database';
 import { buttonClass, inputClass, loadAccounts, primaryClass, useMutation } from '../db/forms';
 import type { LifeEventLink } from '../../../api/lifeEventGraph';
 import ContributionPlanEditor from './ContributionPlanEditor';
+import { recordText, scheduleText, SHORTAGE_TEXT } from './contributionText';
 import { eventAmount, KIND_LABELS } from './eventKinds';
 import GoalProjectionChart from './GoalProjectionChart';
 import LifeEventDiagram from './LifeEventDiagram';
@@ -65,30 +66,31 @@ function Assumptions({ scenario, busy, onSave }: { scenario: LifeScenario; busy:
     </form>;
 }
 
-/** What a record does, in the table's words. */
-function recordText(plan: ContributionPlan, currency: string): string {
-    if (plan.life_event_id) return `取り崩し ${formatCurrency(-plan.monthly_amount, currency)} → ${plan.life_event_name ?? `#${plan.life_event_id}`}（1回）`;
-    return plan.monthly_amount < 0 ? `毎月 取り崩し ${formatCurrency(-plan.monthly_amount, currency)}` : `毎月 積立 ${formatCurrency(plan.monthly_amount, currency)}`;
-}
-
-/** 使用口座と積立設定: each used account with its records, newest month last. */
+/** 使用口座と積立設定: each used account with its records, oldest start first; a transfer shows under both of its accounts. */
 function UsedAccounts({ plans, currency, disabled, onEdit }: {
     plans: ContributionPlan[]; currency: string; disabled: boolean; onEdit: (plan: ContributionPlan) => void;
 }) {
-    const groups = new Map<number, ContributionPlan[]>();
-    for (const plan of [...plans].sort((a, b) => (a.account_name ?? '').localeCompare(b.account_name ?? '', 'ja') || a.start_period.localeCompare(b.start_period))) {
-        groups.set(plan.account_id, [...(groups.get(plan.account_id) ?? []), plan]);
+    const groups = new Map<number, { name: string; rows: Array<{ plan: ContributionPlan; incoming: boolean }> }>();
+    const add = (accountId: number, name: string | null, plan: ContributionPlan, incoming: boolean) => {
+        const group = groups.get(accountId) ?? { name: name ?? `#${accountId}`, rows: [] };
+        group.rows.push({ plan, incoming });
+        groups.set(accountId, group);
+    };
+    for (const plan of [...plans].sort((a, b) => a.start_period.localeCompare(b.start_period) || a.id - b.id)) {
+        add(plan.account_id, plan.account_name, plan, false);
+        if (plan.kind === 'transfer' && plan.to_account_id !== null) add(plan.to_account_id, plan.to_account_name, plan, true);
     }
-    if (!groups.size) return <p className="rounded-md border border-dashed border-[var(--studio-border)] p-4 text-sm text-[var(--studio-text-muted)]">使用口座がありません。「レコードを追加」で口座ごとの毎月の積立（または取り崩し）と年利を追加してください。</p>;
-    return <div className="space-y-3">{[...groups].map(([accountId, rows]) => <div key={accountId} className="overflow-hidden rounded-md border border-[var(--studio-border)]">
-        <h4 className="bg-[var(--studio-bg)] px-4 py-2 text-sm font-medium">{rows[0].account_name ?? `#${accountId}`}</h4>
+    if (!groups.size) return <p className="rounded-md border border-dashed border-[var(--studio-border)] p-4 text-sm text-[var(--studio-text-muted)]">使用口座がありません。「レコードを追加」で口座ごとの積立と年利を追加してください。</p>;
+    return <div className="space-y-3">{[...groups].sort(([, a], [, b]) => a.name.localeCompare(b.name, 'ja')).map(([accountId, group]) => <div key={accountId} className="overflow-hidden rounded-md border border-[var(--studio-border)]">
+        <h4 className="bg-[var(--studio-bg)] px-4 py-2 text-sm font-medium">{group.name}</h4>
         <table className="w-full table-fixed text-left text-sm">
-            <colgroup><col className="w-32" /><col className="w-72" /><col className="w-28" /><col /></colgroup>
-            <thead className="text-xs text-[var(--studio-text-muted)]"><tr>{['月', '内容', '年利', 'メモ'].map((label) => <th key={label} scope="col" className="px-4 py-2 font-medium">{label}</th>)}</tr></thead>
-            <tbody className="divide-y divide-[var(--studio-border)]">{rows.map((plan) => <tr key={plan.id} onClick={() => { if (!disabled) onEdit(plan); }} className={disabled ? '' : 'cursor-pointer hover:bg-[var(--studio-accent-soft)]'}>
-                <th scope="row" className="px-4 py-2 font-normal"><button type="button" disabled={disabled} aria-haspopup="dialog" aria-label={`${plan.account_name}（${plan.start_period}〜）を編集`} onClick={(event) => { event.stopPropagation(); onEdit(plan); }} className="rounded tabular-nums hover:text-[var(--studio-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)]">{plan.life_event_id ? plan.start_period : `${plan.start_period}〜`}</button></th>
-                <td className="px-4 py-2 tabular-nums">{recordText(plan, currency)}</td>
-                <td className="px-4 py-2 tabular-nums">{plan.life_event_id ? <span className="text-[var(--studio-text-muted)]">—</span> : plan.annual_return === null ? <span className="text-[var(--studio-text-muted)]">引き継ぐ</span> : `${plan.annual_return}%`}</td>
+            <colgroup><col className="w-60" /><col className="w-72" /><col className="w-28" /><col /></colgroup>
+            <thead className="text-xs text-[var(--studio-text-muted)]"><tr>{['時期', '内容', '年利', 'メモ'].map((label) => <th key={label} scope="col" className="px-4 py-2 font-medium">{label}</th>)}</tr></thead>
+            <tbody className="divide-y divide-[var(--studio-border)]">{group.rows.map(({ plan, incoming }) => <tr key={`${plan.id}:${incoming}`} onClick={() => { if (!disabled) onEdit(plan); }} className={disabled ? '' : 'cursor-pointer hover:bg-[var(--studio-accent-soft)]'}>
+                <th scope="row" className="px-4 py-2 font-normal"><button type="button" disabled={disabled} aria-haspopup="dialog" aria-label={`${group.name}（${scheduleText(plan)}）を編集`} onClick={(event) => { event.stopPropagation(); onEdit(plan); }} className="rounded text-left tabular-nums hover:text-[var(--studio-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)]">{scheduleText(plan)}</button></th>
+                <td className="px-4 py-2 tabular-nums">{incoming ? `振替 ${formatCurrency(plan.amount, currency)} ← ${plan.account_name ?? `#${plan.account_id}`}` : recordText(plan, currency)}
+                    {plan.on_shortage && !incoming && <span className="block text-xs text-[var(--studio-text-muted)]">不足時：{SHORTAGE_TEXT[plan.on_shortage]}</span>}</td>
+                <td className="px-4 py-2 tabular-nums">{plan.kind !== 'contribution' ? <span className="text-[var(--studio-text-muted)]">—</span> : plan.annual_return === null ? <span className="text-[var(--studio-text-muted)]">引き継ぐ</span> : `${plan.annual_return}%`}</td>
                 <td className="px-4 py-2 text-[var(--studio-text-muted)]">{plan.note ?? ''}</td>
             </tr>)}</tbody>
         </table>
@@ -171,7 +173,7 @@ function SimulationForClient({ currency, clientName, scenarioId }: { currency: s
     const saveRecord = (action: () => Promise<unknown>, message: string) => { void mutation.run(action, message, () => { setEditing(undefined); resource.reload(); }); };
     const removeRecord = (plan: ContributionPlan) => {
         void (async () => {
-            if (await confirm(`「${clientName}」の積立設定（${plan.account_name}・${plan.start_period}〜）を削除します。`, '削除する')) {
+            if (await confirm(`「${clientName}」の積立設定（${plan.account_name}・${scheduleText(plan)}）を削除します。`, '削除する')) {
                 saveRecord(() => scenariosApi.deleteContributionPlan(plan.id), '積立設定を削除しました。');
             }
         })();
@@ -191,7 +193,7 @@ function SimulationForClient({ currency, clientName, scenarioId }: { currency: s
                 </section>
                 <section className="space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-3">
-                        <h3 className="flex items-center gap-1.5 text-sm font-semibold">使用口座と積立設定<Help label="使用口座と積立設定" text="シミュレーションで増やすのは使用口座だけです（それ以外の資産・負債は残りの純資産）。毎月のレコードは口座ごとに、開始月がその月以前で最も新しいものを使います。「ライフイベントへの取り崩し」はその月に一度だけ口座から引き出してイベントに充て、足りない分は残りの純資産から払います。計画の作成では、積立は配分、取り崩しは取り崩しの行、イベントへの取り崩しはその月までのゴールの取り置きになります。" wide /></h3>
+                        <h3 className="flex items-center gap-1.5 text-sm font-semibold">使用口座と積立設定<Help label="使用口座と積立設定" text="シミュレーションで増やすのは使用口座（レコードにある口座）だけです（それ以外の資産・負債は残りの純資産）。レコードは積立・口座振替・ライフイベントへの取り崩しの3種類で、1回、または毎月・毎年・指定の間隔で、回数や終了月まで行います。レコードは足し合わせます。口座振替と取り崩しは、口座の残高が足りないときの扱い（取引を発生させない／ある分だけで取引する）を選べます。取り崩しはイベントの月より前は確保（純資産は変わらない）、イベントの月からはイベントの支払いになり、口座から払えない分は残りの純資産から払います。計画の作成では、積立は配分、口座振替は振替元からの配分、取り崩しはその月までのゴールの取り置きと、取り崩す月の取り崩しの行になります。" wide /></h3>
                         <button type="button" disabled={disabled} onClick={() => setEditing(null)} className={buttonClass}>レコードを追加</button>
                     </div>
                     <UsedAccounts plans={data.scenario.contribution_plans} currency={currency} disabled={disabled} onEdit={setEditing} />

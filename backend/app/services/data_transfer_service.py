@@ -27,6 +27,7 @@ from ..domain.transfer import (
     migrate_account_fields,
     migrate_event_fundings,
     migrate_event_withdrawals,
+    migrate_plan_records,
     migrate_goal_fields,
     migrate_goal_v2,
 )
@@ -203,7 +204,8 @@ def export_client(db: Session, client: models.Client) -> dict:
                 for row in db.query(models.LifeScenario).filter_by(client_id=client.id).order_by(models.LifeScenario.id).all()
             ],
             "scenario_contribution_plans": [
-                row_fields(row, ["id", "scenario_id", "account_id", "start_period", "monthly_amount_minor", "annual_return", "note", "life_event_id", "created_at"])
+                row_fields(row, ["id", "scenario_id", "kind", "account_id", "to_account_id", "start_period", "amount_minor", "interval_months",
+                                 "repeat_count", "end_period", "on_shortage", "annual_return", "note", "life_event_id", "created_at"])
                 for row in db.query(models.ScenarioContributionPlan).join(models.LifeScenario, models.LifeScenario.id == models.ScenarioContributionPlan.scenario_id)
                 .filter(models.LifeScenario.client_id == client.id).order_by(models.ScenarioContributionPlan.id).all()
             ],
@@ -472,6 +474,8 @@ def import_client(
         data = migrate_event_fundings(data)
     if version is None or version < 29:
         data = migrate_event_withdrawals(data, money_client_currency(db, client.id))
+    if version is None or version < 30:
+        data = migrate_plan_records(data, money_client_currency(db, client.id), date.today())
 
     link_map: dict[int, int] = {}
     scenario_map: dict[int, int] = {}
@@ -653,16 +657,6 @@ def import_client(
                 db.add(scenario)
                 db.flush()
                 scenario_map[int(item["id"])] = scenario.id
-            for item in data.get("scenario_contribution_plans", []):
-                # A withdrawal for a life event waits until the events exist.
-                if item.get("life_event_id") is not None:
-                    continue
-                db.add(models.ScenarioContributionPlan(
-                    scenario_id=scenario_map[int(item["scenario_id"])], account_id=account_map[int(item["account_id"])],
-                    start_period=item["start_period"], monthly_amount_minor=item["monthly_amount_minor"],
-                    annual_return=item.get("annual_return"), note=item.get("note"),
-                    created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
-                ))
         for item in data.get("goal_budget_reflections", []):
             db.add(models.GoalBudgetReflection(
                 client_id=client.id, scenario_id=scenario_map.get(_int_or_none(item.get("scenario_id"))),
@@ -694,13 +688,16 @@ def import_client(
             db.add(event)
             db.flush()
             event_map[old_id] = event.id
-        for item in data.get("scenario_contribution_plans", []):
-            if item.get("life_event_id") is None:
-                continue
+        # The records follow the events: a withdrawal names one.
+        for item in data.get("scenario_contribution_plans", []) if version is not None and version >= 21 else []:
             db.add(models.ScenarioContributionPlan(
-                scenario_id=scenario_map[int(item["scenario_id"])], account_id=account_map[int(item["account_id"])],
-                start_period=item["start_period"], monthly_amount_minor=item["monthly_amount_minor"],
-                annual_return=item.get("annual_return"), note=item.get("note"), life_event_id=event_map[int(item["life_event_id"])],
+                scenario_id=scenario_map[int(item["scenario_id"])], kind=item.get("kind") or "contribution",
+                account_id=account_map[int(item["account_id"])],
+                to_account_id=account_map[int(item["to_account_id"])] if item.get("to_account_id") is not None else None,
+                start_period=item["start_period"], amount_minor=item.get("amount_minor") or 0,
+                interval_months=item.get("interval_months"), repeat_count=item.get("repeat_count"), end_period=item.get("end_period"),
+                on_shortage=item.get("on_shortage"), annual_return=item.get("annual_return"), note=item.get("note"),
+                life_event_id=event_map[int(item["life_event_id"])] if item.get("life_event_id") is not None else None,
                 created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
             ))
         # A repayment names its borrowing, which may come later in the payload.
@@ -952,8 +949,8 @@ def import_client(
             period = date.today().strftime("%Y-%m")
             for scenario in db.query(models.LifeScenario).filter_by(client_id=client.id):
                 for old_id, rate in legacy_account_returns.items():
-                    db.add(models.ScenarioContributionPlan(scenario_id=scenario.id, account_id=account_map[old_id],
-                                                           start_period=period, monthly_amount_minor=0, annual_return=rate))
+                    db.add(models.ScenarioContributionPlan(scenario_id=scenario.id, kind="contribution", account_id=account_map[old_id],
+                                                           start_period=period, amount_minor=0, interval_months=1, annual_return=rate))
 
         member_map: dict[int, int] = {}
         for item in data.get("household_members", []):

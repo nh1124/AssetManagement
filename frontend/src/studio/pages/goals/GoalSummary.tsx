@@ -59,8 +59,8 @@ function SummaryForClient({ currency }: { currency: string }) {
                     ['必要額', formatCurrency(required, currency), null],
                     ['確保額', formatCurrency(funded, currency), null],
                     ['不足', formatCurrency(Math.max(0, required - funded), currency), null],
-                    ['毎月の積立', formatCurrency(goal.projected.monthly_contribution, currency),
-                        goal.check.goal ? `今月の計画 ${formatCurrency(goal.check.planned, currency)}（差 ${goal.check.difference >= 0 ? '+' : ''}${formatCurrency(goal.check.difference, currency)}）` : null],
+                    ['今月の積立', formatCurrency(goal.projected.monthly_contribution, currency),
+                        goal.check.goal ? `${goal.check.contribution === goal.projected.monthly_contribution ? '' : `積立設定（振替・取り崩しを含む）${formatCurrency(goal.check.contribution, currency)} ／ `}今月の計画 ${formatCurrency(goal.check.planned, currency)}（差 ${goal.check.difference >= 0 ? '+' : ''}${formatCurrency(goal.check.difference, currency)}）` : null],
                 ].map(([label, value, note]) => <div key={label} className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-4">
                     <dt className="text-xs text-[var(--studio-text-muted)]">{label}</dt>
                     <dd className="mt-2 font-semibold tabular-nums">{value}</dd>
@@ -72,7 +72,7 @@ function SummaryForClient({ currency }: { currency: string }) {
                 <p className="mt-3 flex items-center gap-1.5 text-xs text-[var(--studio-text-muted)]">期間 {goal.projected.horizon_years}年 ／ 既定の年利 {goal.projected.annual_return}% ／ インフレ {goal.projected.inflation}%<Help label="グラフ" text="凡例を選ぶと表示を切り替えます。" /></p>
             </div>
             <section className="space-y-3">
-                <h3 className="flex items-center gap-1.5 font-semibold">ライフイベント<Help label="ライフイベント" text="支出のライフイベントは、シミュレーションの積立設定に「ライフイベントへの取り崩し」を記録しておくと、「計画を作成」でイベントと同じ名前の取り置き（ゴール）ができ、取り崩す月まで口座ごとに積み立てます。その確保額を確保額・進捗に数えます。" wide /></h3>
+                <h3 className="flex items-center gap-1.5 font-semibold">ライフイベント<Help label="ライフイベント" text="支出のライフイベントは、シミュレーションの積立設定に「ライフイベントへの取り崩し」（1回、または毎月・毎年など）を記録しておくと、「計画を作成」でイベントと同じ名前の取り置き（ゴール）ができ、最初に取り崩す月まで口座ごとに積み立てます。その確保額を確保額・進捗に数えます。" wide /></h3>
                 <DataTable columns={['名称', '目標日', '金額', '取り置き', '確保額', '進捗', '起きる確率', '資金が足りる確率']}>
                     {goal.events.map((event) => {
                         const outcome = outcomes.get(event.id);

@@ -96,8 +96,8 @@ def _seed(db, scenario, today):
     # Drive saved scenario reads with real assumptions, without granting a GET exception.
     life_scenario = models.LifeScenario(
         client_id=1, name="Guard life scenario", is_goal=True,
-        contribution_plans=[models.ScenarioContributionPlan(account_id=cash.id, start_period=today.strftime("%Y-%m"),
-                                                            monthly_amount_minor=to_minor(10000, "JPY"), annual_return=3.0)],
+        contribution_plans=[models.ScenarioContributionPlan(kind="contribution", account_id=cash.id, start_period=today.strftime("%Y-%m"),
+                                                            amount_minor=to_minor(10000, "JPY"), interval_months=1, annual_return=3.0)],
     )
     alternate_scenario = models.LifeScenario(client_id=1, name="Guard alternate", annual_return=7.0)
     db.add_all([life_scenario, alternate_scenario])
