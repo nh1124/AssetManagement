@@ -152,8 +152,10 @@ def test_reads_without_budget_plan_preserve_actuals(database, path):
         assert lines[0]["actual"] == 100
     if path == "/budget-plans/summary":
         assert body["plan_id"] is None
-        for key in ("total_expected_inflow", "total_variable_budget", "total_allocation_plan", "total_debt_plan"):
-            assert body[key] == 0
+        # The totals count the definition's monthly amount, as the plan page and the variance report do.
+        assert {key: body[key] for key in ("total_expected_inflow", "total_variable_budget", "total_allocation_plan", "total_debt_plan")} == {
+            "total_expected_inflow": 0, "total_variable_budget": 300, "total_allocation_plan": 0, "total_debt_plan": 0}
+        assert body["remaining_balance"] == -300
         assert len(body["cash_flow_projection"]) == len(body["balance_projection"]) == 12
         assert all(row["ending_cash"] == 900 and row["net_cash"] == 0 for row in body["cash_flow_projection"])
         assert all(row["total_assets"] == row["net_worth"] == 900 for row in body["balance_projection"])

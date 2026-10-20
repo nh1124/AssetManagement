@@ -242,8 +242,13 @@ def counted_amount(line, amount: float, shares: dict[int, float]) -> float:
 
 
 def _sum_lines(lines: Iterable[dict], *line_types: str) -> float:
+    """The month's budget of these lines: an automatic transaction with no saved row counts its monthly amount."""
     wanted = set(line_types)
-    return sum((line.get("amount") or 0.0) for line in lines if line.get("line_type") in wanted)
+    return sum(_line_budget(line) for line in lines if line.get("line_type") in wanted)
+
+
+def _line_budget(line: dict) -> float:
+    return float(line.get("budget_amount", line.get("amount")) or 0.0)
 
 
 def _sum_actual(lines: Iterable[dict], *line_types: str) -> float:
