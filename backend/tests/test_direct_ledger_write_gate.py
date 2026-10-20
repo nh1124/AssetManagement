@@ -232,6 +232,20 @@ def test_human_update_delete_skip_policy_evaluation(http_ledger, monkeypatch, op
         assert db.query(models.TransactionProposal).count() == 0
 
 
+@pytest.mark.parametrize("path, body", [
+    ("/transaction-batches/", {"transactions": []}),
+    ("/capsules/1/drawdown", {"amount": 1, "from_account_id": 1, "to_account_id": 2, "kind": "as_intended", "date": "2026-10-11", "description": "x"}),
+    ("/capsules/1/account-claim", {"account_id": 1, "target_amount": 1}),
+    ("/capsules/1/contribute", {"amount": 1, "from_account_id": 1}),
+], ids=["batch", "drawdown", "account-claim", "contribute"])
+def test_every_mcp_ledger_write_needs_the_policy(http_ledger, path, body):
+    # The paths beside /transactions that post journal legs check the same gate (§8-7).
+    http, db, _ = http_ledger
+    before = _snapshot(db)
+    _assert_refused(http.post(path, json=body, headers=MCP_HEADERS), "medium")
+    assert _snapshot(db) == before
+
+
 @pytest.mark.parametrize("mcp_client_id", [None, ""])
 def test_non_mcp_guard_returns_without_using_database(mcp_client_id):
     class NoDatabaseAccess:

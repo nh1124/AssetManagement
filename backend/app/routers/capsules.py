@@ -4,12 +4,13 @@ from dataclasses import asdict
 from datetime import date
 from typing import List, Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from .. import database, dependencies, models, schemas
 from ..services import capsule_service
+from ..services.ai_policy_service import assert_direct_ledger_write_allowed
 from ..services.capsule_service import (
     capsule_to_dict,
     funding_source_to_dict,
@@ -130,12 +131,19 @@ def delete_capsule(
     return {"message": "Capsule deleted successfully", **asdict(deleted)}
 
 
+def _ledger_write(db: Session, client_id: int, request: Request | None) -> None:
+    """Drawdowns, claim adjustments and contributions post journal legs: an AI needs the direct-write policy."""
+    assert_direct_ledger_write_allowed(db, client_id, mcp_client_id=request.headers.get("x-mcp-client-id") if request else None)
+
+
 @router.post("/{capsule_id}/drawdown", response_model=schemas.CapsuleDrawdownResult)
 def record_capsule_drawdown(
     capsule_id: int, payload: schemas.CapsuleDrawdownRequest,
     db: Session = Depends(database.get_db),
     current_client: models.Client = Depends(dependencies.get_current_client),
+    request: Request = None,
 ):
+    _ledger_write(db, current_client.id, request)
     transaction, drawdown = capsule_service.record_drawdown(
         db, current_client.id, capsule_id, **payload.model_dump(),
     )
@@ -158,7 +166,9 @@ def set_capsule_account_claim(
     capsule_id: int, payload: schemas.CapsuleAccountClaimRequest,
     db: Session = Depends(database.get_db),
     current_client: models.Client = Depends(dependencies.get_current_client),
+    request: Request = None,
 ):
+    _ledger_write(db, current_client.id, request)
     return capsule_workflow.set_account_claim(
         db, current_client.id, capsule_id, **payload.model_dump(),
     )
@@ -170,7 +180,9 @@ def contribute_to_capsule(
     payload: CapsuleContributionRequest = Body(...),
     db: Session = Depends(database.get_db),
     current_client: models.Client = Depends(dependencies.get_current_client),
+    request: Request = None,
 ):
+    _ledger_write(db, current_client.id, request)
     return capsule_workflow.contribute(
         db, current_client.id, capsule_id,
         amount=payload.amount, from_account_id=payload.from_account_id,
