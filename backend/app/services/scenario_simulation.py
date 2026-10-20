@@ -1,9 +1,12 @@
 """Simulate a scenario account by account: contributions, transfers, yields, loans, and which events happen.
 
 The scenario's 使用口座 (the asset accounts its 積立設定 records name) grow from their
-journal balance by the yield in force and receive their 積立 (contributions), year by
-year on shared seeded paths. A 口座振替 moves money between them in its months; when
-the source holds less, it does not happen or moves what is there (on_shortage).
+journal balance by the yield in force and receive their 積立 (contributions), calendar
+year by calendar year on shared seeded paths: the first row is the rest of this year
+(no growth yet), each later row a whole year, so contributions, transfers, events and
+withdrawals of one month always fall in the same row. A 口座振替 moves money between
+them month by month; when the source holds less, it does not happen or moves what is
+there (on_shortage).
 Everything else -- other accounts, debts already on the books -- is the residual net worth.
 
 A ライフイベントへの取り崩し takes its amount out of the account in its months. Before the
@@ -11,8 +14,9 @@ event's month it hands the money to the residual (where the event's paths still 
 it), so the account falls then and net worth falls when the event is paid. From the
 event's month on it pays the event in instalments (e.g. 老後生活 from 2051, ¥100,000 a
 month): the event's own payment leaves out what the instalments pay (up to its
-amount), and each instalment lowers net worth when it is paid. An instalment the account
-cannot pay (on_shortage) comes from the residual; nothing moves into an account from elsewhere.
+amount), and each instalment lowers net worth when it is paid. Instalments before this
+month are taken as paid already. An instalment the account cannot pay (on_shortage)
+comes from the residual; nothing moves into an account from elsewhere.
 
 An event happens on a path when the event it follows happened there and its
 preconditions hold at its date. It is paid from (or arrives in) the residual. A borrowing brings cash in and opens a debt of the same size,
@@ -20,7 +24,7 @@ so net worth does not move; its repayments pay a month at a time from their star
 interest accruing on what is left, and happen only where the borrowing did.
 
 The result says how likely each event is to happen and, for an expense, to be
-affordable (through its last instalment), which branches most paths take, and the net
+affordable (through its last instalment within the simulated years), which branches most paths take, and the net
 worth and account bands. Amounts are in today's money: yields and the residual are
 deflated by inflation; contributions, transfers, loans and repayments are fixed in real terms.
 """
@@ -90,16 +94,16 @@ def _take(balance: np.ndarray, each: float, times: int, on_shortage: str | None)
     return np.minimum(held, each * times)
 
 
-def instalments(plans, events: list[ScenarioEvent], first_month: int, currency: str) -> dict[int, list[tuple[int, float]]]:
+def instalments(plans, events: list[ScenarioEvent], currency: str) -> dict[int, list[tuple[int, float]]]:
     """{event_id: [(month index, amount)]}: the withdrawals from an expense's month on, which pay it in
-    instalments, oldest first, up to the event's amount."""
+    instalments, oldest first, up to the event's amount (past months included: they are paid already)."""
     by_id = {event.id: event for event in events if event.direction == "expense" and event.resolved_date is not None}
     found: dict[int, list[tuple[int, float]]] = {}
     for plan in of_kind(plans, "withdrawal"):
         event = by_id.get(plan.life_event_id)
         if event is None:
             continue
-        start = max(first_month, _month(event.resolved_date))
+        start = _month(event.resolved_date)
         each = Money(plan.amount_minor, currency).to_float()
         found.setdefault(event.id, []).extend((month, each) for month in occurrence_indexes(plan, start, start + OPEN_MONTHS))
     for event_id, rows in found.items():
@@ -137,8 +141,10 @@ def simulate(db: Session, client_id: int, scenario: models.LifeScenario) -> dict
             pair[1 if due is not None and month >= due else 0] += 1
         for row, (before, after) in counts.items():
             taken_by_row.setdefault(row, []).append((plan, before, after))
-    later = instalments(plans, events, current_month, currency)
+    later = instalments(plans, events, currency)
+    # The event's own payment leaves out every instalment; those before this month are paid already.
     paid_later = {event_id: sum(amount for _, amount in rows) for event_id, rows in later.items()}
+    still_owed = {event_id: sum(amount for month, amount in rows if month >= current_month) for event_id, rows in later.items()}
     transfers = sorted(of_kind(plans, "transfer"), key=lambda plan: (plan.start_period, plan.id or 0))
     by_id = {event.id: event for event in events}
     parents = {link.to_event_id: link.from_event_id for link in db.query(models.LifeEventLink).filter(
@@ -190,7 +196,8 @@ def simulate(db: Session, client_id: int, scenario: models.LifeScenario) -> dict
                 if plan.life_event_id in owed:
                     owed[plan.life_event_id] = owed[plan.life_event_id] - due
                 if plan.life_event_id in funded:
-                    funded[plan.life_event_id] &= net_of(balance, plan.account_id) >= 0
+                    # Affordability is watched while instalments are due, not after the last one.
+                    funded[plan.life_event_id] &= np.where(due > 0, net_of(balance, plan.account_id) >= 0, True)
             balances[plan.account_id] = balance
 
     def net() -> np.ndarray:
@@ -213,7 +220,7 @@ def simulate(db: Session, client_id: int, scenario: models.LifeScenario) -> dict
             if event.direction == "expense":
                 later = paid_later.get(event.id, 0.0)
                 move(event, -np.where(runs, event.target_amount - later, 0.0))
-                owed[event.id] = np.where(runs, later, 0.0)
+                owed[event.id] = np.where(runs, still_owed.get(event.id, 0.0), 0.0)
             elif event.direction in ("income", "borrowing"):
                 amount = np.where(runs, event.target_amount, 0.0)
                 move(event, amount)
@@ -251,41 +258,50 @@ def simulate(db: Session, client_id: int, scenario: models.LifeScenario) -> dict
                 move(event, -pay)
 
     def transfer(first: int, last: int) -> None:
-        """This window's 口座振替, oldest record first; a short source skips or moves what it holds."""
-        for plan in transfers:
-            if plan.account_id not in balances or plan.to_account_id not in balances:
-                continue
-            times = len(occurrence_indexes(plan, first, last))
-            moved = _take(balances[plan.account_id], Money(plan.amount_minor, currency).to_float(), times, plan.on_shortage)
-            balances[plan.account_id] = balances[plan.account_id] - moved
-            balances[plan.to_account_id] = balances[plan.to_account_id] + moved
+        """This row's 口座振替 month by month (oldest record first within a month), so money one transfer
+        brings in can go on with a later one; a short source skips or moves what it holds."""
+        movable = [plan for plan in transfers if plan.account_id in balances and plan.to_account_id in balances]
+        for month in range(first, last + 1):
+            for plan in movable:
+                if not occurrence_indexes(plan, month, month):
+                    continue
+                moved = _take(balances[plan.account_id], Money(plan.amount_minor, currency).to_float(), 1, plan.on_shortage)
+                balances[plan.account_id] = balances[plan.account_id] - moved
+                balances[plan.to_account_id] = balances[plan.to_account_id] + moved
 
     def record(index: int) -> None:
         worth[:, index] = net()
         for account_id, rows in account_rows.items():
             rows[:, index] = balances[account_id]
 
-    happen(0)
-    record(0)
-    for index in range(1, years + 1):
-        shock = rng.normal(0, volatility, PATHS)
-        first_month = 12 * (index - 1)
+    def step(index: int, shock: np.ndarray | None) -> None:
+        """One calendar row: this row's contributions (with a year's growth after the first row), transfers, events."""
+        nonlocal residual
+        first, last = max(current_month, (today.year + index) * 12), (today.year + index) * 12 + 11
         for account in accounts:
-            contribution_minor = sum(contributed_minor(plans, account.id, _period(today, first_month + month)) for month in range(12))
-            yearly = rate(plans, account.id, _period(today, first_month), scenario.annual_return)
+            contribution = Money(sum(contributed_minor(plans, account.id, index_period(month)) for month in range(first, last + 1)), currency).to_float()
+            if shock is None:
+                # The rest of this year: no growth counted yet.
+                balances[account.id] = balances[account.id] + contribution
+                continue
+            yearly = rate(plans, account.id, index_period(first), scenario.annual_return)
             real = ((yearly * (1 - tax) if yearly > 0 else yearly) / 100.0) - inflation
             growth = real + (shock if yearly > CASH_LIKE_RETURN else 0.0)
-            contribution = Money(contribution_minor, currency).to_float()
             # Contributions arrive through the year: on average they earn half a year.
             balances[account.id] = balances[account.id] * (1 + growth) + contribution * (1 + growth / 2)
-        transfer(current_month + first_month, current_month + first_month + 11)
-        residual = residual * (1 - inflation)
+        transfer(first, last)
+        if shock is not None:
+            residual = residual * (1 - inflation)
         happen(index)
         record(index)
 
+    step(0, None)
+    for index in range(1, years + 1):
+        step(index, rng.normal(0, volatility, PATHS))
+
     demand = aggregate_event_demand_by_year(
         [(event.resolved_date, event.target_amount - paid_later.get(event.id, 0.0)) for event in events if event.direction == "expense"]
-        + [(date(month // 12, month % 12 + 1, 1), amount) for rows in later.values() for month, amount in rows],
+        + [(date(month // 12, month % 12 + 1, 1), amount) for rows in later.values() for month, amount in rows if month >= current_month],
         years,
         income_events=[(event.resolved_date, event.target_amount) for event in events if event.direction == "income"],
     )

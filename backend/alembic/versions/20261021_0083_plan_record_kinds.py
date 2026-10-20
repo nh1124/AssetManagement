@@ -129,6 +129,9 @@ def downgrade():
             bind.execute(sa.text("INSERT INTO scenario_contribution_plans (scenario_id, kind, account_id, start_period, amount_minor, monthly_amount_minor) "
                                  "VALUES (:scenario_id, 'contribution', :account_id, :start, 0, 0)"),
                          {"scenario_id": row.scenario_id, "account_id": row.account_id, "start": _period(_index(last) + 1)})
+    # The events this migration made stand for the old monthly withdrawals restored above.
+    bind.execute(sa.text("DELETE FROM life_events WHERE note = '毎月の取り崩しから作成（WP23）' AND id NOT IN "
+                         "(SELECT life_event_id FROM scenario_contribution_plans WHERE life_event_id IS NOT NULL)"))
     # One record per account and month (and event) again: records that added up become one of their sum.
     groups: dict[tuple, list] = {}
     for row in bind.execute(sa.text(

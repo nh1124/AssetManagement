@@ -87,9 +87,17 @@ def earmark_schedule(db: Session, events: list[models.LifeEvent]) -> dict[int, d
     amounts = {event.id: event.target_amount_minor or 0 for event in events}
     schedule: dict[int, dict[int, tuple[int, str]]] = {}
     for event_id, records in event_withdrawals(db, list(amounts)).items():
+        totals: dict[int, tuple[int, str]] = {}
         for record in records:
-            minor, first = schedule.setdefault(event_id, {}).get(record.account_id, (0, record.start_period))
-            schedule[event_id][record.account_id] = (min(amounts[event_id], minor + total_minor(record)), min(first, record.start_period))
+            minor, first = totals.get(record.account_id, (0, record.start_period))
+            totals[record.account_id] = (minor + total_minor(record), min(first, record.start_period))
+        # The event's amount is shared out in the order the accounts first withdraw.
+        left = amounts[event_id]
+        schedule[event_id] = {}
+        for account_id, (minor, first) in sorted(totals.items(), key=lambda item: (item[1][1], item[0])):
+            part = min(minor, max(0, left))
+            left -= part
+            schedule[event_id][account_id] = (part, first)
     return schedule
 
 

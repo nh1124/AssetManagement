@@ -178,13 +178,15 @@ def test_simulation_runs_events_only_where_their_branch_and_preconditions_hold(d
     life_event_graph.create_link(db, 1, from_event_id=house.id, to_event_id=furniture.id, kind="after")
 
     result = scenarios.project(db, 1, scenario)
-    assert [row["p50"] for row in result["projection"]] == [100000, 170000, 290000, 410000]
+    # Rows are calendar years: the first holds the rest of this year's contributions, the car comes next year.
+    base = 100000 + 10000 * (13 - TODAY.month)
+    assert [row["p50"] for row in result["projection"]] == [base, base + 70000, base + 190000, base + 310000]
     by_id = {row["id"]: row for row in result["events"]}
     assert (by_id[car.id]["executed_probability"], by_id[car.id]["funded_probability"]) == (1.0, 1.0)
     assert by_id[house.id]["executed_probability"] == by_id[furniture.id]["executed_probability"] == 0.0
     assert result["likely_path"] == {"event_ids": [car.id], "link_ids": []}
     assert [row["probability"] for row in result["conditions"] if row["event_id"] == house.id] == [0.0]
-    assert result["accounts"][0]["p50"][:3] == [100000, 170000, 290000]
+    assert result["accounts"][0]["p50"][:3] == [base, base + 70000, base + 190000]
     assert result["monthly_contribution"] == 10000
     # The chart's demand lines still count every event, happened or not.
     assert result["projection"][2]["cumulative_target"] == 1060000

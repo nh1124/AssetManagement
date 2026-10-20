@@ -43,6 +43,8 @@ class AccountBalances:
     # holdings are worth for display and cannot replace them when FX rates move.
     balances_minor: dict[str, int] = field(default_factory=dict)
     balance: float = 0.0
+    # What the holdings in other currencies are worth in the target currency, apart from its own money.
+    foreign: float = 0.0
 
 
 def calculate_account_balances(
@@ -79,12 +81,15 @@ def calculate_account_balances(
         currency = normalize_currency(transaction.currency)
         result = balances[account.id]
         result.balances_minor[currency] = result.balances_minor.get(currency, 0) + signed_minor
-        result.balance += convert_amount_with_lookup(
+        valued = convert_amount_with_lookup(
             lookup,
             Money(signed_minor, currency).to_float(),
             currency,
             transaction.date,
         )
+        result.balance += valued
+        if lookup is not None and currency != lookup.target_currency:
+            result.foreign += valued
 
     return balances
 

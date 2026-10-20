@@ -59,6 +59,21 @@ def test_an_events_funding_and_the_simulation_value_dollars_in_yen(db):
     assert result["projection"][0]["p50"] == 15000
 
 
+def test_an_accounts_own_money_stays_exact_beside_converted_foreign_money(db):
+    from app.services import life_event_conditions as conditions
+    db.add(models.ExchangeRate(client_id=1, base_currency="USD", quote_currency="JPY", rate=1.0, as_of_date=TODAY))
+    savings, income = account(db, "貯蓄"), account(db, "給与", kind="income")
+    create_transaction(db, client_id=1, date=TODAY, description="大金", amount_minor=2**53 + 1, currency="JPY", from_account_id=income.id, to_account_id=savings.id)
+    create_transaction(db, client_id=1, date=TODAY, description="1ドル", amount_minor=100, currency="USD", from_account_id=income.id, to_account_id=savings.id)
+    scenario = models.LifeScenario(client_id=1, name="ゴール", is_goal=True)
+    db.add(scenario)
+    db.commit()
+    owner = goal_service.create_goal_record(db, 1, schemas.LifeEventCreate(scenario_id=scenario.id, name="家", target_amount=1, target_date=TODAY))
+    db.add(models.LifeEventCondition(client_id=1, life_event_id=owner.id, metric="account_balance", comparator="eq", threshold_minor=2**53 + 2, reference_id=savings.id))
+    db.commit()
+    assert conditions.evaluate(db, 1, owner.id)["conditions"][0]["satisfied"] is True
+
+
 def test_without_a_rate_other_money_counts_nothing_as_in_the_balance_sheet(db):
     _, capsule = dollars(db, rate=None)
     assert (capsule_service.claimed_minor(db, 1, capsule.id), capsule_service.claimed_value(db, 1, capsule.id)) == ({"USD": 5000}, 0)

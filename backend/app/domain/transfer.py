@@ -317,6 +317,12 @@ def validate_import_payload(
             valid = valid and (kind != "withdrawal" or event_id is not None) and (kind == "withdrawal" or event_id is None)
             to_account = _as_int(item.get("to_account_id"))
             valid = valid and ((kind == "transfer") == (to_account is not None)) and to_account != _as_int(item.get("account_id"))
+            assets = {_as_int(row.get("id")) for row in data.get("accounts", []) if row.get("account_type") == "asset"}
+            valid = valid and _as_int(item.get("account_id")) in assets and (to_account is None or to_account in assets)
+            if kind == "withdrawal":
+                event = next((row for row in data.get("life_events", []) if _as_int(row.get("id")) == event_id), None)
+                valid = valid and event is not None and event.get("direction", "expense") == "expense" \
+                    and _as_int(event.get("scenario_id")) == _as_int(item.get("scenario_id"))
         if not valid:
             issue("error", "invalid_contribution_plan", "積立設定のレコードが不正または重複しています。", "scenario_contribution_plans", item.get("id"))
     pairs = set()

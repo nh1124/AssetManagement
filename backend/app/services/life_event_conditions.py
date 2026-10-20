@@ -123,9 +123,7 @@ class _Readers:
     def account_minor(self, account_id: int) -> int:
         """An account's balance in the client's currency: its own money exactly, other currencies at their rates."""
         held = self.balances[account_id]
-        own = held.balances_minor.get(self.currency, 0)
-        rest = held.balance - Money(own, self.currency).to_float()
-        return own + (Money.from_major(str(round(rest, 6)), self.currency).minor if any(code != self.currency for code in held.balances_minor) else 0)
+        return held.balances_minor.get(self.currency, 0) + Money.from_major(str(round(held.foreign, 6)), self.currency).minor
 
     def actual(self, row: models.LifeEventCondition) -> tuple[float | int | date | None, str | None]:
         key = row.metric, row.reference_id
