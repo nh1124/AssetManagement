@@ -214,6 +214,33 @@ def _fallback_line_flow(line_type: str | None, amount: float) -> dict[str, float
     return flow
 
 
+def earmark_counted_shares(lines, amount_of) -> dict[int, float]:
+    """{account_id: the share of the account's earmark rows that counts as the month's 配分}.
+
+    An earmark sets part of an account's money aside; a transfer into the account is how
+    that money arrives. Counting both would count the same money twice, so per account
+    the month's 配分 is the larger of the two: the earmark rows count only for what they
+    set aside beyond the transfers into the account. amount_of reads a row's amount.
+    """
+    inflow: dict[int, float] = {}
+    earmarked: dict[int, float] = {}
+    for line in lines:
+        account_id = _line_attr(line, "account_id")
+        if _line_attr(line, "line_type") != "allocation" or not account_id:
+            continue
+        bucket = earmarked if _line_attr(line, "target_type") == "capsule" else inflow
+        bucket[account_id] = bucket.get(account_id, 0.0) + float(amount_of(line) or 0.0)
+    return {account_id: max(0.0, total - inflow.get(account_id, 0.0)) / total
+            for account_id, total in earmarked.items() if total > 0}
+
+
+def counted_amount(line, amount: float, shares: dict[int, float]) -> float:
+    """A row's amount as the month's 配分 counts it: an earmark row scaled by its account's share."""
+    if _line_attr(line, "line_type") == "allocation" and _line_attr(line, "target_type") == "capsule":
+        return amount * shares.get(_line_attr(line, "account_id"), 1.0)
+    return amount
+
+
 def _sum_lines(lines: Iterable[dict], *line_types: str) -> float:
     wanted = set(line_types)
     return sum((line.get("amount") or 0.0) for line in lines if line.get("line_type") in wanted)

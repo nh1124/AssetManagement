@@ -255,7 +255,7 @@ export function EarmarkOverlay({ earmark, context, onClose }: { earmark: Earmark
     const actions = useLineActions(context);
     const [editing, setEditing] = useState<string | null>(null);
     const money = (amount: number) => formatCurrency(amount, context.currency);
-    return <Overlay title={`取り置き「${earmark.name}」`} help="取り置きは口座ではありません。資金元の口座の残高のうち、この用途に確保する額です。予算では配分として数えます。保存すると取り置きの月額積立計画にも反映されます。" busy={actions.mutation.busy} onClose={onClose}>
+    return <Overlay title={`取り置き「${earmark.name}」`} help="取り置きは口座ではありません。資金元の口座の残高のうち、この用途に確保する額です。予算では、同じ口座への振替を超える分だけを配分として数えます。保存すると取り置きの月額積立計画にも反映されます。" busy={actions.mutation.busy} onClose={onClose}>
         <div className="space-y-4">
             {earmark.goal && <p className="flex items-center gap-1.5"><Tag>ゴール</Tag><Help label="ゴールの取り置き" text="ゴールのライフイベントのために作った取り置きです。月額はゴールから計画を作成すると決まり、ゴールを変更するときに削除できます。" /></p>}
             <Feedback error={actions.mutation.error} message={actions.mutation.message} />
