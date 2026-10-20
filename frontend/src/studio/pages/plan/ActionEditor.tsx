@@ -86,7 +86,6 @@ export default function ActionEditor({ sourcePeriod, currency, busy, action, onS
         onSave({ source_period: action?.source_period ?? sourcePeriod, target_period: targetPeriod, kind, description: description.trim(), payload: savedPayload });
     };
     return <form id={formId} onSubmit={submit} className="space-y-4">
-        {!action && <p className="text-xs text-[var(--studio-text-muted)]">行動を未実行として記録します。実行するか、予定月になって期限到来の処理をすると反映されます。</p>}
         <Feedback loading={lookups.loading} error={lookups.error} />
         <fieldset disabled={disabled} className="grid gap-4 md:grid-cols-2">
             <Field label="行動"><input required value={description} onChange={(event) => setDescription(event.target.value)} className={inputClass} /></Field>

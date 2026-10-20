@@ -8,7 +8,7 @@ import { useClient } from '../../../context/ClientContext';
 import { formatCurrency } from '../../../utils/currency';
 import { clientToday, formatDate, useTimezone } from '../../datetime';
 import { useResource } from '../../useResource';
-import { DataTable, Feedback } from '../db/Database';
+import { DataTable, Feedback, Help } from '../db/Database';
 import { buttonClass, primaryClass } from '../db/forms';
 import { eventAmount, KIND_LABELS } from './eventKinds';
 import GoalPlanDialog from './GoalPlanDialog';
@@ -69,10 +69,10 @@ function SummaryForClient({ currency }: { currency: string }) {
             </dl>
             <div className="rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
                 <GoalProjectionChart scenario={goal.projected} history={goal.history} currentPeriod={period} currency={currency} />
-                <p className="mt-3 text-xs text-[var(--studio-text-muted)]">期間 {goal.projected.horizon_years}年 ／ 既定の年利 {goal.projected.annual_return}% ／ インフレ {goal.projected.inflation}%。凡例を選ぶと表示を切り替えます。</p>
+                <p className="mt-3 flex items-center gap-1.5 text-xs text-[var(--studio-text-muted)]">期間 {goal.projected.horizon_years}年 ／ 既定の年利 {goal.projected.annual_return}% ／ インフレ {goal.projected.inflation}%<Help label="グラフ" text="凡例を選ぶと表示を切り替えます。" /></p>
             </div>
             <section className="space-y-3">
-                <h3 className="font-semibold">ライフイベント</h3>
+                <h3 className="flex items-center gap-1.5 font-semibold">ライフイベント<Help label="ライフイベント" text="支出のライフイベントは、シミュレーションの積立設定に「ライフイベントへの取り崩し」を記録しておくと、「計画を作成」でイベントと同じ名前の取り置き（ゴール）ができ、取り崩す月まで口座ごとに積み立てます。その確保額を確保額・進捗に数えます。" wide /></h3>
                 <DataTable columns={['名称', '目標日', '金額', '取り置き', '確保額', '進捗', '起きる確率', '資金が足りる確率']}>
                     {goal.events.map((event) => {
                         const outcome = outcomes.get(event.id);
@@ -89,7 +89,6 @@ function SummaryForClient({ currency }: { currency: string }) {
                         </tr>;
                     })}
                 </DataTable>
-                <p className="text-xs text-[var(--studio-text-muted)]">支出のライフイベントは、シミュレーションの積立設定に「ライフイベントへの取り崩し」を記録しておくと、「計画を作成」でイベントと同じ名前の取り置き（ゴール）ができ、取り崩す月まで口座ごとに積み立てます。その確保額を確保額・進捗に数えます。</p>
             </section>
         </>}
         {planning && <GoalPlanDialog onClose={(applied) => { setPlanning(false); if (applied) resource.reload(); }} />}

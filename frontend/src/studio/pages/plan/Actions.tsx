@@ -84,7 +84,7 @@ function MonthlyActions({ sourcePeriod, currency, clientName }: { sourcePeriod: 
             {processed.map((row) => <p key={row.id} className={row.status === 'failed' ? 'text-[var(--studio-danger)]' : ''}>#{row.id} {row.description || KINDS[row.kind]}（予定：{row.target_period || '未設定'}）— {STATES[row.status]}{typeof row.result.error === 'string' && `：${row.result.error}`}</p>)}
             {!processed.length && <p className="text-[var(--studio-text-muted)]">期限が到来した行動はありませんでした。</p>}
         </details>}
-        {adding && <Overlay title="行動を追加" onClose={() => setAdding(false)}><Feedback error={mutation.error} /><ActionEditor sourcePeriod={sourcePeriod} currency={currency} busy={disabled} onSave={save} onCancel={() => setAdding(false)} /></Overlay>}
+        {adding && <Overlay title="行動を追加" help="行動を未実行として記録します。実行するか、予定月になって期限到来の処理をすると反映されます。" onClose={() => setAdding(false)}><Feedback error={mutation.error} /><ActionEditor sourcePeriod={sourcePeriod} currency={currency} busy={disabled} onSave={save} onCancel={() => setAdding(false)} /></Overlay>}
         {selectedAction && <Overlay title={selectedAction.description || KINDS[selectedAction.kind] || selectedAction.kind} onClose={() => setSelectedId(null)}>
             <div className="space-y-4">
                 <Feedback error={mutation.error} />
