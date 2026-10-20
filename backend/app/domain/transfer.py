@@ -8,7 +8,7 @@ import re
 from datetime import date, datetime
 from typing import Any
 
-EXPORT_VERSION = 29
+EXPORT_VERSION = 30
 
 DATA_COLLECTIONS = [
     "accounts",
@@ -264,6 +264,7 @@ def validate_import_payload(
     check_ref("capsule_rules", "trigger_account_id", "accounts")
     check_ref("scenario_contribution_plans", "scenario_id", "life_scenarios", required=True)
     check_ref("scenario_contribution_plans", "account_id", "accounts", required=True)
+    check_ref("scenario_contribution_plans", "to_account_id", "accounts")
     check_ref("capsules", "goal_event_id", "life_events")
     check_ref("life_events", "borrowing_event_id", "life_events")
     check_ref("monthly_plan_lines", "account_id", "accounts")
@@ -293,17 +294,37 @@ def validate_import_payload(
                 if type(value) not in (int, float) or not math.isfinite(value):
                     issue("error", "invalid_scenario_rate", "利率は有限の数値で指定してください。", collection, item.get("id"), field)
     plan_keys = set()
+    month = re.compile(r"\d{4}-(0[1-9]|1[0-2])")
     for item in data.get("scenario_contribution_plans", []):
         event_id = _as_int(item.get("life_event_id"))
-        key = (_as_int(item.get("scenario_id")), _as_int(item.get("account_id")), item.get("start_period"), event_id)
-        amount, rate = item.get("monthly_amount_minor"), item.get("annual_return")
-        valid = isinstance(key[2], str) and re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", key[2]) is not None and key not in plan_keys
-        valid = valid and type(amount) is int and (rate is None or (type(rate) in (int, float) and math.isfinite(rate)))
-        # A withdrawal for a life event takes a positive amount out once.
-        valid = valid and (event_id is None or amount < 0)
+        start, rate = item.get("start_period"), item.get("annual_return")
+        valid = isinstance(start, str) and month.fullmatch(start) is not None
+        valid = valid and (rate is None or (type(rate) in (int, float) and math.isfinite(rate)))
+        if version is None or version < 30:
+            key = (_as_int(item.get("scenario_id")), _as_int(item.get("account_id")), start, event_id)
+            amount = item.get("monthly_amount_minor")
+            # A withdrawal for a life event takes a positive amount out once.
+            valid = valid and key not in plan_keys and type(amount) is int and (event_id is None or amount < 0)
+            plan_keys.add(key)
+        else:
+            kind, amount, end = item.get("kind"), item.get("amount_minor"), item.get("end_period")
+            interval, times, shortage = item.get("interval_months"), item.get("repeat_count"), item.get("on_shortage")
+            valid = valid and kind in {"contribution", "transfer", "withdrawal"} and type(amount) is int and amount >= 0
+            valid = valid and (interval is None or (type(interval) is int and 1 <= interval <= 120))
+            valid = valid and (times is None or (type(times) is int and 1 <= times <= 1200))
+            valid = valid and (end is None or (isinstance(end, str) and month.fullmatch(end) is not None and end >= start))
+            valid = valid and shortage in {None, "skip", "partial"}
+            valid = valid and (kind != "withdrawal" or event_id is not None) and (kind == "withdrawal" or event_id is None)
+            to_account = _as_int(item.get("to_account_id"))
+            valid = valid and ((kind == "transfer") == (to_account is not None)) and to_account != _as_int(item.get("account_id"))
+            assets = {_as_int(row.get("id")) for row in data.get("accounts", []) if row.get("account_type") == "asset"}
+            valid = valid and _as_int(item.get("account_id")) in assets and (to_account is None or to_account in assets)
+            if kind == "withdrawal":
+                event = next((row for row in data.get("life_events", []) if _as_int(row.get("id")) == event_id), None)
+                valid = valid and event is not None and event.get("direction", "expense") == "expense" \
+                    and _as_int(event.get("scenario_id")) == _as_int(item.get("scenario_id"))
         if not valid:
             issue("error", "invalid_contribution_plan", "積立設定のレコードが不正または重複しています。", "scenario_contribution_plans", item.get("id"))
-        plan_keys.add(key)
     pairs = set()
     accounts_by_id = {_as_int(row.get("id")): row for row in data.get("accounts", [])}
     for item in data.get("life_scenario_account_returns", []):
@@ -720,6 +741,66 @@ def migrate_event_fundings(data: dict) -> dict:
         if account_id in assets:
             next_id += 1
             fundings.append({"id": next_id, "life_event_id": _as_int(event.get("id")), "account_id": account_id, "share_bp": 10000})
+    return result
+
+
+def migrate_plan_records(data: dict, currency: str, today) -> dict:
+    """Upgrade a verified pre-v30 payload the way migration 20261021_0083 upgrades the database.
+
+    Records get a kind and a schedule and add up: a monthly record ends the month before the
+    account's next one. An event record withdraws once. A negative monthly record becomes an
+    expense event of the whole amount and a monthly withdrawal toward it until the account's
+    next record or the end of the scenario's horizon; a yield it named stays on a ¥0 contribution.
+    """
+    from copy import deepcopy
+    from uuid import uuid4
+    from .money import Money
+
+    def index(period: str) -> int:
+        return int(period[:4]) * 12 + int(period[5:]) - 1
+
+    def period(value: int) -> str:
+        return f"{value // 12:04d}-{value % 12 + 1:02d}"
+
+    result = deepcopy(data)
+    horizons = {_as_int(row.get("id")): row.get("horizon_years", 30) for row in result.get("life_scenarios", [])}
+    names = {_as_int(row.get("id")): row.get("name") for row in result.get("accounts", [])}
+    events = result.setdefault("life_events", [])
+    next_event = max((_as_int(row.get("id")) or 0 for row in events), default=0)
+    plans = result.get("scenario_contribution_plans", [])
+    next_plan = max((_as_int(row.get("id")) or 0 for row in plans), default=0)
+    starts: dict[tuple, list[str]] = {}
+    for row in plans:
+        if row.get("life_event_id") is None:
+            starts.setdefault((_as_int(row.get("scenario_id")), _as_int(row.get("account_id"))), []).append(row["start_period"])
+    now = today.year * 12 + today.month - 1
+    upgraded = []
+    for row in plans:
+        amount = row.pop("monthly_amount_minor", 0) or 0
+        base = {**row, "to_account_id": None, "interval_months": None, "repeat_count": None, "end_period": None, "on_shortage": None,
+                "life_event_id": row.get("life_event_id")}
+        if row.get("life_event_id") is not None:
+            upgraded.append({**base, "kind": "withdrawal", "amount_minor": -amount, "on_shortage": "partial", "annual_return": None})
+            continue
+        later = sorted(start for start in starts[(_as_int(row.get("scenario_id")), _as_int(row.get("account_id")))] if start > row["start_period"])
+        end = period(index(later[0]) - 1) if later else None
+        if amount >= 0:
+            upgraded.append({**base, "kind": "contribution", "amount_minor": amount, "interval_months": 1, "end_period": end})
+            continue
+        last = index(end) if end is not None else now + 12 * (horizons.get(_as_int(row.get("scenario_id"))) or 30)
+        times = max(1, last - index(row["start_period"]) + 1)
+        next_event += 1
+        events.append({"id": next_event, "scenario_id": row.get("scenario_id"), "lineage": str(uuid4()),
+                       "name": row.get("note") or f"取り崩し（{names.get(_as_int(row.get('account_id'))) or row.get('account_id')}）",
+                       "target_date": f"{row['start_period']}-01", "target_amount": Money(-amount * times, currency).to_float(),
+                       "priority": 2, "note": "毎月の取り崩しから作成（WP23）", "condition_mode": "all", "direction": "expense"})
+        upgraded.append({**base, "kind": "withdrawal", "amount_minor": -amount, "interval_months": 1, "repeat_count": times,
+                         "on_shortage": "partial", "life_event_id": next_event, "annual_return": None})
+        if row.get("annual_return") is not None:
+            next_plan += 1
+            upgraded.append({**base, "id": next_plan, "kind": "contribution", "amount_minor": 0, "interval_months": 1, "end_period": end,
+                             "note": None, "life_event_id": None})
+    result["scenario_contribution_plans"] = upgraded
     return result
 
 

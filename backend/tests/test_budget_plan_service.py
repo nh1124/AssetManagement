@@ -184,7 +184,7 @@ def test_data_export_manifest_and_validate_include_monthly_actions() -> None:
         payload = ImportPayload(**snapshot)
         validation = validate_import_client_data(payload=payload, current_client=client)
 
-        assert snapshot["version"] == 29
+        assert snapshot["version"] == 30
         assert snapshot["manifest"]["counts"]["monthly_actions"] == 1
         assert snapshot["data"]["monthly_actions"][0]["kind"] == "set_budget"
         assert validation["status"] == "valid"

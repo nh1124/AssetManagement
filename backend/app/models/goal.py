@@ -134,37 +134,48 @@ class LifeScenario(Base):
 
 
 class ScenarioContributionPlan(Base):
-    """積立設定: from start_period on, an account receives monthly_amount and earns annual_return.
+    """積立設定: one record of a scenario's simulation settings (WP23).
 
-    A negative amount withdraws from the account every month (取り崩し). A later record
-    for the same account replaces the amount from its month; a null annual_return keeps
-    the yield of the record before it. The accounts with records are the scenario's
-    使用口座, the only ones the simulation grows.
-
-    A record naming a life event is different: once, in start_period, it takes
-    -monthly_amount out of the account for that event (ライフイベントへの取り崩し, e.g.
-    2028-10 証券口座 ¥750,000 for 結婚). It does not change the monthly amount.
+    kind says what the record moves, amount_minor (never negative) how much each time:
+    - contribution (積立): into account_id; annual_return, when set, is the account's
+      yield from start_period until a later record of the account names another;
+    - transfer (口座振替): from account_id to to_account_id;
+    - withdrawal (ライフイベントへの取り崩し): from account_id toward life_event_id, an
+      expense of the same scenario (e.g. 証券口座 ¥750,000 in 2028-10 for 結婚, or
+      貯蓄口座 ¥100,000 every month from 2051-01, 360 times, for 老後生活).
+    The schedule starts in start_period: once when interval_months is null, else every
+    interval_months months (1 monthly, 12 yearly) until repeat_count times or
+    end_period (inclusive) -- whichever comes first -- or the end of the simulation.
+    Records add up; none replaces another. on_shortage says what a transfer or a
+    withdrawal does when the account holds less than it moves: skip (取引を発生させない)
+    or partial (ある分だけで取引する). Nothing is moved in from elsewhere.
+    The accounts records name are the scenario's 使用口座, the only ones the simulation grows.
     """
     __tablename__ = "scenario_contribution_plans"
     __table_args__ = (
-        Index("uq_scenario_contribution_plans_month", "scenario_id", "account_id", "start_period", unique=True,
-              postgresql_where=text("life_event_id IS NULL"), sqlite_where=text("life_event_id IS NULL")),
-        Index("uq_scenario_contribution_plans_event", "scenario_id", "account_id", "start_period", "life_event_id", unique=True,
-              postgresql_where=text("life_event_id IS NOT NULL"), sqlite_where=text("life_event_id IS NOT NULL")),
+        CheckConstraint("kind IN ('contribution', 'transfer', 'withdrawal')", name="ck_scenario_contribution_plans_kind"),
+        CheckConstraint("on_shortage IS NULL OR on_shortage IN ('skip', 'partial')", name="ck_scenario_contribution_plans_on_shortage"),
     )
 
     id = Column(Integer, primary_key=True)
     scenario_id = Column(Integer, ForeignKey("life_scenarios.id", ondelete="CASCADE"), nullable=False, index=True)
+    kind = Column(String(16), nullable=False, default="contribution", server_default="contribution")
     account_id = Column(Integer, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False)
+    to_account_id = Column(Integer, ForeignKey("accounts.id", ondelete="CASCADE"), nullable=True)
     start_period = Column(String(7), nullable=False)
-    monthly_amount_minor = Column(BigInteger, nullable=False, default=0, server_default="0")
+    amount_minor = Column(BigInteger, nullable=False, default=0, server_default="0")
+    interval_months = Column(Integer, nullable=True)
+    repeat_count = Column(Integer, nullable=True)
+    end_period = Column(String(7), nullable=True)
+    on_shortage = Column(String(16), nullable=True)
     annual_return = Column(Float, nullable=True)
     note = Column(String, nullable=True)
     life_event_id = Column(Integer, ForeignKey("life_events.id", ondelete="CASCADE"), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     event = relationship("LifeEvent")
-    account = relationship("Account")
+    account = relationship("Account", foreign_keys=[account_id])
+    to_account = relationship("Account", foreign_keys=[to_account_id])
 
 
 class GoalBudgetReflection(Base):

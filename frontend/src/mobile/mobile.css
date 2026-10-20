@@ -1,0 +1,54 @@
+/* Mobile shell on the studio palette (theme.css): the same colours, with
+ * the depth and motion a phone expects -- soft shadows, sheets that rise,
+ * a translucent bar over the content. */
+.mobile-root {
+    --mobile-shadow: 0 1px 2px rgb(21 33 28 / 0.04), 0 6px 18px rgb(21 33 28 / 0.06);
+    --mobile-shadow-raised: 0 10px 30px rgb(14 42 32 / 0.25);
+    --mobile-bar: rgb(255 255 255 / 0.86);
+    --mobile-hero: linear-gradient(135deg, #14402f 0%, #1f5a43 60%, #2f7d5c 100%);
+    -webkit-tap-highlight-color: transparent;
+}
+
+.mobile-root .mobile-scroll {
+    scrollbar-width: none;
+    overscroll-behavior-y: contain;
+}
+
+.mobile-root .mobile-scroll::-webkit-scrollbar {
+    display: none;
+}
+
+@keyframes mobile-sheet-in {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
+}
+
+@keyframes mobile-fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes mobile-snack-in {
+    from { transform: translateY(12px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+.mobile-root .mobile-sheet {
+    animation: mobile-sheet-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.mobile-root .mobile-backdrop {
+    animation: mobile-fade-in 180ms ease-out;
+}
+
+.mobile-root .mobile-snack {
+    animation: mobile-snack-in 180ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .mobile-root .mobile-sheet,
+    .mobile-root .mobile-backdrop,
+    .mobile-root .mobile-snack {
+        animation: none;
+    }
+}

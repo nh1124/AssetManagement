@@ -130,7 +130,7 @@ def test_account_claim_accessor_memoises_zero_and_is_keyed_by_account(db):
     post_claim(db, 2, 3000)
     ctx = BudgetContext(db, 1)
     cap = db.get(models.Capsule, 1)
-    with patch("app.services.budget_context.claimed_minor", wraps=capsule_service.claimed_minor) as claim:
+    with patch("app.services.budget_context.claimed_value", wraps=capsule_service.claimed_value) as claim:
         for _ in range(3):
             assert ctx.capsule_account_balance(cap, 2) == 3000
             assert ctx.capsule_account_balance(cap, 3) == 0

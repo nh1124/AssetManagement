@@ -3,9 +3,12 @@ import api from './index';
 /** One plan row the goal would write, keep or retire. */
 export interface GoalPlanChange {
     period: string;
-    kind: 'account' | 'drawdown' | 'capsule';
+    kind: 'account' | 'transfer' | 'drawdown' | 'capsule';
     account_id: number | null;
     account_name: string | null;
+    /** A transfer row: the account the money comes from. */
+    source_account_id: number | null;
+    source_account_name: string | null;
     capsule_id: number | null;
     capsule_name: string | null;
     /** The event an earmark row is for; with new_capsule, applying makes the earmark named after it. */

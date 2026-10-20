@@ -448,7 +448,7 @@
     "body": "object",
     "source": "src/tools/life-events.ts",
     "path_fragment": "/life-scenarios/${scenario_id}/contribution-plans",
-    "allowed_fields": ["account_id", "start_period", "monthly_amount", "annual_return", "note", "life_event_id"],
+    "allowed_fields": ["kind", "account_id", "to_account_id", "start_period", "amount", "interval_months", "repeat_count", "end_period", "on_shortage", "annual_return", "note", "life_event_id"],
     "required_fields": []
   },
   {
@@ -458,7 +458,7 @@
     "body": "object",
     "source": "src/tools/life-events.ts",
     "path_fragment": "/life-scenarios/contribution-plans/${planId}",
-    "allowed_fields": ["account_id", "start_period", "monthly_amount", "annual_return", "note", "life_event_id"],
+    "allowed_fields": ["kind", "account_id", "to_account_id", "start_period", "amount", "interval_months", "repeat_count", "end_period", "on_shortage", "annual_return", "note", "life_event_id"],
     "required_fields": []
   },
   {

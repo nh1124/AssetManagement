@@ -1046,15 +1046,26 @@ class GoalChange(BaseModel):
 
 
 class ContributionPlanInput(BaseModel):
-    """A 積立設定 record; fields left out keep their value on update."""
+    """A 積立設定 record (WP23); fields left out keep their value on update.
+
+    kind: contribution (積立 into account_id), transfer (口座振替 from account_id to to_account_id)
+    or withdrawal (ライフイベントへの取り崩し from account_id toward life_event_id). amount is what
+    moves each time. Once when interval_months is null, else every interval_months months
+    from start_period, repeat_count times or until end_period. on_shortage (transfer, withdrawal):
+    skip or partial when the account holds less.
+    """
     model_config = ConfigDict(extra="forbid")
+    kind: Literal["contribution", "transfer", "withdrawal"] | None = None
     account_id: int | None = Field(default=None, gt=0)
+    to_account_id: int | None = Field(default=None, gt=0)
     start_period: str | None = Field(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
-    # Negative withdraws from the account every month (取り崩し).
-    monthly_amount: float | None = Field(default=None, allow_inf_nan=False)
+    amount: float | None = Field(default=None, ge=0, allow_inf_nan=False)
+    interval_months: int | None = Field(default=None, ge=1, le=120)
+    repeat_count: int | None = Field(default=None, ge=1, le=1200)
+    end_period: str | None = Field(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    on_shortage: Literal["skip", "partial"] | None = None
     annual_return: float | None = Field(default=None, allow_inf_nan=False)
     note: str | None = None
-    # Names an expense of the scenario: the record withdraws -monthly_amount once, in start_period, for it.
     life_event_id: int | None = Field(default=None, gt=0)
 
 

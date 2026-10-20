@@ -165,14 +165,14 @@ def test_backup_moves_old_yields_into_every_scenario_preserving_override(db):
     assert validate_import_payload(document["data"], 22, manifest)["error_count"] == 0
     import_client(db, db.get(models.Client, 2), data=document["data"], version=22, manifest=manifest)
     restored = export_client(db, db.get(models.Client, 2))
-    assert restored["version"] == EXPORT_VERSION == 29
+    assert restored["version"] == EXPORT_VERSION == 30
     names = {row["id"]: row["name"] for row in restored["data"]["accounts"]}
     story_names = {row["id"]: row["name"] for row in restored["data"]["life_scenarios"]}
     plans = restored["data"]["scenario_contribution_plans"]
     assert {(story_names[row["scenario_id"]], names[row["account_id"]]): row["annual_return"] for row in plans} == {
         ("一", holding.name): 9, ("二", holding.name): 3.5, ("一", zero.name): 0, ("二", zero.name): 0,
     }
-    assert {(row["start_period"], row["monthly_amount_minor"]) for row in plans} == {(date.today().strftime("%Y-%m"), 0)}
+    assert {(row["start_period"], row["amount_minor"], row["kind"]) for row in plans} == {(date.today().strftime("%Y-%m"), 0, "contribution")}
     assert restored["data"]["fx_tracked_currencies"][0]["currency"] == "USD"
     assert all(not {"role", "parent_id", "expected_return", "institution"} & row.keys() for row in restored["data"]["accounts"])
 

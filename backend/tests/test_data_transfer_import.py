@@ -83,10 +83,10 @@ def _seed(db, client_id=101, base=10000):
     next_goal = add(models.LifeEvent, 31, scenario_id=scenario.id, name="next", target_date=date(2028, 1, 1), target_amount=500)
     add(models.LifeEventLink, 32, from_event_id=goal.id, to_event_id=next_goal.id,
         kind="after", offset_months=12, note="graph note")
-    add(models.ScenarioContributionPlan, 38, scenario_id=scenario.id, account_id=cash.id, start_period="2026-10",
-        monthly_amount_minor=30000, annual_return=3.0, note="plan note")
-    add(models.ScenarioContributionPlan, 43, scenario_id=scenario.id, account_id=cash.id, start_period="2026-12",
-        monthly_amount_minor=-600, life_event_id=goal.id)
+    add(models.ScenarioContributionPlan, 38, scenario_id=scenario.id, kind="contribution", account_id=cash.id, start_period="2026-10",
+        amount_minor=30000, interval_months=1, annual_return=3.0, note="plan note")
+    add(models.ScenarioContributionPlan, 43, scenario_id=scenario.id, kind="withdrawal", account_id=cash.id, start_period="2026-12",
+        amount_minor=600, on_shortage="partial", life_event_id=goal.id)
     # Not in the backup, but present so rollback is proven to leave it alone too.
     add(models.Notification, 42, kind="goal_reflection", dedupe_key=f"goal_reflection:{base}", title="t", body="", payload={}, status="open")
     add(models.GoalBudgetReflection, 41, scenario_id=scenario.id, applied_at=STAMP, start_period="2026-10",

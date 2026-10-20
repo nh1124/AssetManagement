@@ -25,7 +25,7 @@ FORMAT_FIELDS = {
     "life_events": ["id","scenario_id","lineage","name","target_date","target_amount","priority","note","condition_mode","direction","interest_rate","borrowing_event_id","repeat_count","created_at"],
     "life_event_links": ["id","from_event_id","to_event_id","kind","offset_months","note","created_at"],
     "life_scenarios": ["id","name","annual_return","inflation","horizon_years","is_goal","created_at","updated_at"],
-    "scenario_contribution_plans": ["id","scenario_id","account_id","start_period","monthly_amount_minor","annual_return","note","life_event_id","created_at"],
+    "scenario_contribution_plans": ["id","scenario_id","kind","account_id","to_account_id","start_period","amount_minor","interval_months","repeat_count","end_period","on_shortage","annual_return","note","life_event_id","created_at"],
     "household_members": ["id","name","relation","birth_date","created_at"],
     "life_event_conditions": ["id","life_event_id","metric","comparator","threshold_minor","threshold_number","threshold_date","reference_id","note","created_at"],
     "transactions": ["id","date","description","amount","currency","batch_id","registry_entry_id","created_at"],
@@ -156,10 +156,10 @@ def _seed_client(db, client_id, base, marker):
     add(models.ExchangeRate, 22, base_currency="USD", quote_currency="JPY", rate=150, as_of_date=date(2026, 10, 1))
     db.flush()
     db.flush()
-    add(models.ScenarioContributionPlan, 38, scenario_id=scenario.id, account_id=cash.id, start_period=PERIOD,
-        monthly_amount_minor=30000, annual_return=3.0, note=marker)
-    add(models.ScenarioContributionPlan, 43, scenario_id=scenario.id, account_id=cash.id, start_period="2026-12",
-        monthly_amount_minor=-600, life_event_id=goal.id)
+    add(models.ScenarioContributionPlan, 38, scenario_id=scenario.id, kind="contribution", account_id=cash.id, start_period=PERIOD,
+        amount_minor=30000, interval_months=1, annual_return=3.0, note=marker)
+    add(models.ScenarioContributionPlan, 43, scenario_id=scenario.id, kind="withdrawal", account_id=cash.id, start_period="2026-12",
+        amount_minor=600, on_shortage="partial", life_event_id=goal.id)
     add(models.GoalBudgetReflection, 41, scenario_id=scenario.id, applied_at=STAMP, start_period="2026-10",
         end_period="2026-10", summary={"months": [{"period": "2026-10"}]})
     tracked = models.FxTrackedCurrency(client_id=client_id, currency="USD", created_at=STAMP)

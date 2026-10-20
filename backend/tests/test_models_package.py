@@ -9,8 +9,8 @@ from app import models
 from app.database import Base
 
 
-# WP22: what an account gives toward a life event is a 積立設定 record (scenario_contribution_plans.life_event_id).
-EXPECTED_METADATA_SHA256 = "690c0b914b934402f6550bf718d70d1b20f3aad3a1799844222f728977526ea5"
+# WP23: 積立設定 records carry a kind, a destination account (口座振替), a schedule and the shortage choice.
+EXPECTED_METADATA_SHA256 = "3c9302b6ac08361d808892a95abcdf324ebcdb1f6de018973ae1d86e1c331860"
 
 MODEL_NAMES = (
     "Client", "ClientMfaSetting", "ClientRecoveryCode",
@@ -91,7 +91,7 @@ def _metadata_snapshot():
 def test_metadata_matches_the_minor_unit_schema():
     snapshot = _metadata_snapshot()
     assert len(snapshot["table_names"]) == 34
-    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 385
+    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 391
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == EXPECTED_METADATA_SHA256
 

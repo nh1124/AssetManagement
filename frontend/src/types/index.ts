@@ -244,7 +244,8 @@ export interface LifeEventProgress extends LifeEvent {
     /** The earmark the plan made for the event (named after it), once it exists. */
     earmark: { capsule_id: number; capsule_name: string } | null;
     /** ライフイベントへの取り崩し: the 積立設定 records that withdraw for the event. */
-    withdrawals: Array<{ account_id: number; account_name: string | null; period: string; amount: number }>;
+    withdrawals: Array<{ account_id: number; account_name: string | null; period: string; amount: number;
+        interval_months: number | null; repeat_count: number | null; end_period: string | null }>;
 }
 
 export type DepreciationMethod = 'none' | 'straight_line' | 'declining_balance';

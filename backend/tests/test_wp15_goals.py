@@ -54,8 +54,8 @@ def event(db, scenario, name, amount, when, direction="expense", account_id=None
     db.flush()
     if account_id is not None and direction == "expense":
         # ライフイベントへの取り崩し (WP22): the account withdraws the whole amount in the event's month.
-        db.add(models.ScenarioContributionPlan(scenario_id=scenario.id, account_id=account_id, start_period=when.strftime("%Y-%m"),
-                                               monthly_amount_minor=-amount, life_event_id=row.id))
+        db.add(models.ScenarioContributionPlan(scenario_id=scenario.id, kind="withdrawal", account_id=account_id, start_period=when.strftime("%Y-%m"),
+                                               amount_minor=amount, on_shortage="partial", life_event_id=row.id))
     db.commit()
     return row
 
@@ -75,34 +75,69 @@ def still(db):
     db.commit()
 
 
-def test_contribution_plan_records_replace_amounts_and_carry_yields_forward():
-    rows = [SimpleNamespace(account_id=1, start_period="2026-01", monthly_amount_minor=10000, annual_return=3.0),
-            SimpleNamespace(account_id=1, start_period="2029-04", monthly_amount_minor=50000, annual_return=None),
-            SimpleNamespace(account_id=1, start_period="2031-01", monthly_amount_minor=0, annual_return=1.0),
-            SimpleNamespace(account_id=2, start_period="2026-01", monthly_amount_minor=7000, annual_return=None)]
-    assert plans.resolve(rows, 1, "2025-12", 5.0) == (0, 5.0)
-    assert plans.resolve(rows, 1, "2029-03", 5.0) == (10000, 3.0)
-    assert plans.resolve(rows, 1, "2029-04", 5.0) == (50000, 3.0)
-    assert plans.resolve(rows, 1, "2031-06", 5.0) == (0, 1.0)
-    assert plans.resolve(rows, 2, "2030-01", 5.0) == (7000, 5.0)
+def record(**values):
+    return SimpleNamespace(**{"kind": "contribution", "to_account_id": None, "interval_months": 1, "repeat_count": None,
+                              "end_period": None, "annual_return": None, **values})
+
+
+def test_contribution_records_add_up_on_their_schedules_and_carry_yields_forward():
+    rows = [record(account_id=1, start_period="2026-01", amount_minor=10000, annual_return=3.0, end_period="2029-03"),
+            record(account_id=1, start_period="2029-04", amount_minor=50000),
+            record(account_id=1, start_period="2031-01", amount_minor=0, annual_return=1.0),
+            # A bonus every December, five times, on top of the monthly records.
+            record(account_id=1, start_period="2026-12", amount_minor=200000, interval_months=12, repeat_count=5),
+            record(account_id=2, start_period="2026-01", amount_minor=7000)]
+    assert (plans.contributed_minor(rows, 1, "2025-12"), plans.rate(rows, 1, "2025-12", 5.0)) == (0, 5.0)
+    assert (plans.contributed_minor(rows, 1, "2029-03"), plans.rate(rows, 1, "2029-03", 5.0)) == (10000, 3.0)
+    assert (plans.contributed_minor(rows, 1, "2029-04"), plans.rate(rows, 1, "2029-04", 5.0)) == (50000, 3.0)
+    assert (plans.contributed_minor(rows, 1, "2029-12"), plans.contributed_minor(rows, 1, "2031-12")) == (250000, 50000)
+    assert plans.rate(rows, 1, "2031-06", 5.0) == 1.0
+    assert (plans.contributed_minor(rows, 2, "2030-01"), plans.rate(rows, 2, "2030-01", 5.0)) == (7000, 5.0)
     assert plans.monthly_total_minor(rows, "2029-04") == 57000
+    assert plans.occurrences(rows[3], "2026-01", "2040-12") == ["2026-12", "2027-12", "2028-12", "2029-12", "2030-12"]
+    assert plans.total_minor(rows[3]) == 1000000
+    once = record(account_id=1, start_period="2027-05", amount_minor=1, interval_months=None)
+    assert plans.occurrences(once, "2027-01", "2027-12") == ["2027-05"] and plans.occurrences(once, "2027-06", "2027-12") == []
+    quarterly = record(account_id=1, start_period="2027-01", amount_minor=1, interval_months=3, end_period="2027-12")
+    assert plans.occurrences(quarterly, "2027-02", "2030-12") == ["2027-04", "2027-07", "2027-10"]
 
 
-def test_contribution_plans_validate_account_period_and_uniqueness(db):
+def test_contribution_plans_validate_kinds_accounts_and_schedules(db):
     scenario = goal(db)
-    savings, food = account(db, "貯蓄"), account(db, "食費", kind="expense")
-    plan = plans.create_plan(db, 1, scenario.id, {"account_id": savings.id, "start_period": PERIOD, "monthly_amount": 30000})
-    assert plans.serialize(db, 1, plan)["monthly_amount"] == 30000
-    with pytest.raises(Conflict):
-        plans.create_plan(db, 1, scenario.id, {"account_id": savings.id, "start_period": PERIOD})
+    savings, bank, food = account(db, "貯蓄"), account(db, "銀行"), account(db, "食費", kind="expense")
+    plan = plans.create_plan(db, 1, scenario.id, {"account_id": savings.id, "start_period": PERIOD, "amount": 30000})
+    # A 積立 is monthly unless said otherwise; another record in the same month adds to it.
+    assert {key: plans.serialize(db, 1, plan)[key] for key in ("kind", "amount", "interval_months")} == {
+        "kind": "contribution", "amount": 30000, "interval_months": 1}
+    plans.create_plan(db, 1, scenario.id, {"account_id": savings.id, "start_period": PERIOD, "amount": 5000, "interval_months": 12})
     with pytest.raises(Refused):
         plans.create_plan(db, 1, scenario.id, {"account_id": food.id, "start_period": PERIOD})
     with pytest.raises(Refused):
         plans.update_plan(db, 1, plan.id, {"start_period": "2026-13"})
     with pytest.raises(NotFound):
-        plans.update_plan(db, 2, plan.id, {"monthly_amount": 1})
-    plans.update_plan(db, 1, plan.id, {"annual_return": None, "monthly_amount": 40000})
-    assert (plan.monthly_amount_minor, plan.annual_return) == (40000, None)
+        plans.update_plan(db, 2, plan.id, {"amount": 1})
+    for values in ({"amount": -1}, {"end_period": "1999-01"}, {"kind": "loan"}):
+        with pytest.raises(Refused):
+            plans.update_plan(db, 1, plan.id, values)
+    plans.update_plan(db, 1, plan.id, {"annual_return": None, "amount": 40000, "repeat_count": 12})
+    assert (plan.amount_minor, plan.annual_return, plan.repeat_count) == (40000, None, 12)
+    # Once has no end.
+    plans.update_plan(db, 1, plan.id, {"interval_months": None})
+    assert (plan.interval_months, plan.repeat_count, plan.end_period) == (None, None, None)
+    # 口座振替: to another account, more than 0; it does not happen when short unless told otherwise, and has no yield.
+    for values in ({}, {"to_account_id": bank.id, "account_id": bank.id}, {"to_account_id": bank.id, "amount": 0}):
+        with pytest.raises(Refused):
+            plans.create_plan(db, 1, scenario.id, {"kind": "transfer", "account_id": savings.id, "start_period": PERIOD, "amount": 100, **values})
+    moved = plans.create_plan(db, 1, scenario.id, {"kind": "transfer", "account_id": bank.id, "to_account_id": savings.id,
+                                                   "start_period": PERIOD, "amount": 100, "annual_return": 3.0})
+    assert (moved.on_shortage, moved.annual_return, moved.interval_months) == ("skip", None, 1)
+    # ライフイベントへの取り崩し: toward an expense of the same scenario; once unless repeated; takes what is there when short.
+    with pytest.raises(Refused):
+        plans.create_plan(db, 1, scenario.id, {"kind": "withdrawal", "account_id": savings.id, "start_period": PERIOD, "amount": 100})
+    house = event(db, scenario, "家", 1000, in_years(1))
+    taken = plans.create_plan(db, 1, scenario.id, {"kind": "withdrawal", "account_id": savings.id, "start_period": PERIOD,
+                                                   "amount": 100, "life_event_id": house.id})
+    assert (taken.on_shortage, taken.interval_months, taken.to_account_id) == ("partial", None, None)
 
 
 def test_duplicating_copies_the_story_and_contributions_not_earmarks_and_goal_only_flags(db):
@@ -111,7 +146,7 @@ def test_duplicating_copies_the_story_and_contributions_not_earmarks_and_goal_on
     first, second = event(db, original, "A", 1000, in_years(1)), event(db, original, "B", 2000, in_years(2))
     life_event_graph.create_link(db, 1, from_event_id=first.id, to_event_id=second.id, kind="after", offset_months=6)
     db.add(models.LifeEventCondition(client_id=1, life_event_id=second.id, metric="net_worth", comparator="gte", threshold_minor=10))
-    plans.create_plan(db, 1, original.id, {"account_id": savings.id, "start_period": PERIOD, "monthly_amount": 5000})
+    plans.create_plan(db, 1, original.id, {"account_id": savings.id, "start_period": PERIOD, "amount": 5000})
     capsule = capsule_service.create_goal_capsule(db, 1, event_id=first.id, name="A", parts={savings.id: 1000})
     db.commit()
 
@@ -120,7 +155,7 @@ def test_duplicating_copies_the_story_and_contributions_not_earmarks_and_goal_on
     assert [row.name for row in copied] == ["A", "B"] and {row.lineage for row in copied} == {first.lineage, second.lineage}
     assert db.query(models.LifeEventLink).filter(models.LifeEventLink.from_event_id == copied[0].id).one().offset_months == 6
     assert db.query(models.LifeEventCondition).filter_by(life_event_id=copied[1].id).count() == 1
-    assert [(row.account_id, row.monthly_amount_minor) for row in db.query(models.ScenarioContributionPlan).filter_by(scenario_id=copy.id)] == [(savings.id, 5000)]
+    assert [(row.account_id, row.amount_minor) for row in db.query(models.ScenarioContributionPlan).filter_by(scenario_id=copy.id)] == [(savings.id, 5000)]
     # A copied story makes no earmarks: they belong to the goal, not to the story.
     assert db.query(models.Capsule).filter(models.Capsule.goal_event_id.in_([row.id for row in copied])).count() == 0
 
@@ -134,7 +169,7 @@ def test_simulation_runs_events_only_where_their_branch_and_preconditions_hold(d
     still(db)
     scenario = goal(db)
     savings = account(db, "貯蓄", balance=100000)
-    plans.create_plan(db, 1, scenario.id, {"account_id": savings.id, "start_period": PERIOD, "monthly_amount": 10000, "annual_return": 0})
+    plans.create_plan(db, 1, scenario.id, {"account_id": savings.id, "start_period": PERIOD, "amount": 10000, "annual_return": 0})
     car = event(db, scenario, "車", 50000, in_years(1), account_id=savings.id)
     house = event(db, scenario, "家", 1000000, in_years(2))
     furniture = event(db, scenario, "家具", 10000, in_years(2))
@@ -143,13 +178,15 @@ def test_simulation_runs_events_only_where_their_branch_and_preconditions_hold(d
     life_event_graph.create_link(db, 1, from_event_id=house.id, to_event_id=furniture.id, kind="after")
 
     result = scenarios.project(db, 1, scenario)
-    assert [row["p50"] for row in result["projection"]] == [100000, 170000, 290000, 410000]
+    # Rows are calendar years: the first holds the rest of this year's contributions, the car comes next year.
+    base = 100000 + 10000 * (13 - TODAY.month)
+    assert [row["p50"] for row in result["projection"]] == [base, base + 70000, base + 190000, base + 310000]
     by_id = {row["id"]: row for row in result["events"]}
     assert (by_id[car.id]["executed_probability"], by_id[car.id]["funded_probability"]) == (1.0, 1.0)
     assert by_id[house.id]["executed_probability"] == by_id[furniture.id]["executed_probability"] == 0.0
     assert result["likely_path"] == {"event_ids": [car.id], "link_ids": []}
     assert [row["probability"] for row in result["conditions"] if row["event_id"] == house.id] == [0.0]
-    assert result["accounts"][0]["p50"][:3] == [100000, 170000, 290000]
+    assert result["accounts"][0]["p50"][:3] == [base, base + 70000, base + 190000]
     assert result["monthly_contribution"] == 10000
     # The chart's demand lines still count every event, happened or not.
     assert result["projection"][2]["cumulative_target"] == 1060000
@@ -172,7 +209,7 @@ def plan_setup(db):
     """A goal with a 30000 monthly contribution to savings and one event set aside there."""
     scenario = goal(db)
     savings = account(db, "貯蓄")
-    plans.create_plan(db, 1, scenario.id, {"account_id": savings.id, "start_period": PERIOD, "monthly_amount": 30000})
+    plans.create_plan(db, 1, scenario.id, {"account_id": savings.id, "start_period": PERIOD, "amount": 30000})
     appliance = event(db, scenario, "家電の買い替え", 120000, months_ahead(12), account_id=savings.id)
     return scenario, savings, appliance
 
@@ -207,7 +244,7 @@ def test_the_plan_puts_the_contribution_into_the_account_with_its_earmarks_insid
 def test_the_plan_warns_when_earmarks_exceed_the_contribution(db):
     scenario, savings, appliance = plan_setup(db)
     plan_row = plans.list_plans(db, 1, scenario.id)[0]
-    plans.update_plan(db, 1, plan_row.id, {"monthly_amount": 4000})
+    plans.update_plan(db, 1, plan_row.id, {"amount": 4000})
     preview = goal_budget_workflow.preview(db, 1, PERIOD, PERIOD)
     # The account still receives its contribution; the earmark beyond it comes from the balance.
     assert {(row["kind"], row["new"]) for row in preview["changes"]} == {("capsule", 10000), ("account", 4000)}
@@ -333,12 +370,14 @@ def test_http_conditions_contribution_plans_earmarks_and_plan_check(db, api):
                       json={"metric": "net_worth", "comparator": "lte", "threshold_minor": 50, "note": "上限"})
     assert (updated.status_code, updated.json()["comparator"], updated.json()["threshold_minor"]) == (200, "lte", 50)
     record = request(api, "POST", f"/life-scenarios/{scenario.id}/contribution-plans",
-                     json={"account_id": savings.id, "start_period": PERIOD, "monthly_amount": 20000, "annual_return": 1.5})
+                     json={"account_id": savings.id, "start_period": PERIOD, "amount": 20000, "annual_return": 1.5})
     assert record.status_code == 200 and record.json()["account_name"] == "貯蓄"
-    assert request(api, "PUT", f"/life-scenarios/contribution-plans/{record.json()['id']}", json={"monthly_amount": 25000}).json()["monthly_amount"] == 25000
+    assert request(api, "PUT", f"/life-scenarios/contribution-plans/{record.json()['id']}", json={"amount": 25000}).json()["amount"] == 25000
+    # The old field is refused rather than ignored.
+    assert request(api, "PUT", f"/life-scenarios/contribution-plans/{record.json()['id']}", json={"monthly_amount": 1}).status_code == 422
     # The event's withdrawal record (ライフイベントへの取り崩し) is listed beside the monthly one.
     listed = request(api, "GET", f"/life-scenarios/{scenario.id}/contribution-plans").json()
-    assert [(row["monthly_amount"], row["life_event_name"]) for row in listed] == [(25000, None), (-1000, "家")]
+    assert [(row["kind"], row["amount"], row["life_event_name"]) for row in listed] == [("contribution", 25000, None), ("withdrawal", 1000, "家")]
     progress = request(api, "GET", "/life-events/with-progress").json()
     assert progress[0]["earmark"] == {"capsule_id": capsule.id, "capsule_name": "家"}
     check = request(api, "GET", f"/goal-budget/plan-check?period={PERIOD}").json()

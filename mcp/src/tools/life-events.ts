@@ -26,12 +26,21 @@ const lifeEventFields = {
 const lifeEventCreateSchema = z.object({ scenario_id: id.describe("Scenario that owns the event"), ...lifeEventFields }).strict();
 const lifeEventUpdateSchema = z.object(lifeEventFields).partial().extend({ id: id.describe("Life event ID") }).strict();
 const contributionFields = {
-  account_id: id.describe("Asset account"),
-  start_period: periodSchema.describe("First month the record applies, YYYY-MM"),
-  monthly_amount: z.number().describe("Monthly contribution from that month; negative withdraws (取り崩し). With life_event_id: the negative amount withdrawn once"),
-  annual_return: z.number().nullable().optional().describe("Yield % from that month; null keeps the previous one (ignored with life_event_id)"),
+  kind: z.enum(["contribution", "transfer", "withdrawal"]).optional()
+    .describe("contribution (積立 into account_id), transfer (口座振替 from account_id to to_account_id), withdrawal (ライフイベントへの取り崩し from account_id toward life_event_id). Left out on create: withdrawal with life_event_id, transfer with to_account_id, else contribution"),
+  account_id: id.describe("Asset account: where a contribution goes, where a transfer or withdrawal comes from"),
+  to_account_id: id.nullable().optional().describe("Transfer destination: another asset account"),
+  start_period: periodSchema.describe("First month the record moves money, YYYY-MM"),
+  amount: z.number().min(0).optional().describe("What moves each time (never negative; more than 0 for a transfer or a withdrawal)"),
+  interval_months: z.number().int().min(1).max(120).nullable().optional()
+    .describe("null: once; 1: every month; 12: every year; N: every N months. Left out on create: 1 for contribution and transfer, once for withdrawal"),
+  repeat_count: z.number().int().min(1).max(1200).nullable().optional().describe("How many times a repeated record moves money"),
+  end_period: periodSchema.nullable().optional().describe("Last month a repeated record may move money, YYYY-MM (with repeat_count, whichever comes first)"),
+  on_shortage: z.enum(["skip", "partial"]).nullable().optional()
+    .describe("Transfer or withdrawal when the account holds less: skip (取引を発生させない, default for transfer) or partial (ある分だけで取引する, default for withdrawal). Nothing is moved in from elsewhere"),
+  annual_return: z.number().nullable().optional().describe("Contribution only: the account's yield % from start_period until a later record names another; null keeps the previous one"),
   note: z.string().nullable().optional(),
-  life_event_id: id.nullable().optional().describe("An expense event of the same scenario: the record withdraws -monthly_amount once, in start_period, for it (ライフイベントへの取り崩し)"),
+  life_event_id: id.nullable().optional().describe("Withdrawal: an expense event of the same scenario. From the event's month on, withdrawals pay it in instalments (e.g. 老後生活, 100000 a month for 360 months)"),
 };
 
 type Handler<T> = (input: T) => Promise<unknown>;
@@ -110,7 +119,7 @@ export function registerLifeEventTools(server: McpServer): void {
 
   server.registerTool("contribution_plans_create", {
     title: "Add a contribution plan record",
-    description: "積立設定: from start_period, the account receives monthly_amount and earns annual_return (null keeps the previous yield). With life_event_id, a one-off withdrawal for that expense event instead (e.g. 2028-10, 証券口座, -750000, 結婚): the simulation takes it out of the account that month, and making the plan from the goal earmarks it in that account until then.",
+    description: "積立設定 record (records add up): 積立 into an account, 口座振替 between accounts, or ライフイベントへの取り崩し toward an expense event, once or on a schedule (every N months, N times or until a month). E.g. 証券口座 750000 once in 2028-10 for 結婚; 貯蓄口座 100000 every month from 2051-01, 360 times, for 老後生活. Making the plan from the goal earmarks a withdrawal's account until its first month, draws it down in each month, and writes transfers with their source.",
     inputSchema: z.object({ scenario_id: id, ...contributionFields }).strict(), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   }, guarded("Created contribution plan record:", async ({ scenario_id, ...record }: { scenario_id: number } & Record<string, unknown>) =>
     api.post<unknown>(`/life-scenarios/${scenario_id}/contribution-plans`, only(record))));

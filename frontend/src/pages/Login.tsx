@@ -1,7 +1,14 @@
 import { useState } from 'react';
+import { isAxiosError } from 'axios';
 import { useAuth } from '../context/AuthContext';
-import { LogIn, User, Lock, AlertCircle } from 'lucide-react';
+import { AlertCircle, Lock, LogIn, Mail, User, UserPlus } from 'lucide-react';
+import '../studio/theme.css';
 
+const field = 'block w-full min-h-11 rounded-xl border border-[var(--studio-border)] bg-[var(--studio-surface)] pl-10 pr-3 text-base text-[var(--studio-text)] placeholder:text-[var(--studio-text-faint)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)]';
+const label = 'mb-1.5 block text-xs font-medium text-[var(--studio-text-muted)]';
+const icon = 'pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--studio-text-faint)]';
+
+/** Sign in (with the MFA step when the account has it) or create an account; the studio's look, on phone and PC. */
 export default function LoginPage() {
     const [mode, setMode] = useState<'login' | 'register'>('login');
     const [username, setUsername] = useState('admin');
@@ -35,157 +42,105 @@ export default function LoginPage() {
             } else {
                 await register({ username, password, email: email || undefined });
             }
-        } catch (err: any) {
-            const detail = err?.response?.data?.detail;
+        } catch (err: unknown) {
+            const response = isAxiosError<{ detail?: unknown }>(err) ? err.response : undefined;
+            const detail = response?.data?.detail;
             if (typeof detail === 'string') {
                 setError(detail);
             } else if (Array.isArray(detail)) {
-                setError(detail.map((d: any) => d?.msg || String(d)).join(', '));
-            } else if (!err?.response) {
-                setError('Cannot reach backend service. Please ensure API server is running.');
+                setError(detail.map((item: { msg?: string }) => item?.msg || String(item)).join('、'));
+            } else if (!response) {
+                setError('サーバーに接続できません。API サーバーが動いているか確認してください。');
             } else {
-                setError(mode === 'login' ? 'Login failed' : 'Registration failed');
+                setError(mode === 'login' ? 'ログインできませんでした。' : '登録できませんでした。');
             }
         } finally {
             setIsLoading(false);
         }
     };
 
+    const switchMode = () => {
+        setMode(mode === 'login' ? 'register' : 'login');
+        setMfaToken(null);
+        setMfaCode('');
+        setError('');
+    };
+
     return (
-        <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
-            <div className="w-full max-w-md">
-                <div className="text-center mb-8">
-                    <h1 className="text-2xl font-bold text-white mb-2">Finance IDE</h1>
-                    <p className="text-slate-400 text-sm">
-                        {mode === 'login' ? 'Sign in to manage your assets' : 'Create a new account to get started'}
+        <div className="studio-root flex min-h-dvh items-center justify-center bg-[var(--studio-bg)] p-4 text-[var(--studio-text)]">
+            <div className="w-full max-w-sm">
+                <div className="mb-8 text-center">
+                    <div className="mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-[var(--studio-rail)] text-xl font-bold text-white shadow-lg">a</div>
+                    <h1 className="text-2xl font-bold tracking-tight">AssetManagement</h1>
+                    <p className="mt-1 text-sm text-[var(--studio-text-muted)]">
+                        {mfaToken ? '認証コードを入力してください' : mode === 'login' ? 'ログインして家計と資産を管理します' : '新しいアカウントを作成します'}
                     </p>
                 </div>
 
-                <form onSubmit={handleSubmit} className="bg-slate-900 border border-slate-800 p-8 shadow-2xl rounded-sm">
+                <form onSubmit={handleSubmit} className="space-y-4 rounded-3xl bg-[var(--studio-surface)] p-6 shadow-[0_10px_40px_rgb(14_42_32/0.08)]">
                     {error && (
-                        <div className="mb-6 p-3 bg-red-950/30 border border-red-900/50 text-red-500 text-xs flex items-center gap-2 animate-in fade-in slide-in-from-top-1">
-                            <AlertCircle size={14} />
+                        <div role="alert" className="flex items-start gap-2 rounded-xl bg-red-50 p-3 text-sm text-[var(--studio-danger)]">
+                            <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden />
                             {error}
                         </div>
                     )}
 
-                    <div className="space-y-4">
-                        {!mfaToken ? (
-                            <>
-                                <div>
-                                    <label className="block text-[10px] text-slate-500 uppercase tracking-widest mb-1">Username</label>
-                                    <div className="relative">
-                                        <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
-                                        <input
-                                            type="text"
-                                            value={username}
-                                            onChange={(e) => setUsername(e.target.value)}
-                                            className="w-full bg-slate-800/50 border border-slate-700 pl-10 pr-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 transition-all placeholder:text-slate-600"
-                                            placeholder="Enter username"
-                                            required
-                                        />
-                                    </div>
-                                </div>
-
-                                {mode === 'register' && (
-                                    <div>
-                                        <label className="block text-[10px] text-slate-500 uppercase tracking-widest mb-1">Email (Optional)</label>
-                                        <div className="relative">
-                                            <AlertCircle className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
-                                            <input
-                                                type="email"
-                                                value={email}
-                                                onChange={(e) => setEmail(e.target.value)}
-                                                className="w-full bg-slate-800/50 border border-slate-700 pl-10 pr-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 transition-all placeholder:text-slate-600"
-                                                placeholder="name@example.com"
-                                            />
-                                        </div>
-                                    </div>
-                                )}
-
-                                <div>
-                                    <label className="block text-[10px] text-slate-500 uppercase tracking-widest mb-1">Password</label>
-                                    <div className="relative">
-                                        <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={16} />
-                                        <input
-                                            type="password"
-                                            value={password}
-                                            onChange={(e) => setPassword(e.target.value)}
-                                            className="w-full bg-slate-800/50 border border-slate-700 pl-10 pr-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 transition-all placeholder:text-slate-600"
-                                            placeholder="Enter password"
-                                            required
-                                            minLength={8}
-                                        />
-                                    </div>
-                                </div>
-                            </>
-                        ) : (
+                    {!mfaToken ? (
+                        <>
                             <div>
-                                <label className="block text-[10px] text-slate-500 uppercase tracking-widest mb-1">
-                                    {useRecoveryCode ? 'Recovery Code' : 'Authenticator Code'}
-                                </label>
-                                <input
-                                    type="text"
-                                    value={mfaCode}
-                                    onChange={(e) => setMfaCode(e.target.value)}
-                                    className="w-full bg-slate-800/50 border border-slate-700 px-3 py-2 text-center font-mono text-sm text-white focus:outline-none focus:border-emerald-500 transition-all placeholder:text-slate-600"
-                                    placeholder={useRecoveryCode ? 'ABCD-1234' : '123456'}
-                                    required
-                                    autoFocus
-                                />
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setUseRecoveryCode(!useRecoveryCode);
-                                        setMfaCode('');
-                                    }}
-                                    className="mt-3 text-xs text-emerald-500 hover:text-emerald-400"
-                                >
-                                    {useRecoveryCode ? 'Use authenticator code' : 'Use recovery code'}
-                                </button>
+                                <label htmlFor="login-username" className={label}>ユーザー名</label>
+                                <div className="relative">
+                                    <User className={icon} size={16} aria-hidden />
+                                    <input id="login-username" type="text" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} className={field} required />
+                                </div>
                             </div>
-                        )}
-
-                        <button
-                            type="submit"
-                            disabled={isLoading}
-                            className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-2.5 flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed mt-6 active:scale-[0.98]"
-                        >
-                            {isLoading ? (
-                                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                            ) : (
-                                mode === 'login' ? <LogIn size={18} /> : <User size={18} />
+                            {mode === 'register' && (
+                                <div>
+                                    <label htmlFor="login-email" className={label}>メールアドレス（任意）</label>
+                                    <div className="relative">
+                                        <Mail className={icon} size={16} aria-hidden />
+                                        <input id="login-email" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} className={field} placeholder="name@example.com" />
+                                    </div>
+                                </div>
                             )}
-                            {isLoading ? (mfaToken ? 'Verifying...' : mode === 'login' ? 'Signing in...' : 'Creating Account...') : (mfaToken ? 'Verify' : mode === 'login' ? 'Sign In' : 'Sign Up')}
-                        </button>
-                    </div>
-
-                    <div className="mt-8 pt-6 border-t border-slate-800 text-center">
-                        <p className="text-xs text-slate-500">
-                            {mode === 'login' ? "Don't have an account?" : "Already have an account?"}{' '}
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setMode(mode === 'login' ? 'register' : 'login');
-                                    setMfaToken(null);
-                                    setMfaCode('');
-                                    setError('');
-                                }}
-                                className="text-emerald-500 hover:text-emerald-400 font-medium transition-colors"
-                            >
-                                {mode === 'login' ? 'Sign Up' : 'Sign In'}
+                            <div>
+                                <label htmlFor="login-password" className={label}>パスワード{mode === 'register' ? '（8文字以上）' : ''}</label>
+                                <div className="relative">
+                                    <Lock className={icon} size={16} aria-hidden />
+                                    <input id="login-password" type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} value={password}
+                                        onChange={(e) => setPassword(e.target.value)} className={field} required minLength={8} />
+                                </div>
+                            </div>
+                        </>
+                    ) : (
+                        <div>
+                            <label htmlFor="login-mfa" className={label}>{useRecoveryCode ? 'リカバリーコード' : '認証アプリの 6 桁のコード'}</label>
+                            <input id="login-mfa" type="text" inputMode={useRecoveryCode ? 'text' : 'numeric'} autoComplete="one-time-code" value={mfaCode}
+                                onChange={(e) => setMfaCode(e.target.value)} placeholder={useRecoveryCode ? 'ABCD-1234' : '123456'} required autoFocus
+                                className={`${field} pl-3 text-center font-mono tracking-widest`} />
+                            <button type="button" onClick={() => { setUseRecoveryCode(!useRecoveryCode); setMfaCode(''); }}
+                                className="mt-2 text-xs font-medium text-[var(--studio-accent)]">
+                                {useRecoveryCode ? '認証アプリのコードを使う' : 'リカバリーコードを使う'}
                             </button>
-                        </p>
+                        </div>
+                    )}
 
-                        {mode === 'login' && (
-                            <p className="text-[10px] text-slate-700 mt-4 italic">
-                                Dev Access: <code className="text-slate-600 bg-slate-950 px-1">admin / adminadmin</code>
-                            </p>
-                        )}
-                    </div>
+                    <button type="submit" disabled={isLoading}
+                        className="flex min-h-12 w-full items-center justify-center gap-2 rounded-xl bg-[var(--studio-accent)] text-sm font-semibold text-white active:opacity-80 disabled:opacity-50">
+                        {isLoading ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" aria-hidden />
+                            : mode === 'login' || mfaToken ? <LogIn size={18} aria-hidden /> : <UserPlus size={18} aria-hidden />}
+                        {isLoading ? (mfaToken ? '確認しています…' : mode === 'login' ? 'ログインしています…' : '作成しています…') : (mfaToken ? '確認する' : mode === 'login' ? 'ログイン' : 'アカウントを作成')}
+                    </button>
+
+                    <p className="border-t border-[var(--studio-border)] pt-4 text-center text-xs text-[var(--studio-text-muted)]">
+                        {mode === 'login' ? 'アカウントをお持ちでないとき：' : 'アカウントをお持ちのとき：'}
+                        <button type="button" onClick={switchMode} className="ml-1 font-semibold text-[var(--studio-accent)]">{mode === 'login' ? '新規登録' : 'ログイン'}</button>
+                    </p>
+                    {mode === 'login' && !mfaToken && (
+                        <p className="text-center text-[11px] text-[var(--studio-text-faint)]">開発用：<code>admin / adminadmin</code></p>
+                    )}
                 </form>
             </div>
         </div>
     );
 }
-

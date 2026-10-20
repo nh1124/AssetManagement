@@ -53,8 +53,8 @@ def event(db, scenario, name, amount, when, **values):
 
 
 def withdraw(db, scenario, account_id, when, amount, event_id, **values):
-    return plans.create_plan(db, 1, scenario.id, {"account_id": account_id, "start_period": month(when),
-                                                   "monthly_amount": -amount, "life_event_id": event_id, **values})
+    return plans.create_plan(db, 1, scenario.id, {"kind": "withdrawal", "account_id": account_id, "start_period": month(when),
+                                                   "amount": amount, "life_event_id": event_id, **values})
 
 
 def test_a_withdrawal_record_takes_money_once_for_an_expense_of_its_scenario(db):
@@ -64,23 +64,25 @@ def test_a_withdrawal_record_takes_money_once_for_an_expense_of_its_scenario(db)
     bonus = event(db, scenario, "臨時収入", 100_000, months_ahead(6), direction="income")
     elsewhere = event(db, other, "旅行", 1000, months_ahead(6))
     record = withdraw(db, scenario, savings.id, months_ahead(12), 600_000, wedding.id, annual_return=5.0)
-    assert (record.monthly_amount_minor, record.annual_return, record.life_event_id) == (-600_000, None, wedding.id)
+    assert (record.kind, record.amount_minor, record.annual_return, record.life_event_id, record.interval_months) == (
+        "withdrawal", 600_000, None, wedding.id, None)
     for event_id in (bonus.id, elsewhere.id, 999):
         with pytest.raises(Refused):
             withdraw(db, scenario, savings.id, months_ahead(12), 1, event_id)
     with pytest.raises(Refused):
-        plans.create_plan(db, 1, scenario.id, {"account_id": savings.id, "start_period": month(months_ahead(12)), "monthly_amount": 1, "life_event_id": wedding.id})
+        withdraw(db, scenario, savings.id, months_ahead(12), 0, wedding.id)
     with pytest.raises(Refused):
         withdraw(db, scenario, food.id, months_ahead(12), 1, wedding.id)
-    with pytest.raises(Conflict):
-        withdraw(db, scenario, savings.id, months_ahead(12), 1, wedding.id)
-    # A monthly record in the same account and month stands beside it, and sets the monthly amount alone.
-    plans.create_plan(db, 1, scenario.id, {"account_id": savings.id, "start_period": month(months_ahead(12)), "monthly_amount": 30000})
+    # Without a kind, naming the event is enough.
+    assert plans.create_plan(db, 1, scenario.id, {"account_id": savings.id, "start_period": month(months_ahead(12)),
+                                                  "amount": 1, "life_event_id": wedding.id}).kind == "withdrawal"
+    # A 積立 in the same account and month stands beside it; the withdrawal is no 積立.
+    plans.create_plan(db, 1, scenario.id, {"account_id": savings.id, "start_period": month(months_ahead(12)), "amount": 30000})
     rows = plans.list_plans(db, 1, scenario.id)
-    assert plans.resolve(rows, savings.id, month(months_ahead(12)), 0.0)[0] == 30000
-    assert [row.life_event_id for row in plans.withdrawals(rows)] == [wedding.id]
-    # Turning it into a monthly record clears the event.
-    plans.update_plan(db, 1, record.id, {"life_event_id": None, "start_period": month(months_ahead(13))})
+    assert plans.contributed_minor(rows, savings.id, month(months_ahead(12))) == 30000
+    assert [row.life_event_id for row in plans.withdrawals(rows)] == [wedding.id, wedding.id]
+    # Turning it into a 積立 clears the event.
+    plans.update_plan(db, 1, record.id, {"kind": "contribution", "start_period": month(months_ahead(13))})
     assert db.get(models.ScenarioContributionPlan, record.id).life_event_id is None
 
 
@@ -226,11 +228,13 @@ def test_http_records_a_withdrawal_and_lists_it_with_the_event(db, api):
     savings = account(db, "貯蓄")
     wedding = event(db, scenario, "結婚", 1_000_000, months_ahead(12))
     created = request(api, "POST", f"/life-scenarios/{scenario.id}/contribution-plans",
-                      json={"account_id": savings.id, "start_period": month(months_ahead(12)), "monthly_amount": -750000, "life_event_id": wedding.id})
+                      json={"kind": "withdrawal", "account_id": savings.id, "start_period": month(months_ahead(12)), "amount": 750000,
+                            "life_event_id": wedding.id})
     assert created.status_code == 200
-    assert (created.json()["life_event_name"], created.json()["monthly_amount"]) == ("結婚", -750000)
+    assert (created.json()["life_event_name"], created.json()["amount"], created.json()["on_shortage"]) == ("結婚", 750000, "partial")
     progress = request(api, "GET", "/life-events/with-progress").json()
-    assert progress[0]["withdrawals"] == [{"account_id": savings.id, "account_name": "貯蓄", "period": month(months_ahead(12)), "amount": 750000.0}]
+    assert progress[0]["withdrawals"] == [{"account_id": savings.id, "account_name": "貯蓄", "period": month(months_ahead(12)), "amount": 750000.0,
+                                           "interval_months": None, "repeat_count": None, "end_period": None}]
     assert request(api, "POST", f"/life-scenarios/{scenario.id}/contribution-plans",
-                   json={"account_id": savings.id, "start_period": PERIOD, "monthly_amount": 5, "life_event_id": wedding.id}).status_code == 422
+                   json={"kind": "withdrawal", "account_id": savings.id, "start_period": PERIOD, "amount": -5, "life_event_id": wedding.id}).status_code == 422
     assert request(api, "PUT", f"/life-events/{wedding.id}/fundings", json=[]).status_code in (404, 405)

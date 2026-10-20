@@ -10,7 +10,7 @@ from ..domain.errors import NotFound
 from ..domain.money import Money
 from .analysis_service import calculate_logical_balance
 from .reporting_service import get_balance_sheet
-from .capsule_service import claimed_minor, goal_capsules
+from .capsule_service import claimed_value_minor
 from .fx_service import get_client_currency
 from .ledger_valuation import calculate_account_balances
 from .goal_earmark_service import events_with_progress
@@ -112,42 +112,18 @@ class _Readers:
         self.figures: dict[tuple[str, int | None], tuple[float | int | date | None, str | None]] = {}
         self.accounts = db.query(models.Account).filter_by(client_id=client_id).all() if {row.metric for row in conditions} & {"net_worth", "free_cash", "account_balance"} else []
         self.balances = calculate_account_balances(db, self.accounts)
-        self.claims: dict[int, dict[str, int]] = {}
         self.actual_minor: dict[tuple[str, int | None], int] = {}
         self.progress: dict[int, dict] | None = None
 
-    def foreign(self, figures: dict[str, int]) -> str | None:
-        currencies = sorted(code for code, minor in figures.items() if code != self.currency and minor != 0)
-        return f"通貨が異なります（{'・'.join(currencies)}／{self.currency}）。" if currencies else None
+    def valued(self, key: tuple[str, int | None], minor: int) -> float:
+        """An amount in the client's currency, kept in minor units for exact comparisons."""
+        self.actual_minor[key] = minor
+        return Money(minor, self.currency).to_float()
 
-    def claim(self, capsule_id: int) -> dict[str, int]:
-        if capsule_id not in self.claims:
-            self.claims[capsule_id] = claimed_minor(self.db, self.client_id, capsule_id)
-        return self.claims[capsule_id]
-
-    def aggregate_currency_reason(self, metric: str) -> str | None:
-        for account in self.accounts:
-            relevant = (account.is_active and account.account_type in {"asset", "liability"}) if metric == "net_worth" else (account.is_active and account.account_type in {"asset", "liability"})
-            if relevant:
-                reason = self.foreign(self.balances[account.id].balances_minor)
-                if reason:
-                    return reason
-        if metric == "free_cash":
-            for capsule in self.db.query(models.Capsule).filter_by(client_id=self.client_id).all():
-                reason = self.foreign(self.claim(capsule.id))
-                if reason:
-                    return reason
-            # The logical reader also values this month's posted budget spending.
-            foreign_spending = self.db.query(models.Transaction.id).join(models.JournalEntry).join(models.Account).filter(
-                models.Transaction.client_id == self.client_id,
-                models.Transaction.date >= date.today().replace(day=1),
-                models.Transaction.date <= date.today(),
-                models.Transaction.currency != self.currency,
-                models.Account.account_type == "expense",
-            ).first()
-            if foreign_spending:
-                return "当月の支出に異なる通貨が含まれます。"
-        return None
+    def account_minor(self, account_id: int) -> int:
+        """An account's balance in the client's currency: its own money exactly, other currencies at their rates."""
+        held = self.balances[account_id]
+        return held.balances_minor.get(self.currency, 0) + Money.from_major(str(round(held.foreign, 6)), self.currency).minor
 
     def actual(self, row: models.LifeEventCondition) -> tuple[float | int | date | None, str | None]:
         key = row.metric, row.reference_id
@@ -157,34 +133,20 @@ class _Readers:
         if row.metric in REFERENCE_MODELS and reference is None:
             return None, "対象が削除されたか、見つかりません。"
         actual, reason = None, None
+        # Amounts in other currencies count at their rates, as the balance sheet values them (WP24).
         if row.metric in {"net_worth", "free_cash"}:
-            reason = self.aggregate_currency_reason(row.metric)
-            if reason is None:
-                actual = get_balance_sheet(self.db, client_id=self.client_id)["net_worth"] if row.metric == "net_worth" else calculate_logical_balance(self.db, self.client_id)
+            actual = get_balance_sheet(self.db, client_id=self.client_id)["net_worth"] if row.metric == "net_worth" else calculate_logical_balance(self.db, self.client_id)
         elif row.metric == "account_balance":
-            figures = self.balances[reference.id].balances_minor
-            reason = self.foreign(figures)
-            if reason is None:
-                self.actual_minor[key] = figures.get(self.currency, 0)
-                actual = Money(self.actual_minor[key], self.currency).to_float()
+            actual = self.valued(key, self.account_minor(reference.id))
         elif row.metric == "capsule_claim":
-            figures = self.claim(reference.id)
-            reason = self.foreign(figures)
-            if reason is None:
-                self.actual_minor[key] = figures.get(self.currency, 0)
-                actual = Money(self.actual_minor[key], self.currency).to_float()
+            actual = self.valued(key, claimed_value_minor(self.db, self.client_id, reference.id))
         elif row.metric == "goal_progress":
             if reference.direction != "expense":
                 return None, "支出イベントにだけ積立進捗があります。"
-            # Progress counts client-currency claims only; a foreign one makes it unknown, not smaller.
-            capsule = goal_capsules(self.db, self.client_id, [reference.id]).get(reference.id)
-            if capsule is not None:
-                reason = self.foreign(self.claim(capsule.id))
-            if reason is None:
-                if self.progress is None:
-                    self.progress = {event["id"]: event for event in events_with_progress(self.db, self.client_id)}
-                actual = self.progress[reference.id]["progress_percentage"] if reference.id in self.progress else None
-                reason = None if actual is not None else "ゴールのシナリオのイベントではありません。"
+            if self.progress is None:
+                self.progress = {event["id"]: event for event in events_with_progress(self.db, self.client_id)}
+            actual = self.progress[reference.id]["progress_percentage"] if reference.id in self.progress else None
+            reason = None if actual is not None else "ゴールのシナリオのイベントではありません。"
         elif row.metric == "member_age":
             born = reference.birth_date
             if born > self.as_of:

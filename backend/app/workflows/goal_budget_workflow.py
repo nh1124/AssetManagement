@@ -18,7 +18,7 @@ from ..services.budget_plan_store import (
 )
 from ..services.cache_service import invalidate_client
 from ..services.goal_plan_service import (
-    GOAL_DRAWDOWN_NAME, GOAL_LINE_NAME, GOAL_SOURCE, REFLECTION_NOTIFICATION, earmark_parts, earmarked_events, plan,
+    GOAL_DRAWDOWN_NAME, GOAL_LINE_NAME, GOAL_SOURCE, GOAL_TRANSFER_NAME, REFLECTION_NOTIFICATION, earmark_parts, earmarked_events, plan,
 )
 from ..services.life_scenario_scope import get_goal, lock_client
 
@@ -74,6 +74,8 @@ def apply(db: Session, client_id: int, start_period: str, end_period: str, finge
                 row.update(target_type="capsule", target_id=change["capsule_id"] or made[change["event_id"]])
             elif change["kind"] == "drawdown":
                 row.update(line_type="drawdown", target_type="account", name=GOAL_DRAWDOWN_NAME)
+            elif change["kind"] == "transfer":
+                row.update(target_type="account", source_account_id=change["source_account_id"], name=GOAL_TRANSFER_NAME)
             else:
                 row.update(target_type="account", name=GOAL_LINE_NAME)
             creates.append(row)

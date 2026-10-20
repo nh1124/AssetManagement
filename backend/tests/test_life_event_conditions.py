@@ -135,8 +135,9 @@ def test_missing_or_other_client_reference_is_unknown(db, metric):
         assert result(db, owner)["actual"] is None
 
 
-@pytest.mark.parametrize("metric", ["capsule_claim", "account_balance", "net_worth", "free_cash", "goal_progress"])
-def test_foreign_money_is_unknown_instead_of_converted_or_discarded(db, metric):
+@pytest.mark.parametrize("metric, valued", [("capsule_claim", 750), ("account_balance", 750), ("net_worth", 750), ("free_cash", 0), ("goal_progress", 75)])
+def test_foreign_money_counts_at_its_rate_in_the_clients_currency(db, metric, valued):
+    # WP24 (owner 2026-10-21): an amount shown or judged as one figure converts other currencies at their rates.
     owner = goal(db)
     cash, capsule = finances(db, currency="USD")
     capsule.goal_event_id = owner.id
@@ -144,8 +145,14 @@ def test_foreign_money_is_unknown_instead_of_converted_or_discarded(db, metric):
     db.commit()
     add(db, owner, metric, {"account_balance": cash.id, "capsule_claim": capsule.id, "goal_progress": owner.id}.get(metric))
     evaluated = result(db, owner)
-    assert evaluated["actual"] is None and evaluated["satisfied"] is None
-    assert "通貨" in evaluated["reason"]
+    assert (evaluated["actual"], evaluated["reason"]) == (valued, None)
+
+
+def test_foreign_money_without_a_rate_counts_nothing_as_in_the_balance_sheet(db):
+    owner = goal(db)
+    _, capsule = finances(db, currency="USD")
+    add(db, owner, "capsule_claim", capsule.id)
+    assert result(db, owner)["actual"] == 0
 
 
 @pytest.mark.parametrize("as_of, age", [(date(2028, 10, 14), 17), (date(2028, 10, 15), 18), (date(2028, 10, 16), 18)])
@@ -239,7 +246,7 @@ def test_backup_remaps_every_reference_and_preserves_dangling_without_id_collisi
     db.commit()
     source, target = db.get(models.Client, 1), db.get(models.Client, 2)
     document = export_client(db, source)
-    assert document["version"] == EXPORT_VERSION == 29
+    assert document["version"] == EXPORT_VERSION == 30
     for _ in range(2):
         import_client(db, target, data=document["data"], version=17, manifest=document["manifest"])
         restored = db.query(models.LifeEvent).filter_by(client_id=2).one()
