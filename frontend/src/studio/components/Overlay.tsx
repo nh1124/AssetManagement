@@ -1,3 +1,4 @@
+import { Help } from './Help';
 import { useContext, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
@@ -35,8 +36,8 @@ function lockPage() {
     };
 }
 
-export default function Overlay({ title, children, footer, headerAction, describedBy, busy = false, onClose }: {
-    title: string; children: ReactNode; footer?: ReactNode; headerAction?: ReactNode; describedBy?: string; busy?: boolean; onClose: () => void;
+export default function Overlay({ title, help, children, footer, headerAction, describedBy, busy = false, onClose }: {
+    title: string; help?: string; children: ReactNode; footer?: ReactNode; headerAction?: ReactNode; describedBy?: string; busy?: boolean; onClose: () => void;
 }) {
     const titleId = useId();
     const panel = useRef<HTMLDialogElement>(null);
@@ -84,7 +85,7 @@ export default function Overlay({ title, children, footer, headerAction, describ
         }}>
         <div className="flex max-h-[calc(100dvh-2rem)] flex-col">
             <header className="flex shrink-0 items-center justify-between gap-4 border-b border-[var(--studio-border)] px-5 py-4">
-                <h2 id={titleId} className="text-base font-semibold">{title}</h2>
+                <div className="flex min-w-0 items-center gap-2"><h2 id={titleId} className="text-base font-semibold">{title}</h2>{help && <Help label={title} text={help} below wide />}</div>
                 <div className="flex items-center gap-3">{headerAction}<span ref={setHeaderHost} className="contents" /><button type="button" aria-label={`${title}を閉じる`} disabled={busy} onClick={() => { if (!busy) onClose(); }} className="rounded-md p-2 text-[var(--studio-text-muted)] hover:bg-[var(--studio-accent-soft)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)] disabled:opacity-40"><X size={18} aria-hidden="true" /></button></div>
             </header>
             <OverlayHeaderContext.Provider value={headerHost}>

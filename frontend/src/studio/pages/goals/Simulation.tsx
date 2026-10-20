@@ -11,7 +11,7 @@ import Overlay from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
 import { clientToday, formatDate, useTimezone } from '../../datetime';
 import { useResource } from '../../useResource';
-import { DataTable, Feedback, Field } from '../db/Database';
+import { DataTable, Feedback, Field, Help } from '../db/Database';
 import { buttonClass, inputClass, loadAccounts, primaryClass, useMutation } from '../db/forms';
 import type { LifeEventLink } from '../../../api/lifeEventGraph';
 import ContributionPlanEditor from './ContributionPlanEditor';
@@ -26,10 +26,10 @@ const percent = (value: number | null) => value === null ? '期間外' : `${Math
 const noop = () => undefined;
 
 /** One of the two halves of the screen: what is set, and what follows from it. */
-function Panel({ title, note, action, children }: { title: string; note: string; action?: ReactNode; children: ReactNode }) {
+function Panel({ title, help, action, children }: { title: string; help: string; action?: ReactNode; children: ReactNode }) {
     return <section className="space-y-5 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--studio-border)] pb-3">
-            <div><h2 className="font-semibold">{title}</h2><p className="mt-1 text-xs text-[var(--studio-text-muted)]">{note}</p></div>
+            <h2 className="flex items-center gap-1.5 font-semibold">{title}<Help label={title} text={help} below /></h2>
             {action}
         </div>
         {children}
@@ -114,15 +114,14 @@ function Results({ projected, events, links, currency, currentPeriod }: {
         </dl>
         <GoalProjectionChart scenario={projected} currentPeriod={currentPeriod} currency={currency} />
         <section className="space-y-2">
-            <h3 className="font-semibold">通る分岐</h3>
+            <h3 className="flex items-center gap-1.5 font-semibold">通る分岐<Help label="通る分岐" text="強調した接続とイベントは過半数の試行が通る分岐、グレーは多くの試行で起きないイベントです。編集は「構成」で行います。" /></h3>
             <LifeEventDiagram events={events} links={links} scenario={projected} currency={currency} disabled dimOffPath
                 pathEventIds={new Set(projected.likely_path.event_ids)} pathLinkIds={new Set(projected.likely_path.link_ids)}
                 conditionEventIds={new Set(projected.conditions.map((row) => row.event_id))}
                 onAddEvent={noop} onEditEvent={noop} onDeleteEvent={noop} onConditions={noop} onDeleteEdge={noop} onConnect={noop} onEdgeClick={noop} />
-            <p className="text-xs text-[var(--studio-text-muted)]">強調した接続とイベントは過半数の試行が通る分岐、グレーは多くの試行で起きないイベントです。編集は「構成」で行います。</p>
         </section>
         <section className="space-y-3">
-            <h3 className="font-semibold">ライフイベントの達成状況</h3>
+            <h3 className="flex items-center gap-1.5 font-semibold">ライフイベントの達成状況<Help label="ライフイベントの達成状況" text="起きる確率：前のイベント（返済は借入）が起き、前提条件を満たす割合。資金が足りる確率：支出が起きたうえで、その後の純資産が0以上の割合。" wide /></h3>
             <DataTable columns={['ライフイベント', '種別', '日付', '金額', '起きる確率', '資金が足りる確率']}>
                 {[...projected.events].sort((a, b) => (a.resolved_date ?? '9999').localeCompare(b.resolved_date ?? '9999')).map((event) => <tr key={`event-${event.id}`}>
                     <th scope="row" className="whitespace-nowrap px-5 py-3 font-medium">{event.name}</th>
@@ -134,7 +133,6 @@ function Results({ projected, events, links, currency, currentPeriod }: {
                 </tr>)}
                 {projected.events.length === 0 && <tr><td colSpan={6} className="px-5 py-4 text-[var(--studio-text-muted)]">ライフイベントはありません。</td></tr>}
             </DataTable>
-            <p className="text-xs text-[var(--studio-text-muted)]">起きる確率：前のイベント（返済は借入）が起き、前提条件を満たす割合。資金が足りる確率：支出が起きたうえで、その後の純資産が0以上の割合。</p>
         </section>
         <ScenarioPreconditions events={projected.conditions} currency={currency} />
         <section className="space-y-3">
@@ -185,7 +183,7 @@ function SimulationForClient({ currency, clientName, scenarioId }: { currency: s
             {!data.scenario.is_goal && <div className="flex justify-end">
                 <button type="button" disabled={disabled || goal.busy} onClick={() => goal.chooseGoal(data.scenario)} className={buttonClass}>このシナリオをゴールにする</button>
             </div>}
-            <Panel title="シミュレーションの設定" note="ここを変えると下の結果を計算し直します。">
+            <Panel title="シミュレーションの設定" help="ここを変えると下の結果を計算し直します。">
                 <section className="space-y-3">
                     <h3 className="text-sm font-semibold">前提</h3>
                     <Assumptions key={`${data.scenario.horizon_years}:${data.scenario.annual_return}:${data.scenario.inflation}`} scenario={data.scenario} busy={disabled}
@@ -193,14 +191,13 @@ function SimulationForClient({ currency, clientName, scenarioId }: { currency: s
                 </section>
                 <section className="space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-3">
-                        <h3 className="text-sm font-semibold">使用口座と積立設定</h3>
+                        <h3 className="flex items-center gap-1.5 text-sm font-semibold">使用口座と積立設定<Help label="使用口座と積立設定" text="シミュレーションで増やすのは使用口座だけです（それ以外の資産・負債は残りの純資産）。毎月のレコードは口座ごとに、開始月がその月以前で最も新しいものを使います。「ライフイベントへの取り崩し」はその月に一度だけ口座から引き出してイベントに充て、足りない分は残りの純資産から払います。計画の作成では、積立は配分、取り崩しは取り崩しの行、イベントへの取り崩しはその月までのゴールの取り置きになります。" wide /></h3>
                         <button type="button" disabled={disabled} onClick={() => setEditing(null)} className={buttonClass}>レコードを追加</button>
                     </div>
                     <UsedAccounts plans={data.scenario.contribution_plans} currency={currency} disabled={disabled} onEdit={setEditing} />
-                    <p className="text-xs text-[var(--studio-text-muted)]">シミュレーションで増やすのは使用口座だけです（それ以外の資産・負債は残りの純資産）。毎月のレコードは口座ごとに、開始月がその月以前で最も新しいものを使います。「ライフイベントへの取り崩し」はその月に一度だけ口座から引き出してイベントに充て、足りない分は残りの純資産から払います。計画の作成では、積立は配分、取り崩しは取り崩しの行、イベントへの取り崩しはその月までのゴールの取り置きになります。</p>
                 </section>
             </Panel>
-            <Panel title="シミュレーションの結果" note={`${data.projected?.horizon_years ?? data.scenario.horizon_years}年分・1200 通りの試行の集計です。`}
+            <Panel title="シミュレーションの結果" help={`${data.projected?.horizon_years ?? data.scenario.horizon_years}年分・1200 通りの試行の集計です。`}
                 action={resource.loading ? <p role="status" className="text-xs text-[var(--studio-text-muted)]">計算しています…</p> : undefined}>
                 {data.projected && <Results projected={data.projected} events={data.events} links={data.links} currency={currency} currentPeriod={currentPeriod} />}
             </Panel>

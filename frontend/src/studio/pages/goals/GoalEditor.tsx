@@ -56,14 +56,14 @@ export default function GoalEditor({ goal, scenarioId, events, currency, busy, o
             </div></fieldset>
             <Field label="名称"><input required value={name} onChange={(event) => setName(event.target.value)} className={inputClass} /></Field>
             {direction === 'repayment' && <Choice label="返済する借入" value={borrowingId} options={borrowings} required onChange={setBorrowingId} />}
-            <Field label={direction === 'repayment' ? `毎月の返済額（${currency}）` : direction === 'expense' ? `目標額（${currency}）` : `金額（${currency}）`}><input required type="number" min="0" step="any" value={amount} onChange={(event) => setAmount(event.target.value)} className={inputClass} /></Field>
+            <Field label={direction === 'repayment' ? `毎月の返済額（${currency}）` : direction === 'expense' ? `目標額（${currency}）` : `金額（${currency}）`}
+                help={direction === 'expense' ? 'どの口座からいくら払うかは、シミュレーションの「使用口座と積立設定」に「ライフイベントへの取り崩し」として記録します。' : undefined}><input required type="number" min="0" step="any" value={amount} onChange={(event) => setAmount(event.target.value)} className={inputClass} /></Field>
             <Field label={direction === 'repayment' ? '返済の開始日' : '目標日'}><input required type="date" value={target} onChange={(event) => setTarget(event.target.value)} className={inputClass} /></Field>
             {direction === 'repayment' && <Field label="回数（か月）" help="開始日の月から毎月払います。残高を払い終えた後は払いません。"><input required type="number" min="1" max="1200" step="1" value={count} onChange={(event) => setCount(event.target.value)} className={inputClass} /></Field>}
             {direction === 'borrowing' && <Field label="年利（%）" help="返済のたびに、残高 × 年利 ÷ 12 の利息を先に払います。"><input inputMode="decimal" value={rate} placeholder="0" onChange={(event) => setRate(event.target.value)} className={inputClass} /></Field>}
             <Field label="優先度"><select value={priority} onChange={(event) => setPriority(Number(event.target.value) as LifeEvent['priority'])} className={inputClass}><option value={1}>高</option><option value={2}>中</option><option value={3}>低</option></select></Field>
             <div className="md:col-span-2"><Field label="メモ"><textarea value={note} onChange={(event) => setNote(event.target.value)} className={inputClass} /></Field></div>
             {direction === 'repayment' && borrowings.length === 0 && <p className="text-xs text-[var(--studio-warning)] md:col-span-2">このシナリオに借入のイベントがありません。先に借入を作ってください。</p>}
-            <p className="text-xs text-[var(--studio-text-muted)] md:col-span-2">どの口座からいくら払うかは、シミュレーションの「使用口座と積立設定」に「ライフイベントへの取り崩し」として記録します。</p>
             <EditorActions form={formId} busy={busy} onCancel={onCancel} onDelete={onDelete} />
         </fieldset>
     </form>;

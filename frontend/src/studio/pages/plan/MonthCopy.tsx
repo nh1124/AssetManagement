@@ -23,12 +23,11 @@ export default function MonthCopy({ period, clientName, onBusy, onCopied, onClos
         const message = `${period}の予算行を${target}へコピーしました。`;
         void mutation.run(() => copyPeriodFullReplace({ source_period: period, target_period: target }), message, () => onCopied(message)).finally(() => onBusy(false));
     };
-    return <Overlay title={`${period}の予算をコピー`} busy={mutation.busy} onClose={onClose}><form id={formId} onSubmit={submit} className="space-y-3">
+    return <Overlay title={`${period}の予算をコピー`} help="保存済みの予算行をコピーし、コピー先の月の予算行を置き換えます。" busy={mutation.busy} onClose={onClose}><form id={formId} onSubmit={submit} className="space-y-3">
         <fieldset disabled={mutation.busy || !clientName} className="flex flex-wrap items-end gap-3">
             <Field label="コピー先の月"><input required type="month" value={target} onChange={(event) => setTarget(event.target.value)} className={inputClass} /></Field>
             <OverlayFooter><button type="submit" form={formId} disabled={mutation.busy || !clientName || !target || target === period} className={primaryClass}>{mutation.busy ? 'コピー中…' : 'コピー'}</button></OverlayFooter>
         </fieldset>
-        <p className="text-xs text-[var(--studio-text-muted)]">保存済みの予算行をコピーし、コピー先の行を置き換えます。</p>
         <Feedback error={mutation.error} />
     </form></Overlay>;
 }

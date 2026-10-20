@@ -9,7 +9,7 @@ import Overlay from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
 import { clientToday, useTimezone } from '../../datetime';
 import { assetErrorMessage, useResource } from '../../useResource';
-import { Choice, EditorActions, Feedback, Field } from '../db/Database';
+import { Choice, EditorActions, Feedback, Field, Help } from '../db/Database';
 import { buttonClass, inputClass, useMutation } from '../db/forms';
 import { eventAmount } from './eventKinds';
 import GoalConditions from './GoalConditions';
@@ -149,6 +149,7 @@ function GraphEditor({ currency, clientName, view }: { currency: string; clientN
         <div className="flex flex-wrap gap-2">
             <button type="button" disabled={disabled} onClick={() => setEditing(null)} className={buttonClass}>ライフイベントを追加</button>
             <button type="button" disabled={disabled || addingLink || (resource.data?.events.length ?? 0) < 2} onClick={() => setAddingLink(true)} className={buttonClass}>接続を追加</button>
+            <span className="self-center"><Help label="構成" text="イベントを選ぶと編集、右クリックで前提条件・削除。枠と線が強調されたイベント・接続は、シミュレーションの過半数の試行が通る分岐です。" below wide /></span>
         </div>
         <Feedback loading={resource.loading || mutation.busy} error={resource.error || (!addingLink && editing === undefined && !editingLink ? mutation.error : '')} message={mutation.message} />
         {resource.data && !resource.loading && !resource.error && <>
@@ -162,7 +163,6 @@ function GraphEditor({ currency, clientName, view }: { currency: string; clientN
                     void mutation.run(() => createLifeEventLink({ from_event_id: source, to_event_id: target, kind: 'after', offset_months: 0 }), '接続を追加しました。', resource.reload);
                 }} />
                 : <EventOutline conditionEventIds={resource.data.conditionEventIds} events={resource.data.events} links={resource.data.links} scenario={resource.data.projected} currency={currency} disabled={disabled} onEdit={setEditing} onDelete={(edge) => { void remove(edge); }} />}
-            <p className="text-xs text-[var(--studio-text-muted)]">イベントを選ぶと編集、右クリックで前提条件・削除。枠と線が強調されたイベント・接続は、シミュレーションの過半数の試行が通る分岐です。</p>
         </>}
         {addingLink && resource.data && <Overlay title="接続を追加" busy={mutation.busy} onClose={() => setAddingLink(false)}>
             <Feedback error={mutation.error} />

@@ -64,15 +64,13 @@ function ReconciliationForClient({ account, accounts, disabled, onPosted }: {
     };
     const factor = comparison && ['JPY', 'KRW'].includes(comparison.currency) ? 1 : 100;
     return <section className="space-y-4">
-        <p className="text-xs text-[var(--studio-text-muted)]">他の通貨は合算しません。</p>
         <form onSubmit={compare} className="space-y-3">
             <fieldset disabled={locked} className="grid gap-3 md:grid-cols-2">
                 <Field label="基準日"><input required type="date" value={date} onChange={(event) => { setDate(event.target.value); invalidate(); }} className={inputClass} /></Field>
-                <Field label="通貨"><select value={currency} onChange={(event) => { setCurrency(event.target.value); invalidate(); }} className={inputClass}>{['JPY', 'USD', 'EUR'].map((code) => <option key={code} value={code}>{code}</option>)}</select></Field>
-                <Field label={`実残高（${currency}）`}><input required type="number" step={['JPY', 'KRW'].includes(currency) ? '1' : '0.01'} value={statement} onChange={(event) => { setStatement(event.target.value); invalidate(); }} className={inputClass} /></Field>
+                <Field label="通貨" help="選んだ通貨の残高だけを照合します。他の通貨は合算しません。"><select value={currency} onChange={(event) => { setCurrency(event.target.value); invalidate(); }} className={inputClass}>{['JPY', 'USD', 'EUR'].map((code) => <option key={code} value={code}>{code}</option>)}</select></Field>
+                <Field label={`実残高（${currency}）`} help="帳簿残高は借方 − 貸方です。負債・収入など貸方に残る残高は、マイナスで入力してください。"><input required type="number" step={['JPY', 'KRW'].includes(currency) ? '1' : '0.01'} value={statement} onChange={(event) => { setStatement(event.target.value); invalidate(); }} className={inputClass} /></Field>
                 <button type="submit" disabled={!statement.trim()} className={buttonClass}>照合する</button>
             </fieldset>
-            <p className="text-xs text-[var(--studio-text-muted)]">帳簿残高は借方 − 貸方です。負債・収入など貸方に残る残高は、マイナスで入力してください。</p>
         </form>
         <Feedback error={mutation.error} message={mutation.message} />
         {posted && <p role="status" className="text-sm">調整取引 #{posted.id}：{formatCurrency(posted.amount, posted.currency)}（{posted.currency}）。もう一度照合すると更新後の残高を確認できます。</p>}
@@ -88,8 +86,7 @@ function ReconciliationForClient({ account, accounts, disabled, onPosted }: {
             {comparison.difference_minor === 0 ? <p role="status" className="text-sm text-[var(--studio-positive)]">差額はありません。調整は不要です。</p> : <form id={formId} onSubmit={post} className="space-y-3">
                 <fieldset disabled={locked} className="grid gap-3 md:grid-cols-2">
                     <Choice label="相手科目" value={counterId} options={accounts.filter((row) => row.id !== comparison.account.id)} required onChange={setCounterId} />
-                    <div><fieldset disabled={capsules.loading || Boolean(capsules.error)}><Choice label="調整を帰属させる取り置き（任意）" value={capsuleId} options={capsules.data ?? []} onChange={setCapsuleId} /></fieldset></div>
-                    <p className="text-xs text-[var(--studio-warning)] md:col-span-2">取り置きを指定すると、照合する口座の確保額も差額だけ変わります。指定しなければ、取り置きの確保額は変わりません。</p>
+                    <div><fieldset disabled={capsules.loading || Boolean(capsules.error)}><Choice label="調整を帰属させる取り置き（任意）" help="取り置きを指定すると、照合する口座の確保額も差額だけ変わります。指定しなければ、取り置きの確保額は変わりません。" value={capsuleId} options={capsules.data ?? []} onChange={setCapsuleId} /></fieldset></div>
                     <Field label="メモ（任意）"><input value={note} onChange={(event) => setNote(event.target.value)} className={inputClass} /></Field>
                     <OverlayFooter><button type="submit" form={formId} disabled={locked || counterId === null || counterId === comparison.account.id} className={primaryClass}>{mutation.busy ? '記帳中…' : '調整を記帳'}</button></OverlayFooter>
                 </fieldset>

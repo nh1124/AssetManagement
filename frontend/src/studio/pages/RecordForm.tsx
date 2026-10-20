@@ -1,6 +1,7 @@
 import { useConfirm } from '../components/useConfirm';
 import ClosedPeriodWarning from '../components/ClosedPeriodWarning';
 import DrawdownClaim from '../components/DrawdownClaim';
+import { Help } from '../components/Help';
 import { OverlayFooter } from '../components/Overlay';
 import { OverlayFooterContext } from '../components/overlayContext';
 import { clientToday, useTimezone } from '../datetime';
@@ -317,8 +318,9 @@ export default function RecordForm({ existing, onSaved, onCancel, onDelete, dele
                         </label>
                     )}
                     {!existing && supportsDrawdown && <div className="space-y-3">
-                        <label className="block space-y-2 text-sm">
-                            <span className="text-[var(--studio-text-muted)]">取り崩す取り置き（任意）</span>
+                        <div className="space-y-2 text-sm">
+                            <div className="flex items-center gap-1.5"><span aria-hidden="true" className="text-[var(--studio-text-muted)]">取り崩す取り置き（任意）</span><Help label="取り崩す取り置き" text="支払元は取り置きの資金源から選びます。" /></div>
+                            <label className="block"><span className="sr-only">取り崩す取り置き（任意）</span>
                             <select disabled={capsulesLoading || Boolean(capsulesError)} value={drawdownCapsuleId} onChange={(event) => {
                                 const next = event.target.value;
                                 setDrawdownCapsuleId(next);
@@ -331,8 +333,8 @@ export default function RecordForm({ existing, onSaved, onCancel, onDelete, dele
                             }} className={inputClass}>
                                 <option value="">{capsulesLoading ? '読み込んでいます…' : '選択しない'}</option>
                                 {capsules.map((capsule) => <option key={capsule.id} value={capsule.id}>{capsule.name}</option>)}
-                            </select>
-                        </label>
+                            </select></label>
+                        </div>
                         {capsulesError && <p role="alert" className="text-xs text-[var(--studio-danger)]">取り置きを取得できませんでした。{capsulesError}</p>}
                         {drawdownActive && <>
                             <label className="block space-y-2 text-sm">
@@ -342,20 +344,17 @@ export default function RecordForm({ existing, onSaved, onCancel, onDelete, dele
                                     <option value="diverted">他に回した</option>
                                 </select>
                             </label>
-                    <p className="text-xs text-[var(--studio-text-muted)]">支払元は取り置きの資金源から選びます。</p>
                         </>}
                     </div>}
                     {!existing && <>{kind === 'allocation' ? (
-                        <label className="block space-y-2 text-sm">
-                            <span className="text-[var(--studio-text-muted)]">取り置き</span>
+                        <div className="space-y-2 text-sm">
+                            <div className="flex items-center gap-1.5"><span aria-hidden="true" className="text-[var(--studio-text-muted)]">取り置き</span><Help label="取り置き" text="本日付で記録し、どの口座にいくら置くかは取り置きの資金計画が決めます。" /></div>
+                            <label className="block"><span className="sr-only">取り置き</span>
                             <select required disabled={capsulesLoading || Boolean(capsulesError)} value={capsuleId} onChange={(event) => setCapsuleId(event.target.value)} className={inputClass}>
                                 <option value="">{capsulesLoading ? '読み込んでいます…' : '選択してください'}</option>
                                 {capsules.map((capsule) => <option key={capsule.id} value={capsule.id}>{capsule.name}</option>)}
-                            </select>
-                            <span className="block text-xs text-[var(--studio-text-faint)]">
-                                本日付で記録し、どの口座にいくら置くかは取り置きの資金計画が決めます。
-                            </span>
-                        </label>
+                            </select></label>
+                        </div>
                     ) : !splitActive && (
                         <AccountSelect label={fields.debitLabel} value={debitAccountId} accounts={debitAccounts} onChange={setDebitAccountId} />
                     )}

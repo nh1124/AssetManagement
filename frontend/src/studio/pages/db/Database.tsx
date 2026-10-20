@@ -1,5 +1,8 @@
 import { useId, type ReactNode } from 'react';
+import { Help, tooltipClass } from '../../components/Help';
 import { OverlayFooter } from '../../components/Overlay';
+
+export { Help };
 import { buttonClass, inputClass, primaryClass } from './forms';
 
 export function Feedback({ loading, error, message }: { loading?: boolean; error?: string; message?: string }) {
@@ -12,18 +15,6 @@ export function Feedback({ loading, error, message }: { loading?: boolean; error
 
 // buttonClass already sets a text colour, so a danger button needs its own class.
 const dangerClass = 'rounded-md border border-[var(--studio-border)] px-3 py-1.5 text-xs text-[var(--studio-danger)] hover:bg-[var(--studio-accent-soft)] disabled:opacity-40';
-
-// Above the control: the overlay body clips what hangs below its last field.
-const tooltipClass = 'pointer-events-none invisible absolute bottom-full left-0 z-10 mb-1 w-64 rounded-md border border-[var(--studio-border)] bg-[var(--studio-surface)] p-2 text-xs font-normal leading-relaxed text-[var(--studio-text)] shadow-lg';
-
-// A short explanation beside a field name, shown on hover or keyboard focus.
-export function Help({ label, text }: { label: string; text: string }) {
-    const id = useId();
-    return <span className="group/tip relative inline-flex">
-        <button type="button" aria-label={`${label}の説明`} aria-describedby={id} className="flex h-4 w-4 items-center justify-center rounded-full border border-[var(--studio-border-strong)] text-[10px] leading-none text-[var(--studio-text-muted)] hover:text-[var(--studio-text)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)]">?</button>
-        <span role="tooltip" id={id} className={`${tooltipClass} group-hover/tip:visible group-focus-within/tip:visible`}>{text}</span>
-    </span>;
-}
 
 export function Field({ label, help, children }: { label: string; help?: string; children: ReactNode }) {
     if (!help) return <label className="block space-y-2 text-sm"><span className="text-[var(--studio-text-muted)]">{label}</span>{children}</label>;

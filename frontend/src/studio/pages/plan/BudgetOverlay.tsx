@@ -7,7 +7,7 @@ import { addPlanRecord, amendPlanRecord, deletePlanRecord, getAccountMonth, type
 import type { MonthlyPlanLine, ScheduledTransaction } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import { useResource } from '../../useResource';
-import { Feedback } from '../db/Database';
+import { Feedback, Help } from '../db/Database';
 import { buttonClass, inputClass, primaryClass, useMutation } from '../db/forms';
 import { KIND_LABELS, TYPE_LABELS, lineName, lineOrigin, type AccountRow, type EarmarkRow } from './budgetRows';
 
@@ -50,7 +50,7 @@ function ScheduledTable({ items, accountId, context }: { items: ScheduledTransac
 function ChangedAt({ origin }: { origin: PlanRecord['origin'] }) {
     if (origin === 'goal') return <Link to="/goals" className="text-xs text-[var(--studio-accent)] hover:underline">ゴールで変更</Link>;
     if (origin === 'registry') return <Link to="/db/auto-transactions" className="text-xs text-[var(--studio-accent)] hover:underline">自動取引で変更</Link>;
-    return <span className={muted}>レコードを追加すると、見込みの代わりにその額を使います</span>;
+    return <Help label="カード請求の見込み" text="カード請求から見込んだ額です。この区分にレコードを追加すると、見込みの代わりにその額を使います。" end />;
 }
 
 function RecordForm({ label, name, amount, placeholder, currency, disabled, onSubmit, onCancel }: {
@@ -128,7 +128,7 @@ function AccountRecords({ accountId, title, context, onClose }: { accountId: num
                                             <button type="button" disabled={disabled} onClick={() => void remove(section, record)} className={`${buttonClass} text-[var(--studio-danger)]`}>削除</button>
                                         </>
                                         : <ChangedAt origin={record.origin} />}
-                                    {record.card_estimate != null && <p className={`basis-full ${muted}`}>カード請求の見込み {money(record.card_estimate)} の代わりにこの額を使います。</p>}
+                                    {record.card_estimate != null && <p className={`basis-full flex items-center gap-1.5 ${muted}`}>カード請求の見込み {money(record.card_estimate)}<Help label="カード請求の見込み" text="このレコードの額を、カード請求の見込みの代わりに使います。" /></p>}
                                 </div>}</li>;
                         })}
                         {!section.records.length && !adding && <li className={`py-2 ${muted}`}>レコードはありません。</li>}
@@ -140,7 +140,7 @@ function AccountRecords({ accountId, title, context, onClose }: { accountId: num
             })}
             {view && view.earmarks.length > 0 && <section className="space-y-2">
                 <div className="flex flex-wrap items-baseline justify-between gap-2">
-                    <h3 className="text-sm font-semibold">この口座の取り置き<span className={`ml-2 font-normal ${muted}`}>予算は取り置きの行で決めます</span></h3>
+                    <h3 className="flex items-center gap-1.5 text-sm font-semibold">この口座の取り置き<Help label="この口座の取り置き" text="この口座の残高から確保する取り置きです。予算は計画の取り置きの行で決めます。" /></h3>
                     <Link to="/db/earmarks" className="text-xs text-[var(--studio-accent)] hover:underline">取り置きで変更</Link>
                 </div>
                 <ul className="divide-y divide-[var(--studio-border)] rounded-md border border-[var(--studio-border)] px-4">
@@ -255,10 +255,9 @@ export function EarmarkOverlay({ earmark, context, onClose }: { earmark: Earmark
     const actions = useLineActions(context);
     const [editing, setEditing] = useState<string | null>(null);
     const money = (amount: number) => formatCurrency(amount, context.currency);
-    return <Overlay title={`取り置き「${earmark.name}」`} busy={actions.mutation.busy} onClose={onClose}>
+    return <Overlay title={`取り置き「${earmark.name}」`} help="取り置きは口座ではありません。資金元の口座の残高のうち、この用途に確保する額です。予算では配分として数えます。保存すると取り置きの月額積立計画にも反映されます。" busy={actions.mutation.busy} onClose={onClose}>
         <div className="space-y-4">
-            <p className={muted}>取り置きは口座ではありません。資金元の口座の残高のうち、この用途に確保する額です。予算では配分として数えます。保存すると取り置きの月額積立計画にも反映されます。</p>
-            {earmark.goal && <p className={muted}><Tag>ゴール</Tag> ゴールのライフイベントのために作った取り置きです。月額はゴールから計画を作成すると決まり、ゴールを変更するときに削除できます。</p>}
+            {earmark.goal && <p className="flex items-center gap-1.5"><Tag>ゴール</Tag><Help label="ゴールの取り置き" text="ゴールのライフイベントのために作った取り置きです。月額はゴールから計画を作成すると決まり、ゴールを変更するときに削除できます。" /></p>}
             <Feedback error={actions.mutation.error} message={actions.mutation.message} />
             <p className="text-sm tabular-nums">月の予算 {money(earmark.budget)} ／ 確保額 {money(earmark.held)}</p>
             <ul className="divide-y divide-[var(--studio-border)] rounded-md border border-[var(--studio-border)] px-4">

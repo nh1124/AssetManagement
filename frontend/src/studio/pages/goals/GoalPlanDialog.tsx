@@ -36,13 +36,12 @@ export default function GoalPlanDialog({ title = 'ゴールから計画を作成
         if (!preview) return;
         void mutation.run(() => applyGoalPlan(start, end, preview.fingerprint), '', () => onClose(true));
     };
-    return <Overlay title={title} busy={mutation.busy} onClose={() => onClose(false)} footer={<>
+    return <Overlay title={title} help="口座ごとの積立（積立設定の月額）から、その口座の取り置きの月額と既存の配分（自動取引など）を引いた額を配分の行に、毎月の取り崩しは取り崩しの行にします。取り置きは、ライフイベントへの取り崩しのレコードがある支出イベントごとに同じ名前で作り（ゴール）、口座ごとに取り崩す額を、取り崩す月まで均等に積み立てます。取り崩す月には、その口座の取り崩しの行を作ります。「取り置きと既存の配分が積立設定の月額を超えています」は、その月その口座で、ゴールの取り置きと既存の配分の合計が積立設定の月額より多いという意味です（その口座の配分の行は 0 になります）。" busy={mutation.busy} onClose={() => onClose(false)} footer={<>
         <button type="button" disabled={mutation.busy || !preview || changes.length === 0} onClick={apply} className={primaryClass}>{mutation.busy ? '処理中…' : '計画に反映'}</button>
         <button type="button" disabled={mutation.busy} onClick={() => onClose(false)} className={buttonClass}>閉じる</button>
     </>}>
         <div className="space-y-4">
             {intro && <p className="text-sm">{intro}</p>}
-            <p className="text-xs text-[var(--studio-text-muted)]">口座ごとの積立（積立設定の月額）から、その口座の取り置きの月額と既存の配分（自動取引など）を引いた額を配分の行に、取り崩しの月額は取り崩しの行にします。取り置きは、取り置く口座を決めた支出のライフイベントごとに同じ名前で作り（ゴール）、残りの必要額を目標月までの月数で均等に割った額を積み立てます。</p>
             <div className="grid items-end gap-4 sm:grid-cols-3">
                 <Field label="開始月"><input type="month" required value={start} disabled={mutation.busy} onChange={(event) => { setStart(event.target.value); setPreview(null); }} className={inputClass} /></Field>
                 <Field label="終了月"><input type="month" required min={start} value={end} disabled={mutation.busy} onChange={(event) => { setEnd(event.target.value); setPreview(null); }} className={inputClass} /></Field>
