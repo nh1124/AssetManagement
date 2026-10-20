@@ -379,8 +379,9 @@ def get_budget_summary(
     total_expected_inflow = total_income_plan + total_borrowing_plan + total_drawdown_plan
 
     total_variable_budget = _sum_lines(expense_lines, "expense")
-    # An earmark in an account that also receives a transfer is not counted on top of it.
-    shares = earmark_counted_shares(allocation_lines, lambda line: line.get("budget_amount"))
+    # An earmark in an account that also receives a transfer is not counted on top of it. The shares are taken on
+    # the same amounts the totals add up (saved rows; a definition with no saved row is 0 here).
+    shares = earmark_counted_shares(allocation_lines, lambda line: line.get("amount"))
     total_allocation_plan = sum(counted_amount(line, line.get("amount") or 0.0, shares) for line in allocation_lines)
     total_debt_plan = _sum_lines(debt_lines, "debt_payment")
     total_capsule_plan = _sum_lines(capsule_lines, "allocation")
