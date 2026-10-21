@@ -17,6 +17,8 @@ data/raw_csv/*.csv
 .env.local
 .env.*.local
 *.env
+# Copies am-rotate-secrets.sh keeps of the previous .env (they hold real keys)
+.env.bak-*
 
 # Setup guides containing personal info
 INITIAL_SETUP.md

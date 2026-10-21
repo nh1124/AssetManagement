@@ -11,8 +11,8 @@ const icon = 'pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-
 /** Sign in (with the MFA step when the account has it) or create an account; the studio's look, on phone and PC. */
 export default function LoginPage() {
     const [mode, setMode] = useState<'login' | 'register'>('login');
-    const [username, setUsername] = useState('admin');
-    const [password, setPassword] = useState('adminadmin');
+    const [username, setUsername] = useState('');
+    const [password, setPassword] = useState('');
     const [email, setEmail] = useState('');
     const [mfaToken, setMfaToken] = useState<string | null>(null);
     const [mfaCode, setMfaCode] = useState('');
@@ -136,9 +136,6 @@ export default function LoginPage() {
                         {mode === 'login' ? 'アカウントをお持ちでないとき：' : 'アカウントをお持ちのとき：'}
                         <button type="button" onClick={switchMode} className="ml-1 font-semibold text-[var(--studio-accent)]">{mode === 'login' ? '新規登録' : 'ログイン'}</button>
                     </p>
-                    {mode === 'login' && !mfaToken && (
-                        <p className="text-center text-[11px] text-[var(--studio-text-faint)]">開発用：<code>admin / adminadmin</code></p>
-                    )}
                 </form>
             </div>
         </div>
