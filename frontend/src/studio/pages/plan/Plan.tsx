@@ -8,6 +8,7 @@ import { Feedback } from '../db/Database';
 import AccountEditor from '../db/AccountEditor';
 import { buttonClass, inputClass, loadAccounts, primaryClass, useMutation, type DatabaseAccount } from '../db/forms';
 import GoalPlanDialog from '../goals/GoalPlanDialog';
+import ReservePlanDialog from './ReservePlanDialog';
 import { useNotifications } from '../../notificationContext';
 import MonthPicker from '../ledger/MonthPicker';
 import MonthCopy from './MonthCopy';
@@ -57,7 +58,7 @@ function MoreMenu({ disabled, items }: { disabled: boolean; items: Array<{ label
     }, []);
     return <details ref={menu} className="relative">
         <summary aria-disabled={disabled} className={`${buttonClass} cursor-pointer list-none ${disabled ? 'pointer-events-none opacity-40' : ''}`}>その他 ▾</summary>
-        <div role="menu" className="absolute right-0 z-10 mt-1 w-48 rounded-md border border-[var(--studio-border)] bg-[var(--studio-surface)] py-1 shadow-lg">
+        <div role="menu" className="absolute right-0 z-10 mt-1 w-60 rounded-md border border-[var(--studio-border)] bg-[var(--studio-surface)] py-1 shadow-lg">
             {items.map((item) => <button key={item.label} type="button" role="menuitem" onClick={() => { if (menu.current) menu.current.open = false; item.onSelect(); }}
                 className="block w-full px-3 py-2 text-left text-sm hover:bg-[var(--studio-accent-soft)]">{item.label}</button>)}
         </div>
@@ -79,6 +80,7 @@ function MonthlyPlan({ period, currency, clientName, filters, picker, onFilters,
     const [copyBusy, setCopyBusy] = useState(false);
     const [copying, setCopying] = useState(false);
     const [planning, setPlanning] = useState(false);
+    const [reserving, setReserving] = useState(false);
     const [adding, setAdding] = useState(false);
     const [created, setCreated] = useState<number | null>(null);
     const [message, setMessage] = useState('');
@@ -96,7 +98,7 @@ function MonthlyPlan({ period, currency, clientName, filters, picker, onFilters,
     const accountRow = model?.accounts.find((row) => row.key === openAccount);
     const earmarkRow = model?.earmarks.find((earmark) => earmark.key === openEarmark);
     const context: OverlayContext = {
-        period, currency, clientName, planId: resource.data?.plan_id ?? null,
+        period, currency, clientName,
         accountName: (id) => id == null ? '—' : names.get(id) ?? `#${id}`,
         onChanged: refresh,
     };
@@ -121,6 +123,7 @@ function MonthlyPlan({ period, currency, clientName, filters, picker, onFilters,
                 <MoreMenu disabled={disabled} items={[
                     { label: '月の予算をコピー', onSelect: () => setCopying(true) },
                     { label: 'ゴールから計画を作成', onSelect: () => setPlanning(true) },
+                    { label: '物品の取り置きから計画を作成', onSelect: () => setReserving(true) },
                 ]} />
             </div>
         </div>
@@ -131,7 +134,8 @@ function MonthlyPlan({ period, currency, clientName, filters, picker, onFilters,
         {accountRow && <AccountOverlay key={accountRow.key} row={accountRow} context={context} onClose={() => setOpenAccount(null)} />}
         {earmarkRow && <EarmarkOverlay key={earmarkRow.key} earmark={earmarkRow} context={context} onClose={() => setOpenEarmark(null)} />}
         {copying && <MonthCopy period={period} clientName={clientName} onBusy={(busy) => { setCopyBusy(busy); onBusy(busy); }} onCopied={(text) => { setCopying(false); setMessage(text); refresh(); }} onClose={() => setCopying(false)} />}
-        {planning && <GoalPlanDialog onClose={(applied) => { setPlanning(false); notifications.refresh(); if (applied) refresh(); }} />}
+        {planning && <GoalPlanDialog onClose={(applied) => { setPlanning(false); notifications.refresh(); if (applied) { setMessage('ゴールから計画を作成しました。'); refresh(); } }} />}
+        {reserving && <ReservePlanDialog onClose={(applied) => { setReserving(false); if (applied) { setMessage('物品の取り置きから計画を作成しました。'); refresh(); } }} />}
         {adding && <AddItem currency={currency} busy={disabled} error={mutation.error} onSave={add} onClose={() => setAdding(false)} />}
     </div>;
 }

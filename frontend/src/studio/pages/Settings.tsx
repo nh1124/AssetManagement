@@ -1,5 +1,6 @@
 import AccountSettings from './AccountSettings';
 import Household from './Household';
+import SimulationSettings from './SimulationSettings';
 import { useConfirm } from '../components/useConfirm';
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import QRCode from 'qrcode';
@@ -240,6 +241,7 @@ function SettingsForClient() {
             </div>}
         </details>
         <Household key={householdRevision} disabled={disabled} clientName={identified ? currentClient.name : undefined} />
+        <SimulationSettings key={`simulation-${householdRevision}`} disabled={disabled} sectionClass={sectionClass} />
         <details className={sectionClass}>
             <summary className="cursor-pointer text-sm font-semibold">{t('settings.transfer')}</summary>
             <button type="button" disabled={disabled} onClick={download} className={buttonClass}>{t('settings.export')}</button>

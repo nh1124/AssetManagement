@@ -82,20 +82,19 @@ def get_variance(
     month: int = Query(default=None),
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
-    plan_id: Optional[int] = Query(None),
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
     """Get Budget vs Actual variance analysis for current client."""
     if start_date and end_date:
-        return get_variance_analysis_for_range(db, start_date, end_date, client_id=current_client.id, plan_id=plan_id)
+        return get_variance_analysis_for_range(db, start_date, end_date, client_id=current_client.id)
 
     if year is None:
         year = date.today().year
     if month is None:
         month = date.today().month
     
-    return get_variance_analysis(db, year, month, client_id=current_client.id, plan_id=plan_id)
+    return get_variance_analysis(db, year, month, client_id=current_client.id)
 
 
 @router.get("/account-flows")

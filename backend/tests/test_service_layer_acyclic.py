@@ -73,6 +73,7 @@ LAYERS: dict[str, int] = {
     "data_health_service": 5,
     "data_transfer_service": 5,  # Backup includes L5 health; no service depends on it.
     "goal_plan_service": 5,  # The plan the goal asks for: contributions per account, earmark needs.
+    "product_reserve_plan": 5,  # §8-4: the plan rows of earmarks whose amounts come from their products.
     "goal_budget_record": 0,  # The applied reflections; models only.
     "notification_service": 0,  # Notification rows and the user's decisions; models only.
     "goal_service": 5,
@@ -94,6 +95,7 @@ LAYERS: dict[str, int] = {
     "transaction_batch_workflow": 6,
     "product_workflow": 6,
     "goal_budget_workflow": 6,
+    "product_reserve_plan_workflow": 6,
     "notification_workflow": 6,
     "capsule_workflow": 6,
     "automatic_recording_workflow": 6,

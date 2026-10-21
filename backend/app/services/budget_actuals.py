@@ -384,6 +384,13 @@ def plan_line_flow_for_amount(
         flow = _empty_flow()
         flow["non_cash_budget"] = amount
         return flow
+    if (_line_attr(line, "line_type") == "allocation" and _line_attr(line, "target_type") == "capsule"
+            and not _cash_flow_line_source_account_id(ctx, line)):
+        # An earmark sets money aside inside its account: it is the month's 配分, but no cash moves.
+        # Read as a movement into the account it would have added cash out of nowhere.
+        flow = _empty_flow()
+        flow["allocation"] = amount
+        return flow
 
     from_account, to_account = _plan_line_movement_accounts(ctx, line)
     if from_account or to_account:
@@ -437,8 +444,10 @@ def _projection_amounts_for_period(
     line: models.MonthlyPlanLine | dict,
     period: str,
 ) -> tuple[float, float, float]:
-    planned = _line_attr(line, "amount") or 0.0
-    if not _line_attr(line, "id") and planned <= 0:
+    # A row the summary listed carries its month's budget (§8-14).
+    budget = _line_attr(line, "budget_amount")
+    planned = float(budget) if budget is not None else (_line_attr(line, "amount") or 0.0)
+    if budget is None and not _line_attr(line, "id") and planned <= 0:
         planned = (
             _line_attr(line, "suggested_amount")
             or _line_attr(line, "registry_amount")

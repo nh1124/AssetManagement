@@ -35,6 +35,7 @@ OWNERS: dict[str, str] = {
     "household_members": "services/household_service",
     "life_scenarios": "services/life_scenario_service",
     "scenario_contribution_plans": "services/contribution_plan_service",
+    "scenario_assumption_periods": "services/contribution_plan_service",  # The scenario's other simulation records.
     "goal_budget_reflections": "services/goal_budget_record",
     "notifications": "services/notification_service",
     "life_event_links": "services/life_event_graph",

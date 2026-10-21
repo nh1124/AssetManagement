@@ -154,7 +154,7 @@ def _apply_set_budget(db: Session, action: models.MonthlyAction) -> dict:
     payload = action.payload or {}
     account_id = int(payload["account_id"])
     amount = float(payload["amount"])
-    plan_id = resolve_budget_plan_id(db, action.client_id, payload.get("plan_id"))
+    plan_id = resolve_budget_plan_id(db, action.client_id)
     target_period = action.target_period or next_period(action.source_period)
     account = _require_account(db, action.client_id, account_id)
     plan_line = find_expense_plan_line(db, action.client_id, plan_id, account_id, target_period)

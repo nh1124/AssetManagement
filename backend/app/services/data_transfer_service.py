@@ -209,6 +209,11 @@ def export_client(db: Session, client: models.Client) -> dict:
                 for row in db.query(models.ScenarioContributionPlan).join(models.LifeScenario, models.LifeScenario.id == models.ScenarioContributionPlan.scenario_id)
                 .filter(models.LifeScenario.client_id == client.id).order_by(models.ScenarioContributionPlan.id).all()
             ],
+            "scenario_assumption_periods": [
+                row_fields(row, ["id", "scenario_id", "start_period", "end_period", "annual_return", "inflation", "note", "created_at"])
+                for row in db.query(models.ScenarioAssumptionPeriod).join(models.LifeScenario, models.LifeScenario.id == models.ScenarioAssumptionPeriod.scenario_id)
+                .filter(models.LifeScenario.client_id == client.id).order_by(models.ScenarioAssumptionPeriod.id).all()
+            ],
             "household_members": [
                 row_fields(row, ["id", "name", "relation", "birth_date", "created_at"])
                 for row in db.query(models.HouseholdMember).filter_by(client_id=client.id).order_by(models.HouseholdMember.id).all()
@@ -503,6 +508,9 @@ def import_client(
         db.query(models.ScenarioContributionPlan).filter(
             models.ScenarioContributionPlan.scenario_id.in_(scenario_ids),
         ).delete(synchronize_session=False)
+        db.query(models.ScenarioAssumptionPeriod).filter(
+            models.ScenarioAssumptionPeriod.scenario_id.in_(scenario_ids),
+        ).delete(synchronize_session=False)
 
         for model in [
             models.GoalBudgetReflection,
@@ -555,13 +563,17 @@ def import_client(
             db.add(account)
             db.flush()
             account_map[old_id] = account.id
-        for item in data.get("budget_plans", []):
+        # A client has one budget plan (§8-10): an older backup's other plans and their rows stay out.
+        stored_plans = data.get("budget_plans", [])
+        kept_plan = next((item for item in stored_plans if item.get("is_default")), stored_plans[0] if stored_plans else None)
+        dropped_plan_ids = {int(item["id"]) for item in stored_plans if item is not kept_plan}
+        for item in [kept_plan] if kept_plan is not None else []:
             old_id = int(item["id"])
             plan = models.BudgetPlan(
                 client_id=client.id,
                 name=item["name"],
                 description=item.get("description"),
-                is_default=item.get("is_default", False),
+                is_default=True,
                 sort_order=item.get("sort_order") or 0,
                 created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
                 updated_at=parse_datetime(item.get("updated_at")),
@@ -698,6 +710,13 @@ def import_client(
                 interval_months=item.get("interval_months"), repeat_count=item.get("repeat_count"), end_period=item.get("end_period"),
                 on_shortage=item.get("on_shortage"), annual_return=item.get("annual_return"), note=item.get("note"),
                 life_event_id=event_map[int(item["life_event_id"])] if item.get("life_event_id") is not None else None,
+                created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
+            ))
+        # 期間ごとの前提 arrived in v31 (§8-11); an older backup has none.
+        for item in data.get("scenario_assumption_periods", []) if version is not None and version >= 31 else []:
+            db.add(models.ScenarioAssumptionPeriod(
+                scenario_id=scenario_map[int(item["scenario_id"])], start_period=item["start_period"], end_period=item.get("end_period"),
+                annual_return=item.get("annual_return"), inflation=item.get("inflation"), note=item.get("note"),
                 created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
             ))
         # A repayment names its borrowing, which may come later in the payload.
@@ -883,6 +902,8 @@ def import_client(
         monthly_plan_line_map: dict[int, int] = {}
         active_plan_line_identities: dict[str, models.MonthlyPlanLine] = {}
         for item in data.get("monthly_plan_lines", []):
+            if item.get("plan_id") is not None and int(item["plan_id"]) in dropped_plan_ids:
+                continue
             old_id = int(item["id"])
             target_type = item.get("target_type") or "manual"
             target_id = item.get("target_id")

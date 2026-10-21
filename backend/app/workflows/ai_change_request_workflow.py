@@ -359,7 +359,15 @@ def refresh_preview(
     client_id: int,
     change_request_id: int,
 ) -> models.AiChangeRequest:
-    row = _get_change_request(db, client_id, change_request_id)
+    """Rebuild the preview against today's data (作り直し, §8-5).
+
+    An approval or a failure belonged to the old preview, so an approved or failed
+    request goes back to 承認待ち and is approved again; a failure's result stays as
+    previous. A decided request (applied, rejected, expired) is not rebuilt.
+    """
+    row = _get_change_request(db, client_id, change_request_id, for_update=True)
+    if row.status not in {"draft", "pending", "approved", "failed"}:
+        raise Invalid(f"Change request cannot be rebuilt from status {row.status}")
     preview_payload = schemas.AiChangeRequestPreviewRequest(
         source=row.source,
         tool_name=row.tool_name,
@@ -378,6 +386,12 @@ def refresh_preview(
     row.validation = preview["validation"]
     row.precondition_hash = preview["precondition_hash"]
     row.requires_mfa = preview["requires_mfa"]
+    if row.status in {"approved", "failed"}:
+        if row.status == "failed":
+            row.result = {"previous": row.result or {}}
+        row.status = "pending"
+        row.approved_by_client_id = None
+        row.approved_at = None
     row.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(row)

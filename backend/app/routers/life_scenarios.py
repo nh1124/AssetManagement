@@ -1,4 +1,4 @@
-"""HTTP adapters for user-authored life scenarios and their 積立設定."""
+"""HTTP adapters for user-authored life scenarios, their 積立設定 and 期間ごとの前提."""
 from fastapi import APIRouter, Body, Depends
 from sqlalchemy.orm import Session
 
@@ -89,6 +89,45 @@ def delete(
     current_client: models.Client = Depends(get_current_client),
 ):
     service.delete(db, current_client.id, scenario_id)
+    return {"message": "削除しました。"}
+
+
+@router.get("/{scenario_id}/assumption-periods")
+def list_assumption_periods(
+    scenario_id: int,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    return [plans.serialize_period(row) for row in plans.list_periods(db, current_client.id, scenario_id)]
+
+
+@router.post("/{scenario_id}/assumption-periods")
+def create_assumption_period(
+    scenario_id: int,
+    payload: schemas.AssumptionPeriodInput,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    return plans.serialize_period(plans.create_period(db, current_client.id, scenario_id, payload.model_dump(exclude_unset=True)))
+
+
+@router.put("/assumption-periods/{period_id}")
+def update_assumption_period(
+    period_id: int,
+    payload: schemas.AssumptionPeriodInput,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    return plans.serialize_period(plans.update_period(db, current_client.id, period_id, payload.model_dump(exclude_unset=True)))
+
+
+@router.delete("/assumption-periods/{period_id}")
+def delete_assumption_period(
+    period_id: int,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    plans.delete_period(db, current_client.id, period_id)
     return {"message": "削除しました。"}
 
 

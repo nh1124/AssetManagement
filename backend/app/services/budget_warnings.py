@@ -56,13 +56,7 @@ def recurrence_setup_warnings(
             registry_line.get("cash_treatment"),
         ))
         if not matched:
-            warnings.append({
-                "type": "missing_budget",
-                "registry_entry_ids": registry_line.get("registry_entry_ids", []),
-                "source": "registry",
-                "name": registry_line["name"],
-                "amount": registry_line["registry_amount"],
-            })
+            # The projection counts an unsaved definition's monthly amount (§8-14); nothing is missing.
             continue
         if round(matched.amount or 0.0, 0) != round(registry_line["registry_amount"], 0):
             warnings.append({

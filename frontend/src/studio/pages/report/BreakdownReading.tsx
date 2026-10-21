@@ -15,7 +15,7 @@ function Variance({ resource, currency }: { resource: BreakdownResource['varianc
         <h2 className="text-lg font-semibold">予算と実績</h2>
         <Feedback loading={resource.loading} error={resource.error} />
         {resource.data && <>
-            {resource.data.plan_id === null && <p className="text-sm text-[var(--studio-text-muted)]">対象の予算プランなし</p>}
+            {resource.data.plan_id === null && <p className="text-sm text-[var(--studio-text-muted)]">保存した計画の行なし</p>}
             <dl className="grid gap-5 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5 sm:grid-cols-3">
                 {[{ label: '期間の予算合計', amount: resource.data.total_budget }, { label: '期間の支出合計', amount: resource.data.total_actual }, { label: '予算 − 支出', amount: resource.data.total_variance }].map((row) => <div key={row.label}><dt className="text-xs text-[var(--studio-text-muted)]">{row.label}</dt><dd className="mt-2 text-xl font-semibold tabular-nums">{formatCurrency(row.amount, currency)}</dd></div>)}
             </dl>

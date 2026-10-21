@@ -26,6 +26,7 @@ FORMAT_FIELDS = {
     "life_event_links": ["id","from_event_id","to_event_id","kind","offset_months","note","created_at"],
     "life_scenarios": ["id","name","annual_return","inflation","horizon_years","is_goal","created_at","updated_at"],
     "scenario_contribution_plans": ["id","scenario_id","kind","account_id","to_account_id","start_period","amount_minor","interval_months","repeat_count","end_period","on_shortage","annual_return","note","life_event_id","created_at"],
+    "scenario_assumption_periods": ["id","scenario_id","start_period","end_period","annual_return","inflation","note","created_at"],
     "household_members": ["id","name","relation","birth_date","created_at"],
     "life_event_conditions": ["id","life_event_id","metric","comparator","threshold_minor","threshold_number","threshold_date","reference_id","note","created_at"],
     "transactions": ["id","date","description","amount","currency","batch_id","registry_entry_id","created_at"],
@@ -160,6 +161,8 @@ def _seed_client(db, client_id, base, marker):
         amount_minor=30000, interval_months=1, annual_return=3.0, note=marker)
     add(models.ScenarioContributionPlan, 43, scenario_id=scenario.id, kind="withdrawal", account_id=cash.id, start_period="2026-12",
         amount_minor=600, on_shortage="partial", life_event_id=goal.id)
+    add(models.ScenarioAssumptionPeriod, 44, scenario_id=scenario.id, start_period="2027-01", end_period="2030-12",
+        annual_return=4.0, inflation=1.5, note=marker)
     add(models.GoalBudgetReflection, 41, scenario_id=scenario.id, applied_at=STAMP, start_period="2026-10",
         end_period="2026-10", summary={"months": [{"period": "2026-10"}]})
     tracked = models.FxTrackedCurrency(client_id=client_id, currency="USD", created_at=STAMP)

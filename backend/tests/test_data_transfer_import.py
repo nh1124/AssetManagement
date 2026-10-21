@@ -87,6 +87,8 @@ def _seed(db, client_id=101, base=10000):
         amount_minor=30000, interval_months=1, annual_return=3.0, note="plan note")
     add(models.ScenarioContributionPlan, 43, scenario_id=scenario.id, kind="withdrawal", account_id=cash.id, start_period="2026-12",
         amount_minor=600, on_shortage="partial", life_event_id=goal.id)
+    add(models.ScenarioAssumptionPeriod, 44, scenario_id=scenario.id, start_period="2027-01", end_period=None,
+        annual_return=None, inflation=1.5, note="period note")
     # Not in the backup, but present so rollback is proven to leave it alone too.
     add(models.Notification, 42, kind="goal_reflection", dedupe_key=f"goal_reflection:{base}", title="t", body="", payload={}, status="open")
     add(models.GoalBudgetReflection, 41, scenario_id=scenario.id, applied_at=STAMP, start_period="2026-10",
@@ -307,6 +309,28 @@ def test_an_older_backup_with_quick_templates_still_restores(db):
     assert [row["label"] for row in restored["data"]["transaction_batches"]] == [
         row["label"] for row in document["data"]["transaction_batches"]
     ]
+
+
+def test_an_older_backup_with_alternative_budget_plans_restores_only_the_default(db):
+    # A client has one budget plan (§8-10). An older backup's other plans and their rows stay out.
+    source, _ = _seed(db)
+    target = _client(db, 202)
+    document = export_client(db, source)
+    [default] = document["data"]["budget_plans"]
+    extra = {**default, "id": 10950, "name": "lean", "is_default": False, "sort_order": 0}
+    document["data"]["budget_plans"].insert(0, extra)
+    line = {**document["data"]["monthly_plan_lines"][0], "id": 10951, "plan_id": extra["id"], "amount": 999}
+    document["data"]["monthly_plan_lines"].append(line)
+    checksums = {key: _checksum(value) for key, value in document["data"].items()}
+    document["manifest"]["counts"]["budget_plans"] = 2
+    document["manifest"]["counts"]["monthly_plan_lines"] += 1
+    document["manifest"]["checksums"] = checksums
+    document["manifest"]["payload_checksum"] = _checksum({"data": document["data"], "checksums": checksums})
+
+    assert _restore(db, target, document)["status"] == "ok"
+    restored = export_client(db, target)
+    assert [(plan["name"], plan["is_default"]) for plan in restored["data"]["budget_plans"]] == [("default", True)]
+    assert 999 not in [row["amount"] for row in restored["data"]["monthly_plan_lines"]]
 
 
 def test_journal_failure_after_deletion_preserves_every_table_byte_for_byte(db):

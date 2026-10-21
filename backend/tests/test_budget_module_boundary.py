@@ -46,10 +46,10 @@ PUBLIC: dict[str, set[str]] = {
         "retire_plan_lines",
         # A goal change retires the old goal's rows from this month on and those of its deleted earmarks.
         "lines_written_by",
-        "create_plan",
+        # The month copy replaces a month of the one plan (§8-10).
+        "copy_period_lines",
         "create_plan_line",
         "create_plan_lines",
-        "delete_plan",
         "delete_plan_line",
         # X9 split plan resolution in two. A read outside the family has to
         # be able to ask which plan to use without creating one, so the
@@ -57,18 +57,12 @@ PUBLIC: dict[str, set[str]] = {
         # stays beside it for the write paths.
         "find_budget_plan_id",
         "get_or_create_default_plan",
-        # Compare needs a scoped read without default-plan creation or summary.
-        "get_plan",
         "get_plan_line",
         "find_expense_plan_line",
-        "list_plans",
-        "replace_plan_lines_from_plan",
         "resolve_budget_plan_id",
-        "update_plan",
         "update_plan_lines",
     },
     "budget_projection": {
-        "get_cash_flow_projection",
         "liquid_cash",
         "planned_cash_outflow_remaining",
     },

@@ -131,6 +131,28 @@ class LifeScenario(Base):
     client = relationship("Client")
     events = relationship("LifeEvent", cascade="all, delete-orphan", passive_deletes=True)
     contribution_plans = relationship("ScenarioContributionPlan", cascade="all, delete-orphan", passive_deletes=True)
+    assumption_periods = relationship("ScenarioAssumptionPeriod", cascade="all, delete-orphan", passive_deletes=True)
+
+
+class ScenarioAssumptionPeriod(Base):
+    """期間ごとの前提 (§8-11): the scenario's default yield and inflation for some months.
+
+    From start_period to end_period (inclusive; open when null) annual_return replaces
+    the scenario's 既定の年利 -- the yield of an account whose 積立設定 names none -- and
+    inflation replaces its インフレ. A field left null keeps what applies without the
+    record. Where records overlap, the latest start (then the latest record) wins. The
+    scenario's own 前提 stays the default; 変動率 and 税率 stay common to all scenarios.
+    """
+    __tablename__ = "scenario_assumption_periods"
+
+    id = Column(Integer, primary_key=True)
+    scenario_id = Column(Integer, ForeignKey("life_scenarios.id", ondelete="CASCADE"), nullable=False, index=True)
+    start_period = Column(String(7), nullable=False)
+    end_period = Column(String(7), nullable=True)
+    annual_return = Column(Float, nullable=True)
+    inflation = Column(Float, nullable=True)
+    note = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class ScenarioContributionPlan(Base):

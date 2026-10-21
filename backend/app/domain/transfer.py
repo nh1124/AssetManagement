@@ -8,7 +8,7 @@ import re
 from datetime import date, datetime
 from typing import Any
 
-EXPORT_VERSION = 30
+EXPORT_VERSION = 31
 
 DATA_COLLECTIONS = [
     "accounts",
@@ -21,6 +21,7 @@ DATA_COLLECTIONS = [
     "life_event_links",
     "life_scenarios",
     "scenario_contribution_plans",
+    "scenario_assumption_periods",
     "household_members",
     "life_event_conditions",
     "transactions",
@@ -265,6 +266,7 @@ def validate_import_payload(
     check_ref("scenario_contribution_plans", "scenario_id", "life_scenarios", required=True)
     check_ref("scenario_contribution_plans", "account_id", "accounts", required=True)
     check_ref("scenario_contribution_plans", "to_account_id", "accounts")
+    check_ref("scenario_assumption_periods", "scenario_id", "life_scenarios", required=True)
     check_ref("capsules", "goal_event_id", "life_events")
     check_ref("life_events", "borrowing_event_id", "life_events")
     check_ref("monthly_plan_lines", "account_id", "accounts")
@@ -325,6 +327,15 @@ def validate_import_payload(
                     and _as_int(event.get("scenario_id")) == _as_int(item.get("scenario_id"))
         if not valid:
             issue("error", "invalid_contribution_plan", "積立設定のレコードが不正または重複しています。", "scenario_contribution_plans", item.get("id"))
+    for item in data.get("scenario_assumption_periods", []):
+        start, end = item.get("start_period"), item.get("end_period")
+        rates = [item.get("annual_return"), item.get("inflation")]
+        valid = isinstance(start, str) and month.fullmatch(start) is not None
+        valid = valid and (end is None or (isinstance(end, str) and month.fullmatch(end) is not None and end >= start))
+        valid = valid and any(rate is not None for rate in rates)
+        valid = valid and all(rate is None or (type(rate) in (int, float) and math.isfinite(rate)) for rate in rates)
+        if not valid:
+            issue("error", "invalid_assumption_period", "期間ごとの前提のレコードが不正です。", "scenario_assumption_periods", item.get("id"))
     pairs = set()
     accounts_by_id = {_as_int(row.get("id")): row for row in data.get("accounts", [])}
     for item in data.get("life_scenario_account_returns", []):

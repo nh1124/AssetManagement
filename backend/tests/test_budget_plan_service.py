@@ -11,7 +11,6 @@ from backend.app.domain.money import Money
 
 from datetime import date
 
-from fastapi import HTTPException
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.exc import IntegrityError
@@ -21,11 +20,9 @@ try:
     from backend.app import models
     from backend.app.services import registry_service
     from backend.app.database import Base
-    from backend.app.routers.budget_plans import compare_budget_plans, copy_period_full_replace, copy_plan_from
     from backend.app.routers.data_transfer import ImportPayload, export_client_data, import_client_data, validate_import_client_data
-    from backend.app.schemas import CopyPeriodRequest, MonthlyPlanLineBatchUpdate, MonthlyPlanLineCreate
+    from backend.app.schemas import MonthlyPlanLineBatchUpdate, MonthlyPlanLineCreate
     from backend.app.services.accounting_service import get_variance_analysis_for_range, process_transaction
-    from backend.app.workflows.monthly_action_workflow import apply_action, create_action
     from backend.app.services.budget_lines import assign_plan_line_identity
     from backend.app.services.budget_plan_service import get_budget_summary
     from backend.app.services.budget_plan_store import create_plan_lines, resolve_budget_plan_id, update_plan_lines
@@ -35,11 +32,9 @@ except ModuleNotFoundError:
     from app import models  # type: ignore[no-redef]
     from app.services import registry_service  # type: ignore[no-redef]
     from app.database import Base  # type: ignore[no-redef]
-    from app.routers.budget_plans import compare_budget_plans, copy_period_full_replace, copy_plan_from  # type: ignore[no-redef]
     from app.routers.data_transfer import ImportPayload, export_client_data, import_client_data, validate_import_client_data  # type: ignore[no-redef]
-    from app.schemas import CopyPeriodRequest, MonthlyPlanLineBatchUpdate, MonthlyPlanLineCreate  # type: ignore[no-redef]
+    from app.schemas import MonthlyPlanLineBatchUpdate, MonthlyPlanLineCreate  # type: ignore[no-redef]
     from app.services.accounting_service import get_variance_analysis_for_range, process_transaction  # type: ignore[no-redef]
-    from app.workflows.monthly_action_workflow import apply_action, create_action  # type: ignore[no-redef]
     from app.services.budget_lines import assign_plan_line_identity  # type: ignore[no-redef]
     from app.services.budget_plan_service import get_budget_summary  # type: ignore[no-redef]
     from app.services.budget_plan_store import create_plan_lines, resolve_budget_plan_id, update_plan_lines  # type: ignore[no-redef]
@@ -184,7 +179,7 @@ def test_data_export_manifest_and_validate_include_monthly_actions() -> None:
         payload = ImportPayload(**snapshot)
         validation = validate_import_client_data(payload=payload, current_client=client)
 
-        assert snapshot["version"] == 30
+        assert snapshot["version"] == 31
         assert snapshot["manifest"]["counts"]["monthly_actions"] == 1
         assert snapshot["data"]["monthly_actions"][0]["kind"] == "set_budget"
         assert validation["status"] == "valid"
@@ -424,98 +419,6 @@ def test_budget_summary_combines_income_spending_allocations_and_debt() -> None:
         nisa_line = next(line for line in summary["plan_lines"] if line["target_name"] == "NISA")
         assert nisa_line["actual"] == 50000
         assert nisa_line["variance"] == 0
-    finally:
-        db.close()
-
-
-
-
-def test_set_budget_action_updates_specified_plan_only() -> None:
-    db = _session()
-    try:
-        client = models.Client(id=1, name="test", general_settings={})
-        food = models.Account(client_id=1, name="food", account_type="expense")
-        baseline = models.BudgetPlan(client_id=1, name="Baseline", is_default=True, sort_order=0)
-        lean = models.BudgetPlan(client_id=1, name="Lean", is_default=False, sort_order=1)
-        db.add_all([client, food, baseline, lean])
-        db.flush()
-        for plan, amount in [(baseline, 10000), (lean, 20000)]:
-            line = models.MonthlyPlanLine(
-                client_id=1,
-                plan_id=plan.id,
-                target_period="2026-05",
-                line_type="expense",
-                target_type="account",
-                account_id=food.id,
-                name="food",
-                amount_minor=to_minor(amount, "JPY"),
-            )
-            assign_plan_line_identity(line)
-            db.add(line)
-        db.commit()
-
-        action = create_action(
-            db,
-            client_id=1,
-            source_period="2026-04",
-            target_period="2026-05",
-            kind="set_budget",
-            payload={"account_id": food.id, "amount": 30000, "plan_id": lean.id},
-        )
-        applied = apply_action(db, client_id=1, action_id=action["id"])
-
-        baseline_line = db.query(models.MonthlyPlanLine).filter_by(
-            client_id=1,
-            plan_id=baseline.id,
-            account_id=food.id,
-            target_period="2026-05",
-            is_active=True,
-        ).one()
-        lean_line = db.query(models.MonthlyPlanLine).filter_by(
-            client_id=1,
-            plan_id=lean.id,
-            account_id=food.id,
-            target_period="2026-05",
-            is_active=True,
-        ).one()
-        assert applied["result"]["plan_id"] == lean.id
-        assert baseline_line.amount == 10000
-        assert lean_line.amount == 30000
-    finally:
-        db.close()
-
-
-def test_variance_analysis_uses_specified_plan_budget() -> None:
-    db = _session()
-    try:
-        client = models.Client(id=1, name="test", general_settings={})
-        food = models.Account(client_id=1, name="food", account_type="expense")
-        baseline = models.BudgetPlan(client_id=1, name="Baseline", is_default=True, sort_order=0)
-        lean = models.BudgetPlan(client_id=1, name="Lean", is_default=False, sort_order=1)
-        db.add_all([client, food, baseline, lean])
-        db.flush()
-        for plan, amount in [(baseline, 10000), (lean, 25000)]:
-            line = models.MonthlyPlanLine(
-                client_id=1,
-                plan_id=plan.id,
-                target_period="2026-05",
-                line_type="expense",
-                target_type="account",
-                account_id=food.id,
-                name="food",
-                amount_minor=to_minor(amount, "JPY"),
-            )
-            assign_plan_line_identity(line)
-            db.add(line)
-        db.commit()
-
-        baseline_variance = get_variance_analysis_for_range(db, date(2026, 5, 1), date(2026, 5, 31), client_id=1, plan_id=baseline.id)
-        lean_variance = get_variance_analysis_for_range(db, date(2026, 5, 1), date(2026, 5, 31), client_id=1, plan_id=lean.id)
-
-        assert baseline_variance["total_budget"] == 10000
-        assert baseline_variance["plan_id"] == baseline.id
-        assert lean_variance["total_budget"] == 25000
-        assert lean_variance["plan_id"] == lean.id
     finally:
         db.close()
 
@@ -948,8 +851,7 @@ def test_expense_only_products_are_variable_budget_suggestions() -> None:
         db.close()
 
 
-
-def test_cash_flow_projection_warns_about_unsynced_yearly_income() -> None:
+def test_cash_flow_projection_counts_unsaved_yearly_income_in_its_month() -> None:
     db = _session()
     try:
         client = models.Client(id=1, name="test", general_settings={})
@@ -967,9 +869,9 @@ def test_cash_flow_projection_warns_about_unsynced_yearly_income() -> None:
         assert may["period"] == "2026-05"
         assert may["inflow"] == 0
         assert june["period"] == "2026-06"
-        assert june["inflow"] == 0
-        assert june["setup_warnings"][0]["type"] == "missing_budget"
-        assert june["setup_warnings"][0]["amount"] == 600000
+        # §8-14: the projection counts the month's budgets, so the unsaved bonus arrives in June.
+        assert june["inflow"] == 600000
+        assert june["setup_warnings"] == []
     finally:
         db.close()
 
@@ -1864,14 +1766,16 @@ def test_cash_flow_summary_reports_buffer_and_shortfall_month() -> None:
 
         summary = get_budget_summary(db, client_id=1, period="2026-05")
 
+        # The unsaved rent counts every month (§8-14): with no cash the first month already falls short.
         assert summary["cash_flow_summary"] == {
-            "runway_months": 12,
-            "lowest_cash": 0,
-            "required_buffer": 0,
-            "shortfall_month": None,
+            "runway_months": 0,
+            "lowest_cash": -960000,
+            "required_buffer": 960000,
+            "shortfall_month": "2026-05",
             "horizon_months": 12,
         }
-        assert summary["cash_flow_projection"][0]["setup_warnings"][0]["type"] == "missing_budget"
+        assert summary["cash_flow_projection"][0]["setup_warnings"] == []
+        assert summary["balance_projection"][-1]["total_assets"] == -960000
     finally:
         db.close()
 
@@ -1956,180 +1860,6 @@ def test_the_repair_adopts_legacy_null_plan_lines_and_the_resolvers_do_not() -> 
         db.close()
 
 
-def test_same_line_identity_is_allowed_across_plans_but_not_within_one_plan() -> None:
-    db = _session()
-    try:
-        client = models.Client(id=1, name="test", general_settings={})
-        baseline = models.BudgetPlan(client_id=1, name="Baseline", is_default=True)
-        house = models.BudgetPlan(client_id=1, name="House")
-        food = models.Account(client_id=1, name="food", account_type="expense")
-        db.add_all([client, baseline, house, food])
-        db.commit()
-
-        payload = {
-            "target_period": "2026-05",
-            "line_type": "expense",
-            "target_type": "account",
-            "account_id": food.id,
-            "amount": 12000,
-        }
-        baseline_line = create_plan_lines(db, 1, [MonthlyPlanLineCreate(**payload, plan_id=baseline.id)])[0]
-        house_line = create_plan_lines(db, 1, [MonthlyPlanLineCreate(**payload, plan_id=house.id)])[0]
-
-        assert baseline_line.plan_id == baseline.id
-        assert house_line.plan_id == house.id
-        try:
-            create_plan_lines(db, 1, [MonthlyPlanLineCreate(**payload, plan_id=baseline.id)])
-        except ValueError as exc:
-            assert "already exists" in str(exc)
-        else:
-            raise AssertionError("duplicate line was accepted within the same budget plan")
-    finally:
-        db.close()
-
-
-def test_plan_line_create_and_update_reject_foreign_or_missing_plan_ids() -> None:
-    db = _session()
-    try:
-        client = models.Client(id=1, name="test", general_settings={})
-        other_client = models.Client(id=2, name="other", general_settings={})
-        other_plan = models.BudgetPlan(client_id=2, name="Other", is_default=True)
-        food = models.Account(client_id=1, name="food", account_type="expense")
-        db.add_all([client, other_client, other_plan, food])
-        db.commit()
-
-        base_payload = {
-            "target_period": "2026-05",
-            "line_type": "expense",
-            "target_type": "account",
-            "account_id": food.id,
-            "amount": 12000,
-        }
-        for bad_plan_id in (other_plan.id, 9999):
-            try:
-                create_plan_lines(db, 1, [MonthlyPlanLineCreate(**base_payload, plan_id=bad_plan_id)])
-            except ValueError as exc:
-                assert "Budget plan not found" in str(exc)
-            else:
-                raise AssertionError("create accepted an invalid budget plan")
-
-        created = create_plan_lines(db, 1, [MonthlyPlanLineCreate(**base_payload)])[0]
-        try:
-            update_plan_lines(db, 1, [
-                MonthlyPlanLineBatchUpdate(
-                    id=created.id,
-                    **base_payload,
-                    plan_id=other_plan.id,
-                )
-            ])
-        except ValueError as exc:
-            assert "Budget plan not found" in str(exc)
-        else:
-            raise AssertionError("update accepted a foreign budget plan")
-    finally:
-        db.close()
-
-
-def test_budget_plan_router_rejects_invalid_compare_and_self_copy() -> None:
-    db = _session()
-    try:
-        client = models.Client(id=1, name="test", general_settings={})
-        plan = models.BudgetPlan(client_id=1, name="Baseline", is_default=True)
-        db.add_all([client, plan])
-        db.commit()
-
-        for plan_ids in ("", "9999"):
-            try:
-                compare_budget_plans(
-                    plan_ids=plan_ids,
-                    start_period="2026-05",
-                    months=12,
-                    db=db,
-                    current_client=client,
-                )
-            except HTTPException as exc:
-                assert exc.status_code in {400, 404}
-            else:
-                raise AssertionError("compare accepted invalid plan_ids")
-
-        try:
-            copy_plan_from(plan.id, source_plan_id=plan.id, db=db, current_client=client)
-        except HTTPException as exc:
-            assert exc.status_code == 400
-        else:
-            raise AssertionError("copy-from-self was accepted")
-    finally:
-        db.close()
-
-
-def test_copy_period_full_replace_only_affects_selected_plan() -> None:
-    db = _session()
-    try:
-        client = models.Client(id=1, name="test", general_settings={})
-        baseline = models.BudgetPlan(client_id=1, name="Baseline", is_default=True)
-        house = models.BudgetPlan(client_id=1, name="House")
-        food = models.Account(client_id=1, name="food", account_type="expense")
-        db.add_all([client, baseline, house, food])
-        db.flush()
-        db.add_all([
-            models.MonthlyPlanLine(
-                client_id=1,
-                plan_id=baseline.id,
-                target_period="2026-06",
-                line_type="expense",
-                target_type="account",
-                account_id=food.id,
-                name="baseline target",
-                amount_minor=to_minor(5000, "JPY"),
-            ),
-            models.MonthlyPlanLine(
-                client_id=1,
-                plan_id=house.id,
-                target_period="2026-05",
-                line_type="expense",
-                target_type="account",
-                account_id=food.id,
-                name="house source",
-                amount_minor=to_minor(15000, "JPY"),
-            ),
-            models.MonthlyPlanLine(
-                client_id=1,
-                plan_id=house.id,
-                target_period="2026-06",
-                line_type="expense",
-                target_type="account",
-                account_id=food.id,
-                name="house old target",
-                amount_minor=to_minor(7000, "JPY"),
-            ),
-        ])
-        db.commit()
-
-        copy_period_full_replace(
-            CopyPeriodRequest(source_period="2026-05", target_period="2026-06", plan_id=house.id),
-            db=db,
-            current_client=client,
-        )
-
-        baseline_target = db.query(models.MonthlyPlanLine).filter_by(
-            plan_id=baseline.id,
-            target_period="2026-06",
-            is_active=True,
-        ).one()
-        house_targets = db.query(models.MonthlyPlanLine).filter_by(
-            plan_id=house.id,
-            target_period="2026-06",
-            is_active=True,
-        ).all()
-
-        assert baseline_target.amount == 5000
-        assert len(house_targets) == 1
-        assert house_targets[0].name == "house source"
-        assert house_targets[0].amount == 15000
-    finally:
-        db.close()
-
-
 @pytest.mark.parametrize("stored_amount,definition_amount,with_plan", [
     (12000, None, True), (None, 8000, True), (12000, 8000, True),
     (0, 8000, True), (None, 8000, False),
@@ -2201,7 +1931,7 @@ def test_variance_counts_definitions_only_in_months_without_a_matching_saved_lin
         create_transaction(db, client_id=1, date=date(2026, 5, 10), amount_minor=2000, currency="JPY",
                            description="food", from_account_id=bank.id, to_account_id=food.id)
         db.commit()
-        result = get_variance_analysis_for_range(db, date(2026, 5, 1), date(2026, 6, 30), 1, plan.id)
+        result = get_variance_analysis_for_range(db, date(2026, 5, 1), date(2026, 6, 30), 1)
         may = 8000 if match == "none" else 0 if match == "zero" else 12000
         assert result["budget_months"] == ["2026-05", "2026-06"]
         assert result["total_budget"] == may + 8000
@@ -2210,7 +1940,6 @@ def test_variance_counts_definitions_only_in_months_without_a_matching_saved_lin
         budgets = {item["category"]: item["budget"] for item in result["items"]}
         assert budgets["food"] == (8000 if match == "entry_name" else may + 8000)
         assert budgets["other"] == (12000 if match == "entry_name" else 0)
-        assert get_variance_analysis_for_range(db, date(2026, 5, 1), date(2026, 5, 31), 1, alternate.id)["total_budget"] == 99000
     finally:
         db.close()
 

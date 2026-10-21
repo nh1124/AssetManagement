@@ -10,7 +10,8 @@ from app.database import Base
 
 
 # WP23: 積立設定 records carry a kind, a destination account (口座振替), a schedule and the shortage choice.
-EXPECTED_METADATA_SHA256 = "3c9302b6ac08361d808892a95abcdf324ebcdb1f6de018973ae1d86e1c331860"
+# §8-11: scenario_assumption_periods (期間ごとの前提).
+EXPECTED_METADATA_SHA256 = "c0a4d064ccd1928dbf2ee478dfced1304d46f48781ad9054e44827438d1caf3c"
 
 MODEL_NAMES = (
     "Client", "ClientMfaSetting", "ClientRecoveryCode",
@@ -20,7 +21,7 @@ MODEL_NAMES = (
     "BudgetPlan", "MonthlyPlanLine", "PeriodReview", "MonthlyAction", "PeriodClose",
     "AiOperationPolicy", "AiAuditLog", "AiChangeRequest",
     "SimulationConfig",
-    "LifeScenario", "ScenarioContributionPlan", "GoalBudgetReflection",
+    "LifeScenario", "ScenarioContributionPlan", "ScenarioAssumptionPeriod", "GoalBudgetReflection",
     "Capsule", "CapsuleFundingSource", "CapsuleRule", "CapsuleDrawdown", "Notification",
     "ProductDepreciation",
 )
@@ -90,8 +91,8 @@ def _metadata_snapshot():
 
 def test_metadata_matches_the_minor_unit_schema():
     snapshot = _metadata_snapshot()
-    assert len(snapshot["table_names"]) == 34
-    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 391
+    assert len(snapshot["table_names"]) == 35
+    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 399
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == EXPECTED_METADATA_SHA256
 

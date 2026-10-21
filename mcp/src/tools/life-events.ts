@@ -1,5 +1,5 @@
 // ============================================================
-// Goal tools: scenarios, life events and loans, 積立設定, changing the goal, goal-to-plan
+// Goal tools: scenarios, life events and loans, 積立設定, 期間ごとの前提, changing the goal, goal-to-plan
 // ============================================================
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -41,6 +41,15 @@ const contributionFields = {
   annual_return: z.number().nullable().optional().describe("Contribution only: the account's yield % from start_period until a later record names another; null keeps the previous one"),
   note: z.string().nullable().optional(),
   life_event_id: id.nullable().optional().describe("Withdrawal: an expense event of the same scenario. From the event's month on, withdrawals pay it in instalments (e.g. 老後生活, 100000 a month for 360 months)"),
+};
+
+const periodFields = {
+  start_period: periodSchema.describe("First month the record applies, YYYY-MM"),
+  end_period: periodSchema.nullable().optional().describe("Last month it applies (inclusive), YYYY-MM; null: to the end of the simulation"),
+  annual_return: z.number().nullable().optional()
+    .describe("The scenario's default yield % in these months (for accounts whose 積立設定 names none); null keeps what applies otherwise"),
+  inflation: z.number().nullable().optional().describe("Inflation % in these months; null keeps what applies otherwise"),
+  note: z.string().nullable().optional(),
 };
 
 type Handler<T> = (input: T) => Promise<unknown>;
@@ -137,6 +146,27 @@ export function registerLifeEventTools(server: McpServer): void {
     inputSchema: z.object({ id: id.describe("Record ID") }).strict(), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   }, guarded("Deleted contribution plan record:", async ({ id: planId }: { id: number }) =>
     api.delete<unknown>(`/life-scenarios/contribution-plans/${planId}`)));
+
+  server.registerTool("assumption_periods_create", {
+    title: "Add an assumption period",
+    description: "期間ごとの前提: from start_period to end_period the scenario's default yield and/or inflation are these values instead of the scenario's own. At least one of annual_return and inflation. Where records overlap the latest start wins; an account's own 積立設定 yield still comes first. The simulation reads a calendar year's values at its first month. 変動率 and 税率 stay common to all scenarios (simulation config).",
+    inputSchema: z.object({ scenario_id: id, ...periodFields }).strict(), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  }, guarded("Created assumption period:", async ({ scenario_id, ...record }: { scenario_id: number } & Record<string, unknown>) =>
+    api.post<unknown>(`/life-scenarios/${scenario_id}/assumption-periods`, only(record))));
+
+  server.registerTool("assumption_periods_update", {
+    title: "Update an assumption period",
+    description: "Changes a 期間ごとの前提 record; fields left out keep their value.",
+    inputSchema: z.object(periodFields).partial().extend({ id: id.describe("Record ID") }).strict(), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, guarded("Updated assumption period:", async ({ id: periodId, ...patch }: { id: number } & Record<string, unknown>) =>
+    api.put<unknown>(`/life-scenarios/assumption-periods/${periodId}`, only(patch))));
+
+  server.registerTool("assumption_periods_delete", {
+    title: "Delete an assumption period",
+    description: "Deletes a 期間ごとの前提 record.",
+    inputSchema: z.object({ id: id.describe("Record ID") }).strict(), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  }, guarded("Deleted assumption period:", async ({ id: periodId }: { id: number }) =>
+    api.delete<unknown>(`/life-scenarios/assumption-periods/${periodId}`)));
 
   server.registerTool("goal_plan_check", {
     title: "Goal against the plan",

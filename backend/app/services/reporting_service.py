@@ -133,13 +133,10 @@ def get_variance_analysis_for_range(
     start_date: date,
     end_date: date,
     client_id: int | None = None,
-    plan_id: int | None = None,
 ) -> dict:
     """Compare actual spending vs summed monthly budgets over an inclusive range."""
     month_keys = _period_months(start_date, end_date)
-    resolved_plan_id = (
-        find_budget_plan_id(db, client_id, plan_id) if client_id is not None else plan_id
-    )
+    resolved_plan_id = find_budget_plan_id(db, client_id) if client_id is not None else None
 
     accounts = db.query(models.Account).filter(
         models.Account.client_id == client_id,
@@ -206,14 +203,13 @@ def get_variance_analysis(
     year: int,
     month: int,
     client_id: int | None = None,
-    plan_id: int | None = None,
 ) -> dict:
     start_date = date(year, month, 1)
     if month == 12:
         end_date = date(year + 1, 1, 1)
     else:
         end_date = date(year, month + 1, 1)
-    result = get_variance_analysis_for_range(db, start_date, end_date - date.resolution, client_id, plan_id)
+    result = get_variance_analysis_for_range(db, start_date, end_date - date.resolution, client_id)
     result["period"] = f"{year}-{month:02d}"
     return result
 

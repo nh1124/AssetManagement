@@ -36,7 +36,7 @@ export function breakdownMarkdown(data: BreakdownSnapshot, startDate: string, en
         '### ライフイベントの進捗',
         list(reportGoals(report).map((row) => `${row.title}：${row.description}`), 'この期間のライフイベントはありません。'),
         '## 予算と実績',
-        ...(variance.plan_id === null ? ['対象の予算プランなし'] : []),
+        ...(variance.plan_id === null ? ['保存した計画の行なし'] : []),
         table(['項目', '値'], [
             ['期間の予算合計', money(variance.total_budget)],
             ['期間の支出合計', money(variance.total_actual)],

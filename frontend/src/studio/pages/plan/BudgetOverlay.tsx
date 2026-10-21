@@ -15,7 +15,6 @@ export interface OverlayContext {
     period: string;
     currency: string;
     clientName?: string;
-    planId: number | null;
     accountName: (id: number | null) => string;
     onChanged: () => void;
 }
@@ -162,7 +161,7 @@ function AccountRecords({ accountId, title, context, onClose }: { accountId: num
 }
 
 /** Saving and deleting one budget row of an earmark or of a row without an account. */
-function useLineActions({ period, currency, clientName, planId, onChanged }: OverlayContext) {
+function useLineActions({ period, currency, clientName, onChanged }: OverlayContext) {
     const confirm = useConfirm();
     const mutation = useMutation();
     const save = async (line: MonthlyPlanLine, amount: number, done: () => void) => {
@@ -177,7 +176,6 @@ function useLineActions({ period, currency, clientName, planId, onChanged }: Ove
             target_id: line.target_id, account_id: line.account_id, source_account_id: line.source_account_id,
             name: line.name || name, amount, source: line.source || 'manual', source_kind: line.source_kind || 'manual',
             manual_override: true, cash_treatment: line.cash_treatment || 'auto', is_active: line.is_active ?? true,
-            plan_id: planId,
         };
         const id = line.id;
         void mutation.run(() => id == null ? createMonthlyPlanLines([payload]) : updateMonthlyPlanLines([{ ...payload, id }]), '予算を保存しました。', () => { done(); onChanged(); });

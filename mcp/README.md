@@ -93,7 +93,7 @@ Tools cover:
 - transaction batches
 - analysis
 - reports and period reviews
-- monthly planning, budget plans and monthly reviews
+- monthly planning (one plan per client) and monthly reviews
 - action bridges
 - automatic transactions (the settings of recurring and one-off transactions)
 - products and unit economics

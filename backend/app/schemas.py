@@ -582,7 +582,6 @@ class MonthlyPlanLineBase(BaseModel):
     manual_override: bool = False
     cash_treatment: MonthlyPlanCashTreatmentLiteral = "auto"
     is_active: bool = True
-    plan_id: Optional[int] = None
 
 
 class MonthlyPlanLineCreate(MonthlyPlanLineBase):
@@ -610,11 +609,11 @@ class MonthlyPlanLineUpdate(BaseModel):
     manual_override: Optional[bool] = None
     cash_treatment: Optional[MonthlyPlanCashTreatmentLiteral] = None
     is_active: Optional[bool] = None
-    plan_id: Optional[int] = None
 
 
 class MonthlyPlanLine(MonthlyPlanLineBase):
     id: int
+    plan_id: Optional[int] = None
     target_name: Optional[str] = None
     account_name: Optional[str] = None
     actual: float = 0.0
@@ -637,48 +636,9 @@ class MonthlyPlanLine(MonthlyPlanLineBase):
 
 # ========== Budget Plans ==========
 
-class BudgetPlanCreate(BaseModel):
-    name: str
-    description: Optional[str] = None
-    sort_order: int = 0
-    model_config = ConfigDict(extra="forbid")
-
-
-class BudgetPlanUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    sort_order: Optional[int] = None
-
-
-class BudgetPlan(BaseModel):
-    id: int
-    name: str
-    description: Optional[str] = None
-    is_default: bool
-    sort_order: int
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-
-    class Config:
-        from_attributes = True
-
-
 class CopyPeriodRequest(BaseModel):
     source_period: str
     target_period: str
-    plan_id: Optional[int] = None
-
-
-class BudgetPlanCashFlowRow(BaseModel):
-    period: str
-    ending_cash: float
-    net_cash: float
-
-
-class BudgetPlanCompareResult(BaseModel):
-    plan_id: int
-    plan_name: str
-    cash_flow: list[BudgetPlanCashFlowRow]
 
 
 # ========== Monthly Reviews ==========
@@ -1069,6 +1029,18 @@ class ContributionPlanInput(BaseModel):
     life_event_id: int | None = Field(default=None, gt=0)
 
 
+class AssumptionPeriodInput(BaseModel):
+    """期間ごとの前提 (§8-11): the default yield and the inflation from start_period to end_period
+    (inclusive; open when null). A null rate keeps what applies without the record; fields left out
+    keep their value on update."""
+    model_config = ConfigDict(extra="forbid")
+    start_period: str | None = Field(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    end_period: str | None = Field(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    annual_return: float | None = Field(default=None, allow_inf_nan=False)
+    inflation: float | None = Field(default=None, allow_inf_nan=False)
+    note: str | None = None
+
+
 class GoalPlanRange(BaseModel):
     model_config = ConfigDict(extra="forbid")
     start_period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
@@ -1076,6 +1048,17 @@ class GoalPlanRange(BaseModel):
 
 
 class GoalPlanApply(GoalPlanRange):
+    fingerprint: str = Field(min_length=64, max_length=64)
+
+
+class ProductReservePlanRange(GoalPlanRange):
+    """物品の取り置きから計画を作成 (§8-4): base saved (取り置きに設定した月額) or remaining (残り期間に合わせる);
+    the held amount comes off the nearest months first (recent) or evenly (even)."""
+    base: Literal["saved", "remaining"]
+    held: Literal["recent", "even"]
+
+
+class ProductReservePlanApply(ProductReservePlanRange):
     fingerprint: str = Field(min_length=64, max_length=64)
 
 

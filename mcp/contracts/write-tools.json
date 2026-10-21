@@ -62,7 +62,7 @@
     "body": "array",
     "source": "src/tools/monthly-planning.ts",
     "path_fragment": "/budget-plans/lines",
-    "allowed_fields": ["plan_id", "target_period", "line_type", "target_type", "target_id", "account_id", "source_account_id", "name", "amount", "source", "source_kind", "identity_key", "manual_override", "cash_treatment", "is_active"],
+    "allowed_fields": ["target_period", "line_type", "target_type", "target_id", "account_id", "source_account_id", "name", "amount", "source", "source_kind", "identity_key", "manual_override", "cash_treatment", "is_active"],
     "required_fields": ["target_period", "line_type"],
     "forbidden_fields": ["priority"]
   },
@@ -73,7 +73,7 @@
     "body": "array",
     "source": "src/tools/monthly-planning.ts",
     "path_fragment": "/budget-plans/lines/batch",
-    "allowed_fields": ["id", "plan_id", "target_period", "line_type", "target_type", "target_id", "account_id", "source_account_id", "name", "amount", "source", "source_kind", "identity_key", "manual_override", "cash_treatment", "is_active"],
+    "allowed_fields": ["id", "target_period", "line_type", "target_type", "target_id", "account_id", "source_account_id", "name", "amount", "source", "source_kind", "identity_key", "manual_override", "cash_treatment", "is_active"],
     "required_fields": ["id", "target_period", "line_type"],
     "forbidden_fields": ["priority"]
   },
@@ -86,49 +86,13 @@
     "path_fragment": "/budget-plans/lines/${id}"
   },
   {
-    "tool": "budget_plans_create",
-    "method": "post",
-    "path": "/budget-plans",
-    "body": "object",
-    "source": "src/tools/strategy.ts",
-    "path_fragment": "/budget-plans",
-    "allowed_fields": ["name", "description", "sort_order"],
-    "required_fields": ["name"]
-  },
-  {
-    "tool": "budget_plans_update",
-    "method": "put",
-    "path": "/budget-plans/{plan_id}",
-    "body": "object",
-    "source": "src/tools/strategy.ts",
-    "path_fragment": "/budget-plans/${id}",
-    "allowed_fields": ["name", "description", "sort_order"],
-    "required_fields": []
-  },
-  {
-    "tool": "budget_plans_delete",
-    "method": "delete",
-    "path": "/budget-plans/{plan_id}",
-    "body": "none",
-    "source": "src/tools/strategy.ts",
-    "path_fragment": "/budget-plans/${id}"
-  },
-  {
-    "tool": "budget_plans_copy_from",
-    "method": "post",
-    "path": "/budget-plans/{plan_id}/copy-from",
-    "body": "none",
-    "source": "src/tools/strategy.ts",
-    "path_fragment": "/budget-plans/${target_plan_id}/copy-from"
-  },
-  {
     "tool": "budget_plans_copy_period",
     "method": "post",
     "path": "/budget-plans/copy-period",
     "body": "object",
     "source": "src/tools/strategy.ts",
     "path_fragment": "/budget-plans/copy-period",
-    "allowed_fields": ["source_period", "target_period", "plan_id"],
+    "allowed_fields": ["source_period", "target_period"],
     "required_fields": ["source_period", "target_period"]
   },
   {
@@ -470,6 +434,34 @@
     "path_fragment": "/life-scenarios/contribution-plans/${planId}"
   },
   {
+    "tool": "assumption_periods_create",
+    "method": "post",
+    "path": "/life-scenarios/{scenario_id}/assumption-periods",
+    "body": "object",
+    "source": "src/tools/life-events.ts",
+    "path_fragment": "/life-scenarios/${scenario_id}/assumption-periods",
+    "allowed_fields": ["start_period", "end_period", "annual_return", "inflation", "note"],
+    "required_fields": []
+  },
+  {
+    "tool": "assumption_periods_update",
+    "method": "put",
+    "path": "/life-scenarios/assumption-periods/{period_id}",
+    "body": "object",
+    "source": "src/tools/life-events.ts",
+    "path_fragment": "/life-scenarios/assumption-periods/${periodId}",
+    "allowed_fields": ["start_period", "end_period", "annual_return", "inflation", "note"],
+    "required_fields": []
+  },
+  {
+    "tool": "assumption_periods_delete",
+    "method": "delete",
+    "path": "/life-scenarios/assumption-periods/{period_id}",
+    "body": "none",
+    "source": "src/tools/life-events.ts",
+    "path_fragment": "/life-scenarios/assumption-periods/${periodId}"
+  },
+  {
     "tool": "goal_plan_apply",
     "method": "post",
     "path": "/goal-budget/apply",
@@ -478,5 +470,15 @@
     "path_fragment": "/goal-budget/apply",
     "allowed_fields": ["start_period", "end_period", "fingerprint"],
     "required_fields": ["start_period", "end_period", "fingerprint"]
+  },
+  {
+    "tool": "product_reserve_plan_apply",
+    "method": "post",
+    "path": "/budget-plans/product-reserves/apply",
+    "body": "object",
+    "source": "src/tools/strategy.ts",
+    "path_fragment": "/budget-plans/product-reserves/apply",
+    "allowed_fields": ["start_period", "end_period", "base", "held", "fingerprint"],
+    "required_fields": ["start_period", "end_period", "base", "held", "fingerprint"]
   }
 ]

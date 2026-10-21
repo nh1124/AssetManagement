@@ -221,13 +221,12 @@ export const getProfitLoss = async (year?: number, month?: number, startDate?: s
     return response.data;
 };
 
-export const getVarianceAnalysis = async (year?: number, month?: number, startDate?: string, endDate?: string, planId?: number | null) => {
+export const getVarianceAnalysis = async (year?: number, month?: number, startDate?: string, endDate?: string) => {
     const params = new URLSearchParams();
     if (year) params.append('year', String(year));
     if (month) params.append('month', String(month));
     if (startDate) params.append('start_date', startDate);
     if (endDate) params.append('end_date', endDate);
-    if (planId) params.append('plan_id', String(planId));
     const response = await api.get(`/analysis/variance?${params.toString()}`);
     return response.data;
 };
@@ -487,12 +486,11 @@ export const deleteGoal = async (id: number) => {
 // Budget Builder
 export const getBudgetSummary = async (
     period?: string,
-    options: { cash_flow_start_period?: string; cash_flow_months?: number; plan_id?: number; include_unset?: boolean } = {},
+    options: { cash_flow_start_period?: string; cash_flow_months?: number; include_unset?: boolean } = {},
 ) => {
     const response = await api.get('/budget-plans/summary', {
         params: {
             period,
-            plan_id: options.plan_id,
             cash_flow_start_period: options.cash_flow_start_period,
             cash_flow_months: options.cash_flow_months,
             include_unset: options.include_unset,
@@ -515,7 +513,6 @@ export type MonthlyPlanLinePayload = {
     manual_override?: boolean;
     cash_treatment?: 'auto' | 'cash' | 'non_cash';
     is_active?: boolean;
-    plan_id?: number | null;
 };
 
 export const createMonthlyPlanLines = async (lines: MonthlyPlanLinePayload[]) => {
@@ -841,7 +838,6 @@ export const applyPeriodReportAction = async (
 export const copyPeriodFullReplace = async (payload: {
     source_period: string;
     target_period: string;
-    plan_id?: number;
 }): Promise<void> => {
     await api.post('/budget-plans/copy-period', payload);
 };

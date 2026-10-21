@@ -1,10 +1,7 @@
 import asyncio
 import logging
 from datetime import date
-from pathlib import Path
 
-from alembic import command
-from alembic.config import Config
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
@@ -62,13 +59,6 @@ async def domain_error_handler(request: Request, exc: DomainError):
         request,
         HTTPException(status_code=status_for(exc), detail=detail_for(exc)),
     )
-
-
-def run_alembic_migrations() -> None:
-    backend_dir = Path(__file__).resolve().parents[1]
-    alembic_cfg = Config(str(backend_dir / "alembic.ini"))
-    alembic_cfg.set_main_option("script_location", str(backend_dir / "alembic"))
-    command.upgrade(alembic_cfg, "head")
 
 
 def ensure_runtime_schema_guards(db) -> None:
@@ -172,7 +162,7 @@ async def startup_event():
     from .utils.password import hash_password
 
     settings.validate_production_settings()
-    run_alembic_migrations()
+    # Migrations run once, in the container's start command (alembic upgrade head) before uvicorn (§8-9).
 
     db = SessionLocal()
     try:
