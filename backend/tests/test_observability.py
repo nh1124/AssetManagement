@@ -30,6 +30,19 @@ from backend.app.utils.observability import (
 from backend.app.utils.observability.logging_setup import JsonFormatter, log_event
 
 
+# Every engine and sessionmaker given to an install_* function lives until the
+# end of the module. SQLAlchemy keys a listener by id(target) and keeps the key
+# after the target is collected, so a new target that reuses a dead one's
+# address counts as already hooked and gets no listeners: these tests then
+# failed at random. The app installs once, on objects that never die.
+_INSTALLED_TARGETS: list = []
+
+
+def _kept(target):
+    _INSTALLED_TARGETS.append(target)
+    return target
+
+
 def _events(caplog, name: str) -> list[dict]:
     return [
         record.fields for record in caplog.records
@@ -41,7 +54,7 @@ def _events(caplog, name: str) -> list[dict]:
 def audited_db():
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
-    factory = sessionmaker(bind=engine, autoflush=False)
+    factory = _kept(sessionmaker(bind=engine, autoflush=False))
     assert install_db_audit(factory)
     session = factory()
     try:
@@ -383,7 +396,7 @@ def test_a_long_value_is_truncated_rather_than_dropped(audited_db, caplog):
 
 
 def test_installing_twice_does_not_record_each_change_twice(audited_db, caplog):
-    factory = sessionmaker(bind=audited_db.get_bind(), autoflush=False)
+    factory = _kept(sessionmaker(bind=audited_db.get_bind(), autoflush=False))
     assert install_db_audit(factory) and install_db_audit(factory)
     caplog.set_level(logging.INFO, logger="app.audit")
     session = factory()
@@ -402,7 +415,7 @@ def test_the_audit_can_be_switched_off(monkeypatch):
 
 def test_only_slow_statements_are_logged_and_never_their_parameters(monkeypatch, caplog):
     monkeypatch.setenv("LOG_SLOW_SQL_MS", "0")
-    engine = create_engine("sqlite:///:memory:")
+    engine = _kept(create_engine("sqlite:///:memory:"))
     Base.metadata.create_all(engine)
     install_sql_timing(engine)
     caplog.set_level(logging.WARNING, logger="app.sql")
@@ -415,7 +428,7 @@ def test_only_slow_statements_are_logged_and_never_their_parameters(monkeypatch,
     assert all(s["slow"] for s in statements)
     assert "param-value-xyz" not in json.dumps(statements)
 
-    quiet = create_engine("sqlite:///:memory:")
+    quiet = _kept(create_engine("sqlite:///:memory:"))
     monkeypatch.setenv("LOG_SLOW_SQL_MS", "60000")
     install_sql_timing(quiet)
     caplog.clear()
