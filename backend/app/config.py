@@ -27,6 +27,9 @@ class AppConfig(BaseSettings):
 
     # Encryption Settings (for API Keys)
     encryption_key: str = DEV_ENCRYPTION_KEY
+    # Comma-separated keys that may still decrypt stored values but are no
+    # longer used to encrypt. Only set while a key rotation is in progress.
+    encryption_key_previous: str = ""
 
     # CORS Settings
     allowed_origins: str = "http://localhost:5173,http://localhost:15173,http://127.0.0.1:5173,http://127.0.0.1:15173"
@@ -48,6 +51,12 @@ class AppConfig(BaseSettings):
     @property
     def is_development(self) -> bool:
         return not self.is_production
+
+    @property
+    def encryption_keys(self) -> list[str]:
+        """Current key first, then the previous ones."""
+        previous = [key.strip() for key in (self.encryption_key_previous or "").split(",") if key.strip()]
+        return [self.encryption_key, *(key for key in previous if key != self.encryption_key)]
 
     @property
     def cors_allowed_origins(self) -> list[str]:

@@ -2,6 +2,7 @@
 // Asset Management MCP Server - HTTP (OAuth 2.0)
 // ============================================================
 
+import { randomUUID } from "node:crypto";
 import express, { type Request, type Response, type NextFunction } from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { buildMcpServer } from "./server.js";
@@ -18,6 +19,14 @@ import { withMcpRequestContext, type McpRequestContext } from "./api-client.js";
 
 const PORT = parseInt(process.env.PORT ?? "3000");
 const BACKEND_URL = (process.env.BACKEND_URL ?? "http://backend:8000").replace(/\/$/, "");
+const LOG_BODIES = process.env.MCP_LOG_BODIES === "1";
+
+// One JSON object per line, in the shape the backend logs use, so the two
+// streams can be read together by correlation_id.
+function logEvent(event: string, fields: Record<string, unknown>, level: "info" | "error" = "info"): void {
+  const line = JSON.stringify({ ts: new Date().toISOString(), level, component: "mcp", event, ...fields });
+  if (level === "error") console.error(line); else console.info(line);
+}
 
 interface BackendUserContext {
   username: string;
@@ -397,22 +406,34 @@ async function handleMcpPost(req: Request, res: Response): Promise<void> {
     : {};
   const toolName = method === "tools/call" && typeof params.name === "string" ? params.name : undefined;
   const authContext = (req as Request & { mcpAuth?: McpRequestContext }).mcpAuth;
-  console.info("[mcp] req", { method, id: body?.id });
+  // Sent to the backend as X-Request-ID with every call this request makes,
+  // so a tool call and the rows it wrote share one correlation_id.
+  const requestId = `mcp-${randomUUID()}`;
+  const startedAt = Date.now();
+  const who = { correlation_id: requestId, method, tool: toolName, mcp_client_id: authContext?.mcpClientId, username: authContext?.username };
+  logEvent("mcp.request.start", who);
 
-  // Capture all bytes written to the response
+  // Count the bytes written to the response. The bytes themselves are the
+  // user's financial data and are kept out of the log unless MCP_LOG_BODIES=1.
   const chunks: Buffer[] = [];
+  let responseBytes = 0;
   const origWrite = res.write.bind(res) as typeof res.write;
   const origEnd = res.end.bind(res) as typeof res.end;
   (res as unknown as { write: typeof res.write }).write = (chunk: unknown, ...args: unknown[]) => {
     const buf = toBuffer(chunk);
-    if (buf) chunks.push(buf);
+    if (buf) { responseBytes += buf.length; if (LOG_BODIES) chunks.push(buf); }
     return (origWrite as (...a: unknown[]) => boolean)(chunk, ...args);
   };
   (res as unknown as { end: typeof res.end }).end = (chunk?: unknown, ...args: unknown[]) => {
     const buf = toBuffer(chunk);
-    if (buf) chunks.push(buf);
-    const captured = Buffer.concat(chunks).toString("utf8");
-    console.info("[mcp] resp", { status: res.statusCode, body: captured.slice(0, 600) });
+    if (buf) { responseBytes += buf.length; if (LOG_BODIES) chunks.push(buf); }
+    logEvent("mcp.request.end", {
+      ...who,
+      status: res.statusCode,
+      duration_ms: Date.now() - startedAt,
+      response_bytes: responseBytes,
+      ...(LOG_BODIES ? { body: Buffer.concat(chunks).toString("utf8").slice(0, 600) } : {}),
+    });
     return (origEnd as (...a: unknown[]) => Response)(chunk, ...args);
   };
 
@@ -422,15 +443,17 @@ async function handleMcpPost(req: Request, res: Response): Promise<void> {
       sessionIdGenerator: undefined,
       enableJsonResponse: true,
     });
-    // Log what the transport actually sends (before Hono writes it to HTTP)
-    const origSend = transport.send.bind(transport);
-    transport.send = async (message, options) => {
-      console.info("[mcp] transport.send", JSON.stringify(message).slice(0, 400));
-      return origSend(message, options);
-    };
+    if (LOG_BODIES) {
+      // Log what the transport actually sends (before Hono writes it to HTTP)
+      const origSend = transport.send.bind(transport);
+      transport.send = async (message, options) => {
+        console.info("[mcp] transport.send", JSON.stringify(message).slice(0, 400));
+        return origSend(message, options);
+      };
+    }
     await server.connect(transport);
     if (authContext) {
-      await withMcpRequestContext({ ...authContext, toolName }, () => transport.handleRequest(req, res, body));
+      await withMcpRequestContext({ ...authContext, toolName, requestId }, () => transport.handleRequest(req, res, body));
     } else {
       await transport.handleRequest(req, res, body);
     }
@@ -439,6 +462,7 @@ async function handleMcpPost(req: Request, res: Response): Promise<void> {
       server.close();
     });
   } catch (err) {
+    logEvent("mcp.request.error", { ...who, duration_ms: Date.now() - startedAt, error: (err as Error).message }, "error");
     console.error("[mcp] error:", err);
     if (!res.headersSent) res.status(500).json({ error: "internal_server_error" });
   }

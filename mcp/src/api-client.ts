@@ -12,6 +12,9 @@ export interface McpRequestContext {
   username: string;
   backendClientId: number;
   toolName?: string;
+  // One id per MCP request, sent with every backend call it makes, so the
+  // backend logs them under one correlation_id.
+  requestId?: string;
 }
 
 const requestContext = new AsyncLocalStorage<McpRequestContext>();
@@ -66,6 +69,7 @@ function contextHeaders(context: McpRequestContext | undefined): Record<string, 
     "X-MCP-Username": context.username,
     "X-MCP-Backend-Client-Id": String(context.backendClientId),
     ...(context.toolName ? { "X-MCP-Tool-Name": context.toolName } : {}),
+    ...(context.requestId ? { "X-Request-ID": context.requestId } : {}),
   } : {};
 }
 

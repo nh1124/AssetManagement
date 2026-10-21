@@ -106,10 +106,11 @@ function hashToken(value: string): string {
 }
 
 function verifyPKCE(verifier: string, challenge: string, method: string): boolean {
-  if (method === "S256") {
-    return crypto.createHash("sha256").update(verifier).digest("base64url") === challenge;
-  }
-  return verifier === challenge;
+  // S256 only, as the discovery document advertises. With "plain" the
+  // challenge is the verifier, so anyone who saw the authorize request could
+  // redeem the code.
+  if (method !== "S256") return false;
+  return crypto.createHash("sha256").update(verifier).digest("base64url") === challenge;
 }
 
 function isHttpsUrl(s: string): boolean {

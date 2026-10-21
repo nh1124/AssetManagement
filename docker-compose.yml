@@ -1,16 +1,30 @@
+# Container logs are capped here and archived by ops/bin/am-logs-archive.sh.
+# Without the cap the json-file driver grows without bound.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
 services:
   db:
     image: postgres:16-alpine
     container_name: finance-db
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      # Only read when the volume is first created. To change the password of
+      # an existing database, ALTER ROLE first, then set this to match.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: finance_ide
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
-      - "${DB_PORT:-5432}:5432"
+      # Loopback by default: nothing outside this machine needs the database.
+      - "${DB_BIND:-127.0.0.1}:${DB_PORT:-5432}:5432"
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U postgres" ]
       interval: 5s
@@ -22,7 +36,7 @@ services:
       context: ./backend
     container_name: finance-backend
     ports:
-      - "${BACKEND_PORT:-18100}:8000"
+      - "${BACKEND_BIND:-127.0.0.1}:${BACKEND_PORT:-18100}:8000"
     volumes:
       - ./backend/app:/app/app
       - ./backend/alembic:/app/alembic
@@ -32,15 +46,26 @@ services:
       # `docker logs` shows nothing until the container stops.
       - PYTHONUNBUFFERED=1
       - APP_ENV=${APP_ENV:-development}
-      - DATABASE_URL=postgresql+psycopg2://postgres:postgres@db:5432/finance_ide
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-dev_jwt_secret_change_in_production_must_be_32_chars}
+      - DATABASE_URL=postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/finance_ide
+      # No defaults for the three secrets. A default here is a published
+      # secret: this file is in a public repository, and a token signed with
+      # a known key is accepted as any user. Generate them (see .env.example).
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?set JWT_SECRET_KEY in .env (see .env.example)}
       - JWT_EXPIRE_MINUTES=${JWT_EXPIRE_MINUTES:-1440}
-      - ENCRYPTION_KEY=${ENCRYPTION_KEY:-YLM_ViHfrMWM0hUF3XoAMLLSaL4dVTy-JnHamAaIWTo=}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?set ENCRYPTION_KEY in .env (see .env.example)}
+      # Old keys that may still decrypt, during a rotation only.
+      - ENCRYPTION_KEY_PREVIOUS=${ENCRYPTION_KEY_PREVIOUS:-}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:5173,http://localhost:15173,http://127.0.0.1:5173,http://127.0.0.1:15173}
-      - MCP_JWT_SECRET=${MCP_JWT_SECRET:-change-me-to-a-secret-key-at-least-32-chars}
+      - MCP_JWT_SECRET=${MCP_JWT_SECRET:?set MCP_JWT_SECRET in .env (see .env.example)}
       - MCP_TOKEN_AUDIENCE=${MCP_TOKEN_AUDIENCE:-asset-management-backend}
       - MCP_BASE_URL=${MCP_BASE_URL:-http://localhost:13000}
       - MCP_ALLOWED_ISSUERS=${MCP_ALLOWED_ISSUERS:-http://localhost:13000,https://localhost:13000}
+      # Logging (app/utils/observability). json | text.
+      - LOG_FORMAT=${LOG_FORMAT:-json}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_DB_CHANGES=${LOG_DB_CHANGES:-1}
+      - LOG_SLOW_SQL_MS=${LOG_SLOW_SQL_MS:-500}
+      - LOG_SQL=${LOG_SQL:-0}
       # Auto-reload is opt-in: BACKEND_RELOAD=1 docker compose up -d backend
       # Off by default so startup stays deterministic. It works as long as the
       # repository lives on a Linux filesystem. From a Windows bind mount
@@ -55,6 +80,8 @@ services:
       exec uvicorn app.main:app --host 0.0.0.0 --port 8000;
       fi"
     healthcheck:
+      # Liveness on purpose (/health, not /health/ready): restarting this
+      # container does not repair a database outage.
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
       interval: 10s
       timeout: 5s
@@ -64,6 +91,9 @@ services:
       db:
         condition: service_healthy
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
 
   frontend:
     build:
@@ -72,7 +102,10 @@ services:
         - VITE_API_URL=/api
     container_name: finance-frontend
     ports:
-      - "${FRONTEND_PORT:-15173}:80"
+      # The one port meant to be reached from other devices (a phone on the
+      # LAN, the Cloudflare tunnel). Set FRONTEND_BIND=127.0.0.1 if the tunnel
+      # is the only way in.
+      - "${FRONTEND_BIND:-0.0.0.0}:${FRONTEND_PORT:-15173}:80"
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/"]
       interval: 15s
@@ -86,22 +119,28 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
 
   mcp:
     build:
       context: ./mcp
     container_name: finance-mcp
     ports:
-      - "${MCP_PORT:-13000}:3000"
+      - "${MCP_BIND:-127.0.0.1}:${MCP_PORT:-13000}:3000"
     environment:
       - PORT=3000
       - APP_ENV=${MCP_APP_ENV:-development}
       - BASE_URL=${MCP_BASE_URL:-http://localhost:13000}
-      - JWT_SECRET=${MCP_JWT_SECRET:-change-me-to-a-secret-key-at-least-32-chars}
+      - JWT_SECRET=${MCP_JWT_SECRET:?set MCP_JWT_SECRET in .env (see .env.example)}
       - BACKEND_TOKEN_AUDIENCE=${MCP_TOKEN_AUDIENCE:-asset-management-backend}
       - BACKEND_URL=http://backend:8000
       - BACKEND_USERNAME=${BACKEND_USERNAME:-}
       - BACKEND_PASSWORD=${BACKEND_PASSWORD:-}
+      # 1 logs request and response bodies (financial data) for debugging a
+      # client integration. Leave off otherwise.
+      - MCP_LOG_BODIES=${MCP_LOG_BODIES:-0}
     healthcheck:
       test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/health',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
       interval: 15s
@@ -111,6 +150,9 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
 
 volumes:
   postgres_data:

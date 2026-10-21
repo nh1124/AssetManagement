@@ -30,6 +30,9 @@ async def get_current_client(
     client = db.query(models.Client).filter(models.Client.id == client_id).first()
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
+    # A token outlives the decision to deactivate its owner by up to a day.
+    if client.is_active is False:
+        raise HTTPException(status_code=401, detail="Authentication required")
 
     return client
 

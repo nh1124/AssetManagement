@@ -6,8 +6,10 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 from . import models
 from .config import settings
+from .database import get_db
 from .domain.errors import DomainError, detail_for, status_for
 from .routers import (
     accounts,
@@ -39,9 +41,16 @@ from .routers import (
     transactions,
 )
 from .dependencies import get_current_client
+from .utils.observability import (
+    RequestLogMiddleware,
+    install_db_audit,
+    install_sql_timing,
+    setup_logging,
+)
 from .utils.password import verify_password
 
 
+setup_logging()
 logger = logging.getLogger(__name__)
 _automatic_recording_task: asyncio.Task | None = None
 
@@ -164,12 +173,14 @@ async def run_automatic_recording_loop() -> None:
 # Startup Seed Logic
 @app.on_event("startup")
 async def startup_event():
-    from .database import SessionLocal
+    from .database import SessionLocal, engine
     from . import models
     from .utils.password import hash_password
 
     settings.validate_production_settings()
     # Migrations run once, in the container's start command (alembic upgrade head) before uvicorn (§8-9).
+    install_db_audit(SessionLocal)
+    install_sql_timing(engine)
 
     db = SessionLocal()
     try:
@@ -232,6 +243,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Added last so it is outermost: it times the whole request, CORS included.
+app.add_middleware(RequestLogMiddleware)
 
 # Include routers
 app.include_router(analysis.router)
@@ -279,4 +292,18 @@ def root():
 
 @app.get("/health")
 def health_check():
+    """Liveness: the process answers. Deliberately does not touch the database,
+    because restarting this container does not repair a database outage."""
     return {"status": "healthy"}
+
+
+@app.get("/health/ready")
+def readiness_check(db: Session = Depends(get_db)):
+    """Readiness: a request arriving now could be served. Through get_db, the
+    same path a request takes to the database."""
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception:
+        logger.exception("readiness check failed")
+        raise HTTPException(status_code=503, detail="database unavailable")
+    return {"status": "ready"}
