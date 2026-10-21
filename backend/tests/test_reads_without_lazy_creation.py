@@ -129,7 +129,7 @@ def seed_actuals_and_orphan(db):
 
 
 @pytest.mark.parametrize("path", [
-    "/budget-plans", "/budget-plans/summary", "/budget-plans/lines",
+    "/budget-plans/summary", "/budget-plans/lines",
     "/analysis/summary", "/analysis/variance", "/reports/monthly",
 ])
 def test_reads_without_budget_plan_preserve_actuals(database, path):
@@ -140,9 +140,7 @@ def test_reads_without_budget_plan_preserve_actuals(database, path):
     response = request("GET", path)
     assert response.status_code == 200, response.text
     body = response.json()
-    if path == "/budget-plans":
-        assert body == []
-    elif path in ("/budget-plans/summary", "/budget-plans/lines"):
+    if path in ("/budget-plans/summary", "/budget-plans/lines"):
         lines = body["plan_lines"] if path == "/budget-plans/summary" else body
         # WP11 counts the definition without creating a plan or adopting the orphan.
         assert len(lines) == 1
@@ -157,8 +155,10 @@ def test_reads_without_budget_plan_preserve_actuals(database, path):
             "total_expected_inflow": 0, "total_variable_budget": 300, "total_allocation_plan": 0, "total_debt_plan": 0}
         assert body["remaining_balance"] == -300
         assert len(body["cash_flow_projection"]) == len(body["balance_projection"]) == 12
-        assert all(row["ending_cash"] == 900 and row["net_cash"] == 0 for row in body["cash_flow_projection"])
-        assert all(row["total_assets"] == row["net_worth"] == 900 for row in body["balance_projection"])
+        # §8-14: the projections count the definition too -- what is left of it this month, then 300 a month.
+        expected = [900 - 200 - 300 * index for index in range(12)]
+        assert [row["ending_cash"] for row in body["cash_flow_projection"]] == expected
+        assert [row["total_assets"] for row in body["balance_projection"]] == expected
     elif path == "/analysis/summary":
         assert body["monthly_pl"] == body["effective_cash"] == body["logical_balance"] == 900
         assert body["budget_usage_rate"] == 33.3

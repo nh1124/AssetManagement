@@ -169,7 +169,7 @@ export function registerAiChangeRequestTools(server: McpServer): void {
     "ai_change_requests_refresh_preview",
     {
       title: "Refresh AI change request preview",
-      description: "Rebuilds before/after/diff/precondition hash for an existing change request.",
+      description: "Rebuilds before/after/diff/precondition hash against current data. An approved or failed request goes back to pending and must be approved again; applied, rejected and expired requests cannot be rebuilt.",
       inputSchema: z.object({ id: z.number().int().min(1).describe("Change request ID") }).strict(),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },

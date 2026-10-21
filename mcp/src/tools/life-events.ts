@@ -1,5 +1,5 @@
 // ============================================================
-// Goal tools: scenarios, life events and loans, 積立設定, changing the goal, goal-to-plan
+// Goal tools: scenarios, life events and loans, 積立設定, 期間ごとの前提, changing the goal, the goal against the plan
 // ============================================================
 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -41,6 +41,15 @@ const contributionFields = {
   annual_return: z.number().nullable().optional().describe("Contribution only: the account's yield % from start_period until a later record names another; null keeps the previous one"),
   note: z.string().nullable().optional(),
   life_event_id: id.nullable().optional().describe("Withdrawal: an expense event of the same scenario. From the event's month on, withdrawals pay it in instalments (e.g. 老後生活, 100000 a month for 360 months)"),
+};
+
+const periodFields = {
+  start_period: periodSchema.describe("First month the record applies, YYYY-MM"),
+  end_period: periodSchema.nullable().optional().describe("Last month it applies (inclusive), YYYY-MM; null: to the end of the simulation"),
+  annual_return: z.number().nullable().optional()
+    .describe("The scenario's default yield % in these months (for accounts whose 積立設定 names none); null keeps what applies otherwise"),
+  inflation: z.number().nullable().optional().describe("Inflation % in these months; null keeps what applies otherwise"),
+  note: z.string().nullable().optional(),
 };
 
 type Handler<T> = (input: T) => Promise<unknown>;
@@ -119,7 +128,7 @@ export function registerLifeEventTools(server: McpServer): void {
 
   server.registerTool("contribution_plans_create", {
     title: "Add a contribution plan record",
-    description: "積立設定 record (records add up): 積立 into an account, 口座振替 between accounts, or ライフイベントへの取り崩し toward an expense event, once or on a schedule (every N months, N times or until a month). E.g. 証券口座 750000 once in 2028-10 for 結婚; 貯蓄口座 100000 every month from 2051-01, 360 times, for 老後生活. Making the plan from the goal earmarks a withdrawal's account until its first month, draws it down in each month, and writes transfers with their source.",
+    description: "積立設定 record (records add up): 積立 into an account, 口座振替 between accounts, or ライフイベントへの取り崩し toward an expense event, once or on a schedule (every N months, N times or until a month). E.g. 証券口座 750000 once in 2028-10 for 結婚; 貯蓄口座 100000 every month from 2051-01, 360 times, for 老後生活. The plan follows through 計画への反映 (plan_reflection_*): it earmarks a withdrawal's account until its first month, draws it down in each month, and writes transfers with their source.",
     inputSchema: z.object({ scenario_id: id, ...contributionFields }).strict(), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   }, guarded("Created contribution plan record:", async ({ scenario_id, ...record }: { scenario_id: number } & Record<string, unknown>) =>
     api.post<unknown>(`/life-scenarios/${scenario_id}/contribution-plans`, only(record))));
@@ -138,21 +147,30 @@ export function registerLifeEventTools(server: McpServer): void {
   }, guarded("Deleted contribution plan record:", async ({ id: planId }: { id: number }) =>
     api.delete<unknown>(`/life-scenarios/contribution-plans/${planId}`)));
 
+  server.registerTool("assumption_periods_create", {
+    title: "Add an assumption period",
+    description: "期間ごとの前提: from start_period to end_period the scenario's default yield and/or inflation are these values instead of the scenario's own. At least one of annual_return and inflation. Where records overlap the latest start wins; an account's own 積立設定 yield still comes first. The simulation reads a calendar year's values at its first month. 変動率 and 税率 stay common to all scenarios (simulation config).",
+    inputSchema: z.object({ scenario_id: id, ...periodFields }).strict(), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  }, guarded("Created assumption period:", async ({ scenario_id, ...record }: { scenario_id: number } & Record<string, unknown>) =>
+    api.post<unknown>(`/life-scenarios/${scenario_id}/assumption-periods`, only(record))));
+
+  server.registerTool("assumption_periods_update", {
+    title: "Update an assumption period",
+    description: "Changes a 期間ごとの前提 record; fields left out keep their value.",
+    inputSchema: z.object(periodFields).partial().extend({ id: id.describe("Record ID") }).strict(), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, guarded("Updated assumption period:", async ({ id: periodId, ...patch }: { id: number } & Record<string, unknown>) =>
+    api.put<unknown>(`/life-scenarios/assumption-periods/${periodId}`, only(patch))));
+
+  server.registerTool("assumption_periods_delete", {
+    title: "Delete an assumption period",
+    description: "Deletes a 期間ごとの前提 record.",
+    inputSchema: z.object({ id: id.describe("Record ID") }).strict(), annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  }, guarded("Deleted assumption period:", async ({ id: periodId }: { id: number }) =>
+    api.delete<unknown>(`/life-scenarios/assumption-periods/${periodId}`)));
+
   server.registerTool("goal_plan_check", {
     title: "Goal against the plan",
     description: "For a month: per account, the goal's 積立設定 contribution against what the plan allocates.",
     inputSchema: z.object({ period: periodSchema }).strict(), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, guarded("Plan check:", async ({ period }: { period: string }) => api.get<unknown>(`/goal-budget/plan-check?period=${period}`)));
-
-  server.registerTool("goal_plan_preview", {
-    title: "Preview the plan from the goal",
-    description: "What making the plan from the goal would write for a range of months; returns a fingerprint for goal_plan_apply.",
-    inputSchema: z.object({ start_period: periodSchema, end_period: periodSchema }).strict(), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, guarded("Plan preview:", async (input: { start_period: string; end_period: string }) => api.post<unknown>("/goal-budget/preview", input)));
-
-  server.registerTool("goal_plan_apply", {
-    title: "Make the plan from the goal",
-    description: "Writes the previewed plan rows. Pass the fingerprint from goal_plan_preview only after the user agreed to that preview.",
-    inputSchema: z.object({ start_period: periodSchema, end_period: periodSchema, fingerprint: z.string().length(64) }).strict(), annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-  }, guarded("Applied:", async (input: { start_period: string; end_period: string; fingerprint: string }) => api.post<unknown>("/goal-budget/apply", input)));
 }

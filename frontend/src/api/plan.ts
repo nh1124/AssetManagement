@@ -43,7 +43,17 @@ export async function getAccountMonth(period: string, accountId: number): Promis
     return (await api.get<AccountMonth>(`/plan/${period}/accounts/${accountId}`)).data;
 }
 
-export async function addPlanRecord(payload: { period: string; account_id: number; section: PlanRecordSection; amount: number; name?: string }): Promise<AccountMonth> {
+/** 自動扱い: the record becomes an automatic transaction; records_transactions also posts it on its day. */
+export interface PlanAutomatic {
+    frequency: 'Monthly' | 'Yearly';
+    day_of_month: number;
+    start_period: string;
+    end_period: string | null;
+    counter_account_id: number | null;
+    records_transactions: boolean;
+}
+
+export async function addPlanRecord(payload: { period: string; account_id: number; section: PlanRecordSection; amount: number; name?: string; automatic?: PlanAutomatic }): Promise<AccountMonth> {
     return (await api.post<AccountMonth>('/plan/records', payload)).data;
 }
 

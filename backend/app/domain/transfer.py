@@ -8,7 +8,7 @@ import re
 from datetime import date, datetime
 from typing import Any
 
-EXPORT_VERSION = 30
+EXPORT_VERSION = 31
 
 DATA_COLLECTIONS = [
     "accounts",
@@ -21,6 +21,7 @@ DATA_COLLECTIONS = [
     "life_event_links",
     "life_scenarios",
     "scenario_contribution_plans",
+    "scenario_assumption_periods",
     "household_members",
     "life_event_conditions",
     "transactions",
@@ -29,7 +30,6 @@ DATA_COLLECTIONS = [
     "monthly_plan_lines",
     "period_reviews",
     "period_closes",
-    "monthly_actions",
     "capsules",
     "capsule_drawdowns",
     "capsule_funding_sources",
@@ -44,7 +44,8 @@ DATA_COLLECTIONS = [
 # verify, but the rows are never imported.
 RETIRED_COLLECTIONS = {"recurring_transactions": 24, "life_scenario_choices": 22, "quick_templates": None,
                        "life_scenario_account_returns": 26, "milestones": 26, "simulation_scenarios": 26, "goal_baselines": 26,
-                       "goal_event_earmarks": 27, "life_event_fundings": 29}
+                       "goal_event_earmarks": 27, "life_event_fundings": 29,
+                       "monthly_actions": 31}
 
 
 def _retired(version: int | None) -> set[str]:
@@ -265,6 +266,7 @@ def validate_import_payload(
     check_ref("scenario_contribution_plans", "scenario_id", "life_scenarios", required=True)
     check_ref("scenario_contribution_plans", "account_id", "accounts", required=True)
     check_ref("scenario_contribution_plans", "to_account_id", "accounts")
+    check_ref("scenario_assumption_periods", "scenario_id", "life_scenarios", required=True)
     check_ref("capsules", "goal_event_id", "life_events")
     check_ref("life_events", "borrowing_event_id", "life_events")
     check_ref("monthly_plan_lines", "account_id", "accounts")
@@ -325,6 +327,15 @@ def validate_import_payload(
                     and _as_int(event.get("scenario_id")) == _as_int(item.get("scenario_id"))
         if not valid:
             issue("error", "invalid_contribution_plan", "積立設定のレコードが不正または重複しています。", "scenario_contribution_plans", item.get("id"))
+    for item in data.get("scenario_assumption_periods", []):
+        start, end = item.get("start_period"), item.get("end_period")
+        rates = [item.get("annual_return"), item.get("inflation")]
+        valid = isinstance(start, str) and month.fullmatch(start) is not None
+        valid = valid and (end is None or (isinstance(end, str) and month.fullmatch(end) is not None and end >= start))
+        valid = valid and any(rate is not None for rate in rates)
+        valid = valid and all(rate is None or (type(rate) in (int, float) and math.isfinite(rate)) for rate in rates)
+        if not valid:
+            issue("error", "invalid_assumption_period", "期間ごとの前提のレコードが不正です。", "scenario_assumption_periods", item.get("id"))
     pairs = set()
     accounts_by_id = {_as_int(row.get("id")): row for row in data.get("accounts", [])}
     for item in data.get("life_scenario_account_returns", []):
@@ -590,38 +601,6 @@ def assert_imported_journal_invariant(
         raise ValueError(
             f"Transaction {transaction_id} journal totals do not satisfy debit=credit=amount"
         )
-
-
-def remap_nested_ids(value: Any, key_maps: dict[str, dict[int, int]]) -> Any:
-    if isinstance(value, list):
-        return [remap_nested_ids(item, key_maps) for item in value]
-    if not isinstance(value, dict):
-        return value
-
-    mapped: dict[str, Any] = {}
-    for key, item_value in value.items():
-        id_map = key_maps.get(key)
-        old_id = _as_int(item_value)
-        if id_map is not None and old_id is not None:
-            mapped[key] = id_map.get(old_id, item_value)
-        else:
-            mapped[key] = remap_nested_ids(item_value, key_maps)
-    return mapped
-
-
-def remap_action_target_id(item: dict[str, Any], key_maps: dict[str, dict[int, int]]) -> int | None:
-    target_id = _as_int(item.get("target_id"))
-    if target_id is None:
-        return None
-    kind = item.get("kind")
-    target_key = {
-        "set_budget": "account_id",
-        "stop_auto_transaction": "registry_entry_id",
-        "change_capsule_contribution": "capsule_id",
-    }.get(kind)
-    if not target_key:
-        return target_id
-    return key_maps.get(target_key, {}).get(target_id, target_id)
 
 
 def migrate_account_fields(data: dict, base_currency: str) -> dict:

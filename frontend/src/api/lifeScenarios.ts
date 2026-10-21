@@ -39,6 +39,20 @@ export interface ContributionPlan {
 
 export type ContributionPlanInput = Partial<Omit<ContributionPlan, 'id' | 'scenario_id' | 'account_name' | 'to_account_name' | 'life_event_name'>>;
 
+/** 期間ごとの前提: the scenario's default yield and inflation from start_period to end_period (inclusive; open when null).
+ * A null rate keeps what applies without the record. */
+export interface AssumptionPeriod {
+    id: number;
+    scenario_id: number;
+    start_period: string;
+    end_period: string | null;
+    annual_return: number | null;
+    inflation: number | null;
+    note: string | null;
+}
+
+export type AssumptionPeriodInput = Partial<Omit<AssumptionPeriod, 'id' | 'scenario_id'>>;
+
 export interface LifeScenario {
     id: number;
     client_id: number;
@@ -51,6 +65,7 @@ export interface LifeScenario {
     created_at: string | null;
     updated_at: string | null;
     contribution_plans: ContributionPlan[];
+    assumption_periods: AssumptionPeriod[];
     events: ScenarioEvent[];
 }
 
@@ -155,4 +170,36 @@ export async function updateContributionPlan(id: number, input: ContributionPlan
 
 export async function deleteContributionPlan(id: number): Promise<void> {
     await api.delete(`/life-scenarios/contribution-plans/${id}`);
+}
+
+/** The client's simulation settings common to all scenarios; only volatility and tax_rate are used today. */
+export interface SimulationConfig {
+    id: number;
+    horizon_years: number;
+    annual_return: number;
+    tax_rate: number;
+    is_nisa: boolean;
+    volatility: number;
+    inflation_rate: number;
+}
+
+export async function getSimulationConfig(): Promise<SimulationConfig> {
+    return (await api.get<SimulationConfig>('/simulation/config')).data;
+}
+
+/** Saves the whole config: the backend replaces every field. */
+export async function saveSimulationConfig(config: Omit<SimulationConfig, 'id'>): Promise<SimulationConfig> {
+    return (await api.post<SimulationConfig>('/simulation/config', config)).data;
+}
+
+export async function createAssumptionPeriod(scenarioId: number, input: AssumptionPeriodInput): Promise<AssumptionPeriod> {
+    return (await api.post<AssumptionPeriod>(`/life-scenarios/${scenarioId}/assumption-periods`, input)).data;
+}
+
+export async function updateAssumptionPeriod(id: number, input: AssumptionPeriodInput): Promise<AssumptionPeriod> {
+    return (await api.put<AssumptionPeriod>(`/life-scenarios/assumption-periods/${id}`, input)).data;
+}
+
+export async function deleteAssumptionPeriod(id: number): Promise<void> {
+    await api.delete(`/life-scenarios/assumption-periods/${id}`);
 }

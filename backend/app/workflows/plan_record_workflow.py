@@ -4,15 +4,19 @@ Each account kind has its sections -- an asset account 予算 (allocations into 
 取り崩し, an expense or income subject 予算, a liability 返済 and 借入. A section lists
 every record behind its budget with where it comes from: the goal, an automatic
 transaction, a card statement estimate, or the user. Only the user's records are
-written here, one per section; the others change where they come from.
+written here -- several per section, one per name (WP27) -- and a record marked 自動扱い
+becomes an automatic transaction (posting on its day or only budgeting); the others change
+where they come from.
 """
 from __future__ import annotations
+
+from datetime import date, timedelta
 
 from sqlalchemy.orm import Session
 
 from .. import schemas
 from ..domain.errors import Conflict, NotFound, Refused
-from ..services import automatic_recording_service, ledger_service
+from ..services import automatic_recording_service, ledger_service, registry_service
 from ..services.budget_plan_service import month_plan_lines
 from ..services.budget_plan_store import create_plan_lines, delete_plan_line, get_plan_line, resolve_budget_plan_id, update_plan_lines
 from ..services.cache_service import invalidate_client
@@ -91,7 +95,7 @@ def account_view(db: Session, client_id: int, period: str, account_id: int) -> d
             "key": key, "label": dict(known).get(key, TYPE_LABELS.get(key, key)), "mismatch": key not in dict(known),
             "total": round(sum(record["amount"] for record in records), 2), "actual": round(_section_actual(rows), 2) if rows else 0.0,
             "records": records,
-            "can_add": key in dict(known) and not any(r["origin"] == "manual" and not r["source_account_id"] for r in records),
+            "can_add": key in dict(known),
         })
     scheduled = [item for item in automatic_recording_service.scheduled_in_period(db, client_id, period)["items"]
                  if account.id in (item.get("account_id"), item.get("counter_account_id"))]
@@ -99,10 +103,48 @@ def account_view(db: Session, client_id: int, period: str, account_id: int) -> d
             "currency": money_client_currency(db, client_id), "sections": sections, "earmarks": earmarks, "scheduled": scheduled}
 
 
+# 自動扱い: the automatic transaction a record becomes, by section -- (kind, the account is the destination).
+AUTOMATIC_KINDS = {"expense": ("expense", True), "income": ("income", False), "allocation": ("transfer", True), "debt_payment": ("debt", True)}
+
+
+def _automatic_entry(db: Session, client_id: int, account, payload: schemas.PlanRecordCreate) -> None:
+    automatic = payload.automatic
+    if payload.section not in AUTOMATIC_KINDS:
+        raise Refused("この区分は自動扱いにできません。", status_code=422)
+    if automatic.counter_account_id is None:
+        raise Refused("自動扱いには相手の口座（支払元・入金先・振替元）を選んでください。", status_code=422)
+    if automatic.end_period is not None and automatic.end_period < automatic.start_period:
+        raise Refused("終了月は開始月以降にしてください。", status_code=422)
+    kind, inbound = AUTOMATIC_KINDS[payload.section]
+    counter = automatic.counter_account_id
+    year, month = (int(part) for part in automatic.start_period.split("-"))
+    end = None
+    if automatic.end_period:
+        end_year, end_month = (int(part) for part in automatic.end_period.split("-"))
+        end = date(end_year + end_month // 12, end_month % 12 + 1, 1) - timedelta(days=1)
+    registry_service.create_entry(db, client_id, {
+        "name": (payload.name or "").strip() or account.name, "kind": kind, "amount": payload.amount,
+        "source_account_id": counter if inbound else account.id, "destination_account_id": account.id if inbound else counter,
+        "budget_account_id": account.id, "repeat_mode": "indefinite", "frequency": automatic.frequency,
+        "day_of_month": automatic.day_of_month, "month_of_year": month if automatic.frequency == "Yearly" else None,
+        "start_date": date(year, month, 1), "end_date": end, "budget_active": True, "is_active": True,
+        "records_transactions": automatic.records_transactions,
+    })
+
+
 def add_record(db: Session, client_id: int, payload: schemas.PlanRecordCreate) -> dict:
     account = _account(db, client_id, payload.account_id)
     if payload.section not in dict(SECTIONS.get(account.account_type, [])):
         raise Refused("この口座・科目には追加できない種類です。", status_code=422)
+    if payload.automatic is not None:
+        try:
+            _automatic_entry(db, client_id, account, payload)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        invalidate_client(client_id)
+        return account_view(db, client_id, payload.period, account.id)
     try:
         create_plan_lines(db, client_id, [{
             "plan_id": resolve_budget_plan_id(db, client_id, commit=False), "target_period": payload.period,
@@ -113,7 +155,7 @@ def add_record(db: Session, client_id: int, payload: schemas.PlanRecordCreate) -
         db.commit()
     except ValueError as error:
         db.rollback()
-        raise Conflict("この種類にはすでにユーザーのレコードがあります。そのレコードを編集してください。") from error
+        raise Conflict("同じ名前のレコードがあります。名前（理由）を変えるか、そのレコードを編集してください。") from error
     except Exception:
         db.rollback()
         raise

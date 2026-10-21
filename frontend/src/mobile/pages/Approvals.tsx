@@ -1,20 +1,22 @@
 import { useCallback, useRef, useState } from 'react';
 import { Bot } from 'lucide-react';
-import { applyAiChangeRequest, approveAiChangeRequest, getAiChangeRequests, getMfaStatus, reauth, rejectAiChangeRequest } from '../../api';
+import { applyAiChangeRequest, approveAiChangeRequest, getAiChangeRequests, getMfaStatus, reauth, refreshAiChangeRequestPreview, rejectAiChangeRequest } from '../../api';
 import { useClient } from '../../context/ClientContext';
 import type { AiChangeRequest } from '../../types';
 import { formatDateTime, useTimezone } from '../../studio/datetime';
 import { diffRows } from '../../studio/pages/automation/diffValues';
-import { RISK_LABELS, STATUS_LABELS } from '../../studio/pages/automation/labels';
+import { failureReason, REBUILD_HELP, RISK_LABELS, STATUS_LABELS } from '../../studio/pages/automation/labels';
 import { assetErrorMessage, useResource } from '../../studio/useResource';
 import { Screen } from '../components/Layout';
 import { useSnack } from '../components/snack';
 import { Badge, Empty, ErrorNote, fieldClass, primaryButton, secondaryButton, Segmented, Skeleton } from '../components/ui';
 
-type Status = 'pending' | 'approved' | 'applied' | 'rejected';
-type Action = 'approve' | 'apply' | 'reject';
-const ACTION_LABELS: Record<Action, string> = { approve: '承認', apply: '適用', reject: '却下' };
-const BUSY_LABELS: Record<Action, string> = { approve: '承認中…', apply: '適用中…', reject: '却下中…' };
+type Status = 'pending' | 'approved' | 'failed' | 'applied' | 'rejected';
+type Action = 'approve' | 'apply' | 'reject' | 'rebuild';
+const ACTION_LABELS: Record<Action, string> = { approve: '承認', apply: '適用', reject: '却下', rebuild: '作り直す' };
+const BUSY_LABELS: Record<Action, string> = { approve: '承認中…', apply: '適用中…', reject: '却下中…', rebuild: '作り直し中…' };
+const DONE_LABELS: Record<Action, string> = { approve: '承認しました', apply: '適用しました', reject: '却下しました', rebuild: '作り直しました（承認待ちへ）' };
+const REJECTABLE = ['pending', 'approved', 'failed'];
 
 /** The step-up factor the backend accepts: an authenticator code or a recovery code. */
 const stepUpFactor = (value: string) => /^\d{6}$/.test(value) ? { code: value } : { recovery_code: value };
@@ -48,7 +50,8 @@ function RequestList({ status, currency, mfaEnabled }: { status: Status; currenc
         const factor = (factors[request.id] ?? '').trim();
         if (action === 'approve' && (request.status !== 'pending' || (needsMfa && (!factor || mfaEnabled !== true)))) return;
         if (action === 'apply' && request.status !== 'approved') return;
-        if (action === 'reject' && request.status !== 'pending' && request.status !== 'approved') return;
+        if (action === 'reject' && !REJECTABLE.includes(request.status)) return;
+        if (action === 'rebuild' && request.status !== 'failed') return;
         inFlight.current = true;
         setBusy({ id: request.id, action });
         try {
@@ -62,13 +65,14 @@ function RequestList({ status, currency, mfaEnabled }: { status: Status; currenc
                 }
             }
             const updated = action === 'approve' ? await approveAiChangeRequest(request.id, token ? { step_up_token: token } : undefined)
-                : action === 'apply' ? await applyAiChangeRequest(request.id) : await rejectAiChangeRequest(request.id);
+                : action === 'apply' ? await applyAiChangeRequest(request.id)
+                : action === 'rebuild' ? await refreshAiChangeRequestPreview(request.id) : await rejectAiChangeRequest(request.id);
             // A decided request leaves this list at once, even if refreshing it fails.
             setData((previous) => previous?.map((row) => row.id === updated.id ? updated : row).filter((row) => row.status === status) ?? null);
-            snack(`#${request.id} を${ACTION_LABELS[action]}しました`);
+            snack(`#${request.id} を${DONE_LABELS[action]}`);
             reload();
         } catch (failure) {
-            snack(`#${request.id} を${ACTION_LABELS[action]}できませんでした。${assetErrorMessage(failure)}`, 'error');
+            snack(`#${request.id} の${ACTION_LABELS[action]}ができませんでした。${assetErrorMessage(failure)}`, 'error');
         } finally {
             // A one-time code is spent or no longer needed either way; never keep a secret in state.
             setFactors((previous) => ({ ...previous, [request.id]: '' }));
@@ -93,16 +97,21 @@ function RequestList({ status, currency, mfaEnabled }: { status: Status; currenc
             </div>
             {Object.keys(request.target_ref).length > 0 && <p className="break-all text-xs text-[var(--studio-text-muted)]">対象：{Object.entries(request.target_ref)
                 .map(([key, value]) => `${key} ${value == null ? '—' : typeof value === 'object' ? JSON.stringify(value) : String(value)}`).join('・')}</p>}
+            {request.status === 'failed' && <p className="text-xs text-[var(--studio-danger)]">失敗の理由：{failureReason(request.result ?? {})}</p>}
             <Changes request={request} currency={currency} />
+            {request.status === 'failed' && <p className="text-xs text-[var(--studio-text-muted)]">{REBUILD_HELP}</p>}
             {mfaMissing && <p className="text-xs text-[var(--studio-warning)]">この承認には MFA が必要です。PC版の設定で MFA を有効にしてください。</p>}
             {stepUp && <label className="block space-y-1 text-xs"><span className="text-[var(--studio-warning)]">認証コード（認証アプリの 6 桁、またはリカバリーコード）</span>
                 <input inputMode="numeric" autoComplete="one-time-code" value={factors[request.id] ?? ''} disabled={disabled} aria-label="認証コード"
                     onChange={(event) => setFactors((previous) => ({ ...previous, [request.id]: event.target.value }))} className={fieldClass} /></label>}
-            <div className="grid grid-cols-3 gap-2">
+            {request.status === 'failed' ? <div className="grid grid-cols-2 gap-2">
+                <button type="button" disabled={disabled} onClick={() => void run(request, 'rebuild')} className={primaryButton}>{label('rebuild')}</button>
+                <button type="button" disabled={disabled} onClick={() => void run(request, 'reject')} className={secondaryButton}>{label('reject')}</button>
+            </div> : <div className="grid grid-cols-3 gap-2">
                 <button type="button" disabled={disabled || request.status !== 'pending' || mfaMissing || (stepUp && !(factors[request.id] ?? '').trim())} onClick={() => void run(request, 'approve')} className={primaryButton}>{label('approve')}</button>
                 <button type="button" disabled={disabled || request.status !== 'approved'} onClick={() => void run(request, 'apply')} className={secondaryButton}>{label('apply')}</button>
-                <button type="button" disabled={disabled || (request.status !== 'pending' && request.status !== 'approved')} onClick={() => void run(request, 'reject')} className={secondaryButton}>{label('reject')}</button>
-            </div>
+                <button type="button" disabled={disabled || !REJECTABLE.includes(request.status)} onClick={() => void run(request, 'reject')} className={secondaryButton}>{label('reject')}</button>
+            </div>}
         </article>;
     })}</>;
 }
@@ -114,7 +123,7 @@ export default function Approvals() {
     const [status, setStatus] = useState<Status>('pending');
     const mfa = useResource(getMfaStatus);
     return <Screen title="AI からの変更" back={-1}>
-        <Segmented label="状態" value={status} onChange={setStatus} options={(['pending', 'approved', 'applied', 'rejected'] as Status[]).map((value) => ({ value, label: STATUS_LABELS[value] }))} />
+        <Segmented label="状態" value={status} onChange={setStatus} options={(['pending', 'approved', 'failed', 'applied', 'rejected'] as Status[]).map((value) => ({ value, label: STATUS_LABELS[value] }))} />
         {mfa.error && <ErrorNote message="MFA の設定を取得できませんでした。MFA が必要な承認は再読み込みの後で行えます。" onRetry={mfa.reload} />}
         <RequestList key={`${clientId}:${status}`} status={status} currency={currency} mfaEnabled={mfa.data?.enabled ?? null} />
     </Screen>;

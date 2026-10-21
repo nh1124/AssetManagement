@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import date
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from .. import models
@@ -34,6 +36,7 @@ from .budget_lines import earmark_counted_shares
 from .budget_plan_service import month_plan_lines
 from .budget_plan_store import active_lines_for_periods
 from .capsule_service import claimed_value_minor, goal_capsules
+from .client_settings_service import reflection_settings
 from .contribution_plan_service import (
     contributed_minor, event_withdrawals, moved_minor, of_kind, occurrence_indexes, period_index, total_minor, withdrawals,
 )
@@ -145,7 +148,97 @@ def _stored_key(line: models.MonthlyPlanLine) -> tuple[str, str, int | None]:
     return "account", "", line.account_id
 
 
-def plan(db: Session, client_id: int, start: str, end: str, plan_id: int | None) -> dict:
+DEFAULT_OPTIONS = {"base": "remaining", "held": "even", "catch_up": "even", "since": None}
+
+
+def _spread(total: int, months: int) -> list[int]:
+    """total over `months` months, the remainder in the later months (as the plan always split it)."""
+    rows, left = [], total
+    for index in range(months):
+        part = left // (months - index)
+        rows.append(part)
+        left -= part
+    return rows
+
+
+def _take_off(rows: list[int], amount: int, held: str) -> list[int]:
+    """rows less `amount`: from the nearest months first (recent) or the same each month (even), never below 0."""
+    if amount <= 0 or not rows:
+        return rows
+    if held == "recent":
+        result = []
+        for row in rows:
+            taken = min(row, amount)
+            amount -= taken
+            result.append(row - taken)
+        return result
+    return [max(0, row - part) for row, part in zip(rows, _spread(amount, len(rows)))]
+
+
+def _add_on(rows: list[int], amount: int, catch_up: str) -> list[int]:
+    """rows plus a shortfall: on the first month (recent), the same on every month (even), or not at all (none)."""
+    if amount <= 0 or catch_up == "none" or not rows:
+        return rows
+    if catch_up == "recent":
+        return [rows[0] + amount, *rows[1:]]
+    return [row + part for row, part in zip(rows, _spread(amount, len(rows)))]
+
+
+def earmark_rows(target: int, held: int, first: int, current: int, started: int, options: dict) -> list[int]:
+    """One earmark part's rows from `current` up to the month before `first`.
+
+    remaining (残り期間に合わせる): the target over the months left, less what the earmark holds (evenly, or
+    from the nearest months). goal_setting (積立設定から決まる額): the target over the months from the earmark's
+    start, fixed; what it holds beyond that schedule comes off the same two ways, and a shortfall is caught up
+    as catch_up says. In the withdrawal month itself the rest is planned at once.
+    """
+    left = first - current
+    if left <= 0:
+        return [max(0, target - held)] if left == 0 else []
+    if options["base"] == "goal_setting":
+        whole = max(left, first - started)
+        schedule = _spread(target, whole)
+        elapsed = whole - left
+        rows, expected = schedule[elapsed:], sum(schedule[:elapsed])
+        if held >= expected:
+            return _take_off(rows, held - expected, options["held"])
+        return _add_on(rows, expected - held, options["catch_up"])
+    return _take_off(_spread(target, left), held, options["held"])
+
+
+def account_movement_minor(db: Session, client_id: int, account_id: int, period: str) -> int:
+    """What came into an account in a month, net of what left it, in the client's currency (journal legs)."""
+    first, last = _index(period), _index(period) + 1
+    start, stop = date(first // 12, first % 12 + 1, 1), date(last // 12, last % 12 + 1, 1)
+    currency = money_client_currency(db, client_id)
+    value = db.query(func.coalesce(func.sum(models.JournalEntry.debit_minor - models.JournalEntry.credit_minor), 0)).join(
+        models.Transaction, models.Transaction.id == models.JournalEntry.transaction_id,
+    ).filter(
+        models.Transaction.client_id == client_id, models.JournalEntry.account_id == account_id,
+        models.Transaction.date >= start, models.Transaction.date < stop, models.Transaction.currency == currency,
+    ).scalar()
+    return int(value or 0)
+
+
+def contribution_shortfalls(db: Session, client_id: int, plans, account_ids, since: str | None, current: str) -> dict[int, int]:
+    """{account_id: how far the account fell behind its 積立設定} from `since` to the month before `current`:
+    what the records bring in (積立 + transfers in − withdrawals) less what actually came in, when positive."""
+    if not since or since >= current:
+        return {}
+    months = [_period(index) for index in range(_index(since), _index(current))]
+    found = {}
+    for account_id in account_ids:
+        expected = sum(expected_minor(plans, account_id, month) for month in months)
+        actual = sum(account_movement_minor(db, client_id, account_id, month) for month in months)
+        if expected > actual:
+            found[account_id] = expected - actual
+    return found
+
+
+def plan(db: Session, client_id: int, start: str, end: str, plan_id: int | None, options: dict | None = None) -> dict:
+    """The rows the goal asks for in [start, end]. options: 基準 base (remaining / goal_setting), 確保済みの引き方 held
+    (even / recent), 遅れの取り返し catch_up (even / recent / none) and since, the first month a 積立 shortfall counts."""
+    options = {**DEFAULT_OPTIONS, **(options or {})}
     goal = _goal(db, client_id)
     periods = _periods(start, end)
     currency = money_client_currency(db, client_id)
@@ -161,7 +254,17 @@ def plan(db: Session, client_id: int, start: str, end: str, plan_id: int | None)
               for event in events for account_id in schedule[event.id]}
     taken_out = withdrawals(plans)
     stored = [line for line in active_lines_for_periods(db, client_id, plan_id, periods) if line.source_kind == GOAL_SOURCE]
-    planned: dict[tuple[int, int], int] = {}
+    opening = _index(periods[0])
+    # Each earmark part's rows from this month to the month before its first withdrawal, made once (R8, WP27).
+    earmark_plan: dict[tuple[int, int], list[int]] = {}
+    for event in events:
+        capsule = existing.get(event.id)
+        started = (capsule.created_at.year * 12 + capsule.created_at.month - 1) if capsule is not None and capsule.created_at else opening
+        for account_id, (target, first) in schedule[event.id].items():
+            earmark_plan[(event.id, account_id)] = earmark_rows(target, claims[(event.id, account_id)], _index(first), opening, started, options)
+    contributors = sorted({record.account_id for record in of_kind(plans, "contribution")})
+    caught_up = {account_id: _add_on([0] * len(periods), shortfall, options["catch_up"])
+                 for account_id, shortfall in contribution_shortfalls(db, client_id, plans, contributors, options["since"], periods[0]).items()}
     changes, months = [], []
     warned: dict[str, list[str]] = {}
     for period in periods:
@@ -170,14 +273,12 @@ def plan(db: Session, client_id: int, start: str, end: str, plan_id: int | None)
         taken: dict[int, int] = {}
         for event in events:
             capsule = existing.get(event.id)
-            for account_id, (target, first) in schedule[event.id].items():
-                left = _index(first) - _index(period)
-                if left < 0:
+            for account_id in schedule[event.id]:
+                rows = earmark_plan[(event.id, account_id)]
+                offset = _index(period) - opening
+                if offset >= len(rows):
                     continue
-                part = (event.id, account_id)
-                remaining = max(0, target - claims[part] - planned.get(part, 0))
-                monthly = remaining // max(1, left)
-                planned[part] = planned.get(part, 0) + monthly
+                monthly = rows[offset]
                 key = ("capsule", str(capsule.id) if capsule is not None else f"event:{event.id}", account_id)
                 wanted[key] = monthly
                 made_for[key] = event
@@ -193,8 +294,9 @@ def plan(db: Session, client_id: int, start: str, end: str, plan_id: int | None)
                 key = ("transfer", str(record.account_id), record.to_account_id)
                 wanted[key] = wanted.get(key, 0) + record.amount_minor
         transfers, held = _other_allocations(db, client_id, period, plan_id, tracked, currency)
-        for account_id in sorted({plan.account_id for plan in of_kind(plans, "contribution")}):
+        for account_id in contributors:
             contribution = contributed_minor(plans, account_id, period)
+            extra = caught_up.get(account_id, [0] * len(periods))[_index(period) - opening]
             contribution_total += contribution
             name, monthly = names.get(account_id, account_id), _amount_text(contribution, currency)
             moved = transfers.get(account_id, 0)
@@ -203,8 +305,9 @@ def plan(db: Session, client_id: int, start: str, end: str, plan_id: int | None)
             set_aside = taken.get(account_id, 0) + held.get(account_id, 0)
             if set_aside > contribution:
                 warned.setdefault(f"「{name}」は取り置き{_amount_text(set_aside, currency)}が積立設定の月額{monthly}を超えています（超える分は口座の残高から確保します）。", []).append(period)
-            if contribution:
-                wanted[("account", "", account_id)] = max(0, contribution - moved)
+            if contribution or extra:
+                # A shortfall of earlier months comes on top, as the settings say (WP27).
+                wanted[("account", "", account_id)] = max(0, contribution - moved) + extra
         rows = {_stored_key(line): line for line in stored if line.target_period == period}
         for key in sorted(set(wanted) | set(rows), key=lambda item: (item[0], item[1], item[2] or 0)):
             kind, target, account_id = key
@@ -229,7 +332,7 @@ def plan(db: Session, client_id: int, start: str, end: str, plan_id: int | None)
             })
         months.append({"period": period, "contribution": Money(contribution_total, currency).to_float(),
                        "earmarks": Money(sum(minor for key, minor in wanted.items() if key[0] == "capsule"), currency).to_float()})
-    basis = {"scenario_id": goal.id, "periods": periods,
+    basis = {"scenario_id": goal.id, "periods": periods, "options": {key: options[key] for key in ("base", "held", "catch_up")},
              "changes": [{key: change[key] for key in ("period", "kind", "account_id", "source_account_id", "capsule_id", "event_id", "line_id",
                                                        "current_minor", "new_minor", "retire")}
                          for change in changes]}
@@ -284,17 +387,20 @@ def plan_check(db: Session, client_id: int, period: str) -> dict:
 
 
 def reflection_notifications(db: Session, client_id: int, period: str) -> list[dict]:
-    """One reminder while the goal sets money aside and no reflection covers this month."""
+    """One reminder while the goal sets money aside and no reflection covers this month (自動反映 off only)."""
     goal = get_goal(db, client_id)
     if goal is None or goal_budget_record.covering(db, client_id, period) is not None:
+        return []
+    client = db.query(models.Client).filter_by(id=client_id).first()
+    if client is not None and reflection_settings(client)["enabled"]:
         return []
     plans = db.query(models.ScenarioContributionPlan).filter_by(scenario_id=goal.id).all()
     if not (moved_minor(plans, "contribution", period) or moved_minor(plans, "transfer", period)):
         return []
     return [{
         "dedupe_key": f"{REFLECTION_NOTIFICATION}:{goal.id}:{period}",
-        "title": "ゴールから計画を作る時期です",
-        "body": f"{period} の計画にゴール「{goal.name}」の積立設定がまだ反映されていません。",
+        "title": "計画への反映がまだです",
+        "body": f"{period} の計画にゴール「{goal.name}」の積立設定がまだ反映されていません。計画の ⚙ から「今すぐ反映」するか、自動反映をオンにしてください。",
         "payload": {"period": period, "scenario_id": goal.id},
         "link": "/plan",
     }]

@@ -27,6 +27,8 @@ The result says how likely each event is to happen and, for an expense, to be
 affordable (through its last instalment within the simulated years), which branches most paths take, and the net
 worth and account bands. Amounts are in today's money: yields and the residual are
 deflated by inflation; contributions, transfers, loans and repayments are fixed in real terms.
+期間ごとの前提 (§8-11) set the default yield and the inflation of a row by its first month;
+an account's own 積立設定 yield still comes first.
 """
 from __future__ import annotations
 
@@ -39,7 +41,7 @@ from sqlalchemy.orm import Session
 from .. import models
 from ..domain.money import Money
 from .contribution_plan_service import (
-    OPEN_MONTHS, contributed_minor, index_period, monthly_total_minor, occurrence_indexes, of_kind, rate, used_account_ids,
+    OPEN_MONTHS, assumption, contributed_minor, index_period, monthly_total_minor, occurrence_indexes, of_kind, rate, used_account_ids,
 )
 from .fx_service import get_client_currency
 from .ledger_valuation import calculate_account_balances
@@ -123,8 +125,8 @@ def simulate(db: Session, client_id: int, scenario: models.LifeScenario) -> dict
     config = db.query(models.SimulationConfig).filter_by(client_id=client_id).first()
     volatility = (config.volatility if config and config.volatility is not None else 15.0) / 100.0
     tax = (config.tax_rate if config and config.tax_rate is not None else 20.0) / 100.0
-    inflation = scenario.inflation / 100.0
     plans = db.query(models.ScenarioContributionPlan).filter_by(scenario_id=scenario.id).all()
+    periods = db.query(models.ScenarioAssumptionPeriod).filter_by(scenario_id=scenario.id).all()
     events = walk(db, client_id, scenario.id)
     accounts = used_accounts(db, client_id, plans)
     opening, currency = _opening(db, client_id, accounts)
@@ -278,13 +280,16 @@ def simulate(db: Session, client_id: int, scenario: models.LifeScenario) -> dict
         """One calendar row: this row's contributions (with a year's growth after the first row), transfers, events."""
         nonlocal residual
         first, last = max(current_month, (today.year + index) * 12), (today.year + index) * 12 + 11
+        opening_period = index_period(first)
+        default_rate = assumption(periods, opening_period, "annual_return", scenario.annual_return)
+        inflation = assumption(periods, opening_period, "inflation", scenario.inflation) / 100.0
         for account in accounts:
             contribution = Money(sum(contributed_minor(plans, account.id, index_period(month)) for month in range(first, last + 1)), currency).to_float()
             if shock is None:
                 # The rest of this year: no growth counted yet.
                 balances[account.id] = balances[account.id] + contribution
                 continue
-            yearly = rate(plans, account.id, index_period(first), scenario.annual_return)
+            yearly = rate(plans, account.id, opening_period, default_rate)
             real = ((yearly * (1 - tax) if yearly > 0 else yearly) / 100.0) - inflation
             growth = real + (shock if yearly > CASH_LIKE_RETURN else 0.0)
             # Contributions arrive through the year: on average they earn half a year.

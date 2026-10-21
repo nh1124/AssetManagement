@@ -98,8 +98,9 @@ def line_identity_key(line: models.MonthlyPlanLine | dict) -> tuple:
     getter = line.get if isinstance(line, dict) else lambda key, default=None: getattr(line, key, default)
     account_id = getter("account_id")
     target_id = getter("target_id")
-    name = "" if account_id or target_id else (getter("name") or "").strip().lower()
     source_kind = _line_source_kind(line)
+    # The user's records are told apart by name (one per reason, WP27); other rows by what they are for.
+    name = (getter("name") or "").strip().lower() if source_kind == "manual" or not (account_id or target_id) else ""
     return (
         getter("plan_id") or 0,
         getter("target_period"),

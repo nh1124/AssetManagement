@@ -1,6 +1,9 @@
 """Own each scenario's 積立設定 (WP23): contributions into an account (積立), transfers between
 accounts (口座振替) and withdrawals toward a life event (ライフイベントへの取り崩し), each once or
-on a schedule (every month, every year, every N months; N times or until a month)."""
+on a schedule (every month, every year, every N months; N times or until a month).
+
+Also the scenario's 期間ごとの前提 (§8-11): records that set the default yield and the
+inflation for some months, over the scenario's own 前提."""
 from __future__ import annotations
 
 import math
@@ -206,6 +209,108 @@ def copy_plans(db: Session, source_id: int, target_id: int, event_map: dict[int,
             life_event_id=event_map.get(plan.life_event_id) if plan.life_event_id is not None else None,
         ))
     db.flush()
+
+
+# 期間ごとの前提 (§8-11).
+
+def list_periods(db: Session, client_id: int, scenario_id: int) -> list[models.ScenarioAssumptionPeriod]:
+    get_scenario(db, client_id, scenario_id)
+    return db.query(models.ScenarioAssumptionPeriod).filter_by(scenario_id=scenario_id).order_by(
+        models.ScenarioAssumptionPeriod.start_period, models.ScenarioAssumptionPeriod.id,
+    ).all()
+
+
+def serialize_period(row: models.ScenarioAssumptionPeriod) -> dict:
+    return {"id": row.id, "scenario_id": row.scenario_id, "start_period": row.start_period, "end_period": row.end_period,
+            "annual_return": row.annual_return, "inflation": row.inflation, "note": row.note}
+
+
+def _get_period(db: Session, client_id: int, period_id: int) -> models.ScenarioAssumptionPeriod:
+    row = db.query(models.ScenarioAssumptionPeriod).join(models.LifeScenario).filter(
+        models.ScenarioAssumptionPeriod.id == period_id, models.LifeScenario.client_id == client_id,
+    ).first()
+    if row is None:
+        raise NotFound("期間ごとの前提のレコードが見つかりません。")
+    return row
+
+
+def _period_values(values: dict) -> dict:
+    result = {}
+    if "start_period" in values:
+        if values["start_period"] is None:
+            raise Refused("開始月はYYYY-MMで指定してください。", status_code=422)
+        result["start_period"] = _month(values["start_period"], "開始月はYYYY-MMで指定してください。")
+    if "end_period" in values:
+        result["end_period"] = _month(values["end_period"], "終了月はYYYY-MMで指定してください。")
+    for field, label in (("annual_return", "年利"), ("inflation", "インフレ")):
+        if field in values:
+            value = values[field]
+            if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)):
+                raise Refused(f"{label}は有限の数値か空欄で指定してください。", status_code=422)
+            result[field] = None if value is None else float(value)
+    if "note" in values:
+        result["note"] = (values["note"] or "").strip() or None
+    return result
+
+
+def _settle_period(row: models.ScenarioAssumptionPeriod) -> None:
+    if row.annual_return is None and row.inflation is None:
+        raise Refused("年利かインフレのどちらかを入力してください。", status_code=422)
+    if row.end_period is not None and row.end_period < row.start_period:
+        raise Refused("終了月は開始月以降にしてください。", status_code=422)
+
+
+def create_period(db: Session, client_id: int, scenario_id: int, values: dict) -> models.ScenarioAssumptionPeriod:
+    get_scenario(db, client_id, scenario_id)
+    data = _period_values(values)
+    if "start_period" not in data:
+        raise Refused("開始月を指定してください。", status_code=422)
+    row = models.ScenarioAssumptionPeriod(scenario_id=scenario_id, **data)
+    _settle_period(row)
+    db.add(row)
+    db.commit()
+    return row
+
+
+def update_period(db: Session, client_id: int, period_id: int, values: dict) -> models.ScenarioAssumptionPeriod:
+    row = _get_period(db, client_id, period_id)
+    data = _period_values(values)
+    try:
+        with db.no_autoflush:
+            for key, value in data.items():
+                setattr(row, key, value)
+            _settle_period(row)
+    except Exception:
+        db.rollback()
+        raise
+    db.commit()
+    return row
+
+
+def delete_period(db: Session, client_id: int, period_id: int) -> None:
+    db.delete(_get_period(db, client_id, period_id))
+    db.commit()
+
+
+PERIOD_COPIED = ("start_period", "end_period", "annual_return", "inflation", "note")
+
+
+def copy_periods(db: Session, source_id: int, target_id: int) -> None:
+    for row in db.query(models.ScenarioAssumptionPeriod).filter_by(scenario_id=source_id).all():
+        db.add(models.ScenarioAssumptionPeriod(scenario_id=target_id, **{field: getattr(row, field) for field in PERIOD_COPIED}))
+    db.flush()
+
+
+def assumption(periods, period: str, field: str, default: float) -> float:
+    """annual_return or inflation in a month: the latest-starting record over the month that sets it, else the default."""
+    found, key = default, None
+    for row in periods:
+        value = getattr(row, field)
+        if value is None or row.start_period > period or (row.end_period is not None and row.end_period < period):
+            continue
+        if key is None or (row.start_period, row.id or 0) > key:
+            found, key = value, (row.start_period, row.id or 0)
+    return found
 
 
 # Reading the schedule: these take any objects with the record's attributes.

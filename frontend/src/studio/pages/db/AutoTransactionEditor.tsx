@@ -2,7 +2,7 @@ import { useId, useState, type FormEvent } from 'react';
 import type { AutoTransaction, AutoTransactionInput, AutoTransactionKind, AutoFrequency } from '../../../types';
 import Overlay from '../../components/Overlay';
 import { clientToday, useTimezone } from '../../datetime';
-import { ActiveSwitch, Choice, EditorActions, Feedback, Field, OptionGroup } from './Database';
+import { ActiveSwitch, Choice, EditorActions, Feedback, Field, Help, OptionGroup } from './Database';
 import { inputClass, type DatabaseAccount } from './forms';
 import { countEndDate } from './automaticSchedule';
 
@@ -21,7 +21,7 @@ function initialDraft(entry: AutoTransaction | null, kind: AutoTransactionKind, 
         name: '', kind, amount: 0, currency, source_account_id: source?.id ?? null, destination_account_id: destination?.id ?? null,
         budget_account_id: null, repeat_mode: 'indefinite', frequency: 'Monthly', frequency_days: null,
         day_of_month: Number(start.slice(8, 10)), month_of_year: null, start_date: start, end_date: null, repeat_count: null,
-        budget_active: true, is_active: true, note: null,
+        budget_active: true, is_active: true, records_transactions: true, note: null,
     };
     if (!entry) return base;
     // Send the write contract only; names and the next cursor belong to the response.
@@ -88,6 +88,7 @@ export default function AutoTransactionEditor({ entry, kind, currency, accounts,
                 <summary className="cursor-pointer text-sm">詳細設定</summary>
                 <fieldset disabled={busy} className="mt-4 space-y-4">
                     <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.budget_active} onChange={(e) => set('budget_active', e.target.checked)} />予算に反映する</label>
+                    <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.records_transactions} onChange={(e) => set('records_transactions', e.target.checked)} />取引も記録する<Help label="取引も記録する" text="オンなら期日に家計簿へ取引を記録します。オフなら毎月の予算として繰り返すだけで、取引は記録しません（計画で自動扱いにしたレコードなど）。" /></label>
                     <Field label="メモ"><textarea value={form.note ?? ''} onChange={(e) => set('note', e.target.value || null)} className={inputClass} /></Field>
                 </fieldset>
             </details>

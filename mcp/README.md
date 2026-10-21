@@ -93,8 +93,7 @@ Tools cover:
 - transaction batches
 - analysis
 - reports and period reviews
-- monthly planning, budget plans and monthly reviews
-- action bridges
+- monthly planning (one plan per client) and monthly reviews
 - automatic transactions (the settings of recurring and one-off transactions)
 - products and unit economics
 - capsules (earmarks), their rules and funding sources
@@ -130,4 +129,5 @@ For agent safety, prefer these before write operations:
 - `transaction_batches_preview`
 - `products_preview`
 - `monthly_plan_lines_preview`
-- `goal_plan_preview`
+- `plan_reflection_preview`
+- `depreciation_preview`

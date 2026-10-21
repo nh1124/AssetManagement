@@ -18,6 +18,7 @@ from ..services.capsule_service import (
 from ..workflows import capsule_workflow
 from .transactions import _serialize_transaction
 
+from ..workflows import plan_reflection_workflow
 router = APIRouter(
     prefix="/capsules",
     tags=["Capsules"],
@@ -68,7 +69,9 @@ def create_capsule(
     current_client: models.Client = Depends(dependencies.get_current_client),
 ):
     db_capsule = capsule_service.create_capsule(db, current_client.id, capsule)
-    return capsule_to_dict(db, db_capsule)
+    result = capsule_to_dict(db, db_capsule)
+    plan_reflection_workflow.after_change(db, current_client.id)
+    return result
 
 
 @router.get("/{capsule_id}/funding-sources", response_model=List[schemas.CapsuleFundingSource])
@@ -92,12 +95,14 @@ def set_capsule_funding_sources(
     db: Session = Depends(database.get_db),
     current_client: models.Client = Depends(dependencies.get_current_client),
 ):
-    return [
+    result = [
         funding_source_to_dict(source)
         for source in capsule_service.set_funding_sources(
             db, current_client.id, capsule_id, payloads,
         )
     ]
+    plan_reflection_workflow.after_change(db, current_client.id)
+    return result
 
 
 @router.put("/{capsule_id}", response_model=schemas.Capsule)
@@ -110,7 +115,9 @@ def update_capsule(
     db_capsule = capsule_service.update_capsule(db, current_client.id, capsule_id, capsule_update)
     if db_capsule is None:
         raise HTTPException(status_code=404, detail="Capsule not found")
-    return capsule_to_dict(db, db_capsule)
+    result = capsule_to_dict(db, db_capsule)
+    plan_reflection_workflow.after_change(db, current_client.id)
+    return result
 
 
 @router.delete("/{capsule_id}")
@@ -128,7 +135,9 @@ def delete_capsule(
     deleted = capsule_service.delete_capsule(db, current_client.id, capsule_id)
     if deleted is None:
         raise HTTPException(status_code=404, detail="Capsule not found")
-    return {"message": "Capsule deleted successfully", **asdict(deleted)}
+    result = {"message": "Capsule deleted successfully", **asdict(deleted)}
+    plan_reflection_workflow.after_change(db, current_client.id)
+    return result
 
 
 def _ledger_write(db: Session, client_id: int, request: Request | None) -> None:

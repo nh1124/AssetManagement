@@ -22,7 +22,7 @@ export function registerPrompts(server: McpServer): void {
           content: {
             type: "text",
             text:
-              `Review ${period} using reports_monthly, analysis_profit_loss, analysis_variance, and actions_list. ` +
+              `Review ${period} using reports_monthly, analysis_profit_loss, and analysis_variance. ` +
               "Summarize the financial state, call out material changes, and propose concrete next actions. " +
               "Do not apply write tools unless explicitly asked.",
           },
@@ -49,7 +49,7 @@ export function registerPrompts(server: McpServer): void {
             text:
               "Inspect the goal using life_scenarios_list, life_scenarios_simulate for the goal scenario and life_events_list, " +
               `then goal_plan_check${period ? ` for ${period}` : ""}. Identify events unlikely to happen or be affordable, ` +
-              "accounts whose plan falls short of the 積立設定, and preview with goal_plan_preview before any goal_plan_apply.",
+              "accounts whose plan falls short of the 積立設定, and preview with plan_reflection_preview before any plan_reflection_run or settings change.",
           },
         },
       ],

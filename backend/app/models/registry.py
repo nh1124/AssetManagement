@@ -33,6 +33,8 @@ class RegistryEntry(Base):
     next_due_date = Column(Date, nullable=True)
     budget_active = Column(Boolean, default=True, server_default="true", nullable=False)
     is_active = Column(Boolean, default=True, server_default="true", nullable=False)
+    # 取引も記録する (WP27): false for one that only budgets each month (a 自動扱い plan record) and never posts.
+    records_transactions = Column(Boolean, default=True, server_default="true", nullable=False)
     note = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -16,12 +16,19 @@ from app.services import capsule_service
 from app.services import contribution_plan_service as plans
 from app.services import goal_earmark_service, goal_service, life_scenario_service as scenarios
 from app.services.ledger_service import create_transaction
-from app.workflows import goal_budget_workflow, goal_change_workflow
+from app.services.budget_plan_store import find_budget_plan_id
+from app.services import goal_plan_service
+from app.workflows import goal_change_workflow, plan_reflection_workflow
 from scenario_fixtures import account, db  # noqa: F401
 
 TODAY = date.today()
 PERIOD = TODAY.strftime("%Y-%m")
 
+
+
+def goal_preview(db, start, end):
+    """What the goal asks for in [start, end] (goal_plan_service.plan); nothing is saved."""
+    return goal_plan_service.plan(db, 1, start, end, find_budget_plan_id(db, 1))
 
 def in_years(years: int, month: int = 1) -> date:
     return date(TODAY.year + years, month, 1)
@@ -174,9 +181,9 @@ def test_changing_the_goal_previews_and_carries_earmarks_to_the_same_event(db):
 def test_replacing_deletes_the_old_earmarks_releases_their_money_and_makes_new_ones(db):
     scenario, copy, savings, capsule, lone = _funded_goal(db)
     plans.create_plan(db, 1, scenario.id, {"account_id": savings.id, "start_period": PERIOD, "amount": 30000})
-    preview = goal_budget_workflow.preview(db, 1, PERIOD, PERIOD)
-    goal_budget_workflow.apply(db, 1, PERIOD, PERIOD, preview["fingerprint"])
-    assert db.query(models.MonthlyPlanLine).filter_by(client_id=1, source_kind="goal", is_active=True).count() == 3
+    preview = goal_preview(db, PERIOD, PERIOD)
+    plan_reflection_workflow.run(db, 1, "manual")
+    assert db.query(models.MonthlyPlanLine).filter_by(client_id=1, source_kind="goal", is_active=True, target_period=PERIOD).count() == 3
     goal_change_workflow.apply(db, 1, copy.id, "replace")
     db.expire_all()
     old_events = [row.id for row in db.query(models.LifeEvent).filter_by(scenario_id=scenario.id)]

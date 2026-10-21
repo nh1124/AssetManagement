@@ -62,7 +62,7 @@
     "body": "array",
     "source": "src/tools/monthly-planning.ts",
     "path_fragment": "/budget-plans/lines",
-    "allowed_fields": ["plan_id", "target_period", "line_type", "target_type", "target_id", "account_id", "source_account_id", "name", "amount", "source", "source_kind", "identity_key", "manual_override", "cash_treatment", "is_active"],
+    "allowed_fields": ["target_period", "line_type", "target_type", "target_id", "account_id", "source_account_id", "name", "amount", "source", "source_kind", "identity_key", "manual_override", "cash_treatment", "is_active"],
     "required_fields": ["target_period", "line_type"],
     "forbidden_fields": ["priority"]
   },
@@ -73,7 +73,7 @@
     "body": "array",
     "source": "src/tools/monthly-planning.ts",
     "path_fragment": "/budget-plans/lines/batch",
-    "allowed_fields": ["id", "plan_id", "target_period", "line_type", "target_type", "target_id", "account_id", "source_account_id", "name", "amount", "source", "source_kind", "identity_key", "manual_override", "cash_treatment", "is_active"],
+    "allowed_fields": ["id", "target_period", "line_type", "target_type", "target_id", "account_id", "source_account_id", "name", "amount", "source", "source_kind", "identity_key", "manual_override", "cash_treatment", "is_active"],
     "required_fields": ["id", "target_period", "line_type"],
     "forbidden_fields": ["priority"]
   },
@@ -86,49 +86,13 @@
     "path_fragment": "/budget-plans/lines/${id}"
   },
   {
-    "tool": "budget_plans_create",
-    "method": "post",
-    "path": "/budget-plans",
-    "body": "object",
-    "source": "src/tools/strategy.ts",
-    "path_fragment": "/budget-plans",
-    "allowed_fields": ["name", "description", "sort_order"],
-    "required_fields": ["name"]
-  },
-  {
-    "tool": "budget_plans_update",
-    "method": "put",
-    "path": "/budget-plans/{plan_id}",
-    "body": "object",
-    "source": "src/tools/strategy.ts",
-    "path_fragment": "/budget-plans/${id}",
-    "allowed_fields": ["name", "description", "sort_order"],
-    "required_fields": []
-  },
-  {
-    "tool": "budget_plans_delete",
-    "method": "delete",
-    "path": "/budget-plans/{plan_id}",
-    "body": "none",
-    "source": "src/tools/strategy.ts",
-    "path_fragment": "/budget-plans/${id}"
-  },
-  {
-    "tool": "budget_plans_copy_from",
-    "method": "post",
-    "path": "/budget-plans/{plan_id}/copy-from",
-    "body": "none",
-    "source": "src/tools/strategy.ts",
-    "path_fragment": "/budget-plans/${target_plan_id}/copy-from"
-  },
-  {
     "tool": "budget_plans_copy_period",
     "method": "post",
     "path": "/budget-plans/copy-period",
     "body": "object",
     "source": "src/tools/strategy.ts",
     "path_fragment": "/budget-plans/copy-period",
-    "allowed_fields": ["source_period", "target_period", "plan_id"],
+    "allowed_fields": ["source_period", "target_period"],
     "required_fields": ["source_period", "target_period"]
   },
   {
@@ -288,30 +252,6 @@
     "required_fields": ["general_settings"]
   },
   {
-    "tool": "actions_process_due",
-    "method": "post",
-    "path": "/actions/process-due",
-    "body": "none",
-    "source": "src/tools/actions.ts",
-    "path_fragment": "/actions/process-due"
-  },
-  {
-    "tool": "actions_apply",
-    "method": "post",
-    "path": "/actions/{action_id}/apply",
-    "body": "none",
-    "source": "src/tools/actions.ts",
-    "path_fragment": "/actions/${id}/apply"
-  },
-  {
-    "tool": "actions_skip",
-    "method": "post",
-    "path": "/actions/{action_id}/skip",
-    "body": "none",
-    "source": "src/tools/actions.ts",
-    "path_fragment": "/actions/${id}/skip"
-  },
-  {
     "tool": "ai_change_requests_create",
     "method": "post",
     "path": "/ai/change-requests",
@@ -410,7 +350,7 @@
     "body": "object",
     "source": "src/tools/auto-transactions.ts",
     "path_fragment": "/auto-transactions/",
-    "allowed_fields": ["name", "kind", "amount", "currency", "source_account_id", "destination_account_id", "budget_account_id", "repeat_mode", "frequency", "frequency_days", "day_of_month", "month_of_year", "start_date", "end_date", "repeat_count", "budget_active", "is_active", "note"],
+    "allowed_fields": ["name", "kind", "amount", "currency", "source_account_id", "destination_account_id", "budget_account_id", "repeat_mode", "frequency", "frequency_days", "day_of_month", "month_of_year", "start_date", "end_date", "repeat_count", "budget_active", "is_active", "note", "records_transactions"],
     "required_fields": ["name", "start_date"]
   },
   {
@@ -420,7 +360,7 @@
     "body": "object",
     "source": "src/tools/auto-transactions.ts",
     "path_fragment": "/auto-transactions/${id}",
-    "allowed_fields": ["name", "kind", "amount", "currency", "source_account_id", "destination_account_id", "budget_account_id", "repeat_mode", "frequency", "frequency_days", "day_of_month", "month_of_year", "start_date", "end_date", "repeat_count", "budget_active", "is_active", "note"],
+    "allowed_fields": ["name", "kind", "amount", "currency", "source_account_id", "destination_account_id", "budget_account_id", "repeat_mode", "frequency", "frequency_days", "day_of_month", "month_of_year", "start_date", "end_date", "repeat_count", "budget_active", "is_active", "note", "records_transactions"],
     "required_fields": ["name", "start_date"]
   },
   {
@@ -470,13 +410,303 @@
     "path_fragment": "/life-scenarios/contribution-plans/${planId}"
   },
   {
-    "tool": "goal_plan_apply",
+    "tool": "assumption_periods_create",
     "method": "post",
-    "path": "/goal-budget/apply",
+    "path": "/life-scenarios/{scenario_id}/assumption-periods",
     "body": "object",
     "source": "src/tools/life-events.ts",
-    "path_fragment": "/goal-budget/apply",
-    "allowed_fields": ["start_period", "end_period", "fingerprint"],
-    "required_fields": ["start_period", "end_period", "fingerprint"]
+    "path_fragment": "/life-scenarios/${scenario_id}/assumption-periods",
+    "allowed_fields": ["start_period", "end_period", "annual_return", "inflation", "note"],
+    "required_fields": []
+  },
+  {
+    "tool": "assumption_periods_update",
+    "method": "put",
+    "path": "/life-scenarios/assumption-periods/{period_id}",
+    "body": "object",
+    "source": "src/tools/life-events.ts",
+    "path_fragment": "/life-scenarios/assumption-periods/${periodId}",
+    "allowed_fields": ["start_period", "end_period", "annual_return", "inflation", "note"],
+    "required_fields": []
+  },
+  {
+    "tool": "assumption_periods_delete",
+    "method": "delete",
+    "path": "/life-scenarios/assumption-periods/{period_id}",
+    "body": "none",
+    "source": "src/tools/life-events.ts",
+    "path_fragment": "/life-scenarios/assumption-periods/${periodId}"
+  },
+  {
+    "tool": "plan_reflection_settings_update",
+    "method": "put",
+    "path": "/plan/reflection/settings",
+    "body": "object",
+    "source": "src/tools/plan-reflection.ts",
+    "path_fragment": "/plan/reflection/settings",
+    "allowed_fields": ["enabled", "goal", "products"],
+    "required_fields": []
+  },
+  {
+    "tool": "plan_reflection_run",
+    "method": "post",
+    "path": "/plan/reflection/run",
+    "body": "none",
+    "source": "src/tools/plan-reflection.ts",
+    "path_fragment": "/plan/reflection/run"
+  },
+  {
+    "tool": "life_scenarios_create",
+    "method": "post",
+    "path": "/life-scenarios",
+    "body": "object",
+    "source": "src/tools/ui-operations.ts",
+    "path_fragment": "\"/life-scenarios\"",
+    "allowed_fields": ["name"],
+    "required_fields": ["name"]
+  },
+  {
+    "tool": "life_scenarios_duplicate",
+    "method": "post",
+    "path": "/life-scenarios/{scenario_id}/duplicate",
+    "body": "object",
+    "source": "src/tools/ui-operations.ts",
+    "path_fragment": "/life-scenarios/${scenarioId}/duplicate",
+    "allowed_fields": ["name"],
+    "required_fields": ["name"]
+  },
+  {
+    "tool": "life_scenarios_update",
+    "method": "put",
+    "path": "/life-scenarios/{scenario_id}",
+    "body": "object",
+    "source": "src/tools/ui-operations.ts",
+    "path_fragment": "/life-scenarios/${scenarioId}`, only(patch)",
+    "allowed_fields": ["name", "annual_return", "inflation", "horizon_years"],
+    "required_fields": []
+  },
+  {
+    "tool": "life_scenarios_delete",
+    "method": "delete",
+    "path": "/life-scenarios/{scenario_id}",
+    "body": "none",
+    "source": "src/tools/ui-operations.ts",
+    "path_fragment": "api.delete<unknown>(`/life-scenarios/${scenarioId}`"
+  },
+  {
+    "tool": "life_event_links_create",
+    "method": "post",
+    "path": "/life-events/links",
+    "body": "object",
+    "source": "src/tools/ui-operations.ts",
+    "path_fragment": "\"/life-events/links\"",
+    "allowed_fields": ["from_event_id", "to_event_id", "kind", "offset_months", "note"],
+    "required_fields": ["from_event_id", "to_event_id", "kind"]
+  },
+  {
+    "tool": "life_event_links_delete",
+    "method": "delete",
+    "path": "/life-events/links/{link_id}",
+    "body": "none",
+    "source": "src/tools/ui-operations.ts",
+    "path_fragment": "/life-events/links/${linkId}"
+  },
+  {
+    "tool": "life_event_conditions_create",
+    "method": "post",
+    "path": "/life-events/{event_id}/conditions",
+    "body": "object",
+    "source": "src/tools/ui-operations.ts",
+    "path_fragment": "api.post<unknown>(`/life-events/${event_id}/conditions`",
+    "allowed_fields": ["metric", "comparator", "threshold_minor", "threshold_number", "threshold_date", "reference_id", "note"],
+    "required_fields": ["metric"]
+  },
+  {
+    "tool": "life_event_conditions_update",
+    "method": "put",
+    "path": "/life-events/{event_id}/conditions/{condition_id}",
+    "body": "object",
+    "source": "src/tools/ui-operations.ts",
+    "path_fragment": "api.put<unknown>(`/life-events/${event_id}/conditions/${condition_id}`",
+    "allowed_fields": ["metric", "comparator", "threshold_minor", "threshold_number", "threshold_date", "reference_id", "note"],
+    "required_fields": ["metric"]
+  },
+  {
+    "tool": "life_event_conditions_delete",
+    "method": "delete",
+    "path": "/life-events/{event_id}/conditions/{condition_id}",
+    "body": "none",
+    "source": "src/tools/ui-operations.ts",
+    "path_fragment": "api.delete<unknown>(`/life-events/${event_id}/conditions/${condition_id}`"
+  },
+  {
+    "tool": "household_members_create",
+    "method": "post",
+    "path": "/household-members",
+    "body": "object",
+    "source": "src/tools/ui-operations.ts",
+    "path_fragment": "api.post<unknown>(\"/household-members\"",
+    "allowed_fields": ["name", "relation", "birth_date"],
+    "required_fields": ["name", "birth_date"]
+  },
+  {
+    "tool": "household_members_update",
+    "method": "put",
+    "path": "/household-members/{member_id}",
+    "body": "object",
+    "source": "src/tools/ui-operations.ts",
+    "path_fragment": "api.put<unknown>(`/household-members/${memberId}`",
+    "allowed_fields": ["name", "relation", "birth_date"],
+    "required_fields": []
+  },
+  {
+    "tool": "household_members_delete",
+    "method": "delete",
+    "path": "/household-members/{member_id}",
+    "body": "none",
+    "source": "src/tools/ui-operations.ts",
+    "path_fragment": "api.delete<unknown>(`/household-members/${memberId}`"
+  },
+  {
+    "tool": "plan_records_add",
+    "method": "post",
+    "path": "/plan/records",
+    "body": "object",
+    "source": "src/tools/ui-operations.ts",
+    "path_fragment": "\"/plan/records\"",
+    "allowed_fields": ["period", "account_id", "section", "amount", "name", "automatic"],
+    "required_fields": ["period", "account_id", "section", "amount"]
+  },
+  {
+    "tool": "plan_records_update",
+    "method": "put",
+    "path": "/plan/records/{record_id}",
+    "body": "object",
+    "source": "src/tools/ui-operations.ts",
+    "path_fragment": "api.put<unknown>(`/plan/records/${recordId}`",
+    "allowed_fields": ["amount", "name"],
+    "required_fields": ["amount"]
+  },
+  {
+    "tool": "plan_records_delete",
+    "method": "delete",
+    "path": "/plan/records/{record_id}",
+    "body": "none",
+    "source": "src/tools/ui-operations.ts",
+    "path_fragment": "api.delete<unknown>(`/plan/records/${recordId}`"
+  },
+  {
+    "tool": "period_closes_close",
+    "method": "post",
+    "path": "/period-closes",
+    "body": "object",
+    "source": "src/tools/ui-operations.ts",
+    "path_fragment": "api.post<unknown>(\"/period-closes\"",
+    "allowed_fields": ["period", "note"],
+    "required_fields": ["period"]
+  },
+  {
+    "tool": "period_closes_reopen",
+    "method": "delete",
+    "path": "/period-closes/{period}",
+    "body": "none",
+    "source": "src/tools/ui-operations.ts",
+    "path_fragment": "/period-closes/${period}"
+  },
+  {
+    "tool": "capsules_contribute",
+    "method": "post",
+    "path": "/capsules/{capsule_id}/contribute",
+    "body": "object",
+    "source": "src/tools/ui-operations.ts",
+    "path_fragment": "/capsules/${capsule_id}/contribute",
+    "allowed_fields": ["amount", "from_account_id", "contribution_date"],
+    "required_fields": ["amount", "from_account_id"]
+  },
+  {
+    "tool": "capsules_drawdown",
+    "method": "post",
+    "path": "/capsules/{capsule_id}/drawdown",
+    "body": "object",
+    "source": "src/tools/ui-operations.ts",
+    "path_fragment": "/capsules/${capsule_id}/drawdown",
+    "allowed_fields": ["amount", "from_account_id", "to_account_id", "kind", "date", "description", "note"],
+    "required_fields": ["amount", "from_account_id", "to_account_id", "kind", "date", "description"]
+  },
+  {
+    "tool": "capsules_set_account_claim",
+    "method": "post",
+    "path": "/capsules/{capsule_id}/account-claim",
+    "body": "object",
+    "source": "src/tools/ui-operations.ts",
+    "path_fragment": "/capsules/${capsule_id}/account-claim",
+    "allowed_fields": ["account_id", "target_amount"],
+    "required_fields": ["account_id", "target_amount"]
+  },
+  {
+    "tool": "depreciation_record",
+    "method": "post",
+    "path": "/depreciations",
+    "body": "object",
+    "source": "src/tools/ui-operations.ts",
+    "path_fragment": "\"/depreciations\"",
+    "allowed_fields": ["product_id", "period", "amount", "date", "expense_account_id", "asset_account_id"],
+    "required_fields": ["product_id", "period"]
+  },
+  {
+    "tool": "depreciation_amend",
+    "method": "put",
+    "path": "/depreciations/{depreciation_id}",
+    "body": "object",
+    "source": "src/tools/ui-operations.ts",
+    "path_fragment": "/depreciations/${depreciationId}",
+    "allowed_fields": ["amount", "date", "expense_account_id"],
+    "required_fields": ["amount"]
+  },
+  {
+    "tool": "transaction_proposals_approve",
+    "method": "post",
+    "path": "/transactions/proposals/{proposal_id}/approve",
+    "body": "none",
+    "source": "src/tools/ui-operations.ts",
+    "path_fragment": "/transactions/proposals/${proposalId}/approve"
+  },
+  {
+    "tool": "transaction_proposals_reject",
+    "method": "post",
+    "path": "/transactions/proposals/{proposal_id}/reject",
+    "body": "object",
+    "source": "src/tools/ui-operations.ts",
+    "path_fragment": "/transactions/proposals/${proposalId}/reject",
+    "allowed_fields": ["note"],
+    "required_fields": []
+  },
+  {
+    "tool": "notifications_decide",
+    "method": "post",
+    "path": "/notifications/{notification_id}/decision",
+    "body": "object",
+    "source": "src/tools/ui-operations.ts",
+    "path_fragment": "/notifications/${notificationId}/decision",
+    "allowed_fields": ["action", "until"],
+    "required_fields": ["action"]
+  },
+  {
+    "tool": "data_health_repair",
+    "method": "post",
+    "path": "/data/health/repair",
+    "body": "none",
+    "source": "src/tools/ui-operations.ts",
+    "path_fragment": "\"/data/health/repair\""
+  },
+  {
+    "tool": "reconcile_adjust",
+    "method": "post",
+    "path": "/analysis/reconcile/{account_id}/adjust",
+    "body": "object",
+    "source": "src/tools/ui-operations.ts",
+    "path_fragment": "/analysis/reconcile/${account_id}/adjust",
+    "allowed_fields": ["as_of", "statement", "counter_account_id", "capsule_id", "note", "currency", "expected_ledger_minor"],
+    "required_fields": ["as_of", "statement", "counter_account_id"]
   }
 ]

@@ -22,8 +22,6 @@ from ..domain.transfer import (
     parse_date,
     parse_datetime,
     validate_import_payload,
-    remap_nested_ids,
-    remap_action_target_id,
     migrate_account_fields,
     migrate_event_fundings,
     migrate_event_withdrawals,
@@ -149,7 +147,8 @@ def export_client(db: Session, client: models.Client) -> dict:
             "registry_entries": [
                 row_fields(item, ["id", "name", "kind", "amount", "currency", "source_account_id", "destination_account_id",
                                   "budget_account_id", "repeat_mode", "frequency", "frequency_days", "day_of_month", "month_of_year",
-                                  "start_date", "end_date", "repeat_count", "next_due_date", "budget_active", "is_active", "note", "created_at", "updated_at"])
+                                  "start_date", "end_date", "repeat_count", "next_due_date", "budget_active", "is_active", "records_transactions", "note",
+                                  "created_at", "updated_at"])
                 for item in db.query(models.RegistryEntry).filter(models.RegistryEntry.client_id == client.id).order_by(models.RegistryEntry.id).all()
             ],
             "transaction_batches": [
@@ -208,6 +207,11 @@ def export_client(db: Session, client: models.Client) -> dict:
                                  "repeat_count", "end_period", "on_shortage", "annual_return", "note", "life_event_id", "created_at"])
                 for row in db.query(models.ScenarioContributionPlan).join(models.LifeScenario, models.LifeScenario.id == models.ScenarioContributionPlan.scenario_id)
                 .filter(models.LifeScenario.client_id == client.id).order_by(models.ScenarioContributionPlan.id).all()
+            ],
+            "scenario_assumption_periods": [
+                row_fields(row, ["id", "scenario_id", "start_period", "end_period", "annual_return", "inflation", "note", "created_at"])
+                for row in db.query(models.ScenarioAssumptionPeriod).join(models.LifeScenario, models.LifeScenario.id == models.ScenarioAssumptionPeriod.scenario_id)
+                .filter(models.LifeScenario.client_id == client.id).order_by(models.ScenarioAssumptionPeriod.id).all()
             ],
             "household_members": [
                 row_fields(row, ["id", "name", "relation", "birth_date", "created_at"])
@@ -313,31 +317,6 @@ def export_client(db: Session, client: models.Client) -> dict:
                 row_fields(close, ["id", "period", "closed_at", "note"])
                 for close in db.query(models.PeriodClose).filter_by(client_id=client.id)
                 .order_by(models.PeriodClose.period).all()
-            ],
-            "monthly_actions": [
-                row_fields(
-                    action,
-                    [
-                        "id",
-                        "source_period",
-                        "target_period",
-                        "proposal_id",
-                        "kind",
-                        "description",
-                        "amount",
-                        "target_id",
-                        "payload",
-                        "result",
-                        "status",
-                        "idempotency_key",
-                        "created_at",
-                        "applied_at",
-                    ],
-                )
-                for action in db.query(models.MonthlyAction)
-                .filter(models.MonthlyAction.client_id == client.id)
-                .order_by(models.MonthlyAction.id)
-                .all()
             ],
             "capsules": [
                 {
@@ -503,6 +482,9 @@ def import_client(
         db.query(models.ScenarioContributionPlan).filter(
             models.ScenarioContributionPlan.scenario_id.in_(scenario_ids),
         ).delete(synchronize_session=False)
+        db.query(models.ScenarioAssumptionPeriod).filter(
+            models.ScenarioAssumptionPeriod.scenario_id.in_(scenario_ids),
+        ).delete(synchronize_session=False)
 
         for model in [
             models.GoalBudgetReflection,
@@ -513,7 +495,6 @@ def import_client(
             models.MonthlyPlanLine,
             models.PeriodReview,
             models.PeriodClose,
-            models.MonthlyAction,
             models.CapsuleDrawdown,
             models.CapsuleRule,
             models.Capsule,
@@ -555,13 +536,17 @@ def import_client(
             db.add(account)
             db.flush()
             account_map[old_id] = account.id
-        for item in data.get("budget_plans", []):
+        # A client has one budget plan (§8-10): an older backup's other plans and their rows stay out.
+        stored_plans = data.get("budget_plans", [])
+        kept_plan = next((item for item in stored_plans if item.get("is_default")), stored_plans[0] if stored_plans else None)
+        dropped_plan_ids = {int(item["id"]) for item in stored_plans if item is not kept_plan}
+        for item in [kept_plan] if kept_plan is not None else []:
             old_id = int(item["id"])
             plan = models.BudgetPlan(
                 client_id=client.id,
                 name=item["name"],
                 description=item.get("description"),
-                is_default=item.get("is_default", False),
+                is_default=True,
                 sort_order=item.get("sort_order") or 0,
                 created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
                 updated_at=parse_datetime(item.get("updated_at")),
@@ -625,6 +610,7 @@ def import_client(
             entry = models.RegistryEntry(client_id=client.id, **values,
                 amount_minor=to_minor(item.get("amount") or 0, item.get("currency") or "JPY"), currency=item.get("currency") or "JPY",
                 budget_active=item.get("budget_active", True), is_active=item.get("is_active", True),
+                records_transactions=item.get("records_transactions", True),
                 created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(), updated_at=parse_datetime(item.get("updated_at")))
             db.add(entry)
             db.flush()
@@ -698,6 +684,13 @@ def import_client(
                 interval_months=item.get("interval_months"), repeat_count=item.get("repeat_count"), end_period=item.get("end_period"),
                 on_shortage=item.get("on_shortage"), annual_return=item.get("annual_return"), note=item.get("note"),
                 life_event_id=event_map[int(item["life_event_id"])] if item.get("life_event_id") is not None else None,
+                created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
+            ))
+        # 期間ごとの前提 arrived in v31 (§8-11); an older backup has none.
+        for item in data.get("scenario_assumption_periods", []) if version is not None and version >= 31 else []:
+            db.add(models.ScenarioAssumptionPeriod(
+                scenario_id=scenario_map[int(item["scenario_id"])], start_period=item["start_period"], end_period=item.get("end_period"),
+                annual_return=item.get("annual_return"), inflation=item.get("inflation"), note=item.get("note"),
                 created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
             ))
         # A repayment names its borrowing, which may come later in the payload.
@@ -883,6 +876,8 @@ def import_client(
         monthly_plan_line_map: dict[int, int] = {}
         active_plan_line_identities: dict[str, models.MonthlyPlanLine] = {}
         for item in data.get("monthly_plan_lines", []):
+            if item.get("plan_id") is not None and int(item["plan_id"]) in dropped_plan_ids:
+                continue
             old_id = int(item["id"])
             target_type = item.get("target_type") or "manual"
             target_id = item.get("target_id")
@@ -984,46 +979,6 @@ def import_client(
                 models.LifeScenario.client_id == client.id, models.LifeScenario.id != restored_goal.id,
             ).all():
                 copy_graph(db, client.id, restored_goal.id, story.id)
-
-        action_key_maps = {
-            "account_id": account_map,
-            "from_account_id": account_map,
-            "to_account_id": account_map,
-            "source_account_id": account_map,
-            "destination_account_id": account_map,
-            "budget_account_id": account_map,
-            "life_event_id": event_map,
-            "registry_entry_id": registry_map,
-            "capsule_id": capsule_map,
-            "funding_capsule_id": capsule_map,
-            "product_id": product_map,
-            "source_product_id": product_map,
-            "transaction_id": transaction_map,
-            "batch_id": batch_map,
-            "budget_plan_id": budget_plan_map,
-            "plan_id": budget_plan_map,
-            "plan_line_id": monthly_plan_line_map,
-            "monthly_plan_line_id": monthly_plan_line_map,
-        }
-        for item in data.get("monthly_actions", []):
-            db.add(
-                models.MonthlyAction(
-                    client_id=client.id,
-                    source_period=item["source_period"],
-                    target_period=item.get("target_period"),
-                    proposal_id=item["proposal_id"],
-                    kind=item["kind"],
-                    description=item.get("description") or "",
-                    amount_minor=to_minor(item.get("amount"), money_client_currency(db, client.id)),
-                    target_id=remap_action_target_id(item, action_key_maps),
-                    payload=remap_nested_ids(item.get("payload") or {}, action_key_maps),
-                    result=remap_nested_ids(item.get("result") or {}, action_key_maps),
-                    status=item.get("status") or "pending",
-                    idempotency_key=item.get("idempotency_key") or f"import:{client.id}:{item['id']}",
-                    created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
-                    applied_at=parse_datetime(item.get("applied_at")),
-                )
-            )
 
         db.commit()
         invalidate_client(client.id)

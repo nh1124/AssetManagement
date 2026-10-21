@@ -7,13 +7,20 @@ from app.services.budget_plan_service import get_budget_summary
 from app.services.budget_plan_store import create_plan_lines, resolve_budget_plan_id, update_plan_lines
 from app.services.money_storage import to_minor
 from app.services import contribution_plan_service as plans, goal_service
-from app.workflows import goal_budget_workflow
+from app.services.budget_plan_store import find_budget_plan_id
+from app.services import goal_plan_service
+from app.workflows import plan_reflection_workflow
 from app import schemas
 from scenario_fixtures import account, db  # noqa: F401
 
 TODAY = date.today()
 PERIOD = TODAY.strftime("%Y-%m")
 
+
+
+def goal_preview(db, start, end):
+    """What the goal asks for in [start, end] (goal_plan_service.plan); nothing is saved."""
+    return goal_plan_service.plan(db, 1, start, end, find_budget_plan_id(db, 1))
 
 def months_ahead(months: int) -> date:
     index = TODAY.year * 12 + TODAY.month - 1 + months
@@ -84,7 +91,37 @@ def test_the_goal_plan_warns_when_transfers_alone_exceed_the_contribution(db):
                                             "kind": "withdrawal", "amount": 120000, "life_event_id": event.id})
     create_plan_lines(db, 1, [{"plan_id": resolve_budget_plan_id(db, 1), "target_period": PERIOD, "line_type": "allocation",
                                "target_type": "account", "account_id": savings.id, "amount": 40000, "source": "manual", "source_kind": "manual"}])
-    preview = goal_budget_workflow.preview(db, 1, PERIOD, PERIOD)
+    preview = goal_preview(db, PERIOD, PERIOD)
     # The transfer already brings more than the contribution, so no account row; the earmark sits inside it.
     assert {(row["kind"], row["new"]) for row in preview["changes"]} == {("capsule", 10000)}
     assert preview["warnings"] == [f"{PERIOD}：「貯蓄」は既存の振替（自動取引など）¥40,000が積立設定の月額¥30,000を超えています。"]
+
+
+def test_the_projection_counts_an_unsaved_automatic_transfer_and_an_unsaved_earmark_like_the_summary(db):
+    # §8-14: next month has no saved row at all; the projection still counts the month's budgets.
+    savings, bank = account(db, "貯蓄"), account(db, "銀行")
+    capsule = models.Capsule(client_id=1, name="旅行", target_amount_minor=300000, monthly_contribution_minor=70000,
+                             funding_sources=[models.CapsuleFundingSource(client_id=1, account_id=savings.id, target_amount_minor=300000)])
+    db.add(capsule)
+    db.add(models.RegistryEntry(client_id=1, name="貯蓄への振替", amount_minor=to_minor(50000, "JPY"), currency="JPY", frequency="Monthly",
+                                source_account_id=bank.id, destination_account_id=savings.id, budget_account_id=savings.id,
+                                budget_active=True, is_active=True, kind="transfer", start_date=date(2026, 1, 1), repeat_mode="indefinite"))
+    db.commit()
+    summary = get_budget_summary(db, 1, PERIOD, cash_flow_months=2)
+    later = summary["cash_flow_projection"][1]
+    # The 50000 transfer and the 70000 earmark in the same account count as 70000, as the summary's total does.
+    # The 50000 transfer stays among the assets; the 70000 earmark counts only beyond it and moves no cash.
+    assert (later["internal_transfer"], later["planned_allocation"], later["net_cash"]) == (50000, 20000, 0)
+    assert [row["ending_cash"] for row in summary["cash_flow_projection"]] == [0, 0]
+    assert [row["total_assets"] for row in summary["balance_projection"]] == [0, 0]
+
+
+def test_a_goal_contribution_row_without_a_source_moves_no_cash(db):
+    # A goal's 積立 row names no source account: it is the month's 配分 and stays among the assets.
+    savings = account(db, "貯蓄", balance=100000)
+    nxt = f"{TODAY.year + (TODAY.month == 12)}-{TODAY.month % 12 + 1:02d}"
+    create_plan_lines(db, 1, [{"plan_id": resolve_budget_plan_id(db, 1), "target_period": nxt, "line_type": "allocation",
+                               "target_type": "account", "account_id": savings.id, "amount": 30000, "source": "goal",
+                               "source_kind": "goal", "name": "ゴールの積立"}])
+    later = get_budget_summary(db, 1, PERIOD, cash_flow_months=2)["cash_flow_projection"][1]
+    assert (later["planned_allocation"], later["net_cash"], later["ending_cash"]) == (30000, 0, 100000)

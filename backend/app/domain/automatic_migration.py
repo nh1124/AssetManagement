@@ -99,7 +99,7 @@ def migrate_automatic_data(data: dict) -> dict[str, int]:
 
 
 def migrate_automatic_operations(data: dict, old_recurring: list[dict]) -> None:
-    """Keep saved actions usable and require renewed approval when posting semantics change."""
+    """Require renewed approval of saved AI requests when posting semantics change."""
     import hashlib
     import json
     from .money import Money
@@ -145,16 +145,6 @@ def migrate_automatic_operations(data: dict, old_recurring: list[dict]) -> None:
                 result[key] = references(item)
         return result
 
-    for row in data.get('monthly_actions', []):
-        old_kind = row['kind']
-        if old_kind == 'add_recurring':
-            row['kind'] = 'add_auto_transaction'
-            row['payload'] = payload(row.get('payload') or {}, start=(row.get('target_period') or row['source_period']) + '-01')
-        elif old_kind == 'pause_recurring':
-            row['kind'] = 'stop_auto_transaction'
-            row['payload'] = references(row.get('payload') or {})
-            row['target_id'] = row['payload'].get('registry_entry_id')
-        row['result'] = references(row.get('result') or {})
     for row in data.get('ai_change_requests', []):
         if row['resource'] != 'recurring_transactions' or row['status'] not in {'draft', 'pending', 'approved'}:
             continue

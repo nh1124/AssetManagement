@@ -20,12 +20,13 @@ FORMAT_FIELDS = {
     "products": ["id","name","category","location","last_unit_price","units_per_purchase","frequency_days","last_purchase_date","is_asset","lifespan_months","budget_account_id","funding_capsule_id","budget_treatment","purchase_price","purchase_date","auto_depreciation","depreciation_method","depreciation_annual_rate","depreciation_interval","depreciation_start_date","depreciation_expense_account_id","depreciation_asset_account_id"],
     "product_depreciations": ["id","product_id","period","transaction_id","amount_minor","created_at"],
     "simulation_configs": ["id","user_id","annual_return","tax_rate","is_nisa","volatility","inflation_rate","horizon_years"],
-    "registry_entries": ["id","name","kind","amount","currency","source_account_id","destination_account_id","budget_account_id","repeat_mode","frequency","frequency_days","day_of_month","month_of_year","start_date","end_date","repeat_count","next_due_date","budget_active","is_active","note","created_at","updated_at"],
+    "registry_entries": ["id","name","kind","amount","currency","source_account_id","destination_account_id","budget_account_id","repeat_mode","frequency","frequency_days","day_of_month","month_of_year","start_date","end_date","repeat_count","next_due_date","budget_active","is_active","records_transactions","note","created_at","updated_at"],
     "transaction_batches": ["id","label","source","input_payload","created_at"],
     "life_events": ["id","scenario_id","lineage","name","target_date","target_amount","priority","note","condition_mode","direction","interest_rate","borrowing_event_id","repeat_count","created_at"],
     "life_event_links": ["id","from_event_id","to_event_id","kind","offset_months","note","created_at"],
     "life_scenarios": ["id","name","annual_return","inflation","horizon_years","is_goal","created_at","updated_at"],
     "scenario_contribution_plans": ["id","scenario_id","kind","account_id","to_account_id","start_period","amount_minor","interval_months","repeat_count","end_period","on_shortage","annual_return","note","life_event_id","created_at"],
+    "scenario_assumption_periods": ["id","scenario_id","start_period","end_period","annual_return","inflation","note","created_at"],
     "household_members": ["id","name","relation","birth_date","created_at"],
     "life_event_conditions": ["id","life_event_id","metric","comparator","threshold_minor","threshold_number","threshold_date","reference_id","note","created_at"],
     "transactions": ["id","date","description","amount","currency","batch_id","registry_entry_id","created_at"],
@@ -34,7 +35,6 @@ FORMAT_FIELDS = {
     "monthly_plan_lines": ["id","target_period","line_type","target_type","target_id","account_id","source_account_id","name","amount","source","source_kind","identity_key","manual_override","cash_treatment","plan_id","is_active","created_at","updated_at"],
     "period_reviews": ["id","start_date","end_date","label","reflection","next_actions","created_at","updated_at"],
     "period_closes": ["id","period","closed_at","note"],
-    "monthly_actions": ["id","source_period","target_period","proposal_id","kind","description","amount","target_id","payload","result","status","idempotency_key","created_at","applied_at"],
     "capsules": ["id","name","target_amount","monthly_contribution","capsule_type","target_amount_source","monthly_contribution_source","goal_event_id","created_at"],
     "capsule_drawdowns": ["id","capsule_id","transaction_id","kind","amount_minor","note","created_at"],
     "capsule_funding_sources": ["id","capsule_id","account_id","target_amount","max_share_bp","sort_order","created_at","updated_at"],
@@ -61,7 +61,6 @@ def _seed_client(db, client_id, base, marker):
         money_names = {
             "monthly_plan_lines": ("amount",), "life_events": ("target_amount",),
             "capsules": ("target_amount", "monthly_contribution"),
-            "monthly_actions": ("amount",),
             "capsule_funding_sources": ("target_amount",),
             "products": ("last_unit_price", "purchase_price"), "registry_entries": ("amount",),
         }
@@ -138,13 +137,6 @@ def _seed_client(db, client_id, base, marker):
         label=marker, reflection=marker, next_actions=marker,
     )
     add(
-        models.MonthlyAction, 17, source_period=PERIOD, target_period="2026-11",
-        proposal_id=marker, kind="goal_allocation", description=marker, target_id=goal.id,
-        idempotency_key=marker,
-        payload={"nested": [{"account_id": cash.id, "capsule_id": capsule.id}]},
-        result={"nested": {"transaction_id": tx.id, "batch_id": batch.id}},
-    )
-    add(
         models.CapsuleRule, 19, capsule_id=capsule.id, trigger_type="expense",
         source_account_id=cash.id, destination_account_id=cash.id, amount_value=10,
     )
@@ -160,6 +152,8 @@ def _seed_client(db, client_id, base, marker):
         amount_minor=30000, interval_months=1, annual_return=3.0, note=marker)
     add(models.ScenarioContributionPlan, 43, scenario_id=scenario.id, kind="withdrawal", account_id=cash.id, start_period="2026-12",
         amount_minor=600, on_shortage="partial", life_event_id=goal.id)
+    add(models.ScenarioAssumptionPeriod, 44, scenario_id=scenario.id, start_period="2027-01", end_period="2030-12",
+        annual_return=4.0, inflation=1.5, note=marker)
     add(models.GoalBudgetReflection, 41, scenario_id=scenario.id, applied_at=STAMP, start_period="2026-10",
         end_period="2026-10", summary={"months": [{"period": "2026-10"}]})
     tracked = models.FxTrackedCurrency(client_id=client_id, currency="USD", created_at=STAMP)
@@ -258,7 +252,6 @@ def test_second_client_is_absent_even_from_nested_references_and_health(seeded):
         assert {row.get("id", row.get("currency")) for row in exported} == {getattr(row, "id", getattr(row, "currency", None)) for row in rows[collection]}
     batch = document["data"]["transaction_batches"][0]
     assert batch["input_payload"]["nested"]["account_id"] == rows["accounts"][0].id
-    assert document["data"]["monthly_actions"][0]["result"]["nested"]["transaction_id"] == rows["transactions"][0].id
 
 
 def test_ordered_accounts_and_budget_plans_keep_their_declared_order(seeded):

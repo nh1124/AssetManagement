@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { getLifeEvents } from '../../../api';
 import { getLifeEventLinks } from '../../../api/lifeEventGraph';
 import * as scenariosApi from '../../../api/lifeScenarios';
-import type { ContributionPlan, LifeScenario, ProjectedLifeScenario } from '../../../api/lifeScenarios';
+import type { AssumptionPeriod, ContributionPlan, LifeScenario, ProjectedLifeScenario } from '../../../api/lifeScenarios';
 import { useClient } from '../../../context/ClientContext';
 import type { LifeEvent } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
@@ -14,6 +14,7 @@ import { useResource } from '../../useResource';
 import { DataTable, Feedback, Field, Help } from '../db/Database';
 import { buttonClass, inputClass, loadAccounts, primaryClass, useMutation } from '../db/forms';
 import type { LifeEventLink } from '../../../api/lifeEventGraph';
+import AssumptionPeriodEditor from './AssumptionPeriodEditor';
 import ContributionPlanEditor from './ContributionPlanEditor';
 import { recordText, scheduleText, SHORTAGE_TEXT } from './contributionText';
 import { eventAmount, KIND_LABELS } from './eventKinds';
@@ -64,6 +65,29 @@ function Assumptions({ scenario, busy, onSave }: { scenario: LifeScenario; busy:
             <div><button type="submit" disabled={busy || !changed} className={primaryClass}>前提を保存</button></div>
         </fieldset>
     </form>;
+}
+
+const monthText = (period: string) => `${period.slice(0, 4)}年${Number(period.slice(5, 7))}月`;
+const rateText = (value: number | null) => value === null ? <span className="text-[var(--studio-text-muted)]">変えない</span> : `${value}%`;
+
+/** 期間ごとの前提: the records that set the default yield and the inflation for some months, oldest start first. */
+function AssumptionPeriods({ periods, disabled, onEdit }: { periods: AssumptionPeriod[]; disabled: boolean; onEdit: (period: AssumptionPeriod) => void }) {
+    if (!periods.length) return <p className="rounded-md border border-dashed border-[var(--studio-border)] p-4 text-sm text-[var(--studio-text-muted)]">ありません。すべての月で上の前提を使います。</p>;
+    return <div className="overflow-hidden rounded-md border border-[var(--studio-border)]">
+        <table className="w-full table-fixed text-left text-sm">
+            <colgroup><col className="w-60" /><col className="w-32" /><col className="w-32" /><col /></colgroup>
+            <thead className="text-xs text-[var(--studio-text-muted)]"><tr>{['期間', '既定の年利', 'インフレ', 'メモ'].map((label) => <th key={label} scope="col" className="px-4 py-2 font-medium">{label}</th>)}</tr></thead>
+            <tbody className="divide-y divide-[var(--studio-border)]">{[...periods].sort((a, b) => a.start_period.localeCompare(b.start_period) || a.id - b.id).map((period) => {
+                const span = `${monthText(period.start_period)}〜${period.end_period ? monthText(period.end_period) : ''}`;
+                return <tr key={period.id} onClick={() => { if (!disabled) onEdit(period); }} className={disabled ? '' : 'cursor-pointer hover:bg-[var(--studio-accent-soft)]'}>
+                    <th scope="row" className="px-4 py-2 font-normal"><button type="button" disabled={disabled} aria-haspopup="dialog" aria-label={`期間ごとの前提（${span}）を編集`} onClick={(event) => { event.stopPropagation(); onEdit(period); }} className="rounded text-left tabular-nums hover:text-[var(--studio-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)]">{span}</button></th>
+                    <td className="px-4 py-2 tabular-nums">{rateText(period.annual_return)}</td>
+                    <td className="px-4 py-2 tabular-nums">{rateText(period.inflation)}</td>
+                    <td className="px-4 py-2 text-[var(--studio-text-muted)]">{period.note ?? ''}</td>
+                </tr>;
+            })}</tbody>
+        </table>
+    </div>;
 }
 
 /** 使用口座と積立設定: each used account with its records, oldest start first; a transfer shows under both of its accounts. */
@@ -168,9 +192,19 @@ function SimulationForClient({ currency, clientName, scenarioId }: { currency: s
     const goal = useMakeScenarioGoal(reloadLayout);
     // undefined: closed; null: a new record.
     const [editing, setEditing] = useState<ContributionPlan | null | undefined>(undefined);
+    const [editingPeriod, setEditingPeriod] = useState<AssumptionPeriod | null | undefined>(undefined);
     const data = resource.data;
     const disabled = !clientName || mutation.busy || resource.loading || Boolean(resource.error);
-    const saveRecord = (action: () => Promise<unknown>, message: string) => { void mutation.run(action, message, () => { setEditing(undefined); resource.reload(); }); };
+    const saveRecord = (action: () => Promise<unknown>, message: string) => {
+        void mutation.run(action, message, () => { setEditing(undefined); setEditingPeriod(undefined); resource.reload(); });
+    };
+    const removePeriod = (period: AssumptionPeriod) => {
+        void (async () => {
+            if (await confirm(`「${clientName}」の期間ごとの前提（${monthText(period.start_period)}〜${period.end_period ? monthText(period.end_period) : ''}）を削除します。`, '削除する')) {
+                saveRecord(() => scenariosApi.deleteAssumptionPeriod(period.id), '期間ごとの前提を削除しました。');
+            }
+        })();
+    };
     const removeRecord = (plan: ContributionPlan) => {
         void (async () => {
             if (await confirm(`「${clientName}」の積立設定（${plan.account_name}・${scheduleText(plan)}）を削除します。`, '削除する')) {
@@ -179,7 +213,7 @@ function SimulationForClient({ currency, clientName, scenarioId }: { currency: s
         })();
     };
     return <section className="space-y-6">
-        <Feedback loading={resource.loading && !data} error={resource.error || (editing === undefined ? mutation.error : '') || goal.error} message={mutation.message || goal.message} />
+        <Feedback loading={resource.loading && !data} error={resource.error || (editing === undefined && editingPeriod === undefined ? mutation.error : '') || goal.error} message={mutation.message || goal.message} />
         {goal.dialog}
         {data && <>
             {!data.scenario.is_goal && <div className="flex justify-end">
@@ -190,6 +224,13 @@ function SimulationForClient({ currency, clientName, scenarioId }: { currency: s
                     <h3 className="text-sm font-semibold">前提</h3>
                     <Assumptions key={`${data.scenario.horizon_years}:${data.scenario.annual_return}:${data.scenario.inflation}`} scenario={data.scenario} busy={disabled}
                         onSave={(values) => saveRecord(() => scenariosApi.update(scenarioId, values), '前提を保存しました。')} />
+                </section>
+                <section className="space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                        <h3 className="flex items-center gap-1.5 text-sm font-semibold">期間ごとの前提<Help label="期間ごとの前提" text="期間を決めて、既定の年利とインフレを上の前提から変えます。空欄の項目は変えません。期間が重なるときは開始月の遅いレコードを使います。口座の積立設定に年利があれば、その口座はそちらを使います。シミュレーションは年ごとに計算するため、各年の最初の月の値を使います。変動率と税率はすべてのシナリオに共通で、設定画面で変えます。" wide /></h3>
+                        <button type="button" disabled={disabled} onClick={() => setEditingPeriod(null)} className={buttonClass}>レコードを追加</button>
+                    </div>
+                    <AssumptionPeriods periods={data.scenario.assumption_periods} disabled={disabled} onEdit={setEditingPeriod} />
                 </section>
                 <section className="space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -209,6 +250,12 @@ function SimulationForClient({ currency, clientName, scenarioId }: { currency: s
             <ContributionPlanEditor plan={editing} accounts={data.accounts} events={data.events} defaultPeriod={currentPeriod} currency={currency} defaultRate={data.scenario.annual_return} busy={disabled}
                 onCancel={() => setEditing(undefined)} onDelete={editing ? () => removeRecord(editing) : undefined}
                 onSave={(input) => saveRecord(() => editing ? scenariosApi.updateContributionPlan(editing.id, input) : scenariosApi.createContributionPlan(scenarioId, input), '積立設定を保存しました。')} />
+        </Overlay>}
+        {editingPeriod !== undefined && data && <Overlay title={editingPeriod ? '期間ごとの前提を編集' : '期間ごとの前提を追加'} busy={mutation.busy} onClose={() => setEditingPeriod(undefined)}>
+            <Feedback error={mutation.error} />
+            <AssumptionPeriodEditor period={editingPeriod} defaultPeriod={currentPeriod} defaultRate={data.scenario.annual_return} defaultInflation={data.scenario.inflation} busy={disabled}
+                onCancel={() => setEditingPeriod(undefined)} onDelete={editingPeriod ? () => removePeriod(editingPeriod) : undefined}
+                onSave={(input) => saveRecord(() => editingPeriod ? scenariosApi.updateAssumptionPeriod(editingPeriod.id, input) : scenariosApi.createAssumptionPeriod(scenarioId, input), '期間ごとの前提を保存しました。')} />
         </Overlay>}
     </section>;
 }

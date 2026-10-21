@@ -124,8 +124,9 @@ Treat these as high-risk:
 - transactions_delete: reverts journal entries and changes balances.
 - products_delete, accounts_delete, exchange_rates_delete, contribution_plans_delete.
 - Active automatic transactions post on due dates.
-- actions_apply / actions_process_due: applies planned actions.
-- goal_plan_apply: writes plan rows from the goal (preview first).
+- plan_reflection_run / plan_reflection_settings_update: rewrite this month and the 11 after it from the goal and the product earmarks (preview first).
+- data_health_repair, reconcile_adjust, capsules_drawdown, capsules_set_account_claim: change journal entries or what earmarks hold.
+- life_scenarios_delete, plan_records_delete, period_closes_reopen.
 
 For high-risk operations, explain the expected effect, call preview/list tools first, and require explicit user confirmation.`,
   },

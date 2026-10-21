@@ -14,6 +14,8 @@ from backend.app.workflows.ai_change_request_workflow import (
     approve_change_request,
     create_change_request,
     preview_change_request,
+    refresh_preview,
+    reject_change_request,
 )
 from backend.app.services.ai_policy_service import replace_client_policies
 from backend.app.utils.password import hash_password
@@ -240,5 +242,39 @@ def test_monthly_plan_line_update_conflicts_after_target_change() -> None:
         db.refresh(request)
         assert request.status == "failed"
         assert request.result["error"] == "precondition_conflict"
+
+        # 作り直し (§8-5): rebuilt against today's 32000 it asks for approval again, then applies.
+        rebuilt = refresh_preview(db, client.id, request.id)
+        assert (rebuilt.status, rebuilt.approved_at) == ("pending", None)
+        assert rebuilt.result == {"previous": {"error": "precondition_conflict",
+                                                "message": "Target changed after preview; refresh preview before applying"}}
+        assert [(change["before"], change["after"]) for change in rebuilt.diff["changes"] if change["field"] == "amount"] == [(32000, 35000)]
+        approve_change_request(db, client.id, client.id, request.id)
+        assert apply_change_request(db, client.id, client.id, request.id).status == "applied"
+        assert line.amount_minor == 35000
+        # A decided request is not rebuilt.
+        try:
+            refresh_preview(db, client.id, request.id)
+        except Exception as exc:
+            assert "cannot be rebuilt from status applied" in str(exc)
+        else:
+            raise AssertionError("an applied request was rebuilt")
+    finally:
+        db.close()
+
+
+def test_rebuilding_an_approved_request_asks_for_approval_again() -> None:
+    db = _session()
+    try:
+        client = _client(db)
+        line = models.MonthlyPlanLine(client_id=client.id, target_period="2026-06", line_type="expense", target_type="manual",
+                                      name="Food", amount_minor=30000, source="manual", source_kind="manual", identity_key="")
+        db.add(line)
+        db.commit()
+        request = create_change_request(db, client.id, client.id, schemas.AiChangeRequestCreate(
+            resource="monthly_plan_lines", action="update", risk="medium", target_ref={"id": line.id}, input_payload={"amount": 35000}))
+        approve_change_request(db, client.id, client.id, request.id)
+        assert refresh_preview(db, client.id, request.id).status == "pending"
+        assert reject_change_request(db, client.id, request.id).status == "rejected"
     finally:
         db.close()

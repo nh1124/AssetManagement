@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from .. import models
 from ..domain.errors import Conflict, Refused
 from .cache_service import invalidate_client
-from .contribution_plan_service import copy_plans, list_plans, serialize as serialize_plan
+from .contribution_plan_service import copy_periods, copy_plans, list_periods, list_plans, serialize as serialize_plan, serialize_period
 from .goal_service import copy_events
 from .life_event_conditions import copy_conditions
 from .life_event_graph import copy_links
@@ -29,6 +29,7 @@ def describe(db: Session, client_id: int, scenario: models.LifeScenario) -> dict
             "id", "client_id", "name", "annual_return", "inflation", "horizon_years", "is_goal", "created_at", "updated_at",
         )},
         "contribution_plans": [serialize_plan(db, client_id, plan) for plan in list_plans(db, client_id, scenario.id)],
+        "assumption_periods": [serialize_period(row) for row in list_periods(db, client_id, scenario.id)],
         "events": [asdict(event) for event in walk(db, client_id, scenario.id)],
     }
 
@@ -86,7 +87,7 @@ def create(db: Session, client_id: int, name: str) -> models.LifeScenario:
 
 
 def duplicate(db: Session, client_id: int, scenario_id: int, name: str) -> models.LifeScenario:
-    """Copy the story and its contribution plan; goal earmark tracking is not part of a story."""
+    """Copy the story, its 積立設定 and its 期間ごとの前提; goal earmark tracking is not part of a story."""
     _lock(db, client_id)
     source = get(db, client_id, scenario_id)
     scenario = models.LifeScenario(client_id=client_id, name=_name(db, client_id, name), **_assumptions(source))
@@ -95,6 +96,7 @@ def duplicate(db: Session, client_id: int, scenario_id: int, name: str) -> model
         db.flush()
         event_map = copy_graph(db, client_id, source.id, scenario.id)
         copy_plans(db, source.id, scenario.id, event_map)
+        copy_periods(db, source.id, scenario.id)
         db.commit()
     except Exception:
         db.rollback()

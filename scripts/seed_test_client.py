@@ -202,15 +202,13 @@ def seed_goal(api: Api, today: date, accounts: dict) -> dict:
     other = api.post(f"/life-scenarios/{base['id']}/duplicate", {"name": "転職して積立を増やす"})
     api.post(f"/life-scenarios/{other['id']}/contribution-plans", {"kind": "contribution", "account_id": accounts["証券口座"], "start_period": "2027-04",
                                                                     "amount": 80000, "interval_months": 1, "note": "転職後の上乗せ"})
-    # Make this month's and the next five months' plan from the goal, as the plan screen would.
-    end = date(today.year + (today.month + 4) // 12, (today.month + 4) % 12 + 1, 1).strftime("%Y-%m")
-    preview = api.post("/goal-budget/preview", {"start_period": period, "end_period": end})
-    applied = api.post("/goal-budget/apply", {"start_period": period, "end_period": end, "fingerprint": preview["fingerprint"]})
-    # Making the plan created the goal's earmarks, named after the events; some money is already set aside.
+    # Turn 自動反映 on: the plan of this month and the 11 after it follows the goal from now on (WP27).
+    applied = api.put("/plan/reflection/settings", {"enabled": True})["run"]
+    # Reflecting created the goal's earmarks, named after the events; some money is already set aside.
     goal_capsules = {row["name"]: row["id"] for row in api.get("/capsules/") if row.get("is_goal")}
     for name, amount in (("ヨーロッパ旅行", 120000), ("結婚", 350000)):
         api.post(f"/capsules/{goal_capsules[name]}/contribute", {"amount": amount, "from_account_id": accounts["貯蓄口座"]})
-    return {"scenarios": {"基本": base["id"], "転職して積立を増やす": other["id"]}, "events": events, "plan_rows": applied["applied"],
+    return {"scenarios": {"基本": base["id"], "転職して積立を増やす": other["id"]}, "events": events, "plan_rows": applied["changes"],
             "goal_earmarks": sorted(goal_capsules)}
 
 

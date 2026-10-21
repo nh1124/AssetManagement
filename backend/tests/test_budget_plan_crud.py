@@ -1,11 +1,14 @@
 from app.services.money_storage import to_minor, minor_fields
 
-from unittest.mock import patch
+import importlib.util
+from pathlib import Path
 
 import pytest
+import sqlalchemy as sa
+from alembic.migration import MigrationContext
+from alembic.operations import Operations
 from fastapi import HTTPException
 from sqlalchemy import create_engine, event
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 from backend.app import models, schemas
@@ -35,8 +38,8 @@ def planning():
         engine.dispose()
 
 
-def _plan(db, *, client_id=1, name="Plan", **values):
-    plan = models.BudgetPlan(client_id=client_id, name=name, **values)
+def _plan(db, *, client_id=1, name="Baseline", is_default=True, **values):
+    plan = models.BudgetPlan(client_id=client_id, name=name, is_default=is_default, **values)
     db.add(plan)
     db.commit()
     return plan
@@ -52,68 +55,11 @@ def _line(db, plan, *, name="Food", period="2026-10", **values):
     return line
 
 
-def test_create_plan_writes_one_plan_without_disturbing_existing_default(planning):
-    db, client = planning
-    baseline = _plan(db, name="Baseline", is_default=True)
-    created = store.create_plan(db, client.id, schemas.BudgetPlanCreate(
-        name="Lean", description="Less spending", sort_order=5,
-    ))
-    db.expire_all()
-    assert db.query(models.BudgetPlan).count() == 2
-    assert (created.name, created.description, created.sort_order, created.is_default) == (
-        "Lean", "Less spending", 5, False,
-    )
-    assert db.query(models.BudgetPlan).filter_by(is_default=True).one().id == baseline.id
-
-
-def test_delete_plan_takes_its_lines_and_leaves_every_other_plan_alone(planning):
-    """X5: the plan's lines go with it, active or not.
-
-    This used to deactivate them and let the foreign key null their plan_id,
-    leaving rows that no reader could see and that no longer said which plan
-    they had belonged to -- reachable only through a backup, which does not
-    filter on is_active.
-    """
-    db, client = planning
-    plan = _plan(db)
-    plan_id = plan.id
-    line_ids = [_line(db, plan).id, _line(db, plan, name="Rent", is_active=False).id]
-    other_plan = _plan(db, name="Other")
-    other_line = _line(db, other_plan)
-
-    assert store.delete_plan(db, client.id, plan_id) is True
-    db.expire_all()
-    assert db.get(models.BudgetPlan, plan_id) is None
-    assert [db.get(models.MonthlyPlanLine, line_id) for line_id in line_ids] == [None, None]
-    assert db.query(models.MonthlyPlanLine).count() == 1
-    assert other_line.is_active is True
-    assert other_line.plan_id == other_plan.id
-    # No orphan can be produced any more, so nothing is left to adopt.
-    assert db.query(models.MonthlyPlanLine).filter(
-        models.MonthlyPlanLine.plan_id.is_(None)).count() == 0
-
-
-@pytest.mark.parametrize("missing", ["unknown_id", "other_client"])
-def test_update_and_delete_missing_plan_return_none_and_false_without_writing(planning, missing):
-    db, client = planning
-    plan = _plan(db, client_id=2)
-    plan_id = 999999 if missing == "unknown_id" else plan.id
-    writes = []
-
-    def capture_write(_, __, statement, ___, ____, _____):
-        if statement.lstrip().split()[0].upper() in {"INSERT", "UPDATE", "DELETE"}:
-            writes.append(statement)
-
-    event.listen(db.bind, "before_cursor_execute", capture_write)
-    try:
-        assert store.update_plan(db, client.id, plan_id, {"name": "Changed"}) is None
-        assert store.delete_plan(db, client.id, plan_id) is False
-        assert not db.new and not db.dirty and not db.deleted
-        assert db.query(models.BudgetPlan).count() == 1
-        assert plan.name == "Plan"
-        assert writes == []
-    finally:
-        event.remove(db.bind, "before_cursor_execute", capture_write)
+def test_the_plan_set_endpoints_are_gone():
+    """§8-10: a client has one plan; listing, making, comparing and copying plans went with the old UI."""
+    paths = {route.path for route in router.router.routes}
+    assert paths == {"/budget-plans/copy-period", "/budget-plans/summary", "/budget-plans/lines",
+                     "/budget-plans/lines/batch", "/budget-plans/lines/{line_id}"}
 
 
 def test_delete_single_plan_line_removes_only_that_line(planning):
@@ -142,132 +88,26 @@ def test_delete_single_plan_line_removes_only_that_line(planning):
     assert store.delete_plan_line(db, client.id, deleted_id) is False
 
 
-def test_list_plans_orders_by_sort_order_then_id_and_scopes_to_client(planning):
+def test_line_delete_with_commit_false_is_rollbackable_by_caller(planning):
     db, client = planning
-    last = _plan(db, name="First created", sort_order=10)
-    first = _plan(db, name="Z", sort_order=0)
-    second = _plan(db, name="A", sort_order=0)
-    _plan(db, client_id=2, name="Foreign", sort_order=-1)
-    assert store.list_plans(db, client.id) == [first, second, last]
-
-
-def test_list_plans_returns_empty_without_creating_baseline(planning):
-    db, client = planning
-    plans = store.list_plans(db, client.id)
-    assert plans == []
-    assert store.list_plans(db, client.id) == plans
-    assert db.query(models.BudgetPlan).count() == 0
-    assert not db.new and not db.dirty and not db.deleted
-
-
-def test_update_plan_changes_supplied_fields_but_preserves_explicit_null_behavior(planning):
-    db, client = planning
-    plan = _plan(db, description="Keep", sort_order=5, is_default=True)
-    updated = store.update_plan(db, client.id, plan.id, schemas.BudgetPlanUpdate(
-        name="Renamed", description=None, sort_order=0,
-    ))
-    db.expire_all()
-    assert updated is plan
-    assert (plan.name, plan.description, plan.sort_order, plan.is_default) == (
-        "Renamed", "Keep", 0, True,
-    )
-
-
-@pytest.mark.parametrize("operation", ["create", "update", "delete", "line_delete"])
-def test_commit_false_leaves_changes_rollbackable_by_caller(planning, operation):
-    db, client = planning
-    plan = _plan(db, description="Original")
-    line = _line(db, plan)
-    default = _plan(db, name="Baseline", is_default=True)
-    plan_id, line_id, default_id = plan.id, line.id, default.id
-    if operation == "create":
-        store.create_plan(db, client.id, {"name": "New"}, commit=False)
-    elif operation == "update":
-        store.update_plan(db, client.id, plan_id, {"description": "Changed"}, commit=False)
-    elif operation == "delete":
-        store.delete_plan(db, client.id, plan_id, commit=False)
-    else:
-        store.delete_plan_line(db, client.id, line_id, commit=False)
+    plan = _plan(db)
+    line_id = _line(db, plan).id
+    store.delete_plan_line(db, client.id, line_id, commit=False)
     db.rollback()
-    assert db.query(models.BudgetPlan).count() == 2
-    assert db.get(models.BudgetPlan, plan_id).description == "Original"
-    assert db.get(models.BudgetPlan, plan_id).is_default is False
-    assert db.get(models.BudgetPlan, default_id).is_default is True
     line = db.get(models.MonthlyPlanLine, line_id)
-    # Both deletes are now real, so a rollback has to bring the line back.
     assert line is not None
-    assert line.is_active is True and line.plan_id == plan_id
+    assert line.is_active is True and line.plan_id == plan.id
 
 
-@pytest.mark.parametrize("operation", ["create", "update"])
-def test_duplicate_name_remains_http_409_and_writes_nothing(planning, operation):
+def test_foreign_line_keeps_http_404_and_delete_keeps_its_message(planning):
     db, client = planning
-    _plan(db, name="Taken")
-    plan = _plan(db, name="Original")
+    foreign_line = _line(db, _plan(db, client_id=2))
     with pytest.raises(HTTPException) as caught:
-        if operation == "create":
-            router.create_budget_plan(schemas.BudgetPlanCreate(name="Taken"), db, client)
-        else:
-            router.update_budget_plan(plan.id, schemas.BudgetPlanUpdate(name="Taken"), db, client)
-    assert (caught.value.status_code, caught.value.detail) == (
-        409, "A plan with this name already exists",
-    )
-    assert db.query(models.BudgetPlan).count() == 2
-    assert plan.name == "Original"
-
-
-@pytest.mark.parametrize("operation", ["create", "update"])
-def test_integrity_error_remains_http_409_and_rolls_back(planning, operation):
-    db, client = planning
-    plan = _plan(db)
-    failure = IntegrityError("duplicate", {}, Exception("unique constraint"))
-    with patch.object(db, "commit", side_effect=failure):
-        with pytest.raises(HTTPException) as caught:
-            if operation == "create":
-                router.create_budget_plan(schemas.BudgetPlanCreate(name="New"), db, client)
-            else:
-                router.update_budget_plan(plan.id, schemas.BudgetPlanUpdate(name="New"), db, client)
-    assert (caught.value.status_code, caught.value.detail) == (
-        409, "A plan with this name already exists",
-    )
-    assert db.query(models.BudgetPlan).count() == 1
-    assert plan.name == "Plan"
-
-
-def test_delete_default_plan_remains_http_400_without_changing_lines(planning):
-    db, client = planning
-    plan = _plan(db, is_default=True)
-    line = _line(db, plan)
-    with pytest.raises(HTTPException) as caught:
-        router.delete_budget_plan(plan.id, db, client)
-    assert (caught.value.status_code, caught.value.detail) == (400, "Cannot delete the default plan")
-    assert line.is_active is True
-    assert db.query(models.BudgetPlan).count() == 1
-
-
-def test_missing_plan_and_line_keep_http_404_details(planning):
-    db, client = planning
-    foreign_plan = _plan(db, client_id=2)
-    foreign_line = _line(db, foreign_plan)
-    calls = [
-        lambda: router.update_budget_plan(foreign_plan.id, schemas.BudgetPlanUpdate(name="New"), db, client),
-        lambda: router.delete_budget_plan(foreign_plan.id, db, client),
-        lambda: router.delete_plan_line(foreign_line.id, db, client),
-    ]
-    for call, detail in zip(calls, ["Budget plan not found"] * 2 + ["Monthly plan line not found"]):
-        with pytest.raises(HTTPException) as caught:
-            call()
-        assert (caught.value.status_code, caught.value.detail) == (404, detail)
+        router.delete_plan_line(foreign_line.id, db, client)
+    assert (caught.value.status_code, caught.value.detail) == (404, "Monthly plan line not found")
     assert foreign_line.is_active is True
-    assert foreign_plan.is_default is False
-
-
-def test_router_deletes_preserve_response_keys_and_messages(planning):
-    db, client = planning
-    plan = _plan(db)
-    line = _line(db, plan)
+    line = _line(db, _plan(db))
     assert router.delete_plan_line(line.id, db, client) == {"message": "Monthly plan line deleted"}
-    assert router.delete_budget_plan(plan.id, db, client) == {"message": "Budget plan deleted"}
 
 
 @pytest.mark.parametrize("same_period", [False, True])
@@ -278,10 +118,9 @@ def test_period_copy_replaces_target_and_preserves_source_fields(planning, same_
                    cash_treatment="non_cash", target_type="manual", target_id=42)
     target_period = source.target_period if same_period else "2026-11"
     old_target = source if same_period else _line(db, plan, period=target_period, name="Old")
-    other_plan = _plan(db, name="Other")
-    untouched = _line(db, other_plan, period=target_period)
+    untouched = _line(db, _plan(db, client_id=2), period=target_period)
     result = router.copy_period_full_replace(schemas.CopyPeriodRequest(
-        plan_id=plan.id, source_period=source.target_period, target_period=target_period,
+        source_period=source.target_period, target_period=target_period,
     ), db, client)
     db.expire_all()
     assert result == {"status": "success", "copied": 1}
@@ -298,16 +137,38 @@ def test_period_copy_replaces_target_and_preserves_source_fields(planning, same_
         assert getattr(copied, field) == getattr(source, field)
 
 
-def test_plan_copy_commits_replacement_and_preserves_response(planning):
+def test_period_copy_without_a_plan_copies_nothing_and_makes_no_plan(planning):
     db, client = planning
-    source = _plan(db, name="Source")
-    target = _plan(db, name="Target")
-    source_line = _line(db, source, manual_override=True)
-    old_target = _line(db, target, name="Old")
-    assert router.copy_plan_from(target.id, source.id, db, client) == {"status": "success", "copied": 1}
-    db.rollback()
-    assert old_target.is_active is False
-    copied = db.query(models.MonthlyPlanLine).filter_by(plan_id=target.id, is_active=True).one()
-    assert (copied.name, copied.amount, copied.manual_override) == (
-        source_line.name, source_line.amount, source_line.manual_override,
-    )
+    result = router.copy_period_full_replace(schemas.CopyPeriodRequest(source_period="2026-10", target_period="2026-11"), db, client)
+    assert result == {"status": "success", "copied": 0}
+    assert db.query(models.BudgetPlan).count() == 0
+
+
+def _migration():
+    path = Path(__file__).parents[1] / "alembic/versions/20261021_0084_single_budget_plan.py"
+    spec = importlib.util.spec_from_file_location("single_plan_migration", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_migration_keeps_each_clients_default_plan_and_deletes_the_rest_with_their_rows():
+    engine = sa.create_engine("sqlite://")
+    with engine.begin() as connection:
+        for statement in (
+            "CREATE TABLE budget_plans (id INTEGER PRIMARY KEY, client_id INTEGER, name VARCHAR, is_default BOOLEAN, sort_order INTEGER)",
+            "CREATE TABLE monthly_plan_lines (id INTEGER PRIMARY KEY, client_id INTEGER, plan_id INTEGER, target_period VARCHAR)",
+            # Client 1: the default comes after an alternative. Client 2: no default; its first plan stays.
+            "INSERT INTO budget_plans VALUES (1, 1, 'Lean', 0, 0), (2, 1, 'Baseline', 1, 1), (3, 2, 'B', 0, 1), (4, 2, 'A', 0, 0)",
+            "INSERT INTO monthly_plan_lines VALUES (1, 1, 1, '2026-10'), (2, 1, 2, '2026-10'), (3, 2, 3, '2026-10'), (4, 2, 4, '2026-10'),"
+            " (5, 1, NULL, '2026-10')",
+        ):
+            connection.exec_driver_sql(statement)
+        with Operations.context(MigrationContext.configure(connection)):
+            _migration().upgrade()
+        plans = connection.exec_driver_sql("SELECT id, client_id, is_default FROM budget_plans ORDER BY id").all()
+        lines = connection.exec_driver_sql("SELECT id FROM monthly_plan_lines ORDER BY id").all()
+    engine.dispose()
+    assert plans == [(2, 1, 1), (4, 2, 1)]
+    # A row in no plan is data health's to adopt; the migration leaves it.
+    assert lines == [(2,), (4,), (5,)]

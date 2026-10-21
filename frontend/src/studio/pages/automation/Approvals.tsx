@@ -1,16 +1,17 @@
 import { useCallback, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { applyAiChangeRequest, approveAiChangeRequest, getAiChangeRequests, getMfaStatus, reauth, rejectAiChangeRequest } from '../../../api';
+import { applyAiChangeRequest, approveAiChangeRequest, getAiChangeRequests, getMfaStatus, reauth, refreshAiChangeRequestPreview, rejectAiChangeRequest } from '../../../api';
+import { Help } from '../../components/Help';
 import { useClient } from '../../../context/ClientContext';
 import type { AiChangeRequest } from '../../../types';
 import { assetErrorMessage, useResource } from '../../useResource';
 import DiffRows from './DiffRows';
-import { buttonClass, inputClass, RISK_LABELS, STATUS_LABELS } from './labels';
+import { buttonClass, failureReason, inputClass, REBUILD_HELP, RISK_LABELS, STATUS_LABELS } from './labels';
 
-type StatusFilter = 'pending' | 'approved' | 'applied' | 'rejected';
-type RequestAction = 'approve' | 'apply' | 'reject';
-const FILTERS: StatusFilter[] = ['pending', 'approved', 'applied', 'rejected'];
-const ACTION_LABELS: Record<RequestAction, string> = { approve: '承認', apply: '適用', reject: '却下' };
+type StatusFilter = 'pending' | 'approved' | 'failed' | 'applied' | 'rejected';
+type RequestAction = 'approve' | 'apply' | 'reject' | 'rebuild';
+const FILTERS: StatusFilter[] = ['pending', 'approved', 'failed', 'applied', 'rejected'];
+const ACTION_LABELS: Record<RequestAction, string> = { approve: '承認', apply: '適用', reject: '却下', rebuild: '作り直し' };
 
 /** The step-up factor the backend accepts: an authenticator code or a recovery code (MFA only). */
 function stepUpFactor(value: string) {
@@ -33,7 +34,8 @@ function RequestList({ status, currency, mfaEnabled }: { status: StatusFilter; c
         const factor = (factors[request.id] ?? '').trim();
         if (action === 'approve' && (request.status !== 'pending' || (needsMfa && (!factor || mfaEnabled !== true)))) return;
         if (action === 'apply' && request.status !== 'approved') return;
-        if (action === 'reject' && request.status !== 'pending' && request.status !== 'approved') return;
+        if (action === 'reject' && !['pending', 'approved', 'failed'].includes(request.status)) return;
+        if (action === 'rebuild' && request.status !== 'failed') return;
         inFlight.current = true;
         setBusy({ id: request.id, action });
         setOperationError('');
@@ -52,10 +54,12 @@ function RequestList({ status, currency, mfaEnabled }: { status: StatusFilter; c
                 }
             }
             const updated = action === 'approve' ? await approveAiChangeRequest(request.id, stepUpToken ? { step_up_token: stepUpToken } : undefined)
-                : action === 'apply' ? await applyAiChangeRequest(request.id) : await rejectAiChangeRequest(request.id);
+                : action === 'apply' ? await applyAiChangeRequest(request.id)
+                : action === 'rebuild' ? await refreshAiChangeRequestPreview(request.id) : await rejectAiChangeRequest(request.id);
             // Remove a decided request immediately, even if refreshing the status list fails.
             setData((previous) => previous?.map((row) => row.id === updated.id ? updated : row).filter((row) => row.status === status) ?? null);
-            setConfirmation(`リクエスト #${request.id} を${ACTION_LABELS[action]}しました。`);
+            setConfirmation(action === 'rebuild' ? `リクエスト #${request.id} を作り直しました。「承認待ち」で確認してください。`
+                : `リクエスト #${request.id} を${ACTION_LABELS[action]}しました。`);
             reload();
         } catch (failure: unknown) {
             setOperationError(`リクエスト #${request.id} を${ACTION_LABELS[action]}できませんでした。${assetErrorMessage(failure)}`);
@@ -85,6 +89,7 @@ function RequestList({ status, currency, mfaEnabled }: { status: StatusFilter; c
                         {Object.keys(request.target_ref).length > 0 && <dl className="flex flex-wrap gap-x-5 gap-y-2 text-xs">
                             {Object.entries(request.target_ref).map(([key, value]) => <div key={key} className="flex gap-2"><dt className="text-[var(--studio-text-muted)]">{key}</dt><dd className="break-all">{value == null ? '—' : typeof value === 'object' ? JSON.stringify(value) : String(value)}</dd></div>)}
                         </dl>}
+                        {request.status === 'failed' && <p className="text-xs text-[var(--studio-danger)]">失敗の理由：{failureReason(request.result ?? {})}</p>}
                         <DiffRows change={request} currency={currency} />
                         {mfaMissing && <p id={`mfa-${request.id}`} className="text-xs text-[var(--studio-warning)]">この承認には MFA が必要です。<Link to="/settings#mfa" className="underline">設定 › MFA</Link> で設定してください。</p>}
                         {stepUp && <label className="block space-y-1 text-xs">
@@ -97,7 +102,11 @@ function RequestList({ status, currency, mfaEnabled }: { status: StatusFilter; c
                         <div className="flex flex-wrap gap-2">
                             <button type="button" onClick={() => void runAction(request, 'approve')} disabled={disabled || mfaMissing || request.status !== 'pending' || (stepUp && !(factors[request.id] ?? '').trim())} aria-describedby={stepUp || mfaMissing ? `mfa-${request.id}` : undefined} className={buttonClass}>{busy?.id === request.id && busy.action === 'approve' ? '承認中…' : '承認'}</button>
                             <button type="button" onClick={() => void runAction(request, 'apply')} disabled={disabled || request.status !== 'approved'} className={buttonClass}>{busy?.id === request.id && busy.action === 'apply' ? '適用中…' : '適用'}</button>
-                            <button type="button" onClick={() => void runAction(request, 'reject')} disabled={disabled || (request.status !== 'pending' && request.status !== 'approved')} className={buttonClass}>{busy?.id === request.id && busy.action === 'reject' ? '却下中…' : '却下'}</button>
+                            <button type="button" onClick={() => void runAction(request, 'reject')} disabled={disabled || !['pending', 'approved', 'failed'].includes(request.status)} className={buttonClass}>{busy?.id === request.id && busy.action === 'reject' ? '却下中…' : '却下'}</button>
+                            {request.status === 'failed' && <span className="inline-flex items-center gap-1">
+                                <button type="button" onClick={() => void runAction(request, 'rebuild')} disabled={disabled} className={buttonClass}>{busy?.id === request.id && busy.action === 'rebuild' ? '作り直し中…' : '作り直す'}</button>
+                                <Help label="作り直す" text={REBUILD_HELP} />
+                            </span>}
                         </div>
                     </article>
                 );

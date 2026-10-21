@@ -165,7 +165,7 @@ def test_backup_moves_old_yields_into_every_scenario_preserving_override(db):
     assert validate_import_payload(document["data"], 22, manifest)["error_count"] == 0
     import_client(db, db.get(models.Client, 2), data=document["data"], version=22, manifest=manifest)
     restored = export_client(db, db.get(models.Client, 2))
-    assert restored["version"] == EXPORT_VERSION == 30
+    assert restored["version"] == EXPORT_VERSION == 31
     names = {row["id"]: row["name"] for row in restored["data"]["accounts"]}
     story_names = {row["id"]: row["name"] for row in restored["data"]["life_scenarios"]}
     plans = restored["data"]["scenario_contribution_plans"]
@@ -222,7 +222,7 @@ def test_migration_preserves_yields_rates_and_seeds_distinct_nonbase_currencies(
     engine.dispose()
 
 
-def test_daily_loop_runs_fx_even_if_recording_fails(monkeypatch):
+def test_daily_loop_runs_reflection_and_fx_even_if_recording_fails(monkeypatch):
     import asyncio
     from unittest.mock import Mock
     import importlib
@@ -232,6 +232,9 @@ def test_daily_loop_runs_fx_even_if_recording_fails(monkeypatch):
     database = importlib.import_module(f"{package}.database")
     automatic_recording_workflow = importlib.import_module(f"{package}.workflows.automatic_recording_workflow")
     loop_fx = importlib.import_module(f"{package}.workflows.fx_workflow")
+    loop_reflection = importlib.import_module(f"{package}.workflows.plan_reflection_workflow")
+    reflected = []
+    monkeypatch.setattr(loop_reflection, "run_due_all", lambda db: reflected.append(db))
     session = Mock()
     visited = []
     monkeypatch.setattr(database, "SessionLocal", lambda: session)
@@ -244,7 +247,7 @@ def test_daily_loop_runs_fx_even_if_recording_fails(monkeypatch):
     monkeypatch.setattr(main.asyncio, "sleep", stop)
     with pytest.raises(asyncio.CancelledError):
         asyncio.run(main.run_automatic_recording_loop())
-    assert visited == [session]
+    assert visited == [session] and reflected == [session]
     session.rollback.assert_called_once()
     session.close.assert_called_once()
 

@@ -19,7 +19,6 @@ export default function MonthCopy({ period, clientName, onBusy, onCopied, onClos
         if (mutation.busy || !clientName || !/^\d{4}-(0[1-9]|1[0-2])$/.test(target) || target === period) return;
         if (!(await confirm(`「${clientName}」の${period}の予算行を${target}へコピーしますか？\n${target}の既存の予算行はすべて置き換えられます。`, 'コピーする'))) return;
         onBusy(true);
-        // Omitting plan_id uses the same default plan as the monthly screen.
         const message = `${period}の予算行を${target}へコピーしました。`;
         void mutation.run(() => copyPeriodFullReplace({ source_period: period, target_period: target }), message, () => onCopied(message)).finally(() => onBusy(false));
     };

@@ -1,5 +1,3 @@
-import { useState } from 'react';
-import { applyPeriodReportAction } from '../../../api';
 import { formatCurrency } from '../../../utils/currency';
 import { DataTable, Feedback } from '../db/Database';
 import { buttonClass } from '../db/forms';
@@ -15,7 +13,7 @@ function Variance({ resource, currency }: { resource: BreakdownResource['varianc
         <h2 className="text-lg font-semibold">予算と実績</h2>
         <Feedback loading={resource.loading} error={resource.error} />
         {resource.data && <>
-            {resource.data.plan_id === null && <p className="text-sm text-[var(--studio-text-muted)]">対象の予算プランなし</p>}
+            {resource.data.plan_id === null && <p className="text-sm text-[var(--studio-text-muted)]">保存した計画の行なし</p>}
             <dl className="grid gap-5 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5 sm:grid-cols-3">
                 {[{ label: '期間の予算合計', amount: resource.data.total_budget }, { label: '期間の支出合計', amount: resource.data.total_actual }, { label: '予算 − 支出', amount: resource.data.total_variance }].map((row) => <div key={row.label}><dt className="text-xs text-[var(--studio-text-muted)]">{row.label}</dt><dd className="mt-2 text-xl font-semibold tabular-nums">{formatCurrency(row.amount, currency)}</dd></div>)}
             </dl>
@@ -44,10 +42,8 @@ export default function BreakdownReading({ resource, ...props }: BreakdownProps 
     return resource ? <BreakdownContent {...props} resource={resource} /> : <LoadedBreakdownReading {...props} />;
 }
 
-function BreakdownContent({ startDate, endDate, currency, clientName, onBusy, readOnly = false, resource }: BreakdownProps & { resource: BreakdownResource }) {
-    const { report, profitLoss, variance, flows, refresh } = resource;
-    const [busy, setBusy] = useState(false);
-    const lock = (value: boolean) => { setBusy(value); onBusy?.(value); };
+function BreakdownContent({ startDate, endDate, currency, readOnly = false, resource }: BreakdownProps & { resource: BreakdownResource }) {
+    const { report, profitLoss, variance, flows } = resource;
     return <div className="studio-report space-y-8">
         <section className="space-y-4">
             <h2 className="text-lg font-semibold">{startDate} 〜 {endDate} の内訳</h2>
@@ -59,7 +55,7 @@ function BreakdownContent({ startDate, endDate, currency, clientName, onBusy, re
         {report.data && <ReportContext report={report.data} currency={currency} standalone />}
         <Variance resource={variance} currency={currency} />
         <AccountFlowsReading resource={flows} startDate={startDate} endDate={endDate} currency={currency} heading="口座・科目" className="space-y-4" readOnly={readOnly} />
-        {report.data && <ReportProposals report={report.data} currency={currency} clientName={clientName} disabled={report.loading || Boolean(report.error) || busy} apply={(id) => applyPeriodReportAction(startDate, endDate, id)} onApplied={refresh} onBusy={lock} readOnly={readOnly} standalone />}
+        {report.data && <ReportProposals report={report.data} currency={currency} readOnly={readOnly} standalone />}
     </div>;
 }
 

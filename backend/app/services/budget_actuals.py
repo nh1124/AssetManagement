@@ -384,6 +384,15 @@ def plan_line_flow_for_amount(
         flow = _empty_flow()
         flow["non_cash_budget"] = amount
         return flow
+    line_type = _line_attr(line, "line_type")
+    if line_type in ("allocation", "drawdown") and not _cash_flow_line_source_account_id(ctx, line) \
+            and account_flow_bucket(ctx.account(_cash_flow_line_account_id(ctx, line))) in ASSET_FLOW_BUCKETS:
+        # Money set aside in an asset account (a goal's 積立, an earmark) or taken out of one (取り崩し)
+        # with no other account named stays among the assets, which are all cash here: it is the
+        # month's 配分 or 取り崩し, but no cash moves. Read as a movement it added cash from nowhere.
+        flow = _empty_flow()
+        flow["allocation" if line_type == "allocation" else "inflow"] = amount
+        return flow
 
     from_account, to_account = _plan_line_movement_accounts(ctx, line)
     if from_account or to_account:
@@ -437,8 +446,10 @@ def _projection_amounts_for_period(
     line: models.MonthlyPlanLine | dict,
     period: str,
 ) -> tuple[float, float, float]:
-    planned = _line_attr(line, "amount") or 0.0
-    if not _line_attr(line, "id") and planned <= 0:
+    # A row the summary listed carries its month's budget (§8-14).
+    budget = _line_attr(line, "budget_amount")
+    planned = float(budget) if budget is not None else (_line_attr(line, "amount") or 0.0)
+    if budget is None and not _line_attr(line, "id") and planned <= 0:
         planned = (
             _line_attr(line, "suggested_amount")
             or _line_attr(line, "registry_amount")

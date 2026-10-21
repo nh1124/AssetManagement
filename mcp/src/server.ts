@@ -4,7 +4,6 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerAccountTools } from "./tools/accounts.js";
-import { registerActionTools } from "./tools/actions.js";
 import { registerAiChangeRequestTools } from "./tools/ai-change-requests.js";
 import { registerAiTools } from "./tools/ai.js";
 import { registerAnalysisTools } from "./tools/analysis.js";
@@ -22,6 +21,8 @@ import { registerAutoTransactionTools } from "./tools/auto-transactions.js";
 import { registerReportTools } from "./tools/reports.js";
 import { registerSimulationTools } from "./tools/simulation.js";
 import { registerStrategyTools } from "./tools/strategy.js";
+import { registerPlanReflectionTools } from "./tools/plan-reflection.js";
+import { registerUiOperationTools } from "./tools/ui-operations.js";
 import { registerTransactionBatchTools } from "./tools/transaction-batches.js";
 import { registerTransactionTools } from "./tools/transactions.js";
 import { registerPrompts } from "./prompts.js";
@@ -43,9 +44,10 @@ export function buildMcpServer(): McpServer {
   registerCalculatorTools(server);
   registerReportTools(server);
   registerPeriodReviewTools(server);
-  registerActionTools(server);
   registerAutoTransactionTools(server);
   registerStrategyTools(server);
+  registerPlanReflectionTools(server);
+  registerUiOperationTools(server);
   registerProductTools(server);
   registerMonthlyPlanningTools(server);
   registerSimulationTools(server);

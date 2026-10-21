@@ -78,7 +78,7 @@ def scheduled_in_period(db: Session, client_id: int, period: str) -> dict:
                 "posted": bool(db.query(models.Transaction.id).filter(
                     models.Transaction.client_id == client_id, models.Transaction.registry_entry_id == entry.id,
                     models.Transaction.date == due,
-                ).first()), "in_budget": entry.budget_active,
+                ).first()), "in_budget": entry.budget_active, "records_transactions": entry.records_transactions,
                 "account_id": registry_service.registry_target_account_id(entry),
                 "counter_account_id": registry_service.registry_source_account_id(entry),
             })
@@ -92,7 +92,7 @@ def scheduled_in_period(db: Session, client_id: int, period: str) -> dict:
         items.append({"kind": "depreciation", "entry_id": None, "product_id": product.id,
                       "name": product.name, "line_type": None, "amount": Money(minor, get_client_currency(db, client_id)).to_float(),
                       "date": end - timedelta(days=1), "frequency": product.depreciation_interval,
-                      "posted": posted, "in_budget": False, "account_id": product.depreciation_expense_account_id,
+                      "posted": posted, "in_budget": False, "records_transactions": True, "account_id": product.depreciation_expense_account_id,
                       "counter_account_id": product.depreciation_asset_account_id})
     items.sort(key=lambda row: (row["date"], row["name"]))
     return {"period": period, "currency": get_client_currency(db, client_id), "items": items}

@@ -1,4 +1,4 @@
-"""HTTP adapters for user-authored life scenarios and their 積立設定."""
+"""HTTP adapters for user-authored life scenarios, their 積立設定 and 期間ごとの前提."""
 from fastapi import APIRouter, Body, Depends
 from sqlalchemy.orm import Session
 
@@ -9,6 +9,7 @@ from ..services import contribution_plan_service as plans
 from ..services import life_scenario_service as service
 from ..workflows import goal_change_workflow
 
+from ..workflows import plan_reflection_workflow
 router = APIRouter(prefix="/life-scenarios", tags=["life_scenarios"])
 
 
@@ -79,7 +80,9 @@ def goal(
     current_client: models.Client = Depends(get_current_client),
 ):
     scenario = goal_change_workflow.apply(db, current_client.id, scenario_id, payload.earmarks)
-    return service.describe(db, current_client.id, scenario)
+    result = service.describe(db, current_client.id, scenario)
+    plan_reflection_workflow.after_change(db, current_client.id)
+    return result
 
 
 @router.delete("/{scenario_id}")
@@ -89,6 +92,45 @@ def delete(
     current_client: models.Client = Depends(get_current_client),
 ):
     service.delete(db, current_client.id, scenario_id)
+    return {"message": "削除しました。"}
+
+
+@router.get("/{scenario_id}/assumption-periods")
+def list_assumption_periods(
+    scenario_id: int,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    return [plans.serialize_period(row) for row in plans.list_periods(db, current_client.id, scenario_id)]
+
+
+@router.post("/{scenario_id}/assumption-periods")
+def create_assumption_period(
+    scenario_id: int,
+    payload: schemas.AssumptionPeriodInput,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    return plans.serialize_period(plans.create_period(db, current_client.id, scenario_id, payload.model_dump(exclude_unset=True)))
+
+
+@router.put("/assumption-periods/{period_id}")
+def update_assumption_period(
+    period_id: int,
+    payload: schemas.AssumptionPeriodInput,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    return plans.serialize_period(plans.update_period(db, current_client.id, period_id, payload.model_dump(exclude_unset=True)))
+
+
+@router.delete("/assumption-periods/{period_id}")
+def delete_assumption_period(
+    period_id: int,
+    db: Session = Depends(get_db),
+    current_client: models.Client = Depends(get_current_client),
+):
+    plans.delete_period(db, current_client.id, period_id)
     return {"message": "削除しました。"}
 
 
@@ -109,7 +151,9 @@ def create_contribution_plan(
     current_client: models.Client = Depends(get_current_client),
 ):
     plan = plans.create_plan(db, current_client.id, scenario_id, payload.model_dump(exclude_unset=True))
-    return plans.serialize(db, current_client.id, plan)
+    result = plans.serialize(db, current_client.id, plan)
+    plan_reflection_workflow.after_change(db, current_client.id)
+    return result
 
 
 @router.put("/contribution-plans/{plan_id}")
@@ -120,7 +164,9 @@ def update_contribution_plan(
     current_client: models.Client = Depends(get_current_client),
 ):
     plan = plans.update_plan(db, current_client.id, plan_id, payload.model_dump(exclude_unset=True))
-    return plans.serialize(db, current_client.id, plan)
+    result = plans.serialize(db, current_client.id, plan)
+    plan_reflection_workflow.after_change(db, current_client.id)
+    return result
 
 
 @router.delete("/contribution-plans/{plan_id}")
@@ -130,4 +176,6 @@ def delete_contribution_plan(
     current_client: models.Client = Depends(get_current_client),
 ):
     plans.delete_plan(db, current_client.id, plan_id)
-    return {"message": "削除しました。"}
+    result = {"message": "削除しました。"}
+    plan_reflection_workflow.after_change(db, current_client.id)
+    return result

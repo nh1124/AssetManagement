@@ -2,13 +2,15 @@
 
 Both projections walk the same months over the same plan lines and differ in
 what they accumulate -- one the cash flow of each movement, the other the
-asset and liability balances it leaves behind. For the current month they
-count the remaining amount rather than the full plan, so actuals already
-posted are not charged twice.
+asset and liability balances it leaves behind. The lines are the month's rows
+as the summary lists them, so a projection counts the month's budgets like the
+summary's totals (§8-14): an automatic transaction or an earmark with no saved
+row counts its monthly amount. For the current month they count the remaining
+amount rather than the full plan, so actuals already posted are not charged twice.
 """
 from __future__ import annotations
 
-from sqlalchemy.orm import Session
+from typing import Callable
 
 from .. import models
 from .budget_actuals import (
@@ -23,6 +25,7 @@ from .budget_lines import (
     _empty_balance,
     _empty_flow,
     account_flow_bucket,
+    _line_attr,
     counted_amount,
     earmark_counted_shares,
 )
@@ -70,6 +73,16 @@ def _balance_projection_row(period: str, state: dict[str, float]) -> dict:
     }
 
 
+# The month's rows as the summary lists them: saved rows and the unsaved rows of
+# automatic transactions, earmarks and card settlements, each with budget_amount.
+MonthLines = Callable[[str], list[dict]]
+
+
+def _line_budget(line: models.MonthlyPlanLine | dict) -> float:
+    budget = _line_attr(line, "budget_amount")
+    return float(budget if budget is not None else (_line_attr(line, "amount") or 0.0))
+
+
 def _period_plan_lines(ctx: BudgetContext, period: str, plan_id: int | None) -> list[models.MonthlyPlanLine]:
     if plan_id is None:
         return []
@@ -96,39 +109,22 @@ def planned_cash_outflow_remaining(
     return flow["expense"] + flow["non_cash_budget"]
 
 
-def get_cash_flow_projection(
-    db: Session,
-    client_id: int,
-    start_period: str,
-    months: int = 12,
-    starting_cash: float | None = None,
-    plan_id: int | None = None,
-) -> list[dict]:
-    return _cash_flow_projection(
-        BudgetContext(db, client_id),
-        start_period,
-        months=months,
-        starting_cash=starting_cash,
-        plan_id=plan_id,
-    )
-
-
 def _cash_flow_projection(
     ctx: BudgetContext,
     start_period: str,
+    month_lines: MonthLines,
     *,
     months: int = 12,
     starting_cash: float | None = None,
-    plan_id: int | None = None,
 ) -> list[dict]:
-    plan_id = find_budget_plan_id(ctx.db, ctx.client_id, plan_id)
+    plan_id = find_budget_plan_id(ctx.db, ctx.client_id)
     cash = liquid_cash(ctx) if starting_cash is None else starting_cash
     rows = []
     for idx in range(months):
         period = add_months(start_period, idx)
         lines = _period_plan_lines(ctx, period, plan_id)
-        projection_lines: list[models.MonthlyPlanLine | dict] = list(lines)
-        shares = earmark_counted_shares(projection_lines, lambda line: line.amount)
+        projection_lines = month_lines(period)
+        shares = earmark_counted_shares(projection_lines, _line_budget)
         planned_flow = _empty_flow()
         actual_flow = _empty_flow()
         remaining_flow = _empty_flow()
@@ -181,18 +177,16 @@ def _cash_flow_projection(
 def _balance_projection(
     ctx: BudgetContext,
     start_period: str,
+    month_lines: MonthLines,
     *,
     months: int = 12,
-    plan_id: int | None = None,
 ) -> list[dict]:
-    plan_id = find_budget_plan_id(ctx.db, ctx.client_id, plan_id)
     state = _starting_balance_state(ctx)
     rows = []
     for idx in range(months):
         period = add_months(start_period, idx)
-        lines = _period_plan_lines(ctx, period, plan_id)
-        projection_lines: list[models.MonthlyPlanLine | dict] = list(lines)
-        shares = earmark_counted_shares(projection_lines, lambda line: line.amount)
+        projection_lines = month_lines(period)
+        shares = earmark_counted_shares(projection_lines, _line_budget)
         for line in projection_lines:
             _, _, remaining_amount = _projection_amounts_for_period(ctx, line, period)
             movement = _balance_movement_for_amount(ctx, line, counted_amount(line, remaining_amount, shares))

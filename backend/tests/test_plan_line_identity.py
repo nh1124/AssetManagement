@@ -35,7 +35,8 @@ def test_identity_has_ten_elements_and_source_kind():
     key = line_identity_key(_line())
     assert len(key) == 10
     assert key[2] == "manual"
-    assert key == (2, "2026-05", "manual", "allocation", "account", 34, 40, 34, "", "auto")
+    # A user's record is told apart by its name (WP27): several may share an account and section.
+    assert key == (2, "2026-05", "manual", "allocation", "account", 34, 40, 34, "savings", "auto")
 
 
 def test_source_kind_alone_separates_identities():

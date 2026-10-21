@@ -9,6 +9,7 @@ from ..dependencies import get_current_client
 from ..services import goal_earmark_service, life_event_conditions, life_event_graph
 from ..services.goal_service import create_goal_record, delete_goal, list_goals, update_goal
 
+from ..workflows import plan_reflection_workflow
 router = APIRouter(prefix="/life-events", tags=["life_events"])
 
 
@@ -112,7 +113,9 @@ def create_life_event(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client)
 ):
-    return create_goal_record(db, current_client.id, life_event)
+    result = create_goal_record(db, current_client.id, life_event)
+    plan_reflection_workflow.after_change(db, current_client.id)
+    return result
 
 
 @router.put("/{event_id}", response_model=schemas.LifeEvent)
@@ -125,7 +128,9 @@ def update_life_event(
     updated = update_goal(db, current_client.id, event_id, life_event)
     if updated is None:
         raise HTTPException(status_code=404, detail="Life event not found")
-    return updated
+    result = updated
+    plan_reflection_workflow.after_change(db, current_client.id)
+    return result
 
 
 @router.delete("/{event_id}")
@@ -136,4 +141,6 @@ def delete_life_event(
 ):
     if not delete_goal(db, current_client.id, event_id):
         raise HTTPException(status_code=404, detail="Life event not found")
-    return {"message": "Deleted"}
+    result = {"message": "Deleted"}
+    plan_reflection_workflow.after_change(db, current_client.id)
+    return result

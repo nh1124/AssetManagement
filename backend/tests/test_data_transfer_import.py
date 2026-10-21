@@ -58,7 +58,6 @@ def _seed(db, client_id=101, base=10000):
         money_names = {
             "monthly_plan_lines": ("amount",), "life_events": ("target_amount",),
             "capsules": ("target_amount", "monthly_contribution"),
-            "monthly_actions": ("amount",),
             "capsule_funding_sources": ("target_amount",),
             "products": ("last_unit_price", "purchase_price"), "registry_entries": ("amount",),
         }
@@ -87,6 +86,8 @@ def _seed(db, client_id=101, base=10000):
         amount_minor=30000, interval_months=1, annual_return=3.0, note="plan note")
     add(models.ScenarioContributionPlan, 43, scenario_id=scenario.id, kind="withdrawal", account_id=cash.id, start_period="2026-12",
         amount_minor=600, on_shortage="partial", life_event_id=goal.id)
+    add(models.ScenarioAssumptionPeriod, 44, scenario_id=scenario.id, start_period="2027-01", end_period=None,
+        annual_return=None, inflation=1.5, note="period note")
     # Not in the backup, but present so rollback is proven to leave it alone too.
     add(models.Notification, 42, kind="goal_reflection", dedupe_key=f"goal_reflection:{base}", title="t", body="", payload={}, status="open")
     add(models.GoalBudgetReflection, 41, scenario_id=scenario.id, applied_at=STAMP, start_period="2026-10",
@@ -124,11 +125,11 @@ def _seed(db, client_id=101, base=10000):
     add(models.ProductDepreciation, 26, product_id=product.id, transaction_id=tx.id,
         period="2026-10", amount_minor=50)
     plan = add(models.BudgetPlan, 15, name="default", is_default=True, sort_order=10)
-    line = add(models.MonthlyPlanLine, 16, plan_id=plan.id, target_period="2026-10",
-               line_type="expense", target_type="account", target_id=expense.id,
-               account_id=expense.id, source_account_id=cash.id, name="food", amount=100,
-               identity_key=json.dumps([plan.id, "2026-10", "manual", "expense", "account",
-                                        expense.id, cash.id, expense.id, "", "auto"], separators=(",", ":")))
+    add(models.MonthlyPlanLine, 16, plan_id=plan.id, target_period="2026-10",
+        line_type="expense", target_type="account", target_id=expense.id,
+        account_id=expense.id, source_account_id=cash.id, name="food", amount=100,
+        identity_key=json.dumps([plan.id, "2026-10", "manual", "expense", "account",
+                                 expense.id, cash.id, expense.id, "food", "auto"], separators=(",", ":")))
     add(models.PeriodReview, 17, start_date=date(2026, 10, 1), end_date=date(2026, 11, 1),
         label="October", reflection="reflection", next_actions="actions")
     add(models.CapsuleRule, 19, capsule_id=capsule.id, trigger_type="Expense",
@@ -137,13 +138,6 @@ def _seed(db, client_id=101, base=10000):
         account_id=cash.id, target_amount=250, max_share_bp=6000, sort_order=3)
     add(models.ExchangeRate, 22, base_currency="USD", quote_currency="JPY", rate=150,
         as_of_date=date(2026, 10, 1))
-    add(models.MonthlyAction, 23, source_period="2026-10", target_period="2026-11",
-        proposal_id="allocation", kind="change_capsule_contribution", description="allocation",
-        target_id=capsule.id, idempotency_key="allocation", amount=10,
-        payload={"nested": [{"account_id": cash.id, "life_event_id": goal.id,
-                             "capsule_id": capsule.id, "product_id": product.id,
-                             "plan_line_id": line.id}]},
-        result={"nested": {"transaction_id": tx.id, "batch_id": batch.id}}, status="applied", applied_at=STAMP)
     # Tables outside the backup format must survive a failed restore too,
     # including proposal links that a transaction deletion sets to NULL.
     add(models.TransactionProposal, 24, origin="test", date=date(2026, 10, 2),
@@ -238,12 +232,6 @@ def test_round_trip_preserves_every_collection_and_document(db):
                 for index in (5, 6, 7):
                     identity[index] = maps["accounts"][identity[index]]
                 item["identity_key"] = json.dumps(identity, separators=(",", ":"))
-            if collection == "monthly_actions":
-                item["target_id"] = maps["capsules"][item["target_id"]]
-                for field, old_id in item["payload"]["nested"][0].items():
-                    item["payload"]["nested"][0][field] = maps[REFERENCES[field]][old_id]
-                for field, old_id in item["result"]["nested"].items():
-                    item["result"]["nested"][field] = maps[REFERENCES[field]][old_id]
 
 
 
@@ -307,6 +295,28 @@ def test_an_older_backup_with_quick_templates_still_restores(db):
     assert [row["label"] for row in restored["data"]["transaction_batches"]] == [
         row["label"] for row in document["data"]["transaction_batches"]
     ]
+
+
+def test_an_older_backup_with_alternative_budget_plans_restores_only_the_default(db):
+    # A client has one budget plan (§8-10). An older backup's other plans and their rows stay out.
+    source, _ = _seed(db)
+    target = _client(db, 202)
+    document = export_client(db, source)
+    [default] = document["data"]["budget_plans"]
+    extra = {**default, "id": 10950, "name": "lean", "is_default": False, "sort_order": 0}
+    document["data"]["budget_plans"].insert(0, extra)
+    line = {**document["data"]["monthly_plan_lines"][0], "id": 10951, "plan_id": extra["id"], "amount": 999}
+    document["data"]["monthly_plan_lines"].append(line)
+    checksums = {key: _checksum(value) for key, value in document["data"].items()}
+    document["manifest"]["counts"]["budget_plans"] = 2
+    document["manifest"]["counts"]["monthly_plan_lines"] += 1
+    document["manifest"]["checksums"] = checksums
+    document["manifest"]["payload_checksum"] = _checksum({"data": document["data"], "checksums": checksums})
+
+    assert _restore(db, target, document)["status"] == "ok"
+    restored = export_client(db, target)
+    assert [(plan["name"], plan["is_default"]) for plan in restored["data"]["budget_plans"]] == [("default", True)]
+    assert 999 not in [row["amount"] for row in restored["data"]["monthly_plan_lines"]]
 
 
 def test_journal_failure_after_deletion_preserves_every_table_byte_for_byte(db):
@@ -395,7 +405,7 @@ def test_commit_failure_rolls_back_the_complete_rebuild(db):
 
     def fail_commit(session):
         commits.append(session)
-        assert db.query(models.MonthlyAction).filter_by(client_id=client.id).count() == 1
+        assert db.query(models.PeriodReview).filter_by(client_id=client.id).count() == 1
         raise RuntimeError("commit refused")
 
     event.listen(db, "before_commit", fail_commit)

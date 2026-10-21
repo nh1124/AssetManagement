@@ -32,7 +32,6 @@ import type {
     LoginResult,
     LifeEvent,
     LifeEventProgress,
-    MonthlyAction,
     MfaRecoveryCodes,
     MfaSetupStart,
     MfaStatus,
@@ -42,7 +41,6 @@ import type {
     Product,
     AutoTransaction,
     AutoTransactionInput,
-    ReviewActionCreate,
     Transaction,
     TransactionProposal,
 } from '../types';
@@ -221,13 +219,12 @@ export const getProfitLoss = async (year?: number, month?: number, startDate?: s
     return response.data;
 };
 
-export const getVarianceAnalysis = async (year?: number, month?: number, startDate?: string, endDate?: string, planId?: number | null) => {
+export const getVarianceAnalysis = async (year?: number, month?: number, startDate?: string, endDate?: string) => {
     const params = new URLSearchParams();
     if (year) params.append('year', String(year));
     if (month) params.append('month', String(month));
     if (startDate) params.append('start_date', startDate);
     if (endDate) params.append('end_date', endDate);
-    if (planId) params.append('plan_id', String(planId));
     const response = await api.get(`/analysis/variance?${params.toString()}`);
     return response.data;
 };
@@ -294,39 +291,12 @@ export const savePeriodReview = async (review: {
     return response.data;
 };
 
-export const getMonthlyActions = async (sourcePeriod?: string): Promise<MonthlyAction[]> => {
-    const response = await api.get('/actions/', { params: sourcePeriod ? { source_period: sourcePeriod } : undefined });
-    return response.data;
-};
 
-export const createMonthlyAction = async (payload: ReviewActionCreate): Promise<MonthlyAction> => {
-    const response = await api.post('/actions/', payload);
-    return response.data;
-};
 
-export const updateMonthlyAction = async (id: number, payload: ReviewActionCreate): Promise<MonthlyAction> => {
-    const response = await api.put(`/actions/${id}`, payload);
-    return response.data;
-};
 
-export const deleteMonthlyAction = async (id: number): Promise<void> => {
-    await api.delete(`/actions/${id}`);
-};
 
-export const processDueMonthlyActions = async (): Promise<{ processed: MonthlyAction[] }> => {
-    const response = await api.post('/actions/process-due');
-    return response.data;
-};
 
-export const applyReviewAction = async (id: number): Promise<MonthlyAction> => {
-    const response = await api.post(`/actions/${id}/apply`);
-    return response.data;
-};
 
-export const skipReviewAction = async (id: number): Promise<MonthlyAction> => {
-    const response = await api.post(`/actions/${id}/skip`);
-    return response.data;
-};
 
 // Accounts endpoints
 export const getAccounts = async (accountType?: string, isActive?: boolean): Promise<Account[]> => {
@@ -487,12 +457,11 @@ export const deleteGoal = async (id: number) => {
 // Budget Builder
 export const getBudgetSummary = async (
     period?: string,
-    options: { cash_flow_start_period?: string; cash_flow_months?: number; plan_id?: number; include_unset?: boolean } = {},
+    options: { cash_flow_start_period?: string; cash_flow_months?: number; include_unset?: boolean } = {},
 ) => {
     const response = await api.get('/budget-plans/summary', {
         params: {
             period,
-            plan_id: options.plan_id,
             cash_flow_start_period: options.cash_flow_start_period,
             cash_flow_months: options.cash_flow_months,
             include_unset: options.include_unset,
@@ -515,7 +484,6 @@ export type MonthlyPlanLinePayload = {
     manual_override?: boolean;
     cash_treatment?: 'auto' | 'cash' | 'non_cash';
     is_active?: boolean;
-    plan_id?: number | null;
 };
 
 export const createMonthlyPlanLines = async (lines: MonthlyPlanLinePayload[]) => {
@@ -817,31 +785,13 @@ export const getPeriodReport = async (startDate: string, endDate: string): Promi
     return response.data;
 };
 
-export const applyMonthlyReportAction = async (
-    period: string,
-    proposalId: string
-): Promise<{ status: string; action: MonthlyAction }> => {
-    const response = await api.post(`/reports/${period}/actions/${proposalId}/apply`);
-    return response.data;
-};
 
-export const applyPeriodReportAction = async (
-    startDate: string,
-    endDate: string,
-    proposalId: string
-): Promise<{ status: string; action: MonthlyAction }> => {
-    const response = await api.post(`/reports/period/actions/${proposalId}/apply`, null, {
-        params: { start_date: startDate, end_date: endDate },
-    });
-    return response.data;
-};
 
 // Budget Plans
 
 export const copyPeriodFullReplace = async (payload: {
     source_period: string;
     target_period: string;
-    plan_id?: number;
 }): Promise<void> => {
     await api.post('/budget-plans/copy-period', payload);
 };

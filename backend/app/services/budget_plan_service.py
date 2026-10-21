@@ -338,7 +338,6 @@ def get_budget_summary(
     db: Session,
     client_id: int,
     period: str,
-    plan_id: int | None = None,
     cash_flow_start_period: str | None = None,
     cash_flow_months: int = 12,
     goal_metrics: dict | None = None,
@@ -355,7 +354,7 @@ def get_budget_summary(
     for the budget screen that lists every account (WP5).
     """
     ctx = BudgetContext(db, client_id)
-    plan_id = find_budget_plan_id(db, client_id, plan_id)
+    plan_id = find_budget_plan_id(db, client_id)
 
     goal_metrics = goal_metrics or {}
     goals_count = int(goal_metrics.get("goals_count") or 0)
@@ -402,9 +401,17 @@ def get_budget_summary(
         feasibility_status = "shortfall"
 
     projection_start = cash_flow_start_period or period
-    projection = _cash_flow_projection(ctx, projection_start, months=cash_flow_months, starting_cash=starting_cash, plan_id=plan_id)
+    # Both projections count the months' budgets as this summary does (§8-14); each month is built once.
+    built: dict[str, list[dict]] = {period: plan_lines}
+
+    def lines_for(month: str) -> list[dict]:
+        if month not in built:
+            built[month] = _month_lines(ctx, month, plan_id)
+        return built[month]
+
+    projection = _cash_flow_projection(ctx, projection_start, lines_for, months=cash_flow_months, starting_cash=starting_cash)
     cash_flow_summary = summarize_cash_flow_projection(projection, starting_cash, projection_start)
-    balance_projection = _balance_projection(ctx, projection_start, months=cash_flow_months, plan_id=plan_id)
+    balance_projection = _balance_projection(ctx, projection_start, lines_for, months=cash_flow_months)
     balance_summary = summarize_balance_projection(balance_projection)
 
     extra = {"unset_lines": _unset_account_lines(ctx, plan_lines, period)} if include_unset else {}

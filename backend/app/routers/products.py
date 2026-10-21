@@ -11,6 +11,7 @@ from ..dependencies import get_current_client
 from ..services import product_service
 from ..workflows import product_workflow
 
+from ..workflows import plan_reflection_workflow
 router = APIRouter(prefix="/products", tags=["products"])
 
 
@@ -32,9 +33,11 @@ def create_product(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    return product_service.enrich_product(product_workflow.create_product(
+    result = product_service.enrich_product(product_workflow.create_product(
         db, current_client.id, product, reserve_fingerprint=reserve_fingerprint,
     ))
+    plan_reflection_workflow.after_change(db, current_client.id)
+    return result
 
 
 @router.put("/{product_id}", response_model=schemas.Product)
@@ -50,7 +53,9 @@ def update_product(
     )
     if updated is None:
         raise HTTPException(status_code=404, detail="Product not found")
-    return product_service.enrich_product(updated)
+    result = product_service.enrich_product(updated)
+    plan_reflection_workflow.after_change(db, current_client.id)
+    return result
 
 
 @router.patch("/{product_id}", response_model=schemas.Product)
@@ -66,7 +71,9 @@ def patch_product(
     )
     if updated is None:
         raise HTTPException(status_code=404, detail="Product not found")
-    return product_service.enrich_product(updated)
+    result = product_service.enrich_product(updated)
+    plan_reflection_workflow.after_change(db, current_client.id)
+    return result
 
 
 @router.delete("/{product_id}", status_code=204)
@@ -80,6 +87,7 @@ def delete_product(
         db, current_client.id, product_id, reserve_fingerprint=reserve_fingerprint,
     ):
         raise HTTPException(status_code=404, detail="Product not found")
+    plan_reflection_workflow.after_change(db, current_client.id)
 
 
 @router.get("/unit-economics-summary")

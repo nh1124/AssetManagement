@@ -167,8 +167,14 @@ def _missing_source_items(db: Session, client_id: int) -> list[dict[str, Any]]:
         .all()
     )
 
+    asset_ids = {account.id for account in db.query(models.Account.id).filter(
+        models.Account.client_id == client_id, models.Account.account_type == "asset")}
     items: list[dict[str, Any]] = []
     for line in lines:
+        # 配分 into or 取り崩し out of an asset account needs no source: it moves no cash (WP27).
+        # The goal's rows are always of this kind, so they no longer fill this list.
+        if line.line_type in {"allocation", "drawdown"} and (line.account_id in asset_ids or line.target_type == "capsule"):
+            continue
         candidate = infer_plan_line_source(db, line)
         items.append(
             {

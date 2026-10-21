@@ -289,14 +289,28 @@ class DepreciationRecord(BaseModel):
 PlanRecordSection = Literal["allocation", "drawdown", "expense", "income", "debt_payment", "borrowing"]
 
 
+class PlanRecordAutomatic(BaseModel):
+    """自動扱い (WP27): the record becomes an automatic transaction from start_period, every month or year,
+    until end_period (open when null). counter_account_id is the other side (where it is paid from, where
+    it arrives); records_transactions also posts it on its day, otherwise it only budgets."""
+    model_config = ConfigDict(extra="forbid")
+    frequency: Literal["Monthly", "Yearly"] = "Monthly"
+    day_of_month: int = Field(default=1, ge=1, le=31)
+    start_period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    end_period: Optional[str] = Field(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    counter_account_id: int | None = Field(default=None, gt=0)
+    records_transactions: bool = False
+
+
 class PlanRecordCreate(BaseModel):
-    """A user's record in an account's month on the plan page (WP19)."""
+    """A user's record in an account's month on the plan page (WP19); several per section, one per name (WP27)."""
     model_config = ConfigDict(extra="forbid")
     period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
     account_id: int = Field(gt=0)
     section: PlanRecordSection
     amount: float = Field(ge=0, allow_inf_nan=False)
     name: Optional[str] = Field(default=None, max_length=200)
+    automatic: PlanRecordAutomatic | None = None
 
 
 class PlanRecordUpdate(BaseModel):
@@ -492,6 +506,8 @@ class RegistryEntryBase(BaseModel):
     repeat_count: int | None = Field(default=None, ge=1, le=100000)
     budget_active: bool = True
     is_active: bool = True
+    # 取引も記録する: false for one that only budgets each month and never posts (WP27).
+    records_transactions: bool = True
     note: str | None = None
 
 
@@ -582,7 +598,6 @@ class MonthlyPlanLineBase(BaseModel):
     manual_override: bool = False
     cash_treatment: MonthlyPlanCashTreatmentLiteral = "auto"
     is_active: bool = True
-    plan_id: Optional[int] = None
 
 
 class MonthlyPlanLineCreate(MonthlyPlanLineBase):
@@ -610,11 +625,11 @@ class MonthlyPlanLineUpdate(BaseModel):
     manual_override: Optional[bool] = None
     cash_treatment: Optional[MonthlyPlanCashTreatmentLiteral] = None
     is_active: Optional[bool] = None
-    plan_id: Optional[int] = None
 
 
 class MonthlyPlanLine(MonthlyPlanLineBase):
     id: int
+    plan_id: Optional[int] = None
     target_name: Optional[str] = None
     account_name: Optional[str] = None
     actual: float = 0.0
@@ -637,48 +652,9 @@ class MonthlyPlanLine(MonthlyPlanLineBase):
 
 # ========== Budget Plans ==========
 
-class BudgetPlanCreate(BaseModel):
-    name: str
-    description: Optional[str] = None
-    sort_order: int = 0
-    model_config = ConfigDict(extra="forbid")
-
-
-class BudgetPlanUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    sort_order: Optional[int] = None
-
-
-class BudgetPlan(BaseModel):
-    id: int
-    name: str
-    description: Optional[str] = None
-    is_default: bool
-    sort_order: int
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
-
-    class Config:
-        from_attributes = True
-
-
 class CopyPeriodRequest(BaseModel):
     source_period: str
     target_period: str
-    plan_id: Optional[int] = None
-
-
-class BudgetPlanCashFlowRow(BaseModel):
-    period: str
-    ending_cash: float
-    net_cash: float
-
-
-class BudgetPlanCompareResult(BaseModel):
-    plan_id: int
-    plan_name: str
-    cash_flow: list[BudgetPlanCashFlowRow]
 
 
 # ========== Monthly Reviews ==========
@@ -1069,14 +1045,41 @@ class ContributionPlanInput(BaseModel):
     life_event_id: int | None = Field(default=None, gt=0)
 
 
-class GoalPlanRange(BaseModel):
+class AssumptionPeriodInput(BaseModel):
+    """期間ごとの前提 (§8-11): the default yield and the inflation from start_period to end_period
+    (inclusive; open when null). A null rate keeps what applies without the record; fields left out
+    keep their value on update."""
     model_config = ConfigDict(extra="forbid")
-    start_period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
-    end_period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    start_period: str | None = Field(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    end_period: str | None = Field(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    annual_return: float | None = Field(default=None, allow_inf_nan=False)
+    inflation: float | None = Field(default=None, allow_inf_nan=False)
+    note: str | None = None
 
 
-class GoalPlanApply(GoalPlanRange):
-    fingerprint: str = Field(min_length=64, max_length=64)
+class ReflectionGoalSettings(BaseModel):
+    """How the goal is written into the plan: 基準 (remaining: 残り期間に合わせる; goal_setting: 積立設定から決まる額),
+    確保済みの引き方 (even / recent) and 遅れの取り返し (even / recent / none)."""
+    model_config = ConfigDict(extra="forbid")
+    base: Literal["remaining", "goal_setting"] | None = None
+    held: Literal["even", "recent"] | None = None
+    catch_up: Literal["even", "recent", "none"] | None = None
+
+
+class ReflectionProductSettings(BaseModel):
+    """How earmarks with linked products are written: base (remaining / saved: 取り置きの月額), held (even / recent)."""
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool | None = None
+    base: Literal["remaining", "saved"] | None = None
+    held: Literal["even", "recent"] | None = None
+
+
+class ReflectionSettingsPatch(BaseModel):
+    """計画への反映の設定 (WP27); fields left out keep their value. enabled: 自動反映."""
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool | None = None
+    goal: ReflectionGoalSettings | None = None
+    products: ReflectionProductSettings | None = None
 
 
 class FxTrackedCurrencyCreate(BaseModel):

@@ -23,7 +23,6 @@ OWNERS: dict[str, str] = {
     "registry_entries": "services/registry_service",
     "budget_plans": "services/budget_plan_store",
     "monthly_plan_lines": "services/budget_plan_store",
-    "monthly_actions": "services/monthly_action_store",
     "period_closes": "services/period_close_service",
     "period_reviews": "services/period_review_service",
     "capsules": "services/capsule_service",
@@ -35,6 +34,7 @@ OWNERS: dict[str, str] = {
     "household_members": "services/household_service",
     "life_scenarios": "services/life_scenario_service",
     "scenario_contribution_plans": "services/contribution_plan_service",
+    "scenario_assumption_periods": "services/contribution_plan_service",  # The scenario's other simulation records.
     "goal_budget_reflections": "services/goal_budget_record",
     "notifications": "services/notification_service",
     "life_event_links": "services/life_event_graph",

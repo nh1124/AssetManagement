@@ -9,7 +9,6 @@ import Earmarks from './pages/earmarks/Earmarks';
 import Ledger from './pages/ledger/Ledger';
 import Flows from './pages/Flows';
 import Plan from './pages/plan/Plan';
-import Actions from './pages/plan/Actions';
 import Trends from './pages/report/Trends';
 import Breakdown from './pages/report/Monthly';
 import Review from './pages/report/Review';
@@ -44,7 +43,7 @@ const SCREENS: Record<string, { index: ReactElement; tabs?: Record<string, React
         tabs: { auto: <Ledger automatic /> },
     },
     flows: { index: <Flows />, tabs: { accounts: <Flows subjects /> } },
-    plan: { index: <Plan />, tabs: { actions: <Actions /> } },
+    plan: { index: <Plan />, tabs: { earmarks: <Plan view="earmarks" />, auto: <Plan view="auto" /> } },
     report: { index: <Trends />, tabs: { breakdown: <Breakdown />, review: <Review />, export: <Export /> } },
     goals: { index: <GoalSummary /> },
     assets: {
@@ -102,7 +101,7 @@ export default function StudioApp() {
                     <Route path="assets/earmarks" element={<Navigate to="/db/earmarks" replace />} />
                     {/* 予算 became 計画 (WP16). */}
                     <Route path="budget" element={<Navigate to="/plan" replace />} />
-                    <Route path="budget/actions" element={<Navigate to="/plan/actions" replace />} />
+                    <Route path="budget/actions" element={<Navigate to="/plan" replace />} />
                     {STUDIO_SCREENS.map((screen) => {
                         const screenRoutes = SCREENS[screen.path];
                         return (
