@@ -1,5 +1,6 @@
+import { Settings } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
 import Overlay from '../../components/Overlay';
-import { clientToday, useTimezone } from '../../datetime';
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { getBudgetSummary, getScheduledTransactions } from '../../../api';
 import { useClient } from '../../../context/ClientContext';
@@ -7,14 +8,15 @@ import { useResource } from '../../useResource';
 import { Feedback } from '../db/Database';
 import AccountEditor from '../db/AccountEditor';
 import { buttonClass, inputClass, loadAccounts, primaryClass, useMutation, type DatabaseAccount } from '../db/forms';
-import GoalPlanDialog from '../goals/GoalPlanDialog';
-import ReservePlanDialog from './ReservePlanDialog';
+import ReflectionOverlay from './ReflectionOverlay';
+import PlanAutomatic from './PlanAutomatic';
+import { usePlanMonth } from './planMonth';
 import { useNotifications } from '../../notificationContext';
 import MonthPicker from '../ledger/MonthPicker';
 import MonthCopy from './MonthCopy';
 import { AccountOverlay, EarmarkOverlay, type OverlayContext } from './BudgetOverlay';
 import { SCOPES, buildModel, earmarkMatches, rowMatches, type BudgetSummary, type Scope } from './budgetRows';
-import BudgetTable from './BudgetTable';
+import BudgetTable, { EarmarkTable } from './BudgetTable';
 
 interface Filters { query: string; scope: Scope }
 const FILTERS_KEY = 'studio.budget.filters';
@@ -65,8 +67,10 @@ function MoreMenu({ disabled, items }: { disabled: boolean; items: Array<{ label
     </details>;
 }
 
-function MonthlyPlan({ period, currency, clientName, filters, picker, onFilters, onBusy }: {
-    period: string; currency: string; clientName?: string; filters: Filters; picker: ReactNode;
+export type PlanView = 'plan' | 'earmarks' | 'auto';
+
+function MonthlyPlan({ view, period, currency, clientName, filters, picker, onFilters, onBusy }: {
+    view: PlanView; period: string; currency: string; clientName?: string; filters: Filters; picker: ReactNode;
     onFilters: (filters: Filters) => void; onBusy: (busy: boolean) => void;
 }) {
     const load = useCallback(() => loadSummary(period), [period]);
@@ -79,8 +83,12 @@ function MonthlyPlan({ period, currency, clientName, filters, picker, onFilters,
     const notifications = useNotifications();
     const [copyBusy, setCopyBusy] = useState(false);
     const [copying, setCopying] = useState(false);
-    const [planning, setPlanning] = useState(false);
-    const [reserving, setReserving] = useState(false);
+    // A notification about an automatic run opens the settings with its history (/plan?reflection=history).
+    const [search, setSearch] = useSearchParams();
+    const [reflecting, setReflecting] = useState(search.has('reflection'));
+    useEffect(() => {
+        if (search.has('reflection')) setSearch((params) => { params.delete('reflection'); return params; }, { replace: true });
+    }, [search, setSearch]);
     const [adding, setAdding] = useState(false);
     const [created, setCreated] = useState<number | null>(null);
     const [message, setMessage] = useState('');
@@ -114,39 +122,39 @@ function MonthlyPlan({ period, currency, clientName, filters, picker, onFilters,
     return <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
             {picker}
-            <div className="w-48"><input type="search" aria-label="名前で検索" placeholder="名前で検索" value={filters.query} onChange={(event) => onFilters({ ...filters, query: event.target.value })} className={inputClass} /></div>
-            <div role="group" aria-label="表示する項目" className="inline-flex overflow-hidden rounded-md border border-[var(--studio-border)]">
+            {view !== 'auto' && <div className="w-48"><input type="search" aria-label="名前で検索" placeholder="名前で検索" value={filters.query} onChange={(event) => onFilters({ ...filters, query: event.target.value })} className={inputClass} /></div>}
+            {view === 'plan' && <div role="group" aria-label="表示する項目" className="inline-flex overflow-hidden rounded-md border border-[var(--studio-border)]">
                 {SCOPES.map((scope) => <button key={scope.value} type="button" aria-pressed={filters.scope === scope.value} onClick={() => onFilters({ ...filters, scope: scope.value })} className={`${buttonClass} rounded-none border-0 aria-pressed:bg-[var(--studio-accent-soft)] aria-pressed:text-[var(--studio-accent)]`}>{scope.label}</button>)}
-            </div>
+            </div>}
             <div className="ml-auto flex flex-wrap items-center gap-2">
-                <button type="button" disabled={disabled} onClick={() => setAdding(true)} className={primaryClass}>項目を追加</button>
-                <MoreMenu disabled={disabled} items={[
-                    { label: '月の予算をコピー', onSelect: () => setCopying(true) },
-                    { label: 'ゴールから計画を作成', onSelect: () => setPlanning(true) },
-                    { label: '物品の取り置きから計画を作成', onSelect: () => setReserving(true) },
-                ]} />
+                {view === 'plan' && <>
+                    <button type="button" disabled={disabled} onClick={() => setAdding(true)} className={primaryClass}>項目を追加</button>
+                    <MoreMenu disabled={disabled} items={[{ label: '月の予算をコピー', onSelect: () => setCopying(true) }]} />
+                </>}
+                <button type="button" disabled={!clientName} onClick={() => setReflecting(true)} aria-label="計画への反映の設定" title="計画への反映の設定"
+                    className={`${buttonClass} inline-flex items-center gap-1.5`}><Settings size={14} aria-hidden="true" />反映</button>
             </div>
         </div>
         <Feedback loading={resource.loading || accounts.loading} error={resource.error || accounts.error || (scheduled.error ? `自動取引の予定を取得できませんでした。${scheduled.error}` : '')} />
         <Feedback error={mutation.error && !adding ? mutation.error : undefined} message={message || mutation.message} />
-        {model && <BudgetTable accounts={rows} earmarks={earmarks} currency={currency} narrowed={narrowed}
+        {model && view === 'plan' && <BudgetTable accounts={rows} earmarks={earmarks} currency={currency} narrowed={narrowed} showEarmarks={false}
             highlight={created} disabled={disabled} onAccount={(row) => setOpenAccount(row.key)} onEarmark={(earmark) => setOpenEarmark(earmark.key)} />}
+        {model && view === 'earmarks' && <EarmarkTable earmarks={earmarks} currency={currency} disabled={disabled} onEarmark={(earmark) => setOpenEarmark(earmark.key)} />}
+        {view === 'auto' && scheduled.data && <PlanAutomatic items={scheduled.data.items} currency={currency} accountName={context.accountName} />}
         {accountRow && <AccountOverlay key={accountRow.key} row={accountRow} context={context} onClose={() => setOpenAccount(null)} />}
         {earmarkRow && <EarmarkOverlay key={earmarkRow.key} earmark={earmarkRow} context={context} onClose={() => setOpenEarmark(null)} />}
         {copying && <MonthCopy period={period} clientName={clientName} onBusy={(busy) => { setCopyBusy(busy); onBusy(busy); }} onCopied={(text) => { setCopying(false); setMessage(text); refresh(); }} onClose={() => setCopying(false)} />}
-        {planning && <GoalPlanDialog onClose={(applied) => { setPlanning(false); notifications.refresh(); if (applied) { setMessage('ゴールから計画を作成しました。'); refresh(); } }} />}
-        {reserving && <ReservePlanDialog onClose={(applied) => { setReserving(false); if (applied) { setMessage('物品の取り置きから計画を作成しました。'); refresh(); } }} />}
+        {reflecting && <ReflectionOverlay clientName={clientName} currency={currency} onClose={(changed) => { setReflecting(false); notifications.refresh(); if (changed) refresh(); }} />}
         {adding && <AddItem currency={currency} busy={disabled} error={mutation.error} onSave={add} onClose={() => setAdding(false)} />}
     </div>;
 }
 
-export default function Plan() {
+/** 計画: the month's plan by account (計画と実績), its earmarks (取り置き) and its automatic transactions (自動取引). */
+export default function Plan({ view = 'plan' }: { view?: PlanView }) {
     const { clientId, currentClient } = useClient();
-    const timezone = useTimezone();
     const [busy, setBusy] = useState(false);
-    const [periodEdit, setPeriod] = useState<string | null>(null);
+    const [period, setPeriod] = usePlanMonth();
     const [filters, setFilters] = useState(storedFilters);
-    const period = periodEdit ?? clientToday(timezone).slice(0, 7);
     const currency = currentClient?.general_settings?.currency || 'JPY';
     const changeFilters = (next: Filters) => {
         setFilters(next);
@@ -154,7 +162,7 @@ export default function Plan() {
         try { localStorage.setItem(FILTERS_KEY, JSON.stringify({ scope: next.scope })); } catch { /* storage unavailable */ }
     };
     return <section>
-        <MonthlyPlan key={`${clientId}:${period}:${currency}`} period={period} currency={currency} clientName={currentClient?.id === clientId ? currentClient.name : undefined}
+        <MonthlyPlan key={`${clientId}:${period}:${currency}`} view={view} period={period} currency={currency} clientName={currentClient?.id === clientId ? currentClient.name : undefined}
             filters={filters} onFilters={changeFilters} onBusy={setBusy} picker={<MonthPicker value={period} onChange={setPeriod} disabled={busy} />} />
     </section>;
 }

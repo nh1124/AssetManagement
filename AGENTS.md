@@ -12,7 +12,7 @@
 
 - 実データはユーザー資産。書き込み前に対象 client を必ず確認する。
 - `Transaction` 作成時は必ず `JournalEntry` も作成する（API/MCP 経由なら自動。DB 直 INSERT 禁止）。
-- 自動取引（`registry_entries`、MCP は `auto_transactions_*`）が決まった取引の正本。有効なものは期日に必ず記帳される。ゴールが書いた計画行は `goal_plan_apply` で作り直し、直接編集しない。
+- 自動取引（`registry_entries`、MCP は `auto_transactions_*`）が決まった取引の正本。有効なものは期日に必ず記帳される。ゴール（と物品の取り置き）が書いた計画行は計画への反映（`plan_reflection_*`）が作り直す。直接編集しない。
 - 破壊的操作（delete / import replace）はユーザーの明示指示があるときのみ。
 
 ## 構成

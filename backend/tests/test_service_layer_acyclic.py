@@ -33,7 +33,6 @@ LAYERS: dict[str, int] = {
     "household_service": 0,
     "liability_schedule": 0,
     "mfa_service": 0,
-    "monthly_action_store": 0,
     "money_storage": 0,
     "period_review_service": 0,
     "period_close_service": 0,  # Review markers do not depend on journal writers.
@@ -88,14 +87,12 @@ LAYERS: dict[str, int] = {
     "report_service": 5,
     # L6 - dependency runs UI -> workflow -> service; a workflow may use
     # anything below it to compose a request across features.
-    "monthly_action_workflow": 6,
     "ai_change_request_workflow": 6,
     "transaction_approval_workflow": 6,
     "ledger_entry_workflow": 6,
     "transaction_batch_workflow": 6,
     "product_workflow": 6,
-    "goal_budget_workflow": 6,
-    "product_reserve_plan_workflow": 6,
+    "plan_reflection_workflow": 6,
     "notification_workflow": 6,
     "capsule_workflow": 6,
     "automatic_recording_workflow": 6,

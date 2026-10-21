@@ -6,6 +6,7 @@ from ..dependencies import get_current_client
 from ..services.registry_service import list_entries
 from ..workflows import registry_workflow
 
+from ..workflows import plan_reflection_workflow
 router = APIRouter(prefix="/auto-transactions", tags=["auto-transactions"])
 
 
@@ -24,7 +25,9 @@ def list_automatic_transactions(db: Session = Depends(get_db), current_client: m
 
 @router.post("/", response_model=schemas.RegistryEntry)
 def create_automatic_transaction(payload: schemas.RegistryEntryCreate, db: Session = Depends(get_db), current_client: models.Client = Depends(get_current_client)):
-    return enrich_entry(registry_workflow.save(db, current_client.id, payload.model_dump()))
+    result = enrich_entry(registry_workflow.save(db, current_client.id, payload.model_dump()))
+    plan_reflection_workflow.after_change(db, current_client.id)
+    return result
 
 
 @router.put("/{entry_id}", response_model=schemas.RegistryEntry)
@@ -32,10 +35,13 @@ def update_automatic_transaction(entry_id: int, payload: schemas.RegistryEntryCr
     entry = registry_workflow.save(db, current_client.id, payload.model_dump(), entry_id)
     if entry is None:
         raise HTTPException(status_code=404, detail="自動取引が見つかりません")
-    return enrich_entry(entry)
+    result = enrich_entry(entry)
+    plan_reflection_workflow.after_change(db, current_client.id)
+    return result
 
 
 @router.delete("/{entry_id}", status_code=204)
 def delete_automatic_transaction(entry_id: int, db: Session = Depends(get_db), current_client: models.Client = Depends(get_current_client)):
     if not registry_workflow.delete(db, current_client.id, entry_id):
         raise HTTPException(status_code=404, detail="自動取引が見つかりません")
+    plan_reflection_workflow.after_change(db, current_client.id)

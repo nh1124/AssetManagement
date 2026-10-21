@@ -5,7 +5,7 @@ import { formatCurrency } from '../../../utils/currency';
 import Overlay from '../../components/Overlay';
 import { DataTable, Feedback } from '../db/Database';
 import { buttonClass, primaryClass, useMutation } from '../db/forms';
-import GoalPlanDialog from './GoalPlanDialog';
+import ReflectionOverlay from '../plan/ReflectionOverlay';
 
 const CHOICES: Array<{ value: GoalEarmarkChoice; label: string; description: string }> = [
     { value: 'carry', label: '同じライフイベントへ引き継ぐ', description: '複製したシナリオどうしで同じイベントの取り置きを、確保額ごと新しいゴールのイベントに付け替えます。対応するイベントが無い取り置きはそのまま残ります。' },
@@ -20,7 +20,7 @@ const CHOICES: Array<{ value: GoalEarmarkChoice; label: string; description: str
  */
 export function useMakeScenarioGoal(onSuccess: () => void): ReturnType<typeof useMutation> & { chooseGoal: (scenario: Pick<LifeScenario, 'id' | 'name'>) => void; dialog: ReactNode } {
     const mutation = useMutation();
-    const { currentClient } = useClient();
+    const { clientId, currentClient } = useClient();
     const currency = currentClient?.general_settings?.currency || 'JPY';
     const [preview, setPreview] = useState<GoalChangePreview | null>(null);
     const [choice, setChoice] = useState<GoalEarmarkChoice>('keep');
@@ -44,7 +44,7 @@ export function useMakeScenarioGoal(onSuccess: () => void): ReturnType<typeof us
         <button type="button" disabled={mutation.busy} onClick={() => setPreview(null)} className={buttonClass}>キャンセル</button>
     </>}>
         <div className="space-y-4">
-            <p className="text-sm">{preview.current_goal ? `いまのゴールは「${preview.current_goal.name}」です。` : 'いまはゴールがありません。'}ゴールを変えても計画は変わりません（このあと、ゴールから計画を作成できます）。</p>
+            <p className="text-sm">{preview.current_goal ? `いまのゴールは「${preview.current_goal.name}」です。` : 'いまはゴールがありません。'}自動反映がオンなら計画もこのゴールに合わせて作り直します。オフなら計画の ⚙ から「今すぐ反映」で作ります。</p>
             <Feedback error={mutation.error} />
             {preview.capsules.length > 0 && <>
                 <h3 className="text-sm font-semibold">前のゴールの取り置き</h3>
@@ -66,7 +66,9 @@ export function useMakeScenarioGoal(onSuccess: () => void): ReturnType<typeof us
             </fieldset>
             {choice === 'replace' && preview.create.length > 0 && <p className="text-xs text-[var(--studio-text-muted)]">作る取り置き：{preview.create.map((row) => `「${row.name}」（${row.account_name ?? '口座なし'}）`).join('、')}</p>}
         </div>
-    </Overlay> : planning ? <GoalPlanDialog title="計画も作成しますか？" intro="ゴールを変更しました。計画は前のゴールのままです。作成しない場合は閉じてください（ゴールや計画の画面から後で作成できます）。"
+    </Overlay> : planning ? <ReflectionOverlay clientName={currentClient && currentClient.id === clientId ? currentClient.name : undefined}
+        currency={currency}
+        intro="ゴールを変更しました。自動反映がオンなら計画はもう作り直しています。オフなら「今すぐ反映」で計画を作ります（後で計画やゴールの画面からもできます）。"
         onClose={() => { setPlanning(false); onSuccess(); }} /> : null;
     return { ...mutation, chooseGoal, dialog };
 }

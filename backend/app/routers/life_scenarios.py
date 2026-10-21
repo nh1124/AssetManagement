@@ -9,6 +9,7 @@ from ..services import contribution_plan_service as plans
 from ..services import life_scenario_service as service
 from ..workflows import goal_change_workflow
 
+from ..workflows import plan_reflection_workflow
 router = APIRouter(prefix="/life-scenarios", tags=["life_scenarios"])
 
 
@@ -79,7 +80,9 @@ def goal(
     current_client: models.Client = Depends(get_current_client),
 ):
     scenario = goal_change_workflow.apply(db, current_client.id, scenario_id, payload.earmarks)
-    return service.describe(db, current_client.id, scenario)
+    result = service.describe(db, current_client.id, scenario)
+    plan_reflection_workflow.after_change(db, current_client.id)
+    return result
 
 
 @router.delete("/{scenario_id}")
@@ -148,7 +151,9 @@ def create_contribution_plan(
     current_client: models.Client = Depends(get_current_client),
 ):
     plan = plans.create_plan(db, current_client.id, scenario_id, payload.model_dump(exclude_unset=True))
-    return plans.serialize(db, current_client.id, plan)
+    result = plans.serialize(db, current_client.id, plan)
+    plan_reflection_workflow.after_change(db, current_client.id)
+    return result
 
 
 @router.put("/contribution-plans/{plan_id}")
@@ -159,7 +164,9 @@ def update_contribution_plan(
     current_client: models.Client = Depends(get_current_client),
 ):
     plan = plans.update_plan(db, current_client.id, plan_id, payload.model_dump(exclude_unset=True))
-    return plans.serialize(db, current_client.id, plan)
+    result = plans.serialize(db, current_client.id, plan)
+    plan_reflection_workflow.after_change(db, current_client.id)
+    return result
 
 
 @router.delete("/contribution-plans/{plan_id}")
@@ -169,4 +176,6 @@ def delete_contribution_plan(
     current_client: models.Client = Depends(get_current_client),
 ):
     plans.delete_plan(db, current_client.id, plan_id)
-    return {"message": "削除しました。"}
+    result = {"message": "削除しました。"}
+    plan_reflection_workflow.after_change(db, current_client.id)
+    return result

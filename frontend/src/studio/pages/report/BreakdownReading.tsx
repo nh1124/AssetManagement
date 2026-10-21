@@ -1,5 +1,3 @@
-import { useState } from 'react';
-import { applyPeriodReportAction } from '../../../api';
 import { formatCurrency } from '../../../utils/currency';
 import { DataTable, Feedback } from '../db/Database';
 import { buttonClass } from '../db/forms';
@@ -44,10 +42,8 @@ export default function BreakdownReading({ resource, ...props }: BreakdownProps 
     return resource ? <BreakdownContent {...props} resource={resource} /> : <LoadedBreakdownReading {...props} />;
 }
 
-function BreakdownContent({ startDate, endDate, currency, clientName, onBusy, readOnly = false, resource }: BreakdownProps & { resource: BreakdownResource }) {
-    const { report, profitLoss, variance, flows, refresh } = resource;
-    const [busy, setBusy] = useState(false);
-    const lock = (value: boolean) => { setBusy(value); onBusy?.(value); };
+function BreakdownContent({ startDate, endDate, currency, readOnly = false, resource }: BreakdownProps & { resource: BreakdownResource }) {
+    const { report, profitLoss, variance, flows } = resource;
     return <div className="studio-report space-y-8">
         <section className="space-y-4">
             <h2 className="text-lg font-semibold">{startDate} 〜 {endDate} の内訳</h2>
@@ -59,7 +55,7 @@ function BreakdownContent({ startDate, endDate, currency, clientName, onBusy, re
         {report.data && <ReportContext report={report.data} currency={currency} standalone />}
         <Variance resource={variance} currency={currency} />
         <AccountFlowsReading resource={flows} startDate={startDate} endDate={endDate} currency={currency} heading="口座・科目" className="space-y-4" readOnly={readOnly} />
-        {report.data && <ReportProposals report={report.data} currency={currency} clientName={clientName} disabled={report.loading || Boolean(report.error) || busy} apply={(id) => applyPeriodReportAction(startDate, endDate, id)} onApplied={refresh} onBusy={lock} readOnly={readOnly} standalone />}
+        {report.data && <ReportProposals report={report.data} currency={currency} readOnly={readOnly} standalone />}
     </div>;
 }
 

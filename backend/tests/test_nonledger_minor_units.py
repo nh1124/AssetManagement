@@ -51,7 +51,7 @@ def test_threshold_through_request_context(currency):
 MONEY_FIELDS = [
     (models.MonthlyPlanLine, "amount"), (models.LifeEvent, "target_amount"),
     (models.Capsule, "target_amount"),
-    (models.Capsule, "monthly_contribution"), (models.MonthlyAction, "amount"),
+    (models.Capsule, "monthly_contribution"),
     (models.Product, "last_unit_price"), (models.Product, "purchase_price"),
     (models.AiOperationPolicy, "threshold_amount"),
     (models.RegistryEntry, "amount"),
@@ -276,8 +276,6 @@ def _money_rows(db):
         models.Capsule(id=1, client_id=1, target_amount_minor=1234,
                        monthly_contribution_minor=1234),
         models.MonthlyPlanLine(id=1, client_id=1, target_period="2026-10", line_type="expense", amount_minor=1234),
-        models.MonthlyAction(id=1, client_id=1, source_period="2026-10", proposal_id="read",
-                             kind="set_budget", idempotency_key="read", amount_minor=1234),
         models.Product(id=1, client_id=1, last_unit_price_minor=1234, purchase_price_minor=1234),
         models.AiOperationPolicy(id=1, client_id=1, resource="transactions", action="create",
                                  risk="medium", mode="deny", threshold_amount_minor=1234),

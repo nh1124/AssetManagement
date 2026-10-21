@@ -58,7 +58,6 @@ def _seed(db, client_id=101, base=10000):
         money_names = {
             "monthly_plan_lines": ("amount",), "life_events": ("target_amount",),
             "capsules": ("target_amount", "monthly_contribution"),
-            "monthly_actions": ("amount",),
             "capsule_funding_sources": ("target_amount",),
             "products": ("last_unit_price", "purchase_price"), "registry_entries": ("amount",),
         }
@@ -126,11 +125,11 @@ def _seed(db, client_id=101, base=10000):
     add(models.ProductDepreciation, 26, product_id=product.id, transaction_id=tx.id,
         period="2026-10", amount_minor=50)
     plan = add(models.BudgetPlan, 15, name="default", is_default=True, sort_order=10)
-    line = add(models.MonthlyPlanLine, 16, plan_id=plan.id, target_period="2026-10",
-               line_type="expense", target_type="account", target_id=expense.id,
-               account_id=expense.id, source_account_id=cash.id, name="food", amount=100,
-               identity_key=json.dumps([plan.id, "2026-10", "manual", "expense", "account",
-                                        expense.id, cash.id, expense.id, "", "auto"], separators=(",", ":")))
+    add(models.MonthlyPlanLine, 16, plan_id=plan.id, target_period="2026-10",
+        line_type="expense", target_type="account", target_id=expense.id,
+        account_id=expense.id, source_account_id=cash.id, name="food", amount=100,
+        identity_key=json.dumps([plan.id, "2026-10", "manual", "expense", "account",
+                                 expense.id, cash.id, expense.id, "food", "auto"], separators=(",", ":")))
     add(models.PeriodReview, 17, start_date=date(2026, 10, 1), end_date=date(2026, 11, 1),
         label="October", reflection="reflection", next_actions="actions")
     add(models.CapsuleRule, 19, capsule_id=capsule.id, trigger_type="Expense",
@@ -139,13 +138,6 @@ def _seed(db, client_id=101, base=10000):
         account_id=cash.id, target_amount=250, max_share_bp=6000, sort_order=3)
     add(models.ExchangeRate, 22, base_currency="USD", quote_currency="JPY", rate=150,
         as_of_date=date(2026, 10, 1))
-    add(models.MonthlyAction, 23, source_period="2026-10", target_period="2026-11",
-        proposal_id="allocation", kind="change_capsule_contribution", description="allocation",
-        target_id=capsule.id, idempotency_key="allocation", amount=10,
-        payload={"nested": [{"account_id": cash.id, "life_event_id": goal.id,
-                             "capsule_id": capsule.id, "product_id": product.id,
-                             "plan_line_id": line.id}]},
-        result={"nested": {"transaction_id": tx.id, "batch_id": batch.id}}, status="applied", applied_at=STAMP)
     # Tables outside the backup format must survive a failed restore too,
     # including proposal links that a transaction deletion sets to NULL.
     add(models.TransactionProposal, 24, origin="test", date=date(2026, 10, 2),
@@ -240,12 +232,6 @@ def test_round_trip_preserves_every_collection_and_document(db):
                 for index in (5, 6, 7):
                     identity[index] = maps["accounts"][identity[index]]
                 item["identity_key"] = json.dumps(identity, separators=(",", ":"))
-            if collection == "monthly_actions":
-                item["target_id"] = maps["capsules"][item["target_id"]]
-                for field, old_id in item["payload"]["nested"][0].items():
-                    item["payload"]["nested"][0][field] = maps[REFERENCES[field]][old_id]
-                for field, old_id in item["result"]["nested"].items():
-                    item["result"]["nested"][field] = maps[REFERENCES[field]][old_id]
 
 
 
@@ -419,7 +405,7 @@ def test_commit_failure_rolls_back_the_complete_rebuild(db):
 
     def fail_commit(session):
         commits.append(session)
-        assert db.query(models.MonthlyAction).filter_by(client_id=client.id).count() == 1
+        assert db.query(models.PeriodReview).filter_by(client_id=client.id).count() == 1
         raise RuntimeError("commit refused")
 
     event.listen(db, "before_commit", fail_commit)

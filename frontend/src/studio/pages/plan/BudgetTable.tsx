@@ -13,6 +13,8 @@ interface TableProps {
     disabled: boolean;
     onAccount: (row: AccountRow) => void;
     onEarmark: (earmark: EarmarkRow) => void;
+    /** 取り置き is a tab of its own; the 計画と実績 tab leaves it out. */
+    showEarmarks?: boolean;
 }
 
 const th = 'whitespace-nowrap px-4 py-3 font-medium';
@@ -44,27 +46,37 @@ function rowClass(highlight: boolean, disabled: boolean) {
 
 const Frame = ({ children }: { children: ReactNode }) => <div className="overflow-x-auto rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)]">{children}</div>;
 
-function EarmarkTable({ earmarks, currency, disabled, onEarmark }: Pick<TableProps, 'earmarks' | 'currency' | 'disabled' | 'onEarmark'>) {
+/** Where the month's budget of an earmark comes from: the reflection (goal or products), a row typed in, or its monthly amount. */
+function origin(earmark: EarmarkRow): string {
+    const kinds = new Set(earmark.lines.filter((line) => line.id != null).map((line) => line.source_kind));
+    if (kinds.has('goal')) return 'ゴールの反映';
+    if (kinds.has('product_reserve')) return '物品の反映';
+    if (kinds.size) return '手入力';
+    return '取り置きの月額';
+}
+
+export function EarmarkTable({ earmarks, currency, disabled, onEarmark }: Pick<TableProps, 'earmarks' | 'currency' | 'disabled' | 'onEarmark'>) {
     const money = (amount: number) => formatCurrency(amount, currency);
     return <section className="space-y-2">
         <h3 className="flex items-center gap-1.5 text-sm font-semibold">取り置き<Help label="取り置き" text="口座ではありません。資金元の口座の残高から確保します。予算では、同じ口座への振替を超える分だけを配分として数えます（振替と重ねて数えません）。" /></h3>
         <Frame><table className="w-full text-left text-sm">
-            <thead className={`border-b border-[var(--studio-border)] ${muted}`}><tr>{['取り置き', '資金元', '月の予算', '確保額'].map((label) => <th key={label} scope="col" className={th}>{label}</th>)}</tr></thead>
+            <thead className={`border-b border-[var(--studio-border)] ${muted}`}><tr>{['取り置き', '資金元', '月の予算', '出どころ', '確保額'].map((label) => <th key={label} scope="col" className={th}>{label}</th>)}</tr></thead>
             <tbody className="divide-y divide-[var(--studio-border)]">
                 {earmarks.map((earmark) => <tr key={earmark.key} onClick={() => { if (!disabled) onEarmark(earmark); }} className={rowClass(false, disabled)}>
                     <th scope="row" className="px-4 py-2.5"><button type="button" disabled={disabled} aria-haspopup="dialog" onClick={(event) => { event.stopPropagation(); onEarmark(earmark); }} className="rounded text-left font-medium hover:text-[var(--studio-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)] disabled:opacity-40">{earmark.name}</button>{earmark.goal && <Chip>ゴール</Chip>}</th>
                     <td className={`px-4 py-2.5 ${muted}`}>{earmark.sources.join('・') || '資金元の口座なし'}</td>
                     <td className={td}>{money(earmark.budget)}</td>
+                    <td className={`px-4 py-2.5 ${muted}`}>{origin(earmark)}</td>
                     <td className={td}>{money(earmark.held)}</td>
                 </tr>)}
-                {!earmarks.length && <tr><td colSpan={4} className={`px-4 py-3 ${muted}`}>条件に合う取り置きはありません。</td></tr>}
+                {!earmarks.length && <tr><td colSpan={5} className={`px-4 py-3 ${muted}`}>条件に合う取り置きはありません。</td></tr>}
             </tbody>
         </table></Frame>
     </section>;
 }
 
 /** One row per account; name movements only when several have content. */
-export default function BudgetTable({ accounts, earmarks, currency, narrowed, highlight, disabled, onAccount, onEarmark }: TableProps) {
+export default function BudgetTable({ accounts, earmarks, currency, narrowed, highlight, disabled, onAccount, onEarmark, showEarmarks = true }: TableProps) {
     const money = (amount: number) => formatCurrency(amount, currency);
     const groups = [...KINDS, null].map((kind) => ({ kind, rows: accounts.filter((row) => row.kind === kind) }))
         .filter((group) => group.rows.length || (!narrowed && group.kind));
@@ -91,7 +103,7 @@ export default function BudgetTable({ accounts, earmarks, currency, narrowed, hi
             </tbody>)}
             {!groups.length && <tbody><tr><td colSpan={4} className="px-4 py-4 text-[var(--studio-text-muted)]">条件に合う口座・科目はありません。</td></tr></tbody>}
         </table></Frame>
-        {(earmarks.length > 0 || !narrowed) && <EarmarkTable earmarks={earmarks} currency={currency} disabled={disabled} onEarmark={onEarmark} />}
+        {showEarmarks && (earmarks.length > 0 || !narrowed) && <EarmarkTable earmarks={earmarks} currency={currency} disabled={disabled} onEarmark={onEarmark} />}
     </div>;
 }
 

@@ -48,7 +48,6 @@ PUBLIC: dict[str, set[str]] = {
         "lines_written_by",
         # The month copy replaces a month of the one plan (§8-10).
         "copy_period_lines",
-        "create_plan_line",
         "create_plan_lines",
         "delete_plan_line",
         # X9 split plan resolution in two. A read outside the family has to
@@ -58,7 +57,6 @@ PUBLIC: dict[str, set[str]] = {
         "find_budget_plan_id",
         "get_or_create_default_plan",
         "get_plan_line",
-        "find_expense_plan_line",
         "resolve_budget_plan_id",
         "update_plan_lines",
     },

@@ -145,8 +145,6 @@ def _seed(db, scenario, today):
                            amount_type="fixed", **rule_amount_fields(100, "fixed", "JPY")),
         models.SimulationConfig(client_id=1),
         models.PeriodReview(client_id=1, start_date=start, end_date=end, label="Guard review"),
-        models.MonthlyAction(client_id=1, source_period=today.strftime("%Y-%m"),
-                             proposal_id="guard", kind="review", idempotency_key="guard"),
         models.ExchangeRate(client_id=1, base_currency="USD", quote_currency="JPY",
                             rate=150, as_of_date=today),
         models.ClientMfaSetting(client_id=1, enabled=False),

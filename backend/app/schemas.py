@@ -289,14 +289,28 @@ class DepreciationRecord(BaseModel):
 PlanRecordSection = Literal["allocation", "drawdown", "expense", "income", "debt_payment", "borrowing"]
 
 
+class PlanRecordAutomatic(BaseModel):
+    """自動扱い (WP27): the record becomes an automatic transaction from start_period, every month or year,
+    until end_period (open when null). counter_account_id is the other side (where it is paid from, where
+    it arrives); records_transactions also posts it on its day, otherwise it only budgets."""
+    model_config = ConfigDict(extra="forbid")
+    frequency: Literal["Monthly", "Yearly"] = "Monthly"
+    day_of_month: int = Field(default=1, ge=1, le=31)
+    start_period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    end_period: Optional[str] = Field(default=None, pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    counter_account_id: int | None = Field(default=None, gt=0)
+    records_transactions: bool = False
+
+
 class PlanRecordCreate(BaseModel):
-    """A user's record in an account's month on the plan page (WP19)."""
+    """A user's record in an account's month on the plan page (WP19); several per section, one per name (WP27)."""
     model_config = ConfigDict(extra="forbid")
     period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
     account_id: int = Field(gt=0)
     section: PlanRecordSection
     amount: float = Field(ge=0, allow_inf_nan=False)
     name: Optional[str] = Field(default=None, max_length=200)
+    automatic: PlanRecordAutomatic | None = None
 
 
 class PlanRecordUpdate(BaseModel):
@@ -492,6 +506,8 @@ class RegistryEntryBase(BaseModel):
     repeat_count: int | None = Field(default=None, ge=1, le=100000)
     budget_active: bool = True
     is_active: bool = True
+    # 取引も記録する: false for one that only budgets each month and never posts (WP27).
+    records_transactions: bool = True
     note: str | None = None
 
 
@@ -1041,25 +1057,29 @@ class AssumptionPeriodInput(BaseModel):
     note: str | None = None
 
 
-class GoalPlanRange(BaseModel):
+class ReflectionGoalSettings(BaseModel):
+    """How the goal is written into the plan: 基準 (remaining: 残り期間に合わせる; goal_setting: 積立設定から決まる額),
+    確保済みの引き方 (even / recent) and 遅れの取り返し (even / recent / none)."""
     model_config = ConfigDict(extra="forbid")
-    start_period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
-    end_period: str = Field(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")
+    base: Literal["remaining", "goal_setting"] | None = None
+    held: Literal["even", "recent"] | None = None
+    catch_up: Literal["even", "recent", "none"] | None = None
 
 
-class GoalPlanApply(GoalPlanRange):
-    fingerprint: str = Field(min_length=64, max_length=64)
+class ReflectionProductSettings(BaseModel):
+    """How earmarks with linked products are written: base (remaining / saved: 取り置きの月額), held (even / recent)."""
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool | None = None
+    base: Literal["remaining", "saved"] | None = None
+    held: Literal["even", "recent"] | None = None
 
 
-class ProductReservePlanRange(GoalPlanRange):
-    """物品の取り置きから計画を作成 (§8-4): base saved (取り置きに設定した月額) or remaining (残り期間に合わせる);
-    the held amount comes off the nearest months first (recent) or evenly (even)."""
-    base: Literal["saved", "remaining"]
-    held: Literal["recent", "even"]
-
-
-class ProductReservePlanApply(ProductReservePlanRange):
-    fingerprint: str = Field(min_length=64, max_length=64)
+class ReflectionSettingsPatch(BaseModel):
+    """計画への反映の設定 (WP27); fields left out keep their value. enabled: 自動反映."""
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool | None = None
+    goal: ReflectionGoalSettings | None = None
+    products: ReflectionProductSettings | None = None
 
 
 class FxTrackedCurrencyCreate(BaseModel):

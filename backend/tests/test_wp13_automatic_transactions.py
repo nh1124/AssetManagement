@@ -290,33 +290,11 @@ def test_reactivation_on_posted_day_does_not_duplicate_an_occurrence(db):
     assert entry.next_due_date == date(2026, 2, 1)
 
 
-def test_monthly_action_add_and_stop_use_the_same_schedule_and_keep_history(db):
-    from app.workflows.monthly_action_workflow import create_action, apply_action
-    from fastapi.encoders import jsonable_encoder
-    action = create_action(db, 1, '2026-01', 'add_auto_transaction', jsonable_encoder(payload()), '2026-02')
-    applied = apply_action(db, 1, action['id'])
-    entry_id = applied['result']['registry_entry_id']
-    entry = db.get(models.RegistryEntry, entry_id)
-    assert entry.kind == 'expense'
-    assert entry.next_due_date >= registry.client_today(db, 1)
-    stop = create_action(db, 1, '2026-01', 'stop_auto_transaction', {'registry_entry_id': entry_id}, '2026-02')
-    assert apply_action(db, 1, stop['id'])['result']['is_active'] is False
-    assert not entry.is_active and entry.next_due_date is None
-
-
-def test_legacy_saved_actions_and_approved_ai_requests_use_new_ids_and_require_approval():
+def test_legacy_approved_ai_requests_use_new_ids_and_require_approval():
     data = legacy_data()
     data['accounts'] = [{'id': 1, 'account_type': 'asset'}, {'id': 2, 'account_type': 'expense'}]
-    data['monthly_actions'] = [{'kind': 'pause_recurring', 'payload': {'recurring_id': 10}, 'target_id': 10},
-        {'kind': 'add_recurring', 'source_period': '2026-01', 'target_period': '2026-02', 'payload': {'name': 'new', 'amount': 100, 'from_account_id': 1, 'to_account_id': 2, 'frequency': 'Monthly'}}]
     data['ai_change_requests'] = [{'resource': 'recurring_transactions', 'status': 'approved', 'target_ref': {'id': 10}, 'input_payload': {'amount': 200}, 'approved_by_client_id': 1}]
     migrate_automatic_data(data)
-    assert data['monthly_actions'][0]['kind'] == 'stop_auto_transaction'
-    assert data['monthly_actions'][0]['payload'] == {'registry_entry_id': 1}
-    assert data['monthly_actions'][0]['target_id'] == 1
-    added = data['monthly_actions'][1]
-    assert added['kind'] == 'add_auto_transaction' and added['payload']['start_date'] == '2026-02-01'
-    assert added['payload']['kind'] == 'expense'
     request = data['ai_change_requests'][0]
     assert request['resource'] == 'auto_transactions' and request['target_ref'] == {'id': 1}
     assert request['status'] == 'pending' and request['approved_by_client_id'] is None

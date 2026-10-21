@@ -16,7 +16,7 @@ from .goal import (
     ScenarioContributionPlan,
 )
 from .budget import BudgetPlan, MonthlyPlanLine
-from .planning import PeriodReview, MonthlyAction, PeriodClose
+from .planning import PeriodReview, PeriodClose
 from .ai import AiOperationPolicy, AiAuditLog, AiChangeRequest
 from .simulation import SimulationConfig
 from .capsule import Capsule, CapsuleFundingSource, CapsuleRule, CapsuleDrawdown
@@ -50,7 +50,6 @@ __all__ = [
     "MonthlyPlanLine",
     "PeriodReview",
     "PeriodClose",
-    "MonthlyAction",
     "AiOperationPolicy",
     "AiAuditLog",
     "AiChangeRequest",

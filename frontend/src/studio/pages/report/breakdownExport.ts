@@ -2,7 +2,7 @@ import type { AccountFlowAnalysis, MonthlyReport } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import { ACCOUNT_TYPES } from '../db/forms';
 import type { ProfitLoss } from './ReportReading';
-import { KINDS, STATES, proposalEffect, reportFigures, reportGoals, reportWarnings, varianceRows } from './reportPresentation';
+import { KINDS, proposalEffect, reportFigures, reportGoals, reportWarnings, varianceRows } from './reportPresentation';
 import type { VarianceAnalysis } from './useBreakdownData';
 
 interface BreakdownSnapshot {
@@ -48,7 +48,7 @@ export function breakdownMarkdown(data: BreakdownSnapshot, startDate: string, en
         table(['口座・科目', '種別', '借方', '貸方', '増減', '仕訳数'], flows.accounts.map((row) => [row.account_name, ACCOUNT_TYPES[row.account_type], money(row.total_debit), money(row.total_credit), money(row.normal_balance_delta), row.transaction_count])),
         ...(!flows.accounts.length ? ['この期間の口座の動きはありません。'] : []),
         '## 次にできること',
-        list(report.action_proposals.map((proposal) => `${KINDS[proposal.kind]}（${proposal.applied ? '適用済み' : STATES[proposal.action_status ?? 'pending']}）：${proposalEffect(proposal, report, currency)}`), 'この期間の提案はありません。'),
+        list(report.action_proposals.map((proposal) => `${KINDS[proposal.kind]}：${proposalEffect(proposal, report, currency)}`), 'この期間の提案はありません。'),
     ].join('\n\n') + '\n';
 }
 

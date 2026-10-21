@@ -18,14 +18,13 @@ from datetime import timedelta
 from sqlalchemy.orm import Session
 
 from ..services import (
-    ai_change_request_store, data_health_service, ledger_service, monthly_action_store,
+    ai_change_request_store, data_health_service, ledger_service,
     notification_service, period_close_service,
 )
 from ..services.periods import add_months, period_to_range
-from ..services import goal_plan_service
+from ..services import goal_budget_record, goal_plan_service
 
 APPROVAL_PENDING = "approval_pending"
-ACTIONS_DUE = "actions_due"
 UNMATCHED = "unmatched"
 DATA_HEALTH = "data_health"
 MONTH_CLOSE = "month_close"
@@ -49,15 +48,6 @@ def approval_notifications(db: Session, client_id: int, period: str) -> list[dic
     return _notification(APPROVAL_PENDING, [row.id for row in rows], f"承認待ちの AI 変更が{len(rows)}件あります",
                          [f"#{row.id} {row.resource}・{row.action}" for row in rows],
                          "/automation/approvals", {"ids": [row.id for row in rows]})
-
-
-def due_action_notifications(db: Session, client_id: int, period: str) -> list[dict]:
-    rows = monthly_action_store.list_due(db, client_id, period_to_range(period)[0])
-    if not rows:
-        return []
-    return _notification(ACTIONS_DUE, [row.id for row in rows], f"期限の来た行動が{len(rows)}件あります",
-                         [f"{row.target_period} {row.description or row.kind}" for row in rows],
-                         "/budget/actions", {"ids": [row.id for row in rows]})
 
 
 def unmatched_notifications(db: Session, client_id: int, period: str) -> list[dict]:
@@ -95,8 +85,8 @@ def month_close_notifications(db: Session, client_id: int, period: str) -> list[
 
 GENERATORS: dict[str, Callable[[Session, int, str], list[dict]]] = {
     goal_plan_service.REFLECTION_NOTIFICATION: goal_plan_service.reflection_notifications,
+    goal_budget_record.REFLECTED_NOTIFICATION: goal_budget_record.reflected_notifications,
     APPROVAL_PENDING: approval_notifications,
-    ACTIONS_DUE: due_action_notifications,
     UNMATCHED: unmatched_notifications,
     DATA_HEALTH: data_health_notifications,
     MONTH_CLOSE: month_close_notifications,

@@ -23,6 +23,7 @@ const inputSchema = z.object({
   repeat_count: z.number().int().min(1).max(100000).nullable().optional(),
   budget_active: z.boolean().optional(),
   is_active: z.boolean().optional(),
+  records_transactions: z.boolean().optional().describe("取引も記録する: false for one that only budgets each month and never posts"),
   note: z.string().nullable().optional(),
 }).strict();
 

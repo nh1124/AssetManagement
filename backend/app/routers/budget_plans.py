@@ -16,7 +16,6 @@ from ..services.budget_plan_store import (
 )
 from ..services.cache_service import get_or_set
 from ..services.goal_earmark_service import funding_gap
-from ..workflows import product_reserve_plan_workflow
 
 router = APIRouter(prefix="/budget-plans", tags=["budget_plans"])
 
@@ -30,26 +29,6 @@ def copy_period_full_replace(
     copied = copy_period_lines(db, current_client.id, payload.source_period, payload.target_period, commit=True)
     invalidate_client(current_client.id)
     return {"status": "success", "copied": copied}
-
-
-@router.post("/product-reserves/preview")
-def preview_product_reserve_plan(
-    payload: schemas.ProductReservePlanRange,
-    db: Session = Depends(get_db),
-    current_client: models.Client = Depends(get_current_client),
-):
-    """物品の取り置きから計画を作成: what it would write; nothing is saved (§8-4)."""
-    return product_reserve_plan_workflow.preview(db, current_client.id, payload.start_period, payload.end_period, payload.base, payload.held)
-
-
-@router.post("/product-reserves/apply")
-def apply_product_reserve_plan(
-    payload: schemas.ProductReservePlanApply,
-    db: Session = Depends(get_db),
-    current_client: models.Client = Depends(get_current_client),
-):
-    return product_reserve_plan_workflow.apply(
-        db, current_client.id, payload.start_period, payload.end_period, payload.base, payload.held, payload.fingerprint)
 
 
 @router.get("/summary")

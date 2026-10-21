@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { Bell } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import type { AppNotification } from '../../api/notifications';
-import GoalPlanDialog from '../pages/goals/GoalPlanDialog';
+import ReflectionOverlay from '../pages/plan/ReflectionOverlay';
+import { useClient } from '../../context/ClientContext';
 import { buttonClass, primaryClass } from '../pages/db/forms';
 import { formatDateTime, useTimezone } from '../datetime';
 import { GOAL_REFLECTION, useNotifications } from '../notificationContext';
@@ -10,9 +11,9 @@ import Overlay from './Overlay';
 
 /** Inbox groups, in this order; a kind not listed here follows under its own name. */
 const KIND_LABELS: Record<string, string> = {
-    [GOAL_REFLECTION]: 'ゴールの計画',
+    [GOAL_REFLECTION]: '計画への反映',
+    plan_reflected: '計画の自動更新',
     approval_pending: '承認待ち',
-    actions_due: '行動',
     unmatched: '自動取引',
     data_health: 'データ健全性',
     month_close: '月次締め',
@@ -40,6 +41,7 @@ export default function NotificationBell() {
     const timezone = useTimezone();
     const [open, setOpen] = useState(false);
     const [planning, setPlanning] = useState(false);
+    const { clientId, currentClient } = useClient();
     return <>
         <button type="button" onClick={() => setOpen(true)} aria-label={`通知 ${items.length}件`} title="通知"
             className="relative rounded p-2 text-[var(--studio-text-muted)] transition-colors hover:bg-[var(--studio-accent-soft)] hover:text-[var(--studio-text)]">
@@ -64,7 +66,7 @@ export default function NotificationBell() {
                         </ul>
                         <div className="flex flex-wrap gap-2">
                             {item.kind === GOAL_REFLECTION
-                                ? <button type="button" onClick={() => { setOpen(false); setPlanning(true); }} className={primaryClass}>計画を作成</button>
+                                ? <button type="button" onClick={() => { setOpen(false); setPlanning(true); }} className={primaryClass}>反映の設定を開く</button>
                                 : item.link && <button type="button" onClick={() => { setOpen(false); navigate(item.link as string); }} className={primaryClass}>開く</button>}
                             <button type="button" onClick={() => snooze(item.id, 1)} className={buttonClass}>明日また確認</button>
                             <button type="button" onClick={() => snooze(item.id, 7)} className={buttonClass}>1週間後に確認</button>
@@ -75,6 +77,7 @@ export default function NotificationBell() {
                 {hiddenCount > 0 && <p className="text-xs text-[var(--studio-text-muted)]">後で確認にした通知が{hiddenCount}件あります（時期が来ると表示されます）。</p>}
             </div>
         </Overlay>}
-        {planning && <GoalPlanDialog onClose={() => { setPlanning(false); refresh(); }} />}
+        {planning && <ReflectionOverlay clientName={currentClient?.id === clientId ? currentClient.name : undefined}
+            currency={currentClient?.general_settings?.currency || 'JPY'} onClose={() => { setPlanning(false); refresh(); }} />}
     </>;
 }

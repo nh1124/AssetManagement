@@ -11,7 +11,6 @@ from .config import settings
 from .domain.errors import DomainError, detail_for, status_for
 from .routers import (
     accounts,
-    actions,
     ai_change_requests,
     ai_operations,
     analysis,
@@ -31,6 +30,7 @@ from .routers import (
     period_reviews,
     period_closes,
     plan,
+    plan_reflection,
     products,
     registry_entries,
     reports,
@@ -135,6 +135,7 @@ async def run_automatic_recording_loop() -> None:
     """Daily run of every automatic recording the registry switches on."""
     from .database import SessionLocal
     from .workflows.automatic_recording_workflow import process_due_all
+    from .workflows.plan_reflection_workflow import run_due_all
     from .workflows.fx_workflow import refresh_all
 
     while True:
@@ -144,6 +145,12 @@ async def run_automatic_recording_loop() -> None:
         except Exception:
             db.rollback()
             logger.exception("Automatic recording cycle failed")
+        try:
+            # 自動反映 at the start of a month (WP27), after the month's automatic transactions are posted.
+            run_due_all(db)
+        except Exception:
+            db.rollback()
+            logger.exception("Plan reflection cycle failed")
         try:
             refresh_all(db)
         except Exception:
@@ -233,6 +240,7 @@ app.include_router(transaction_batches.router)
 app.include_router(products.router)
 app.include_router(automatic_recordings.router)
 app.include_router(depreciations.router)
+app.include_router(plan_reflection.router)
 app.include_router(plan.router)
 app.include_router(registry_entries.router, dependencies=[Depends(get_current_client)])
 app.include_router(life_events.router)
@@ -245,7 +253,6 @@ app.include_router(period_reviews.router)
 app.include_router(period_closes.router)
 app.include_router(simulation.router)
 app.include_router(accounts.router)
-app.include_router(actions.router, dependencies=[Depends(get_current_client)])
 app.include_router(ai_operations.router)
 app.include_router(ai_change_requests.router)
 app.include_router(clients.router)

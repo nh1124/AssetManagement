@@ -8,7 +8,8 @@ import type { MonthlyPlanLine, ScheduledTransaction } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import { useResource } from '../../useResource';
 import { Feedback, Help } from '../db/Database';
-import { buttonClass, inputClass, primaryClass, useMutation } from '../db/forms';
+import { buttonClass, inputClass, loadAccounts, primaryClass, useMutation, type DatabaseAccount } from '../db/forms';
+import RecordOptions, { type RecordInput } from './RecordOptions';
 import { KIND_LABELS, TYPE_LABELS, lineName, lineOrigin, type AccountRow, type EarmarkRow } from './budgetRows';
 
 export interface OverlayContext {
@@ -38,7 +39,7 @@ function ScheduledTable({ items, accountId, context }: { items: ScheduledTransac
                     <td className="whitespace-nowrap py-2 pr-4">{item.kind === 'depreciation' ? '減価' : item.line_type ? TYPE_LABELS[item.line_type] : '—'}</td>
                     <td className="py-2 pr-4 text-[var(--studio-text-muted)]">{context.accountName(other)}</td>
                     <td className="whitespace-nowrap py-2 pr-4 text-right tabular-nums">{money(item.amount)}</td>
-                    <td className="whitespace-nowrap py-2 text-xs">自動{item.posted ? '・記帳済み' : ''}{item.kind === 'automatic_transaction' && !item.in_budget ? '（予算外）' : ''}</td>
+                    <td className="whitespace-nowrap py-2 text-xs">{item.records_transactions === false ? '予算のみ' : `自動${item.posted ? '・記帳済み' : ''}`}{item.kind === 'automatic_transaction' && !item.in_budget ? '（予算外）' : ''}</td>
                 </tr>;
             })}
         </tbody>
@@ -89,9 +90,14 @@ function AccountRecords({ accountId, title, context, onClose }: { accountId: num
         if (disabled || !(await confirm(question, verb))) return;
         void mutation.run(async () => { setLatest(await action()); }, done, () => { setEditing(null); context.onChanged(); });
     };
-    const add = (section: PlanSection, amount: number, name: string) => write(
-        `${where}の${section.label}に ${money(amount)}（${context.currency}）のレコードを追加しますか？`, '追加する',
-        () => addPlanRecord({ period: context.period, account_id: accountId, section: section.key, amount, name: name || undefined }), 'レコードを追加しました。');
+    const add = (section: PlanSection, input: RecordInput) => write(
+        input.automatic
+            ? `${where}の${section.label}「${input.name || title}」${money(input.amount)}（${context.currency}）を自動取引にしますか？\n${input.automatic.records_transactions ? '期日に取引も記録します。' : '予算として繰り返すだけで、取引は記録しません。'}`
+            : `${where}の${section.label}に「${input.name || title}」${money(input.amount)}（${context.currency}）のレコードを追加しますか？`,
+        input.automatic ? '自動取引にする' : '追加する',
+        () => addPlanRecord({ period: context.period, account_id: accountId, section: section.key, amount: input.amount, name: input.name || undefined, automatic: input.automatic }),
+        input.automatic ? '自動取引にしました。' : 'レコードを追加しました。');
+    const accounts = useResource(loadAccounts);
     const amend = (section: PlanSection, record: PlanRecord, amount: number, name: string) => write(
         `${where}の${section.label}「${record.name}」を ${money(record.amount)} → ${money(amount)}（${context.currency}）に変更しますか？`, '変更する',
         () => amendPlanRecord(record.id as number, { amount, name: name || undefined }), 'レコードを変更しました。');
@@ -130,11 +136,12 @@ function AccountRecords({ accountId, title, context, onClose }: { accountId: num
                                     {record.card_estimate != null && <p className={`basis-full flex items-center gap-1.5 ${muted}`}>カード請求の見込み {money(record.card_estimate)}<Help label="カード請求の見込み" text="このレコードの額を、カード請求の見込みの代わりに使います。" /></p>}
                                 </div>}</li>;
                         })}
-                        {!section.records.length && !adding && <li className={`py-2 ${muted}`}>レコードはありません。</li>}
-                        {adding && <li><RecordForm label={section.label} name="" amount="" placeholder={title} currency={context.currency} disabled={disabled}
-                            onSubmit={(amount, name) => void add(section, amount, name)} onCancel={() => setEditing(null)} /></li>}
+                        {!section.records.length && <li className={`py-2 ${muted}`}>レコードはありません。</li>}
                     </ul>
-                    {section.can_add && !adding && <button type="button" disabled={disabled} onClick={() => setEditing(`add:${section.key}`)} className={buttonClass}>＋ レコードを追加</button>}
+                    {section.can_add && <button type="button" disabled={disabled} onClick={() => setEditing(`add:${section.key}`)} className={buttonClass}>＋ レコードを追加</button>}
+                    {adding && <RecordOptions section={section.key} sectionLabel={section.label} accountId={accountId} accountName={title} period={context.period}
+                        currency={context.currency} accounts={(accounts.data ?? []) as DatabaseAccount[]} busy={disabled} error={mutation.error}
+                        onSave={(input) => void add(section, input)} onClose={() => setEditing(null)} />}
                 </section>;
             })}
             {view && view.earmarks.length > 0 && <section className="space-y-2">
@@ -255,7 +262,7 @@ export function EarmarkOverlay({ earmark, context, onClose }: { earmark: Earmark
     const money = (amount: number) => formatCurrency(amount, context.currency);
     return <Overlay title={`取り置き「${earmark.name}」`} help="取り置きは口座ではありません。資金元の口座の残高のうち、この用途に確保する額です。予算では、同じ口座への振替を超える分だけを配分として数えます。保存すると取り置きの月額積立計画にも反映されます。" busy={actions.mutation.busy} onClose={onClose}>
         <div className="space-y-4">
-            {earmark.goal && <p className="flex items-center gap-1.5"><Tag>ゴール</Tag><Help label="ゴールの取り置き" text="ゴールのライフイベントのために作った取り置きです。月額はゴールから計画を作成すると決まり、ゴールを変更するときに削除できます。" /></p>}
+            {earmark.goal && <p className="flex items-center gap-1.5"><Tag>ゴール</Tag><Help label="ゴールの取り置き" text="ゴールのライフイベントのために作った取り置きです。月額は計画への反映（⚙）で決まり、ゴールを変更するときに削除できます。" /></p>}
             <Feedback error={actions.mutation.error} message={actions.mutation.message} />
             <p className="text-sm tabular-nums">月の予算 {money(earmark.budget)} ／ 確保額 {money(earmark.held)}</p>
             <ul className="divide-y divide-[var(--studio-border)] rounded-md border border-[var(--studio-border)] px-4">

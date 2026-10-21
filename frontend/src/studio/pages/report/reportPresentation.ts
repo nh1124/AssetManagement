@@ -7,7 +7,6 @@ export const KINDS: Record<ActionProposal['kind'], string> = {
     allocate_to_goal: '余剰をライフイベントへ配分', transfer_to_capsule: '取り置きへ移動',
     increase_savings: '積立額を増やす', review_budget: '予算を見直す', extend_target_date: '目標日を延ばす',
 };
-export const STATES = { pending: '未適用', applied: '適用済み', skipped: '見送り', failed: '適用に失敗' };
 
 export function varianceRows(variance: VarianceAnalysis) {
     // Zero-valued items still belong to the budget and must remain in every output.

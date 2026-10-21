@@ -33,7 +33,6 @@ class Client(Base):
     monthly_plan_lines = relationship("MonthlyPlanLine", back_populates="client")
     budget_plans = relationship("BudgetPlan", back_populates="client")
     period_reviews = relationship("PeriodReview", back_populates="client")
-    monthly_actions = relationship("MonthlyAction", back_populates="client")
     exchange_rates = relationship("ExchangeRate", back_populates="client")
     mfa_setting = relationship("ClientMfaSetting", back_populates="client", uselist=False, cascade="all, delete-orphan")
     recovery_codes = relationship("ClientRecoveryCode", back_populates="client", cascade="all, delete-orphan")

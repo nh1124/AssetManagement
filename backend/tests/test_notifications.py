@@ -110,15 +110,6 @@ def approval(db, client_id):
     return lambda: setattr(row, "status", "rejected")
 
 
-def due_action(db, client_id):
-    row = models.MonthlyAction(client_id=client_id, source_period="2026-09", target_period=PERIOD, proposal_id="p",
-                               kind="capsule_contribution", description="積立", idempotency_key="k")
-    # Next month's action is not due yet.
-    db.add_all([row, models.MonthlyAction(client_id=client_id, source_period=PERIOD, target_period="2026-11",
-                                          proposal_id="q", kind="capsule_contribution", idempotency_key="l")])
-    return lambda: setattr(row, "status", "applied")
-
-
 def unmatched(db, client_id):
     row = models.TransactionProposal(client_id=client_id, origin="recurring", date=date(2026, 10, 1),
                                      description="家賃", amount_minor=1000, legs=[], idempotency_key="k")
@@ -133,7 +124,6 @@ def unclosed_month(db, client_id):
 
 @pytest.mark.parametrize("kind, seed, link", [
     (workflow.APPROVAL_PENDING, approval, "/automation/approvals"),
-    (workflow.ACTIONS_DUE, due_action, "/budget/actions"),
     (workflow.UNMATCHED, unmatched, "/ledger/auto"),
     (workflow.MONTH_CLOSE, unclosed_month, "/ledger?month=2026-09"),
 ])

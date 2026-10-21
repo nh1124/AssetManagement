@@ -52,14 +52,15 @@ FinanceIDE MCP（backend `/` FastAPI の facade）を通じてユーザーの実
 
 ## 4. ゴールと計画
 
-- シナリオ＝ライフイベント・接続・前提条件・積立設定（口座ごとの月額・年利）。取り置きとイベントを結ぶのはゴールの実績管理の設定（`goal_earmarks_set`）だけ。
-- 計画にゴールを反映するのは `goal_plan_preview` → 内容をユーザーに見せる → `goal_plan_apply`（fingerprint）。ゴールが書いた行だけが置き換わる。
+- シナリオ＝ライフイベント・接続・前提条件・積立設定（積立・口座振替・取り崩しのレコード）・期間ごとの前提。作成・複製・接続・前提条件も MCP でできる（`life_scenarios_*`・`life_event_links_*`・`life_event_conditions_*`）。
+- 計画への反映は `plan_reflection_*`：設定（基準・確保済みの引き方・遅れの取り返し・物品の取り置き・自動反映）を `plan_reflection_get` で読み、`plan_reflection_preview` で変わる行をユーザーに見せてから `plan_reflection_settings_update` か `plan_reflection_run`。今月から 12 か月を作り直し、過去の月とユーザーのレコードは変えない。自動反映がオンなら月の初めと設定の変更で自動で走る。
 - 計画との差は `goal_plan_check`（口座ごとに積立設定の月額と計画の配分）。
 
 ## 5. 破壊的操作
 
 - `*_delete` / `data_import_replace_current_client` / `accounts_delete` は、ユーザーの明示的な指示なしに実行しない。実行前に対象 ID と件数を提示して確認する。
-- `exchange_rates_auto_update`・`actions_process_due`・`goal_plan_apply` のような一括系も、影響範囲（何件・どの期間）を先に説明する。
+- `exchange_rates_auto_update`・`plan_reflection_run`・`data_health_repair`・`reconcile_adjust` のような一括系も、影響範囲（何件・どの期間）を先に説明する。
+- アカウント操作（ログイン・登録・パスワード・MFA）と AI 自身の権限設定（AI ポリシー・書込方式）は MCP に無い。ユーザーに画面で行ってもらう。
 
 ## 6. 完了報告フォーマット
 

@@ -11,12 +11,18 @@ from app import models, schemas
 from app.domain.transfer import migrate_plan_records, validate_import_payload
 from app.services import contribution_plan_service as plans
 from app.services import goal_plan_service, goal_service, life_scenario_service as scenarios
-from app.workflows import goal_budget_workflow
+from app.services.budget_plan_store import find_budget_plan_id
+from app.workflows import plan_reflection_workflow
 from scenario_fixtures import account, db  # noqa: F401
 
 TODAY = date.today()
 PERIOD = TODAY.strftime("%Y-%m")
 
+
+
+def goal_preview(db, start, end):
+    """What the goal asks for in [start, end] (goal_plan_service.plan); nothing is saved."""
+    return goal_plan_service.plan(db, 1, start, end, find_budget_plan_id(db, 1))
 
 def months_ahead(months: int) -> date:
     index = TODAY.year * 12 + TODAY.month - 1 + months
@@ -118,7 +124,7 @@ def test_the_plan_writes_transfers_with_their_source_and_draws_each_instalment_d
     plans.create_plan(db, 1, scenario.id, {"kind": "withdrawal", "account_id": savings.id, "start_period": month(months_ahead(3)), "amount": 20_000,
                                             "interval_months": 1, "repeat_count": 3, "life_event_id": trip.id})
     end = month(months_ahead(4))
-    preview = goal_budget_workflow.preview(db, 1, PERIOD, end)
+    preview = goal_preview(db, PERIOD, end)
     rows = {(row["period"], row["kind"], row["source_account_id"]): row["new"] for row in preview["changes"]}
     assert {key: value for key, value in rows.items() if key[1] == "transfer"} == {
         (month(months_ahead(offset)), "transfer", bank.id): 20_000 for offset in range(5)}
@@ -126,14 +132,16 @@ def test_the_plan_writes_transfers_with_their_source_and_draws_each_instalment_d
     # The earmark holds what the three instalments take, set aside until the first one.
     assert [rows.get((month(months_ahead(offset)), "capsule", None)) for offset in range(5)] == [20_000, 20_000, 20_000, None, None]
     assert [rows.get((month(months_ahead(offset)), "drawdown", None)) for offset in range(5)] == [None, None, None, 20_000, 20_000]
-    goal_budget_workflow.apply(db, 1, PERIOD, end, preview["fingerprint"])
+    plan_reflection_workflow.run(db, 1, "manual")
     line = db.query(models.MonthlyPlanLine).filter_by(client_id=1, source_kind="goal", target_period=PERIOD, source_account_id=bank.id).one()
     assert (line.line_type, line.target_type, line.account_id, line.name, line.amount_minor) == ("allocation", "account", savings.id, "ゴールの振替", 20_000)
-    assert not any(row["changed"] for row in goal_budget_workflow.preview(db, 1, PERIOD, end)["changes"])
+    assert not any(row["changed"] for row in goal_preview(db, PERIOD, end)["changes"])
     # The check compares what the 積立設定 brings into each account: the transfer; the earmark sits inside it.
     check = goal_plan_service.plan_check(db, 1, PERIOD)
     assert [(row["name"], row["contribution"], row["planned"]) for row in check["accounts"]] == [("貯蓄", 20_000, 20_000)]
-    assert goal_plan_service.reflection_notifications(db, 1, month(months_ahead(5))) != []
+    # A run covers this month and the 11 after it; the reminder comes back after that.
+    assert goal_plan_service.reflection_notifications(db, 1, month(months_ahead(11))) == []
+    assert goal_plan_service.reflection_notifications(db, 1, month(months_ahead(12))) != []
 
 
 def test_one_event_amount_is_shared_by_its_accounts_in_the_order_they_withdraw(db):

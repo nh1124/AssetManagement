@@ -11,7 +11,7 @@ import { useResource } from '../../useResource';
 import { DataTable, Feedback, Help } from '../db/Database';
 import { buttonClass, primaryClass } from '../db/forms';
 import { eventAmount, KIND_LABELS } from './eventKinds';
-import GoalPlanDialog from './GoalPlanDialog';
+import ReflectionOverlay from '../plan/ReflectionOverlay';
 import GoalProjectionChart from './GoalProjectionChart';
 import NoLifeEvents from './NoLifeEvents';
 
@@ -31,6 +31,8 @@ function SummaryForClient({ currency }: { currency: string }) {
     }, [period]);
     const resource = useResource(load);
     const [planning, setPlanning] = useState(false);
+    const { clientId, currentClient } = useClient();
+    const clientName = currentClient && currentClient.id === clientId ? currentClient.name : undefined;
     const data = resource.data;
     const goal = data?.goal;
     const expenses = goal?.events.filter((event) => event.direction === 'expense') ?? [];
@@ -49,7 +51,7 @@ function SummaryForClient({ currency }: { currency: string }) {
             <div className="flex flex-wrap items-center justify-between gap-3">
                 <h2 className="flex items-center gap-2 font-semibold"><Flag size={18} aria-label="ゴール" />{goal.projected.name}</h2>
                 <div className="flex flex-wrap items-center gap-2">
-                    <button type="button" disabled={disabled} onClick={() => setPlanning(true)} className={`inline-flex items-center gap-2 ${buttonClass}`}><CalendarPlus size={14} aria-hidden="true" />計画を作成</button>
+                    <button type="button" disabled={disabled} onClick={() => setPlanning(true)} className={`inline-flex items-center gap-2 ${buttonClass}`}><CalendarPlus size={14} aria-hidden="true" />計画への反映</button>
                     <Link to="/goals/scenarios" className={`inline-flex items-center gap-2 ${buttonClass}`}><Pencil size={14} aria-hidden="true" />編集する</Link>
                 </div>
             </div>
@@ -91,7 +93,7 @@ function SummaryForClient({ currency }: { currency: string }) {
                 </DataTable>
             </section>
         </>}
-        {planning && <GoalPlanDialog onClose={(applied) => { setPlanning(false); if (applied) resource.reload(); }} />}
+        {planning && <ReflectionOverlay clientName={clientName} currency={currency} onClose={(changed) => { setPlanning(false); if (changed) resource.reload(); }} />}
     </section>;
 }
 

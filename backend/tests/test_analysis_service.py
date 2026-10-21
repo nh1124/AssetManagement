@@ -31,7 +31,6 @@ try:
     from backend.app.services.periods import current_period_key
     from backend.app.services.report_service import generate_monthly_report
     from backend.app.services.accounting_service import update_transaction
-    from backend.app.workflows.monthly_action_workflow import apply_action, create_action
 except ModuleNotFoundError:
     from app import models  # type: ignore[no-redef]
     from app.database import Base  # type: ignore[no-redef]
@@ -47,7 +46,6 @@ except ModuleNotFoundError:
     from app.services.periods import current_period_key  # type: ignore[no-redef]
     from app.services.report_service import generate_monthly_report  # type: ignore[no-redef]
     from app.services.accounting_service import update_transaction  # type: ignore[no-redef]
-    from app.workflows.monthly_action_workflow import apply_action, create_action  # type: ignore[no-redef]
 
 
 def _session():
@@ -216,8 +214,6 @@ def test_foreign_currency_transactions_are_valued_with_exchange_rates() -> None:
         db.close()
 
 
-
-
 def test_period_pl_and_balance_sheet_respect_explicit_dates() -> None:
     db = _session()
     try:
@@ -327,34 +323,4 @@ def test_account_flows_and_account_transactions_use_journal_sides() -> None:
     finally:
         db.close()
 
-
-def test_review_action_set_budget_applies_to_target_period() -> None:
-    db = _session()
-    try:
-        client = models.Client(id=1, name="test", general_settings={})
-        account = models.Account(client_id=1, id=20, name="food", account_type="expense")
-        db.add_all([client, account])
-        db.commit()
-
-        action = create_action(
-            db,
-            client_id=1,
-            source_period="2026-04",
-            target_period="2026-05",
-            kind="set_budget",
-            description="Set food budget",
-            payload={"account_id": 20, "amount": 45000},
-        )
-        applied = apply_action(db, client_id=1, action_id=action["id"])
-        budget = db.query(models.MonthlyPlanLine).filter(
-            models.MonthlyPlanLine.client_id == 1,
-            models.MonthlyPlanLine.account_id == 20,
-            models.MonthlyPlanLine.target_period == "2026-05",
-            models.MonthlyPlanLine.line_type == "expense",
-        ).one()
-
-        assert applied["status"] == "applied"
-        assert budget.amount == 45000
-    finally:
-        db.close()
 

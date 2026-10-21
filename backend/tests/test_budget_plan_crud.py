@@ -59,8 +59,7 @@ def test_the_plan_set_endpoints_are_gone():
     """§8-10: a client has one plan; listing, making, comparing and copying plans went with the old UI."""
     paths = {route.path for route in router.router.routes}
     assert paths == {"/budget-plans/copy-period", "/budget-plans/summary", "/budget-plans/lines",
-                     "/budget-plans/lines/batch", "/budget-plans/lines/{line_id}",
-                     "/budget-plans/product-reserves/preview", "/budget-plans/product-reserves/apply"}
+                     "/budget-plans/lines/batch", "/budget-plans/lines/{line_id}"}
 
 
 def test_delete_single_plan_line_removes_only_that_line(planning):

@@ -17,8 +17,6 @@ from app.domain.transfer import (
     data_counts,
     parse_date,
     parse_datetime,
-    remap_action_target_id,
-    remap_nested_ids,
     row_fields,
     validate_import_payload,
 )
@@ -48,8 +46,8 @@ def _checksum_sample(amount=12.5):
 EMPTY_TABLE_DIGEST = "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
 SAMPLE_DIGEST = "b0af7658403f3086011bd58bd60d0e583d974b3fd2530c69b845a2f300682108"
 # Quick templates left the format (E4); the sample data byte digest stays fixed. The payload
-# digest covers the per-table checksums, so it moves when a collection joins (v31: 期間ごとの前提).
-PAYLOAD_DIGEST = "77e76427ca70868983546563202fdafa91d92578e3c013e12cc2e75b1e1db902"
+# digest covers the per-table checksums, so it moves when a collection joins or leaves (v31: 期間ごとの前提 in, 行動 out).
+PAYLOAD_DIGEST = "716f4e3d64b43bba5fa82978751dbc18c0a881e9ec23ffdea203414a1e6267c7"
 # The same sample as exported while quick_templates was still a collection.
 PRE_E4_PAYLOAD_DIGEST = "8ce363d73785ffbc2a3c6d9e1b53da7bbda72874400f841d84c1c4ecba0e5d14"
 TABLE_DIGESTS = {
@@ -72,7 +70,6 @@ TABLE_DIGESTS = {
     "monthly_plan_lines": EMPTY_TABLE_DIGEST,
     "period_reviews": EMPTY_TABLE_DIGEST,
     "period_closes": EMPTY_TABLE_DIGEST,
-    "monthly_actions": EMPTY_TABLE_DIGEST,
     "capsules": EMPTY_TABLE_DIGEST,
     "capsule_drawdowns": EMPTY_TABLE_DIGEST,
     "capsule_funding_sources": EMPTY_TABLE_DIGEST,
@@ -191,7 +188,8 @@ def test_a_manifest_from_before_quick_templates_were_removed_still_verifies():
     sample = _checksum_sample()
     # A v23 manifest names the collections of its day, not those added or retired since.
     added = {"fx_tracked_currencies", "scenario_contribution_plans", "scenario_assumption_periods"}
-    retired = ("recurring_transactions", "quick_templates", "life_scenario_account_returns", "milestones", "simulation_scenarios", "goal_baselines")
+    retired = ("recurring_transactions", "quick_templates", "life_scenario_account_returns", "milestones", "simulation_scenarios", "goal_baselines",
+               "monthly_actions")
     checksums = {**{key: value for key, value in TABLE_DIGESTS.items() if key not in added}, **dict.fromkeys(retired, EMPTY_TABLE_DIGEST)}
     counts = {**{key: value for key, value in SAMPLE_COUNTS.items() if key not in added}, **dict.fromkeys(retired, 0)}
     manifest = {"counts": counts, "checksums": checksums, "payload_checksum": PRE_E4_PAYLOAD_DIGEST}
@@ -308,32 +306,3 @@ def test_imported_journal_refuses_missing_or_unbalanced_entries(amount, entries,
     with pytest.raises(ValueError) as error:
         assert_imported_journal_invariant(10, amount, entries)
     assert str(error.value) == message
-
-
-def test_nested_id_remapping_preserves_unknown_ids_and_original_payload():
-    original = {
-        "account_id": "1", "capsule_id": "99", "unmapped_id": 1,
-        "nested": [{"account_id": 2, "deeper": {"capsule_id": 3}},
-                   {"account_id": "bad"}, None, 1],
-    }
-    assert remap_nested_ids(original, {"account_id": {1: 101, 2: 102}, "capsule_id": {3: 103}}) == {
-        "account_id": 101, "capsule_id": "99", "unmapped_id": 1,
-        "nested": [{"account_id": 102, "deeper": {"capsule_id": 103}},
-                   {"account_id": "bad"}, None, 1],
-    }
-    assert original["account_id"] == "1"
-    assert original["nested"][0] == {"account_id": 2, "deeper": {"capsule_id": 3}}
-
-
-@pytest.mark.parametrize("item, expected", [
-    pytest.param({"kind": "set_budget", "target_id": "1"}, 101, id="budget-account"),
-    pytest.param({"kind": "stop_auto_transaction", "target_id": 1}, 201, id="recurring"),
-    pytest.param({"kind": "change_capsule_contribution", "target_id": 1}, 301, id="capsule"),
-    pytest.param({"kind": "set_budget", "target_id": 99}, 99, id="unmapped-target"),
-    pytest.param({"kind": "unknown", "target_id": "1"}, 1, id="unknown-kind"),
-    pytest.param({"kind": "set_budget", "target_id": "bad"}, None, id="malformed-target"),
-    pytest.param({"kind": "set_budget"}, None, id="missing-target"),
-])
-def test_action_target_remapping_follows_kind_and_preserves_unknown_ids(item, expected):
-    maps = {"account_id": {1: 101}, "registry_entry_id": {1: 201}, "capsule_id": {1: 301}, "life_event_id": {1: 401}}
-    assert remap_action_target_id(item, maps) == expected

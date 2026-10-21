@@ -32,34 +32,6 @@ def get_plan_line(db: Session, client_id: int, line_id: int) -> models.MonthlyPl
     ).first()
 
 
-def find_expense_plan_line(
-    db: Session, client_id: int, plan_id: int, account_id: int, target_period: str,
-) -> models.MonthlyPlanLine | None:
-    return db.query(models.MonthlyPlanLine).filter(
-        models.MonthlyPlanLine.client_id == client_id,
-        models.MonthlyPlanLine.plan_id == plan_id,
-        models.MonthlyPlanLine.account_id == account_id,
-        models.MonthlyPlanLine.target_period == target_period,
-        models.MonthlyPlanLine.line_type == "expense",
-    ).first()
-
-
-def create_plan_line(
-    db: Session, client_id: int, fields: dict, *, commit: bool = False,
-) -> models.MonthlyPlanLine:
-    # Review actions already resolve their target; batch normalization and
-    # duplicate validation would change their existing write behavior.
-    line = models.MonthlyPlanLine(**minor_fields(fields, money_client_currency(db, client_id), 'amount'), client_id=client_id)
-    db.add(line)
-    assign_plan_line_identity(line)
-    if commit:
-        db.commit()
-        db.refresh(line)
-    else:
-        db.flush()
-    return line
-
-
 def get_plan(db: Session, client_id: int, plan_id: int) -> models.BudgetPlan | None:
     return db.query(models.BudgetPlan).filter(
         models.BudgetPlan.client_id == client_id,

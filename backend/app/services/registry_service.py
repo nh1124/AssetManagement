@@ -158,9 +158,10 @@ def registry_source_account_id(entry: models.RegistryEntry) -> int | None:
 
 
 def due_entries(db: Session, client_id: int, today: date) -> list[models.RegistryEntry]:
+    # One that only budgets (取引も記録しない) is never due.
     return db.query(models.RegistryEntry).filter(
         models.RegistryEntry.client_id == client_id, models.RegistryEntry.is_active.is_(True),
-        models.RegistryEntry.next_due_date <= today,
+        models.RegistryEntry.records_transactions.is_(True), models.RegistryEntry.next_due_date <= today,
     ).with_for_update(skip_locked=True).all()
 
 

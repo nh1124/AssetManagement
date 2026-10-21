@@ -94,7 +94,8 @@ export const STUDIO_GROUPS: StudioGroup[] = [
                 section: WORKSPACE,
                 tabs: [
                     { segment: '', label: 'tab.plan' },
-                    { segment: 'actions', label: 'tab.actions' },
+                    { segment: 'earmarks', label: 'tab.planEarmarks' },
+                    { segment: 'auto', label: 'tab.planAuto' },
                 ],
             },
             {

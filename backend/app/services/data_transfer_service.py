@@ -22,8 +22,6 @@ from ..domain.transfer import (
     parse_date,
     parse_datetime,
     validate_import_payload,
-    remap_nested_ids,
-    remap_action_target_id,
     migrate_account_fields,
     migrate_event_fundings,
     migrate_event_withdrawals,
@@ -149,7 +147,8 @@ def export_client(db: Session, client: models.Client) -> dict:
             "registry_entries": [
                 row_fields(item, ["id", "name", "kind", "amount", "currency", "source_account_id", "destination_account_id",
                                   "budget_account_id", "repeat_mode", "frequency", "frequency_days", "day_of_month", "month_of_year",
-                                  "start_date", "end_date", "repeat_count", "next_due_date", "budget_active", "is_active", "note", "created_at", "updated_at"])
+                                  "start_date", "end_date", "repeat_count", "next_due_date", "budget_active", "is_active", "records_transactions", "note",
+                                  "created_at", "updated_at"])
                 for item in db.query(models.RegistryEntry).filter(models.RegistryEntry.client_id == client.id).order_by(models.RegistryEntry.id).all()
             ],
             "transaction_batches": [
@@ -318,31 +317,6 @@ def export_client(db: Session, client: models.Client) -> dict:
                 row_fields(close, ["id", "period", "closed_at", "note"])
                 for close in db.query(models.PeriodClose).filter_by(client_id=client.id)
                 .order_by(models.PeriodClose.period).all()
-            ],
-            "monthly_actions": [
-                row_fields(
-                    action,
-                    [
-                        "id",
-                        "source_period",
-                        "target_period",
-                        "proposal_id",
-                        "kind",
-                        "description",
-                        "amount",
-                        "target_id",
-                        "payload",
-                        "result",
-                        "status",
-                        "idempotency_key",
-                        "created_at",
-                        "applied_at",
-                    ],
-                )
-                for action in db.query(models.MonthlyAction)
-                .filter(models.MonthlyAction.client_id == client.id)
-                .order_by(models.MonthlyAction.id)
-                .all()
             ],
             "capsules": [
                 {
@@ -521,7 +495,6 @@ def import_client(
             models.MonthlyPlanLine,
             models.PeriodReview,
             models.PeriodClose,
-            models.MonthlyAction,
             models.CapsuleDrawdown,
             models.CapsuleRule,
             models.Capsule,
@@ -637,6 +610,7 @@ def import_client(
             entry = models.RegistryEntry(client_id=client.id, **values,
                 amount_minor=to_minor(item.get("amount") or 0, item.get("currency") or "JPY"), currency=item.get("currency") or "JPY",
                 budget_active=item.get("budget_active", True), is_active=item.get("is_active", True),
+                records_transactions=item.get("records_transactions", True),
                 created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(), updated_at=parse_datetime(item.get("updated_at")))
             db.add(entry)
             db.flush()
@@ -1005,46 +979,6 @@ def import_client(
                 models.LifeScenario.client_id == client.id, models.LifeScenario.id != restored_goal.id,
             ).all():
                 copy_graph(db, client.id, restored_goal.id, story.id)
-
-        action_key_maps = {
-            "account_id": account_map,
-            "from_account_id": account_map,
-            "to_account_id": account_map,
-            "source_account_id": account_map,
-            "destination_account_id": account_map,
-            "budget_account_id": account_map,
-            "life_event_id": event_map,
-            "registry_entry_id": registry_map,
-            "capsule_id": capsule_map,
-            "funding_capsule_id": capsule_map,
-            "product_id": product_map,
-            "source_product_id": product_map,
-            "transaction_id": transaction_map,
-            "batch_id": batch_map,
-            "budget_plan_id": budget_plan_map,
-            "plan_id": budget_plan_map,
-            "plan_line_id": monthly_plan_line_map,
-            "monthly_plan_line_id": monthly_plan_line_map,
-        }
-        for item in data.get("monthly_actions", []):
-            db.add(
-                models.MonthlyAction(
-                    client_id=client.id,
-                    source_period=item["source_period"],
-                    target_period=item.get("target_period"),
-                    proposal_id=item["proposal_id"],
-                    kind=item["kind"],
-                    description=item.get("description") or "",
-                    amount_minor=to_minor(item.get("amount"), money_client_currency(db, client.id)),
-                    target_id=remap_action_target_id(item, action_key_maps),
-                    payload=remap_nested_ids(item.get("payload") or {}, action_key_maps),
-                    result=remap_nested_ids(item.get("result") or {}, action_key_maps),
-                    status=item.get("status") or "pending",
-                    idempotency_key=item.get("idempotency_key") or f"import:{client.id}:{item['id']}",
-                    created_at=parse_datetime(item.get("created_at")) or datetime.utcnow(),
-                    applied_at=parse_datetime(item.get("applied_at")),
-                )
-            )
 
         db.commit()
         invalidate_client(client.id)

@@ -304,6 +304,8 @@ export interface AutoTransactionInput {
     repeat_count: number | null;
     budget_active: boolean;
     is_active: boolean;
+    /** 取引も記録する: false for one that only budgets each month and never posts. */
+    records_transactions: boolean;
     note: string | null;
 }
 export interface AutoTransaction extends AutoTransactionInput {
@@ -390,38 +392,11 @@ export interface ActionProposal {
     amount?: number | null;
     target_id?: number | null;
     target_life_event_id?: number | null;
-    auto_executable: boolean;
-    action_status?: 'pending' | 'applied' | 'skipped' | 'failed';
-    applied?: boolean;
-    monthly_action_id?: number | null;
     navigation_target?: string;
 }
 
-export interface MonthlyAction {
-    id: number;
-    source_period: string;
-    target_period?: string | null;
-    proposal_id: string;
-    kind: string;
-    description: string;
-    amount?: number | null;
-    target_id?: number | null;
-    payload: Record<string, unknown>;
-    result: Record<string, unknown>;
-    status: 'pending' | 'applied' | 'skipped' | 'failed';
-    applied_at?: string | null;
-    created_at?: string | null;
-}
 
-export type ReviewActionKind = 'set_budget' | 'add_auto_transaction' | 'stop_auto_transaction' | 'change_capsule_contribution';
 
-export interface ReviewActionCreate {
-    source_period: string;
-    target_period?: string | null;
-    kind: ReviewActionKind;
-    description?: string;
-    payload: Record<string, unknown>;
-}
 
 export interface MonthlyReport {
     period: string;
@@ -693,6 +668,8 @@ export interface ScheduledTransaction {
     frequency: string | null;
     posted: boolean;
     in_budget: boolean;
+    /** False for an automatic transaction that only budgets (never posts). */
+    records_transactions: boolean;
     /** The account or subject whose budget the movement is. */
     account_id: number | null;
     counter_account_id: number | null;

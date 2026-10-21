@@ -32,7 +32,6 @@ import type {
     LoginResult,
     LifeEvent,
     LifeEventProgress,
-    MonthlyAction,
     MfaRecoveryCodes,
     MfaSetupStart,
     MfaStatus,
@@ -42,7 +41,6 @@ import type {
     Product,
     AutoTransaction,
     AutoTransactionInput,
-    ReviewActionCreate,
     Transaction,
     TransactionProposal,
 } from '../types';
@@ -293,39 +291,12 @@ export const savePeriodReview = async (review: {
     return response.data;
 };
 
-export const getMonthlyActions = async (sourcePeriod?: string): Promise<MonthlyAction[]> => {
-    const response = await api.get('/actions/', { params: sourcePeriod ? { source_period: sourcePeriod } : undefined });
-    return response.data;
-};
 
-export const createMonthlyAction = async (payload: ReviewActionCreate): Promise<MonthlyAction> => {
-    const response = await api.post('/actions/', payload);
-    return response.data;
-};
 
-export const updateMonthlyAction = async (id: number, payload: ReviewActionCreate): Promise<MonthlyAction> => {
-    const response = await api.put(`/actions/${id}`, payload);
-    return response.data;
-};
 
-export const deleteMonthlyAction = async (id: number): Promise<void> => {
-    await api.delete(`/actions/${id}`);
-};
 
-export const processDueMonthlyActions = async (): Promise<{ processed: MonthlyAction[] }> => {
-    const response = await api.post('/actions/process-due');
-    return response.data;
-};
 
-export const applyReviewAction = async (id: number): Promise<MonthlyAction> => {
-    const response = await api.post(`/actions/${id}/apply`);
-    return response.data;
-};
 
-export const skipReviewAction = async (id: number): Promise<MonthlyAction> => {
-    const response = await api.post(`/actions/${id}/skip`);
-    return response.data;
-};
 
 // Accounts endpoints
 export const getAccounts = async (accountType?: string, isActive?: boolean): Promise<Account[]> => {
@@ -814,24 +785,7 @@ export const getPeriodReport = async (startDate: string, endDate: string): Promi
     return response.data;
 };
 
-export const applyMonthlyReportAction = async (
-    period: string,
-    proposalId: string
-): Promise<{ status: string; action: MonthlyAction }> => {
-    const response = await api.post(`/reports/${period}/actions/${proposalId}/apply`);
-    return response.data;
-};
 
-export const applyPeriodReportAction = async (
-    startDate: string,
-    endDate: string,
-    proposalId: string
-): Promise<{ status: string; action: MonthlyAction }> => {
-    const response = await api.post(`/reports/period/actions/${proposalId}/apply`, null, {
-        params: { start_date: startDate, end_date: endDate },
-    });
-    return response.data;
-};
 
 // Budget Plans
 

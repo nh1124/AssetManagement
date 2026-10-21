@@ -22,12 +22,19 @@ from app.services import capsule_service
 from app.services import contribution_plan_service as plans
 from app.services import goal_service, life_scenario_service as scenarios
 from app.services.ledger_service import create_transaction
-from app.workflows import goal_budget_workflow
+from app.services.budget_plan_store import find_budget_plan_id
+from app.services import goal_plan_service
+from app.workflows import plan_reflection_workflow
 from scenario_fixtures import account, db, request  # noqa: F401
 
 TODAY = date.today()
 PERIOD = TODAY.strftime("%Y-%m")
 
+
+
+def goal_preview(db, start, end):
+    """What the goal asks for in [start, end] (goal_plan_service.plan); nothing is saved."""
+    return goal_plan_service.plan(db, 1, start, end, find_budget_plan_id(db, 1))
 
 def months_ahead(months: int) -> date:
     index = TODAY.year * 12 + TODAY.month - 1 + months
@@ -119,16 +126,16 @@ def test_the_plan_earmarks_each_account_until_its_withdrawal_and_draws_it_down_t
     car = event(db, scenario, "車", 120_000, months_ahead(12))
     withdraw(db, scenario, savings.id, months_ahead(12), 90_000, car.id)
     withdraw(db, scenario, securities.id, months_ahead(6), 30_000, car.id)
-    preview = goal_budget_workflow.preview(db, 1, PERIOD, PERIOD)
+    preview = goal_preview(db, PERIOD, PERIOD)
     assert sorted((row["kind"], row["account_id"], row["new"], row["new_capsule"]) for row in preview["changes"]) == [
         ("capsule", savings.id, 7500, True), ("capsule", securities.id, 5000, True)]
-    goal_budget_workflow.apply(db, 1, PERIOD, PERIOD, preview["fingerprint"])
+    plan_reflection_workflow.run(db, 1, "manual")
     capsule = capsule_service.goal_capsules(db, 1, [car.id])[car.id]
     # The earmark holds what the accounts withdraw (120,000 here), not the rest the residual pays.
     assert (capsule.name, capsule.monthly_contribution_minor, capsule.target_amount_minor) == ("車", 12500, 120000)
     assert {(source.account_id, source.target_amount_minor) for source in capsule.funding_sources} == {(savings.id, 90000), (securities.id, 30000)}
     # In the withdrawal month the plan draws the account down for the event.
-    later = goal_budget_workflow.preview(db, 1, month(months_ahead(6)), month(months_ahead(6)))
+    later = goal_preview(db, month(months_ahead(6)), month(months_ahead(6)))
     assert ("drawdown", securities.id, 30000) in {(row["kind"], row["account_id"], row["new"]) for row in later["changes"]}
 
     # Money set aside in securities stays claimed there when the event stops withdrawing from it.
@@ -137,8 +144,8 @@ def test_the_plan_earmarks_each_account_until_its_withdrawal_and_draws_it_down_t
     db.commit()
     record = next(row for row in plans.list_plans(db, 1, scenario.id) if row.account_id == securities.id)
     plans.delete_plan(db, 1, record.id)
-    preview = goal_budget_workflow.preview(db, 1, PERIOD, PERIOD)
-    goal_budget_workflow.apply(db, 1, PERIOD, PERIOD, preview["fingerprint"])
+    preview = goal_preview(db, PERIOD, PERIOD)
+    plan_reflection_workflow.run(db, 1, "manual")
     db.refresh(capsule)
     assert {(source.account_id, source.target_amount_minor) for source in capsule.funding_sources} == {(savings.id, 90000), (securities.id, 0)}
     assert capsule.target_amount_minor == 90000

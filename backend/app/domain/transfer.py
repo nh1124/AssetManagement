@@ -30,7 +30,6 @@ DATA_COLLECTIONS = [
     "monthly_plan_lines",
     "period_reviews",
     "period_closes",
-    "monthly_actions",
     "capsules",
     "capsule_drawdowns",
     "capsule_funding_sources",
@@ -45,7 +44,8 @@ DATA_COLLECTIONS = [
 # verify, but the rows are never imported.
 RETIRED_COLLECTIONS = {"recurring_transactions": 24, "life_scenario_choices": 22, "quick_templates": None,
                        "life_scenario_account_returns": 26, "milestones": 26, "simulation_scenarios": 26, "goal_baselines": 26,
-                       "goal_event_earmarks": 27, "life_event_fundings": 29}
+                       "goal_event_earmarks": 27, "life_event_fundings": 29,
+                       "monthly_actions": 31}
 
 
 def _retired(version: int | None) -> set[str]:
@@ -601,38 +601,6 @@ def assert_imported_journal_invariant(
         raise ValueError(
             f"Transaction {transaction_id} journal totals do not satisfy debit=credit=amount"
         )
-
-
-def remap_nested_ids(value: Any, key_maps: dict[str, dict[int, int]]) -> Any:
-    if isinstance(value, list):
-        return [remap_nested_ids(item, key_maps) for item in value]
-    if not isinstance(value, dict):
-        return value
-
-    mapped: dict[str, Any] = {}
-    for key, item_value in value.items():
-        id_map = key_maps.get(key)
-        old_id = _as_int(item_value)
-        if id_map is not None and old_id is not None:
-            mapped[key] = id_map.get(old_id, item_value)
-        else:
-            mapped[key] = remap_nested_ids(item_value, key_maps)
-    return mapped
-
-
-def remap_action_target_id(item: dict[str, Any], key_maps: dict[str, dict[int, int]]) -> int | None:
-    target_id = _as_int(item.get("target_id"))
-    if target_id is None:
-        return None
-    kind = item.get("kind")
-    target_key = {
-        "set_budget": "account_id",
-        "stop_auto_transaction": "registry_entry_id",
-        "change_capsule_contribution": "capsule_id",
-    }.get(kind)
-    if not target_key:
-        return target_id
-    return key_maps.get(target_key, {}).get(target_id, target_id)
 
 
 def migrate_account_fields(data: dict, base_currency: str) -> dict:
