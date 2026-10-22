@@ -149,8 +149,7 @@ export function registerUiOperationTools(server: McpServer): void {
   register(server, "notifications_decide", "Snooze or dismiss a notification", "snooze until a time (後で確認), dismiss (見送り) or reopen.",
     { id, action: z.enum(["snooze", "dismiss", "reopen"]), until: z.string().optional().describe("ISO date-time, for snooze") }, "write",
     ({ id: notificationId, ...body }) => api.post<unknown>(`/notifications/${notificationId}/decision`, only(body)));
-  register(server, "data_health_check", "Check data health", "The data health issues and what can be repaired.", {}, "read", () => api.get<unknown>("/data/health"));
-  register(server, "data_health_repair", "Repair data health", "Applies the repairs the check offers. Ask the user first.", {}, "write", () => api.post<unknown>("/data/health/repair", {}));
+  register(server, "data_health_check", "Check data health", "The data issues the user can fix and where: closed entries in the ledger, earmark funding in Earmarks, and negative amounts set aside or accounts holding less than their earmarks in Assets > Accounts.", {}, "read", () => api.get<unknown>("/data/health"));
   register(server, "reconcile_account", "Reconcile an account", "Compares an account's ledger balance with a statement balance as of a date.",
     { account_id: id, as_of: dateSchema, statement: z.number(), currency: z.string().optional() }, "read",
     ({ account_id, ...input }) => api.get<unknown>(`/analysis/reconcile/${account_id}${query(input)}`));

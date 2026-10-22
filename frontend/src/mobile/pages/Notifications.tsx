@@ -8,8 +8,8 @@ import { Empty, focusRing } from '../components/ui';
 import { tr } from '../../studio/i18n';
 
 // Notification links are studio paths. These open here; the rest (closing a month, making the plan from
-// the goal, data health, actions) need the studio's screens.
-const MOBILE_PATHS: Record<string, string> = { '/automation/approvals': '/approvals', '/ledger/auto': '/ledger' };
+// the goal) need the studio's screens. Data checks open the matching accounts or earmarks screen.
+const MOBILE_PATHS: Record<string, string> = { '/automation/approvals': '/approvals', '/ledger/auto': '/ledger', '/assets/accounts': '/accounts', '/db/earmarks': '/earmarks' };
 
 function target(notification: AppNotification): { href: string; inApp: boolean } | null {
     if (!notification.link) return null;

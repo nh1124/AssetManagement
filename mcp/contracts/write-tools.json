@@ -692,14 +692,6 @@
     "required_fields": ["action"]
   },
   {
-    "tool": "data_health_repair",
-    "method": "post",
-    "path": "/data/health/repair",
-    "body": "none",
-    "source": "src/tools/ui-operations.ts",
-    "path_fragment": "\"/data/health/repair\""
-  },
-  {
     "tool": "reconcile_adjust",
     "method": "post",
     "path": "/analysis/reconcile/{account_id}/adjust",

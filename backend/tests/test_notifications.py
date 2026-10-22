@@ -8,7 +8,7 @@ from sqlalchemy.pool import StaticPool
 
 from app import models
 from app.database import Base
-from app.services import data_health_service, notification_service as service
+from app.services import notification_service as service
 from app.workflows import notification_workflow as workflow
 
 NOW = datetime(2026, 10, 18, 9, 0)
@@ -173,16 +173,3 @@ def test_notifications_follow_the_client_language_without_reopening(db):
     assert english["dedupe_key"] == japanese["dedupe_key"]
     (close,) = workflow.month_close_notifications(db, 1, PERIOD) or [None]
     assert close is None or close["title"].endswith("is not closed")
-
-
-def test_data_health_notifies_warnings_and_errors_only(db, monkeypatch):
-    issues = [
-        {"code": "journal_unbalanced", "severity": "error", "title": "不一致", "count": 2},
-        {"code": "advance_pair_candidate", "severity": "info", "title": "立替", "count": 5},
-        {"code": "duplicate_recurring", "severity": "warning", "title": "重複", "count": 0},
-    ]
-    monkeypatch.setattr(data_health_service, "check_data_health", lambda db, client_id: {"issues": issues})
-    (item,) = workflow.data_health_notifications(db, 1, PERIOD)
-    assert (item["body"], item["link"], item["payload"]) == ("不一致（2件）", "/debug/data-health", {"codes": ["journal_unbalanced"], "count": 1})
-    issues[0]["count"] = 0
-    assert workflow.data_health_notifications(db, 1, PERIOD) == []

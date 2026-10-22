@@ -16,7 +16,7 @@ const kindLabels = (): Record<string, string> => ({
     plan_reflected: tr('計画の自動更新', 'Automatic plan updates'),
     approval_pending: tr('承認待ち', 'Awaiting approval'),
     unmatched: tr('自動取引', 'Automatic transactions'),
-    data_health: tr('データ健全性', 'Data health'),
+    data_health: tr('データの確認', 'Data check'),
     month_close: tr('月次締め', 'Monthly close'),
 });
 const KIND_ORDER = Object.keys(kindLabels());

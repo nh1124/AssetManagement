@@ -23,7 +23,6 @@ import Simulation from './pages/goals/Simulation';
 import Ai from './pages/automation/Ai';
 import Approvals from './pages/automation/Approvals';
 import Audit from './pages/automation/Audit';
-import DataHealth from './pages/debug/DataHealth';
 import DatabaseAccounts from './pages/db/Accounts';
 import Fx from './pages/db/Fx';
 import AutoTransactions from './pages/db/AutoTransactions';
@@ -53,7 +52,6 @@ const SCREENS: Record<string, { index: ReactElement; tabs?: Record<string, React
     'automation/ai': { index: <Ai /> },
     'automation/approvals': { index: <Approvals /> },
     'automation/audit': { index: <Audit /> },
-    'debug/data-health': { index: <DataHealth /> },
     'db/accounts': { index: <DatabaseAccounts /> },
     'db/fx': { index: <Fx /> },
     'db/auto-transactions': {

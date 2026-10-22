@@ -58,10 +58,20 @@ setup_logging()
 logger = logging.getLogger(__name__)
 _automatic_recording_task: asyncio.Task | None = None
 
+
+def api_docs_urls(config) -> dict[str, str | None]:
+    return {
+        "docs_url": None if config.is_production else "/docs",
+        "redoc_url": None if config.is_production else "/redoc",
+        "openapi_url": None if config.is_production else "/openapi.json",
+    }
+
+
 app = FastAPI(
     title="Finance IDE API",
     version="4.0.0",
-    description="SaaS Refactor - Multi-Client Finance Management"
+    description="SaaS Refactor - Multi-Client Finance Management",
+    **api_docs_urls(settings),
 )
 
 
@@ -160,13 +170,13 @@ def ensure_runtime_schema_guards(db) -> None:
         db.commit()
 
 
-def ensure_no_default_admin_password(db) -> None:
-    admin_client = db.query(models.Client).filter(
-        models.Client.username == "admin",
+def ensure_no_development_password(db) -> None:
+    clients = db.query(models.Client).filter(
+        models.Client.username.in_(("admin", "dev")),
         models.Client.is_active.is_(True),
-    ).first()
-    if admin_client and verify_password("adminadmin", admin_client.password_hash or ""):
-        raise RuntimeError("Invalid production configuration: default admin password is still active")
+    ).all()
+    if any(verify_password("adminadmin", client.password_hash or "") for client in clients):
+        raise RuntimeError("Invalid production configuration: development password is still active")
 
 
 async def run_automatic_recording_loop() -> None:
@@ -217,15 +227,15 @@ async def startup_event():
         default_client = db.query(models.Client).filter(models.Client.id == 1).first()
 
         if settings.is_production:
-            ensure_no_default_admin_password(db)
+            ensure_no_development_password(db)
         else:
             # 1. Ensure Default Client exists in development only.
             if not default_client:
-                print("Seeding default admin user for development...")
+                print("Seeding dev user for development...")
                 default_client = models.Client(
                     id=1,
-                    name="Default User",
-                    username="admin",
+                    name="dev",
+                    username="dev",
                     password_hash=hash_password("adminadmin"),
                     general_settings={}
                 )
@@ -240,9 +250,9 @@ async def startup_event():
                 except Exception as e:
                     print(f"Sequence sync skipped: {e}")
             else:
-                # Ensure admin has valid credentials in development only.
+                # Ensure dev has valid credentials in development only.
                 if not default_client.username or not default_client.password_hash:
-                    default_client.username = "admin"
+                    default_client.username = "dev"
                     default_client.password_hash = hash_password("adminadmin")
                     db.commit()
 

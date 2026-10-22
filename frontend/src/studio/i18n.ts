@@ -53,7 +53,6 @@ export function activeLocale(): string {
 const dictionary = {
     'group.database': ['データベース', 'Database'],
     'group.automation': ['オートメーション', 'Automation'],
-    'group.prototype': ['試作', 'Prototype'],
     'screen.ledger': ['家計簿', 'Ledger'],
     'screen.assets': ['資産', 'Assets'],
     'screen.flows': ['収支', 'Income & expenses'],
@@ -69,7 +68,6 @@ const dictionary = {
     'screen.ai': ['AI操作', 'AI operations'],
     'screen.approvals': ['承認リクエスト', 'Approval requests'],
     'screen.audit': ['監査ログ', 'Audit log'],
-    'screen.health': ['データ健全性', 'Data health'],
     'tab.records': ['すべての記録', 'All records'],
     'tab.auto': ['自動取引', 'Automatic transactions'],
     'tab.overview': ['全体の状況', 'Overview'],

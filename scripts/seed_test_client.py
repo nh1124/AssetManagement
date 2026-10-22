@@ -8,7 +8,7 @@ paid by a monthly withdrawal) whose plan is made,
 which creates the goal's earmarks, and the user's own plan records for this month. Only ever run it against the
 test client.
 
-    python scripts/seed_test_client.py --base http://127.0.0.1:18100 --username admin --password ...
+    python scripts/seed_test_client.py --base http://127.0.0.1:18100 --username dev --password ...
 """
 from __future__ import annotations
 

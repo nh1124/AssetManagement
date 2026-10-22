@@ -9,7 +9,7 @@ from backend.app.config import (
     AppConfig,
 )
 from backend.app.database import Base
-from backend.app.main import ensure_no_default_admin_password
+from backend.app.main import ensure_no_development_password
 from backend.app.models import Client
 from backend.app.utils.password import hash_password
 
@@ -99,29 +99,32 @@ def test_development_expands_local_mcp_issuer_scheme_variants() -> None:
     ]
 
 
-def test_default_admin_password_is_rejected() -> None:
+@pytest.mark.parametrize("username", ["dev", "admin"])
+def test_development_password_is_rejected(username) -> None:
     db = _session()
     try:
-        db.add(Client(name="Default User", username="admin", password_hash=hash_password("adminadmin")))
+        db.add(Client(name="dev", username=username, password_hash=hash_password("adminadmin")))
         db.commit()
 
         with pytest.raises(RuntimeError) as exc:
-            ensure_no_default_admin_password(db)
+            ensure_no_development_password(db)
 
-        assert "default admin password" in str(exc.value)
+        assert "development password" in str(exc.value)
     finally:
         db.close()
 
 
-def test_non_default_or_inactive_admin_password_is_allowed() -> None:
+@pytest.mark.parametrize("username", ["dev", "admin"])
+@pytest.mark.parametrize("active,password", [(False, "adminadmin"), (True, "changed-password")])
+def test_changed_or_inactive_development_password_is_allowed(username, active, password) -> None:
     db = _session()
     try:
         db.add_all([
-            Client(name="Inactive Admin", username="admin", password_hash=hash_password("adminadmin"), is_active=False),
+            Client(name="dev", username=username, password_hash=hash_password(password), is_active=active),
             Client(name="Owner", username="owner", password_hash=hash_password("adminadmin")),
         ])
         db.commit()
 
-        ensure_no_default_admin_password(db)
+        ensure_no_development_password(db)
     finally:
         db.close()

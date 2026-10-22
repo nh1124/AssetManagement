@@ -15,7 +15,7 @@ from app.database import Base
 from app.domain.journal import Leg
 from app.routers import data_transfer as router
 from app.services.capsule_service import claimed_minor
-from app.services.data_health_service import check_data_health
+from app.services.data_health_service import USER_CODES, check_data_health
 from app.services.ledger_service import create_transaction
 
 
@@ -345,7 +345,7 @@ def test_every_issue_caps_items_at_100_but_keeps_full_count(db):
     result = issues(db)
     for code, severity in CODES.items():
         issue = result[code]
-        assert set(issue) == {"code", "severity", "title", "detail", "count", "repairable", "items"}
+        assert set(issue) == {"audience", "code", "severity", "title", "detail", "count", "repairable", "items"}
         assert issue["severity"] == severity
         assert issue["repairable"] is False
         assert issue["count"] == 101
@@ -360,7 +360,7 @@ def snapshot(db):
     }
 
 
-def test_http_health_returns_all_codes_and_counts_without_writes(db, monkeypatch):
+def test_http_health_returns_user_codes_and_counts_without_writes(db, monkeypatch):
     post(db, 10000, [Leg(2, debit=10000, capsule_id=1), Leg(1, credit=10000)])
     post(db, 4000, [Leg(4, debit=4000), Leg(2, credit=4000)])
     post(db, 12345, [Leg(2, debit=12345, capsule_id=1), Leg(1, credit=12345)], currency="USD")
@@ -395,7 +395,11 @@ def test_http_health_returns_all_codes_and_counts_without_writes(db, monkeypatch
     response = asyncio.run(request())
     assert response.status_code == 200
     result = {issue["code"]: issue for issue in response.json()["issues"]}
+    assert set(result) == USER_CODES
     for code, severity in CODES.items():
+        if code not in USER_CODES:
+            assert code not in result
+            continue
         assert result[code]["count"] == 1
         assert result[code]["severity"] == severity
         assert result[code]["repairable"] is False

@@ -27,6 +27,17 @@ from .registry_service import (
 )
 
 
+USER_CODES = frozenset({
+    "account_earmarked_beyond_its_balance",
+    "entries_in_a_closed_period",
+    "capsule_without_account",
+    "capsule_claim_negative_on_account",
+    "capsule_beyond_its_declared_share",
+    "capsule_plan_does_not_total_its_target",
+    "capsule_funding_account_is_inactive",
+})
+
+
 PLAN_SOURCE_LINE_TYPES = {"expense", "allocation", "debt_payment", "borrowing", "drawdown"}
 
 
@@ -605,8 +616,9 @@ def _entries_in_closed_periods(db: Session, client_id: int) -> list[dict]:
     return items
 
 
-# Issue titles in the client's language (the notification and the debug screen show them).
+# Issue titles in the client's language for API and maintenance consumers.
 TITLES: dict[str, tuple[str, str]] = {
+    "account_earmarked_beyond_its_balance": ("口座の残高を超えて取り置いている", "Account holds less than its earmarks"),
     "entries_in_a_closed_period": ("締め後に記録された取引", "Transactions recorded after a close"),
     "capsule_without_account": ("資金元の口座がない取り置きの規則", "Capsule rules without a reservation account"),
     "capsule_claim_negative_on_account": ("口座での取り置きの確保額がマイナス", "Capsule claim is negative on an account"),
@@ -624,7 +636,7 @@ TITLES: dict[str, tuple[str, str]] = {
 }
 
 
-def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
+def check_data_health(db: Session, client_id: int, *, audience: str | None = None) -> dict[str, Any]:
     default_plan = db.query(models.BudgetPlan).filter_by(client_id=client_id, is_default=True).first()
     null_plan_count = (
         db.query(models.MonthlyPlanLine)
@@ -755,8 +767,11 @@ def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
     ]
     language = client_language(db, client_id)
     for issue in issues:
+        issue["audience"] = "user" if issue["code"] in USER_CODES else "admin"
         if issue["code"] in TITLES:
             issue["title"] = pick(language, *TITLES[issue["code"]])
+    if audience is not None:
+        issues = [issue for issue in issues if issue["audience"] == audience]
     total = sum(issue["count"] for issue in issues)
     repairable = sum(1 for issue in issues if issue["repairable"] and issue["count"] > 0)
     return {
