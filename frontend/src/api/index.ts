@@ -2,6 +2,7 @@ import axios from 'axios';
 import { activeLanguage } from '../studio/i18n';
 import type { TransactionWithPeriodClose } from './periodCloses';
 import type {
+    ApprovalPendingResult,
     Account,
     AccountEarmark,
     AccountFlowAnalysis,
@@ -94,7 +95,7 @@ export const verifyMfaLogin = async (payload: { mfa_token: string } & MfaFactor)
     return response.data;
 };
 
-export const register = async (userData: { username: string; password: string; email?: string; name?: string }): Promise<SignInStep> => {
+export const register = async (userData: { username: string; password: string; email?: string; name?: string }): Promise<SignInStep | ApprovalPendingResult> => {
     const response = await api.post('/auth/register', userData);
     return response.data;
 };

@@ -22,6 +22,11 @@ from app.domain.transfer import DATA_COLLECTIONS
 # A backup is portable user data. These tables are deliberately not in it, and
 # each reason is about the data, not about the effort of adding it.
 EXCLUDED: dict[str, str] = {
+    "admin_users": "Installation administrator credentials are separate from portable user data.",
+    "admin_user_permissions": "Installation capabilities must never travel in user backups.",
+    "admin_sessions": "Installation sessions are credentials and must not be restored from user files.",
+    "admin_audit_logs": "Administrative history belongs to the installation that produced it.",
+    "system_settings": "Installation policy is not user data and must not be overwritten by an import.",
     "clients": (
         "The owner is the import's target, not part of its payload: export_client "
         "writes the client separately and import_client is told which client to "

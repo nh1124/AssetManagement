@@ -18,6 +18,8 @@ class Client(Base):
     locked_until = Column(DateTime, nullable=True)
     tokens_valid_after = Column(DateTime, nullable=True)
     must_change_password = Column(Boolean, default=False, server_default="false", nullable=False)
+    approval_pending = Column(Boolean, default=False, server_default="false", nullable=False)
+    suspended_reason = Column(Text, nullable=True)
     general_settings = Column(JSON, default=dict) # { "currency": "JPY", "language": "ja" }
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)

@@ -11,10 +11,11 @@ from app.database import Base
 
 # WP23: 積立設定 records carry a kind, a destination account (口座振替), a schedule and the shortage choice.
 # §8-11: scenario_assumption_periods (期間ごとの前提). WP27: monthly_actions gone, registry_entries.records_transactions.
-EXPECTED_METADATA_SHA256 = "384d4ea0acb68e10bc202ab8c9f8839dccb1665795f14a6b5d050cd3ac54ba34"
+EXPECTED_METADATA_SHA256 = "7dc07168e48e18c083b6f1340867724abecc4b86e2c4842396ed2f0e925e233f"
 
 MODEL_NAMES = (
     "Client", "ClientMfaSetting", "ClientRecoveryCode",
+    "AdminUser", "AdminUserPermission", "AdminSession", "AdminAuditLog", "SystemSetting",
     "Account", "JournalEntry", "Transaction", "TransactionProposal",
     "TransactionBatch", "ExchangeRate", "FxTrackedCurrency", "Product",
     "RegistryEntry", "LifeEvent", "LifeEventLink", "HouseholdMember", "LifeEventCondition",
@@ -91,8 +92,8 @@ def _metadata_snapshot():
 
 def test_metadata_matches_the_minor_unit_schema():
     snapshot = _metadata_snapshot()
-    assert len(snapshot["table_names"]) == 34
-    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 391
+    assert len(snapshot["table_names"]) == 39
+    assert sum(len(table["columns"]) for table in snapshot["tables"].values()) == 436
     encoded = json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
     assert hashlib.sha256(encoded).hexdigest() == EXPECTED_METADATA_SHA256
 

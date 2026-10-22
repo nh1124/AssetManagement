@@ -10,7 +10,7 @@ Dry-run by default. Run inside the backend container:
     python -m app.maintenance.reencrypt_secrets
     python -m app.maintenance.reencrypt_secrets --apply
 
-The stored secrets are the TOTP secrets in client_mfa_settings (the AI
+The stored secrets are the TOTP secrets in client_mfa_settings and admin_users (the AI
 provider keys that used to live in clients.ai_config are gone). A value no
 configured key can read is counted as unreadable and left untouched.
 """
@@ -35,6 +35,14 @@ def reencrypt(db: Session, *, apply: bool) -> dict[str, int]:
             counts["rotated" if fresh else "unreadable"] += 1
             if fresh:
                 setattr(setting, field, fresh)
+
+    for admin in db.query(models.AdminUser).all():
+        if admin.totp_secret_encrypted is None:
+            continue
+        fresh = security.rotate_token(admin.totp_secret_encrypted)
+        counts["rotated" if fresh else "unreadable"] += 1
+        if fresh:
+            admin.totp_secret_encrypted = fresh
 
     if apply:
         db.commit()

@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session, object_session
 from .. import models
 from ..domain.messages import Message
 from ..security import decrypt_key, encrypt_key
+from ..utils.totp import matching_totp_step
 from ..utils.password import hash_password, verify_password
 
 RECOVERY_CODE_COUNT = 8
@@ -121,18 +122,7 @@ def verify_totp_code(setting: models.ClientMfaSetting, code: str) -> bool:
 
 
 def _matching_totp_step(secret: str | None, code: str, last_step: int | None = None) -> int | None:
-    if not secret:
-        return None
-    totp = pyotp.TOTP(secret)
-    current_step = totp.timecode(datetime.now(timezone.utc))
-    candidate = (code or "").strip().replace(" ", "")
-    if len(candidate) != totp.digits or not candidate.isascii() or not candidate.isdigit():
-        return None
-    for offset in (-1, 0, 1):
-        step = current_step + offset
-        if (last_step is None or step > last_step) and secrets.compare_digest(totp.generate_otp(step), candidate):
-            return step
-    return None
+    return matching_totp_step(secret, code, last_step, now=datetime.now(timezone.utc))
 
 
 def verify_mfa_factor(db: Session, client: models.Client, code: str | None = None, recovery_code: str | None = None) -> bool:
@@ -238,3 +228,10 @@ def ensure_no_development_totp(db: Session) -> None:
     ).all()
     if any(decrypt_key(setting.totp_secret_encrypted or "") == DEV_TOTP_SECRET for setting in settings):
         raise RuntimeError("Invalid production configuration: development TOTP secret is still active")
+
+
+def remove_factor(db: Session, client: models.Client, *, commit: bool = True) -> None:
+    db.query(models.ClientRecoveryCode).filter_by(client_id=client.id).delete(synchronize_session="fetch")
+    db.query(models.ClientMfaSetting).filter_by(client_id=client.id).delete(synchronize_session="fetch")
+    db.expire(client, ["mfa_setting", "recovery_codes"])
+    db.commit() if commit else db.flush()

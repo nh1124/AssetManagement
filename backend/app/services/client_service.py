@@ -2,15 +2,16 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import case, or_
+from sqlalchemy import case, or_, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import models
-from ..domain.errors import Conflict
+from ..domain.errors import Conflict, Invalid, NotFound
+from ..utils.password import hash_password
+from ..utils.temporary_password import temporary_password
+from . import system_settings_service, mfa_service
 
-LOCKOUT_THRESHOLD = 5
-LOCKOUT_MINUTES = 15
 
 
 def get_by_username(
@@ -47,18 +48,18 @@ def unique_display_name(db: Session, base_name: str) -> str:
 
 def register(
     db: Session, *, name: str, username: str, email: str | None,
-    password_hash: str,
+    password_hash: str, approval_pending: bool = False, commit: bool = True,
 ) -> models.Client:
     client = models.Client(
         name=name,
         username=username,
         email=email,
         password_hash=password_hash,
-        general_settings={},
+        general_settings={}, approval_pending=approval_pending,
     )
     try:
         db.add(client)
-        db.commit()
+        db.commit() if commit else db.flush()
         db.refresh(client)
     except IntegrityError:
         db.rollback()
@@ -92,6 +93,8 @@ def is_locked(client: models.Client) -> bool:
 
 def record_auth_failure(db: Session, client: models.Client) -> None:
     now = datetime.utcnow()
+    threshold = system_settings_service.get(db, "login_lockout_threshold")
+    minutes = system_settings_service.get(db, "login_lockout_minutes")
     # Increment in SQL so simultaneous failures cannot overwrite one another.
     count = case(
         (models.Client.locked_until <= now, 1),
@@ -100,7 +103,7 @@ def record_auth_failure(db: Session, client: models.Client) -> None:
     db.query(models.Client).filter(models.Client.id == client.id).update({
         models.Client.failed_login_count: count,
         models.Client.locked_until: case(
-            (count >= LOCKOUT_THRESHOLD, now + timedelta(minutes=LOCKOUT_MINUTES)),
+            (count >= threshold, now + timedelta(minutes=minutes)),
             else_=None,
         ),
     }, synchronize_session=False)
@@ -130,3 +133,115 @@ def revoke_tokens(db: Session, client: models.Client, *, commit: bool = True) ->
     client.tokens_valid_after = datetime.utcnow()
     if commit:
         db.commit()
+
+
+def get_by_id(db: Session, client_id: int) -> models.Client:
+    client = db.get(models.Client, client_id)
+    if client is None:
+        raise NotFound("Client not found", ja="クライアントが見つかりません。")
+    return client
+
+
+def _save(db: Session, client: models.Client, commit: bool):
+    db.commit() if commit else db.flush()
+    return client
+
+
+def create_by_admin(db: Session, username: str, name: str, email: str | None = None, *, commit: bool = True):
+    username = username.strip().lower()
+    if not username or not name.strip():
+        raise Invalid("Username and name are required.", ja="ユーザー名と名前を入力してください。")
+    password = temporary_password()
+    client = register(db, username=username, name=unique_display_name(db, name),
+                      email=email.strip().lower() if email else None,
+                      password_hash=hash_password(password), commit=False)
+    client.must_change_password = True
+    _save(db, client, commit)
+    return client, password
+
+
+def suspend(db: Session, client: models.Client, reason: str, *, commit: bool = True):
+    if not reason.strip():
+        raise Invalid("A suspension reason is required.", ja="停止理由を入力してください。")
+    client.is_active, client.suspended_reason = False, reason
+    client.tokens_valid_after = datetime.utcnow()
+    return _save(db, client, commit)
+
+
+def reactivate(db: Session, client: models.Client, *, commit: bool = True):
+    client.is_active, client.suspended_reason = True, None
+    return _save(db, client, commit)
+
+
+def approve(db: Session, client: models.Client, *, commit: bool = True):
+    client.approval_pending = False
+    return _save(db, client, commit)
+
+
+def unlock(db: Session, client: models.Client, *, commit: bool = True):
+    client.failed_login_count, client.locked_until = 0, None
+    return _save(db, client, commit)
+
+
+def sign_out(db: Session, client: models.Client, *, commit: bool = True):
+    revoke_tokens(db, client, commit=commit)
+    return client
+
+
+def reset_password(db: Session, client: models.Client, *, commit: bool = True) -> str:
+    password = temporary_password()
+    client.password_hash = hash_password(password)
+    client.must_change_password = True
+    client.tokens_valid_after = datetime.utcnow()
+    _save(db, client, commit)
+    return password
+
+
+def _admin_attributes(client, count, last_date, enabled):
+    return {"id": client.id, **{key: getattr(client, key) for key in (
+        "username", "name", "email", "is_active", "approval_pending", "suspended_reason",
+        "must_change_password", "locked_until", "created_at")},
+        "mfa_enabled": enabled, "transaction_count": count, "last_transaction_date": last_date}
+
+
+def _transaction_counts(db: Session, client_ids):
+    return {client_id: (count, last_date) for client_id, count, last_date in db.query(
+        models.Transaction.client_id, func.count(models.Transaction.id), func.max(models.Transaction.date),
+    ).filter(models.Transaction.client_id.in_(client_ids)).group_by(models.Transaction.client_id).all()}
+
+
+def admin_summary(db: Session, client: models.Client) -> dict:
+    count, last_date = _transaction_counts(db, [client.id]).get(client.id, (0, None))
+    return _admin_attributes(client, count, last_date, mfa_service.mfa_enabled(db, client.id))
+
+
+def admin_list(db: Session, *, status=None, query=None, limit: int = 100, offset: int = 0) -> list[dict]:
+    if not 1 <= limit <= 1000 or offset < 0:
+        raise Invalid("Invalid pagination.", ja="ページの指定が正しくありません。")
+    rows = db.query(models.Client)
+    if status == "active":
+        rows = rows.filter(models.Client.is_active.is_(True), models.Client.approval_pending.is_(False))
+    elif status == "suspended":
+        rows = rows.filter(models.Client.is_active.is_(False))
+    elif status == "pending":
+        rows = rows.filter(models.Client.approval_pending.is_(True))
+    elif status == "locked":
+        rows = rows.filter(models.Client.locked_until > datetime.utcnow())
+    elif status is not None:
+        raise Invalid("Unknown account status.", ja="不明なアカウント状態です。")
+    if query:
+        rows = rows.filter(or_(*(getattr(models.Client, key).icontains(query, autoescape=True)
+                                for key in ("username", "name", "email"))))
+    clients = rows.order_by(models.Client.id).limit(limit).offset(offset).all()
+    ids = [client.id for client in clients]
+    if not ids:
+        return []
+    counts = _transaction_counts(db, ids)
+    enabled = {row[0] for row in db.query(models.ClientMfaSetting.client_id).filter(
+        models.ClientMfaSetting.client_id.in_(ids), models.ClientMfaSetting.enabled.is_(True)).all()}
+    return [_admin_attributes(client, *counts.get(client.id, (0, None)), client.id in enabled) for client in clients]
+
+
+def admin_client_ids(db: Session) -> list[int]:
+    """Health inspection includes suspended and pending accounts."""
+    return [row[0] for row in db.query(models.Client.id).order_by(models.Client.id).all()]

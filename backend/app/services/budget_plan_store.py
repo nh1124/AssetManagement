@@ -93,7 +93,7 @@ def get_or_create_default_plan(db: Session, client_id: int, *, commit: bool = Tr
         for extra in defaults[1:]:
             extra.is_default = False
         db.add(plan)
-        db.commit()
+        db.commit() if commit else db.flush()
         db.refresh(plan)
     return plan
 

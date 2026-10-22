@@ -104,6 +104,11 @@ export interface ExchangeRateAutoUpdateResult {
     errors: Array<Pick<ExchangeRate, 'base_currency' | 'quote_currency'> & { error: string }>;
 }
 
+export interface ApprovalPendingResult {
+    approval_pending: true;
+    message: string;
+}
+
 export interface SignInStep {
     access_token: null;
     token_type: 'step';

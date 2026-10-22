@@ -29,6 +29,7 @@ ROLE_BY_DIRECTORY: dict[str, str] = {
     # Pure domain vocabulary owns no tables and accepts no database sessions.
     "domain": "domain",
     "maintenance": "tool",
+    "admin": "ui",
     "utils": "infra",
 }
 

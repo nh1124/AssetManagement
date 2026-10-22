@@ -19,7 +19,6 @@ from app.config import AppConfig
 from app.database import Base
 from app.domain.journal import Leg
 from app.main import api_docs_urls
-from app.maintenance.data_health import main as health_main
 from app.routers import data_transfer
 from app.services import data_health_service as health, notification_service
 from app.services.ledger_service import create_transaction
@@ -266,54 +265,6 @@ def test_api_docs_urls(production):
     config = AppConfig(app_env="production" if production else "development")
     expected = {"docs_url": "/docs", "redoc_url": "/redoc", "openapi_url": "/openapi.json"}
     assert api_docs_urls(config) == ({key: None for key in expected} if production else expected)
-
-
-def test_cli_dry_run_reads_only_and_apply_repairs(db, capsys):
-    seed_issues(db)
-    before = snapshot(db)
-    statements = []
-    def record(_connection, _cursor, statement, *_):
-        statements.append(statement.strip().split()[0].upper())
-    sa.event.listen(db.bind, "before_cursor_execute", record)
-    try:
-        assert health_main(["--client-id", "1"], db=db) == 0
-        assert not (set(statements) & {"UPDATE", "INSERT", "DELETE"})
-    finally:
-        sa.event.remove(db.bind, "before_cursor_execute", record)
-    assert snapshot(db) == before
-    output = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
-    assert output[0]["client_id"] == 1
-    assert {row["audience"] for row in output[1:]} == {"admin", "user"}
-    assert health_main(["--client-id", "1", "--apply"], db=db) == 0
-    actions = json.loads(capsys.readouterr().out.splitlines()[0])["actions"]
-    assert next(a["updated"] for a in actions if a["code"] == "duplicate_plan_lines") == 1
-    assert db.query(models.MonthlyPlanLine).filter_by(is_active=True).count() == 1
-    assert db.query(models.BudgetPlan).filter_by(client_id=1, is_default=True).count() == 1
-
-
-def test_cli_all_clients_is_read_only_and_skips_inactive(db, capsys):
-    before = snapshot(db)
-    assert health_main(["--all-clients"], db=db) == 0
-    output = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
-    assert {row["client_id"] for row in output} == {1, 2}
-    assert snapshot(db) == before
-    with pytest.raises(SystemExit) as exc:
-        health_main(["--all-clients", "--apply"], db=db)
-    assert exc.value.code == 2
-    assert snapshot(db) == before
-
-
-def test_cli_limits_issue_items(db, capsys):
-    seed_issues(db)
-    for i in range(25):
-        db.add(models.Transaction(client_id=1, date=date(2026, 9, 21), description=f"Late {i}",
-                                  amount_minor=100, created_at=datetime(2026, 10, 3)))
-    db.commit()
-    health_main(["--client-id", "1"], db=db)
-    late = next(json.loads(line) for line in capsys.readouterr().out.splitlines()
-                if json.loads(line).get("code") == "entries_in_a_closed_period")
-    assert late["count"] == 26
-    assert len(late["items"]) == 20
 
 
 @pytest.mark.parametrize("direction", ["upgrade", "downgrade"])

@@ -29,6 +29,7 @@ export default function LoginPage() {
     const [mfaCode, setMfaCode] = useState('');
     const [useRecoveryCode, setUseRecoveryCode] = useState(false);
     const [error, setError] = useState('');
+    const [notice, setNotice] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const inFlight = useRef(false);
     const { login, register, completeSignIn } = useAuth();
@@ -36,6 +37,7 @@ export default function LoginPage() {
 
     const reset = () => {
         setMode('login');
+        setNotice('');
         setStep(null);
         setSetup(null);
         setRecovery(null);
@@ -83,11 +85,18 @@ export default function LoginPage() {
         event.preventDefault();
         if (inFlight.current || recovery) return;
         setError('');
+        setNotice('');
         inFlight.current = true;
         setIsLoading(true);
         try {
             if (!step) {
-                await enterStep(mode === 'login' ? await login({ username, password }) : await register({ username, password, email: email || undefined }));
+                const result = mode === 'login' ? await login({ username, password }) : await register({ username, password, email: email || undefined });
+                if ('approval_pending' in result) {
+                    reset();
+                    setNotice(result.message);
+                } else {
+                    await enterStep(result);
+                }
             } else if (step.next_step === 'password_change') {
                 if (newPassword.length < 8 || newPassword !== confirmation) {
                     setError(tr('8文字以上の同じパスワードを入力してください。', 'Enter matching passwords of at least 8 characters.'));
@@ -126,6 +135,7 @@ export default function LoginPage() {
                 <div className="flex items-center gap-2"><h2 className="text-base font-semibold">{heading}</h2>
                     {step?.next_step === 'mfa_setup' && <Help below label={heading} text={tr('Google Authenticator や 1Password などの認証アプリを使います。すべてのアカウントで必要です。', 'Use an authenticator app such as Google Authenticator or 1Password. This is required for every account.')} />}
                 </div>
+                {notice && <p role="status" className="rounded-xl bg-[var(--studio-bg)] p-3 text-sm">{notice}</p>}
                 {error && <div role="alert" className="flex items-start gap-2 rounded-xl bg-red-50 p-3 text-sm text-[var(--studio-danger)]"><AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden />{error}</div>}
                 {recovery ? <RecoveryCodes codes={recovery.recovery_codes} onContinue={() => finish(recovery)} continueLabel={tr('サインインする', 'Finish sign-in')} /> : <>
                     <fieldset disabled={isLoading} className="space-y-4">
