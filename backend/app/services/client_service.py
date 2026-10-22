@@ -245,3 +245,20 @@ def admin_list(db: Session, *, status=None, query=None, limit: int = 100, offset
 def admin_client_ids(db: Session) -> list[int]:
     """Health inspection includes suspended and pending accounts."""
     return [row[0] for row in db.query(models.Client.id).order_by(models.Client.id).all()]
+
+
+def admin_counts(db):
+    now = datetime.utcnow()
+    total = db.query(models.Client).count()
+    return {"total": total,
+            "active": db.query(models.Client).filter_by(is_active=True, approval_pending=False).count(),
+            "suspended": db.query(models.Client).filter_by(is_active=False).count(),
+            "pending_approval": db.query(models.Client).filter_by(approval_pending=True).count(),
+            "locked": db.query(models.Client).filter(models.Client.locked_until > now).count(),
+            "without_totp": db.query(models.Client).filter(~models.Client.id.in_(
+                db.query(models.ClientMfaSetting.client_id).filter_by(enabled=True))).count()}
+
+
+def active_admin_client_ids(db, limit=201):
+    return [row[0] for row in db.query(models.Client.id).filter_by(is_active=True, approval_pending=False)
+            .order_by(models.Client.id).limit(limit)]

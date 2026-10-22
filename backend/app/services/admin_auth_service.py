@@ -7,6 +7,7 @@ import pyotp
 from sqlalchemy import case, or_
 from sqlalchemy.orm import Session
 
+from ..config import settings
 from .. import models
 from ..domain.admin_permissions import ADMINS_MANAGE, validate_permissions
 from ..domain.errors import Conflict, Invalid, NotFound, Refused
@@ -33,6 +34,8 @@ def get_by_id(db: Session, admin_id: int):
 
 
 def _validate_password(password):
+    if len(password.encode("utf-8")) > 72:
+        raise Invalid("Administrator passwords must fit within 72 UTF-8 bytes.", ja="管理者パスワードはUTF-8で72バイト以内にしてください。")
     if len(password) < 12:
         raise Invalid("Administrator passwords need at least 12 characters.", ja="管理者パスワードは12文字以上にしてください。")
 
@@ -134,6 +137,8 @@ def _revoke_sessions(db, admin):
 
 def set_password(db: Session, admin, password: str, *, commit: bool = True):
     _validate_password(password)
+    if check_password(password, admin.password_hash):
+        raise Invalid("Choose a different password.", ja="異なるパスワードを選んでください。")
     admin.password_hash, admin.must_change_password = hash_password(password), False
     _revoke_sessions(db, admin)
     _save(db, commit)
@@ -238,24 +243,31 @@ def list_admins(db: Session) -> list[dict]:
         "permissions": permissions.get(admin.id, [])} for admin in admins]
 
 
-def create_session(db: Session, admin, *, expires_at=None, ip=None, user_agent=None, commit: bool = True) -> str:
-    if not admin.is_active or not admin.mfa_enabled or admin.must_change_password or is_locked(admin):
+def create_session(db: Session, admin, *, expires_at=None, ip=None, user_agent=None, stage=None, stepped_up=False, config=None, commit: bool = True) -> str:
+    config = config or settings
+    if stage not in {None, "password_change", "mfa_setup", "mfa"}:
+        raise Invalid("Invalid session stage.", ja="セッションの段階が正しくありません。")
+    if not admin.is_active or is_locked(admin) or (stage is None and (not admin.mfa_enabled or admin.must_change_password)):
         raise Refused("Administrator sign-in is incomplete.", ja="管理者のサインインが完了していません。")
     now = datetime.utcnow()
     raw = secrets.token_urlsafe(32)
     db.add(models.AdminSession(id=hashlib.sha256(raw.encode()).hexdigest(), admin_user_id=admin.id,
-                              created_at=now, last_seen_at=now, expires_at=expires_at or now + timedelta(hours=8),
+                              created_at=now, last_seen_at=now, expires_at=expires_at or now + (timedelta(minutes=10) if stage else timedelta(hours=config.admin_session_max_hours)),
+                              stage=stage, stepped_up_at=now if stepped_up else None,
                               ip=ip, user_agent=user_agent))
     _save(db, commit)
     return raw
 
 
-def find_session(db: Session, raw_cookie: str):
+def find_session(db: Session, raw_cookie: str, *, config=None):
+    config = config or settings
     row = db.get(models.AdminSession, hashlib.sha256(raw_cookie.encode()).hexdigest())
-    if row is None or row.revoked_at is not None or row.expires_at <= datetime.utcnow():
+    now = datetime.utcnow()
+    if (row is None or row.revoked_at is not None or row.expires_at <= now
+            or row.last_seen_at <= now - timedelta(minutes=config.admin_session_idle_minutes)):
         return None
     admin = get_by_id(db, row.admin_user_id)
-    if (not admin.is_active or not admin.mfa_enabled or admin.must_change_password
+    if (not admin.is_active or (row.stage is None and (not admin.mfa_enabled or admin.must_change_password))
             or (admin.tokens_valid_after is not None and row.created_at < admin.tokens_valid_after)):
         return None
     return row
@@ -272,3 +284,118 @@ def touch_session(db: Session, session, *, stepped_up: bool = False, commit: boo
 def revoke_session(db: Session, session, *, commit: bool = True):
     session.revoked_at = datetime.utcnow()
     _save(db, commit)
+
+
+def session_admin(db, raw_cookie, *, stage=None, any_stage=False, config=None):
+    row = find_session(db, raw_cookie or "", config=config)
+    if row is None or (not any_stage and row.stage != stage):
+        raise Refused("Administrator authentication required.", ja="管理者としてサインインしてください。", status_code=401)
+    touch_session(db, row)
+    return get_by_id(db, row.admin_user_id), row
+
+
+def session_summary(row):
+    return {key: getattr(row, key) for key in ("id", "created_at", "last_seen_at", "expires_at", "stepped_up_at", "stage")}
+
+
+def own_sessions(db, admin, *, config=None):
+    config = config or settings
+    now = datetime.utcnow()
+    return [session_summary(row) for row in db.query(models.AdminSession).filter(
+        models.AdminSession.admin_user_id == admin.id, models.AdminSession.revoked_at.is_(None),
+        models.AdminSession.expires_at > now,
+        models.AdminSession.last_seen_at > now - timedelta(minutes=config.admin_session_idle_minutes),
+    ).order_by(models.AdminSession.created_at.desc())]
+
+
+def revoke_own_session(db, admin, session_id, *, commit=True):
+    row = db.query(models.AdminSession).filter_by(id=session_id, admin_user_id=admin.id).first()
+    if row is None:
+        raise NotFound("Session not found.", ja="セッションが見つかりません。")
+    revoke_session(db, row, commit=commit)
+
+
+def _check_login_state(admin):
+    if admin is None or not admin.is_active:
+        raise Refused("Invalid administrator credentials.", ja="管理者の認証情報が正しくありません。", status_code=401)
+    if is_locked(admin):
+        raise Refused("Administrator is locked.", ja="管理者がロックされています。", status_code=429)
+
+
+def _code(db, admin, code, *, setup=False):
+    _check_login_state(admin)
+    valid = confirm_totp(db, admin, code, commit=False) if setup else verify_totp(db, admin, code, commit=False)
+    if not valid:
+        raise Refused("Invalid authentication code.", ja="認証コードが正しくありません。", status_code=401)
+
+
+def sign_in(db, username, password, code=None, *, ip=None, user_agent=None, config=None):
+    admin = get_by_username(db, username)
+    _check_login_state(admin)
+    if not verify_password(db, admin, password, commit=False):
+        raise Refused("Invalid administrator credentials.", ja="管理者の認証情報が正しくありません。", status_code=401)
+    if admin.must_change_password:
+        stage = "password_change"
+    elif not admin.mfa_enabled:
+        stage = "mfa_setup"
+    elif code is None:
+        stage = "mfa"
+    else:
+        _code(db, admin, code)
+        stage = None
+    raw = create_session(db, admin, stage=stage, stepped_up=stage is None, ip=ip, user_agent=user_agent, config=config, commit=False)
+    return admin, raw, stage
+
+
+def transition(db, admin, row, endpoint, *, new_password=None, code=None, ip=None, user_agent=None, config=None):
+    expected = {"password": "password_change", "code": "mfa", "setup_start": "mfa_setup", "setup_verify": "mfa_setup"}
+    if row.stage != expected[endpoint]:
+        raise Refused("Invalid session stage.", ja="セッションの段階が正しくありません。", status_code=401)
+    _check_login_state(admin)
+    extra = {}
+    if endpoint == "password":
+        set_password(db, admin, new_password, commit=False)
+        stage = "mfa" if admin.mfa_enabled else "mfa_setup"
+    elif endpoint == "setup_start":
+        extra = start_totp_setup(db, admin, commit=False)
+        stage = "mfa_setup"
+    else:
+        _code(db, admin, code, setup=endpoint == "setup_verify")
+        stage = None
+    revoke_session(db, row, commit=False)
+    raw = create_session(db, admin, stage=stage, stepped_up=stage is None, ip=ip, user_agent=user_agent, config=config, commit=False)
+    return admin, raw, stage, extra
+
+
+def step_up(db, admin, row, code):
+    _code(db, admin, code)
+    touch_session(db, row, stepped_up=True, commit=False)
+
+
+def change_own_password(db, admin, row, current_password, new_password):
+    _check_login_state(admin)
+    if not verify_password(db, admin, current_password, commit=False):
+        raise Refused("Invalid administrator credentials.", ja="管理者の認証情報が正しくありません。", status_code=401)
+    set_password(db, admin, new_password, commit=False)
+    # Preserve this session, including its original absolute expiry.
+    row.revoked_at = None
+    admin.tokens_valid_after = row.created_at
+    db.flush()
+
+
+def create_web_admin(db, username, permissions, actor):
+    password = temporary_password()
+    admin, _ = create(db, username, password, actor, permissions=permissions, commit=False)
+    admin.must_change_password = True
+    admin.totp_secret_encrypted = None
+    db.flush()
+    return admin, password
+
+
+def update_admin(db, admin_id, *, is_active=None, permissions=None, actor):
+    admin = get_by_id(db, admin_id)
+    if permissions is not None:
+        set_permissions(db, admin, permissions, actor, commit=False)
+    if is_active is not None:
+        (enable if is_active else disable)(db, admin, commit=False)
+    return admin

@@ -47,6 +47,7 @@ def upgrade():
         sa.Column("created_at", sa.DateTime(), nullable=False),
         sa.Column("last_seen_at", sa.DateTime(), nullable=False),
         sa.Column("expires_at", sa.DateTime(), nullable=False),
+        sa.Column("stage", sa.String(), nullable=True),
         sa.Column("stepped_up_at", sa.DateTime(), nullable=True),
         sa.Column("revoked_at", sa.DateTime(), nullable=True),
         sa.Column("ip", sa.String(), nullable=True),

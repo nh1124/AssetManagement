@@ -45,6 +45,7 @@ class AdminSession(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     last_seen_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     expires_at = Column(DateTime, nullable=False)
+    stage = Column(String, nullable=True)
     stepped_up_at = Column(DateTime, nullable=True)
     revoked_at = Column(DateTime, nullable=True)
     ip = Column(String, nullable=True)

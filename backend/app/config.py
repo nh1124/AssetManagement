@@ -23,6 +23,13 @@ class AppConfig(BaseSettings):
     mcp_allowed_issuers: str = "http://localhost:13000"
     mcp_base_url: str = ""
 
+    admin_allowed_hosts: str = "127.0.0.1,localhost"
+    admin_allowed_origins: str = "http://127.0.0.1:18300,http://localhost:18300"
+    admin_cookie_secure: bool = False
+    admin_session_idle_minutes: int = 30
+    admin_session_max_hours: int = 8
+    admin_ui_dir: str = ""
+
     # Database Settings
     database_url: str = "sqlite:///./finance.db"
 
@@ -102,6 +109,10 @@ class AppConfig(BaseSettings):
             errors.append("ALLOWED_ORIGINS must not contain '*' in production")
         if not self.cors_allowed_origins:
             errors.append("ALLOWED_ORIGINS must include at least one trusted origin in production")
+
+        for key in ("admin_allowed_hosts", "admin_allowed_origins"):
+            if "*" in getattr(self, key):
+                errors.append(f"{key.upper()} must not contain '*' in production")
 
         if errors:
             raise RuntimeError("Invalid production configuration: " + "; ".join(errors))
