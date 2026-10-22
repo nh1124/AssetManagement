@@ -18,6 +18,8 @@ services:
       POSTGRES_DB: finance_ide
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./db/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+    command: ["postgres", "-c", "hba_file=/etc/postgresql/pg_hba.conf"]
     ports:
       # Loopback by default: nothing outside this machine needs the database.
       - "${DB_BIND:-127.0.0.1}:${DB_PORT:-5432}:5432"
@@ -42,12 +44,14 @@ services:
       context: ./backend
     container_name: finance-migrate
     volumes:
-      - ./backend/app:/app/app
-      - ./backend/alembic:/app/alembic
-      - ./backend/alembic.ini:/app/alembic.ini
+      - ./backend/app:/app/app:ro
+      - ./backend/alembic:/app/alembic:ro
+      - ./backend/alembic.ini:/app/alembic.ini:ro
     environment:
       - PYTHONUNBUFFERED=1
       - APP_ENV=${APP_ENV:-development}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?set ENCRYPTION_KEY in .env (see .env.example)}
+      - ENCRYPTION_KEY_PREVIOUS=${ENCRYPTION_KEY_PREVIOUS:-}
       - DATABASE_URL=postgresql+psycopg2://am_owner:${AM_DB_OWNER_PASSWORD:?set AM_DB_OWNER_PASSWORD in .env (see .env.example)}@db:5432/finance_ide
       - LOG_FORMAT=${LOG_FORMAT:-json}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
@@ -67,9 +71,9 @@ services:
     ports:
       - "${BACKEND_BIND:-127.0.0.1}:${BACKEND_PORT:-18100}:8000"
     volumes:
-      - ./backend/app:/app/app
-      - ./backend/alembic:/app/alembic
-      - ./backend/alembic.ini:/app/alembic.ini
+      - ./backend/app:/app/app:ro
+      - ./backend/alembic:/app/alembic:ro
+      - ./backend/alembic.ini:/app/alembic.ini:ro
     environment:
       # Without this, uvicorn's access log sits in Python's stdout buffer and
       # `docker logs` shows nothing until the container stops.
@@ -138,7 +142,7 @@ services:
       # Only ever bind to loopback or the VPN address, never 0.0.0.0.
       - "${ADMIN_BIND:-127.0.0.1}:${ADMIN_PORT:-18300}:8000"
     volumes:
-      - ./backend/app:/app/app
+      - ./backend/app:/app/app:ro
     environment:
       - PYTHONUNBUFFERED=1
       - APP_ENV=${APP_ENV:-development}
@@ -146,8 +150,8 @@ services:
       - DATABASE_URL=postgresql+psycopg2://am_admin_app:${AM_DB_ADMIN_APP_PASSWORD:?set AM_DB_ADMIN_APP_PASSWORD in .env (see .env.example)}@db:5432/finance_ide
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:?set ENCRYPTION_KEY in .env (see .env.example)}
       - ENCRYPTION_KEY_PREVIOUS=${ENCRYPTION_KEY_PREVIOUS:-}
-      - ADMIN_ALLOWED_HOSTS=${ADMIN_ALLOWED_HOSTS:-127.0.0.1,localhost}
-      - ADMIN_ALLOWED_ORIGINS=${ADMIN_ALLOWED_ORIGINS:-http://127.0.0.1:${ADMIN_PORT:-18300},http://localhost:${ADMIN_PORT:-18300}}
+      - ADMIN_ALLOWED_HOSTS=${ADMIN_ALLOWED_HOSTS:-admin.localhost}
+      - ADMIN_ALLOWED_ORIGINS=${ADMIN_ALLOWED_ORIGINS:-http://admin.localhost:${ADMIN_PORT:-18300}}
       - ADMIN_COOKIE_SECURE=${ADMIN_COOKIE_SECURE:-0}
       - LOG_FORMAT=${LOG_FORMAT:-json}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
@@ -164,7 +168,7 @@ services:
       backend:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8000/health', headers={'Host': 'admin.localhost'}), timeout=3)"]
       interval: 10s
       timeout: 5s
       retries: 10

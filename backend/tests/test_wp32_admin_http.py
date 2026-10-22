@@ -74,12 +74,12 @@ def http():
     app.dependency_overrides[get_db] = db_override
 
     def request(method, path, raw=None, *, target=None, **kwargs):
-        headers = {'Origin': 'http://localhost:18300', 'X-Request-ID': 'wp32-http-correlation', **kwargs.pop('headers', {})}
+        headers = {'Origin': 'http://admin.localhost:18300', 'X-Request-ID': 'wp32-http-correlation', **kwargs.pop('headers', {})}
         headers = {key: value for key, value in headers.items() if value is not None}
         if raw:
             headers['Cookie'] = f'{COOKIE}={raw}'
         async def run():
-            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=target or app, raise_app_exceptions=False), base_url='http://localhost') as client:
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=target or app, raise_app_exceptions=False), base_url='http://admin.localhost:18300') as client:
                 pending = asyncio.create_task(client.request(method, path, headers=headers, **kwargs))
                 deadline = asyncio.get_running_loop().time() + 30
                 while not pending.done():
@@ -196,7 +196,8 @@ def test_cli_login_code_rotation_replay_and_cookie(http):
     raw = cookie(first)
     assert first.json() == {'stage': 'mfa', 'admin': {'username': 'owner'}}
     flags = first.headers['set-cookie'].lower()
-    assert 'httponly' in flags and 'samesite=strict' in flags and 'path=/' in flags
+    assert 'httponly' in flags and 'samesite=strict' in flags and 'path=/admin/api' in flags
+    assert 'domain=' not in flags
     assert 'max-age' not in flags and 'expires=' not in flags and 'secure' not in flags
     assert request('GET', '/admin/api/me', raw).status_code == 401
     assert request('POST', '/admin/api/session/password', raw, json={'new_password': NEW_PASSWORD}).status_code == 401
@@ -212,6 +213,52 @@ def test_cli_login_code_rotation_replay_and_cookie(http):
         assert row.stepped_up_at and row.stage is None
         assert timedelta(hours=7, minutes=59) < row.expires_at - row.created_at <= timedelta(hours=8)
         assert db.get(models.AdminSession, hashlib.sha256(raw.encode()).hexdigest()).revoked_at
+
+
+def test_session_cookie_jar_host_and_path_isolation(http):
+    request, _, _ = http
+    response = request('POST', '/admin/api/session', json={'username': 'owner', 'password': PASSWORD})
+    raw = cookie(response)
+    jar = response.cookies
+    for url, expected in [
+        ('http://admin.localhost:18300/admin/api/me', True),
+        ('http://admin.localhost:15380/admin/api/me', True),
+        ('http://admin.localhost:18300/', False),
+        ('http://admin.localhost:18300/admin/apix', False),
+        ('http://127.0.0.1:15173/', False),
+        ('http://localhost:18100/api/clients', False),
+        ('http://127.0.0.1:18100/admin/api/me', False),
+        ('http://localhost:15173/admin/api/me', False),
+    ]:
+        outgoing = httpx.Request('GET', url)
+        jar.set_cookie_header(outgoing)
+        assert (outgoing.headers.get('cookie') == f'{COOKIE}={raw}') is expected, url
+    stored = next(iter(jar.jar))
+    assert stored.domain == 'admin.localhost' and not stored.domain_specified
+    assert stored.path == '/admin/api'
+
+
+@pytest.mark.parametrize('stage', ['password_change', 'mfa_setup', 'mfa', None])
+@pytest.mark.parametrize('path,required_stage', [
+    ('/admin/api/me', None), ('/admin/api/session/password', 'password_change'),
+    ('/admin/api/session/code', 'mfa'), ('/admin/api/session/mfa-setup/start', 'mfa_setup'),
+    ('/admin/api/session/mfa-setup/verify', 'mfa_setup'),
+])
+def test_wrong_stage_is_audited_once(http, stage, path, required_stage):
+    if stage == required_stage:
+        return
+    request, sessions, _ = http
+    with sessions() as db:
+        raw = admins.create_session(db, admins.get_by_username(db, 'owner'), stage=stage)
+    response = request('GET' if path.endswith('/me') else 'POST', path, raw,
+                       json={'new_password': NEW_PASSWORD, 'code': '000000'})
+    assert response.status_code == 401
+    with sessions() as db:
+        row = db.query(models.AdminAuditLog).filter_by(action='session.stage_refused').one()
+        assert row.detail == {'path': path, 'stage': stage, 'required_stage': required_stage}
+        assert row.result == 'refused' and row.admin_user_id == 1 and row.actor == 'admin:1'
+        assert row.ip == '127.0.0.1' and row.correlation_id == 'wp32-http-correlation'
+        assert db.query(models.AdminAuditLog).filter_by(result='refused').count() == 1
 
 
 def test_web_admin_and_reset_state_machine(http):
@@ -290,6 +337,8 @@ def test_lockout_correct_password_does_not_reset(http):
         assert admins.get_by_username(db, 'owner').failed_login_count == 0
     logout = request('DELETE', '/admin/api/session', full)
     assert logout.status_code == 200 and 'Max-Age=0' in logout.headers['set-cookie']
+    assert 'Path=/admin/api' in logout.headers['set-cookie']
+    assert 'Domain=' not in logout.headers['set-cookie']
     assert request('GET', '/admin/api/me', full).status_code == 401
 
 
@@ -297,7 +346,8 @@ PERMISSION_ROUTES = [(method, path, permission) for (method, path), permission i
 
 
 @pytest.mark.parametrize('method,path,permission', PERMISSION_ROUTES)
-def test_permissions_and_step_up(http, method, path, permission):
+@pytest.mark.parametrize('step_up', ['missing', 'stale'])
+def test_permissions_and_step_up(http, method, path, permission, step_up):
     request, sessions, _ = http
     raw = full_session(sessions, permissions=())
     response = request(method, concrete(path), raw, json=body_for(path))
@@ -307,9 +357,19 @@ def test_permissions_and_step_up(http, method, path, permission):
         assert row.detail == {'path': concrete(path), 'permission': permission}
         assert row.result == 'refused' and row.admin_user_id == 1
     raw = full_session(sessions, permissions=ALL_PERMISSIONS, stepped=False)
+    if step_up == 'stale':
+        with sessions() as db:
+            row = db.get(models.AdminSession, hashlib.sha256(raw.encode()).hexdigest())
+            row.stepped_up_at = datetime.utcnow() - timedelta(minutes=6)
+            db.commit()
     if permission in STEP_UP_REQUIRED:
         response = request(method, concrete(path), raw, json=body_for(path))
         assert response.status_code == 403 and response.json()['code'] == 'step_up_required'
+        with sessions() as db:
+            row = db.query(models.AdminAuditLog).filter_by(action='step_up.required').one()
+            assert row.detail == {'path': concrete(path), 'permission': permission}
+            assert row.result == 'refused' and row.admin_user_id == 1 and row.actor == 'admin:1'
+            assert row.ip == '127.0.0.1' and row.correlation_id == 'wp32-http-correlation'
         response = request('POST', '/admin/api/session/step-up', raw, json={'code': totp(sessions)})
         assert response.status_code == 200, response.text
     with sessions() as db:
@@ -463,6 +523,11 @@ def test_own_password_step_up_and_each_session_mutation_audit(http):
     raw = full_session(sessions, stepped=False)
     response = request('POST', '/admin/api/me/password', raw, json={'current_password': PASSWORD, 'new_password': NEW_PASSWORD})
     assert response.status_code == 403 and response.json()['code'] == 'step_up_required'
+    with sessions() as db:
+        row = db.query(models.AdminAuditLog).filter_by(action='step_up.required').one()
+        assert row.detail == {'path': '/admin/api/me/password', 'permission': None}
+        assert row.result == 'refused' and row.admin_user_id == 1 and row.actor == 'admin:1'
+        assert row.ip == '127.0.0.1' and row.correlation_id == 'wp32-http-correlation'
     operations = [
         ('POST', '/admin/api/session/step-up', {'code': totp(sessions)}, 'session.step_up'),
         ('POST', '/admin/api/me/password', {'current_password': PASSWORD, 'new_password': NEW_PASSWORD}, 'admin.password'),

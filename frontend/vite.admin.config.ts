@@ -27,6 +27,8 @@ export default defineConfig({
             await copyFile(resolve(out, 'admin.html'), resolve(out, 'index.html'));
         },
     }],
+    // Open http://admin.localhost:15380; explicitly include this origin in the
+    // admin API's ADMIN_ALLOWED_ORIGINS (http://admin.localhost:18300 stays allowed).
     server: {
         host: '127.0.0.1',
         port: 15380,

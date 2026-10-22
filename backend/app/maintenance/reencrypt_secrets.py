@@ -5,10 +5,10 @@ ENCRYPTION_KEY and the old one moves to ENCRYPTION_KEY_PREVIOUS, after which
 both can decrypt but only the new one encrypts. This rewrites what is already
 stored, so the old key can then be removed.
 
-Dry-run by default. Run inside the backend container:
+Dry-run by default. Run as am_owner through the migrate service:
 
-    python -m app.maintenance.reencrypt_secrets
-    python -m app.maintenance.reencrypt_secrets --apply
+    docker compose run --rm --no-deps migrate python -m app.maintenance.reencrypt_secrets
+    docker compose run --rm --no-deps migrate python -m app.maintenance.reencrypt_secrets --apply
 
 The stored secrets are the TOTP secrets in client_mfa_settings and admin_users (the AI
 provider keys that used to live in clients.ai_config are gone). A value no

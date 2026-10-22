@@ -80,11 +80,15 @@ until the restored copy has been looked at.
 ```
 
 Replaces `JWT_SECRET_KEY`, `MCP_JWT_SECRET` and `ENCRYPTION_KEY` when they are
-missing or still the development defaults, recreates the backend and MCP
-containers, and puts the old `.env` back if the backend does not come up
-healthy. Everyone is signed out. Stored AI keys and MFA secrets keep working:
+missing or still the development defaults, recreates the backend, MCP and admin
+containers, and puts the old `.env` back if the backend or admin does not come up
+healthy (recreating all three again on rollback). Everyone is signed out.
+Stored MFA secrets keep working:
 the old encryption key stays readable as `ENCRYPTION_KEY_PREVIOUS` while
-`app.maintenance.reencrypt_secrets` rewrites them under the new one.
+`app.maintenance.reencrypt_secrets` rewrites them under the new one through
+`docker compose run --rm --no-deps migrate` as `am_owner`. Re-encryption failure
+or unreadable values return a non-zero exit and `last_result=reencrypt_incomplete`;
+`ENCRYPTION_KEY_PREVIOUS` must stay until re-encryption succeeds.
 
 It refuses to run while `backend/` or `mcp/` have uncommitted changes, because
 the restart would start whatever is in the working tree.
@@ -105,7 +109,9 @@ the restart would start whatever is in the working tree.
 
 ## 管理コンソール
 
-ブラウザで <http://127.0.0.1:18300> を開きます。初回の管理者は
+ブラウザで <http://admin.localhost:18300> を開きます。
+専用のホスト名と Cookie の `/admin/api` パスで、管理セッションが利用者サービスへ送信されるのを防ぎます。
+利用者サービスには `admin.localhost` を使わないでください。初回の管理者は
 `am-admin admin create <name>` で作成します（パスワード・TOTP の対話入力）。
 `ops/install.sh` は CLI をインストールし、`~/.local/bin/am-admin` をリンクします。
 `~/.local/bin` を PATH に追加し、ops 設定の `AM_REPO_DIR` をデプロイ先に合わせてください。
@@ -120,7 +126,7 @@ Compose のプロジェクト名を指定した環境では、CLI 実行時も�
 既存の ops 設定が `AM_CONTAINERS` を指定している場合は、手動で
 `finance-admin` を追加してください。
 
-開発時の `npm --prefix frontend run dev:admin` は <http://127.0.0.1:15380> です。
+開発時の `npm --prefix frontend run dev:admin` は <http://admin.localhost:15380> です。
 API に渡す `ADMIN_ALLOWED_ORIGINS` にその origin を明示的に追加します
 （設定例はルートの `.env.example`）。既定の許可範囲は変更しません。
 
@@ -147,9 +153,17 @@ migrate・backend・admin を作り直します。バックアップ（`am-backu
 コンテナ内のローカルソケットで `postgres` として動くので影響を受けません
 （リストア検証は `--no-owner --no-privileges` で復元します）。
 
+superuser の `POSTGRES_PASSWORD` も強い値に変更してください。既存 DB では先に
+`docker exec -it finance-db psql -U postgres -d finance_ide` のローカルソケットで
+`ALTER ROLE postgres PASSWORD '...';` を実行し、`.env` の値を合わせます。
+現在の Compose は `db/pg_hba.conf` を読み取り専用で指定し、`postgres` の TCP 接続を
+IPv4・IPv6 とも拒否します（ホストの公開ポートからも不可）。ops と `am-db-roles.sh` は
+`docker exec` 内のローカルソケット接続を使い続けます。
+
 戻すとき: 以前のコミットの `docker-compose.yml` に戻して `up -d` すれば、
 アプリは `postgres` で接続します（表の持ち主が `am_owner` でも superuser は読み書きできます）。
-ロールは残しておいてかまいません。
+ロールは残しておいてかまいません。`hba_file` の上書きは現在の Compose にだけあるため、
+戻すと DB はデータディレクトリ内の元の `pg_hba.conf` を再び使い、superuser の TCP 拒否も解除されます。
 
 ## What the watchdog will not do
 

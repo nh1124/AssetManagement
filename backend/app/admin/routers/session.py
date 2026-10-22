@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from ...database import get_db
 from ...services import admin_auth_service as service
 from ...workflows import admin_account_workflow as workflow
-from ..auth import (COOKIE, attribution, cookie, current_admin, metadata,
+from ..auth import (COOKIE, COOKIE_PATH, attribution, cookie, current_admin, metadata,
                     session_details, staged)
 
 router = APIRouter(prefix="/admin/api/session")
@@ -75,5 +75,5 @@ def step_up(body: Code, request: Request, context=Depends(current_admin), db=Dep
 def logout(request: Request, response: Response, context=Depends(current_admin), db=Depends(get_db)):
     workflow.session_operation(db, "session.logout", lambda: service.revoke_session(
         db, context.session, commit=False), **attribution(request, context))
-    response.delete_cookie(COOKIE, path="/", httponly=True, secure=request.app.state.config.admin_cookie_secure, samesite="strict")
+    response.delete_cookie(COOKIE, path=COOKIE_PATH, httponly=True, secure=request.app.state.config.admin_cookie_secure, samesite="strict")
     return {"ok": True}

@@ -148,13 +148,6 @@ async def startup_event():
 
                 # The sequence assigns the id (1 in a fresh database); forcing id=1 would need
                 # setval, which the application role may not run (WP32 W5).
-            else:
-                # Ensure dev has valid credentials in development only.
-                if not default_client.username or not default_client.password_hash:
-                    default_client.username = "dev"
-                    default_client.password_hash = hash_password("adminadmin")
-                    db.commit()
-
             if default_client.username == "dev":
                 mfa_service.ensure_development_mfa(db, default_client)
 

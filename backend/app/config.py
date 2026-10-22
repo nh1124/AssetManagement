@@ -23,8 +23,8 @@ class AppConfig(BaseSettings):
     mcp_allowed_issuers: str = "http://localhost:13000"
     mcp_base_url: str = ""
 
-    admin_allowed_hosts: str = "127.0.0.1,localhost"
-    admin_allowed_origins: str = "http://127.0.0.1:18300,http://localhost:18300"
+    admin_allowed_hosts: str = "admin.localhost"
+    admin_allowed_origins: str = "http://admin.localhost:18300"
     admin_cookie_secure: bool = False
     admin_session_idle_minutes: int = 30
     admin_session_max_hours: int = 8

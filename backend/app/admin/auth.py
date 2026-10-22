@@ -16,6 +16,7 @@ from ..utils.observability.context import current
 from ..workflows import admin_account_workflow as workflow
 
 COOKIE = "am_admin_session"
+COOKIE_PATH = "/admin/api"
 
 
 @dataclass
@@ -38,11 +39,15 @@ def session_details(request):
 
 
 def cookie(response, raw, config=settings):
-    response.set_cookie(COOKIE, raw, httponly=True, secure=config.admin_cookie_secure, samesite="strict", path="/")
+    response.set_cookie(COOKIE, raw, httponly=True, secure=config.admin_cookie_secure, samesite="strict", path=COOKIE_PATH)
 
 
 def resolve(request, db, *, stage=None, any_stage=False):
-    admin, row = service.session_admin(db, request.cookies.get(COOKIE), stage=stage, any_stage=any_stage, config=request.app.state.config)
+    try:
+        admin, row = service.session_admin(db, request.cookies.get(COOKIE), stage=stage, any_stage=any_stage, config=request.app.state.config)
+    except service.SessionStageRefused as exc:
+        workflow.session_stage_refused(db, exc.admin_user_id, request.url.path, exc.stage, exc.required_stage, **metadata(request))
+        raise
     return AdminContext(admin, row, service.permissions_for(db, admin))
 
 
@@ -67,9 +72,10 @@ async def step_up_handler(request, exc):
         "code": "step_up_required"})
 
 
-def check_step_up(context):
+def check_step_up(context, request, db, permission=None):
     stamp = context.session.stepped_up_at
     if stamp is None or stamp < datetime.utcnow() - timedelta(minutes=5):
+        workflow.step_up_required(db, context.admin, request.url.path, permission, **metadata(request))
         raise StepUpRequired()
 
 
@@ -79,12 +85,12 @@ def require(permission):
             workflow.permission_denied(db, context.admin, request.url.path, permission, **metadata(request))
             raise Refused("Permission denied.", ja="この操作の権限がありません。")
         if permission in STEP_UP_REQUIRED:
-            check_step_up(context)
+            check_step_up(context, request, db, permission)
         return context
     dependency.permission = permission
     return dependency
 
 
-def stepped_admin(context=Depends(current_admin)):
-    check_step_up(context)
+def stepped_admin(request: Request, context=Depends(current_admin), db=Depends(get_db)):
+    check_step_up(context, request, db)
     return context

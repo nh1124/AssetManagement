@@ -15,6 +15,7 @@ from app.config import AppConfig, DEV_TOTP_SECRET
 from app.database import Base
 from app.security import decrypt_key, encrypt_key
 from app.services import mfa_service
+from app.utils.password import verify_password
 
 
 @pytest.fixture
@@ -135,3 +136,39 @@ def test_production_startup_refuses_development_factor(db, monkeypatch):
     main = configure_startup(db, monkeypatch, True)
     with pytest.raises(RuntimeError, match="development TOTP secret"):
         asyncio.run(main.startup_event())
+
+
+@pytest.mark.parametrize('username,password_hash', [(None, None), ('legacy', None), (None, 'preserve'), ('dev', None)])
+def test_startup_does_not_repair_existing_credentials(db, monkeypatch, username, password_hash):
+    client = db.get(models.Client, 1)
+    client.username, client.password_hash = username, password_hash
+    db.commit()
+    main = configure_startup(db, monkeypatch, False)
+
+    async def run():
+        await main.startup_event()
+        await main.shutdown_event()
+
+    asyncio.run(run())
+    client = db.get(models.Client, 1)
+    assert (client.username, client.password_hash) == (username, password_hash)
+    setting = mfa_service.get_mfa_setting(db, client)
+    assert bool(setting and setting.enabled) is (username == 'dev')
+
+
+def test_startup_creates_dev_with_sequence_assigned_id(db, monkeypatch):
+    db.delete(db.get(models.Client, 1))
+    db.add(models.Client(id=7, name='Existing', username='existing', password_hash='preserve'))
+    db.commit()
+    main = configure_startup(db, monkeypatch, False)
+
+    async def run():
+        await main.startup_event()
+        await main.shutdown_event()
+
+    asyncio.run(run())
+    dev = db.query(models.Client).filter_by(username='dev').one()
+    assert dev.id == 8
+    assert verify_password('adminadmin', dev.password_hash)
+    assert mfa_service.get_mfa_setting(db, dev).enabled
+    assert db.get(models.Client, 7).password_hash == 'preserve'

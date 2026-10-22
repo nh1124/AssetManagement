@@ -192,6 +192,17 @@ def permission_denied(db, admin, path, permission, **metadata):
                  detail={"path": path, "permission": permission}, result="refused", commit=True, **metadata)
 
 
+def step_up_required(db, admin, path, permission, **metadata):
+    audit.record(db, f"admin:{admin.id}", "step_up.required", admin_user_id=admin.id,
+                 detail={"path": path, "permission": permission}, result="refused", commit=True, **metadata)
+
+
+def session_stage_refused(db, admin_user_id, path, stage, required_stage, **metadata):
+    audit.record(db, f"admin:{admin_user_id}", "session.stage_refused", admin_user_id=admin_user_id,
+                 detail={"path": path, "stage": stage, "required_stage": required_stage},
+                 result="refused", commit=True, **metadata)
+
+
 def overview(db, permissions):
     result = {"clients": clients.admin_counts(db), "admins": len(admins.list_admins(db))}
     if "health.read" in permissions:

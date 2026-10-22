@@ -11,6 +11,7 @@ from ..config import settings
 from .. import models
 from ..domain.admin_permissions import ADMINS_MANAGE, validate_permissions
 from ..domain.errors import Conflict, Invalid, NotFound, Refused
+from ..domain.messages import Message
 from ..security import decrypt_key, encrypt_key
 from ..utils.password import hash_password, verify_password as check_password
 from ..utils.temporary_password import temporary_password
@@ -286,10 +287,20 @@ def revoke_session(db: Session, session, *, commit: bool = True):
     _save(db, commit)
 
 
+class SessionStageRefused(Refused):
+    def __init__(self, row, required_stage):
+        super().__init__(Message("Administrator authentication required.", ja="管理者としてサインインしてください。"), status_code=401)
+        self.admin_user_id = row.admin_user_id
+        self.stage = row.stage
+        self.required_stage = required_stage
+
+
 def session_admin(db, raw_cookie, *, stage=None, any_stage=False, config=None):
     row = find_session(db, raw_cookie or "", config=config)
-    if row is None or (not any_stage and row.stage != stage):
+    if row is None:
         raise Refused("Administrator authentication required.", ja="管理者としてサインインしてください。", status_code=401)
+    if not any_stage and row.stage != stage:
+        raise SessionStageRefused(row, stage)
     touch_session(db, row)
     return get_by_id(db, row.admin_user_id), row
 
