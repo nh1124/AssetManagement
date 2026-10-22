@@ -209,6 +209,7 @@ def test_each_health_message_preserves_lead_count_and_language(db, monkeypatch, 
              "count": 105, "items": items}
     def checked(db, client_id, *, audience):
         assert audience == "user"
+        issue["fingerprint"] = health.issue_fingerprint(issue["items"])
         return {"issues": [issue]}
     monkeypatch.setattr(health, "check_data_health", checked)
     (row,) = notifications.data_health_notifications(db, 1, "2026-10")
@@ -352,3 +353,43 @@ def test_seed_migration_guarded_sql(direction, guard):
         assert tuple(connection.execute(sa.text("SELECT username, name FROM clients WHERE id = 2")).one()) == (
             other["username"], other["name"])
     engine.dispose()
+
+
+def test_unsampled_health_identity_changes_fingerprint_and_notification(db):
+    db.add(models.PeriodClose(client_id=1, period="2026-09", closed_at=datetime(2026, 10, 1)))
+    db.add_all([
+        models.Transaction(id=i, client_id=1, date=date(2026, 9, 20), description=f"Entry {i}",
+                           amount_minor=100, created_at=datetime(2026, 10, 2))
+        for i in range(1, 102)
+    ])
+    db.commit()
+    def issue():
+        return next(row for row in health.check_data_health(db, 1, audience="user")["issues"]
+                    if row["code"] == "entries_in_a_closed_period")
+    before = issue()
+    assert before["count"] == 101 and len(before["items"]) == 100
+    (old,) = notifications.data_health_notifications(db, 1, "2026-10")
+    notification_service.sync(db, 1, "data_health", [old])
+    db.query(models.Notification).filter_by(dedupe_key=old["dedupe_key"]).one().status = "dismissed"
+    db.delete(db.get(models.Transaction, 101))
+    db.add(models.Transaction(id=102, client_id=1, date=date(2026, 9, 20), description="Replacement",
+                              amount_minor=100, created_at=datetime(2026, 10, 2)))
+    db.commit()
+    after = issue()
+    assert before["items"] == after["items"] and before["count"] == after["count"]
+    assert before["fingerprint"] != after["fingerprint"]
+    (new,) = notifications.data_health_notifications(db, 1, "2026-10")
+    assert new["dedupe_key"] != old["dedupe_key"]
+    notification_service.sync(db, 1, "data_health", [new])
+    assert notification_service.visible(db, 1)[0].dedupe_key == new["dedupe_key"]
+
+
+def test_health_fingerprint_ignores_order_and_names_but_tracks_claim_identity():
+    items = [{"capsule_id": 1, "account_id": 2, "currency": "JPY", "name": "Trip"},
+             {"capsule_id": 3, "account_id": 4, "currency": "USD", "name": "Home"}]
+    before = health.issue_fingerprint(items)
+    items.reverse()
+    items[0]["name"] = "Renamed"
+    assert health.issue_fingerprint(items) == before
+    items[0]["currency"] = "JPY"
+    assert health.issue_fingerprint(items) != before

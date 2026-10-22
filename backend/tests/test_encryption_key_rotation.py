@@ -110,3 +110,23 @@ def test_a_value_no_key_can_read_is_reported_and_left_alone(db, stored_under_old
     assert reencrypt(db, apply=True) == {"rotated": 0, "unreadable": 1}
     db.expire_all()
     assert stored_secret(db, client) == before
+
+
+@pytest.mark.parametrize("apply", [False, True])
+def test_pending_factor_is_reencrypted_even_without_an_active_secret(db, monkeypatch, apply):
+    use_keys(monkeypatch, [OLD_KEY])
+    secret = pyotp.random_base32()
+    client = models.Client(name="pending-owner")
+    db.add(client)
+    db.flush()
+    row = models.ClientMfaSetting(client_id=client.id, pending_totp_secret_encrypted=security.encrypt_key(secret))
+    db.add(row)
+    db.commit()
+    before = row.pending_totp_secret_encrypted
+    use_keys(monkeypatch, [NEW_KEY, OLD_KEY])
+    assert reencrypt(db, apply=apply) == {"rotated": 1, "unreadable": 0}
+    db.refresh(row)
+    if apply:
+        assert Fernet(NEW_KEY.encode()).decrypt(row.pending_totp_secret_encrypted.encode()).decode() == secret
+    else:
+        assert row.pending_totp_secret_encrypted == before

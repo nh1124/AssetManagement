@@ -5,7 +5,7 @@ from typing import Optional
 from . import models
 from .database import get_db
 from .domain.messages import LANGUAGES, Message
-from .utils.jwt import decode_token
+from .utils.jwt import decode_token, token_is_current
 
 bearer_scheme = HTTPBearer(auto_error=False)
 AUTHENTICATION_REQUIRED = Message("Authentication required", ja="サインインしてください。")
@@ -57,6 +57,9 @@ async def get_current_client(
         raise HTTPException(status_code=404, detail=Message("Client not found", ja="クライアントが見つかりません。"))
     # A token outlives the decision to deactivate its owner by up to a day.
     if client.is_active is False:
+        raise HTTPException(status_code=401, detail=AUTHENTICATION_REQUIRED)
+
+    if not token_is_current(payload, client.tokens_valid_after):
         raise HTTPException(status_code=401, detail=AUTHENTICATION_REQUIRED)
 
     return client

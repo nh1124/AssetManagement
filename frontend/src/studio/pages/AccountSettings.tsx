@@ -56,12 +56,14 @@ export default function AccountSettings({ sectionClass }: { sectionClass: string
     const saveProfile = (event: FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         if (busy || mismatch || (needsCurrent && !current)) return;
-        void run(() => updateProfile({
-            name: name !== null ? name.trim() : undefined,
-            email: emailChanged ? emailValue.trim() : undefined,
-            password: password || undefined,
-            current_password: needsCurrent ? current : undefined,
-        }), 'account.saved');
+        void run(async () => {
+            await updateProfile({
+                name: name !== null ? name.trim() : undefined,
+                email: emailChanged ? emailValue.trim() : undefined,
+                password: password || undefined,
+                current_password: needsCurrent ? current : undefined,
+            });
+        }, 'account.saved');
     };
     return <details className={sectionClass}>
         <summary className="cursor-pointer text-sm font-semibold">{t('account.title')}</summary>

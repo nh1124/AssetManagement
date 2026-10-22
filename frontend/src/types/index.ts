@@ -104,13 +104,22 @@ export interface ExchangeRateAutoUpdateResult {
     errors: Array<Pick<ExchangeRate, 'base_currency' | 'quote_currency'> & { error: string }>;
 }
 
-export interface LoginResult {
-    access_token?: string | null;
-    token_type: 'bearer' | 'mfa' | string;
+export interface SignInStep {
+    access_token: null;
+    token_type: 'step';
     client_id: number;
     name: string;
-    mfa_required: boolean;
+    next_step: 'password_change' | 'mfa_setup' | 'mfa';
+    step_token: string;
+    mfa_required?: boolean;
     mfa_token?: string | null;
+}
+
+export interface AccessResult {
+    access_token: string;
+    token_type: 'bearer';
+    client_id: number;
+    name: string;
 }
 
 export interface MfaStatus {
@@ -120,7 +129,7 @@ export interface MfaStatus {
     recovery_codes_remaining: number;
 }
 
-export interface MfaSetupStart {
+export interface TotpProvisioning {
     otpauth_uri: string;
     manual_entry_key: string;
 }
@@ -128,6 +137,15 @@ export interface MfaSetupStart {
 export interface MfaRecoveryCodes {
     recovery_codes: string[];
 }
+
+export interface EnrollmentResult extends AccessResult, MfaRecoveryCodes {}
+
+export interface MfaReplacementResult extends MfaRecoveryCodes {
+    access_token: string;
+    token_type: 'bearer';
+}
+
+export type MfaFactor = { code: string; recovery_code?: never } | { recovery_code: string; code?: never };
 
 export type AiOperationRisk = 'low' | 'medium' | 'high' | 'critical';
 export type AiOperationMode = 'deny' | 'allow_read' | 'require_approval' | 'allow_execute';

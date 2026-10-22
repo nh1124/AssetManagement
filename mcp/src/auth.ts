@@ -61,6 +61,7 @@ interface PendingAuthCode {
   allow_refresh_token: boolean;
   username: string;
   backend_client_id: number;
+  auth_time_ms: number;
   issuer: string;
   expires_at: number;
 }
@@ -72,6 +73,7 @@ interface OAuthRefreshTokenRecord {
   resource: string;
   username: string;
   backend_client_id: number;
+  auth_time_ms: number;
   issuer: string;
   issued_at_ms: number;
   expires_at_ms: number;
@@ -248,6 +250,7 @@ export function createAuthCode(params: {
   allow_refresh_token: boolean;
   username: string;
   backend_client_id: number;
+  auth_time_ms: number;
   issuer: string;
 }): string {
   const code = crypto.randomBytes(32).toString("base64url");
@@ -262,6 +265,7 @@ export function createAuthCode(params: {
     allow_refresh_token: params.allow_refresh_token,
     username: params.username,
     backend_client_id: params.backend_client_id,
+    auth_time_ms: params.auth_time_ms,
     issuer: params.issuer,
     expires_at: Date.now() + AUTH_CODE_TTL_MS,
   });
@@ -279,6 +283,7 @@ export interface McpAccessTokenPayload {
   scope: string;
   username: string;
   backend_client_id: number;
+  auth_time_ms: number;
   aud?: string | string[];
   iss?: string;
   exp?: number;
@@ -291,6 +296,7 @@ function issueAccessJwt(params: {
   resource: string;
   username: string;
   backend_client_id: number;
+  auth_time_ms: number;
   issuer: string;
 }): string {
   return jwt.sign(
@@ -301,6 +307,7 @@ function issueAccessJwt(params: {
       scope: params.scope,
       username: params.username,
       backend_client_id: params.backend_client_id,
+      auth_time_ms: params.auth_time_ms,
     },
     JWT_SECRET,
     {
@@ -317,6 +324,7 @@ function issueOpaqueRefreshToken(params: {
   resource: string;
   username: string;
   backend_client_id: number;
+  auth_time_ms: number;
   issuer: string;
 }): string {
   const token = crypto.randomBytes(48).toString("base64url");
@@ -329,6 +337,7 @@ function issueOpaqueRefreshToken(params: {
     resource: params.resource,
     username: params.username,
     backend_client_id: params.backend_client_id,
+    auth_time_ms: params.auth_time_ms,
     issuer: params.issuer,
     issued_at_ms: now,
     expires_at_ms: now + REFRESH_TOKEN_TTL_MS,
@@ -385,6 +394,7 @@ export function exchangeCodeForTokens(params: {
     resource: effectiveResource,
     username: entry.username,
     backend_client_id: entry.backend_client_id,
+    auth_time_ms: entry.auth_time_ms,
     issuer: entry.issuer,
   });
   const refresh_token = entry.allow_refresh_token
@@ -394,6 +404,7 @@ export function exchangeCodeForTokens(params: {
         resource: effectiveResource,
         username: entry.username,
         backend_client_id: entry.backend_client_id,
+        auth_time_ms: entry.auth_time_ms,
         issuer: entry.issuer,
       })
     : undefined;
@@ -427,6 +438,7 @@ export function refreshAccessToken(params: {
     resource: record.resource,
     username: record.username,
     backend_client_id: record.backend_client_id,
+    auth_time_ms: record.auth_time_ms,
     issuer: record.issuer,
   });
   record.replaced_by_hash = hashToken(new_refresh_token);
@@ -437,6 +449,7 @@ export function refreshAccessToken(params: {
     resource: record.resource,
     username: record.username,
     backend_client_id: record.backend_client_id,
+    auth_time_ms: record.auth_time_ms,
     issuer: record.issuer,
   });
 

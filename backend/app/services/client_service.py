@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
+from sqlalchemy import case, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from .. import models
 from ..domain.errors import Conflict
+
+LOCKOUT_THRESHOLD = 5
+LOCKOUT_MINUTES = 15
 
 
 def get_by_username(
@@ -66,6 +72,8 @@ def update_profile(
     for key in ("name", "email", "password_hash"):
         if key in fields:
             setattr(client, key, fields[key])
+    if "password_hash" in fields:
+        client.tokens_valid_after = datetime.utcnow()
     try:
         if commit:
             db.commit()
@@ -76,3 +84,49 @@ def update_profile(
         db.rollback()
         raise Conflict("この名前またはメールアドレスは使われています。", en="This name or email is already in use.") from exc
     return client
+
+
+def is_locked(client: models.Client) -> bool:
+    return client.locked_until is not None and client.locked_until > datetime.utcnow()
+
+
+def record_auth_failure(db: Session, client: models.Client) -> None:
+    now = datetime.utcnow()
+    # Increment in SQL so simultaneous failures cannot overwrite one another.
+    count = case(
+        (models.Client.locked_until <= now, 1),
+        else_=models.Client.failed_login_count + 1,
+    )
+    db.query(models.Client).filter(models.Client.id == client.id).update({
+        models.Client.failed_login_count: count,
+        models.Client.locked_until: case(
+            (count >= LOCKOUT_THRESHOLD, now + timedelta(minutes=LOCKOUT_MINUTES)),
+            else_=None,
+        ),
+    }, synchronize_session=False)
+    db.commit()
+    db.refresh(client)
+
+
+def record_auth_success(db: Session, client: models.Client, *, commit: bool = True) -> None:
+    db.flush()
+    db.query(models.Client).filter(
+        models.Client.id == client.id,
+        or_(models.Client.locked_until.is_(None), models.Client.locked_until <= datetime.utcnow()),
+    ).update({models.Client.failed_login_count: 0, models.Client.locked_until: None}, synchronize_session=False)
+    if commit:
+        db.commit()
+    db.refresh(client)
+
+
+def change_password(db: Session, client: models.Client, password_hash: str) -> None:
+    client.password_hash = password_hash
+    client.must_change_password = False
+    client.tokens_valid_after = datetime.utcnow()
+    db.commit()
+
+
+def revoke_tokens(db: Session, client: models.Client, *, commit: bool = True) -> None:
+    client.tokens_valid_after = datetime.utcnow()
+    if commit:
+        db.commit()

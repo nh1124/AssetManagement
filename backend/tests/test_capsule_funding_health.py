@@ -345,7 +345,8 @@ def test_every_issue_caps_items_at_100_but_keeps_full_count(db):
     result = issues(db)
     for code, severity in CODES.items():
         issue = result[code]
-        assert set(issue) == {"audience", "code", "severity", "title", "detail", "count", "repairable", "items"}
+        assert set(issue) == {"audience", "code", "severity", "title", "detail", "count", "repairable", "items", "fingerprint"}
+        assert len(issue["fingerprint"]) == 64
         assert issue["severity"] == severity
         assert issue["repairable"] is False
         assert issue["count"] == 101

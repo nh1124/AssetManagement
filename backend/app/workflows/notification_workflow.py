@@ -136,12 +136,7 @@ def data_health_notifications(db: Session, client_id: int, period: str) -> list[
             else pick(language, ja_line, en_line).format(**item)
             for item in items
         ]
-        # Account/currency distinguish separate claims of the same earmark. Include
-        # the total too, since health reports cap their item samples at 100.
-        reasons = [f"{code}:{issue['count']}"] + [
-            f"{code}:{item_id}:{item.get('account_id', '')}:{item.get('currency', '')}"
-            for item_id, item in zip(ids, items)
-        ]
+        reasons = [f"{code}:{issue['fingerprint']}"]
         payload = {"code": code, "ids": ids, "count": issue["count"]}
         if closed:
             earliest = min(item["period"] for item in items)

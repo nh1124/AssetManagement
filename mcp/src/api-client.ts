@@ -1,4 +1,4 @@
-// HTTP client: uses MCP token exchange in HTTP mode and fixed credentials only for stdio fallback.
+// HTTP uses MCP token exchange. Legacy stdio password login fails when the backend requires staged sign-in.
 
 import { AsyncLocalStorage } from "node:async_hooks";
 
@@ -32,9 +32,9 @@ async function login(): Promise<string> {
     body: JSON.stringify({ username: BACKEND_USERNAME, password: BACKEND_PASSWORD }),
   });
   if (!res.ok) throw new Error(`Login failed: ${res.status} ${await res.text()}`);
-  const data = await res.json() as { access_token?: string; mfa_required?: boolean };
-  if (data.mfa_required || !data.access_token) {
-    throw new Error("Backend login requires MFA; configure a non-interactive MCP credential flow before using this account");
+  const data = await res.json() as { access_token?: string; next_step?: string; mfa_required?: boolean };
+  if (data.next_step || data.mfa_required || !data.access_token) {
+    throw new Error("Password-only MCP service login (BACKEND_USERNAME/BACKEND_PASSWORD, stdio) is no longer supported: the backend requires staged sign-in and an authenticator code. Complete account setup in the app, then connect through MCP HTTP OAuth.");
   }
   return data.access_token;
 }

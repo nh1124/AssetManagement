@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 import secrets
 import string
 
 import pyotp
-from sqlalchemy.orm import Session
+from sqlalchemy import or_
+from sqlalchemy.orm import Session, object_session
 
 from .. import models
 from ..domain.messages import Message
@@ -49,15 +50,22 @@ def mfa_status(db: Session, client: models.Client) -> dict:
 
 
 def start_totp_setup(db: Session, client: models.Client) -> dict:
-    secret = pyotp.random_base32()
     setting = get_mfa_setting(db, client, create=True)
+    if setting.enabled:
+        raise ValueError(Message("MFA is already enabled", ja="MFAはすでに有効です。"))
+    secret = pyotp.random_base32()
     setting.totp_secret_encrypted = encrypt_key(secret)
     setting.enabled = False
     setting.enabled_at = None
     setting.last_verified_at = None
+    setting.last_totp_step = None
     db.commit()
     db.refresh(setting)
 
+    return _provisioning(client, secret)
+
+
+def _provisioning(client: models.Client, secret: str) -> dict:
     label = client.username or client.email or client.name or f"client-{client.id}"
     otpauth_uri = pyotp.TOTP(secret).provisioning_uri(name=label, issuer_name="Finance IDE")
     return {
@@ -68,7 +76,7 @@ def start_totp_setup(db: Session, client: models.Client) -> dict:
 
 def verify_totp_setup(db: Session, client: models.Client, code: str) -> list[str]:
     setting = get_mfa_setting(db, client)
-    if not setting or not setting.totp_secret_encrypted:
+    if not setting or setting.enabled or not setting.totp_secret_encrypted:
         raise ValueError(Message("MFA setup has not been started", ja="MFAの設定が始まっていません。最初からやり直してください。"))
 
     if not verify_totp_code(setting, code):
@@ -83,18 +91,6 @@ def verify_totp_setup(db: Session, client: models.Client, code: str) -> list[str
     return recovery_codes
 
 
-def disable_mfa(db: Session, client: models.Client) -> None:
-    setting = get_mfa_setting(db, client)
-    if setting:
-        setting.enabled = False
-        setting.totp_secret_encrypted = None
-        setting.enabled_at = None
-        setting.last_verified_at = None
-
-    db.query(models.ClientRecoveryCode).filter(models.ClientRecoveryCode.client_id == client.id).delete()
-    db.commit()
-
-
 def regenerate_recovery_codes(db: Session, client: models.Client, commit: bool = True) -> list[str]:
     db.query(models.ClientRecoveryCode).filter(models.ClientRecoveryCode.client_id == client.id).delete()
     codes = [_new_recovery_code() for _ in range(RECOVERY_CODE_COUNT)]
@@ -107,9 +103,36 @@ def regenerate_recovery_codes(db: Session, client: models.Client, commit: bool =
 
 def verify_totp_code(setting: models.ClientMfaSetting, code: str) -> bool:
     secret = decrypt_key(setting.totp_secret_encrypted or "")
-    if not secret:
+    step = _matching_totp_step(secret, code, setting.last_totp_step)
+    if step is None:
         return False
-    return pyotp.TOTP(secret).verify((code or "").strip().replace(" ", ""), valid_window=1)
+    db = object_session(setting)
+    if db is None:
+        return False
+    # A conditional update consumes the step once even with simultaneous requests
+    # or an ORM object loaded before another request consumed the code.
+    consumed = db.query(models.ClientMfaSetting).filter(
+        models.ClientMfaSetting.id == setting.id,
+        models.ClientMfaSetting.totp_secret_encrypted == setting.totp_secret_encrypted,
+        or_(models.ClientMfaSetting.last_totp_step.is_(None), models.ClientMfaSetting.last_totp_step < step),
+    ).update({models.ClientMfaSetting.last_totp_step: step}, synchronize_session=False)
+    db.refresh(setting)
+    return bool(consumed)
+
+
+def _matching_totp_step(secret: str | None, code: str, last_step: int | None = None) -> int | None:
+    if not secret:
+        return None
+    totp = pyotp.TOTP(secret)
+    current_step = totp.timecode(datetime.now(timezone.utc))
+    candidate = (code or "").strip().replace(" ", "")
+    if len(candidate) != totp.digits or not candidate.isascii() or not candidate.isdigit():
+        return None
+    for offset in (-1, 0, 1):
+        step = current_step + offset
+        if (last_step is None or step > last_step) and secrets.compare_digest(totp.generate_otp(step), candidate):
+            return step
+    return None
 
 
 def verify_mfa_factor(db: Session, client: models.Client, code: str | None = None, recovery_code: str | None = None) -> bool:
@@ -146,18 +169,6 @@ def consume_recovery_code(db: Session, client: models.Client, code: str) -> bool
     return False
 
 
-def verify_reauth_factor(
-    db: Session,
-    client: models.Client,
-    current_password: str | None = None,
-    code: str | None = None,
-    recovery_code: str | None = None,
-) -> bool:
-    if current_password and verify_password(current_password, client.password_hash or ""):
-        return True
-    return verify_mfa_factor(db, client, code=code, recovery_code=recovery_code)
-
-
 def _new_recovery_code() -> str:
     left = "".join(secrets.choice(RECOVERY_CODE_ALPHABET) for _ in range(4))
     right = "".join(secrets.choice(RECOVERY_CODE_ALPHABET) for _ in range(4))
@@ -166,3 +177,64 @@ def _new_recovery_code() -> str:
 
 def _normalize_recovery_code(code: str) -> str:
     return (code or "").strip().upper().replace(" ", "")
+
+
+def start_totp_replacement(db: Session, client: models.Client) -> dict:
+    setting = get_mfa_setting(db, client)
+    if not setting or not setting.enabled:
+        raise ValueError(Message("MFA is not enabled", ja="MFAは有効になっていません。"))
+    secret = pyotp.random_base32()
+    setting.pending_totp_secret_encrypted = encrypt_key(secret)
+    db.commit()
+    return _provisioning(client, secret)
+
+
+def verify_totp_replacement(db: Session, client: models.Client, code: str) -> list[str]:
+    setting = get_mfa_setting(db, client)
+    secret = decrypt_key(setting.pending_totp_secret_encrypted or "") if setting else None
+    # Consume a newer step atomically with the swap, preserving the replay
+    # boundary even when another request verifies the active factor meanwhile.
+    step = _matching_totp_step(secret, code, setting.last_totp_step if setting else None)
+    if step is None:
+        raise ValueError(Message("Invalid MFA code", ja="認証コードが正しくありません。"))
+    swapped = db.query(models.ClientMfaSetting).filter(
+        models.ClientMfaSetting.id == setting.id,
+        models.ClientMfaSetting.pending_totp_secret_encrypted == setting.pending_totp_secret_encrypted,
+        or_(models.ClientMfaSetting.last_totp_step.is_(None), models.ClientMfaSetting.last_totp_step < step),
+    ).update({
+        models.ClientMfaSetting.totp_secret_encrypted: setting.pending_totp_secret_encrypted,
+        models.ClientMfaSetting.pending_totp_secret_encrypted: None,
+        models.ClientMfaSetting.last_totp_step: step,
+        models.ClientMfaSetting.last_verified_at: datetime.utcnow(),
+    }, synchronize_session=False)
+    db.refresh(setting)
+    if not swapped:
+        raise ValueError(Message("Invalid MFA code", ja="認証コードが正しくありません。"))
+    # The caller commits the swap, new recovery codes and token revocation together.
+    return regenerate_recovery_codes(db, client, commit=False)
+
+
+def ensure_development_mfa(db: Session, client: models.Client) -> None:
+    from ..config import DEV_TOTP_SECRET
+
+    setting = get_mfa_setting(db, client, create=True)
+    setting.totp_secret_encrypted = encrypt_key(DEV_TOTP_SECRET)
+    setting.pending_totp_secret_encrypted = None
+    setting.enabled = True
+    setting.enabled_at = setting.enabled_at or datetime.utcnow()
+    if not db.query(models.ClientRecoveryCode.id).filter(
+        models.ClientRecoveryCode.client_id == client.id,
+        models.ClientRecoveryCode.used_at.is_(None),
+    ).first():
+        regenerate_recovery_codes(db, client, commit=False)
+    db.commit()
+
+
+def ensure_no_development_totp(db: Session) -> None:
+    from ..config import DEV_TOTP_SECRET
+
+    settings = db.query(models.ClientMfaSetting).join(models.Client).filter(
+        models.Client.is_active.is_(True),
+    ).all()
+    if any(decrypt_key(setting.totp_secret_encrypted or "") == DEV_TOTP_SECRET for setting in settings):
+        raise RuntimeError("Invalid production configuration: development TOTP secret is still active")

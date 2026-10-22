@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any
@@ -25,6 +28,24 @@ from .registry_service import (
     registry_entry_amount_for_period,
     registry_target_account_id,
 )
+
+
+def issue_fingerprint(items: list[dict]) -> str:
+    """Hash every affected identity, independent of sampling, order and names."""
+    def identity(value):
+        if isinstance(value, dict):
+            return {
+                key: identity(item) for key, item in value.items()
+                if key == "id" or key.endswith(("_id", "_ids"))
+                or key in {"currency", "client_currency", "period", "problem"}
+                or isinstance(item, (dict, list))
+            }
+        if isinstance(value, list):
+            return sorted((identity(item) for item in value), key=lambda item: json.dumps(item, sort_keys=True))
+        return value
+
+    identities = sorted(json.dumps(identity(item), sort_keys=True, separators=(",", ":")) for item in items)
+    return hashlib.sha256(json.dumps(identities, separators=(",", ":")).encode()).hexdigest()
 
 
 USER_CODES = frozenset({
@@ -595,7 +616,7 @@ def _capsule_funding_issues(db: Session, client_id: int) -> list[dict[str, Any]]
     ]
     return [{
         "code": code, "severity": severity, "title": title, "detail": detail,
-        "count": len(items), "repairable": False, "items": items[:100],
+        "count": len(items), "repairable": False, "items": items,
     } for code, severity, title, detail, items in checks]
 
 
@@ -672,7 +693,7 @@ def check_data_health(db: Session, client_id: int, *, audience: str | None = Non
             "code": "entries_in_a_closed_period", "severity": "warning",
             "title": "締め後に記録された取引",
             "detail": "締め済みの月に、締め日時より後で作成された取引があります。締めは目印であり、修正は可能です。",
-            "count": len(late_entries), "repairable": False, "items": late_entries[:100],
+            "count": len(late_entries), "repairable": False, "items": late_entries,
         },
         {
             "code": "capsule_without_account",
@@ -681,7 +702,7 @@ def check_data_health(db: Session, client_id: int, *, audience: str | None = Non
             "detail": "An active rule cannot reserve money until its capsule has a funding plan.",
             "count": len(capsule_without_account),
             "repairable": False,
-            "items": capsule_without_account[:100],
+            "items": capsule_without_account,
         },
         *_capsule_funding_issues(db, client_id),
         {
@@ -707,7 +728,7 @@ def check_data_health(db: Session, client_id: int, *, audience: str | None = Non
             "detail": "Cash Flow accuracy depends on knowing whether each plan line moves cash, debt, or another asset.",
             "count": len(missing_source),
             "repairable": any(item["repairable"] for item in missing_source),
-            "items": missing_source[:100],
+            "items": missing_source,
         },
         # Existing clients index this code; without a cache it cannot disagree.
         {
@@ -726,7 +747,7 @@ def check_data_health(db: Session, client_id: int, *, audience: str | None = Non
             "detail": "Every transaction needs two or more legs whose debits and credits are equal and come to the transaction amount.",
             "count": len(unbalanced_journals),
             "repairable": False,
-            "items": unbalanced_journals[:100],
+            "items": unbalanced_journals,
         },
         {
             "code": "budget_leg_unclaimed",
@@ -740,7 +761,7 @@ def check_data_health(db: Session, client_id: int, *, audience: str | None = Non
             ),
             "count": len(unclaimed_legs),
             "repairable": False,
-            "items": unclaimed_legs[:100],
+            "items": unclaimed_legs,
         },
         {
             "code": "advance_pair_candidate",
@@ -753,7 +774,7 @@ def check_data_health(db: Session, client_id: int, *, audience: str | None = Non
             ),
             "count": len(advance_pairs),
             "repairable": False,
-            "items": advance_pairs[:100],
+            "items": advance_pairs,
         },
         {
             "code": "duplicate_plan_lines",
@@ -762,11 +783,13 @@ def check_data_health(db: Session, client_id: int, *, audience: str | None = Non
             "detail": "Only one active plan line should exist for the same period, source, and target.",
             "count": len(duplicate_plan_lines),
             "repairable": bool(duplicate_plan_lines),
-            "items": duplicate_plan_lines[:100],
+            "items": duplicate_plan_lines,
         },
     ]
     language = client_language(db, client_id)
     for issue in issues:
+        issue["fingerprint"] = issue_fingerprint(issue["items"])
+        issue["items"] = issue["items"][:100]
         issue["audience"] = "user" if issue["code"] in USER_CODES else "admin"
         if issue["code"] in TITLES:
             issue["title"] = pick(language, *TITLES[issue["code"]])

@@ -28,11 +28,15 @@ import type {
     ExchangeRate,
     FxTrackedCurrency,
     ExchangeRateAutoUpdateResult,
-    LoginResult,
+    SignInStep,
+    AccessResult,
+    EnrollmentResult,
+    MfaReplacementResult,
+    MfaFactor,
     LifeEvent,
     LifeEventProgress,
     MfaRecoveryCodes,
-    MfaSetupStart,
+    TotpProvisioning,
     MfaStatus,
     MonthlyReport,
     PeriodReview,
@@ -69,7 +73,7 @@ api.interceptors.response.use(
         const hadToken = Boolean(localStorage.getItem('finance_access_token'));
         const url = String(error.config?.url || '');
         // A wrong step-up code also answers 401; it must not sign the user out.
-        const isAuthFlow = url.startsWith('/auth/login') || url.startsWith('/auth/mfa/login/verify') || url.startsWith('/auth/register') || url.startsWith('/auth/reauth');
+        const isAuthFlow = ['/auth/login', '/auth/mfa/login/verify', '/auth/register', '/auth/password-change', '/auth/enroll/', '/auth/mfa/replace/', '/auth/mfa/recovery-codes/regenerate', '/auth/reauth'].some((path) => url.startsWith(path));
         if (error.response?.status === 401 && hadToken && !isAuthFlow) {
             localStorage.removeItem('finance_access_token');
             localStorage.removeItem('finance_client_id');
@@ -80,25 +84,38 @@ api.interceptors.response.use(
 );
 
 // Auth endpoints
-export const login = async (credentials: any): Promise<LoginResult> => {
+export const login = async (credentials: { username: string; password: string }): Promise<SignInStep> => {
     const response = await api.post('/auth/login', credentials);
     return response.data;
 };
 
-export const verifyMfaLogin = async (payload: { mfa_token: string; code?: string; recovery_code?: string }): Promise<LoginResult> => {
+export const verifyMfaLogin = async (payload: { mfa_token: string } & MfaFactor): Promise<AccessResult> => {
     const response = await api.post('/auth/mfa/login/verify', payload);
     return response.data;
 };
 
-export const register = async (userData: any) => {
+export const register = async (userData: { username: string; password: string; email?: string; name?: string }): Promise<SignInStep> => {
     const response = await api.post('/auth/register', userData);
     return response.data;
 };
 
+export const changeSignInPassword = async (payload: { step_token: string; new_password: string }): Promise<SignInStep> =>
+    (await api.post('/auth/password-change', payload)).data;
+
+export const startEnrollment = async (step_token: string): Promise<TotpProvisioning> =>
+    (await api.post('/auth/enroll/start', { step_token })).data;
+
+export const verifyEnrollment = async (payload: { step_token: string; code: string }): Promise<EnrollmentResult> =>
+    (await api.post('/auth/enroll/verify', payload)).data;
+
 // Changing the email or the password requires current_password.
 export interface ProfileUpdate { name?: string; email?: string; password?: string; current_password?: string }
 
-export const updateProfile = async (payload: ProfileUpdate) => (await api.patch('/auth/me', payload)).data;
+export const updateProfile = async (payload: ProfileUpdate): Promise<{ message: string; access_token?: string }> => {
+    const response = await api.patch<{ message: string; access_token?: string }>('/auth/me', payload);
+    if (response.data.access_token) localStorage.setItem('finance_access_token', response.data.access_token);
+    return response.data;
+};
 
 export const getMe = async () => {
     const response = await api.get('/me');
@@ -110,22 +127,18 @@ export const getMfaStatus = async (): Promise<MfaStatus> => {
     return response.data;
 };
 
-export const startMfaSetup = async (payload: { current_password: string }): Promise<MfaSetupStart> => {
-    const response = await api.post('/auth/mfa/setup/start', payload);
+export const startMfaReplacement = async (payload: MfaFactor): Promise<TotpProvisioning> => {
+    const response = await api.post('/auth/mfa/replace/start', payload);
     return response.data;
 };
 
-export const verifyMfaSetup = async (payload: { code: string }): Promise<MfaRecoveryCodes> => {
-    const response = await api.post('/auth/mfa/setup/verify', payload);
+export const verifyMfaReplacement = async (payload: { code: string }): Promise<MfaReplacementResult> => {
+    const response = await api.post<MfaReplacementResult>('/auth/mfa/replace/verify', payload);
+    localStorage.setItem('finance_access_token', response.data.access_token);
     return response.data;
 };
 
-export const disableMfa = async (payload: { current_password?: string; code?: string; recovery_code?: string }) => {
-    const response = await api.post('/auth/mfa/disable', payload);
-    return response.data;
-};
-
-export const regenerateMfaRecoveryCodes = async (payload: { current_password?: string; code?: string; recovery_code?: string }): Promise<MfaRecoveryCodes> => {
+export const regenerateMfaRecoveryCodes = async (payload: MfaFactor): Promise<MfaRecoveryCodes> => {
     const response = await api.post('/auth/mfa/recovery-codes/regenerate', payload);
     return response.data;
 };

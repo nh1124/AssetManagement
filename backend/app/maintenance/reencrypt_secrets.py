@@ -26,13 +26,15 @@ from .. import models, security
 def reencrypt(db: Session, *, apply: bool) -> dict[str, int]:
     counts = {"rotated": 0, "unreadable": 0}
 
-    for setting in db.query(models.ClientMfaSetting).filter(
-        models.ClientMfaSetting.totp_secret_encrypted.isnot(None)
-    ).all():
-        fresh = security.rotate_token(setting.totp_secret_encrypted)
-        counts["rotated" if fresh else "unreadable"] += 1
-        if fresh:
-            setting.totp_secret_encrypted = fresh
+    for setting in db.query(models.ClientMfaSetting).all():
+        for field in ("totp_secret_encrypted", "pending_totp_secret_encrypted"):
+            value = getattr(setting, field)
+            if value is None:
+                continue
+            fresh = security.rotate_token(value)
+            counts["rotated" if fresh else "unreadable"] += 1
+            if fresh:
+                setattr(setting, field, fresh)
 
     if apply:
         db.commit()
