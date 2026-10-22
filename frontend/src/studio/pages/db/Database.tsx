@@ -4,10 +4,11 @@ import { OverlayFooter } from '../../components/Overlay';
 
 export { Help };
 import { buttonClass, inputClass, primaryClass } from './forms';
+import { tr } from '../../i18n';
 
 export function Feedback({ loading, error, message }: { loading?: boolean; error?: string; message?: string }) {
     return <>
-        {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">読み込んでいます…</p>}
+        {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">{tr('読み込んでいます…', 'Loading…')}</p>}
         {error && <p role="alert" className="text-sm text-[var(--studio-danger)]">{error}</p>}
         {message && <p role="status" className="text-sm text-[var(--studio-positive)]">{message}</p>}
     </>;
@@ -48,22 +49,22 @@ export function Choice({ label, help, value, options, onChange, required = false
 }) {
     return <Field label={label} help={help}>
         <select className={inputClass} value={value ?? ''} required={required} disabled={disabled} onChange={(event) => onChange(event.target.value ? Number(event.target.value) : null)}>
-            <option value="">未設定</option>
+            <option value="">{tr('未設定', 'Not set')}</option>
             {/* Keep an existing reference visible even when its lookup is no longer available. */}
-            {value != null && !options.some((row) => row.id === value) && <option value={value}>#{value}（一覧にありません）</option>}
-            {options.map((row) => <option key={row.id} value={row.id}>{row.name}{row.is_active === false ? '（無効）' : ''}</option>)}
+            {value != null && !options.some((row) => row.id === value) && <option value={value}>{tr(`#${value}（一覧にありません）`, `#${value} (not in the list)`)}</option>}
+            {options.map((row) => <option key={row.id} value={row.id}>{row.name}{row.is_active === false ? tr('（無効）', ' (inactive)') : ''}</option>)}
         </select>
     </Field>;
 }
 
 export function EditorActions({ busy, form, onCancel, onDelete }: { busy: boolean; form: string; onCancel: () => void; onDelete?: () => void }) {
-    const save = <button type="submit" form={form} disabled={busy} className={primaryClass}>{busy ? '保存中…' : '保存'}</button>;
+    const save = <button type="submit" form={form} disabled={busy} className={primaryClass}>{busy ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}</button>;
     // Deleting sits apart from saving, on the far side and in the danger colour.
-    const remove = onDelete && <button type="button" disabled={busy} onClick={onDelete} className={`${dangerClass} mr-auto`}>削除</button>;
+    const remove = onDelete && <button type="button" disabled={busy} onClick={onDelete} className={`${dangerClass} mr-auto`}>{tr('削除', 'Delete')}</button>;
     return <OverlayFooter fallback={<div className="flex justify-end gap-2 md:col-span-2">
         {remove}
         {save}
-        <button type="button" disabled={busy} onClick={onCancel} className={buttonClass}>キャンセル</button>
+        <button type="button" disabled={busy} onClick={onCancel} className={buttonClass}>{tr('キャンセル', 'Cancel')}</button>
     </div>}>{remove}{save}</OverlayFooter>;
 }
 
@@ -83,21 +84,21 @@ export function EditableRow({ disabled, onEdit, className = '', children }: { di
 
 export function RowTitle({ name, disabled, onEdit, children }: { name: string; disabled: boolean; onEdit: () => void; children: ReactNode }) {
     return <th scope="row" className="px-5 py-3 font-medium">
-        <button type="button" disabled={disabled} aria-haspopup="dialog" aria-label={`${name}を編集`} onClick={(event) => { event.stopPropagation(); onEdit(); }} className="rounded text-left hover:text-[var(--studio-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)] disabled:cursor-default">{children}</button>
+        <button type="button" disabled={disabled} aria-haspopup="dialog" aria-label={tr(`${name}を編集`, `Edit ${name}`)} onClick={(event) => { event.stopPropagation(); onEdit(); }} className="rounded text-left hover:text-[var(--studio-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)] disabled:cursor-default">{children}</button>
     </th>;
 }
 
 export function ActiveSwitch({ name, active, disabled, busy = false, onToggle }: { name: string; active: boolean; disabled: boolean; busy?: boolean; onToggle: () => void }) {
-    return <button type="button" role="switch" aria-checked={active} aria-label={`${name}の有効状態`} disabled={disabled} onClick={(event) => { event.stopPropagation(); onToggle(); }} className="flex items-center gap-2 whitespace-nowrap rounded-md px-1 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)] disabled:cursor-not-allowed">
+    return <button type="button" role="switch" aria-checked={active} aria-label={tr(`${name}の有効状態`, `${name} active`)} disabled={disabled} onClick={(event) => { event.stopPropagation(); onToggle(); }} className="flex items-center gap-2 whitespace-nowrap rounded-md px-1 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)] disabled:cursor-not-allowed">
         <span aria-hidden="true" className={`flex h-5 w-9 items-center rounded-full px-0.5 ${active ? 'justify-end bg-[var(--studio-accent)]' : 'justify-start bg-[var(--studio-border-strong)]'}`}><span className="h-4 w-4 rounded-full bg-[var(--studio-surface)]" /></span>
-        <span>{active ? '有効' : '無効'}</span>
-        {busy && <span className="text-[var(--studio-text-muted)]">更新中…</span>}
+        <span>{active ? tr('有効', 'Active') : tr('無効', 'Inactive')}</span>
+        {busy && <span className="text-[var(--studio-text-muted)]">{tr('更新中…', 'Updating…')}</span>}
     </button>;
 }
 
-export function RowActions({ name, disabled, onEdit, onDelete, deleteLabel = '削除' }: { name: string; disabled: boolean; onEdit: () => void; onDelete: () => void; deleteLabel?: string }) {
+export function RowActions({ name, disabled, onEdit, onDelete, deleteLabel = tr('削除', 'Delete') }: { name: string; disabled: boolean; onEdit: () => void; onDelete: () => void; deleteLabel?: string }) {
     return <td className="whitespace-nowrap px-5 py-3"><div className="flex gap-2">
-        <button type="button" disabled={disabled} onClick={onEdit} aria-label={`${name}を編集`} className={buttonClass}>編集</button>
-        <button type="button" disabled={disabled} onClick={onDelete} aria-label={`${name}を${deleteLabel}`} className={dangerClass}>{deleteLabel}</button>
+        <button type="button" disabled={disabled} onClick={onEdit} aria-label={tr(`${name}を編集`, `Edit ${name}`)} className={buttonClass}>{tr('編集', 'Edit')}</button>
+        <button type="button" disabled={disabled} onClick={onDelete} aria-label={tr(`${name}を${deleteLabel}`, `${deleteLabel} ${name}`)} className={dangerClass}>{deleteLabel}</button>
     </div></td>;
 }

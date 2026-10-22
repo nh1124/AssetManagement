@@ -4,6 +4,7 @@ import type { TransactionProposal } from '../../../types';
 import { useResource } from '../../useResource';
 import Records from './Records';
 import AutoTransactions from './AutoTransactions';
+import { tr } from '../../i18n';
 
 const loadPending = (): Promise<TransactionProposal[]> => getTransactionProposals({ status: 'pending' });
 
@@ -14,7 +15,7 @@ function LedgerForClient({ automatic }: { automatic: boolean }) {
         <>
             {/* Keep the pending count beside the route tabs on both ledger views. */}
             <div className="-mt-2 mb-4 flex items-center gap-3 text-xs text-[var(--studio-text-muted)]" aria-live="polite">
-                <span>未反映：{loading ? '確認中…' : error ? '件数を取得できませんでした' : `${proposals?.length ?? 0}件`}</span>
+                <span>{tr('未反映：', 'Not yet recorded: ')}{loading ? tr('確認中…', 'Checking…') : error ? tr('件数を取得できませんでした', 'Could not get the count') : tr(`${proposals?.length ?? 0}件`, `${proposals?.length ?? 0}`)}</span>
             </div>
             {automatic ? (
                 <AutoTransactions proposals={proposals} loading={loading} error={error} onDecided={(id) => {

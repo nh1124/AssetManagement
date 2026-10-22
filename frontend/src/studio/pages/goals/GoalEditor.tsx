@@ -4,6 +4,7 @@ import type { LifeEvent, LifeEventKind } from '../../../types';
 import { Choice, EditorActions, Feedback, Field } from '../db/Database';
 import { buttonClass, inputClass } from '../db/forms';
 import { KIND_LABELS } from './eventKinds';
+import { tr } from '../../i18n';
 
 /** A life event: its kind, name, amount and date; a loan's rate, or a repayment's borrowing and months.
  * What an account gives toward it is a 積立設定 record of the simulation settings. */
@@ -28,15 +29,15 @@ export default function GoalEditor({ goal, scenarioId, events, currency, busy, o
         const value = Number(amount);
         if (busy) return;
         if (!name.trim() || !target || amount.trim() === '' || !Number.isFinite(value) || value < 0) {
-            setError('名称・日付と0以上の金額を入力してください。');
+            setError(tr('名称・日付と0以上の金額を入力してください。', 'Enter a name, a date and an amount of 0 or more.'));
             return;
         }
         if (direction === 'repayment' && (!borrowingId || !Number.isInteger(Number(count)) || Number(count) < 1)) {
-            setError('返済する借入と、1以上の回数を入力してください。');
+            setError(tr('返済する借入と、1以上の回数を入力してください。', 'Choose the borrowing to repay and a count of 1 or more.'));
             return;
         }
         if (direction === 'borrowing' && rate.trim() !== '' && !(Number(rate) >= 0)) {
-            setError('年利は0以上の数値で入力してください。');
+            setError(tr('年利は0以上の数値で入力してください。', 'Enter a rate of 0 or more.'));
             return;
         }
         setError('');
@@ -51,19 +52,19 @@ export default function GoalEditor({ goal, scenarioId, events, currency, busy, o
     return <form id={formId} onSubmit={submit} className="space-y-4">
         <Feedback error={error} />
         <fieldset disabled={busy} className="grid gap-4 md:grid-cols-2">
-            <fieldset className="space-y-2 md:col-span-2"><legend className="text-sm text-[var(--studio-text-muted)]">種別</legend><div role="group" aria-label="種別" className="inline-flex overflow-hidden rounded-md border border-[var(--studio-border)]">
+            <fieldset className="space-y-2 md:col-span-2"><legend className="text-sm text-[var(--studio-text-muted)]">{tr('種別', 'Kind')}</legend><div role="group" aria-label={tr('種別', 'Kind')} className="inline-flex overflow-hidden rounded-md border border-[var(--studio-border)]">
                 {(Object.keys(KIND_LABELS) as LifeEventKind[]).map((value) => <button key={value} type="button" aria-pressed={direction === value} onClick={() => setDirection(value)} className={`${buttonClass} rounded-none border-0 aria-pressed:bg-[var(--studio-accent-soft)] aria-pressed:text-[var(--studio-accent)]`}>{KIND_LABELS[value]}</button>)}
             </div></fieldset>
-            <Field label="名称"><input required value={name} onChange={(event) => setName(event.target.value)} className={inputClass} /></Field>
-            {direction === 'repayment' && <Choice label="返済する借入" value={borrowingId} options={borrowings} required onChange={setBorrowingId} />}
-            <Field label={direction === 'repayment' ? `毎月の返済額（${currency}）` : direction === 'expense' ? `目標額（${currency}）` : `金額（${currency}）`}
-                help={direction === 'expense' ? 'どの口座からいつ・いくら払うかは、シミュレーションの「使用口座と積立設定」に「ライフイベントへの取り崩し」として記録します（老後の生活費のように、毎月の取り崩しで払うこともできます）。' : undefined}><input required type="number" min="0" step="any" value={amount} onChange={(event) => setAmount(event.target.value)} className={inputClass} /></Field>
-            <Field label={direction === 'repayment' ? '返済の開始日' : '目標日'}><input required type="date" value={target} onChange={(event) => setTarget(event.target.value)} className={inputClass} /></Field>
-            {direction === 'repayment' && <Field label="回数（か月）" help="開始日の月から毎月払います。残高を払い終えた後は払いません。"><input required type="number" min="1" max="1200" step="1" value={count} onChange={(event) => setCount(event.target.value)} className={inputClass} /></Field>}
-            {direction === 'borrowing' && <Field label="年利（%）" help="返済のたびに、残高 × 年利 ÷ 12 の利息を先に払います。"><input inputMode="decimal" value={rate} placeholder="0" onChange={(event) => setRate(event.target.value)} className={inputClass} /></Field>}
-            <Field label="優先度"><select value={priority} onChange={(event) => setPriority(Number(event.target.value) as LifeEvent['priority'])} className={inputClass}><option value={1}>高</option><option value={2}>中</option><option value={3}>低</option></select></Field>
-            <div className="md:col-span-2"><Field label="メモ"><textarea value={note} onChange={(event) => setNote(event.target.value)} className={inputClass} /></Field></div>
-            {direction === 'repayment' && borrowings.length === 0 && <p className="text-xs text-[var(--studio-warning)] md:col-span-2">このシナリオに借入のイベントがありません。先に借入を作ってください。</p>}
+            <Field label={tr('名称', 'Name')}><input required value={name} onChange={(event) => setName(event.target.value)} className={inputClass} /></Field>
+            {direction === 'repayment' && <Choice label={tr('返済する借入', 'Borrowing to repay')} value={borrowingId} options={borrowings} required onChange={setBorrowingId} />}
+            <Field label={direction === 'repayment' ? tr(`毎月の返済額（${currency}）`, `Monthly repayment (${currency})`) : direction === 'expense' ? tr(`目標額（${currency}）`, `Target (${currency})`) : tr(`金額（${currency}）`, `Amount (${currency})`)}
+                help={direction === 'expense' ? tr('どの口座からいつ・いくら払うかは、シミュレーションの「使用口座と積立設定」に「ライフイベントへの取り崩し」として記録します（老後の生活費のように、毎月の取り崩しで払うこともできます）。', 'Which account pays how much and when is recorded as a “Drawdown for a life event” in the simulation’s accounts and contribution settings (it can also be paid by monthly drawdowns, like retirement living costs).') : undefined}><input required type="number" min="0" step="any" value={amount} onChange={(event) => setAmount(event.target.value)} className={inputClass} /></Field>
+            <Field label={direction === 'repayment' ? tr('返済の開始日', 'First repayment') : tr('目標日', 'Target date')}><input required type="date" value={target} onChange={(event) => setTarget(event.target.value)} className={inputClass} /></Field>
+            {direction === 'repayment' && <Field label={tr('回数（か月）', 'Payments (months)')} help={tr('開始日の月から毎月払います。残高を払い終えた後は払いません。', 'Paid monthly from the first month, and no more once the balance is paid off.')}><input required type="number" min="1" max="1200" step="1" value={count} onChange={(event) => setCount(event.target.value)} className={inputClass} /></Field>}
+            {direction === 'borrowing' && <Field label={tr('年利（%）', 'Annual rate (%)')} help={tr('返済のたびに、残高 × 年利 ÷ 12 の利息を先に払います。', 'Each repayment first pays interest of balance × rate ÷ 12.')}><input inputMode="decimal" value={rate} placeholder="0" onChange={(event) => setRate(event.target.value)} className={inputClass} /></Field>}
+            <Field label={tr('優先度', 'Priority')}><select value={priority} onChange={(event) => setPriority(Number(event.target.value) as LifeEvent['priority'])} className={inputClass}><option value={1}>{tr('高', 'High')}</option><option value={2}>{tr('中', 'Medium')}</option><option value={3}>{tr('低', 'Low')}</option></select></Field>
+            <div className="md:col-span-2"><Field label={tr('メモ', 'Note')}><textarea value={note} onChange={(event) => setNote(event.target.value)} className={inputClass} /></Field></div>
+            {direction === 'repayment' && borrowings.length === 0 && <p className="text-xs text-[var(--studio-warning)] md:col-span-2">{tr('このシナリオに借入のイベントがありません。先に借入を作ってください。', 'This scenario has no borrowing event. Create the borrowing first.')}</p>}
             <EditorActions form={formId} busy={busy} onCancel={onCancel} onDelete={onDelete} />
         </fieldset>
     </form>;

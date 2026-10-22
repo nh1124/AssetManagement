@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { X } from 'lucide-react';
 import { focusRing } from './ui';
+import { tr } from '../../studio/i18n';
 
 // Open sheets, newest last: only the topmost answers Escape and keeps focus (a confirmation over an editor).
 const open: string[] = [];
@@ -54,7 +55,7 @@ export default function Sheet({ title, onClose, children, footer, busy = false, 
             <div className="flex justify-center pt-2" aria-hidden><span className="h-1 w-10 rounded-full bg-[var(--studio-border-strong)]" /></div>
             <header className="flex items-center justify-between gap-3 px-5 pb-2 pt-2">
                 <h2 id={heading} className="text-base font-semibold">{title}</h2>
-                <button type="button" onClick={onClose} disabled={busy} aria-label="閉じる"
+                <button type="button" onClick={onClose} disabled={busy} aria-label={tr('閉じる', 'Close')}
                     className={`-mr-2 flex h-11 w-11 items-center justify-center rounded-full text-[var(--studio-text-muted)] active:bg-[var(--studio-accent-soft)] disabled:opacity-40 ${focusRing}`}>
                     <X size={20} aria-hidden />
                 </button>

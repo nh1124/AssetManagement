@@ -159,6 +159,22 @@ def test_a_new_reason_is_a_new_notification_and_long_lists_end_in_a_count(db):
     assert second["dedupe_key"] != first["dedupe_key"]
 
 
+def test_notifications_follow_the_client_language_without_reopening(db):
+    for index in range(12):
+        db.add(models.TransactionProposal(client_id=1, origin="recurring", date=date(2026, 10, 1), description=f"明細{index}",
+                                          amount_minor=100, legs=[], idempotency_key=f"k{index}"))
+    db.flush()
+    (japanese,) = workflow.unmatched_notifications(db, 1, PERIOD)
+    db.get(models.Client, 1).general_settings = {"language": "en"}
+    db.flush()
+    (english,) = workflow.unmatched_notifications(db, 1, PERIOD)
+    assert english["title"] == "12 automatic transaction(s) not yet recorded" and english["body"].splitlines()[-1] == "and 2 more"
+    # The same reasons in another language are the same notification, so a dismissal holds.
+    assert english["dedupe_key"] == japanese["dedupe_key"]
+    (close,) = workflow.month_close_notifications(db, 1, PERIOD) or [None]
+    assert close is None or close["title"].endswith("is not closed")
+
+
 def test_data_health_notifies_warnings_and_errors_only(db, monkeypatch):
     issues = [
         {"code": "journal_unbalanced", "severity": "error", "title": "不一致", "count": 2},

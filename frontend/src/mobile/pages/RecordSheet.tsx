@@ -10,10 +10,11 @@ import { assetErrorMessage, useResource } from '../../studio/useResource';
 import Sheet from '../components/Sheet';
 import { useSnack } from '../components/snack';
 import { dangerButton, Field, fieldClass, focusRing, primaryButton, Segmented } from '../components/ui';
+import { tr } from '../../studio/i18n';
 
 type Kind = 'expense' | 'income' | 'transfer';
 type AccountType = Account['account_type'];
-const KIND_OPTIONS: Array<{ value: Kind; label: string }> = [{ value: 'expense', label: '支出' }, { value: 'income', label: '収入' }, { value: 'transfer', label: '振替' }];
+const kindOptions = (): Array<{ value: Kind; label: string }> => [{ value: 'expense', label: tr('支出', 'Expense') }, { value: 'income', label: tr('収入', 'Income') }, { value: 'transfer', label: tr('振替', 'Transfer') }];
 // Which accounts each side of a kind may name: 支出 debits an expense from money, 収入 credits income into an asset.
 const SUBJECT_TYPES: Record<Kind, AccountType[]> = { expense: ['expense'], income: ['income'], transfer: [] };
 const FROM_TYPES: Record<Kind, AccountType[]> = { expense: ['asset', 'liability'], income: [], transfer: ['asset', 'liability'] };
@@ -115,12 +116,12 @@ export default function RecordSheet({ transaction, onClose, onSaved }: { transac
     const submit = async (event: FormEvent) => {
         event.preventDefault();
         if (busy) return;
-        const missing = !(Number.isFinite(value) && value > 0) ? '金額を入力してください。'
-            : kind !== 'transfer' && !allowed(subject, SUBJECT_TYPES[kind]) ? (kind === 'expense' ? '費目を選んでください。' : '収入の種類を選んでください。')
-            : kind !== 'income' && !allowed(from, FROM_TYPES[kind]) ? (kind === 'expense' ? '支払った口座を選んでください。' : '振替元を選んでください。')
-            : kind !== 'expense' && !allowed(to, TO_TYPES[kind]) ? (kind === 'income' ? '入金した口座を選んでください。' : '振替先を選んでください。')
-            : kind === 'transfer' && from === to ? '振替元と別の振替先を選んでください。'
-            : !date ? '日付を入力してください。' : '';
+        const missing = !(Number.isFinite(value) && value > 0) ? tr('金額を入力してください。', 'Enter an amount.')
+            : kind !== 'transfer' && !allowed(subject, SUBJECT_TYPES[kind]) ? (kind === 'expense' ? tr('費目を選んでください。', 'Choose a category.') : tr('収入の種類を選んでください。', 'Choose the kind of income.'))
+            : kind !== 'income' && !allowed(from, FROM_TYPES[kind]) ? (kind === 'expense' ? tr('支払った口座を選んでください。', 'Choose the account you paid from.') : tr('振替元を選んでください。', 'Choose where to transfer from.'))
+            : kind !== 'expense' && !allowed(to, TO_TYPES[kind]) ? (kind === 'income' ? tr('入金した口座を選んでください。', 'Choose the account it went into.') : tr('振替先を選んでください。', 'Choose where to transfer to.'))
+            : kind === 'transfer' && from === to ? tr('振替元と別の振替先を選んでください。', 'Choose a different account to transfer to.')
+            : !date ? tr('日付を入力してください。', 'Enter a date.') : '';
         if (missing) { setError(missing); return; }
         const legs: TransactionLeg[] = kind === 'expense' ? [{ account_id: subject as number, debit: value }, { account_id: from as number, credit: value }]
             : kind === 'income' ? [{ account_id: to as number, debit: value }, { account_id: subject as number, credit: value }]
@@ -132,7 +133,7 @@ export default function RecordSheet({ transaction, onClose, onSaved }: { transac
             const result = transaction ? await updateTransaction(transaction.id, payload) : await createTransaction(payload);
             if (subject !== null) store(RECENT_KEY, [subject, ...recent.filter((id) => id !== subject)].slice(0, 12));
             if (kind === 'expense' && from !== null) store(FROM_KEY, from);
-            snack(`${transaction ? '記録を更新しました' : '記録しました'}${result.closed_period ? `（${result.closed_period} は締め済みです）` : ''}`);
+            snack(`${transaction ? tr('記録を更新しました', 'Record updated') : tr('記録しました', 'Recorded')}${result.closed_period ? tr(`（${result.closed_period} は締め済みです）`, ` (${result.closed_period} is closed)`) : ''}`);
             onSaved();
         } catch (failure) {
             setError(assetErrorMessage(failure));
@@ -142,11 +143,11 @@ export default function RecordSheet({ transaction, onClose, onSaved }: { transac
     };
     const remove = async () => {
         if (!transaction || busy) return;
-        if (!(await confirm(`${transaction.date}「${transaction.description || '内容なし'}」を削除します。削除は取り消せません。`, '削除する'))) return;
+        if (!(await confirm(tr(`${transaction.date}「${transaction.description || '内容なし'}」を削除します。削除は取り消せません。`, `Delete “${transaction.description || 'Untitled'}” on ${transaction.date}? This cannot be undone.`), tr('削除する', 'Delete')))) return;
         setBusy(true);
         try {
             await deleteTransaction(transaction.id);
-            snack('記録を削除しました');
+            snack(tr('記録を削除しました', 'Record deleted'));
             onSaved();
         } catch (failure) {
             setError(assetErrorMessage(failure));
@@ -156,57 +157,57 @@ export default function RecordSheet({ transaction, onClose, onSaved }: { transac
     const dismiss = async () => {
         if (busy) return;
         // Typed input is not thrown away by a stray tap on the backdrop.
-        if (touched && simple && !(await confirm('入力した内容は保存されません。閉じますか？', '閉じる', '入力の破棄'))) return;
+        if (touched && simple && !(await confirm(tr('入力した内容は保存されません。閉じますか？', 'What you entered will not be saved. Close?'), tr('閉じる', 'Close'), tr('入力の破棄', 'Discard input')))) return;
         onClose();
     };
     const edit = <T,>(setter: (value: T) => void) => (value: T) => { setter(value); setTouched(true); };
     const accountSelect = (label: string, selected: number | null, options: Account[], onChange: (id: number | null) => void) => <Field label={label}>
         <select value={selected ?? ''} onChange={(event) => edit(onChange)(event.target.value ? Number(event.target.value) : null)} className={fieldClass}>
-            <option value="">選んでください</option>
+            <option value="">{tr('選んでください', 'Choose…')}</option>
             {options.map((account) => <option key={account.id} value={account.id}>{account.name}</option>)}
         </select>
     </Field>;
     const form = 'mobile-record-form';
-    return <Sheet title={transaction ? '記録を編集' : '取引を記録'} onClose={() => void dismiss()} busy={busy} tall
+    return <Sheet title={transaction ? tr('記録を編集', 'Edit record') : tr('取引を記録', 'Record a transaction')} onClose={() => void dismiss()} busy={busy} tall
         footer={simple && resource.data ? <div className="flex gap-3">
-            {transaction && <button type="button" onClick={() => void remove()} disabled={busy} className={dangerButton}>削除</button>}
-            <button type="submit" form={form} disabled={busy} className={`${primaryButton} flex-1`}>{busy ? '保存しています…' : transaction ? '保存する' : '記録する'}</button>
+            {transaction && <button type="button" onClick={() => void remove()} disabled={busy} className={dangerButton}>{tr('削除', 'Delete')}</button>}
+            <button type="submit" form={form} disabled={busy} className={`${primaryButton} flex-1`}>{busy ? tr('保存しています…', 'Saving…') : transaction ? tr('保存する', 'Save') : tr('記録する', 'Record')}</button>
         </div> : undefined}>
         {resource.error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-[var(--studio-danger)]">{resource.error}</p>}
         {!resource.data && !resource.error && <div className="h-40 animate-pulse rounded-2xl bg-[var(--studio-surface)]" />}
         {resource.data && !simple && <div className="space-y-3 rounded-2xl bg-[var(--studio-surface)] p-4 text-sm">
-            <p>この記録（内訳が複数ある・メモや取り置き・減価償却が付いている・返金のような組み合わせ）は PC版の家計簿で編集してください。</p>
-            <a href="/studio/ledger" className={`inline-flex min-h-11 items-center gap-1 font-medium text-[var(--studio-accent)] ${focusRing}`}>PC版で開く<ExternalLink size={14} aria-hidden /></a>
+            <p>{tr('この記録（内訳が複数ある・メモや取り置き・減価償却が付いている・返金のような組み合わせ）は PC版の家計簿で編集してください。', 'Edit this record in the desktop ledger: it has several lines, a memo, an earmark or depreciation, or a combination such as a refund.')}</p>
+            <a href="/studio/ledger" className={`inline-flex min-h-11 items-center gap-1 font-medium text-[var(--studio-accent)] ${focusRing}`}>{tr('PC版で開く', 'Open on desktop')}<ExternalLink size={14} aria-hidden /></a>
         </div>}
         {resource.data && simple && <form id={form} onSubmit={(event) => void submit(event)} className="space-y-5">
-            <Segmented label="記録の種類" value={kind} options={KIND_OPTIONS} onChange={chooseKind} />
+            <Segmented label={tr('記録の種類', 'Kind of record')} value={kind} options={kindOptions()} onChange={chooseKind} />
             <label className="block rounded-2xl bg-[var(--studio-surface)] px-4 py-3 shadow-[var(--mobile-shadow)]">
-                <span className="text-xs font-medium text-[var(--studio-text-muted)]">金額{currency !== (currentClient?.general_settings?.currency || 'JPY') ? `（${currency}）` : ''}</span>
+                <span className="text-xs font-medium text-[var(--studio-text-muted)]">{tr('金額', 'Amount')}{currency !== (currentClient?.general_settings?.currency || 'JPY') ? tr(`（${currency}）`, ` (${currency})`) : ''}</span>
                 <div className="flex items-baseline gap-1">
                     <span className="text-2xl font-semibold text-[var(--studio-text-muted)]">{getCurrencySymbol(currency)}</span>
-                    <input ref={amountInput} inputMode="decimal" value={amount} placeholder="0" aria-label="金額"
+                    <input ref={amountInput} inputMode="decimal" value={amount} placeholder="0" aria-label={tr('金額', 'Amount')}
                         onChange={(event) => edit(setAmount)(event.target.value.replace(/[^\d.]/g, ''))}
                         className="w-full bg-transparent text-4xl font-bold tabular-nums tracking-tight focus:outline-none" />
                 </div>
             </label>
             {kind !== 'transfer' && <fieldset>
-                <legend className="mb-2 text-xs font-medium text-[var(--studio-text-muted)]">{kind === 'expense' ? '費目' : '収入の種類'}</legend>
+                <legend className="mb-2 text-xs font-medium text-[var(--studio-text-muted)]">{kind === 'expense' ? tr('費目', 'Category') : tr('収入の種類', 'Kind of income')}</legend>
                 {subjects.length ? <div className="flex flex-wrap gap-2">
                     {shownSubjects.map((account) => <button key={account.id} type="button" aria-pressed={subject === account.id} onClick={() => edit(setSubject)(account.id)}
                         className={`min-h-11 rounded-full border px-4 text-sm ${focusRing} ${subject === account.id ? 'border-[var(--studio-accent)] bg-[var(--studio-accent)] text-white' : 'border-[var(--studio-border)] bg-[var(--studio-surface)]'}`}>{account.name}</button>)}
                     {subjects.length > SHOWN_SUBJECTS && <button type="button" onClick={() => setAllSubjects((shown) => !shown)}
-                        className={`min-h-11 rounded-full px-3 text-sm font-medium text-[var(--studio-accent)] ${focusRing}`}>{allSubjects ? '少なく表示' : `ほか ${subjects.length - SHOWN_SUBJECTS}件`}</button>}
-                </div> : <p className="text-sm text-[var(--studio-text-muted)]">{kind === 'expense' ? '費用' : '収益'}の科目がありません。PC版のデータベースで追加してください。</p>}
+                        className={`min-h-11 rounded-full px-3 text-sm font-medium text-[var(--studio-accent)] ${focusRing}`}>{allSubjects ? tr('少なく表示', 'Show fewer') : tr(`ほか ${subjects.length - SHOWN_SUBJECTS}件`, `${subjects.length - SHOWN_SUBJECTS} more`)}</button>}
+                </div> : <p className="text-sm text-[var(--studio-text-muted)]">{kind === 'expense' ? tr('費用の科目がありません。PC版のデータベースで追加してください。', 'No expense accounts. Add them in the desktop database.') : tr('収益の科目がありません。PC版のデータベースで追加してください。', 'No income accounts. Add them in the desktop database.')}</p>}
             </fieldset>}
-            {kind === 'expense' && accountSelect('支払った口座', from, choices(FROM_TYPES.expense), setFrom)}
-            {kind === 'income' && accountSelect('入金した口座', to, choices(TO_TYPES.income), setTo)}
+            {kind === 'expense' && accountSelect(tr('支払った口座', 'Paid from'), from, choices(FROM_TYPES.expense), setFrom)}
+            {kind === 'income' && accountSelect(tr('入金した口座', 'Paid into'), to, choices(TO_TYPES.income), setTo)}
             {kind === 'transfer' && <div className="grid gap-4">
-                {accountSelect('振替元', from, choices(FROM_TYPES.transfer), setFrom)}
-                {accountSelect('振替先', to, choices(TO_TYPES.transfer).filter((account) => account.id !== from), setTo)}
+                {accountSelect(tr('振替元', 'From'), from, choices(FROM_TYPES.transfer), setFrom)}
+                {accountSelect(tr('振替先', 'To'), to, choices(TO_TYPES.transfer).filter((account) => account.id !== from), setTo)}
             </div>}
             <div className="grid grid-cols-2 gap-3">
-                <Field label="日付"><input type="date" required value={date} onChange={(event) => edit(setDate)(event.target.value)} className={fieldClass} /></Field>
-                <Field label="内容"><input value={description} placeholder="任意" onChange={(event) => edit(setDescription)(event.target.value)} className={fieldClass} /></Field>
+                <Field label={tr('日付', 'Date')}><input type="date" required value={date} onChange={(event) => edit(setDate)(event.target.value)} className={fieldClass} /></Field>
+                <Field label={tr('内容', 'Description')}><input value={description} placeholder={tr('任意', 'Optional')} onChange={(event) => edit(setDescription)(event.target.value)} className={fieldClass} /></Field>
             </div>
             {error && <p role="alert" className="rounded-xl bg-red-50 px-3 py-2 text-sm text-[var(--studio-danger)]">{error}</p>}
         </form>}

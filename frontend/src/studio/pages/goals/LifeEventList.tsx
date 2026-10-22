@@ -9,8 +9,9 @@ import { buttonClass } from '../db/forms';
 import { eventAmount, KIND_LABELS } from './eventKinds';
 import LifeEventOverlay from './LifeEventOverlay';
 import { useScenario } from './scenarioContext';
+import { labels, tr } from '../../i18n';
 
-const PRIORITIES = { 1: '高', 2: '中', 3: '低' } as const;
+const PRIORITIES = labels<'1' | '2' | '3'>({ 1: ['高', 'High'], 2: ['中', 'Medium'], 3: ['低', 'Low'] });
 
 function LifeEventListForClient({ currency, clientName }: { currency: string; clientName?: string }) {
     const { scenario } = useScenario();
@@ -23,17 +24,17 @@ function LifeEventListForClient({ currency, clientName }: { currency: string; cl
     const [editing, setEditing] = useState<LifeEvent | null | undefined>(undefined);
     const disabled = !clientName || resource.loading || Boolean(resource.error);
     return <section className="space-y-4">
-        <div><button type="button" disabled={disabled} onClick={() => setEditing(null)} className={buttonClass}>新しいライフイベント</button></div>
+        <div><button type="button" disabled={disabled} onClick={() => setEditing(null)} className={buttonClass}>{tr('新しいライフイベント', 'New life event')}</button></div>
         <Feedback loading={resource.loading} error={resource.error} />
-        {resource.data && <DataTable columns={['名称', '種別', '金額', '日付', '優先度']}>
+        {resource.data && <DataTable columns={[tr('名称', 'Name'), tr('種別', 'Kind'), tr('金額', 'Amount'), tr('日付', 'Date'), tr('優先度', 'Priority')]}>
             {resource.data.events.map((event) => <EditableRow key={event.id} disabled={disabled} onEdit={() => setEditing(event)}>
                 <RowTitle name={event.name} disabled={disabled} onEdit={() => setEditing(event)}>{event.name}</RowTitle>
                 <td className="whitespace-nowrap px-5 py-3">{KIND_LABELS[event.direction]}</td>
                 <td className="whitespace-nowrap px-5 py-3 tabular-nums">{eventAmount(event, currency)}</td>
                 <td className="whitespace-nowrap px-5 py-3">{formatDate(event.target_date)}</td>
-                <td className="whitespace-nowrap px-5 py-3">{PRIORITIES[event.priority]}</td>
+                <td className="whitespace-nowrap px-5 py-3">{PRIORITIES[String(event.priority) as '1' | '2' | '3']}</td>
             </EditableRow>)}
-            {resource.data.events.length === 0 && <tr><td colSpan={5} className="px-5 py-4 text-[var(--studio-text-muted)]">ライフイベントはありません。</td></tr>}
+            {resource.data.events.length === 0 && <tr><td colSpan={5} className="px-5 py-4 text-[var(--studio-text-muted)]">{tr('ライフイベントはありません。', 'No life events.')}</td></tr>}
         </DataTable>}
         {editing !== undefined && resource.data && clientName && <LifeEventOverlay event={editing} scenarioId={scenario.id} events={resource.data.events}
             currency={currency} clientName={clientName} onClose={() => setEditing(undefined)} onChanged={resource.reload} />}

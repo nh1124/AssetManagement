@@ -5,6 +5,7 @@ import Overlay from '../../components/Overlay';
 import { useConfirm } from '../../components/useConfirm';
 import { Feedback, Field } from '../db/Database';
 import { buttonClass, inputClass, primaryClass, useMutation } from '../db/forms';
+import { tr } from '../../i18n';
 
 export default function LifeEventLinkDetails({ edge, events, clientName, onReload, onClose }: {
     edge: LifeEventLink; events: LifeEvent[]; clientName: string;
@@ -20,16 +21,16 @@ export default function LifeEventLinkDetails({ edge, events, clientName, onReloa
     const changed = offset !== edge.offset_months;
     const done = () => { onClose(); onReload(); };
 
-    return <Overlay title="接続" busy={mutation.busy} onClose={onClose} footer={<>
+    return <Overlay title={tr('接続', 'Link')} busy={mutation.busy} onClose={onClose} footer={<>
         {!deleted && <button type="button" disabled={mutation.busy} className={`${buttonClass} mr-auto text-[var(--studio-danger)]`} onClick={() => {
             void (async () => {
-                if (await confirm(`「${clientName}」の「${source}」から「${target}」への接続を削除します。`, '削除')) {
-                    await mutation.run(() => deleteLifeEventLink(edge.id), '接続を削除しました。', done);
+                if (await confirm(tr(`「${clientName}」の「${source}」から「${target}」への接続を削除します。`, `Delete the link from “${source}” to “${target}” for “${clientName}”.`), tr('削除', 'Delete'))) {
+                    await mutation.run(() => deleteLifeEventLink(edge.id), tr('接続を削除しました。', 'Link deleted.'), done);
                 }
             })();
-        }}>削除</button>}
+        }}>{tr('削除', 'Delete')}</button>}
         <button type="submit" form={form} disabled={mutation.busy || (!changed && !deleted)} className={primaryClass}>
-            {mutation.busy ? '保存中…' : deleted ? '再作成' : '削除して再作成'}
+            {mutation.busy ? tr('保存中…', 'Saving…') : deleted ? tr('再作成', 'Recreate') : tr('削除して再作成', 'Delete and recreate')}
         </button>
     </>}>
         <Feedback error={mutation.error} />
@@ -38,7 +39,7 @@ export default function LifeEventLinkDetails({ edge, events, clientName, onReloa
             // is the difference between a retry and a connection the user thinks is
             // still there.
             <p className="text-sm text-[var(--studio-danger)]">
-                元の接続は削除済みで、作り直しに失敗しました。もう一度保存すると作り直します。
+                {tr('元の接続は削除済みで、作り直しに失敗しました。もう一度保存すると作り直します。', 'The old link was deleted and recreating it failed. Save again to recreate it.')}
             </p>
         )}
         <form id={form} className="space-y-4" onSubmit={(event) => {
@@ -57,15 +58,15 @@ export default function LifeEventLinkDetails({ edge, events, clientName, onReloa
                     onReload();
                     throw failure;
                 }
-            }, '接続を変更しました。', done);
+            }, tr('接続を変更しました。', 'Link changed.'), done);
         }}>
             <fieldset disabled={mutation.busy} className="grid gap-4 sm:grid-cols-2">
-                <Field label="元のイベント"><span className="block">{source}</span></Field>
-                <Field label="次のイベント"><span className="block">{target}</span></Field>
-                <Field label="元のイベントからの月数（0＝目標日）"><input type="number" required step="1" value={offset} onChange={(event) => setOffset(Number(event.target.value))} className={inputClass} /></Field>
+                <Field label={tr('元のイベント', 'From event')}><span className="block">{source}</span></Field>
+                <Field label={tr('次のイベント', 'Next event')}><span className="block">{target}</span></Field>
+                <Field label={tr('元のイベントからの月数（0＝目標日）', 'Months after the first event (0 = its date)')}><input type="number" required step="1" value={offset} onChange={(event) => setOffset(Number(event.target.value))} className={inputClass} /></Field>
             </fieldset>
             {/* This operation is two requests, so the user must see its non-atomic state. */}
-            <p role="status" className="text-xs text-[var(--studio-text-muted)]">{deleted ? '接続は削除済みです。再作成してください。' : '変更は接続を削除して再作成します。'}</p>
+            <p role="status" className="text-xs text-[var(--studio-text-muted)]">{deleted ? tr('接続は削除済みです。再作成してください。', 'The link is deleted. Recreate it.') : tr('変更は接続を削除して再作成します。', 'A change deletes the link and creates it again.')}</p>
         </form>
     </Overlay>;
 }

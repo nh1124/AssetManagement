@@ -21,6 +21,7 @@ from ..services import (
     ai_change_request_store, data_health_service, ledger_service,
     notification_service, period_close_service,
 )
+from ..services.client_settings_service import client_language, pick
 from ..services.periods import add_months, period_to_range
 from ..services import goal_budget_record, goal_plan_service
 
@@ -32,11 +33,12 @@ MONTH_CLOSE = "month_close"
 BODY_LINES = 10
 
 
-def _notification(kind: str, reasons: list, title: str, lines: list[str], link: str, payload: dict) -> list[dict]:
+def _notification(kind: str, reasons: list, title: str, lines: list[str], link: str, payload: dict, language: str = "ja") -> list[dict]:
+    # The key is the reasons alone, so a language change rewrites the text without reopening a dismissal.
     key = hashlib.sha256(json.dumps(sorted(reasons)).encode()).hexdigest()[:16]
     shown = lines[:BODY_LINES]
     if len(lines) > len(shown):
-        shown.append(f"ほか{len(lines) - len(shown)}件")
+        shown.append(pick(language, f"ほか{len(lines) - len(shown)}件", f"and {len(lines) - len(shown)} more"))
     return [{"dedupe_key": f"{kind}:{key}", "title": title, "body": "\n".join(shown),
              "payload": {**payload, "count": len(lines)}, "link": link}]
 
@@ -45,18 +47,22 @@ def approval_notifications(db: Session, client_id: int, period: str) -> list[dic
     rows = ai_change_request_store.list_for_client(db, client_id, status="pending")
     if not rows:
         return []
-    return _notification(APPROVAL_PENDING, [row.id for row in rows], f"承認待ちの AI 変更が{len(rows)}件あります",
-                         [f"#{row.id} {row.resource}・{row.action}" for row in rows],
-                         "/automation/approvals", {"ids": [row.id for row in rows]})
+    language = client_language(db, client_id)
+    return _notification(APPROVAL_PENDING, [row.id for row in rows],
+                         pick(language, f"承認待ちの AI 変更が{len(rows)}件あります", f"{len(rows)} change(s) from AI awaiting approval"),
+                         [f"#{row.id} {row.resource}{pick(language, '・', ' · ')}{row.action}" for row in rows],
+                         "/automation/approvals", {"ids": [row.id for row in rows]}, language)
 
 
 def unmatched_notifications(db: Session, client_id: int, period: str) -> list[dict]:
     rows = ledger_service.list_proposals(db, client_id, status="pending")
     if not rows:
         return []
-    return _notification(UNMATCHED, [row.id for row in rows], f"未反映の候補が{len(rows)}件あります",
+    language = client_language(db, client_id)
+    return _notification(UNMATCHED, [row.id for row in rows],
+                         pick(language, f"未反映の候補が{len(rows)}件あります", f"{len(rows)} automatic transaction(s) not yet recorded"),
                          [f"{row.date.isoformat()} {row.description}" for row in rows],
-                         "/ledger/auto", {"ids": [row.id for row in rows]})
+                         "/ledger/auto", {"ids": [row.id for row in rows]}, language)
 
 
 def data_health_notifications(db: Session, client_id: int, period: str) -> list[dict]:
@@ -64,9 +70,11 @@ def data_health_notifications(db: Session, client_id: int, period: str) -> list[
               if issue["count"] > 0 and issue["severity"] in ("warning", "error")]
     if not issues:
         return []
-    return _notification(DATA_HEALTH, [issue["code"] for issue in issues], "データ健全性に異常があります",
-                         [f"{issue['title']}（{issue['count']}件）" for issue in issues],
-                         "/debug/data-health", {"codes": [issue["code"] for issue in issues]})
+    language = client_language(db, client_id)
+    return _notification(DATA_HEALTH, [issue["code"] for issue in issues],
+                         pick(language, "データ健全性に異常があります", "Data health issues found"),
+                         [pick(language, f"{issue['title']}（{issue['count']}件）", f"{issue['title']} ({issue['count']})") for issue in issues],
+                         "/debug/data-health", {"codes": [issue["code"] for issue in issues]}, language)
 
 
 def month_close_notifications(db: Session, client_id: int, period: str) -> list[dict]:
@@ -79,8 +87,10 @@ def month_close_notifications(db: Session, client_id: int, period: str) -> list[
     if not rows:
         return []
     # The ledger month view holds the close; the link opens that month.
-    return _notification(MONTH_CLOSE, [previous], f"{previous} が締められていません",
-                         ["記録を確認して月を締めてください。"], f"/ledger?month={previous}", {"period": previous})
+    language = client_language(db, client_id)
+    return _notification(MONTH_CLOSE, [previous], pick(language, f"{previous} が締められていません", f"{previous} is not closed"),
+                         [pick(language, "記録を確認して月を締めてください。", "Check the records and close the month.")],
+                         f"/ledger?month={previous}", {"period": previous}, language)
 
 
 GENERATORS: dict[str, Callable[[Session, int, str], list[dict]]] = {

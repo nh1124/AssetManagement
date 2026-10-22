@@ -5,6 +5,7 @@ import { clientToday, useTimezone } from '../../datetime';
 import MonthPicker from '../ledger/MonthPicker';
 import { formatCurrency } from '../../../utils/currency';
 import { useResource as useAssetData } from '../../useResource';
+import { tr } from '../../i18n';
 
 interface BalanceSheet {
     as_of_date: string;
@@ -41,31 +42,31 @@ function OverviewForDate({ asOf }: { asOf: string }) {
 
     return (
         <section className="space-y-4">
-            {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">貸借対照表を読み込んでいます…</p>}
-            {error && <p role="alert" className="text-sm text-[var(--studio-danger)]">貸借対照表を取得できませんでした。{error}</p>}
+            {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">{tr('貸借対照表を読み込んでいます…', 'Loading the balance sheet…')}</p>}
+            {error && <p role="alert" className="text-sm text-[var(--studio-danger)]">{tr('貸借対照表を取得できませんでした。', 'Could not load the balance sheet. ')}{error}</p>}
             {sheet && (
                 <div className="grid gap-4 lg:grid-cols-2" aria-busy={loading}>
                     <section className="flex flex-col overflow-hidden rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)]">
-                        <h3 className="border-b border-[var(--studio-border)] px-5 py-4 text-sm font-semibold">資産</h3>
-                        <div className="flex-1"><BalanceRows rows={sheet.assets} currency={sheet.currency} emptyLabel="資産はありません。" /></div>
+                        <h3 className="border-b border-[var(--studio-border)] px-5 py-4 text-sm font-semibold">{tr('資産', 'Assets')}</h3>
+                        <div className="flex-1"><BalanceRows rows={sheet.assets} currency={sheet.currency} emptyLabel={tr('資産はありません。', 'No assets.')} /></div>
                         <dl className="border-t border-[var(--studio-border)] bg-[var(--studio-accent-soft)] px-5 py-4">
                             <div className="flex justify-between gap-4 text-sm font-semibold">
-                                <dt>資産合計</dt><dd className="whitespace-nowrap tabular-nums">{formatCurrency(sheet.total_assets, sheet.currency)}</dd>
+                                <dt>{tr('資産合計', 'Total assets')}</dt><dd className="whitespace-nowrap tabular-nums">{formatCurrency(sheet.total_assets, sheet.currency)}</dd>
                             </div>
                         </dl>
                     </section>
                     <section className="overflow-hidden rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)]">
-                        <h3 className="border-b border-[var(--studio-border)] px-5 py-4 text-sm font-semibold">負債・純資産</h3>
-                        <BalanceRows rows={sheet.liabilities} currency={sheet.currency} emptyLabel="負債はありません。" />
+                        <h3 className="border-b border-[var(--studio-border)] px-5 py-4 text-sm font-semibold">{tr('負債・純資産', 'Liabilities and net worth')}</h3>
+                        <BalanceRows rows={sheet.liabilities} currency={sheet.currency} emptyLabel={tr('負債はありません。', 'No liabilities.')} />
                         <dl className="border-t border-[var(--studio-border)]">
                             <div className="flex justify-between gap-4 px-5 py-3 text-sm font-medium">
-                                <dt>負債合計</dt><dd className="whitespace-nowrap tabular-nums">{formatCurrency(sheet.total_liabilities, sheet.currency)}</dd>
+                                <dt>{tr('負債合計', 'Total liabilities')}</dt><dd className="whitespace-nowrap tabular-nums">{formatCurrency(sheet.total_liabilities, sheet.currency)}</dd>
                             </div>
                             <div className="flex justify-between gap-4 border-t border-[var(--studio-border)] px-5 py-4 text-sm font-semibold">
-                                <dt>純資産</dt><dd className={`whitespace-nowrap tabular-nums ${sheet.net_worth < 0 ? 'text-[var(--studio-danger)]' : 'text-[var(--studio-positive)]'}`}>{formatCurrency(sheet.net_worth, sheet.currency)}</dd>
+                                <dt>{tr('純資産', 'Net worth')}</dt><dd className={`whitespace-nowrap tabular-nums ${sheet.net_worth < 0 ? 'text-[var(--studio-danger)]' : 'text-[var(--studio-positive)]'}`}>{formatCurrency(sheet.net_worth, sheet.currency)}</dd>
                             </div>
                             <div className="flex justify-between gap-4 border-t border-[var(--studio-border)] bg-[var(--studio-accent-soft)] px-5 py-4 text-sm font-semibold">
-                                <dt>負債＋純資産</dt><dd className="whitespace-nowrap tabular-nums">{formatCurrency(sheet.total_liabilities + sheet.net_worth, sheet.currency)}</dd>
+                                <dt>{tr('負債＋純資産', 'Liabilities + net worth')}</dt><dd className="whitespace-nowrap tabular-nums">{formatCurrency(sheet.total_liabilities + sheet.net_worth, sheet.currency)}</dd>
                             </div>
                         </dl>
                     </section>

@@ -1,5 +1,6 @@
 import type { AiChangeRequest } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
+import { tr } from '../../i18n';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -15,9 +16,9 @@ export function valueText(value: unknown, field: string, currency: string): stri
     // Match monetary field names, not arbitrary numbers such as account IDs or counts.
     if (/(?:^|[._])(amount|balance|debit|credit|cost|price|total|difference)$/.test(field)
         && (typeof value === 'number' || (typeof value === 'string' && value.trim() !== ''))
-        && Number.isFinite(Number(value))) return `${formatCurrency(Number(value), currency)}（${currency}）`;
-    if (typeof value === 'boolean') return value ? 'はい' : 'いいえ';
-    return value === '' ? '（空欄）' : String(value);
+        && Number.isFinite(Number(value))) return `${formatCurrency(Number(value), currency)}${tr(`（${currency}）`, ` (${currency})`)}`;
+    if (typeof value === 'boolean') return value ? tr('はい', 'Yes') : tr('いいえ', 'No');
+    return value === '' ? tr('（空欄）', '(empty)') : String(value);
 }
 
 /** A change request's fields, each with its value before and after, as text. */

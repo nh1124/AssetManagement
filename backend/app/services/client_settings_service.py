@@ -11,6 +11,17 @@ from ..domain.money import normalize_currency
 
 
 
+def client_language(db: Session, client_id: int) -> str:
+    """The UI language the client chose in its settings: "en", or "ja" (the default)."""
+    client = db.get(models.Client, client_id)
+    return "en" if client is not None and (client.general_settings or {}).get("language") == "en" else "ja"
+
+
+def pick(language: str, ja: str, en: str) -> str:
+    """Text the client reads (notifications), in its language."""
+    return en if language == "en" else ja
+
+
 def merge_general_settings(
     db: Session, client: models.Client, patch: dict, *, commit: bool = True,
 ) -> dict:

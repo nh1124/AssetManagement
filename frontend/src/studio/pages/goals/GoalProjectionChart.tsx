@@ -3,6 +3,7 @@ import { Area, CartesianGrid, ComposedChart, Legend, Line, ReferenceLine, Respon
 import type { ProjectedLifeScenario } from '../../../api/lifeScenarios';
 import type { NetWorthHistoryPoint } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
+import { tr } from '../../i18n';
 
 /** A month as a position on a year axis: the end of 2026-03 is 2026.25. */
 const monthEnd = (period: string) => Number(period.slice(0, 4)) + Number(period.slice(5, 7)) / 12;
@@ -10,7 +11,7 @@ const monthEnd = (period: string) => Number(period.slice(0, 4)) + Number(period.
 function monthLabel(position: number): string {
     const total = Math.round(position * 12);
     const year = Math.floor((total - 1) / 12);
-    return `${year}年${total - year * 12}月`;
+    return tr(`${year}年${total - year * 12}月`, new Date(year, total - year * 12 - 1, 1).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }));
 }
 
 type Point = { x: number; band?: [number, number]; p50?: number; cumulative_target?: number; cumulative_income?: number; actual?: number; events?: string[] };
@@ -19,11 +20,11 @@ type Point = { x: number; band?: [number, number]; p50?: number; cumulative_targ
 function ChartTooltip({ active, label, payload, currency }: Pick<TooltipContentProps<number | number[], string>, 'active' | 'label' | 'payload'> & { currency: string }) {
     if (!active || !payload?.length) return null;
     const point = payload[0]?.payload as Point | undefined;
-    const money = (value: unknown) => Array.isArray(value) ? value.map((item) => formatCurrency(Number(item), currency)).join('〜') : formatCurrency(Number(value), currency);
+    const money = (value: unknown) => Array.isArray(value) ? value.map((item) => formatCurrency(Number(item), currency)).join(tr('〜', ' – ')) : formatCurrency(Number(value), currency);
     return <div className="space-y-1 rounded-md border border-[var(--studio-border)] bg-[var(--studio-surface)] p-2 text-xs text-[var(--studio-text)] shadow">
         <p className="font-medium">{monthLabel(Number(label))}</p>
-        {payload.filter((item) => item.value !== undefined && item.value !== null).map((item) => <p key={String(item.dataKey)} className="tabular-nums" style={{ color: item.color }}>{item.name}：{money(item.value)}</p>)}
-        {point?.events && <p>ライフイベント：{point.events.join('・')}</p>}
+        {payload.filter((item) => item.value !== undefined && item.value !== null).map((item) => <p key={String(item.dataKey)} className="tabular-nums" style={{ color: item.color }}>{item.name}{tr('：', ': ')}{money(item.value)}</p>)}
+        {point?.events && <p>{tr('ライフイベント：', 'Life events: ')}{point.events.join(tr('・', ', '))}</p>}
     </div>;
 }
 
@@ -61,21 +62,21 @@ export default function GoalProjectionChart({ scenario, history = [], currentPer
         return next;
     });
     const axisStyle = { fill: 'var(--studio-text-muted)', fontSize: 11 };
-    return <div role="img" aria-label={`純資産の推移。横軸：年、縦軸：金額（${currency}）。P10〜P90、中央値、累計必要額${hasIncome ? '、累計収入' : ''}${hasActual ? '、実績の純資産' : ''}とライフイベントの予定`} className="h-96 min-w-0">
+    return <div role="img" aria-label={tr(`純資産の推移。横軸：年、縦軸：金額（${currency}）。P10〜P90、中央値、累計必要額${hasIncome ? '、累計収入' : ''}${hasActual ? '、実績の純資産' : ''}とライフイベントの予定`, `Net worth over time. Horizontal axis: year; vertical axis: amount (${currency}). P10 to P90, the median, the cumulative need${hasIncome ? ', cumulative income' : ''}${hasActual ? ', actual net worth' : ''} and the planned life events`)} className="h-96 min-w-0">
         <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={rows} margin={{ top: 12, right: 30, bottom: 28, left: 20 }} accessibilityLayer>
                 <CartesianGrid stroke="var(--studio-border)" vertical={false} />
-                <XAxis type="number" domain={['dataMin', 'dataMax']} dataKey="x" allowDecimals={false} tickFormatter={(value: number) => String(Math.floor(value))} tick={axisStyle} minTickGap={30} label={{ value: '年', position: 'bottom', ...axisStyle }} />
-                <YAxis width={105} tick={axisStyle} tickFormatter={(value: number) => formatCurrency(value, currency)} label={{ value: `金額（${currency}）`, position: 'top', ...axisStyle }} />
+                <XAxis type="number" domain={['dataMin', 'dataMax']} dataKey="x" allowDecimals={false} tickFormatter={(value: number) => String(Math.floor(value))} tick={axisStyle} minTickGap={30} label={{ value: tr('年', 'Year'), position: 'bottom', ...axisStyle }} />
+                <YAxis width={105} tick={axisStyle} tickFormatter={(value: number) => formatCurrency(value, currency)} label={{ value: tr(`金額（${currency}）`, `Amount (${currency})`), position: 'top', ...axisStyle }} />
                 <Tooltip content={(props) => <ChartTooltip active={props.active} label={props.label} payload={props.payload} currency={currency} />} />
                 <Legend verticalAlign="top" inactiveColor="var(--studio-border-strong)" wrapperStyle={{ cursor: 'pointer', fontSize: 12, paddingBottom: 8 }}
                     onClick={(entry) => { if (typeof entry.dataKey === 'string') toggle(entry.dataKey); }}
                     formatter={(value: string, entry) => <span style={{ color: typeof entry.dataKey === 'string' && hidden.has(entry.dataKey) ? 'var(--studio-border-strong)' : 'var(--studio-text)' }}>{value}</span>} />
-                <Area type="linear" dataKey="band" name="P10〜P90" hide={hidden.has('band')} stroke="none" fill="var(--studio-accent)" fillOpacity={0.15} connectNulls isAnimationActive={false} />
-                <Line type="linear" dataKey="p50" name="中央値（P50）" hide={hidden.has('p50')} stroke="var(--studio-accent)" strokeWidth={2} dot={false} connectNulls isAnimationActive={false} />
-                <Line type="linear" dataKey="cumulative_target" name="累計必要額" hide={hidden.has('cumulative_target')} stroke="var(--studio-text-muted)" strokeWidth={2} strokeDasharray="5 4" dot={false} connectNulls isAnimationActive={false} />
-                {hasIncome && <Line type="linear" dataKey="cumulative_income" name="累計収入" hide={hidden.has('cumulative_income')} stroke="var(--studio-positive)" strokeWidth={2} strokeDasharray="2 4" dot={false} connectNulls isAnimationActive={false} />}
-                {hasActual && <Line type="linear" dataKey="actual" name="実績の純資産" hide={hidden.has('actual')} stroke="var(--studio-warning)" strokeWidth={2} dot={{ r: 2 }} connectNulls isAnimationActive={false} />}
+                <Area type="linear" dataKey="band" name={tr('P10〜P90', 'P10–P90')} hide={hidden.has('band')} stroke="none" fill="var(--studio-accent)" fillOpacity={0.15} connectNulls isAnimationActive={false} />
+                <Line type="linear" dataKey="p50" name={tr('中央値（P50）', 'Median (P50)')} hide={hidden.has('p50')} stroke="var(--studio-accent)" strokeWidth={2} dot={false} connectNulls isAnimationActive={false} />
+                <Line type="linear" dataKey="cumulative_target" name={tr('累計必要額', 'Cumulative need')} hide={hidden.has('cumulative_target')} stroke="var(--studio-text-muted)" strokeWidth={2} strokeDasharray="5 4" dot={false} connectNulls isAnimationActive={false} />
+                {hasIncome && <Line type="linear" dataKey="cumulative_income" name={tr('累計収入', 'Cumulative income')} hide={hidden.has('cumulative_income')} stroke="var(--studio-positive)" strokeWidth={2} strokeDasharray="2 4" dot={false} connectNulls isAnimationActive={false} />}
+                {hasActual && <Line type="linear" dataKey="actual" name={tr('実績の純資産', 'Actual net worth')} hide={hidden.has('actual')} stroke="var(--studio-warning)" strokeWidth={2} dot={{ r: 2 }} connectNulls isAnimationActive={false} />}
                 {[...eventMonths].map((x) => <ReferenceLine key={`event-${x}`} x={x} ifOverflow="extendDomain" stroke="var(--studio-border-strong)" strokeDasharray="2 3" />)}
             </ComposedChart>
         </ResponsiveContainer>

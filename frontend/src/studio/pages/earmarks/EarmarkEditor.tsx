@@ -4,6 +4,7 @@ import type { Capsule } from '../../../types';
 import { Field } from '../db/Database';
 import { OverlayFooter } from '../../components/Overlay';
 import { inputClass, primaryClass } from '../db/forms';
+import { tr } from '../../i18n';
 
 /** An earmark's own fields. Which goal events it counts toward is the goal's 実績管理の設定. */
 export default function EarmarkEditor({ capsule, currency, busy, onSave }: {
@@ -22,10 +23,10 @@ export default function EarmarkEditor({ capsule, currency, busy, onSave }: {
     };
     return <form id={formId} onSubmit={submit} className="space-y-4">
         <fieldset disabled={busy} className="grid gap-4 md:grid-cols-2">
-            <Field label="名称"><input required value={name} onChange={(event) => setName(event.target.value)} className={inputClass} /></Field>
-            <Field label={`目標額（${currency}）`}><input required type="number" min="0" step="any" value={target} onChange={(event) => setTarget(event.target.value)} className={inputClass} /></Field>
-            <Field label={`月額（${currency}）`}><input required type="number" min="0" step="any" value={monthly} onChange={(event) => setMonthly(event.target.value)} className={inputClass} /></Field>
+            <Field label={tr('名称', 'Name')}><input required value={name} onChange={(event) => setName(event.target.value)} className={inputClass} /></Field>
+            <Field label={tr(`目標額（${currency}）`, `Target (${currency})`)}><input required type="number" min="0" step="any" value={target} onChange={(event) => setTarget(event.target.value)} className={inputClass} /></Field>
+            <Field label={tr(`月額（${currency}）`, `Monthly (${currency})`)}><input required type="number" min="0" step="any" value={monthly} onChange={(event) => setMonthly(event.target.value)} className={inputClass} /></Field>
         </fieldset>
-        <OverlayFooter><button type="submit" form={formId} disabled={busy} className={primaryClass}>{busy ? '保存中…' : '保存'}</button></OverlayFooter>
+        <OverlayFooter><button type="submit" form={formId} disabled={busy} className={primaryClass}>{busy ? tr('保存中…', 'Saving…') : tr('保存', 'Save')}</button></OverlayFooter>
     </form>;
 }

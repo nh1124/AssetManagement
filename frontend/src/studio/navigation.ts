@@ -7,22 +7,22 @@
  * Paths are relative to the studio basename, so "/assets" is "/studio/assets".
  */
 import {
-    Activity,
-    Archive,
-    BookOpen,
-    Boxes,
-    ChartLine,
-    ClipboardList,
-    Coins,
+    Armchair,
+    ArrowDownUp,
+    ArrowRightLeft,
+    CalendarRange,
+    ChartColumn,
     FlaskConical,
-    Flag,
+    History,
+    Inbox,
     Landmark,
-    Layers,
+    NotebookPen,
     PiggyBank,
-    Repeat,
-    ScrollText,
-    ShieldCheck,
-    Wallet,
+    Repeat2,
+    ShoppingBasket,
+    Sparkles,
+    Target,
+    WalletMinimal,
 } from 'lucide-react';
 import type { ComponentType } from 'react';
 import type { TranslationKey } from './i18n';
@@ -31,9 +31,9 @@ export interface StudioScreen {
     /** Route path under the studio basename. */
     path: string;
     label: TranslationKey;
-    icon: ComponentType<{ size?: number | string; className?: string }>;
-    /** Shown in the header above the screen title. */
-    section: TranslationKey;
+    icon: ComponentType<{ size?: number | string; className?: string; strokeWidth?: number | string }>;
+    /** Shown in the header above the screen title; the main screens have none. */
+    section?: TranslationKey;
     /** Tabs are route segments, so a tab is a URL and the back button works. */
     tabs?: Array<{ segment: string; label: TranslationKey }>;
 }
@@ -49,7 +49,6 @@ export interface StudioGroup {
     offRail?: boolean;
 }
 
-const WORKSPACE = 'group.workspace';
 const DATABASE = 'group.database';
 const AUTOMATION = 'group.automation';
 const PROTOTYPE = 'group.prototype';
@@ -57,13 +56,12 @@ const PROTOTYPE = 'group.prototype';
 export const STUDIO_GROUPS: StudioGroup[] = [
     {
         id: 'workspace',
-        label: 'group.workspace',
+        label: null,
         screens: [
             {
                 path: 'ledger',
                 label: 'screen.ledger',
-                icon: BookOpen,
-                section: WORKSPACE,
+                icon: NotebookPen,
                 tabs: [
                     { segment: '', label: 'tab.records' },
                     { segment: 'auto', label: 'tab.auto' },
@@ -73,15 +71,14 @@ export const STUDIO_GROUPS: StudioGroup[] = [
             {
                 path: 'assets',
                 label: 'screen.assets',
-                icon: Wallet,
-                section: WORKSPACE,
+                icon: WalletMinimal,
                 tabs: [
                     { segment: '', label: 'tab.overview' },
                     { segment: 'accounts', label: 'tab.accounts' },
                 ],
             },
             {
-                path: 'flows', label: 'screen.flows', icon: Activity, section: WORKSPACE,
+                path: 'flows', label: 'screen.flows', icon: ArrowDownUp,
                 tabs: [
                     { segment: '', label: 'tab.categories' },
                     { segment: 'accounts', label: 'tab.subjects' },
@@ -90,8 +87,7 @@ export const STUDIO_GROUPS: StudioGroup[] = [
             {
                 path: 'plan',
                 label: 'screen.plan',
-                icon: ClipboardList,
-                section: WORKSPACE,
+                icon: CalendarRange,
                 tabs: [
                     { segment: '', label: 'tab.plan' },
                     { segment: 'earmarks', label: 'tab.planEarmarks' },
@@ -101,8 +97,7 @@ export const STUDIO_GROUPS: StudioGroup[] = [
             {
                 path: 'report',
                 label: 'screen.report',
-                icon: ChartLine,
-                section: WORKSPACE,
+                icon: ChartColumn,
                 tabs: [
                     { segment: '', label: 'tab.trends' },
                     { segment: 'breakdown', label: 'tab.breakdown' },
@@ -111,7 +106,7 @@ export const STUDIO_GROUPS: StudioGroup[] = [
                 ],
             },
             {
-                path: 'goals', label: 'screen.goals', icon: Flag, section: WORKSPACE,
+                path: 'goals', label: 'screen.goals', icon: Target,
             },
         ],
     },
@@ -121,11 +116,11 @@ export const STUDIO_GROUPS: StudioGroup[] = [
         collapsible: true,
         screens: [
             { path: 'db/accounts', label: 'screen.accounts', icon: Landmark, section: DATABASE },
-            { path: 'db/fx', label: 'screen.fx', icon: Coins, section: DATABASE },
+            { path: 'db/fx', label: 'screen.fx', icon: ArrowRightLeft, section: DATABASE },
             {
                 path: 'db/auto-transactions',
                 label: 'screen.autoTransactions',
-                icon: Repeat,
+                icon: Repeat2,
                 section: DATABASE,
                 tabs: [
                     { segment: '', label: 'tab.services' },
@@ -134,10 +129,10 @@ export const STUDIO_GROUPS: StudioGroup[] = [
                     { segment: 'allocation', label: 'tab.transfer' },
                 ],
             },
-            { path: 'db/fixed-assets', label: 'screen.fixedAssets', icon: Boxes, section: DATABASE },
-            { path: 'db/consumables', label: 'screen.consumables', icon: Layers, section: DATABASE },
+            { path: 'db/fixed-assets', label: 'screen.fixedAssets', icon: Armchair, section: DATABASE },
+            { path: 'db/consumables', label: 'screen.consumables', icon: ShoppingBasket, section: DATABASE },
             // Earmarks set money aside; they are neither accounts nor transactions (U4).
-            { path: 'db/earmarks', label: 'screen.earmarks', icon: Archive, section: DATABASE },
+            { path: 'db/earmarks', label: 'screen.earmarks', icon: PiggyBank, section: DATABASE },
         ],
     },
     {
@@ -145,9 +140,9 @@ export const STUDIO_GROUPS: StudioGroup[] = [
         label: 'group.automation',
         collapsible: true,
         screens: [
-            { path: 'automation/ai', label: 'screen.ai', icon: PiggyBank, section: AUTOMATION },
-            { path: 'automation/approvals', label: 'screen.approvals', icon: ShieldCheck, section: AUTOMATION },
-            { path: 'automation/audit', label: 'screen.audit', icon: ScrollText, section: AUTOMATION },
+            { path: 'automation/ai', label: 'screen.ai', icon: Sparkles, section: AUTOMATION },
+            { path: 'automation/approvals', label: 'screen.approvals', icon: Inbox, section: AUTOMATION },
+            { path: 'automation/audit', label: 'screen.audit', icon: History, section: AUTOMATION },
         ],
     },
     {

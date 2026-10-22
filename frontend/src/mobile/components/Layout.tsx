@@ -1,11 +1,12 @@
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
-import { Bell, BookOpen, ChevronLeft, Flag, Home, Menu, PieChart, Plus } from 'lucide-react';
+import { Bell, CalendarRange, ChevronLeft, Home, Menu, NotebookPen, Plus, Target } from 'lucide-react';
 import type { Transaction } from '../../types';
 import { useNotifications } from '../../studio/notificationContext';
 import RecordSheet from '../pages/RecordSheet';
 import { RecordingContext } from './recording';
 import { focusRing } from './ui';
+import { tr } from '../../studio/i18n';
 
 /** A screen: a sticky translucent header (title, back, actions) over its content. */
 export function Screen({ title, back, actions, top = false, children }: {
@@ -18,15 +19,15 @@ export function Screen({ title, back, actions, top = false, children }: {
     return <>
         <header className="sticky top-0 z-30 border-b border-[var(--studio-border)]/70 bg-[var(--mobile-bar)] pt-[env(safe-area-inset-top)] backdrop-blur-md">
             <div className="mx-auto flex h-14 max-w-lg items-center gap-1 px-2">
-                {back !== undefined ? <button type="button" onClick={() => { if (back === -1) navigate(-1); else navigate(back); }} aria-label="戻る" className={iconButton}><ChevronLeft size={22} aria-hidden /></button> : <span className="w-2" />}
+                {back !== undefined ? <button type="button" onClick={() => { if (back === -1) navigate(-1); else navigate(back); }} aria-label={tr('戻る', 'Back')} className={iconButton}><ChevronLeft size={22} aria-hidden /></button> : <span className="w-2" />}
                 <h1 className="min-w-0 flex-1 truncate text-lg font-bold tracking-tight">{title}</h1>
                 {actions}
                 {top && <>
-                    <button type="button" onClick={() => navigate('/notifications')} aria-label={`通知${items.length ? `（${items.length}件）` : ''}`} className={iconButton}>
+                    <button type="button" onClick={() => navigate('/notifications')} aria-label={tr(`通知${items.length ? `（${items.length}件）` : ''}`, `Notifications${items.length ? ` (${items.length})` : ''}`)} className={iconButton}>
                         <Bell size={20} aria-hidden />
                         {items.length > 0 && <span className="absolute right-1.5 top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--studio-danger)] px-1 text-[10px] font-bold text-white">{items.length}</span>}
                     </button>
-                    <button type="button" onClick={() => navigate('/more')} aria-label="メニュー" className={iconButton}><Menu size={20} aria-hidden /></button>
+                    <button type="button" onClick={() => navigate('/more')} aria-label={tr('メニュー', 'Menu')} className={iconButton}><Menu size={20} aria-hidden /></button>
                 </>}
             </div>
         </header>
@@ -34,28 +35,29 @@ export function Screen({ title, back, actions, top = false, children }: {
     </>;
 }
 
-const TABS = [
-    { to: '/', label: 'ホーム', icon: Home, end: true },
-    { to: '/ledger', label: '家計簿', icon: BookOpen, end: false },
-    { to: '/plan', label: '計画', icon: PieChart, end: false },
-    { to: '/goals', label: 'ゴール', icon: Flag, end: false },
+// The studio rail's icons, so a screen looks the same on both.
+const tabs = () => [
+    { to: '/', label: tr('ホーム', 'Home'), icon: Home, end: true },
+    { to: '/ledger', label: tr('家計簿', 'Ledger'), icon: NotebookPen, end: false },
+    { to: '/plan', label: tr('計画', 'Plan'), icon: CalendarRange, end: false },
+    { to: '/goals', label: tr('ゴール', 'Goals'), icon: Target, end: false },
 ];
 
 function TabBar({ onRecord }: { onRecord: () => void }) {
-    const tab = ({ to, label, icon: Icon, end }: typeof TABS[number]) => <NavLink key={to} to={to} end={end}
+    const tab = ({ to, label, icon: Icon, end }: ReturnType<typeof tabs>[number]) => <NavLink key={to} to={to} end={end}
         className={({ isActive }) => `flex flex-1 flex-col items-center justify-center gap-0.5 text-[11px] font-medium ${focusRing} ${isActive ? 'text-[var(--studio-accent)]' : 'text-[var(--studio-text-muted)]'}`}>
         {({ isActive }) => <><Icon size={22} strokeWidth={isActive ? 2.4 : 1.8} aria-hidden /><span>{label}</span></>}
     </NavLink>;
-    return <nav aria-label="メイン" className="fixed inset-x-0 bottom-0 z-40 border-t border-[var(--studio-border)]/70 bg-[var(--mobile-bar)] pb-[env(safe-area-inset-bottom)] backdrop-blur-md">
+    return <nav aria-label={tr('メイン', 'Main')} className="fixed inset-x-0 bottom-0 z-40 border-t border-[var(--studio-border)]/70 bg-[var(--mobile-bar)] pb-[env(safe-area-inset-bottom)] backdrop-blur-md">
         <div className="mx-auto flex h-16 max-w-lg items-stretch px-2">
-            {TABS.slice(0, 2).map(tab)}
+            {tabs().slice(0, 2).map(tab)}
             <div className="flex w-20 items-start justify-center">
-                <button type="button" onClick={onRecord} aria-label="取引を記録"
+                <button type="button" onClick={onRecord} aria-label={tr('取引を記録', 'Record a transaction')}
                     className={`-mt-5 flex h-14 w-14 items-center justify-center rounded-full bg-[var(--studio-accent)] text-white shadow-[var(--mobile-shadow-raised)] active:scale-95 ${focusRing}`}>
                     <Plus size={28} strokeWidth={2.4} aria-hidden />
                 </button>
             </div>
-            {TABS.slice(2).map(tab)}
+            {tabs().slice(2).map(tab)}
         </div>
     </nav>;
 }

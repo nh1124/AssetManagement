@@ -1,3 +1,4 @@
+import { tr } from '../../i18n';
 export default function MonthPicker({ value, onChange, disabled = false }: {
     value: string;
     onChange: (month: string) => void;
@@ -10,7 +11,7 @@ export default function MonthPicker({ value, onChange, disabled = false }: {
     };
     return (
         <label className="flex items-center gap-3 text-sm text-[var(--studio-text-muted)]">
-            対象月
+            {tr('対象月', 'Month')}
             <input type="month" required value={value} disabled={disabled} onClick={(event) => openPicker(event.currentTarget)} onFocus={(event) => openPicker(event.currentTarget)} onChange={(event) => {
                 // Clearing a required month must not silently request all history.
                 if (/^\d{4}-(0[1-9]|1[0-2])$/.test(event.target.value)) onChange(event.target.value);

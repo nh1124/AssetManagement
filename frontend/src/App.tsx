@@ -6,6 +6,8 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import LoginPage from './pages/Login';
 import MobileApp from './mobile/MobileApp';
 import StudioApp from './studio/StudioApp';
+import LanguageBoundary from './studio/LanguageBoundary';
+import { tr } from './studio/i18n';
 import { useShellMode } from './shared/useShellMode';
 import './studio/theme.css';
 
@@ -26,7 +28,7 @@ function AppContent() {
   if (isLoading) {
     return (
       <div className="studio-root flex min-h-dvh items-center justify-center bg-[var(--studio-bg)]">
-        <div role="status" aria-label="読み込んでいます" className="h-8 w-8 animate-spin rounded-full border-4 border-[var(--studio-accent-soft)] border-t-[var(--studio-accent)]" />
+        <div role="status" aria-label={tr('読み込んでいます', 'Loading')} className="h-8 w-8 animate-spin rounded-full border-4 border-[var(--studio-accent-soft)] border-t-[var(--studio-accent)]" />
       </div>
     );
   }
@@ -38,18 +40,22 @@ function AppContent() {
   if (isStudio()) {
     return (
       <ClientProvider>
-        <ToastProvider>
-          <StudioApp />
-        </ToastProvider>
+        <LanguageBoundary>
+          <ToastProvider>
+            <StudioApp />
+          </ToastProvider>
+        </LanguageBoundary>
       </ClientProvider>
     );
   }
 
   return (
     <ClientProvider>
-      <ToastProvider>
-        {shellMode === 'mobile' ? <MobileApp /> : <ToStudio />}
-      </ToastProvider>
+      <LanguageBoundary>
+        <ToastProvider>
+          {shellMode === 'mobile' ? <MobileApp /> : <ToStudio />}
+        </ToastProvider>
+      </LanguageBoundary>
     </ClientProvider>
   );
 }

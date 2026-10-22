@@ -9,7 +9,7 @@ import { disableMfa, exportData, getMfaStatus, importData, regenerateMfaRecovery
 import { useClient } from '../../context/ClientContext';
 import type { MfaSetupStart } from '../../types';
 import { clientToday, formatDateTime, normalizeTimezone, useTimezone } from '../datetime';
-import { useLanguage, type Language, type TranslationKey } from '../i18n';
+import { useLanguage, type Language, type TranslationKey, tr } from '../i18n';
 import { useResource } from '../useResource';
 import { Field } from './db/Database';
 import { buttonClass, inputClass, primaryClass } from './db/forms';
@@ -131,7 +131,7 @@ function SettingsForClient() {
         });
     };
     const turnOffMfa = async () => {
-        if (mfaDisabled || !mfa.data?.enabled || !hasCredential || !(await confirm(t('mfa.disableConfirm'), '解除する'))) return;
+        if (mfaDisabled || !mfa.data?.enabled || !hasCredential || !(await confirm(t('mfa.disableConfirm'), tr('解除する', 'Disable')))) return;
         void mutation.run(() => disableMfa({ current_password: password || undefined, code: code.trim() || undefined }), 'mfa.disabledDone', () => {
             clearSecurity();
             mfa.setData((previous) => previous ? { ...previous, enabled: false, recovery_codes_remaining: 0 } : previous);
@@ -139,7 +139,7 @@ function SettingsForClient() {
         });
     };
     const regenerateCodes = async () => {
-        if (mfaDisabled || !mfa.data?.enabled || !hasCredential || !(await confirm(t('mfa.regenerateConfirm'), '再生成する'))) return;
+        if (mfaDisabled || !mfa.data?.enabled || !hasCredential || !(await confirm(t('mfa.regenerateConfirm'), tr('再生成する', 'Regenerate')))) return;
         void mutation.run(() => regenerateMfaRecoveryCodes({ current_password: password || undefined, code: code.trim() || undefined }), 'mfa.regenerated', (result) => {
             clearCredentials();
             setRecoveryCodes(result.recovery_codes);
@@ -163,7 +163,7 @@ function SettingsForClient() {
     };
     const upload = async () => {
         if (disabled || !file) return;
-        if (!(await confirm(t('settings.importConfirm', { file: file.name, name: currentClient?.name ?? '', id: clientId }), '読み込む'))) return;
+        if (!(await confirm(t('settings.importConfirm', { file: file.name, name: currentClient?.name ?? '', id: clientId }), tr('読み込む', 'Import')))) return;
         void mutation.run(async () => {
             let payload: unknown;
             try { payload = JSON.parse(await file.text()); }

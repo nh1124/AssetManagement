@@ -14,16 +14,17 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['icons/icon-192.png', 'icons/icon-512.png', 'icons/maskable-512.png'],
+      includeAssets: ['icons/mark.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/maskable-512.png'],
       manifest: {
-        name: 'Finance IDE',
-        short_name: 'Finance IDE',
+        name: 'AssetManagement',
+        short_name: 'AssetManagement',
         description: 'Personal asset management workspace',
         start_url: '/',
         scope: '/',
         display: 'standalone',
-        background_color: '#020617',
-        theme_color: '#020617',
+        // The light workspace behind the app, as index.html's theme-color.
+        background_color: '#f6f5f0',
+        theme_color: '#f6f5f0',
         icons: [
           {
             src: '/icons/icon-192.png',

@@ -28,6 +28,7 @@ from ..domain.errors import Refused
 from ..domain.money import Money
 from .budget_lines import capsule_shares
 from .budget_plan_store import active_lines_for_periods
+from .client_settings_service import client_language, pick
 from .capsule_service import claimed_value_minor
 from .money_storage import money_client_currency, to_minor
 from .product_reserve_service import _add_months, product_reserve_values, should_use_reserve
@@ -109,9 +110,11 @@ def plan(db: Session, client_id: int, start: str, end: str, plan_id: int | None,
               if line.line_type == "allocation" and line.target_type == "capsule" and line.target_id in earmarks]
     reference = date(first // 12, first % 12 + 1, 1)
     changes, warnings, summaries = [], [], []
+    language = client_language(db, client_id)
     for capsule_id, (capsule, products) in sorted(earmarks.items()):
         if not capsule.funding_sources:
-            warnings.append(f"取り置き「{capsule.name}」は資金元の口座がないため作りません。取り置きの画面で口座を設定してください。")
+            warnings.append(pick(language, f"取り置き「{capsule.name}」は資金元の口座がないため作りません。取り置きの画面で口座を設定してください。",
+                                 f"The earmark “{capsule.name}” has no funding account, so no rows are made for it. Set its accounts on the earmarks screen."))
             continue
         if base == "saved":
             base_minor = capsule.monthly_contribution_minor or 0

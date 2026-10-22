@@ -36,7 +36,7 @@ from .budget_lines import earmark_counted_shares
 from .budget_plan_service import month_plan_lines
 from .budget_plan_store import active_lines_for_periods
 from .capsule_service import claimed_value_minor, goal_capsules
-from .client_settings_service import reflection_settings
+from .client_settings_service import client_language, pick, reflection_settings
 from .contribution_plan_service import (
     contributed_minor, event_withdrawals, moved_minor, of_kind, occurrence_indexes, period_index, total_minor, withdrawals,
 )
@@ -132,9 +132,11 @@ def _amount_text(minor: int, currency: str) -> str:
     return f"¥{value:,.0f}" if currency == "JPY" else f"{value:,.2f} {currency}"
 
 
-def _warning(message: str, periods: list[str]) -> str:
-    when = periods[0] if len(periods) == 1 else f"{periods[0]}〜{periods[-1]}のうち{len(periods)}か月"
-    return f"{when}：{message}"
+def _warning(message: str, periods: list[str], language: str = "ja") -> str:
+    if len(periods) == 1:
+        return pick(language, f"{periods[0]}：{message}", f"{periods[0]}: {message}")
+    return pick(language, f"{periods[0]}〜{periods[-1]}のうち{len(periods)}か月：{message}",
+                f"{len(periods)} months from {periods[0]} to {periods[-1]}: {message}")
 
 
 def _stored_key(line: models.MonthlyPlanLine) -> tuple[str, str, int | None]:
@@ -267,6 +269,7 @@ def plan(db: Session, client_id: int, start: str, end: str, plan_id: int | None,
                  for account_id, shortfall in contribution_shortfalls(db, client_id, plans, contributors, options["since"], periods[0]).items()}
     changes, months = [], []
     warned: dict[str, list[str]] = {}
+    language = client_language(db, client_id)
     for period in periods:
         wanted: dict[tuple[str, str, int | None], int] = {}
         made_for: dict[tuple[str, str, int | None], models.LifeEvent] = {}
@@ -301,10 +304,12 @@ def plan(db: Session, client_id: int, start: str, end: str, plan_id: int | None,
             name, monthly = names.get(account_id, account_id), _amount_text(contribution, currency)
             moved = transfers.get(account_id, 0)
             if moved > contribution:
-                warned.setdefault(f"「{name}」は既存の振替（自動取引など）{_amount_text(moved, currency)}が積立設定の月額{monthly}を超えています。", []).append(period)
+                warned.setdefault(pick(language, f"「{name}」は既存の振替（自動取引など）{_amount_text(moved, currency)}が積立設定の月額{monthly}を超えています。",
+                                       f"“{name}”: existing transfers (such as automatic transactions) of {_amount_text(moved, currency)} exceed the monthly contribution of {monthly}."), []).append(period)
             set_aside = taken.get(account_id, 0) + held.get(account_id, 0)
             if set_aside > contribution:
-                warned.setdefault(f"「{name}」は取り置き{_amount_text(set_aside, currency)}が積立設定の月額{monthly}を超えています（超える分は口座の残高から確保します）。", []).append(period)
+                warned.setdefault(pick(language, f"「{name}」は取り置き{_amount_text(set_aside, currency)}が積立設定の月額{monthly}を超えています（超える分は口座の残高から確保します）。",
+                                       f"“{name}”: earmarks of {_amount_text(set_aside, currency)} exceed the monthly contribution of {monthly} (the rest is set aside from the account balance)."), []).append(period)
             if contribution or extra:
                 # A shortfall of earlier months comes on top, as the settings say (WP27).
                 wanted[("account", "", account_id)] = max(0, contribution - moved) + extra
@@ -338,7 +343,7 @@ def plan(db: Session, client_id: int, start: str, end: str, plan_id: int | None,
                          for change in changes]}
     fingerprint = hashlib.sha256(json.dumps(basis, sort_keys=True).encode()).hexdigest()
     return {"scenario": {"id": goal.id, "name": goal.name}, "periods": periods, "currency": currency,
-            "months": months, "changes": changes, "warnings": [_warning(message, sorted(set(when))) for message, when in warned.items()],
+            "months": months, "changes": changes, "warnings": [_warning(message, sorted(set(when)), language) for message, when in warned.items()],
             "fingerprint": fingerprint}
 
 
@@ -397,10 +402,13 @@ def reflection_notifications(db: Session, client_id: int, period: str) -> list[d
     plans = db.query(models.ScenarioContributionPlan).filter_by(scenario_id=goal.id).all()
     if not (moved_minor(plans, "contribution", period) or moved_minor(plans, "transfer", period)):
         return []
+    language = client_language(db, client_id)
     return [{
         "dedupe_key": f"{REFLECTION_NOTIFICATION}:{goal.id}:{period}",
-        "title": "計画への反映がまだです",
-        "body": f"{period} の計画にゴール「{goal.name}」の積立設定がまだ反映されていません。計画の ⚙ から「今すぐ反映」するか、自動反映をオンにしてください。",
+        "title": pick(language, "計画への反映がまだです", "The plan is not reflected yet"),
+        "body": pick(language,
+                     f"{period} の計画にゴール「{goal.name}」の積立設定がまだ反映されていません。計画の ⚙ から「今すぐ反映」するか、自動反映をオンにしてください。",
+                     f"The contribution settings of the goal “{goal.name}” are not in the plan for {period} yet. Use “Reflect now” from the plan’s ⚙, or turn on automatic reflection."),
         "payload": {"period": period, "scenario_id": goal.id},
         "link": "/plan",
     }]

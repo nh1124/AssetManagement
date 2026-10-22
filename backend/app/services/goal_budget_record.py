@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 
 from .. import models
+from .client_settings_service import client_language, pick
 
 
 def covering(db: Session, client_id: int, period: str) -> models.GoalBudgetReflection | None:
@@ -34,6 +35,7 @@ HISTORY = 10
 # An automatic run is announced for this long, unless 見送り hides it sooner.
 ANNOUNCED_DAYS = 14
 TRIGGER_LABELS = {"month": "月の初め", "change": "変更", "settings": "設定の保存", "manual": "今すぐ反映"}
+TRIGGER_LABELS_EN = {"month": "start of month", "change": "a change", "settings": "settings saved", "manual": "reflect now"}
 
 
 def describe(row: models.GoalBudgetReflection) -> dict:
@@ -63,8 +65,11 @@ def reflected_notifications(db: Session, client_id: int, period: str) -> list[di
     shown = describe(row)
     if shown["trigger"] not in ("month", "change", "settings") or not shown["changes"]:
         return []
-    lines = [f"{shown['start_period']}〜{shown['end_period']}：{shown['changes']}件の行を変更しました（{TRIGGER_LABELS[shown['trigger']]}）。"]
+    language = client_language(db, client_id)
+    lines = [pick(language,
+                  f"{shown['start_period']}〜{shown['end_period']}：{shown['changes']}件の行を変更しました（{TRIGGER_LABELS[shown['trigger']]}）。",
+                  f"{shown['start_period']} to {shown['end_period']}: changed {shown['changes']} row(s) ({TRIGGER_LABELS_EN[shown['trigger']]}).")]
     lines += shown["warnings"][:3]
-    return [{"dedupe_key": f"{REFLECTED_NOTIFICATION}:{row.id}", "title": "計画を自動で更新しました", "body": "\n".join(lines),
+    return [{"dedupe_key": f"{REFLECTED_NOTIFICATION}:{row.id}", "title": pick(language, "計画を自動で更新しました", "The plan was updated automatically"), "body": "\n".join(lines),
              "payload": {"record_id": row.id}, "link": "/plan?reflection=history"}]
 
