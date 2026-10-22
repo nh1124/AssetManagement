@@ -74,7 +74,7 @@ done
 sleep 1
 
 docker exec "$scratch" createdb -U postgres "$AM_DB_NAME" || fail createdb_failed
-docker exec -i "$scratch" pg_restore -U postgres -d "$AM_DB_NAME" --no-owner --exit-on-error <"$dump" \
+docker exec -i "$scratch" pg_restore -U postgres -d "$AM_DB_NAME" --no-owner --no-privileges --exit-on-error <"$dump" \
   || fail pg_restore_failed
 
 restored=$(docker exec -i "$scratch" psql -U postgres -d "$AM_DB_NAME" -At -v ON_ERROR_STOP=1 <<'SQL'

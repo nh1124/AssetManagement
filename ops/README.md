@@ -124,6 +124,33 @@ Compose のプロジェクト名を指定した環境では、CLI 実行時も�
 API に渡す `ADMIN_ALLOWED_ORIGINS` にその origin を明示的に追加します
 （設定例はルートの `.env.example`）。既定の許可範囲は変更しません。
 
+## DB のロール
+
+各プロセスは別の DB ロールで接続します（権限の正本は `backend/app/db_access.py`）。
+`am_owner`（表の持ち主。migrate サービスだけ）、`am_user_app`（利用者 backend）、
+`am_admin_app`（管理 backend と CLI）。利用者 backend は管理者の表・監査ログ・
+システム設定の書き込み・アカウントの停止／承認ができず、DDL も実行できません。
+
+初めて入れるとき（既存の DB は表の持ち主が `postgres`）:
+
+```bash
+# 0. バックアップ（am-backup が最新か、または pg_dump を取る）
+# 1. .env に 3 つのパスワード（英数字のみ・32 文字以上・互いに別）
+#    AM_DB_OWNER_PASSWORD / AM_DB_USER_APP_PASSWORD / AM_DB_ADMIN_APP_PASSWORD（openssl rand -hex 32）
+ops/bin/am-db-roles.sh            # 何をするか表示（パスワードは伏せる）
+ops/bin/am-db-roles.sh --apply    # ロールを作り、表の持ち主を am_owner へ（1 トランザクション）
+docker compose --env-file .env up -d   # migrate が alembic と権限の付与を行い、backend・admin が起動
+```
+
+パスワードを替えるときは `.env` を変えて `am-db-roles.sh --apply` をもう一度実行し、
+migrate・backend・admin を作り直します。バックアップ（`am-backup`）とリストア検証は
+コンテナ内のローカルソケットで `postgres` として動くので影響を受けません
+（リストア検証は `--no-owner --no-privileges` で復元します）。
+
+戻すとき: 以前のコミットの `docker-compose.yml` に戻して `up -d` すれば、
+アプリは `postgres` で接続します（表の持ち主が `am_owner` でも superuser は読み書きできます）。
+ロールは残しておいてかまいません。
+
 ## What the watchdog will not do
 
 It never runs `docker compose up`. Recreating containers from the working tree

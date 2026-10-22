@@ -39,6 +39,7 @@ ROLE_BY_MODULE: dict[str, str] = {
     "dependencies": "infra",
     "config": "infra",
     "security": "infra",
+    "db_access": "infra",  # the database role matrix (WP32 W5); declarative, no queries
     "schemas": "schema",
 }
 

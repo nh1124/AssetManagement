@@ -101,7 +101,6 @@ def configure_startup(db, monkeypatch, production):
     from app import database, main
 
     monkeypatch.setattr(database, "SessionLocal", lambda: db)
-    monkeypatch.setattr(main, "ensure_runtime_schema_guards", lambda session: None)
     monkeypatch.setattr(main, "install_db_audit", lambda factory: None)
     monkeypatch.setattr(main, "install_sql_timing", lambda engine: None)
     monkeypatch.setattr(main, "settings", AppConfig(
