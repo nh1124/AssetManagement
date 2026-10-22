@@ -18,6 +18,8 @@ services:
       POSTGRES_DB: finance_ide
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./db/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+    command: ["postgres", "-c", "hba_file=/etc/postgresql/pg_hba.conf"]
     ports:
       # Loopback by default: nothing outside this machine needs the database.
       - "${DB_BIND:-127.0.0.1}:${DB_PORT:-5432}:5432"
@@ -30,6 +32,37 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - default
+      - admin
+
+  # One-shot, on every `up`: migrations and database privileges, as the table
+  # owner (WP32 W5). The applications connect as am_user_app / am_admin_app and
+  # never run DDL. Roles are created once with ops/bin/am-db-roles.sh.
+  migrate:
+    build:
+      context: ./backend
+    container_name: finance-migrate
+    volumes:
+      - ./backend/app:/app/app:ro
+      - ./backend/alembic:/app/alembic:ro
+      - ./backend/alembic.ini:/app/alembic.ini:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+      - APP_ENV=${APP_ENV:-development}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?set ENCRYPTION_KEY in .env (see .env.example)}
+      - ENCRYPTION_KEY_PREVIOUS=${ENCRYPTION_KEY_PREVIOUS:-}
+      - DATABASE_URL=postgresql+psycopg2://am_owner:${AM_DB_OWNER_PASSWORD:?set AM_DB_OWNER_PASSWORD in .env (see .env.example)}@db:5432/finance_ide
+      - LOG_FORMAT=${LOG_FORMAT:-json}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    command: sh -c "alembic upgrade head && python -m app.maintenance.db_grants --apply"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
 
   backend:
     build:
@@ -38,15 +71,16 @@ services:
     ports:
       - "${BACKEND_BIND:-127.0.0.1}:${BACKEND_PORT:-18100}:8000"
     volumes:
-      - ./backend/app:/app/app
-      - ./backend/alembic:/app/alembic
-      - ./backend/alembic.ini:/app/alembic.ini
+      - ./backend/app:/app/app:ro
+      - ./backend/alembic:/app/alembic:ro
+      - ./backend/alembic.ini:/app/alembic.ini:ro
     environment:
       # Without this, uvicorn's access log sits in Python's stdout buffer and
       # `docker logs` shows nothing until the container stops.
       - PYTHONUNBUFFERED=1
       - APP_ENV=${APP_ENV:-development}
-      - DATABASE_URL=postgresql+psycopg2://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/finance_ide
+      # Least privilege (app/db_access.py): no DDL, no administrator tables.
+      - DATABASE_URL=postgresql+psycopg2://am_user_app:${AM_DB_USER_APP_PASSWORD:?set AM_DB_USER_APP_PASSWORD in .env (see .env.example)}@db:5432/finance_ide
       # No defaults for the three secrets. A default here is a published
       # secret: this file is in a public repository, and a token signed with
       # a known key is accepted as any user. Generate them (see .env.example).
@@ -72,9 +106,9 @@ services:
       # (/mnt/c/...) there is no inotify, and the watcher dies with
       # "Input/output error (os error 5)", taking the container with it.
       - BACKEND_RELOAD=${BACKEND_RELOAD:-0}
+    # Migrations run in the migrate service, as the table owner.
     command: >
-      sh -c "alembic upgrade head &&
-      if [ \"$$BACKEND_RELOAD\" = \"1\" ]; then
+      sh -c "if [ \"$$BACKEND_RELOAD\" = \"1\" ]; then
       exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app;
       else
       exec uvicorn app.main:app --host 0.0.0.0 --port 8000;
@@ -90,6 +124,55 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+
+  admin:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.admin
+      additional_contexts:
+        frontend: ./frontend
+    container_name: finance-admin
+    ports:
+      # Only ever bind to loopback or the VPN address, never 0.0.0.0.
+      - "${ADMIN_BIND:-127.0.0.1}:${ADMIN_PORT:-18300}:8000"
+    volumes:
+      - ./backend/app:/app/app:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+      - APP_ENV=${APP_ENV:-development}
+      # Least privilege (app/db_access.py): reads accounts, writes only the admin tables and account status.
+      - DATABASE_URL=postgresql+psycopg2://am_admin_app:${AM_DB_ADMIN_APP_PASSWORD:?set AM_DB_ADMIN_APP_PASSWORD in .env (see .env.example)}@db:5432/finance_ide
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY:?set ENCRYPTION_KEY in .env (see .env.example)}
+      - ENCRYPTION_KEY_PREVIOUS=${ENCRYPTION_KEY_PREVIOUS:-}
+      - ADMIN_ALLOWED_HOSTS=${ADMIN_ALLOWED_HOSTS:-admin.localhost}
+      - ADMIN_ALLOWED_ORIGINS=${ADMIN_ALLOWED_ORIGINS:-http://admin.localhost:${ADMIN_PORT:-18300}}
+      - ADMIN_COOKIE_SECURE=${ADMIN_COOKIE_SECURE:-0}
+      - LOG_FORMAT=${LOG_FORMAT:-json}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_DB_CHANGES=${LOG_DB_CHANGES:-1}
+      - LOG_SLOW_SQL_MS=${LOG_SLOW_SQL_MS:-500}
+      - LOG_SQL=${LOG_SQL:-0}
+    networks:
+      - admin
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8000/health', headers={'Host': 'admin.localhost'}), timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 40s
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
@@ -153,6 +236,11 @@ services:
     security_opt:
       - no-new-privileges:true
     logging: *default-logging
+
+networks:
+  default:
+  admin:
+    driver: bridge
 
 volumes:
   postgres_data:

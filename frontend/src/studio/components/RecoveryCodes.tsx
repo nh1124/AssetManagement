@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { tr } from '../i18n';
-import { buttonClass, primaryClass } from '../pages/db/forms';
+import { buttonClass, primaryClass } from './controlStyles';
 
 /** Keep access to the codes until the user confirms they have saved them. */
 export default function RecoveryCodes({ codes, onContinue, continueLabel }: { codes: string[]; onContinue: () => void; continueLabel?: string }) {

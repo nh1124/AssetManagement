@@ -8,6 +8,7 @@ from .domain.messages import LANGUAGES, Message
 from .utils.jwt import decode_token, token_is_current
 
 bearer_scheme = HTTPBearer(auto_error=False)
+APPROVAL_PENDING = Message("This account is waiting for approval.", ja="このアカウントは管理者の承認待ちです。")
 AUTHENTICATION_REQUIRED = Message("Authentication required", ja="サインインしてください。")
 
 
@@ -58,6 +59,9 @@ async def get_current_client(
     # A token outlives the decision to deactivate its owner by up to a day.
     if client.is_active is False:
         raise HTTPException(status_code=401, detail=AUTHENTICATION_REQUIRED)
+
+    if client.approval_pending:
+        raise HTTPException(status_code=403, detail=APPROVAL_PENDING)
 
     if not token_is_current(payload, client.tokens_valid_after):
         raise HTTPException(status_code=401, detail=AUTHENTICATION_REQUIRED)

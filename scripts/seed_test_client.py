@@ -8,16 +8,32 @@ paid by a monthly withdrawal) whose plan is made,
 which creates the goal's earmarks, and the user's own plan records for this month. Only ever run it against the
 test client.
 
-    python scripts/seed_test_client.py --base http://127.0.0.1:18100 --username dev --password ...
+    python scripts/seed_test_client.py --base http://127.0.0.1:18100 --username dev --password ... --totp-secret ...
+
+Every account has TOTP (WP31): pass the account's base32 secret (the development seed uses DEV_TOTP_SECRET in
+backend/app/config.py) or a current --code.
 """
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
+import hmac
 import json
+import struct
 import sys
+import time
 import urllib.error
 import urllib.request
 from datetime import date
+
+
+def totp(secret: str, at: float | None = None) -> str:
+    """RFC 6238 code (30 s, 6 digits, SHA-1) without third-party packages."""
+    key = base64.b32decode(secret.strip().upper() + "=" * (-len(secret.strip()) % 8))
+    digest = hmac.new(key, struct.pack(">Q", int((time.time() if at is None else at) // 30)), hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    return f"{(struct.unpack('>I', digest[offset:offset + 4])[0] & 0x7FFFFFFF) % 1_000_000:06d}"
 
 
 class Api:
@@ -228,12 +244,19 @@ def main() -> None:
     parser.add_argument("--base", required=True)
     parser.add_argument("--username", required=True)
     parser.add_argument("--password", required=True)
+    parser.add_argument("--totp-secret", help="the account's base32 TOTP secret")
+    parser.add_argument("--code", help="a current authenticator code instead of --totp-secret")
     parser.add_argument("--client-id", type=int, default=1, help="refuse to run unless the signed-in client has this id")
     args = parser.parse_args()
+    if not (args.totp_secret or args.code):
+        sys.exit("pass --totp-secret or --code (every account has TOTP)")
     api = Api(args.base)
-    auth = api.post("/auth/login", {"username": args.username, "password": args.password})
-    if auth.get("client_id") != args.client_id:
-        sys.exit(f"signed in as client {auth.get('client_id')}, expected {args.client_id}; nothing changed")
+    step = api.post("/auth/login", {"username": args.username, "password": args.password})
+    if step.get("client_id") != args.client_id:
+        sys.exit(f"signed in as client {step.get('client_id')}, expected {args.client_id}; nothing changed")
+    if step.get("next_step") != "mfa":
+        sys.exit(f"the account must first finish sign-in in the app (next step: {step.get('next_step')})")
+    auth = api.post("/auth/mfa/login/verify", {"mfa_token": step["step_token"], "code": args.code or totp(args.totp_secret)})
     api.token = auth["access_token"]
     exported = api.get("/data/export")
     api.post("/data/import", {"version": exported["version"], "data": {}})

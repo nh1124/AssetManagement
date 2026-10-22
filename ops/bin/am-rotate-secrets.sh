@@ -23,6 +23,7 @@ AM_JOB=rotate-secrets
 
 : "${AM_REPO_DIR:=$HOME/AssetManagement}"
 : "${AM_BACKEND_CONTAINER:=finance-backend}"
+: "${AM_ADMIN_CONTAINER:=finance-admin}"
 # Overridable so the script can be exercised against a throwaway project.
 : "${AM_COMPOSE:=docker compose}"
 apply=0
@@ -110,7 +111,7 @@ chmod 600 "$backup" "$env_file"
 rollback() {
   log_event error rolling_back reason="$1"
   cp -p "$backup" "$env_file"
-  (cd "$AM_REPO_DIR" && $AM_COMPOSE up -d backend mcp) >/dev/null 2>&1 || true
+  (cd "$AM_REPO_DIR" && $AM_COMPOSE up -d backend mcp admin) >/dev/null 2>&1 || true
   write_status rotate-secrets last_result=rolled_back last_error="$1" last_failure_at="$(date -Iseconds)"
   exit 1
 }
@@ -132,17 +133,18 @@ case "$plan" in
     ;;
 esac
 
-(cd "$AM_REPO_DIR" && $AM_COMPOSE up -d backend mcp) >/dev/null 2>&1 || rollback compose_up_failed
+(cd "$AM_REPO_DIR" && $AM_COMPOSE up -d backend mcp admin) >/dev/null 2>&1 || rollback compose_up_failed
 
 healthy=0
 for _ in $(seq 1 60); do
-  if [ "$(docker inspect -f '{{.State.Health.Status}}' "$AM_BACKEND_CONTAINER" 2>/dev/null)" = "healthy" ]; then
+  if [ "$(docker inspect -f '{{.State.Health.Status}}' "$AM_BACKEND_CONTAINER" 2>/dev/null)" = "healthy" ] \
+    && [ "$(docker inspect -f '{{.State.Health.Status}}' "$AM_ADMIN_CONTAINER" 2>/dev/null)" = "healthy" ]; then
     healthy=1
     break
   fi
   sleep 3
 done
-[ "$healthy" = 1 ] || rollback backend_not_healthy
+[ "$healthy" = 1 ] || rollback backend_or_admin_not_healthy
 # The keys are in use now; a later failure must not undo them.
 trap - ERR
 
@@ -150,12 +152,19 @@ if [ -n "$old_encryption_key" ]; then
   # Rewrite the stored secrets under the new key. The previous key is left
   # in .env on purpose: remove it by hand once this has reported success and
   # a backup taken after this point exists.
-  if docker exec "$AM_BACKEND_CONTAINER" python -m app.maintenance.reencrypt_secrets --apply; then
-    log_event info reencrypted
-  else
-    log_event error reencrypt_incomplete
-    echo "re-encryption reported unreadable values; ENCRYPTION_KEY_PREVIOUS must stay" >&2
+  reencrypt_exit=0
+  reencrypt_output=$(cd "$AM_REPO_DIR" && $AM_COMPOSE run --rm --no-deps migrate \
+    python -m app.maintenance.reencrypt_secrets --apply 2>&1) || reencrypt_exit=$?
+  printf '%s\n' "$reencrypt_output"
+  if [ "$reencrypt_exit" -ne 0 ] || [[ ! "$reencrypt_output" =~ applied:\ rotated=[0-9]+\ unreadable=0($|[[:space:]]) ]]; then
+    reencrypt_error="exit=$reencrypt_exit $reencrypt_output"
+    log_event error reencrypt_incomplete error="$reencrypt_error"
+    write_status rotate-secrets last_result=reencrypt_incomplete last_error="$reencrypt_error" \
+      last_failure_at="$(date -Iseconds)" last_keys="$(echo "$plan" | xargs)" env_backup="$backup"
+    echo "re-encryption failed or reported unreadable values; ENCRYPTION_KEY_PREVIOUS must stay" >&2
+    exit 1
   fi
+  log_event info reencrypted
 fi
 
 write_status rotate-secrets last_result=ok last_success_at="$(date -Iseconds)" \

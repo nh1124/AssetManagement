@@ -40,8 +40,9 @@ def _actor_client_id(authorization: str | None) -> int | None:
 
 
 class RequestLogMiddleware:
-    def __init__(self, app):
+    def __init__(self, app, component="backend"):
         self.app = app
+        self.component = component
 
     async def __call__(self, scope, receive, send):
         if scope["type"] != "http":
@@ -58,7 +59,7 @@ class RequestLogMiddleware:
         token = bind(RequestContext(
             request_id=request_id,
             correlation_id=incoming_id if _SAFE_ID.fullmatch(incoming_id) else request_id,
-            actor_client_id=_actor_client_id(headers.get("authorization")),
+            actor_client_id=None if self.component == "admin" else _actor_client_id(headers.get("authorization")),
             channel="mcp" if mcp_client_id else "ui",
             mcp_client_id=mcp_client_id,
             mcp_tool=headers.get("x-mcp-tool-name") or None,
@@ -68,6 +69,7 @@ class RequestLogMiddleware:
         level = logging.DEBUG if path in QUIET_PATHS else logging.INFO
         client = scope.get("client") or ("", 0)
         request_fields = {
+            "component": self.component,
             "method": scope.get("method", ""),
             "path": path,
         }

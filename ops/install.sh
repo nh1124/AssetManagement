@@ -13,13 +13,19 @@ here="$(dirname "$(readlink -f "$0")")"
 lib="$HOME/.local/lib/am-ops"
 conf="$HOME/.config/am-ops"
 units="$HOME/.config/systemd/user"
+bin_dir="$HOME/.local/bin"
 
-mkdir -p "$lib/bin" "$lib/lib" "$conf" "$units"
+mkdir -p "$lib/bin" "$lib/lib" "$conf" "$units" "$bin_dir"
 install -m 755 "$here"/bin/*.sh "$lib/bin/"
 install -m 644 "$here"/lib/*.sh "$lib/lib/"
+if [ -e "$bin_dir/am-admin" ] && [ ! -L "$bin_dir/am-admin" ]; then
+  echo "keeping existing non-link $bin_dir/am-admin" >&2
+else
+  ln -sfn "$lib/bin/am-admin.sh" "$bin_dir/am-admin"
+fi
 chmod 700 "$conf"
 if [ ! -f "$conf/config.env" ]; then
-  install -m 600 "$here/config.example.env" "$conf/config.env"
+  install -m 600 "$here/.env.example" "$conf/config.env"
   echo "created $conf/config.env"
 fi
 

@@ -23,6 +23,10 @@ EXCLUDED = {"__init__.py", "accounting_service.py"}
 # layer below it, never above. Same-layer imports are allowed because the
 # acyclicity test already rejects the dangerous case.
 LAYERS: dict[str, int] = {
+    "admin_auth_service": 0,
+    "admin_audit_service": 0,
+    "system_settings_service": 0,
+    "admin_account_workflow": 6,
     # L0 - leaves: no dependency on any other service
     "ai_change_request_store": 0,
     "ai_policy_service": 0,

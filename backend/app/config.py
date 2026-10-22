@@ -23,6 +23,13 @@ class AppConfig(BaseSettings):
     mcp_allowed_issuers: str = "http://localhost:13000"
     mcp_base_url: str = ""
 
+    admin_allowed_hosts: str = "admin.localhost"
+    admin_allowed_origins: str = "http://admin.localhost:18300"
+    admin_cookie_secure: bool = False
+    admin_session_idle_minutes: int = 30
+    admin_session_max_hours: int = 8
+    admin_ui_dir: str = ""
+
     # Database Settings
     database_url: str = "sqlite:///./finance.db"
 
@@ -87,17 +94,35 @@ class AppConfig(BaseSettings):
                         issuers.append(alternate)
         return issuers
 
+    def _admin_production_errors(self) -> list[str]:
+        errors: list[str] = []
+        if not self.encryption_key.strip() or self.encryption_key == DEV_ENCRYPTION_KEY:
+            errors.append("ENCRYPTION_KEY must be changed in production")
+        for key in ("admin_allowed_hosts", "admin_allowed_origins"):
+            value = getattr(self, key)
+            if "*" in value:
+                errors.append(f"{key.upper()} must not contain '*' in production")
+            if not any(part.strip() for part in value.split(",")):
+                errors.append(f"{key.upper()} must include at least one trusted value in production")
+        return errors
+
+    def validate_admin_production_settings(self) -> None:
+        """The admin process decrypts MFA secrets; it never signs user/MCP JWTs."""
+        if not self.is_production:
+            return
+        errors = self._admin_production_errors()
+        if errors:
+            raise RuntimeError("Invalid production configuration: " + "; ".join(errors))
+
     def validate_production_settings(self) -> None:
         if not self.is_production:
             return
 
-        errors: list[str] = []
+        errors = self._admin_production_errors()
         if self.jwt_secret_key == DEV_JWT_SECRET_KEY:
             errors.append("JWT_SECRET_KEY must be changed in production")
         if self.mcp_jwt_secret == DEV_MCP_JWT_SECRET:
             errors.append("MCP_JWT_SECRET must be changed in production")
-        if self.encryption_key == DEV_ENCRYPTION_KEY:
-            errors.append("ENCRYPTION_KEY must be changed in production")
         if "*" in self.cors_allowed_origins:
             errors.append("ALLOWED_ORIGINS must not contain '*' in production")
         if not self.cors_allowed_origins:

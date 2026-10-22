@@ -3,18 +3,12 @@ import logging
 from datetime import date
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
-from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import Session
-from starlette.exceptions import HTTPException as StarletteHTTPException
 from . import models
 from .config import settings
 from .database import get_db
-from .dependencies import request_language
-from .domain.errors import DomainError, detail_for, status_for
-from .domain.messages import Message, localize
 from .routers import (
     accounts,
     ai_change_requests,
@@ -51,6 +45,14 @@ from .utils.observability import (
     install_sql_timing,
     setup_logging,
 )
+from .utils.http import (
+    api_docs_urls,
+    install_exception_handlers,
+    # Compatibility for tests/adapters that registered the original handlers.
+    domain_error_handler,
+    localized_http_exception_handler,
+    localized_validation_error_handler,
+)
 from .utils.password import verify_password
 from .services import mfa_service
 
@@ -58,14 +60,6 @@ from .services import mfa_service
 setup_logging()
 logger = logging.getLogger(__name__)
 _automatic_recording_task: asyncio.Task | None = None
-
-
-def api_docs_urls(config) -> dict[str, str | None]:
-    return {
-        "docs_url": None if config.is_production else "/docs",
-        "redoc_url": None if config.is_production else "/redoc",
-        "openapi_url": None if config.is_production else "/openapi.json",
-    }
 
 
 app = FastAPI(
@@ -76,99 +70,7 @@ app = FastAPI(
 )
 
 
-# WP29: an error's text follows the language the screen asked for (Accept-Language);
-# a request that names no language gets every message as written, as before.
-@app.exception_handler(DomainError)
-async def domain_error_handler(request: Request, exc: DomainError):
-    # Reuse FastAPI's serializer so bytes, headers and bodyless codes agree.
-    return await http_exception_handler(
-        request,
-        HTTPException(status_code=status_for(exc), detail=detail_for(exc, request_language(request))),
-    )
-
-
-@app.exception_handler(StarletteHTTPException)
-async def localized_http_exception_handler(request: Request, exc: StarletteHTTPException):
-    language = request_language(request)
-    if language is not None:
-        exc = StarletteHTTPException(exc.status_code, detail=localize(exc.detail, language), headers=exc.headers)
-    return await http_exception_handler(request, exc)
-
-
-@app.exception_handler(RequestValidationError)
-async def localized_validation_error_handler(request: Request, exc: RequestValidationError):
-    # A schema validator's own Message replaces pydantic's "Value error, …" line;
-    # pydantic's built-in messages (missing field, wrong type) stay as pydantic writes them.
-    language = request_language(request)
-    if language is not None:
-        errors = []
-        for error in exc.errors():
-            cause = (error.get("ctx") or {}).get("error")
-            text = cause.args[0] if isinstance(cause, ValueError) and len(cause.args) == 1 else None
-            errors.append({**error, "msg": text.in_language(language)} if isinstance(text, Message) else error)
-        exc = RequestValidationError(errors, body=exc.body)
-    return await request_validation_exception_handler(request, exc)
-
-
-def ensure_runtime_schema_guards(db) -> None:
-    """Patch critical additive columns when a hot-reloaded app outruns Alembic."""
-    dialect = db.bind.dialect.name if db.bind is not None else ""
-    if dialect == "postgresql":
-        db.execute(text("ALTER TABLE monthly_plan_lines ADD COLUMN IF NOT EXISTS source_kind VARCHAR NOT NULL DEFAULT 'manual'"))
-        db.execute(text("ALTER TABLE monthly_plan_lines ADD COLUMN IF NOT EXISTS identity_key VARCHAR NOT NULL DEFAULT ''"))
-        db.execute(text("ALTER TABLE monthly_plan_lines ADD COLUMN IF NOT EXISTS manual_override BOOLEAN NOT NULL DEFAULT false"))
-        db.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS liability_closing_day INTEGER"))
-        db.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS liability_payment_day INTEGER"))
-        db.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS liability_payment_month_offset INTEGER NOT NULL DEFAULT 0"))
-        db.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS liability_payment_policy VARCHAR NOT NULL DEFAULT 'full'"))
-        db.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS liability_minimum_payment_minor BIGINT"))
-        db.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS liability_fixed_payment_amount_minor BIGINT"))
-        db.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS liability_installment_months INTEGER"))
-        db.execute(text("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS liability_revolving_rate DOUBLE PRECISION"))
-        db.execute(text(
-            """
-            CREATE TABLE IF NOT EXISTS ai_change_requests (
-                id SERIAL PRIMARY KEY,
-                client_id INTEGER NOT NULL REFERENCES clients(id),
-                created_by_client_id INTEGER REFERENCES clients(id),
-                ai_client_id INTEGER REFERENCES clients(id),
-                mcp_client_id VARCHAR,
-                source VARCHAR NOT NULL,
-                tool_name VARCHAR,
-                resource VARCHAR NOT NULL,
-                action VARCHAR NOT NULL,
-                risk VARCHAR NOT NULL,
-                status VARCHAR NOT NULL DEFAULT 'pending',
-                target_ref JSON NOT NULL,
-                input_payload JSON NOT NULL,
-                before_snapshot JSON NOT NULL,
-                after_snapshot JSON NOT NULL,
-                diff JSON NOT NULL,
-                validation JSON NOT NULL,
-                idempotency_key VARCHAR NOT NULL,
-                precondition_hash VARCHAR,
-                requires_mfa BOOLEAN NOT NULL DEFAULT false,
-                approved_by_client_id INTEGER REFERENCES clients(id),
-                approved_at TIMESTAMP,
-                applied_at TIMESTAMP,
-                expires_at TIMESTAMP,
-                result JSON NOT NULL,
-                created_at TIMESTAMP NOT NULL,
-                updated_at TIMESTAMP NOT NULL,
-                CONSTRAINT _client_ai_change_request_idempotency_uc UNIQUE (client_id, idempotency_key)
-            )
-            """
-        ))
-        db.execute(text("CREATE INDEX IF NOT EXISTS ix_ai_change_requests_client_id ON ai_change_requests (client_id)"))
-        db.execute(text("CREATE INDEX IF NOT EXISTS ix_ai_change_requests_status ON ai_change_requests (status)"))
-        db.execute(text(
-            """
-            CREATE UNIQUE INDEX IF NOT EXISTS uq_monthly_plan_lines_active_identity
-            ON monthly_plan_lines (client_id, identity_key)
-            WHERE is_active = true AND identity_key <> ''
-            """
-        ))
-        db.commit()
+install_exception_handlers(app)
 
 
 def ensure_no_development_password(db) -> None:
@@ -218,13 +120,13 @@ async def startup_event():
     from .utils.password import hash_password
 
     settings.validate_production_settings()
-    # Migrations run once, in the container's start command (alembic upgrade head) before uvicorn (§8-9).
+    # Migrations and database privileges run in the migrate service, as the table owner (WP32 W5);
+    # this process connects as am_user_app and never runs DDL.
     install_db_audit(SessionLocal)
     install_sql_timing(engine)
 
     db = SessionLocal()
     try:
-        ensure_runtime_schema_guards(db)
         default_client = db.query(models.Client).filter(models.Client.id == 1).first()
 
         if settings.is_production:
@@ -235,7 +137,6 @@ async def startup_event():
             if not default_client:
                 print("Seeding dev user for development...")
                 default_client = models.Client(
-                    id=1,
                     name="dev",
                     username="dev",
                     password_hash=hash_password("adminadmin"),
@@ -245,19 +146,8 @@ async def startup_event():
                 db.commit()
                 db.refresh(default_client)
 
-                # Sync Postgres Sequence (since we manually forced ID=1)
-                try:
-                    db.execute(text("SELECT setval('clients_id_seq', (SELECT MAX(id) FROM clients))"))
-                    db.commit()
-                except Exception as e:
-                    print(f"Sequence sync skipped: {e}")
-            else:
-                # Ensure dev has valid credentials in development only.
-                if not default_client.username or not default_client.password_hash:
-                    default_client.username = "dev"
-                    default_client.password_hash = hash_password("adminadmin")
-                    db.commit()
-
+                # The sequence assigns the id (1 in a fresh database); forcing id=1 would need
+                # setval, which the application role may not run (WP32 W5).
             if default_client.username == "dev":
                 mfa_service.ensure_development_mfa(db, default_client)
 

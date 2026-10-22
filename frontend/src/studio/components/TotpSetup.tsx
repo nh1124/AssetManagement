@@ -3,7 +3,7 @@ import QRCode from 'qrcode';
 import type { TotpProvisioning } from '../../types';
 import { tr } from '../i18n';
 import { useResource } from '../useResource';
-import { buttonClass } from '../pages/db/forms';
+import { buttonClass } from './controlStyles';
 
 export default function TotpSetup({ setup }: { setup: TotpProvisioning }) {
     const load = useCallback(() => QRCode.toDataURL(setup.otpauth_uri, { width: 208, margin: 2, errorCorrectionLevel: 'M' }), [setup.otpauth_uri]);

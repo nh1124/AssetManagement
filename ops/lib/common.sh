@@ -18,7 +18,9 @@ fi
 : "${AM_DB_CONTAINER:=finance-db}"
 : "${AM_DB_NAME:=finance_ide}"
 : "${AM_DB_USER:=postgres}"
-: "${AM_CONTAINERS:=finance-db finance-backend finance-frontend finance-mcp}"
+: "${AM_CONTAINERS:=finance-db finance-backend finance-frontend finance-mcp finance-admin}"
+# Optional single VPN address permitted for the admin port by am-status.
+: "${AM_ADMIN_ALLOWED_BIND:=}"
 : "${AM_BACKUP_ROOT:=$HOME/backups/assetmanagement}"
 : "${AM_STATE_DIR:=$HOME/.local/state/am-ops}"
 : "${AM_OPS_LOG:=$AM_STATE_DIR/ops.log}"

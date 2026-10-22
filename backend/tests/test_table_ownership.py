@@ -15,6 +15,11 @@ APP_DIR = Path(__file__).resolve().parents[1] / "app"
 # The module responsible for a table's invariants. Rows in that table should be
 # created here and nowhere else.
 OWNERS: dict[str, str] = {
+    "admin_users": "services/admin_auth_service",
+    "admin_user_permissions": "services/admin_auth_service",
+    "admin_sessions": "services/admin_auth_service",
+    "admin_audit_logs": "services/admin_audit_service",
+    "system_settings": "services/system_settings_service",
     "accounts": "services/ledger_service",
     "journal_entries": "services/ledger_service",
     "transactions": "services/ledger_service",

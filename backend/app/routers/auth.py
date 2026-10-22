@@ -1,5 +1,6 @@
 from datetime import timedelta
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, EmailStr
 from typing import Literal, Optional
@@ -8,9 +9,9 @@ from .. import models
 from ..database import get_db
 from ..utils.jwt import create_access_token, create_typed_token, decode_token, decode_mcp_access_token, token_is_current
 from ..utils.password import verify_password, hash_password
-from ..dependencies import get_current_client
-from ..domain.messages import Message, message_of
-from ..services import client_service, mfa_service
+from ..dependencies import get_current_client, request_language, APPROVAL_PENDING
+from ..domain.messages import Message, message_of, localize
+from ..services import client_service, mfa_service, system_settings_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 INVALID_TOKEN = Message("Invalid token", ja="サインインの有効期限が切れました。もう一度サインインしてください。")
@@ -134,6 +135,8 @@ def _client_from_typed_token(db: Session, token: str, expected_type: str) -> mod
     client = client_service.get_active_by_id(db, payload.get("sub"))
     if not client or not token_is_current(payload, client.tokens_valid_after):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=INVALID_TOKEN)
+    if client.approval_pending:
+        raise HTTPException(status_code=403, detail=APPROVAL_PENDING)
     return client
 
 LOCKED = Message("Too many attempts. Try again later.", ja="試行が多すぎます。しばらくしてからもう一度お試しください。")
@@ -193,6 +196,8 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
     _ensure_unlocked(client)
     if not verify_password(req.password, client.password_hash or ""):
         _failed(db, client, invalid)
+    if client.approval_pending:
+        raise HTTPException(status_code=403, detail=APPROVAL_PENDING)
     return _next_step(db, client)
 
 
@@ -254,6 +259,9 @@ def exchange_mcp_token(req: McpTokenExchangeRequest, db: Session = Depends(get_d
     if not client or (username and (client.username or "").lower() != username):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="MCP subject is not a valid user")
 
+    if client.approval_pending:
+        raise HTTPException(status_code=403, detail=APPROVAL_PENDING)
+
     if not token_is_current(payload, client.tokens_valid_after, claim="auth_time_ms", required=True):
         raise HTTPException(status_code=401, detail=INVALID_TOKEN)
 
@@ -275,8 +283,11 @@ def exchange_mcp_token(req: McpTokenExchangeRequest, db: Session = Depends(get_d
     }
 
 @router.post("/register", response_model=AuthResponse, response_model_exclude_unset=True)
-def register(req: RegisterRequest, db: Session = Depends(get_db)):
+def register(req: RegisterRequest, db: Session = Depends(get_db), request: Request = None):
     """Create a new client with login credentials."""
+    registration_mode = system_settings_service.get(db, "registration_mode")
+    if registration_mode == "closed":
+        raise HTTPException(status_code=403, detail=Message("Sign-up is closed.", ja="現在、新規登録は受け付けていません。"))
     username = req.username.strip().lower()
     if not username:
         raise HTTPException(status_code=400, detail=Message("Username is required", ja="ユーザー名を入力してください。"))
@@ -298,11 +309,15 @@ def register(req: RegisterRequest, db: Session = Depends(get_db)):
     try:
         new_client = client_service.register(
             db, name=client_name, username=username, email=email,
-            password_hash=password_hash,
+            password_hash=password_hash, approval_pending=registration_mode == "approval",
         )
     except IntegrityError:
         raise HTTPException(status_code=400, detail=Message("Unable to register with provided credentials", ja="入力した内容では登録できませんでした。"))
 
+    if new_client.approval_pending:
+        return JSONResponse(status_code=202, content={"approval_pending": True, "message": localize(
+            Message("Your account was created and is waiting for approval.", ja="アカウントを作成しました。管理者の承認をお待ちください。"),
+            request_language(request) if request is not None else None)})
     return _next_step(db, new_client)
 
 

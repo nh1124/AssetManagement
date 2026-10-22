@@ -157,6 +157,22 @@ def _seed(db, client_id=101, base=10000):
     return client, rows
 
 
+def _seed_installation_data(db):
+    """Installation records must survive both failed and successful user restores."""
+    admin = models.AdminUser(username="installation-owner", password_hash="admin-credential",
+                             totp_secret_encrypted="admin-factor", created_at=STAMP, created_by="cli:test")
+    db.add(admin)
+    db.flush()
+    db.add_all([
+        models.AdminUserPermission(admin_user_id=admin.id, permission="admins.manage", granted_by="cli:test"),
+        models.AdminSession(id="a" * 64, admin_user_id=admin.id, expires_at=datetime(2030, 1, 1)),
+        models.AdminAuditLog(admin_user_id=admin.id, actor=f"admin:{admin.id}", action="client.suspend",
+                             target_client_id=101, detail={}, result="ok"),
+        models.SystemSetting(key="registration_mode", value="approval", updated_by="cli:test"),
+    ])
+    db.commit()
+
+
 def _table_bytes(db):
     return {
         name: json.dumps([dict(row) for row in db.execute(select(table).order_by(*table.primary_key.columns)).mappings()],
@@ -332,6 +348,7 @@ def test_journal_failure_after_deletion_preserves_every_table_byte_for_byte(db):
     # including an unrelated client's rows. The plan is in the transfer format
     # now, and the fixture seeds one for each client.
     _seed(db, client_id=102, base=20000)
+    _seed_installation_data(db)
     document = export_client(db, client)
     document["data"]["journal_entries"][0]["account_id"] = str(document["data"]["journal_entries"][0]["account_id"])
     assert validate_import_payload(document["data"], document["version"], document["manifest"])["error_count"] == 0
@@ -424,3 +441,21 @@ def test_commit_failure_rolls_back_the_complete_rebuild(db):
     assert commits == [db]
     assert str(caught.value) == "Import failed: commit refused"
     assert _table_bytes(db) == before
+
+
+def test_user_restore_preserves_installation_data_and_account_status(db):
+    source, _ = _seed(db)
+    target = _client(db, 202)
+    _seed_installation_data(db)
+    source.approval_pending, source.suspended_reason = True, "source status"
+    target.approval_pending, target.suspended_reason = True, "target status"
+    db.commit()
+    document = export_client(db, source)
+    assert "approval_pending" not in document["client"] and "suspended_reason" not in document["client"]
+    installation_tables = {"admin_users", "admin_user_permissions", "admin_sessions", "admin_audit_logs", "system_settings"}
+    assert not installation_tables.intersection(document["data"])
+    before = {key: value for key, value in _table_bytes(db).items() if key in installation_tables}
+    _restore(db, target, document)
+    db.refresh(target)
+    assert target.approval_pending and target.suspended_reason == "target status"
+    assert {key: value for key, value in _table_bytes(db).items() if key in installation_tables} == before
