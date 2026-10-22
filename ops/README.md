@@ -18,8 +18,14 @@ ops/install.sh
 ```
 
 Copies the scripts to `~/.local/lib/am-ops/`, creates
-`~/.config/am-ops/config.env` once, and enables the timers. Run it again after
-changing anything under `ops/`.
+`~/.config/am-ops/config.env` once, links `~/.local/bin/am-admin`, and enables
+the timers. Run it again after changing anything under `ops/`.
+
+It records the checkout it runs from as `AM_REPO_DIR` in the config (used by
+`am-admin`, `am-db-roles.sh` and `am-rotate-secrets.sh` to find `.env` and
+`docker-compose.yml`), so a clone in any directory works. It does not do that
+from a linked git worktree, and it keeps an existing value that names another
+checkout; `ops/install.sh --set-repo-dir` switches it to this one.
 
 ## Look
 
@@ -113,8 +119,9 @@ the restart would start whatever is in the working tree.
 専用のホスト名と Cookie の `/admin/api` パスで、管理セッションが利用者サービスへ送信されるのを防ぎます。
 利用者サービスには `admin.localhost` を使わないでください。初回の管理者は
 `am-admin admin create <name>` で作成します（パスワード・TOTP の対話入力）。
-`ops/install.sh` は CLI をインストールし、`~/.local/bin/am-admin` をリンクします。
-`~/.local/bin` を PATH に追加し、ops 設定の `AM_REPO_DIR` をデプロイ先に合わせてください。
+`ops/install.sh` は CLI をインストールし、`~/.local/bin/am-admin` をリンクし、
+実行したチェックアウトの場所を ops 設定の `AM_REPO_DIR` に記録します。`~/.local/bin` を PATH に追加してください。
+インストールしなくても、リポジトリ内の `ops/bin/am-admin.sh` を直接実行できます。
 Compose のプロジェクト名を指定した環境では、CLI 実行時も同じ
 `COMPOSE_PROJECT_NAME` を設定します。
 
@@ -164,6 +171,56 @@ IPv4・IPv6 とも拒否します（ホストの公開ポートからも不可�
 アプリは `postgres` で接続します（表の持ち主が `am_owner` でも superuser は読み書きできます）。
 ロールは残しておいてかまいません。`hba_file` の上書きは現在の Compose にだけあるため、
 戻すと DB はデータディレクトリ内の元の `pg_hba.conf` を再び使い、superuser の TCP 拒否も解除されます。
+
+## 別の PC へ移す
+
+新しい PC（WSL2 の Ubuntu など）へ、データとアカウントをそのまま移す手順です。
+2026-10-23 に、本番のバックアップを別の compose プロジェクトへ戻すリハーサルで確認しました。
+
+**前提（新しい PC）**：systemd が有効な Linux（WSL2 なら `/etc/wsl.conf` の `[boot] systemd=true`）、
+Docker Engine と Compose v2、git、openssl、python3。
+
+**リポジトリに入っていないもの**（手で移す）：
+
+| もの | 移し方 |
+|---|---|
+| `.env`（鍵・DB ロールのパスワード） | 安全な方法でコピー。**`ENCRYPTION_KEY`（と `ENCRYPTION_KEY_PREVIOUS`）は必ず同じ値**。違うと DB の TOTP の秘密が読めず、利用者も管理者もサインインできなくなる。JWT の鍵は新しくてもよい（全員がサインインし直す） |
+| DB の中身 | 移す直前のバックアップ（下の 1） |
+| `~/.config/am-ops/config.env` | 通常は不要（`install.sh` が作り、`AM_REPO_DIR` も記録する）。ミラー先などを変えていたら写す |
+| `docs/` | `.gitignore` で除外している設計・引き継ぎの文書。フォルダごとコピー |
+| 未取り込みのブランチ | 例：`ops/incident-loop`（障害検知のスクリプト）。取り込むか、作業ツリーごとコピー |
+
+**手順**：
+
+```bash
+# ── 古い PC ──
+# 1. 書き込みを止めてからバックアップ（止めた後のものを使う）
+docker compose stop backend admin mcp frontend
+docker compose exec -T db pg_dump -U postgres -d finance_ide -Fc > finance_ide.dump
+#    finance_ide.dump と .env（と docs/）を新しい PC へ安全に運ぶ
+
+# ── 新しい PC ──
+git clone <このリポジトリの URL> ~/AssetManagement
+cd ~/AssetManagement
+#    .env をここに置く（権限 600）
+docker compose --env-file .env up -d db
+ops/bin/am-db-roles.sh --apply                 # 空の DB にロールを作る
+docker exec -i finance-db pg_restore -U postgres -d finance_ide \
+  --no-owner --role=am_owner --no-privileges --exit-on-error < finance_ide.dump
+docker compose --env-file .env up -d --build   # migrate が新しい migration と権限の付与、続いて backend・admin・frontend・mcp
+ops/install.sh                                 # 定期ジョブ、am-admin、AM_REPO_DIR の記録
+```
+
+`--role=am_owner` で、戻した表の持ち主が最初から `am_owner` になります。権限はバックアップから戻さず
+（`--no-privileges`）、migrate が `backend/app/db_access.py` から付け直します。
+
+**確かめる**：`docker compose ps`（migrate は `Exited (0)`、ほかは healthy）、
+`~/.local/lib/am-ops/bin/am-status.sh`、`systemctl --user start am-backup.service am-restore-verify.service` の結果、
+アプリへのサインイン（TOTP はそのまま使える）、<http://admin.localhost:18300> への管理者のサインイン。
+AI の接続（MCP）は認可をやり直します。
+
+**古い PC を止める**：新しい PC で確認が済んでから `ops/uninstall.sh`（定期ジョブを外す）と
+`docker compose down`。データの volume（`docker compose down -v`）はしばらく残しておくと戻れます。
 
 ## What the watchdog will not do
 
