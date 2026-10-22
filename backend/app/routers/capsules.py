@@ -8,6 +8,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from ..domain.messages import Message
 from .. import database, dependencies, models, schemas
 from ..services import capsule_service
 from ..services.ai_policy_service import assert_direct_ledger_write_allowed
@@ -82,7 +83,7 @@ def read_capsule_funding_sources(
 ):
     sources = capsule_service.list_funding_sources(db, current_client.id, capsule_id)
     if sources is None:
-        raise HTTPException(status_code=404, detail="Capsule not found")
+        raise HTTPException(status_code=404, detail=Message("Capsule not found", ja="取り置きが見つかりません。"))
     # The same serializer capsule_to_dict uses, so the plan reads identically
     # whether it arrives from here or on the capsule itself.
     return [funding_source_to_dict(source) for source in sources]
@@ -114,7 +115,7 @@ def update_capsule(
 ):
     db_capsule = capsule_service.update_capsule(db, current_client.id, capsule_id, capsule_update)
     if db_capsule is None:
-        raise HTTPException(status_code=404, detail="Capsule not found")
+        raise HTTPException(status_code=404, detail=Message("Capsule not found", ja="取り置きが見つかりません。"))
     result = capsule_to_dict(db, db_capsule)
     plan_reflection_workflow.after_change(db, current_client.id)
     return result
@@ -134,7 +135,7 @@ def delete_capsule(
     """
     deleted = capsule_service.delete_capsule(db, current_client.id, capsule_id)
     if deleted is None:
-        raise HTTPException(status_code=404, detail="Capsule not found")
+        raise HTTPException(status_code=404, detail=Message("Capsule not found", ja="取り置きが見つかりません。"))
     result = {"message": "Capsule deleted successfully", **asdict(deleted)}
     plan_reflection_workflow.after_change(db, current_client.id)
     return result
@@ -238,7 +239,7 @@ def update_capsule_rule(
 ):
     rule = capsule_service.update_rule(db, current_client.id, rule_id, payload)
     if rule is None:
-        raise HTTPException(status_code=404, detail="Rule not found")
+        raise HTTPException(status_code=404, detail=Message("Rule not found", ja="取り置きの規則が見つかりません。"))
     return _rule_to_dict(rule)
 
 
@@ -249,5 +250,5 @@ def delete_capsule_rule(
     current_client: models.Client = Depends(dependencies.get_current_client),
 ):
     if not capsule_service.delete_rule(db, current_client.id, rule_id):
-        raise HTTPException(status_code=404, detail="Rule not found")
+        raise HTTPException(status_code=404, detail=Message("Rule not found", ja="取り置きの規則が見つかりません。"))
     return {"message": "Rule deleted"}

@@ -77,14 +77,17 @@ def _settle(db: Session, client_id: int, event: models.LifeEvent) -> None:
     if event.direction == "repayment":
         borrowing = get_life_event(db, client_id, event.borrowing_event_id) if event.borrowing_event_id else None
         if borrowing is None or borrowing.direction != "borrowing" or borrowing.scenario_id != event.scenario_id or borrowing.id == event.id:
-            raise Refused("同じシナリオの借入イベントを選んでください。", status_code=422)
+            raise Refused("同じシナリオの借入イベントを選んでください。", en="Choose a borrowing event in the same scenario.", status_code=422)
         event.repeat_count = event.repeat_count or 1
     else:
         event.borrowing_event_id = None
         event.repeat_count = None
     if event.id is not None and event.direction != "borrowing" and db.query(models.LifeEvent.id).filter_by(
             client_id=client_id, borrowing_event_id=event.id).first():
-        raise Refused("この借入を返す返済イベントがあります。先に返済イベントを変更してください。", status_code=422)
+        raise Refused(
+            "この借入を返す返済イベントがあります。先に返済イベントを変更してください。",
+            en="A repayment event repays this borrowing. Change the repayment event first.", status_code=422,
+        )
 
 
 def create_goal_record(

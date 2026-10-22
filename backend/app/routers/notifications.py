@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from ..domain.messages import Message, message_of
 from .. import models
 from ..database import get_db
 from ..dependencies import get_current_client
@@ -47,9 +48,9 @@ def decide(
 ):
     row = notification_service.get(db, current_client.id, notification_id)
     if row is None:
-        raise HTTPException(status_code=404, detail="Notification not found")
+        raise HTTPException(status_code=404, detail=Message("Notification not found", ja="通知が見つかりません。"))
     try:
         row = notification_service.decide(db, row, payload.action, until=payload.until)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail=message_of(exc)) from exc
     return notification_service.describe(row)

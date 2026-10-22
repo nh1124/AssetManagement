@@ -5,6 +5,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 
+from ..domain.messages import Message, message_of
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
@@ -177,9 +178,9 @@ def approve_proposal(
     try:
         transaction = approve_entry_proposal(db, current_client.id, proposal_id)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=message_of(exc)) from exc
     if transaction is None:
-        raise HTTPException(status_code=404, detail="Transaction proposal not found")
+        raise HTTPException(status_code=404, detail=Message("Transaction proposal not found", ja="取引の提案が見つかりません。"))
     invalidate_client(current_client.id)
     return _serialize_transaction(transaction)
 
@@ -196,9 +197,9 @@ def reject_proposal(
             db, current_client.id, proposal_id, note=decision.note,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=message_of(exc)) from exc
     if proposal is None:
-        raise HTTPException(status_code=404, detail="Transaction proposal not found")
+        raise HTTPException(status_code=404, detail=Message("Transaction proposal not found", ja="取引の提案が見つかりません。"))
     invalidate_client(current_client.id)
     return proposal
 
@@ -216,7 +217,7 @@ def get_transaction(
     """
     transaction = get_entry(db, current_client.id, transaction_id)
     if transaction is None:
-        raise HTTPException(status_code=404, detail="Transaction not found")
+        raise HTTPException(status_code=404, detail=Message("Transaction not found", ja="取引が見つかりません。"))
     return _serialize_transaction(transaction)
 
 
@@ -240,10 +241,10 @@ def update_transaction(
     try:
         tx = amend_entry(db, current_client.id, transaction_id, payload)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=message_of(exc)) from exc
 
     if not tx:
-        raise HTTPException(status_code=404, detail="Transaction not found")
+        raise HTTPException(status_code=404, detail=Message("Transaction not found", ja="取引が見つかりません。"))
     invalidate_client(current_client.id)
     return _write_response(db, current_client.id, tx)
 
@@ -265,6 +266,6 @@ def delete_transaction(
         risk="medium",
     )
     if not remove_entry(db, current_client.id, transaction_id):
-        raise HTTPException(status_code=404, detail="Transaction not found")
+        raise HTTPException(status_code=404, detail=Message("Transaction not found", ja="取引が見つかりません。"))
     invalidate_client(current_client.id)
     return {"message": "Transaction deleted"}

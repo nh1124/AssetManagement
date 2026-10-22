@@ -42,7 +42,7 @@ def copy_conditions(db: Session, client_id: int, event_map: dict[int, int]) -> N
 def _event(db: Session, client_id: int, event_id: int) -> models.LifeEvent:
     value = db.query(models.LifeEvent).filter_by(client_id=client_id, id=event_id).first()
     if value is None:
-        raise NotFound("ゴールが見つかりません。")
+        raise NotFound("ゴールが見つかりません。", en="Life event not found.")
     return value
 
 
@@ -50,7 +50,7 @@ def create_condition(db: Session, client_id: int, event_id: int, payload: schema
     _event(db, client_id, event_id)
     model = REFERENCE_MODELS.get(payload.metric)
     if model is not None and db.query(model).filter_by(client_id=client_id, id=payload.reference_id).first() is None:
-        raise NotFound("同じクライアントの対象を選択してください。")
+        raise NotFound("同じクライアントの対象を選択してください。", en="Choose a target of this client.")
     row = models.LifeEventCondition(client_id=client_id, life_event_id=event_id, **payload.model_dump())
     db.add(row)
     db.commit()
@@ -63,10 +63,10 @@ def update_condition(db: Session, client_id: int, event_id: int, condition_id: i
     _event(db, client_id, event_id)
     row = db.query(models.LifeEventCondition).filter_by(client_id=client_id, life_event_id=event_id, id=condition_id).first()
     if row is None:
-        raise NotFound("条件が見つかりません。")
+        raise NotFound("条件が見つかりません。", en="Precondition not found.")
     model = REFERENCE_MODELS.get(payload.metric)
     if model is not None and db.query(model).filter_by(client_id=client_id, id=payload.reference_id).first() is None:
-        raise NotFound("同じクライアントの対象を選択してください。")
+        raise NotFound("同じクライアントの対象を選択してください。", en="Choose a target of this client.")
     for key, value in payload.model_dump().items():
         setattr(row, key, value)
     db.commit()
@@ -78,7 +78,7 @@ def delete_condition(db: Session, client_id: int, event_id: int, condition_id: i
     _event(db, client_id, event_id)
     row = db.query(models.LifeEventCondition).filter_by(client_id=client_id, life_event_id=event_id, id=condition_id).first()
     if row is None:
-        raise NotFound("条件が見つかりません。")
+        raise NotFound("条件が見つかりません。", en="Precondition not found.")
     db.delete(row)
     db.commit()
 

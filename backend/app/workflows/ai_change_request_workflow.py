@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..domain.errors import Conflict, Invalid, NotFound, Refused
+from ..domain.messages import Message, message_of
 from ..domain.money import Money
 from ..services.money_storage import money_client_currency
 from ..services.fx_service import get_exchange_rate
@@ -101,14 +102,14 @@ def _validate_transaction_create(db: Session, client_id: int, payload: dict[str,
     if parsed.currency is None:
         parsed.currency = get_client_currency(db, client_id)
     if parsed.amount <= 0:
-        raise ValueError("Transaction amount must be positive")
+        raise ValueError(Message("Transaction amount must be positive", ja="取引の金額は0より大きくしてください。"))
 
     account_ids = [value for value in [parsed.from_account_id, parsed.to_account_id] if value is not None]
     if account_ids:
         found_ids = find_account_ids(db, client_id, account_ids)
         missing = [account_id for account_id in account_ids if account_id not in found_ids]
         if missing:
-            raise ValueError(f"Account not found: {missing[0]}")
+            raise ValueError(Message(f"Account not found: {missing[0]}", ja=f"口座・科目が見つかりません（#{missing[0]}）。"))
 
     return parsed.model_dump(mode="json")
 
@@ -131,10 +132,10 @@ def _preview_transaction_create(db: Session, client_id: int, payload: dict[str, 
 def _preview_monthly_plan_lines_update(db: Session, client_id: int, target_ref: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
     line_id = int(target_ref.get("id") or payload.get("id") or 0)
     if not line_id:
-        raise ValueError("Monthly plan line id is required")
+        raise ValueError(Message("Monthly plan line id is required", ja="計画の行を指定してください。"))
     line = get_plan_line(db, client_id, line_id)
     if not line:
-        raise ValueError("Monthly plan line not found")
+        raise ValueError(Message("Monthly plan line not found", ja="計画の行が見つかりません。"))
 
     data = schemas.MonthlyPlanLineUpdate(**payload).model_dump(exclude_unset=True, mode="json")
     before = _model_dict(line, MONTHLY_PLAN_LINE_FIELDS)
@@ -178,10 +179,10 @@ def _preview_automatic_create(db: Session, client_id: int, payload: dict[str, An
 def _preview_automatic_update(db: Session, client_id: int, target_ref: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
     recurring_id = int(target_ref.get("id") or payload.get("id") or 0)
     if not recurring_id:
-        raise ValueError("Automatic transaction id is required")
+        raise ValueError(Message("Automatic transaction id is required", ja="自動取引を指定してください。"))
     recurring = get_entry(db, client_id, recurring_id)
     if not recurring:
-        raise ValueError("Automatic transaction not found")
+        raise ValueError(Message("Automatic transaction not found", ja="自動取引が見つかりません。"))
     schedule, data = _automatic_input(db, client_id, payload, recurring.currency)
     before = _model_dict(recurring, REGISTRY_ENTRY_FIELDS)
     after = {**before, **data, "id": recurring_id}
@@ -221,7 +222,7 @@ def preview_change_request(
         else:
             preview = _preview_automatic_update(db, client_id, payload.target_ref, payload.input_payload)
     except ValueError as exc:
-        raise Invalid(str(exc)) from exc
+        raise Invalid(message_of(exc)) from exc
 
     context = _operation_context(db, client_id, payload, resource, action, preview)
     decision = evaluate_ai_operation(db, client_id, context)
@@ -324,12 +325,15 @@ def approve_change_request(
 ) -> models.AiChangeRequest:
     row = _get_change_request(db, client_id, change_request_id, for_update=True)
     if row.status not in {"draft", "pending"}:
-        raise Invalid(f"Change request cannot be approved from status {row.status}")
+        raise Invalid(
+            f"Change request cannot be approved from status {row.status}",
+            ja=f"この状態（{row.status}）の承認リクエストは承認できません。",
+        )
     if row.requires_mfa:
         if not mfa_service.mfa_enabled(db, actor_client_id):
-            raise Refused("MFA setup required")
+            raise Refused("MFA setup required", ja="先にMFAを設定してください。")
         if not step_up_token_payload or step_up_token_payload.get("type") != "step_up" or str(step_up_token_payload.get("sub")) != str(actor_client_id):
-            raise Refused("Step-up authentication required", status_code=401)
+            raise Refused("Step-up authentication required", ja="認証アプリのコードで本人確認をしてください。", status_code=401)
     row.status = "approved"
     row.approved_by_client_id = actor_client_id
     row.approved_at = datetime.utcnow()
@@ -346,7 +350,10 @@ def reject_change_request(
 ) -> models.AiChangeRequest:
     row = _get_change_request(db, client_id, change_request_id)
     if row.status in {"applied", "rejected"}:
-        raise Invalid(f"Change request cannot be rejected from status {row.status}")
+        raise Invalid(
+            f"Change request cannot be rejected from status {row.status}",
+            ja=f"この状態（{row.status}）の承認リクエストは却下できません。",
+        )
     row.status = "rejected"
     row.updated_at = datetime.utcnow()
     db.commit()
@@ -367,7 +374,10 @@ def refresh_preview(
     """
     row = _get_change_request(db, client_id, change_request_id, for_update=True)
     if row.status not in {"draft", "pending", "approved", "failed"}:
-        raise Invalid(f"Change request cannot be rebuilt from status {row.status}")
+        raise Invalid(
+            f"Change request cannot be rebuilt from status {row.status}",
+            ja=f"この状態（{row.status}）の承認リクエストは作り直せません。",
+        )
     preview_payload = schemas.AiChangeRequestPreviewRequest(
         source=row.source,
         tool_name=row.tool_name,
@@ -408,7 +418,10 @@ def apply_change_request(
     if row.status == "applied":
         return row
     if row.status != "approved":
-        raise Invalid(f"Change request must be approved before apply; current status is {row.status}")
+        raise Invalid(
+            f"Change request must be approved before apply; current status is {row.status}",
+            ja=f"承認リクエストは適用する前に承認が必要です（現在の状態：{row.status}）。",
+        )
 
     current_preview = preview_change_request(
         db,
@@ -470,7 +483,7 @@ def apply_change_request(
             failed_row.result = {"error": "apply_failed", "message": str(exc)}
             failed_row.updated_at = datetime.utcnow()
             db.commit()
-        raise Invalid(str(exc)) from exc
+        raise Invalid(message_of(exc)) from exc
     except Exception:
         db.rollback()
         raise
@@ -528,7 +541,7 @@ def _apply_dispatch(db: Session, client_id: int, row: models.AiChangeRequest) ->
     if (row.resource, row.action) == ("monthly_plan_lines", "update"):
         line_id = int(row.target_ref.get("id") or row.input_payload.get("id") or 0)
         if not line_id:
-            raise ValueError("Monthly plan line id is required")
+            raise ValueError(Message("Monthly plan line id is required", ja="計画の行を指定してください。"))
         payload = {**row.input_payload, "id": line_id}
         saved = update_plan_lines(db, client_id, [payload], commit=False)
         return {"ids": [line.id for line in saved]}
@@ -541,10 +554,10 @@ def _apply_dispatch(db: Session, client_id: int, row: models.AiChangeRequest) ->
     if (row.resource, row.action) == ("auto_transactions", "update"):
         recurring_id = int(row.target_ref.get("id") or row.input_payload.get("id") or 0)
         if not recurring_id:
-            raise ValueError("Automatic transaction id is required")
+            raise ValueError(Message("Automatic transaction id is required", ja="自動取引を指定してください。"))
         recurring = get_entry(db, client_id, recurring_id)
         if not recurring:
-            raise ValueError("Automatic transaction not found")
+            raise ValueError(Message("Automatic transaction not found", ja="自動取引が見つかりません。"))
         data = schemas.RegistryEntryCreate(**row.input_payload).model_dump(exclude_unset=True)
         recurring = update_entry(db, client_id, recurring_id, data)
         db.flush()
@@ -562,7 +575,7 @@ def _get_change_request(
 ) -> models.AiChangeRequest:
     row = ai_change_request_store.get(db, client_id, change_request_id, for_update=for_update)
     if not row:
-        raise NotFound("Change request not found")
+        raise NotFound("Change request not found", ja="承認リクエストが見つかりません。")
     return row
 
 

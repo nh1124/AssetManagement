@@ -27,32 +27,35 @@ def create_link(
     # Serialize graph edits so two individually valid inserts cannot form a cycle.
     client = db.query(models.Client).filter(models.Client.id == client_id).with_for_update().first()
     if client is None:
-        raise NotFound("クライアントが見つかりません。")
+        raise NotFound("クライアントが見つかりません。", en="Client not found.")
     events = {event.id: event for event in db.query(models.LifeEvent).filter(
         models.LifeEvent.client_id == client_id,
         models.LifeEvent.id.in_([from_event_id, to_event_id]),
     ).all()}
     if len(events) != len({from_event_id, to_event_id}):
-        raise NotFound("同じクライアントのイベントを選択してください。")
+        raise NotFound("同じクライアントのイベントを選択してください。", en="Choose events of this client.")
     source, target = events[from_event_id], events[to_event_id]
     if source.scenario_id != target.scenario_id:
-        raise Refused("同じシナリオのイベントを選択してください。", status_code=422)
+        raise Refused("同じシナリオのイベントを選択してください。", en="Choose events in the same scenario.", status_code=422)
     if from_event_id == to_event_id:
-        raise Refused(f"「{source.name}」自身には接続できません。", status_code=422)
+        raise Refused(f"「{source.name}」自身には接続できません。", en=f"“{source.name}” cannot be linked to itself.", status_code=422)
     if kind != "after":
-        raise Refused("接続は「必ず続く」のみです。", status_code=422)
+        raise Refused("接続は「必ず続く」のみです。", en="A link can only be “always follows”.", status_code=422)
     if type(offset_months) is not int:
-        raise Refused("接続の月数が不正です。", status_code=422)
+        raise Refused("接続の月数が不正です。", en="The link’s number of months is not valid.", status_code=422)
     adjacency: dict[int, list[int]] = {}
     for link in list_links(db, client_id, source.scenario_id):
         if (link.from_event_id, link.to_event_id) == (from_event_id, to_event_id):
-            raise Conflict("このイベント間の接続は登録済みです。")
+            raise Conflict("このイベント間の接続は登録済みです。", en="These events are already linked.")
         adjacency.setdefault(link.from_event_id, []).append(link.to_event_id)
     pending, seen = [to_event_id], set()
     while pending:
         event_id = pending.pop()
         if event_id == from_event_id:
-            raise Refused(f"「{source.name}」から「{target.name}」への接続は循環します。", status_code=422)
+            raise Refused(
+                f"「{source.name}」から「{target.name}」への接続は循環します。",
+                en=f"A link from “{source.name}” to “{target.name}” would make a loop.", status_code=422,
+            )
         if event_id not in seen:
             seen.add(event_id)
             pending.extend(adjacency.get(event_id, []))
@@ -89,6 +92,6 @@ def delete_link(db: Session, client_id: int, link_id: int) -> None:
         models.LifeEventLink.id == link_id, models.LifeEventLink.client_id == client_id,
     ).first()
     if link is None:
-        raise NotFound("接続が見つかりません。")
+        raise NotFound("接続が見つかりません。", en="Link not found.")
     db.delete(link)
     db.commit()

@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
+from ..domain.messages import Message
 from .. import models
 from ..database import get_db
 from ..dependencies import get_current_client
@@ -47,7 +48,7 @@ def update_client_settings(
     current_client: models.Client = Depends(get_current_client),
 ):
     if current_client.id != client_id:
-        raise HTTPException(status_code=403, detail="Cannot edit another client settings")
+        raise HTTPException(status_code=403, detail=Message("Cannot edit another client settings", ja="ほかのクライアントの設定は変更できません。"))
     settings = merge_general_settings(db, current_client, payload.general_settings)
     invalidate_client(current_client.id)
     return settings

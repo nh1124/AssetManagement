@@ -10,6 +10,8 @@ from decimal import (
 from fractions import Fraction
 from functools import total_ordering
 
+from .messages import Message
+
 
 CURRENCY_EXPONENTS = {"JPY": 0, "USD": 2, "EUR": 2}
 
@@ -19,7 +21,10 @@ DEFAULT_CURRENCY = "JPY"
 def _places(currency: str) -> int:
     # A new currency needs an explicit precision decision; guessing hides typos.
     if currency not in CURRENCY_EXPONENTS:
-        raise ValueError(f"Unsupported currency {currency!r}; define its minor-unit precision")
+        raise ValueError(Message(
+            f"Unsupported currency {currency!r}; define its minor-unit precision",
+            ja=f"{currency!r} は対応していない通貨です。",
+        ))
     return CURRENCY_EXPONENTS[currency]
 
 

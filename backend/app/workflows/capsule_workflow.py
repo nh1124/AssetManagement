@@ -24,20 +24,20 @@ def set_account_claim(
             raise ValueError
         target = Money.from_major(raw_target, currency)
     except (ValueError, ArithmeticError) as exc:
-        raise Invalid("確保額は0以上の有限の金額を指定してください") from exc
+        raise Invalid("確保額は0以上の有限の金額を指定してください", en="Enter an amount to set aside of zero or more.") from exc
 
     # Account first matches reconciliation's lock order and serializes setters
     # for different capsules sharing the same balance.
     account = ledger_service.get_account(db, client_id, account_id, for_update=True)
     if account is None:
-        raise NotFound("口座が見つかりません")
+        raise NotFound("口座が見つかりません", en="Account not found")
     if account.account_type != "asset":
-        raise Invalid("資産口座を指定してください")
+        raise Invalid("資産口座を指定してください", en="Choose an asset account")
     capsule = capsule_service.get_capsule(db, client_id, capsule_id, for_update=True)
     if capsule is None:
-        raise NotFound("取り置きが見つかりません")
+        raise NotFound("取り置きが見つかりません", en="Earmark not found")
     if not any(source.account_id == account_id for source in capsule.funding_sources):
-        raise Invalid("この口座は取り置きの資金源に紐づいていません")
+        raise Invalid("この口座は取り置きの資金源に紐づいていません", en="This account is not a funding source of the earmark")
 
     balances = ledger_service.account_balances_minor(db, client_id, account_id)
     claims = capsule_service.claimed_minor(db, client_id, capsule_id, account_id)
@@ -45,7 +45,10 @@ def set_account_claim(
     # than a fixed currency field. Foreign or mixed holdings need an explicit
     # currency decision, never an inferred exchange rate.
     if any(code != currency for code in balances.keys() | claims.keys()):
-        raise Invalid("取り置きと口座の通貨が異なるため確保額を調整できません")
+        raise Invalid(
+            "取り置きと口座の通貨が異なるため確保額を調整できません",
+            en="The earmark and the account use different currencies, so the amount set aside cannot be adjusted",
+        )
     current = claims.get(currency, 0)
     difference = target.minor - current
     if difference == 0:
@@ -54,7 +57,7 @@ def set_account_claim(
     balance = balances.get(currency, 0)
     total_claim = capsule_service.account_claimed_minor(db, client_id, account_id).get(currency, 0)
     if target.minor > balance or total_claim + difference > balance:
-        raise Invalid("確保額の合計が口座残高を超えています")
+        raise Invalid("確保額の合計が口座残高を超えています", en="The amounts set aside add up to more than the account balance")
 
     amount = abs(difference)
     try:
@@ -85,19 +88,19 @@ def contribute(
 ) -> dict:
     capsule = capsule_service.get_capsule(db, client_id, capsule_id)
     if not capsule:
-        raise NotFound("Capsule not found")
+        raise NotFound("Capsule not found", ja="取り置きが見つかりません。")
     from_account = ledger_service.get_account(db, client_id, from_account_id)
     if not from_account:
-        raise NotFound("Source account not found")
+        raise NotFound("Source account not found", ja="資金元の口座が見つかりません。")
     if amount <= 0:
-        raise Invalid("Contribution amount must be positive")
+        raise Invalid("Contribution amount must be positive", ja="確保する金額は0より大きい金額を入力してください。")
 
     sources = capsule_service.list_funding_sources(db, client_id, capsule.id)
     if not sources:
-        raise NotFound("Reservation account not found")
+        raise NotFound("Reservation account not found", ja="取り置きの資金源の口座が見つかりません。")
     for source in sources:
         if not ledger_service.get_account(db, client_id, source.account_id):
-            raise NotFound("Reservation account not found")
+            raise NotFound("Reservation account not found", ja="取り置きの資金源の口座が見つかりません。")
     remaining = capsule_service.remaining_target(db, capsule)
     if remaining <= 0:
         return {

@@ -15,6 +15,7 @@ from dateutil.relativedelta import relativedelta
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from ..domain.messages import Message, message_of
 from .. import models, schemas
 from ..domain.errors import Invalid
 from ..domain.journal import Leg
@@ -35,7 +36,7 @@ def _validate_period(period: str) -> Date:
     try:
         start, _ = period_to_range(period)
     except (ValueError, AttributeError) as error:
-        raise Invalid("Period must be YYYY-MM") from error
+        raise Invalid("Period must be YYYY-MM", ja="期間はYYYY-MMで指定してください。") from error
     return start
 
 
@@ -45,7 +46,7 @@ def _get_product(db: Session, client_id: int, product_id: int) -> models.Product
         models.Product.client_id == client_id,
     ).first()
     if product is None:
-        raise Invalid("Product not found for this client")
+        raise Invalid("Product not found for this client", ja="物品が見つかりません。")
     return product
 
 
@@ -111,10 +112,10 @@ def due_minor(db: Session, client_id: int, product: models.Product, period: str)
 
     life = int(product.lifespan_months or 0)
     if life <= 0:
-        raise Invalid("Depreciation needs a lifespan in months")
+        raise Invalid("Depreciation needs a lifespan in months", ja="減価償却には耐用月数が必要です。")
     start = _start_date(product)
     if start is None:
-        raise Invalid("Set a purchase date or a depreciation start date first")
+        raise Invalid("Set a purchase date or a depreciation start date first", ja="先に購入日か償却の開始日を設定してください。")
 
     months = _months_in(product.depreciation_interval or "monthly")
     method = product.depreciation_method or "none"
@@ -123,10 +124,10 @@ def due_minor(db: Session, client_id: int, product: models.Product, period: str)
     elif method == "declining_balance":
         rate = float(product.depreciation_annual_rate or 0.0)
         if rate <= 0:
-            raise Invalid("Declining-balance depreciation needs an annual rate above zero")
+            raise Invalid("Declining-balance depreciation needs an annual rate above zero", ja="定率法には0より大きい年償却率が必要です。")
         amount = int(remaining * rate / 100.0 / 12.0 * months)
     else:
-        raise Invalid("This product has no depreciation method")
+        raise Invalid("This product has no depreciation method", ja="この物品には減価償却の方法が設定されていません。")
 
     # A declining balance never reaches zero by arithmetic, so the useful life is
     # what ends it: the posting that reaches the end of the life takes whatever
@@ -169,16 +170,16 @@ def schedule(db: Session, client_id: int, product_id: int) -> dict:
     due = 0
     reason = None
     if (product.depreciation_method or "none") == "none":
-        reason = "No depreciation method is set"
+        reason = Message("No depreciation method is set", ja="減価償却の方法が設定されていません")
     elif period is None:
-        reason = "No purchase date or start date is set"
+        reason = Message("No purchase date or start date is set", ja="購入日も償却の開始日も設定されていません")
     elif price <= 0:
-        reason = "No purchase price is recorded"
+        reason = Message("No purchase price is recorded", ja="購入価格が記録されていません")
     else:
         try:
             due = due_minor(db, client_id, product, period)
         except Invalid as error:
-            reason = str(error)
+            reason = message_of(error)
     return {
         "product_id": product.id,
         "currency": currency,
@@ -197,18 +198,24 @@ def validate_automatic(db: Session, client_id: int, product: models.Product) -> 
     if not product.auto_depreciation:
         return
     if not product.is_asset or product.depreciation_method == "none":
-        raise Invalid("Automatic depreciation needs a fixed asset and a depreciation method")
+        raise Invalid("Automatic depreciation needs a fixed asset and a depreciation method", ja="自動の減価償却には固定資産と償却の方法が必要です。")
     if not product.depreciation_interval or _start_date(product) is None:
-        raise Invalid("Set a depreciation interval and a purchase date or start date first")
+        raise Invalid(
+            "Set a depreciation interval and a purchase date or start date first",
+            ja="先に償却の間隔と、購入日か償却の開始日を設定してください。",
+        )
     if not product.purchase_price_minor or product.purchase_price_minor <= 0 or not product.lifespan_months or product.lifespan_months <= 0:
-        raise Invalid("Depreciation needs a purchase price and a lifespan in months")
+        raise Invalid("Depreciation needs a purchase price and a lifespan in months", ja="減価償却には購入価格と耐用月数が必要です。")
     if product.depreciation_method == "declining_balance" and not (product.depreciation_annual_rate or 0) > 0:
-        raise Invalid("Declining-balance depreciation needs an annual rate above zero")
+        raise Invalid("Declining-balance depreciation needs an annual rate above zero", ja="定率法には0より大きい年償却率が必要です。")
     if not product.depreciation_expense_account_id or not product.depreciation_asset_account_id:
-        raise Invalid("Set both the depreciation expense account and the asset account first")
+        raise Invalid(
+            "Set both the depreciation expense account and the asset account first",
+            ja="先に減価償却費の科目と資産口座の両方を設定してください。",
+        )
     for account_id in (product.depreciation_expense_account_id, product.depreciation_asset_account_id):
         if ledger_service.get_account(db, client_id, account_id) is None:
-            raise Invalid(f"Account {account_id} not found for this client")
+            raise Invalid(f"Account {account_id} not found for this client", ja=f"口座・科目が見つかりません（#{account_id}）。")
 
 
 def _post(
@@ -221,18 +228,21 @@ def _post(
     expense_account_id = expense_account_id or product.depreciation_expense_account_id
 
     if amount_minor is None and (product.depreciation_method or "none") == "none":
-        raise Invalid("This product has no depreciation method")
+        raise Invalid("This product has no depreciation method", ja="この物品には減価償却の方法が設定されていません。")
     if not expense_account_id or not product.depreciation_asset_account_id:
-        raise Invalid("Set both the depreciation expense account and the asset account first")
+        raise Invalid(
+            "Set both the depreciation expense account and the asset account first",
+            ja="先に減価償却費の科目と資産口座の両方を設定してください。",
+        )
     for account_id in (expense_account_id, product.depreciation_asset_account_id):
         if ledger_service.get_account(db, client_id, account_id) is None:
-            raise Invalid(f"Account {account_id} not found for this client")
+            raise Invalid(f"Account {account_id} not found for this client", ja=f"口座・科目が見つかりません（#{account_id}）。")
 
     begins = _start_date(product)
     if begins is None:
-        raise Invalid("Set a purchase date or a depreciation start date first")
+        raise Invalid("Set a purchase date or a depreciation start date first", ja="先に購入日か償却の開始日を設定してください。")
     if start < begins.replace(day=1):
-        raise Invalid(f"Depreciation starts in {_period_key(begins)}")
+        raise Invalid(f"Depreciation starts in {_period_key(begins)}", ja=f"減価償却は{_period_key(begins)}から始まります。")
 
     already = db.query(models.ProductDepreciation).filter(
         models.ProductDepreciation.client_id == client_id,
@@ -240,17 +250,17 @@ def _post(
         models.ProductDepreciation.period == period,
     ).first()
     if already is not None:
-        raise Invalid(f"{period} has already been posted for this product")
+        raise Invalid(f"{period} has already been posted for this product", ja=f"この物品の{period}の減価償却は記録済みです。")
 
     remaining = int(product.purchase_price_minor or 0) - posted_minor(db, client_id, product.id)
     if amount_minor is None:
         amount = due_minor(db, client_id, product, period)
     elif not 0 < amount_minor <= remaining:
-        raise Invalid("金額は0より大きく、帳簿価額以下にしてください。")
+        raise Invalid("金額は0より大きく、帳簿価額以下にしてください。", en="The amount must be above zero and no more than the book value.")
     else:
         amount = amount_minor
     if amount <= 0:
-        raise Invalid("Nothing left to depreciate")
+        raise Invalid("Nothing left to depreciate", ja="償却する残りはありません。")
 
     currency = get_client_currency(db, client_id)
     transaction = ledger_service.create_transaction(
@@ -303,7 +313,7 @@ def post_due(
 def _account_of_type(db: Session, client_id: int, account_id: int, account_type: str, label: str) -> int:
     account = ledger_service.get_account(db, client_id, account_id)
     if account is None or account.account_type != account_type:
-        raise Invalid(f"同じクライアントの{label}を選んでください。")
+        raise Invalid(f"同じクライアントの{label}を選んでください。", en=f"Choose an {account_type} account of this client.")
     return account.id
 
 
@@ -318,7 +328,7 @@ def record(
     """
     product = _get_product(db, client_id, product_id)
     if not product.is_asset:
-        raise Invalid("固定資産を選んでください。")
+        raise Invalid("固定資産を選んでください。", en="Choose a fixed asset.")
     if expense_account_id is not None:
         expense_account_id = _account_of_type(db, client_id, expense_account_id, "expense", "費用科目")
         product.depreciation_expense_account_id = product.depreciation_expense_account_id or expense_account_id
@@ -332,7 +342,7 @@ def record(
 def _record_of(db: Session, client_id: int, depreciation_id: int) -> models.ProductDepreciation:
     row = db.query(models.ProductDepreciation).filter_by(client_id=client_id, id=depreciation_id).first()
     if row is None:
-        raise Invalid("減価償却の記録が見つかりません。")
+        raise Invalid("減価償却の記録が見つかりません。", en="Depreciation record not found.")
     return row
 
 
@@ -345,7 +355,7 @@ def amend(
     product = _get_product(db, client_id, row.product_id)
     room = int(product.purchase_price_minor or 0) - posted_minor(db, client_id, product.id) + int(row.amount_minor)
     if not 0 < amount_minor <= room:
-        raise Invalid("金額は0より大きく、帳簿価額以下にしてください。")
+        raise Invalid("金額は0より大きく、帳簿価額以下にしてください。", en="The amount must be above zero and no more than the book value.")
     transaction = db.query(models.Transaction).filter_by(client_id=client_id, id=row.transaction_id).first()
     # Read the legs as values: the rebuild below replaces the leg rows themselves.
     legs = db.query(models.JournalEntry.account_id, models.JournalEntry.debit_minor).filter_by(transaction_id=transaction.id).all()

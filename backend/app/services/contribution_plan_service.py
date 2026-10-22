@@ -11,6 +11,7 @@ import re
 
 from sqlalchemy.orm import Session
 
+from ..domain.messages import Message
 from .. import models
 from ..domain.errors import NotFound, Refused
 from ..domain.money import Money
@@ -63,15 +64,20 @@ def _get(db: Session, client_id: int, plan_id: int) -> models.ScenarioContributi
         models.ScenarioContributionPlan.id == plan_id, models.LifeScenario.client_id == client_id,
     ).first()
     if plan is None:
-        raise NotFound("積立設定のレコードが見つかりません。")
+        raise NotFound("積立設定のレコードが見つかりません。", en="Contribution record not found.")
     return plan
 
 
 def _asset(db: Session, client_id: int, account_id) -> int:
     account = db.query(models.Account).filter_by(client_id=client_id, id=account_id).first()
     if account is None or account.account_type != "asset":
-        raise Refused("同じクライアントの資産口座を選択してください。", status_code=422)
+        raise Refused("同じクライアントの資産口座を選択してください。", en="Choose an asset account of this client.", status_code=422)
     return account.id
+
+
+START_MONTH = Message("開始月はYYYY-MMで指定してください。", en="Give the start month as YYYY-MM.")
+END_MONTH = Message("終了月はYYYY-MMで指定してください。", en="Give the end month as YYYY-MM.")
+END_BEFORE_START = Message("終了月は開始月以降にしてください。", en="The end month must be on or after the start month.")
 
 
 def _whole(value, low: int, high: int, message: str) -> int | None:
@@ -94,7 +100,10 @@ def _values(db: Session, client_id: int, values: dict) -> dict:
     result = {}
     if "kind" in values:
         if values["kind"] not in KINDS:
-            raise Refused("レコードの種類は積立・口座振替・ライフイベントへの取り崩しのいずれかです。", status_code=422)
+            raise Refused(
+                "レコードの種類は積立・口座振替・ライフイベントへの取り崩しのいずれかです。",
+                en="A record is a contribution, a transfer or a drawdown for a life event.", status_code=422,
+            )
         result["kind"] = values["kind"]
     if "life_event_id" in values:
         result["life_event_id"] = values["life_event_id"]
@@ -104,27 +113,35 @@ def _values(db: Session, client_id: int, values: dict) -> dict:
         result["to_account_id"] = None if values["to_account_id"] is None else _asset(db, client_id, values["to_account_id"])
     if "start_period" in values:
         if values["start_period"] is None:
-            raise Refused("開始月はYYYY-MMで指定してください。", status_code=422)
-        result["start_period"] = _month(values["start_period"], "開始月はYYYY-MMで指定してください。")
+            raise Refused(START_MONTH, status_code=422)
+        result["start_period"] = _month(values["start_period"], START_MONTH)
     if "end_period" in values:
-        result["end_period"] = _month(values["end_period"], "終了月はYYYY-MMで指定してください。")
+        result["end_period"] = _month(values["end_period"], END_MONTH)
     if "interval_months" in values:
-        result["interval_months"] = _whole(values["interval_months"], 1, MAX_INTERVAL_MONTHS, f"間隔は1〜{MAX_INTERVAL_MONTHS}か月で指定してください。")
+        result["interval_months"] = _whole(values["interval_months"], 1, MAX_INTERVAL_MONTHS, Message(
+            f"間隔は1〜{MAX_INTERVAL_MONTHS}か月で指定してください。",
+            en=f"The interval must be 1 to {MAX_INTERVAL_MONTHS} months.",
+        ))
     if "repeat_count" in values:
-        result["repeat_count"] = _whole(values["repeat_count"], 1, MAX_REPEAT, f"回数は1〜{MAX_REPEAT}回で指定してください。")
+        result["repeat_count"] = _whole(values["repeat_count"], 1, MAX_REPEAT, Message(
+            f"回数は1〜{MAX_REPEAT}回で指定してください。", en=f"The number of times must be 1 to {MAX_REPEAT}.",
+        ))
     if "on_shortage" in values:
         if values["on_shortage"] is not None and values["on_shortage"] not in SHORTAGE:
-            raise Refused("不足時の扱いは「取引を発生させない」か「ある分だけで取引する」です。", status_code=422)
+            raise Refused(
+                "不足時の扱いは「取引を発生させない」か「ある分だけで取引する」です。",
+                en="When the balance is short, either skip the transaction or move what is there.", status_code=422,
+            )
         result["on_shortage"] = values["on_shortage"]
     if "amount" in values:
         amount = values["amount"]
         if isinstance(amount, bool) or not isinstance(amount, (int, float)) or not math.isfinite(amount) or amount < 0:
-            raise Refused("金額は0以上の数値で指定してください。", status_code=422)
+            raise Refused("金額は0以上の数値で指定してください。", en="The amount must be a number of zero or more.", status_code=422)
         result["amount_minor"] = Money.from_major(str(amount), money_client_currency(db, client_id)).minor
     if "annual_return" in values:
         rate = values["annual_return"]
         if rate is not None and (isinstance(rate, bool) or not isinstance(rate, (int, float)) or not math.isfinite(rate)):
-            raise Refused("年利は有限の数値で指定してください。", status_code=422)
+            raise Refused("年利は有限の数値で指定してください。", en="The return must be a finite number.", status_code=422)
         result["annual_return"] = None if rate is None else float(rate)
     if "note" in values:
         result["note"] = (values["note"] or "").strip() or None
@@ -138,19 +155,28 @@ def _settle(db: Session, client_id: int, plan: models.ScenarioContributionPlan) 
     if kind == "withdrawal":
         event = db.query(models.LifeEvent).filter_by(id=plan.life_event_id, client_id=client_id).first() if plan.life_event_id else None
         if event is None or event.scenario_id != plan.scenario_id or event.direction != "expense":
-            raise Refused("同じシナリオの支出のライフイベントを選んでください。", status_code=422)
+            raise Refused(
+                "同じシナリオの支出のライフイベントを選んでください。",
+                en="Choose a spending life event in the same scenario.", status_code=422,
+            )
     else:
         plan.life_event_id = None
     if kind == "transfer":
         if plan.to_account_id is None or plan.to_account_id == plan.account_id:
-            raise Refused("口座振替は振替元と別の振替先の口座を選んでください。", status_code=422)
+            raise Refused(
+                "口座振替は振替元と別の振替先の口座を選んでください。",
+                en="For a transfer, choose a different account to transfer to.", status_code=422,
+            )
     else:
         plan.to_account_id = None
     if kind == "contribution":
         plan.on_shortage = None
     else:
         if plan.amount_minor <= 0:
-            raise Refused("口座振替・取り崩しは0より大きい金額を入力してください。", status_code=422)
+            raise Refused(
+                "口座振替・取り崩しは0より大きい金額を入力してください。",
+                en="A transfer or drawdown needs an amount above zero.", status_code=422,
+            )
         plan.on_shortage = plan.on_shortage or DEFAULT_SHORTAGE[kind]
         plan.annual_return = None
     if plan.interval_months is None:
@@ -158,7 +184,7 @@ def _settle(db: Session, client_id: int, plan: models.ScenarioContributionPlan) 
         plan.repeat_count = None
         plan.end_period = None
     if plan.end_period is not None and plan.end_period < plan.start_period:
-        raise Refused("終了月は開始月以降にしてください。", status_code=422)
+        raise Refused(END_BEFORE_START, status_code=422)
 
 
 def create_plan(db: Session, client_id: int, scenario_id: int, values: dict) -> models.ScenarioContributionPlan:
@@ -169,7 +195,7 @@ def create_plan(db: Session, client_id: int, scenario_id: int, values: dict) -> 
     # Unless said otherwise, a 積立 or a 口座振替 happens every month and a withdrawal once.
     data.setdefault("interval_months", None if data["kind"] == "withdrawal" else 1)
     if "account_id" not in data or "start_period" not in data:
-        raise Refused("口座と開始月を指定してください。", status_code=422)
+        raise Refused("口座と開始月を指定してください。", en="Choose the account and the start month.", status_code=422)
     plan = models.ScenarioContributionPlan(scenario_id=scenario_id, **data)
     _settle(db, client_id, plan)
     db.add(plan)
@@ -230,7 +256,7 @@ def _get_period(db: Session, client_id: int, period_id: int) -> models.ScenarioA
         models.ScenarioAssumptionPeriod.id == period_id, models.LifeScenario.client_id == client_id,
     ).first()
     if row is None:
-        raise NotFound("期間ごとの前提のレコードが見つかりません。")
+        raise NotFound("期間ごとの前提のレコードが見つかりません。", en="Assumption period not found.")
     return row
 
 
@@ -238,15 +264,18 @@ def _period_values(values: dict) -> dict:
     result = {}
     if "start_period" in values:
         if values["start_period"] is None:
-            raise Refused("開始月はYYYY-MMで指定してください。", status_code=422)
-        result["start_period"] = _month(values["start_period"], "開始月はYYYY-MMで指定してください。")
+            raise Refused(START_MONTH, status_code=422)
+        result["start_period"] = _month(values["start_period"], START_MONTH)
     if "end_period" in values:
-        result["end_period"] = _month(values["end_period"], "終了月はYYYY-MMで指定してください。")
-    for field, label in (("annual_return", "年利"), ("inflation", "インフレ")):
+        result["end_period"] = _month(values["end_period"], END_MONTH)
+    for field, label, english in (("annual_return", "年利", "return"), ("inflation", "インフレ", "inflation")):
         if field in values:
             value = values[field]
             if value is not None and (isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value)):
-                raise Refused(f"{label}は有限の数値か空欄で指定してください。", status_code=422)
+                raise Refused(
+                    f"{label}は有限の数値か空欄で指定してください。",
+                    en=f"The {english} must be a finite number or left blank.", status_code=422,
+                )
             result[field] = None if value is None else float(value)
     if "note" in values:
         result["note"] = (values["note"] or "").strip() or None
@@ -255,16 +284,16 @@ def _period_values(values: dict) -> dict:
 
 def _settle_period(row: models.ScenarioAssumptionPeriod) -> None:
     if row.annual_return is None and row.inflation is None:
-        raise Refused("年利かインフレのどちらかを入力してください。", status_code=422)
+        raise Refused("年利かインフレのどちらかを入力してください。", en="Enter a return or an inflation rate.", status_code=422)
     if row.end_period is not None and row.end_period < row.start_period:
-        raise Refused("終了月は開始月以降にしてください。", status_code=422)
+        raise Refused(END_BEFORE_START, status_code=422)
 
 
 def create_period(db: Session, client_id: int, scenario_id: int, values: dict) -> models.ScenarioAssumptionPeriod:
     get_scenario(db, client_id, scenario_id)
     data = _period_values(values)
     if "start_period" not in data:
-        raise Refused("開始月を指定してください。", status_code=422)
+        raise Refused("開始月を指定してください。", en="Choose the start month.", status_code=422)
     row = models.ScenarioAssumptionPeriod(scenario_id=scenario_id, **data)
     _settle_period(row)
     db.add(row)

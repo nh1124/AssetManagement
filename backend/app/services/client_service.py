@@ -74,5 +74,5 @@ def update_profile(
     except IntegrityError as exc:
         # Names and emails are unique across clients.
         db.rollback()
-        raise Conflict("この名前またはメールアドレスは使われています。") from exc
+        raise Conflict("この名前またはメールアドレスは使われています。", en="This name or email is already in use.") from exc
     return client

@@ -3,6 +3,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator, field_valida
 from datetime import date, datetime
 from datetime import date as DateType
 from typing import Any, List, Optional, Literal
+from .domain.messages import Message
 from .domain.money import Money
 
 # What a capsule rule's trigger describes, as a statement about an entry's
@@ -695,7 +696,7 @@ class LifeEventLinkCreate(BaseModel):
     @classmethod
     def validate_kind(cls, value):
         if value != "after":
-            raise ValueError("接続は「必ず続く」のみです。")
+            raise ValueError(Message("接続は「必ず続く」のみです。", en="A link can only be “always follows”."))
         return value
 
     offset_months: int = 0
@@ -965,10 +966,10 @@ class LifeEventConditionCreate(BaseModel):
         money = self.metric in {"net_worth", "free_cash", "account_balance", "capsule_claim"}
         numeric = self.metric in {"goal_progress", "member_age"}
         if (self.threshold_minor is not None) != money or (self.threshold_number is not None) != numeric or (self.threshold_date is not None) != (self.metric == "date_reached"):
-            raise ValueError("指標に合う条件値を一つ指定してください。")
+            raise ValueError(Message("指標に合う条件値を一つ指定してください。", en="Give one threshold that fits the measure."))
         referenced = self.metric in {"account_balance", "capsule_claim", "goal_progress", "member_age"}
         if (self.reference_id is not None) != referenced:
-            raise ValueError("指標に合う対象を指定してください。")
+            raise ValueError(Message("指標に合う対象を指定してください。", en="Choose a target that fits the measure."))
         return self
 
 
@@ -988,7 +989,7 @@ class LifeScenarioName(BaseModel):
     @classmethod
     def validate_name(cls, values):
         if isinstance(values, dict) and (not isinstance(values.get("name"), str) or not values["name"].strip()):
-            raise ValueError("シナリオ名を入力してください。")
+            raise ValueError(Message("シナリオ名を入力してください。", en="Enter a scenario name."))
         return values
 
 
@@ -1006,12 +1007,12 @@ class LifeScenarioUpdate(BaseModel):
         if not isinstance(values, dict):
             return values
         if "name" in values and (not isinstance(values["name"], str) or not values["name"].strip()):
-            raise ValueError("シナリオ名を入力してください。")
+            raise ValueError(Message("シナリオ名を入力してください。", en="Enter a scenario name."))
         for field in ("annual_return", "inflation"):
             if field in values and (type(values[field]) not in (int, float) or not math.isfinite(values[field])):
-                raise ValueError("利率は有限の数値で指定してください。")
+                raise ValueError(Message("利率は有限の数値で指定してください。", en="The rate must be a finite number."))
         if "horizon_years" in values and (type(values["horizon_years"]) is not int or not 1 <= values["horizon_years"] <= 60):
-            raise ValueError("試算期間は1〜60年で指定してください。")
+            raise ValueError(Message("試算期間は1〜60年で指定してください。", en="The horizon must be 1 to 60 years."))
         return values
 
 

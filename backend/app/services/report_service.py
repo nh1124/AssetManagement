@@ -6,6 +6,7 @@ from datetime import date
 from dateutil.relativedelta import relativedelta
 from sqlalchemy.orm import Session
 
+from ..domain.messages import Message
 from .reporting_service import (
     get_balance_sheet,
     get_profit_loss,
@@ -123,7 +124,10 @@ def generate_monthly_report(db: Session, client_id: int, year: int, month: int) 
 
 def generate_period_report(db: Session, client_id: int, start_date: date, end_date: date) -> dict:
     if end_date < start_date:
-        raise ValueError("end_date must be on or after start_date")
+        raise ValueError(Message(
+            "end_date must be on or after start_date",
+            ja="終了日は開始日以降にしてください。", en="The end date must be on or after the start date",
+        ))
 
     previous_period_end = start_date - relativedelta(days=1)
     period = _period_key(start_date, end_date)

@@ -5,6 +5,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from ..domain.messages import Message
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
@@ -52,7 +53,7 @@ def update_product(
         db, current_client.id, product_id, product, reserve_fingerprint=reserve_fingerprint,
     )
     if updated is None:
-        raise HTTPException(status_code=404, detail="Product not found")
+        raise HTTPException(status_code=404, detail=Message("Product not found", ja="物品が見つかりません。"))
     result = product_service.enrich_product(updated)
     plan_reflection_workflow.after_change(db, current_client.id)
     return result
@@ -70,7 +71,7 @@ def patch_product(
         db, current_client.id, product_id, product, reserve_fingerprint=reserve_fingerprint,
     )
     if updated is None:
-        raise HTTPException(status_code=404, detail="Product not found")
+        raise HTTPException(status_code=404, detail=Message("Product not found", ja="物品が見つかりません。"))
     result = product_service.enrich_product(updated)
     plan_reflection_workflow.after_change(db, current_client.id)
     return result
@@ -86,7 +87,7 @@ def delete_product(
     if not product_workflow.delete_product(
         db, current_client.id, product_id, reserve_fingerprint=reserve_fingerprint,
     ):
-        raise HTTPException(status_code=404, detail="Product not found")
+        raise HTTPException(status_code=404, detail=Message("Product not found", ja="物品が見つかりません。"))
     plan_reflection_workflow.after_change(db, current_client.id)
 
 

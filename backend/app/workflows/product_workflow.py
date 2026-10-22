@@ -19,7 +19,7 @@ def validate_budget_account(db: Session, client_id: int, budget_account_id: int 
         return
     account = ledger_service.get_expense_account(db, client_id, budget_account_id)
     if not account:
-        raise Invalid("Budget account must be an expense account for this client")
+        raise Invalid("Budget account must be an expense account for this client", ja="予算の科目には費用科目を選んでください。")
 
 
 def validate_funding_capsule(db: Session, client_id: int, funding_capsule_id: int | None) -> None:
@@ -27,7 +27,7 @@ def validate_funding_capsule(db: Session, client_id: int, funding_capsule_id: in
         return
     capsule = capsule_service.get_product_funding_capsule(db, client_id, funding_capsule_id)
     if not capsule:
-        raise Invalid("Funding capsule must belong to this client")
+        raise Invalid("Funding capsule must belong to this client", ja="資金の取り置きが見つかりません。")
 
 
 def normalize_product_data(db: Session, client_id: int, data: dict) -> dict:

@@ -3,8 +3,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 from datetime import date
 from typing import Optional
+from ..domain.messages import localize, message_of
 from ..database import get_db
-from ..dependencies import get_current_client
+from ..dependencies import get_current_client, request_language
 from .. import models, schemas
 from ..services import analysis_service, reconciliation_service
 from ..services.ai_policy_service import assert_direct_ledger_write_allowed
@@ -120,7 +121,7 @@ def get_account_flows(
             client_id=current_client.id,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=message_of(exc)) from exc
 
 
 @router.get("/account-transactions")
@@ -145,15 +146,17 @@ def get_account_transactions(
             client_id=current_client.id,
         )
     except LookupError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail=message_of(exc)) from exc
 
 @router.get("/depreciation")
 def get_depreciation(
     db: Session = Depends(get_db),
-    current_client: models.Client = Depends(get_current_client)
+    current_client: models.Client = Depends(get_current_client),
+    language: str | None = Depends(request_language),
 ):
     """Get asset depreciation summary for current client."""
-    return analysis_service.get_depreciation_summary(db, client_id=current_client.id)
+    # Each position's blocked_reason is shown on the fixed-asset screen, in its language.
+    return localize(analysis_service.get_depreciation_summary(db, client_id=current_client.id), language)
 
 @router.get("/net-position")
 def get_net_position(

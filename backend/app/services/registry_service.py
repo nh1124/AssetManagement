@@ -37,11 +37,11 @@ def validate_account_refs(db: Session, client_id: int, data: dict) -> None:
             models.Account.id == account_id, models.Account.client_id == client_id,
         ).first()
         if not account:
-            raise Invalid(f"{key} must belong to this client")
+            raise Invalid(f"{key} must belong to this client", ja="口座・科目が見つかりません。", en="Account not found")
     if data.get("source_account_id") == data.get("destination_account_id"):
-        raise Invalid("出金元と入金先は別の口座を選んでください")
+        raise Invalid("出金元と入金先は別の口座を選んでください", en="Choose different accounts to pay from and to pay into")
     if not data.get("source_account_id") or not data.get("destination_account_id"):
-        raise Invalid("出金元と入金先を選んでください")
+        raise Invalid("出金元と入金先を選んでください", en="Choose the account to pay from and the account to pay into")
 
 
 def get_entry(db: Session, client_id: int, entry_id: int) -> models.RegistryEntry | None:
@@ -62,10 +62,10 @@ def normalize_schedule(entry) -> None:
         entry.repeat_count = entry.end_date = None
     else:
         if entry.frequency not in {"Monthly", "Yearly", "EveryNDays"}:
-            raise Invalid("周期を選んでください")
+            raise Invalid("周期を選んでください", en="Choose how often it repeats")
         if entry.frequency == "EveryNDays":
             if not entry.frequency_days or entry.frequency_days < 1:
-                raise Invalid("日数は1以上を指定してください")
+                raise Invalid("日数は1以上を指定してください", en="The number of days must be at least 1")
             entry.day_of_month = entry.month_of_year = None
         else:
             entry.frequency_days = None
@@ -73,14 +73,14 @@ def normalize_schedule(entry) -> None:
             entry.month_of_year = (entry.month_of_year or entry.start_date.month) if entry.frequency == "Yearly" else None
         if entry.repeat_mode == "count":
             if not entry.repeat_count or entry.repeat_count < 1:
-                raise Invalid("回数は1以上を指定してください")
+                raise Invalid("回数は1以上を指定してください", en="The number of times must be at least 1")
             entry.end_date = count_end_date(entry)
             if entry.end_date is None:
-                raise Invalid("回数が日付の範囲を超えています")
+                raise Invalid("回数が日付の範囲を超えています", en="That many times goes beyond the supported dates")
         else:
             entry.repeat_count = None
     if entry.end_date and entry.end_date < entry.start_date:
-        raise Invalid("終了日は開始日以降にしてください")
+        raise Invalid("終了日は開始日以降にしてください", en="The end date must be on or after the start date")
 
 
 def create_entry(db: Session, client_id: int, data: dict, *, today: date | None = None) -> models.RegistryEntry:

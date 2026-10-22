@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from .. import models
 from ..domain.errors import Invalid, NotFound
+from ..domain.messages import Message
 from ..domain.money import Money
 from ..models.money import settings_currency
 from ..domain.journal import (
@@ -102,20 +103,30 @@ def _normalize_liability_settings(payload: dict, account_type: str) -> None:
         payload["liability_payment_policy"] = "full"
     if "liability_payment_month_offset" in payload and payload["liability_payment_month_offset"] is None:
         payload["liability_payment_month_offset"] = 0
-    for key in ("liability_closing_day", "liability_payment_day"):
+    for key, name_ja, name_en in (("liability_closing_day", "締日", "closing day"), ("liability_payment_day", "支払日", "payment day")):
         value = payload.get(key)
         if value is not None and not 1 <= value <= 31:
-            raise Invalid(f"{key} must be between 1 and 31")
+            raise Invalid(f"{key} must be between 1 and 31", ja=f"{name_ja}は1〜31で指定してください。", en=f"The {name_en} must be between 1 and 31")
     offset = payload.get("liability_payment_month_offset")
     if offset is not None and not 0 <= offset <= 24:
-        raise Invalid("liability_payment_month_offset must be between 0 and 24")
+        raise Invalid(
+            "liability_payment_month_offset must be between 0 and 24",
+            ja="支払月は0〜24で指定してください。", en="The payment month must be between 0 and 24",
+        )
     installment_months = payload.get("liability_installment_months")
     if installment_months is not None and installment_months < 1:
-        raise Invalid("liability_installment_months must be positive")
-    for key in ("liability_minimum_payment", "liability_fixed_payment_amount", "liability_revolving_rate"):
+        raise Invalid(
+            "liability_installment_months must be positive",
+            ja="分割回数は1以上にしてください。", en="The number of installments must be at least 1",
+        )
+    for key, name_ja, name_en in (
+        ("liability_minimum_payment", "最低支払額", "minimum payment"),
+        ("liability_fixed_payment_amount", "定額支払額", "fixed payment"),
+        ("liability_revolving_rate", "リボ年利", "revolving rate"),
+    ):
         value = payload.get(key)
         if value is not None and value < 0:
-            raise Invalid(f"{key} must not be negative")
+            raise Invalid(f"{key} must not be negative", ja=f"{name_ja}は0以上にしてください。", en=f"The {name_en} must not be negative")
 
 
 def _convert_account_money(db: Session, client_id: int, payload: dict) -> None:
@@ -136,9 +147,10 @@ def create_account(
     if abs(payload.pop("balance", 0) or 0) > 0.01:
         raise Invalid(
             "Journal is the source of truth. Create an opening-balance transaction instead of setting account.balance.",
+            ja="残高は取引から計算します。口座の残高を直接設定せず、開始残高の取引を記録してください。",
         )
     if payload["account_type"] not in {value.value for value in models.AccountType}:
-        raise Invalid("口座の種類が不正です")
+        raise Invalid("口座の種類が不正です", en="The account type is not valid")
     _normalize_liability_settings(payload, payload["account_type"])
     _convert_account_money(db, client_id, payload)
     account = models.Account(**payload, client_id=client_id)
@@ -164,6 +176,7 @@ def update_account(
     if "balance" in update_data:
         raise Invalid(
             "Journal is the source of truth. Use transactions to change balances.",
+            ja="残高は取引から計算します。残高を変えるには取引を記録してください。",
         )
     _normalize_liability_settings(update_data, account.account_type)
     _convert_account_money(db, client_id, update_data)
@@ -212,14 +225,18 @@ def _get_account_by_id(
 def _validate_leg_references(db: Session, client_id: int, legs: Sequence[Leg]) -> None:
     for account_id in {leg.account_id for leg in legs}:
         if _get_account_by_id(db, account_id, client_id) is None:
-            raise ValueError(f"Account {account_id} not found for this client")
+            raise ValueError(Message(
+                f"Account {account_id} not found for this client", ja=f"口座・科目が見つかりません（#{account_id}）。",
+            ))
     for capsule_id in {leg.capsule_id for leg in legs if leg.capsule_id is not None}:
         capsule = db.query(models.Capsule).filter(
             models.Capsule.id == capsule_id,
             models.Capsule.client_id == client_id,
         ).first()
         if capsule is None:
-            raise ValueError(f"Capsule {capsule_id} not found for this client")
+            raise ValueError(Message(
+                f"Capsule {capsule_id} not found for this client", ja=f"取り置きが見つかりません（#{capsule_id}）。",
+            ))
 
 
 def _post_transaction_journal(
@@ -476,7 +493,10 @@ def approve_proposal(
     # None means no person decided at this moment: an auto-posting capsule rule
     # settled it when it was configured. decided_at still records when.
     if proposal.status != "pending":
-        raise ValueError(f"Proposal {proposal.id} is not pending (status: {proposal.status})")
+        raise ValueError(Message(
+            f"Proposal {proposal.id} is not pending (status: {proposal.status})",
+            ja=f"提案 #{proposal.id} はすでに処理されています（状態：{proposal.status}）。",
+        ))
     transaction = create_transaction(
         db,
         client_id=proposal.client_id,
@@ -501,7 +521,10 @@ def reject_proposal(
     note: str | None = None,
 ) -> None:
     if proposal.status != "pending":
-        raise ValueError(f"Proposal {proposal.id} is not pending (status: {proposal.status})")
+        raise ValueError(Message(
+            f"Proposal {proposal.id} is not pending (status: {proposal.status})",
+            ja=f"提案 #{proposal.id} はすでに処理されています（状態：{proposal.status}）。",
+        ))
     proposal.status = "rejected"
     proposal.note = note
     proposal.decided_at = datetime.utcnow()

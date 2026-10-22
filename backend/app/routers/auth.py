@@ -9,9 +9,14 @@ from ..database import get_db
 from ..utils.jwt import create_access_token, create_typed_token, decode_token, decode_mcp_access_token
 from ..utils.password import verify_password, hash_password
 from ..dependencies import get_current_client
+from ..domain.messages import Message, message_of
 from ..services import client_service, mfa_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+INVALID_TOKEN = Message("Invalid token", ja="サインインの有効期限が切れました。もう一度サインインしてください。")
+REAUTHENTICATION_REQUIRED = Message(
+    "Reauthentication required", ja="本人確認ができませんでした。パスワードまたはコードを確認してください。",
+)
 
 class LoginRequest(BaseModel):
     username: str
@@ -101,11 +106,11 @@ def _auth_response(client: models.Client) -> dict:
 def _client_from_typed_token(db: Session, token: str, expected_type: str) -> models.Client:
     payload = decode_token(token)
     if not payload or payload.get("type") != expected_type:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=INVALID_TOKEN)
 
     client = client_service.get_active_by_id(db, payload.get("sub"))
     if not client:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=INVALID_TOKEN)
     return client
 
 @router.post("/login", response_model=AuthResponse)
@@ -116,7 +121,7 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
     if not client or not verify_password(req.password, client.password_hash):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid username or password"
+            detail=Message("Invalid username or password", ja="ユーザー名またはパスワードが正しくありません。")
         )
     
     mfa_setting = mfa_service.get_mfa_setting(db, client)
@@ -144,7 +149,7 @@ def verify_mfa_login(req: MfaLoginVerifyRequest, db: Session = Depends(get_db)):
     client = _client_from_typed_token(db, req.mfa_token, "mfa")
     if not mfa_service.verify_mfa_factor(db, client, code=req.code, recovery_code=req.recovery_code):
         # TODO(P1-002): connect MFA failure to audit log service.
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid MFA code")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=Message("Invalid MFA code", ja="認証コードが正しくありません。"))
     return _auth_response(client)
 
 
@@ -187,19 +192,19 @@ def register(req: RegisterRequest, db: Session = Depends(get_db)):
     """Create a new client with login credentials."""
     username = req.username.strip().lower()
     if not username:
-        raise HTTPException(status_code=400, detail="Username is required")
+        raise HTTPException(status_code=400, detail=Message("Username is required", ja="ユーザー名を入力してください。"))
     if len(req.password) < 8:
-        raise HTTPException(status_code=400, detail="Password must be at least 8 characters")
+        raise HTTPException(status_code=400, detail=Message("Password must be at least 8 characters", ja="パスワードは8文字以上にしてください。"))
 
     existing = client_service.get_by_username(db, username)
     if existing:
-        raise HTTPException(status_code=400, detail="Username already taken")
+        raise HTTPException(status_code=400, detail=Message("Username already taken", ja="このユーザー名は使われています。"))
 
     email = req.email.lower() if req.email else None
     if email:
         email_existing = client_service.get_by_email(db, email)
         if email_existing:
-            raise HTTPException(status_code=400, detail="Email already registered")
+            raise HTTPException(status_code=400, detail=Message("Email already registered", ja="このメールアドレスは登録済みです。"))
 
     client_name = client_service.unique_display_name(db, req.name or username)
     password_hash = hash_password(req.password)
@@ -209,7 +214,7 @@ def register(req: RegisterRequest, db: Session = Depends(get_db)):
             password_hash=password_hash,
         )
     except IntegrityError:
-        raise HTTPException(status_code=400, detail="Unable to register with provided credentials")
+        raise HTTPException(status_code=400, detail=Message("Unable to register with provided credentials", ja="入力した内容では登録できませんでした。"))
 
     return {"message": "User registered successfully", "client_id": new_client.id}
 
@@ -229,7 +234,7 @@ def start_mfa_setup(
     current_client: models.Client = Depends(get_current_client),
 ):
     if not verify_password(req.current_password, current_client.password_hash or ""):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid password")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=Message("Invalid password", ja="パスワードが正しくありません。"))
     return mfa_service.start_totp_setup(db, current_client)
 
 
@@ -243,7 +248,7 @@ def verify_mfa_setup(
         codes = mfa_service.verify_totp_setup(db, current_client, req.code)
     except ValueError as exc:
         # TODO(P1-002): connect MFA setup failures to audit log service.
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=message_of(exc))
     return {"recovery_codes": codes}
 
 
@@ -261,7 +266,7 @@ def disable_mfa(
         recovery_code=req.recovery_code,
     ):
         # TODO(P1-002): connect MFA disable failures to audit log service.
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Reauthentication required")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=REAUTHENTICATION_REQUIRED)
 
     mfa_service.disable_mfa(db, current_client)
     return {"message": "MFA disabled"}
@@ -281,11 +286,11 @@ def regenerate_recovery_codes(
         recovery_code=req.recovery_code,
     ):
         # TODO(P1-002): connect recovery-code regeneration failures to audit log service.
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Reauthentication required")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=REAUTHENTICATION_REQUIRED)
 
     setting = mfa_service.get_mfa_setting(db, current_client)
     if not setting or not setting.enabled:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="MFA is not enabled")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=Message("MFA is not enabled", ja="MFAは有効になっていません。"))
     return {"recovery_codes": mfa_service.regenerate_recovery_codes(db, current_client)}
 
 
@@ -310,9 +315,9 @@ def reauth(
 ):
     # Step-up is MFA only: a password never stands in for the second factor.
     if not mfa_service.mfa_enabled(db, current_client.id):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="MFA setup required")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=Message("MFA setup required", ja="先にMFAを設定してください。"))
     if not mfa_service.verify_mfa_factor(db, current_client, code=req.code, recovery_code=req.recovery_code):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Reauthentication required")
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=REAUTHENTICATION_REQUIRED)
     return _issue_step_up_token(current_client)
 
 
@@ -342,10 +347,10 @@ def update_profile(
         fields["email"] = req.email.strip().lower()
     if req.password:
         if len(req.password) < 8:
-            raise HTTPException(status_code=422, detail="パスワードは8文字以上にしてください。")
+            raise HTTPException(status_code=422, detail=Message("パスワードは8文字以上にしてください。", en="Passwords need at least 8 characters."))
         fields["password_hash"] = hash_password(req.password)
     if ("email" in fields or "password_hash" in fields) and not (
             req.current_password and verify_password(req.current_password, current_client.password_hash or "")):
-        raise HTTPException(status_code=403, detail="現在のパスワードが正しくありません。")
+        raise HTTPException(status_code=403, detail=Message("現在のパスワードが正しくありません。", en="The current password is incorrect."))
     client_service.update_profile(db, current_client, fields)
     return {"message": "Profile updated successfully"}

@@ -5,11 +5,16 @@ from datetime import date, datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from ..domain.messages import Message
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
 from ..services.period_review_service import default_range, get_review, list_reviews, period_label, upsert_review
 
+END_BEFORE_START = Message(
+    "end_date must be on or after start_date",
+    ja="終了日は開始日以降にしてください。", en="The end date must be on or after the start date",
+)
 router = APIRouter(prefix="/period-reviews", tags=["period-reviews"])
 
 
@@ -32,7 +37,7 @@ def get_period_review(
     if start_date is None or end_date is None:
         start_date, end_date = default_range()
     if end_date < start_date:
-        raise HTTPException(status_code=400, detail="end_date must be on or after start_date")
+        raise HTTPException(status_code=400, detail=END_BEFORE_START)
 
     review = get_review(db, current_client.id, start_date, end_date)
 
@@ -58,6 +63,6 @@ def upsert_period_review(
     current_client: models.Client = Depends(get_current_client),
 ):
     if payload.end_date < payload.start_date:
-        raise HTTPException(status_code=400, detail="end_date must be on or after start_date")
+        raise HTTPException(status_code=400, detail=END_BEFORE_START)
 
     return upsert_review(db, current_client.id, payload)

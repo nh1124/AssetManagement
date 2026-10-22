@@ -64,16 +64,16 @@ def _period(index: int) -> str:
 def _periods(start: str, end: str) -> list[str]:
     first, last = _index(start), _index(end)
     if last < first:
-        raise Refused("終了月は開始月以降にしてください。", status_code=422)
+        raise Refused("終了月は開始月以降にしてください。", en="The end month must be on or after the start month.", status_code=422)
     if last - first + 1 > MAX_MONTHS:
-        raise Refused(f"一度に作れるのは{MAX_MONTHS}か月までです。", status_code=422)
+        raise Refused(f"一度に作れるのは{MAX_MONTHS}か月までです。", en=f"Up to {MAX_MONTHS} months can be made at once.", status_code=422)
     return [_period(index) for index in range(first, last + 1)]
 
 
 def _goal(db: Session, client_id: int) -> models.LifeScenario:
     goal = get_goal(db, client_id)
     if goal is None:
-        raise Refused("ゴールのシナリオが選ばれていません。", status_code=422)
+        raise Refused("ゴールのシナリオが選ばれていません。", en="No goal scenario is chosen.", status_code=422)
     return goal
 
 

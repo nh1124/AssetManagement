@@ -19,7 +19,10 @@ def statement_money(db: Session, client_id: int, statement: Decimal | str, curre
     try:
         return Money.from_major(str(statement), currency or get_client_currency(db, client_id))
     except (ValueError, ArithmeticError) as exc:
-        raise Invalid("Statement balance must be finite and use a supported currency") from exc
+        raise Invalid(
+            "Statement balance must be finite and use a supported currency",
+            ja="明細の残高は、対応している通貨の有限の金額で入力してください。",
+        ) from exc
 
 
 def compare_to_statement(
@@ -28,7 +31,7 @@ def compare_to_statement(
 ) -> dict:
     account = get_account(db, client_id, account_id)
     if account is None:
-        raise NotFound("Account not found for this client")
+        raise NotFound("Account not found for this client", ja="口座が見つかりません。")
     currency = currency or get_client_currency(db, client_id)
     Money(statement_minor, currency)
     # A statement concerns a denomination, not an FX valuation. Debit-net
@@ -74,22 +77,28 @@ def post_adjustment(
             models.Account.client_id == client_id, models.Account.id == account_id,
         ).with_for_update().first()
         if account is None:
-            raise NotFound("Account not found for this client")
+            raise NotFound("Account not found for this client", ja="口座が見つかりません。")
         if counter_account_id == account_id:
-            raise Invalid("Counter account must differ from the reconciled account")
+            raise Invalid("Counter account must differ from the reconciled account", ja="相手の科目は照合する口座とは別のものを選んでください。")
         if get_account(db, client_id, counter_account_id) is None:
-            raise NotFound("Counter account not found for this client")
+            raise NotFound("Counter account not found for this client", ja="相手の科目が見つかりません。")
         if capsule_id is not None and db.query(models.Capsule).filter(
             models.Capsule.client_id == client_id, models.Capsule.id == capsule_id,
         ).with_for_update().first() is None:
-            raise NotFound("Capsule not found for this client")
+            raise NotFound("Capsule not found for this client", ja="取り置きが見つかりません。")
         comparison = compare_to_statement(db, client_id, account_id, as_of=as_of,
                                           statement_minor=statement_minor, currency=currency)
         if expected_ledger_minor is not None and expected_ledger_minor != comparison["ledger_minor"]:
-            raise Conflict("Ledger balance changed; compare the statement again before posting")
+            raise Conflict(
+                "Ledger balance changed; compare the statement again before posting",
+                ja="帳簿の残高が変わりました。記録する前に、もう一度明細と照合してください。",
+            )
         difference = comparison["difference_minor"]
         if difference == 0:
-            raise Invalid("Statement already matches the ledger; zero difference has nothing to post")
+            raise Invalid(
+                "Statement already matches the ledger; zero difference has nothing to post",
+                ja="明細と帳簿はすでに一致しています。差額がないので記録するものはありません。",
+            )
         amount = abs(difference)
         reconciled_leg = Leg(account_id, debit=amount if difference > 0 else 0,
                              credit=amount if difference < 0 else 0, capsule_id=capsule_id)
@@ -100,7 +109,11 @@ def post_adjustment(
             denomination = comparison["currency"]
             claim = claimed_minor(db, client_id, capsule_id, account_id=account_id).get(denomination, 0)
             if claim + claim_change < 0:
-                raise Invalid(f"Adjustment exceeds the capsule claim of {Money(claim, denomination).to_major()} {denomination} on {account.name}")
+                held = f"{Money(claim, denomination).to_major()} {denomination}"
+                raise Invalid(
+                    f"Adjustment exceeds the capsule claim of {held} on {account.name}",
+                    ja=f"{account.name}で確保している{held}を超えて調整することはできません。",
+                )
         transaction = create_transaction(
             db, client_id=client_id, date=as_of, currency=comparison["currency"], amount_minor=amount,
             description=note or f"残高照合：{account.name}",

@@ -22,6 +22,7 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..domain.messages import Message
 
 ACTIVE = ("open", "snoozed")
 # Everything that is not done yet; a dismissal is a decision about the current reasons only.
@@ -108,7 +109,7 @@ def decide(db: Session, notification: models.Notification, action: str, *, until
         until = until.astimezone(timezone.utc).replace(tzinfo=None)
     if action == "snooze":
         if until is None or until <= now:
-            raise ValueError("snooze needs a time in the future")
+            raise ValueError(Message("snooze needs a time in the future", ja="再通知の日時は今より後にしてください。", en="Choose a time in the future to be reminded"))
         notification.status, notification.snoozed_until = "snoozed", until
     elif action == "dismiss":
         notification.status, notification.snoozed_until, notification.resolved_at = "dismissed", None, now

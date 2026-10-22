@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from typing import List, Optional, Literal
+from ..domain.messages import Message
 from .. import models
 from ..database import get_db
 from ..dependencies import get_current_client
@@ -118,7 +119,7 @@ def get_account_earmarks(
     current_client: models.Client = Depends(get_current_client),
 ):
     if ledger_service.get_account(db, current_client.id, account_id) is None:
-        raise HTTPException(status_code=404, detail="Account not found")
+        raise HTTPException(status_code=404, detail=Message("Account not found", ja="口座・科目が見つかりません。"))
     return capsule_service.list_account_earmarks(db, current_client.id, account_id)
 
 @router.get("/by-type")
@@ -179,7 +180,7 @@ def update_account(
         db, current_client.id, account_id, account.model_dump(exclude_unset=True),
     )
     if db_account is None:
-        raise HTTPException(status_code=404, detail="Account not found")
+        raise HTTPException(status_code=404, detail=Message("Account not found", ja="口座・科目が見つかりません。"))
     invalidate_client(current_client.id)
     return _serialize_account(db_account, balances=calculate_account_balances(db, [db_account])[db_account.id])
 
@@ -191,7 +192,7 @@ def delete_account(
 ):
     """Soft delete an account belonging to current client."""
     if not ledger_service.delete_account(db, current_client.id, account_id):
-        raise HTTPException(status_code=404, detail="Account not found")
+        raise HTTPException(status_code=404, detail=Message("Account not found", ja="口座・科目が見つかりません。"))
     invalidate_client(current_client.id)
     return {"message": "Account deactivated"}
 
