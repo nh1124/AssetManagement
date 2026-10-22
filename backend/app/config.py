@@ -94,25 +94,39 @@ class AppConfig(BaseSettings):
                         issuers.append(alternate)
         return issuers
 
+    def _admin_production_errors(self) -> list[str]:
+        errors: list[str] = []
+        if not self.encryption_key.strip() or self.encryption_key == DEV_ENCRYPTION_KEY:
+            errors.append("ENCRYPTION_KEY must be changed in production")
+        for key in ("admin_allowed_hosts", "admin_allowed_origins"):
+            value = getattr(self, key)
+            if "*" in value:
+                errors.append(f"{key.upper()} must not contain '*' in production")
+            if not any(part.strip() for part in value.split(",")):
+                errors.append(f"{key.upper()} must include at least one trusted value in production")
+        return errors
+
+    def validate_admin_production_settings(self) -> None:
+        """The admin process decrypts MFA secrets; it never signs user/MCP JWTs."""
+        if not self.is_production:
+            return
+        errors = self._admin_production_errors()
+        if errors:
+            raise RuntimeError("Invalid production configuration: " + "; ".join(errors))
+
     def validate_production_settings(self) -> None:
         if not self.is_production:
             return
 
-        errors: list[str] = []
+        errors = self._admin_production_errors()
         if self.jwt_secret_key == DEV_JWT_SECRET_KEY:
             errors.append("JWT_SECRET_KEY must be changed in production")
         if self.mcp_jwt_secret == DEV_MCP_JWT_SECRET:
             errors.append("MCP_JWT_SECRET must be changed in production")
-        if self.encryption_key == DEV_ENCRYPTION_KEY:
-            errors.append("ENCRYPTION_KEY must be changed in production")
         if "*" in self.cors_allowed_origins:
             errors.append("ALLOWED_ORIGINS must not contain '*' in production")
         if not self.cors_allowed_origins:
             errors.append("ALLOWED_ORIGINS must include at least one trusted origin in production")
-
-        for key in ("admin_allowed_hosts", "admin_allowed_origins"):
-            if "*" in getattr(self, key):
-                errors.append(f"{key.upper()} must not contain '*' in production")
 
         if errors:
             raise RuntimeError("Invalid production configuration: " + "; ".join(errors))

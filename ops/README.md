@@ -92,7 +92,7 @@ the restart would start whatever is in the working tree.
 ## Configuration
 
 `~/.config/am-ops/config.env`; every key is described in
-[config.example.env](config.example.env).
+[.env.example](.env.example); additional defaults are in `lib/common.sh`.
 
 - `AM_MIRROR_DIRS` — extra copies. A folder synced by Google Drive for desktop,
   a NAS mount, or an `sshfs`/`rclone mount` of a VPS all work the same way.
@@ -102,6 +102,27 @@ the restart would start whatever is in the working tree.
 - `AM_HEARTBEAT_URL_*` — fetched after each successful run. A monitoring
   service that alerts when the pings stop is the only thing that notices the
   whole machine being off.
+
+## 管理コンソール
+
+ブラウザで <http://127.0.0.1:18300> を開きます。初回の管理者は
+`am-admin admin create <name>` で作成します（パスワード・TOTP の対話入力）。
+`ops/install.sh` は CLI をインストールし、`~/.local/bin/am-admin` をリンクします。
+`~/.local/bin` を PATH に追加し、ops 設定の `AM_REPO_DIR` をデプロイ先に合わせてください。
+Compose のプロジェクト名を指定した環境では、CLI 実行時も同じ
+`COMPOSE_PROJECT_NAME` を設定します。
+
+公開先は必ず loopback または VPN のアドレスだけに限定してください。
+`0.0.0.0`・LAN・パブリックへの公開は禁止です。VPN 利用時は `.env` の
+`ADMIN_BIND` と管理用 hosts/origins を明示し、ops 設定の
+`AM_ADMIN_ALLOWED_BIND` に同じ VPN IP（ポートなし）を設定します。
+`am-status.sh` の `[admin]` が公開ポートと範囲外公開の警告を表示します。
+既存の ops 設定が `AM_CONTAINERS` を指定している場合は、手動で
+`finance-admin` を追加してください。
+
+開発時の `npm --prefix frontend run dev:admin` は <http://127.0.0.1:15380> です。
+API に渡す `ADMIN_ALLOWED_ORIGINS` にその origin を明示的に追加します
+（設定例はルートの `.env.example`）。既定の許可範囲は変更しません。
 
 ## What the watchdog will not do
 

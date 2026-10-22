@@ -33,7 +33,7 @@ class AdminApplication(FastAPI):
 
 
 def create_app(config=settings):
-    config.validate_production_settings()
+    config.validate_admin_production_settings()
     setup_logging()
     app = AdminApplication(title="AssetManagement Admin", **api_docs_urls(config))
     app.state.config = config

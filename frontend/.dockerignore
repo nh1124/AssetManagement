@@ -1,4 +1,5 @@
 node_modules
 dist
+dist-admin
 .env
 npm-debug.log
