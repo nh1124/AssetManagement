@@ -14,6 +14,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
+from ..domain.messages import localize, message_of
 from .. import models
 from ..domain.errors import Conflict, NotFound
 from ..services import capsule_service, client_service, client_settings_service, goal_budget_record, notification_service, registry_service
@@ -44,7 +45,7 @@ KEPT_ROWS = 100
 def _client(db: Session, client_id: int) -> models.Client:
     client = client_service.get_active_by_id(db, client_id)
     if client is None:
-        raise NotFound("クライアントが見つかりません。")
+        raise NotFound("クライアントが見つかりません。", en="Client not found.")
     return client
 
 
@@ -256,4 +257,9 @@ def _apply(db: Session, client_id: int, retires: list, updates: list, creates: l
         if creates:
             create_plan_lines(db, client_id, creates, commit=False)
     except ValueError as exc:
-        raise Conflict(f"計画の行を書き込めませんでした：{exc}") from exc
+        reason = message_of(exc)
+        raise Conflict(
+            f"計画の行を書き込めませんでした：{reason}",
+            ja=f"計画の行を書き込めませんでした：{localize(reason, 'ja')}",
+            en=f"Could not write the plan rows: {localize(reason, 'en')}",
+        ) from exc

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { isAxiosError } from 'axios';
+import { tr } from './i18n';
 
 export function assetErrorMessage(error: unknown): string {
     if (isAxiosError<{ detail?: unknown; message?: string }>(error)) {
@@ -9,11 +10,11 @@ export function assetErrorMessage(error: unknown): string {
             const messages = data.detail.flatMap((entry: unknown) =>
                 typeof entry === 'object' && entry !== null && 'msg' in entry && typeof entry.msg === 'string'
                     ? [entry.msg] : []);
-            if (messages.length) return messages.join('、');
+            if (messages.length) return messages.join(tr('、', '; '));
         }
         if (typeof data?.message === 'string') return data.message;
     }
-    return error instanceof Error ? error.message : '通信に失敗しました。もう一度お試しください。';
+    return error instanceof Error ? error.message : tr('通信に失敗しました。もう一度お試しください。', 'The request failed. Try again.');
 }
 
 export function useResource<T>(load: () => Promise<T>) {

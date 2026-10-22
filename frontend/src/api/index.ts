@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { activeLanguage } from '../studio/i18n';
 import type { TransactionWithPeriodClose } from './periodCloses';
 import type {
     Account,
@@ -58,6 +59,8 @@ api.interceptors.request.use((config) => {
     if (token) {
         config.headers['Authorization'] = `Bearer ${token}`;
     }
+    // Error messages from the server come back in the language the screen is in.
+    config.headers['Accept-Language'] = activeLanguage();
     return config;
 });
 

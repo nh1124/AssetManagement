@@ -11,6 +11,7 @@ from .periods import period_to_range
 from .. import models
 from .budget_actuals import LINE_SIDE, claimed_leg_ids
 from .budget_context import BudgetContext
+from .client_settings_service import client_language, pick
 from .journal_legs import primary_accounts
 from .ledger_service import BALANCE_TOLERANCE
 from .ledger_valuation import calculate_account_balances
@@ -604,6 +605,25 @@ def _entries_in_closed_periods(db: Session, client_id: int) -> list[dict]:
     return items
 
 
+# Issue titles in the client's language (the notification and the debug screen show them).
+TITLES: dict[str, tuple[str, str]] = {
+    "entries_in_a_closed_period": ("締め後に記録された取引", "Transactions recorded after a close"),
+    "capsule_without_account": ("資金元の口座がない取り置きの規則", "Capsule rules without a reservation account"),
+    "capsule_claim_negative_on_account": ("口座での取り置きの確保額がマイナス", "Capsule claim is negative on an account"),
+    "capsule_beyond_its_declared_share": ("取り置きの確保額が持ち分を超えている", "Capsule claim exceeds its declared share"),
+    "capsule_claim_outside_the_client_currency": ("基準通貨以外の取り置きの確保額", "Capsule claims outside the client's currency"),
+    "capsule_plan_does_not_total_its_target": ("取り置きの資金計画が目標額と合わない", "Capsule funding plan differs from its target"),
+    "capsule_funding_account_is_inactive": ("取り置きの資金元の口座が無効", "Capsule funding account is inactive"),
+    "budget_plan_defaults": ("既定の予算プランへのつながり", "Default budget plan links"),
+    "plan_line_sources": ("計画の行の資金元の口座", "Plan line source accounts"),
+    "account_balances": ("口座残高のずれ", "Account balance drift"),
+    "journal_unbalanced": ("貸借が合わない仕訳", "Unbalanced journal entries"),
+    "budget_leg_unclaimed": ("どの計画の行にも数えられていない予算口座の支出", "Spending on a budgeted account that no plan line reports"),
+    "advance_pair_candidate": ("2件の取引で記録された立替", "Advance recorded as two transactions"),
+    "duplicate_plan_lines": ("重複した有効な計画の行", "Duplicate active plan lines"),
+}
+
+
 def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
     default_plan = db.query(models.BudgetPlan).filter_by(client_id=client_id, is_default=True).first()
     null_plan_count = (
@@ -733,6 +753,10 @@ def check_data_health(db: Session, client_id: int) -> dict[str, Any]:
             "items": duplicate_plan_lines[:100],
         },
     ]
+    language = client_language(db, client_id)
+    for issue in issues:
+        if issue["code"] in TITLES:
+            issue["title"] = pick(language, *TITLES[issue["code"]])
     total = sum(issue["count"] for issue in issues)
     repairable = sum(1 for issue in issues if issue["repairable"] and issue["count"] > 0)
     return {

@@ -13,12 +13,13 @@ import { Feedback } from '../db/Database';
 import MonthlyClose from './MonthlyClose';
 import MonthPicker from './MonthPicker';
 import { monthRange } from './periods';
+import { tr } from '../../i18n';
 
 const PAGE_SIZE = 50;
 const buttonClass = 'rounded-md border border-[var(--studio-border)] px-3 py-1.5 text-xs text-[var(--studio-text-muted)] hover:bg-[var(--studio-accent-soft)] disabled:opacity-40';
 
 function accountLabel(transaction: Transaction): string {
-    if ((transaction.legs?.length ?? 0) > 2) return '複数';
+    if ((transaction.legs?.length ?? 0) > 2) return tr('複数', 'Multiple');
     const name = (side: 'credit' | 'debit') => {
         const leg = transaction.legs?.find((entry) => (entry[side] ?? 0) > 0);
         return leg && 'account_name' in leg && typeof leg.account_name === 'string' ? leg.account_name : '—';
@@ -38,7 +39,7 @@ export function RecordEditor({ transactionId, busy, error, onClose, onSaved, onD
     const load = useCallback(() => getTransaction(transactionId), [transactionId]);
     const resource = useResource(load);
     const transaction = resource.data;
-    return <Overlay title={transaction ? `「${transaction.description || '内容未入力'}」を編集` : `取引 #${transactionId}を編集`} onClose={onClose}>
+    return <Overlay title={transaction ? tr(`「${transaction.description || '内容未入力'}」を編集`, `Edit “${transaction.description || 'Untitled'}”`) : tr(`取引 #${transactionId}を編集`, `Edit transaction #${transactionId}`)} onClose={onClose}>
         <Feedback loading={resource.loading} error={resource.error || error} />
         {transaction && !resource.loading && !resource.error && <RecordForm existing={transaction} onSaved={onSaved} onCancel={onClose} onDelete={() => onDelete(transaction)} deleting={busy} />}
     </Overlay>;
@@ -76,7 +77,7 @@ function RecordResults({ month, currency, onDeleted, onBusy }: {
             const next = await getTransactionsPage({ ...monthRange(month), limit: PAGE_SIZE, offset: page.items.length });
             if (mounted.current) setData({ items: [...page.items, ...next.items], total: next.total });
         } catch (failure: unknown) {
-            if (mounted.current) setOperationError(`次の記録を取得できませんでした。${assetErrorMessage(failure)}`);
+            if (mounted.current) setOperationError(tr(`次の記録を取得できませんでした。${assetErrorMessage(failure)}`, `Could not load more records. ${assetErrorMessage(failure)}`));
         } finally {
             inFlight.current = false;
             if (mounted.current) { setBusy(false); onBusy(false); }
@@ -86,7 +87,7 @@ function RecordResults({ month, currency, onDeleted, onBusy }: {
     const remove = async (transaction: Transaction) => {
         if (inFlight.current || loading || error) return;
         const amount = `${formatCurrency(transaction.amount, transaction.currency || currency)} (${transaction.currency || currency})`;
-        if (!(await confirm(`${transaction.date}「${transaction.description || '内容未入力'}」${amount} の記録を削除しますか？\n削除は取り消せません。`, '削除する'))) return;
+        if (!(await confirm(tr(`${transaction.date}「${transaction.description || '内容未入力'}」${amount} の記録を削除しますか？\n削除は取り消せません。`, `Delete the record “${transaction.description || 'Untitled'}” on ${transaction.date}, ${amount}?\nThis cannot be undone.`), tr('削除する', 'Delete')))) return;
         inFlight.current = true;
         setBusy(true);
         onBusy(true);
@@ -97,12 +98,12 @@ function RecordResults({ month, currency, onDeleted, onBusy }: {
             if (!mounted.current) return;
             setData((previous) => previous ? { items: previous.items.filter((row) => row.id !== transaction.id), total: Math.max(0, previous.total - 1) } : null);
             setEditingId(null);
-            setConfirmation(`${transaction.date}「${transaction.description || '内容未入力'}」を削除しました。`);
+            setConfirmation(tr(`${transaction.date}「${transaction.description || '内容未入力'}」を削除しました。`, `Deleted “${transaction.description || 'Untitled'}” on ${transaction.date}.`));
             // Reload from offset zero because deleting changes every later offset.
             reload();
             onDeleted();
         } catch (failure: unknown) {
-            if (mounted.current) setOperationError(`記録を削除できませんでした。${assetErrorMessage(failure)}`);
+            if (mounted.current) setOperationError(tr(`記録を削除できませんでした。${assetErrorMessage(failure)}`, `Could not delete the record. ${assetErrorMessage(failure)}`));
         } finally {
             inFlight.current = false;
             if (mounted.current) { setBusy(false); onBusy(false); }
@@ -123,22 +124,22 @@ function RecordResults({ month, currency, onDeleted, onBusy }: {
                 reload();
                 onDeleted();
             }} onDelete={(transaction) => void remove(transaction)} />}
-            {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">記録を読み込んでいます…</p>}
-            {error && <p role="alert" className="text-sm text-[var(--studio-danger)]">記録を取得できませんでした。{error}</p>}
+            {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">{tr('記録を読み込んでいます…', 'Loading records…')}</p>}
+            {error && <p role="alert" className="text-sm text-[var(--studio-danger)]">{tr('記録を取得できませんでした。', 'Could not load records. ')}{error}</p>}
             {operationError && <p role="alert" className="text-sm text-[var(--studio-danger)]">{operationError}</p>}
             {confirmation && <p role="status" className="rounded-md bg-[var(--studio-accent-soft)] p-3 text-sm text-[var(--studio-positive)]">{confirmation}</p>}
             {page && (page.items.length ? (
                 <div className="overflow-x-auto rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)]">
                     <table className="w-full text-left text-sm" aria-busy={loading || busy}>
-                        <caption className="sr-only">{month}の記録（新しい順）</caption>
+                        <caption className="sr-only">{tr(`${month}の記録（新しい順）`, `Records for ${month} (newest first)`)}</caption>
                         <thead className="border-b border-[var(--studio-border)] text-xs text-[var(--studio-text-muted)]">
-                            <tr><th scope="col" className="px-5 py-3 font-medium">日付</th><th scope="col" className="px-5 py-3 font-medium">内容</th><th scope="col" className="px-5 py-3 text-right font-medium">金額</th><th scope="col" className="px-5 py-3 font-medium">口座</th></tr>
+                            <tr><th scope="col" className="px-5 py-3 font-medium">{tr('日付', 'Date')}</th><th scope="col" className="px-5 py-3 font-medium">{tr('内容', 'Description')}</th><th scope="col" className="px-5 py-3 text-right font-medium">{tr('金額', 'Amount')}</th><th scope="col" className="px-5 py-3 font-medium">{tr('口座', 'Accounts')}</th></tr>
                         </thead>
                         <tbody className="divide-y divide-[var(--studio-border)]">
                             {page.items.map((transaction) => (
                                 <tr key={transaction.id} onClick={() => openEditor(transaction.id)} className={loading || error || busy || editingId !== null ? '' : 'cursor-pointer hover:bg-[var(--studio-accent-soft)] focus-within:bg-[var(--studio-accent-soft)]'}>
                                     <td className="whitespace-nowrap px-5 py-3 text-[var(--studio-text-muted)]"><time dateTime={transaction.date}>{formatDate(transaction.date, timezone)}</time></td>
-                                    <th scope="row" className="px-5 py-3 font-medium"><button type="button" disabled={loading || Boolean(error) || busy || editingId !== null} aria-label={`${transaction.date} ${transaction.description || '内容未入力'}を編集`} aria-haspopup="dialog" onClick={(event) => { event.stopPropagation(); openEditor(transaction.id); }} className="rounded text-left hover:text-[var(--studio-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)] disabled:opacity-40">{transaction.description || '内容未入力'}</button>{transaction.depreciation && <span className="ml-2 rounded bg-[var(--studio-bg)] px-1.5 py-0.5 text-[11px] font-normal text-[var(--studio-text-muted)]">減価償却</span>}</th>
+                                    <th scope="row" className="px-5 py-3 font-medium"><button type="button" disabled={loading || Boolean(error) || busy || editingId !== null} aria-label={tr(`${transaction.date} ${transaction.description || '内容未入力'}を編集`, `Edit ${transaction.date} ${transaction.description || 'Untitled'}`)} aria-haspopup="dialog" onClick={(event) => { event.stopPropagation(); openEditor(transaction.id); }} className="rounded text-left hover:text-[var(--studio-accent)] focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)] disabled:opacity-40">{transaction.description || tr('内容未入力', 'Untitled')}</button>{transaction.depreciation && <span className="ml-2 rounded bg-[var(--studio-bg)] px-1.5 py-0.5 text-[11px] font-normal text-[var(--studio-text-muted)]">{tr('減価償却', 'Depreciation')}</span>}</th>
                                     <td className="whitespace-nowrap px-5 py-3 text-right tabular-nums">{formatCurrency(transaction.amount, transaction.currency || currency)}<span className="ml-2 text-xs text-[var(--studio-text-muted)]">{transaction.currency || currency}</span></td>
                                     <td className="px-5 py-3 text-[var(--studio-text-muted)]">{accountLabel(transaction)}</td>
                                 </tr>
@@ -146,8 +147,8 @@ function RecordResults({ month, currency, onDeleted, onBusy }: {
                         </tbody>
                     </table>
                 </div>
-            ) : !loading && !error && <div className="space-y-3 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-6 text-sm text-[var(--studio-text-muted)]"><p>この月の記録はありません。</p><Link to="/record" className={`inline-block ${buttonClass}`}>取引を記録</Link></div>)}
-            {page && page.items.length < page.total && <button type="button" onClick={() => void loadMore()} disabled={loading || Boolean(error) || busy} className={buttonClass}>{busy ? '処理中…' : '次を読み込む'}（{page.items.length} / {page.total}件）</button>}
+            ) : !loading && !error && <div className="space-y-3 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-6 text-sm text-[var(--studio-text-muted)]"><p>{tr('この月の記録はありません。', 'No records this month.')}</p><Link to="/record" className={`inline-block ${buttonClass}`}>{tr('取引を記録', 'Record a transaction')}</Link></div>)}
+            {page && page.items.length < page.total && <button type="button" onClick={() => void loadMore()} disabled={loading || Boolean(error) || busy} className={buttonClass}>{busy ? tr('処理中…', 'Working…') : tr('次を読み込む', 'Load more')}{tr(`（${page.items.length} / ${page.total}件）`, ` (${page.items.length} of ${page.total})`)}</button>}
         </div>
     );
 }

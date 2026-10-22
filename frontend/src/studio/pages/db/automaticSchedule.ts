@@ -1,4 +1,5 @@
 import type { AutoTransactionInput } from '../../../types';
+import { tr } from '../../i18n';
 
 export function countEndDate(form: AutoTransactionInput): string | null {
     if (!form.start_date || !form.repeat_count || form.repeat_count < 1) return null;
@@ -23,8 +24,9 @@ export function countEndDate(form: AutoTransactionInput): string | null {
 }
 
 export function scheduleLabel(entry: AutoTransactionInput): string {
-    if (entry.repeat_mode === 'once') return `一回限り ${entry.start_date}`;
-    const cycle = entry.frequency === 'Monthly' ? `毎月 ${entry.day_of_month}日`
-        : entry.frequency === 'Yearly' ? `毎年 ${entry.month_of_year}月${entry.day_of_month}日` : `${entry.frequency_days}日ごと`;
-    return cycle + (entry.repeat_mode === 'count' ? `・${entry.repeat_count}回` : '');
+    if (entry.repeat_mode === 'once') return tr(`一回限り ${entry.start_date}`, `Once on ${entry.start_date}`);
+    const cycle = entry.frequency === 'Monthly' ? tr(`毎月 ${entry.day_of_month}日`, `Monthly on day ${entry.day_of_month}`)
+        : entry.frequency === 'Yearly' ? tr(`毎年 ${entry.month_of_year}月${entry.day_of_month}日`, `Yearly on ${entry.month_of_year}/${entry.day_of_month}`)
+            : tr(`${entry.frequency_days}日ごと`, `Every ${entry.frequency_days} days`);
+    return cycle + (entry.repeat_mode === 'count' ? tr(`・${entry.repeat_count}回`, `, ${entry.repeat_count} times`) : '');
 }

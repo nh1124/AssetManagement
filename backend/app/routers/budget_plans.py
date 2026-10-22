@@ -3,6 +3,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
+from ..domain.messages import Message, message_of
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
@@ -62,7 +63,7 @@ def get_budget_plan_summary(
             ),
         )
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail=message_of(exc)) from exc
 
 
 @router.get("/lines")
@@ -76,7 +77,7 @@ def get_plan_lines(
     try:
         return build_budget_summary(db, current_client.id, period)["plan_lines"]
     except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail=message_of(exc)) from exc
 
 
 @router.post("/lines")
@@ -88,7 +89,7 @@ def create_plan_lines_endpoint(
     try:
         saved = create_plan_lines(db, current_client.id, lines)
     except ValueError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        raise HTTPException(status_code=409, detail=message_of(exc)) from exc
     invalidate_client(current_client.id)
     return {"status": "success", "ids": [line.id for line in saved]}
 
@@ -102,7 +103,7 @@ def update_plan_lines_endpoint(
     try:
         saved = update_plan_lines(db, current_client.id, lines)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=message_of(exc)) from exc
     invalidate_client(current_client.id)
     return {"status": "success", "ids": [line.id for line in saved]}
 
@@ -114,6 +115,6 @@ def delete_plan_line(
     current_client: models.Client = Depends(get_current_client),
 ):
     if not delete_stored_plan_line(db, current_client.id, line_id):
-        raise HTTPException(status_code=404, detail="Monthly plan line not found")
+        raise HTTPException(status_code=404, detail=Message("Monthly plan line not found", ja="計画の行が見つかりません。"))
     invalidate_client(current_client.id)
     return {"message": "Monthly plan line deleted"}

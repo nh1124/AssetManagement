@@ -2,10 +2,15 @@ import { useEffect, useRef, useState } from 'react';
 import { getAccounts, getCapsules } from '../../../api';
 import type { Account } from '../../../types';
 import { assetErrorMessage } from '../../useResource';
+import { tr } from '../../i18n';
 
 export type DatabaseAccount = Omit<Account, 'account_type'> & { account_type: Account['account_type'] };
+// Getters, so each read is in the active language.
 export const ACCOUNT_TYPES: Record<DatabaseAccount['account_type'], string> = {
-    asset: '資産', liability: '負債', income: '収入', expense: '費用',
+    get asset() { return tr('資産', 'Asset'); },
+    get liability() { return tr('負債', 'Liability'); },
+    get income() { return tr('収入', 'Income'); },
+    get expense() { return tr('費用', 'Expense'); },
 };
 
 export const buttonClass = 'rounded-md border border-[var(--studio-border)] px-3 py-1.5 text-xs text-[var(--studio-text-muted)] hover:bg-[var(--studio-accent-soft)] disabled:opacity-40';

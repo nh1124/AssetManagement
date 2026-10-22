@@ -10,6 +10,7 @@ import { eventAmount } from './eventKinds';
 import { layout } from './graphLayout';
 import ContextMenu, { type ContextMenuItem } from './ContextMenu';
 import { useScenario } from './scenarioContext';
+import { tr } from '../../i18n';
 
 type EventData = {
     id: number;
@@ -27,16 +28,16 @@ type LinkEdge = Edge<{ link: LifeEventLink }>;
 
 function LifeEventNode({ data, isConnectable }: NodeProps<EventNode>) {
     return <div className={`life-event-node ${data.onPath ? 'life-event-node-path' : ''} ${data.dim ? 'life-event-node-off' : ''}`}>
-        <Handle type="target" position={Position.Left} isConnectable={isConnectable} aria-label={`${data.name}への接続`} title="接続先" />
+        <Handle type="target" position={Position.Left} isConnectable={isConnectable} aria-label={tr(`${data.name}への接続`, `Link into ${data.name}`)} title={tr('接続先', 'Link target')} />
         <span title={data.name} className="line-clamp-2 font-medium">{data.name}</span>
         <div className="mt-auto space-y-1 tabular-nums">
-            <div>{data.resolved_date ?? '日付未設定'}</div>
+            <div>{data.resolved_date ?? tr('日付未設定', 'No date')}</div>
             <div>{data.amountText}</div>
         </div>
         <div className="min-h-4 text-xs text-[var(--studio-text-muted)]">
-            {data.hasConditions && <span>前提条件あり</span>}
+            {data.hasConditions && <span>{tr('前提条件あり', 'Has preconditions')}</span>}
         </div>
-        <Handle type="source" position={Position.Right} isConnectable={isConnectable} aria-label={`${data.name}からの接続`} title="接続元" />
+        <Handle type="source" position={Position.Right} isConnectable={isConnectable} aria-label={tr(`${data.name}からの接続`, `Link out of ${data.name}`)} title={tr('接続元', 'Link source')} />
     </div>;
 }
 
@@ -61,11 +62,11 @@ function FitWhenMeasured({ signature }: { signature: string }) {
     }, [initialised, signature, fitView]);
     return null;
 }
-const ariaLabelConfig = {
-    'node.a11yDescription.keyboardDisabled': 'イベントを選ぶと編集を開きます。',
-    'edge.a11yDescription.default': 'Enterキーで接続を開きます。',
-    'handle.ariaLabel': 'イベントを接続',
-};
+const ariaLabelConfig = () => ({
+    'node.a11yDescription.keyboardDisabled': tr('イベントを選ぶと編集を開きます。', 'Choose an event to edit it.'),
+    'edge.a11yDescription.default': tr('Enterキーで接続を開きます。', 'Press Enter to open the link.'),
+    'handle.ariaLabel': tr('イベントを接続', 'Link events'),
+});
 const flowStyle = {
     '--xy-background-color': 'var(--studio-bg)',
     '--xy-edge-stroke-selected': 'var(--studio-accent)',
@@ -99,18 +100,18 @@ export default function LifeEventDiagram({ events, links, scenario, pathEventIds
         const bounds = container.current.getBoundingClientRect();
         setMenu({ x: event.clientX - bounds.left - container.current.clientLeft, y: event.clientY - bounds.top - container.current.clientTop, target });
     };
-    const simulation: ContextMenuItem = { label: 'シミュレーションへ', onSelect: () => { void navigate(`/goals/scenarios/${current.id}/simulation`); } };
+    const simulation: ContextMenuItem = { label: tr('シミュレーションへ', 'To the simulation'), onSelect: () => { void navigate(`/goals/scenarios/${current.id}/simulation`); } };
     const menuItems = (target: MenuTarget): ContextMenuItem[] => {
         switch (target.type) {
-            case 'pane': return [{ label: 'ライフイベントを追加', onSelect: () => onAddEvent() }, simulation];
+            case 'pane': return [{ label: tr('ライフイベントを追加', 'Add a life event'), onSelect: () => onAddEvent() }, simulation];
             case 'node': return [
-                { label: '編集', onSelect: () => onEditEvent(target.event) },
-                { label: '前提条件', onSelect: () => onConditions(target.event) },
-                { label: '削除', onSelect: () => onDeleteEvent(target.event) }, simulation,
+                { label: tr('編集', 'Edit'), onSelect: () => onEditEvent(target.event) },
+                { label: tr('前提条件', 'Preconditions'), onSelect: () => onConditions(target.event) },
+                { label: tr('削除', 'Delete'), onSelect: () => onDeleteEvent(target.event) }, simulation,
             ];
             case 'edge': return [
-                { label: '接続の詳細', onSelect: () => onEdgeClick(target.edge) },
-                { label: '削除', onSelect: () => onDeleteEdge(target.edge) },
+                { label: tr('接続の詳細', 'Link details'), onSelect: () => onEdgeClick(target.edge) },
+                { label: tr('削除', 'Delete'), onSelect: () => onDeleteEdge(target.edge) },
             ];
         }
     };
@@ -125,7 +126,7 @@ export default function LifeEventDiagram({ events, links, scenario, pathEventIds
         return {
             nodes: graph.nodes.map((node): EventNode => ({
                 id: node.id, position: { x: node.x, y: node.y }, data: node.data, type: 'lifeEvent',
-                ariaLabel: `${node.data.name}・${node.data.resolved_date ?? '日付未設定'}${node.data.hasConditions ? '・前提条件あり' : ''}${node.data.onPath ? '・多くの試行が通る' : ''}`,
+                ariaLabel: tr(`${node.data.name}・${node.data.resolved_date ?? '日付未設定'}${node.data.hasConditions ? '・前提条件あり' : ''}${node.data.onPath ? '・多くの試行が通る' : ''}`, `${node.data.name}, ${node.data.resolved_date ?? 'no date'}${node.data.hasConditions ? ', has preconditions' : ''}${node.data.onPath ? ', on most simulated paths' : ''}`),
             })),
             edges: graph.edges.map((edge): LinkEdge => ({
                 ...edge, data: { link: edge.data }, type: 'smoothstep',
@@ -133,7 +134,7 @@ export default function LifeEventDiagram({ events, links, scenario, pathEventIds
                     ? { stroke: 'var(--studio-accent)', strokeWidth: 3 }
                     : { stroke: 'var(--studio-text-muted)', strokeWidth: 1.5 },
                 markerEnd: { type: MarkerType.ArrowClosed, color: pathLinkIds.has(edge.data.id) ? 'var(--studio-accent)' : 'var(--studio-text-muted)' },
-                label: edge.data.offset_months === 0 ? undefined : `${edge.data.offset_months > 0 ? '+' : ''}${edge.data.offset_months}か月`,
+                label: edge.data.offset_months === 0 ? undefined : tr(`${edge.data.offset_months > 0 ? '+' : ''}${edge.data.offset_months}か月`, `${edge.data.offset_months > 0 ? '+' : ''}${edge.data.offset_months} mo`),
                 labelStyle: { fill: 'var(--studio-text)', fontSize: 12 },
                 labelBgStyle: { fill: 'var(--studio-surface)' }, labelBgPadding: [6, 4],
                 interactionWidth: 24,
@@ -143,19 +144,19 @@ export default function LifeEventDiagram({ events, links, scenario, pathEventIds
                         onEdgeClick(edge.data);
                     }
                 } },
-                ariaLabel: `${events.find((event) => event.id === edge.data.from_event_id)?.name}から${events.find((event) => event.id === edge.data.to_event_id)?.name}・必ず続く・${edge.data.offset_months}か月`,
+                ariaLabel: tr(`${events.find((event) => event.id === edge.data.from_event_id)?.name}から${events.find((event) => event.id === edge.data.to_event_id)?.name}・必ず続く・${edge.data.offset_months}か月`, `From ${events.find((event) => event.id === edge.data.from_event_id)?.name} to ${events.find((event) => event.id === edge.data.to_event_id)?.name}, always follows, ${edge.data.offset_months} months`),
             })),
         };
     }, [events, links, scenario, pathEventIds, pathLinkIds, conditionEventIds, currency, disabled, dimOffPath, onEdgeClick]);
 
     const signature = `${nodes.map((node) => node.id).join()}|${edges.map((edge) => edge.id).join()}`;
     return <div ref={container} tabIndex={-1} onContextMenu={(event) => event.preventDefault()}
-        className="life-event-diagram relative h-[min(65vh,640px)] min-h-96 overflow-hidden rounded-lg border border-[var(--studio-border)]" aria-label="ライフイベントの接続図">
+        className="life-event-diagram relative h-[min(65vh,640px)] min-h-96 overflow-hidden rounded-lg border border-[var(--studio-border)]" aria-label={tr('ライフイベントの接続図', 'Life event diagram')}>
         <ReactFlowProvider>
             <ReactFlow<EventNode, LinkEdge> nodes={nodes} edges={edges} nodeTypes={nodeTypes} style={flowStyle}
                 fitView fitViewOptions={fitOptions} minZoom={0.25} maxZoom={1.5}
                 nodesDraggable={false} nodesConnectable={!disabled} edgesReconnectable={false} deleteKeyCode={null}
-                nodesFocusable={false} edgesFocusable={!disabled} ariaLabelConfig={ariaLabelConfig}
+                nodesFocusable={false} edgesFocusable={!disabled} ariaLabelConfig={ariaLabelConfig()}
                 connectionLineStyle={{ stroke: 'var(--studio-accent)', strokeWidth: 2 }}
                 onConnectStart={() => { dragAllowed.current = !disabled; setMenu(null); }}
                 onConnect={(connection) => {

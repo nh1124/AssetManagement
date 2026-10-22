@@ -7,6 +7,7 @@ import { useReturnTo } from '../useReturnTo';
 import { Feedback } from './db/Database';
 import { buttonClass } from './db/forms';
 import RecordForm from './RecordForm';
+import { tr } from '../i18n';
 
 function TransactionEditor({ transactionId }: { transactionId: string }) {
     const navigate = useNavigate();
@@ -17,17 +18,17 @@ function TransactionEditor({ transactionId }: { transactionId: string }) {
         return () => { mounted.current = false; };
     }, []);
     const load = useCallback(async () => {
-        if (!/^\d+$/.test(transactionId)) throw new Error('この取引は見つかりません。');
+        if (!/^\d+$/.test(transactionId)) throw new Error(tr('この取引は見つかりません。', 'This transaction was not found.'));
         return getTransaction(Number(transactionId));
     }, [transactionId]);
     const resource = useResource(load);
     const leave = () => navigate(returnTo, { replace: true });
     return <section className="space-y-4">
-        {(resource.loading || resource.error) && <h2 className="text-lg font-semibold">取引 #{transactionId}を編集</h2>}
+        {(resource.loading || resource.error) && <h2 className="text-lg font-semibold">{tr(`取引 #${transactionId}を編集`, `Edit transaction #${transactionId}`)}</h2>}
         <Feedback loading={resource.loading} error={resource.error} />
-        {resource.loading && <button type="button" onClick={leave} className={buttonClass}>キャンセル</button>}
+        {resource.loading && <button type="button" onClick={leave} className={buttonClass}>{tr('キャンセル', 'Cancel')}</button>}
         {resource.data && !resource.loading && !resource.error && <RecordForm existing={resource.data} onSaved={leave} onCancel={leave} />}
-        {resource.error && <div className="flex gap-2"><button type="button" onClick={leave} className={buttonClass}>キャンセル</button></div>}
+        {resource.error && <div className="flex gap-2"><button type="button" onClick={leave} className={buttonClass}>{tr('キャンセル', 'Cancel')}</button></div>}
     </section>;
 }
 

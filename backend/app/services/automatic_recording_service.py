@@ -119,4 +119,4 @@ def _period_range(period: str):
     try:
         return period_to_range(period)
     except (ValueError, TypeError, AttributeError) as error:
-        raise Invalid("期間はYYYY-MMで指定してください") from error
+        raise Invalid("期間はYYYY-MMで指定してください", en="Give the period as YYYY-MM") from error

@@ -1,9 +1,56 @@
-import { useClient } from '../context/ClientContext';
-
+/* Two languages for the whole UI.
+ *
+ * Screens write their words inline as tr('日本語', 'English'); the shell's
+ * shared words live in the dictionary below, keyed, because navigation.ts keeps
+ * them as data. The active language is module state so that helpers outside
+ * React (labels, exports, row builders) translate too: LanguageBoundary sets it
+ * before its children render and remounts them when it changes, so a value
+ * computed once on mount is never left in the old language.
+ */
 export type Language = 'ja' | 'en';
 
+// The last language a signed-in client used, for the sign-in page and the first paint after reload.
+export const LANGUAGE_STORAGE_KEY = 'ui.language';
+
+function storedLanguage(): Language {
+    try {
+        return localStorage.getItem(LANGUAGE_STORAGE_KEY) === 'en' ? 'en' : 'ja';
+    } catch {
+        return 'ja';
+    }
+}
+
+let active: Language = storedLanguage();
+
+/** Only LanguageBoundary calls this, before its children render. */
+export function setActiveLanguage(language: Language) {
+    active = language;
+}
+
+/** The text in the active language. */
+export function tr(ja: string, en: string): string {
+    return active === 'en' ? en : ja;
+}
+
+export function activeLanguage(): Language {
+    return active;
+}
+
+/** A label map for module scope: each read returns the active language's text. */
+export function labels<K extends string>(pairs: Record<K, readonly [string, string]>): Record<K, string> {
+    const result = {} as Record<K, string>;
+    for (const key of Object.keys(pairs) as K[]) {
+        Object.defineProperty(result, key, { get: () => tr(pairs[key][0], pairs[key][1]), enumerable: true });
+    }
+    return result;
+}
+
+/** Locale for Intl formatting in the active language. */
+export function activeLocale(): string {
+    return active === 'en' ? 'en-US' : 'ja-JP';
+}
+
 const dictionary = {
-    'group.workspace': ['ワークスペース', 'Workspace'],
     'group.database': ['データベース', 'Database'],
     'group.automation': ['オートメーション', 'Automation'],
     'group.prototype': ['試作', 'Prototype'],
@@ -41,7 +88,10 @@ const dictionary = {
     'tab.repayment': ['返済', 'Repayment'],
     'tab.transfer': ['振替', 'Transfer'],
     'tab.allocation': ['配分', 'Allocation'],
-    'shell.subtitle': ['ファイナンシャル・スタジオ', 'Financial Studio'],
+    'shell.collapse': ['サイドバーを閉じる（Ctrl+\\）', 'Close sidebar (Ctrl+\\)'],
+    'shell.expand': ['サイドバーを開く（Ctrl+\\）', 'Open sidebar (Ctrl+\\)'],
+    'shell.home': ['ホームへ', 'Go home'],
+    'shell.editTransaction': ['取引を編集', 'Edit transaction'],
     'shell.record': ['取引を記録', 'Record a transaction'],
     'shell.signOut': ['サインアウト', 'Sign out'],
     'common.loading': ['読み込んでいます…', 'Loading…'],
@@ -56,7 +106,7 @@ const dictionary = {
     'settings.browserZone': ['{zone}（ブラウザーの設定）', '{zone} (browser timezone)'],
     'settings.timezoneScope': ['日付・時刻の表示と、既定の日付・基準日として使う「今日」を変更します。記録した取引の日付はそのまま保持され、タイムゾーンを変更しても変換・書き換えは行いません。', 'Changes date and time display and what “today” means for default dates and as-of dates. Recorded transaction dates keep the date you gave them; changing the timezone never converts or rewrites them.'],
     'settings.language': ['言語', 'Language'],
-    'settings.languageScope': ['言語設定はナビゲーション、タブ、ヘッダーとこの設定画面に適用されます。他の画面の本文は現在は日本語のままです。翻訳は今後対応します。', 'This setting changes navigation, tabs, the header and this settings screen. Other screen bodies remain in Japanese for now; their translation will follow later.'],
+    'settings.languageScope': ['画面全体と通知の言語です。口座名やメモなど、入力した内容は翻訳されません。', 'The language of every screen and of notifications. What you typed, such as account names and notes, is not translated.'],
     'settings.save': ['表示設定を保存', 'Save display preferences'],
     'settings.saved': ['表示設定を保存しました。', 'Display preferences saved.'],
     'settings.failed': ['操作に失敗しました。入力内容を確認して、もう一度お試しください。', 'The operation failed. Check your input and try again.'],
@@ -118,12 +168,11 @@ const dictionary = {
 export type TranslationKey = keyof typeof dictionary;
 type Parameters = Record<string, string | number>;
 
-export function t(key: TranslationKey, language: Language = 'ja', parameters: Parameters = {}): string {
-    return dictionary[key][language === 'en' ? 1 : 0].replace(/\{(\w+)\}/g, (match, name: string) => String(parameters[name] ?? match));
+export function t(key: TranslationKey, parameters: Parameters = {}): string {
+    return dictionary[key][active === 'en' ? 1 : 0].replace(/\{(\w+)\}/g, (match, name: string) => String(parameters[name] ?? match));
 }
 
+/** The active language, for components; LanguageBoundary remounts them when it changes. */
 export function useLanguage() {
-    const { clientId, currentClient } = useClient();
-    const language: Language = currentClient?.id === clientId && currentClient.general_settings?.language === 'en' ? 'en' : 'ja';
-    return { language, t: (key: TranslationKey, parameters?: Parameters) => t(key, language, parameters) };
+    return { language: active, t };
 }

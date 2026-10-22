@@ -17,6 +17,7 @@ import MonthCopy from './MonthCopy';
 import { AccountOverlay, EarmarkOverlay, type OverlayContext } from './BudgetOverlay';
 import { SCOPES, buildModel, earmarkMatches, rowMatches, type BudgetSummary, type Scope } from './budgetRows';
 import BudgetTable, { EarmarkTable } from './BudgetTable';
+import { tr } from '../../i18n';
 
 interface Filters { query: string; scope: Scope }
 const FILTERS_KEY = 'studio.budget.filters';
@@ -41,7 +42,7 @@ function AddItem({ currency, busy, error, onSave, onClose }: {
     onSave: (action: () => Promise<unknown>) => void; onClose: () => void;
 }) {
     const accounts = useResource(loadAccounts);
-    return <Overlay title="項目を追加（口座・勘定科目）" help="作成すると計画に「未設定」で並びます。" onClose={onClose}>
+    return <Overlay title={tr('項目を追加（口座・勘定科目）', 'Add an item (account)')} help={tr('作成すると計画に「未設定」で並びます。', 'Once created, it appears in the plan as “Not set”.')} onClose={onClose}>
         <Feedback loading={accounts.loading} error={error || accounts.error} />
         {accounts.data && <AccountEditor account={null} initialType="expense" currency={currency} busy={busy} onSave={onSave} onCancel={onClose} />}
     </Overlay>;
@@ -59,7 +60,7 @@ function MoreMenu({ disabled, items }: { disabled: boolean; items: Array<{ label
         return () => document.removeEventListener('pointerdown', close);
     }, []);
     return <details ref={menu} className="relative">
-        <summary aria-disabled={disabled} className={`${buttonClass} cursor-pointer list-none ${disabled ? 'pointer-events-none opacity-40' : ''}`}>その他 ▾</summary>
+        <summary aria-disabled={disabled} className={`${buttonClass} cursor-pointer list-none ${disabled ? 'pointer-events-none opacity-40' : ''}`}>{tr('その他', 'More')} ▾</summary>
         <div role="menu" className="absolute right-0 z-10 mt-1 w-60 rounded-md border border-[var(--studio-border)] bg-[var(--studio-surface)] py-1 shadow-lg">
             {items.map((item) => <button key={item.label} type="button" role="menuitem" onClick={() => { if (menu.current) menu.current.open = false; item.onSelect(); }}
                 className="block w-full px-3 py-2 text-left text-sm hover:bg-[var(--studio-accent-soft)]">{item.label}</button>)}
@@ -113,7 +114,7 @@ function MonthlyPlan({ view, period, currency, clientName, filters, picker, onFi
     const add = (action: () => Promise<unknown>) => void mutation.run(async () => {
         const account = await action() as { id: number };
         setCreated(account.id);
-    }, '項目を追加しました。一覧で色付きで表示しています。', () => {
+    }, tr('項目を追加しました。一覧で色付きで表示しています。', 'Item added. It is highlighted in the list.'), () => {
         setAdding(false);
         accounts.reload();
         resource.reload();
@@ -122,20 +123,20 @@ function MonthlyPlan({ view, period, currency, clientName, filters, picker, onFi
     return <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
             {picker}
-            {view !== 'auto' && <div className="w-48"><input type="search" aria-label="名前で検索" placeholder="名前で検索" value={filters.query} onChange={(event) => onFilters({ ...filters, query: event.target.value })} className={inputClass} /></div>}
-            {view === 'plan' && <div role="group" aria-label="表示する項目" className="inline-flex overflow-hidden rounded-md border border-[var(--studio-border)]">
+            {view !== 'auto' && <div className="w-48"><input type="search" aria-label={tr('名前で検索', 'Search by name')} placeholder={tr('名前で検索', 'Search by name')} value={filters.query} onChange={(event) => onFilters({ ...filters, query: event.target.value })} className={inputClass} /></div>}
+            {view === 'plan' && <div role="group" aria-label={tr('表示する項目', 'Show')} className="inline-flex overflow-hidden rounded-md border border-[var(--studio-border)]">
                 {SCOPES.map((scope) => <button key={scope.value} type="button" aria-pressed={filters.scope === scope.value} onClick={() => onFilters({ ...filters, scope: scope.value })} className={`${buttonClass} rounded-none border-0 aria-pressed:bg-[var(--studio-accent-soft)] aria-pressed:text-[var(--studio-accent)]`}>{scope.label}</button>)}
             </div>}
             <div className="ml-auto flex flex-wrap items-center gap-2">
                 {view === 'plan' && <>
-                    <button type="button" disabled={disabled} onClick={() => setAdding(true)} className={primaryClass}>項目を追加</button>
-                    <MoreMenu disabled={disabled} items={[{ label: '月の予算をコピー', onSelect: () => setCopying(true) }]} />
+                    <button type="button" disabled={disabled} onClick={() => setAdding(true)} className={primaryClass}>{tr('項目を追加', 'Add item')}</button>
+                    <MoreMenu disabled={disabled} items={[{ label: tr('月の予算をコピー', 'Copy the month’s budget'), onSelect: () => setCopying(true) }]} />
                 </>}
-                <button type="button" disabled={!clientName} onClick={() => setReflecting(true)} aria-label="計画への反映の設定" title="計画への反映の設定"
-                    className={`${buttonClass} inline-flex items-center gap-1.5`}><Settings size={14} aria-hidden="true" />反映</button>
+                <button type="button" disabled={!clientName} onClick={() => setReflecting(true)} aria-label={tr('計画への反映の設定', 'Plan reflection settings')} title={tr('計画への反映の設定', 'Plan reflection settings')}
+                    className={`${buttonClass} inline-flex items-center gap-1.5`}><Settings size={14} aria-hidden="true" />{tr('反映', 'Reflection')}</button>
             </div>
         </div>
-        <Feedback loading={resource.loading || accounts.loading} error={resource.error || accounts.error || (scheduled.error ? `自動取引の予定を取得できませんでした。${scheduled.error}` : '')} />
+        <Feedback loading={resource.loading || accounts.loading} error={resource.error || accounts.error || (scheduled.error ? tr(`自動取引の予定を取得できませんでした。${scheduled.error}`, `Could not load scheduled automatic transactions. ${scheduled.error}`) : '')} />
         <Feedback error={mutation.error && !adding ? mutation.error : undefined} message={message || mutation.message} />
         {model && view === 'plan' && <BudgetTable accounts={rows} earmarks={earmarks} currency={currency} narrowed={narrowed} showEarmarks={false}
             highlight={created} disabled={disabled} onAccount={(row) => setOpenAccount(row.key)} onEarmark={(earmark) => setOpenEarmark(earmark.key)} />}

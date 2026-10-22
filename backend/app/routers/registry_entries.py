@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from ..domain.messages import Message
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
@@ -34,7 +35,7 @@ def create_automatic_transaction(payload: schemas.RegistryEntryCreate, db: Sessi
 def update_automatic_transaction(entry_id: int, payload: schemas.RegistryEntryCreate, db: Session = Depends(get_db), current_client: models.Client = Depends(get_current_client)):
     entry = registry_workflow.save(db, current_client.id, payload.model_dump(), entry_id)
     if entry is None:
-        raise HTTPException(status_code=404, detail="自動取引が見つかりません")
+        raise HTTPException(status_code=404, detail=Message("自動取引が見つかりません", en="Automatic transaction not found"))
     result = enrich_entry(entry)
     plan_reflection_workflow.after_change(db, current_client.id)
     return result
@@ -43,5 +44,5 @@ def update_automatic_transaction(entry_id: int, payload: schemas.RegistryEntryCr
 @router.delete("/{entry_id}", status_code=204)
 def delete_automatic_transaction(entry_id: int, db: Session = Depends(get_db), current_client: models.Client = Depends(get_current_client)):
     if not registry_workflow.delete(db, current_client.id, entry_id):
-        raise HTTPException(status_code=404, detail="自動取引が見つかりません")
+        raise HTTPException(status_code=404, detail=Message("自動取引が見つかりません", en="Automatic transaction not found"))
     plan_reflection_workflow.after_change(db, current_client.id)

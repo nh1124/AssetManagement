@@ -5,9 +5,10 @@ import { useClient } from '../../../context/ClientContext';
 import type { DataHealthIssue } from '../../../types';
 import { formatCurrency } from '../../../utils/currency';
 import { assetErrorMessage, useResource } from '../../useResource';
+import { labels, tr } from '../../i18n';
 
 const buttonClass = 'rounded-md border border-[var(--studio-border)] px-3 py-1.5 text-xs text-[var(--studio-text-muted)] hover:bg-[var(--studio-accent-soft)] disabled:opacity-40';
-const SEVERITY_LABELS: Record<DataHealthIssue['severity'], string> = { ok: '正常', warning: '警告', error: 'エラー' };
+const SEVERITY_LABELS = labels<DataHealthIssue['severity']>({ ok: ['正常', 'OK'], warning: ['警告', 'Warning'], error: ['エラー', 'Error'] });
 const SEVERITY_COLORS: Record<DataHealthIssue['severity'], string> = {
     ok: 'text-[var(--studio-positive)]', warning: 'text-[var(--studio-warning)]', error: 'text-[var(--studio-danger)]',
 };
@@ -23,9 +24,9 @@ function itemValue(value: unknown, key: string, currency: string): string {
     // Issue items vary; format named monetary values without mistaking IDs or counts for money.
     if (/(?:^|_)(amount|balance|debit|credit|cost|price|total|difference|claim|planned)$/.test(key)
         && (typeof value === 'number' || (typeof value === 'string' && value.trim() !== ''))
-        && Number.isFinite(Number(value))) return `${formatCurrency(Number(value), currency)}（${currency}）`;
-    if (typeof value === 'boolean') return value ? 'はい' : 'いいえ';
-    return value === '' ? '（空欄）' : String(value);
+        && Number.isFinite(Number(value))) return `${formatCurrency(Number(value), currency)}${tr(`（${currency}）`, ` (${currency})`)}`;
+    if (typeof value === 'boolean') return value ? tr('はい', 'Yes') : tr('いいえ', 'No');
+    return value === '' ? tr('（空欄）', '(empty)') : String(value);
 }
 
 function IssueCard({ issue, currency }: { issue: DataHealthIssue; currency: string }) {
@@ -35,13 +36,13 @@ function IssueCard({ issue, currency }: { issue: DataHealthIssue; currency: stri
         <article className="space-y-3 rounded-lg border border-[var(--studio-border)] bg-[var(--studio-surface)] p-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
                 <div><h3 className="text-sm font-semibold">{issue.title}</h3><p className="mt-1 break-all font-mono text-xs text-[var(--studio-text-muted)]">{issue.code}</p></div>
-                <div className="flex flex-wrap gap-3 text-xs"><span className={SEVERITY_COLORS[issue.severity]}>重要度：{SEVERITY_LABELS[issue.severity]}</span><span>件数：{issue.count}件</span><span>{issue.repairable ? '自動修復可能' : '確認・手動対応が必要'}</span></div>
+                <div className="flex flex-wrap gap-3 text-xs"><span className={SEVERITY_COLORS[issue.severity]}>{tr('重要度：', 'Severity: ')}{SEVERITY_LABELS[issue.severity]}</span><span>{tr(`件数：${issue.count}件`, `Count: ${issue.count}`)}</span><span>{issue.repairable ? tr('自動修復可能', 'Can be repaired automatically') : tr('確認・手動対応が必要', 'Needs checking by hand')}</span></div>
             </div>
             <p className="whitespace-pre-wrap text-sm text-[var(--studio-text-muted)]">{issue.detail}</p>
             {columns.length ? (
                 <div className="overflow-x-auto rounded-md border border-[var(--studio-border)]">
                     <table className="w-full text-left text-xs">
-                        <caption className="sr-only">{issue.title}の対象データ</caption>
+                        <caption className="sr-only">{tr(`${issue.title}の対象データ`, `Data for ${issue.title}`)}</caption>
                         <thead className="border-b border-[var(--studio-border)] bg-[var(--studio-bg)] text-[var(--studio-text-muted)]"><tr>{columns.map((key) => <th scope="col" key={key} className="whitespace-nowrap px-3 py-2 font-medium">{key}</th>)}</tr></thead>
                         <tbody className="divide-y divide-[var(--studio-border)]">
                             {issue.items.map((item, index) => {
@@ -51,7 +52,7 @@ function IssueCard({ issue, currency }: { issue: DataHealthIssue; currency: stri
                         </tbody>
                     </table>
                 </div>
-            ) : <p className="text-xs text-[var(--studio-text-muted)]">対象データの明細はありません。</p>}
+            ) : <p className="text-xs text-[var(--studio-text-muted)]">{tr('対象データの明細はありません。', 'No details.')}</p>}
         </article>
     );
 }
@@ -67,7 +68,7 @@ function HealthForClient({ clientId, clientName, currency }: { clientId: number;
 
     const repair = async () => {
         if (inFlight.current || loading || error || !data || !repairable || !clientName) return;
-        if (!(await confirm(`「${clientName}」（クライアント #${clientId}）の自動修復可能な問題をすべて修復しますか？\nこの操作は実データに書き込みます。修復後に再検査します。`, '修復する'))) return;
+        if (!(await confirm(tr(`「${clientName}」（クライアント #${clientId}）の自動修復可能な問題をすべて修復しますか？\nこの操作は実データに書き込みます。修復後に再検査します。`, `Repair every automatically repairable issue of “${clientName}” (client #${clientId})?\nThis writes to real data. The check runs again afterwards.`), tr('修復する', 'Repair')))) return;
         inFlight.current = true;
         setRepairing(true);
         setOperationError('');
@@ -76,10 +77,10 @@ function HealthForClient({ clientId, clientName, currency }: { clientId: number;
             const result = await repairDataHealth();
             // Preserve the server's repair result while a fresh check is requested.
             setData(result.health);
-            setConfirmation('修復処理が完了しました。');
+            setConfirmation(tr('修復処理が完了しました。', 'Repair finished.'));
             reload();
         } catch (failure: unknown) {
-            setOperationError(`修復できませんでした。${assetErrorMessage(failure)}`);
+            setOperationError(tr(`修復できませんでした。${assetErrorMessage(failure)}`, `Could not repair. ${assetErrorMessage(failure)}`));
         } finally {
             inFlight.current = false;
             setRepairing(false);
@@ -89,19 +90,19 @@ function HealthForClient({ clientId, clientName, currency }: { clientId: number;
     return (
         <section className="space-y-4">
             <div className="rounded-lg border border-[var(--studio-warning)] bg-[var(--studio-surface)] p-4 text-sm text-[var(--studio-warning)]">
-                <p className="font-semibold">UI再構築のデバッグ用画面です。リリース前に削除してください。</p>
+                <p className="font-semibold">{tr('UI再構築のデバッグ用画面です。リリース前に削除してください。', 'A debug screen for the UI rebuild. Delete it before release.')}</p>
             </div>
             <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex gap-2"><button type="button" onClick={reload} disabled={loading || repairing} className={buttonClass}>再検査</button><button type="button" onClick={() => void repair()} disabled={loading || repairing || Boolean(error) || !repairable || !clientName} className={buttonClass}>{repairing ? '修復中…' : '修復する'}</button></div>
+                <div className="flex gap-2"><button type="button" onClick={reload} disabled={loading || repairing} className={buttonClass}>{tr('再検査', 'Check again')}</button><button type="button" onClick={() => void repair()} disabled={loading || repairing || Boolean(error) || !repairable || !clientName} className={buttonClass}>{repairing ? tr('修復中…', 'Repairing…') : tr('修復する', 'Repair')}</button></div>
             </div>
-            {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">データ健全性を検査しています…</p>}
-            {error && <p role="alert" className="text-sm text-[var(--studio-danger)]">検査結果を取得できませんでした。{error}</p>}
+            {loading && <p role="status" className="text-sm text-[var(--studio-text-muted)]">{tr('データ健全性を検査しています…', 'Checking data health…')}</p>}
+            {error && <p role="alert" className="text-sm text-[var(--studio-danger)]">{tr('検査結果を取得できませんでした。', 'Could not load the check results. ')}{error}</p>}
             {operationError && <p role="alert" className="text-sm text-[var(--studio-danger)]">{operationError}</p>}
             {confirmation && <p role="status" className="text-sm text-[var(--studio-positive)]">{confirmation}</p>}
             {data && <div className="space-y-4" aria-busy={loading || repairing}>
-                <p className="rounded-md bg-[var(--studio-accent-soft)] px-4 py-3 text-sm">問題が見つからなかった検査：{data.issues.filter((issue) => issue.count === 0).length}件</p>
+                <p className="rounded-md bg-[var(--studio-accent-soft)] px-4 py-3 text-sm">{tr('問題が見つからなかった検査：', 'Checks with no issues: ')}{data.issues.filter((issue) => issue.count === 0).length}</p>
                 {data.issues.filter((issue) => issue.count > 0).map((issue) => <IssueCard key={issue.code} issue={issue} currency={currency} />)}
-                {!repairable && data.issues.some((issue) => issue.count > 0) && <p className="text-xs text-[var(--studio-text-muted)]">自動修復できる問題はありません。各項目を確認してください。</p>}
+                {!repairable && data.issues.some((issue) => issue.count > 0) && <p className="text-xs text-[var(--studio-text-muted)]">{tr('自動修復できる問題はありません。各項目を確認してください。', 'Nothing can be repaired automatically. Check each item.')}</p>}
             </div>}
         </section>
     );

@@ -3,14 +3,18 @@ import logging
 from datetime import date
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.exception_handlers import http_exception_handler
+from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.orm import Session
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from . import models
 from .config import settings
 from .database import get_db
+from .dependencies import request_language
 from .domain.errors import DomainError, detail_for, status_for
+from .domain.messages import Message, localize
 from .routers import (
     accounts,
     ai_change_requests,
@@ -61,13 +65,38 @@ app = FastAPI(
 )
 
 
+# WP29: an error's text follows the language the screen asked for (Accept-Language);
+# a request that names no language gets every message as written, as before.
 @app.exception_handler(DomainError)
 async def domain_error_handler(request: Request, exc: DomainError):
     # Reuse FastAPI's serializer so bytes, headers and bodyless codes agree.
     return await http_exception_handler(
         request,
-        HTTPException(status_code=status_for(exc), detail=detail_for(exc)),
+        HTTPException(status_code=status_for(exc), detail=detail_for(exc, request_language(request))),
     )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def localized_http_exception_handler(request: Request, exc: StarletteHTTPException):
+    language = request_language(request)
+    if language is not None:
+        exc = StarletteHTTPException(exc.status_code, detail=localize(exc.detail, language), headers=exc.headers)
+    return await http_exception_handler(request, exc)
+
+
+@app.exception_handler(RequestValidationError)
+async def localized_validation_error_handler(request: Request, exc: RequestValidationError):
+    # A schema validator's own Message replaces pydantic's "Value error, …" line;
+    # pydantic's built-in messages (missing field, wrong type) stay as pydantic writes them.
+    language = request_language(request)
+    if language is not None:
+        errors = []
+        for error in exc.errors():
+            cause = (error.get("ctx") or {}).get("error")
+            text = cause.args[0] if isinstance(cause, ValueError) and len(cause.args) == 1 else None
+            errors.append({**error, "msg": text.in_language(language)} if isinstance(text, Message) else error)
+        exc = RequestValidationError(errors, body=exc.body)
+    return await request_validation_exception_handler(request, exc)
 
 
 def ensure_runtime_schema_guards(db) -> None:

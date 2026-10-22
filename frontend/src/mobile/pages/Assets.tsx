@@ -11,6 +11,7 @@ import Sheet from '../components/Sheet';
 import { TransactionRow } from '../components/transactions';
 import { Empty, ErrorNote, List, Money, Row, Skeleton } from '../components/ui';
 import { accountTypes } from '../data';
+import { tr } from '../../studio/i18n';
 
 /** One account: what is set aside in it, and its latest records. */
 function AccountSheet({ account, currency, onClose }: { account: Account; currency: string; onClose: () => void }) {
@@ -26,20 +27,20 @@ function AccountSheet({ account, currency, onClose }: { account: Account; curren
     return <Sheet title={account.name} onClose={onClose} tall>
         <div className="space-y-4">
             <div className="rounded-2xl bg-[var(--studio-surface)] p-4 shadow-[var(--mobile-shadow)]">
-                <p className="text-xs text-[var(--studio-text-muted)]">残高</p>
+                <p className="text-xs text-[var(--studio-text-muted)]">{tr('残高', 'Balance')}</p>
                 <Money value={account.balance} currency={currency} className="text-2xl font-bold" />
-                {held > 0 && <p className="mt-1 text-xs text-[var(--studio-text-muted)]">うち取り置き {formatCurrency(held, currency)}・自由に使える額 {formatCurrency(account.balance - held, currency)}</p>}
+                {held > 0 && <p className="mt-1 text-xs text-[var(--studio-text-muted)]">{tr(`うち取り置き ${formatCurrency(held, currency)}・自由に使える額 ${formatCurrency(account.balance - held, currency)}`, `Set aside ${formatCurrency(held, currency)} · free to use ${formatCurrency(account.balance - held, currency)}`)}</p>}
             </div>
             {resource.error && <ErrorNote message={resource.error} onRetry={resource.reload} />}
             {!resource.data && !resource.error && <Skeleton lines={2} />}
-            {resource.data && resource.data.earmarks.length > 0 && <List title="この口座の取り置き">
+            {resource.data && resource.data.earmarks.length > 0 && <List title={tr('この口座の取り置き', 'Earmarks in this account')}>
                 {resource.data.earmarks.map((row) => <Row key={row.capsule_id} title={row.capsule_name} trailing={<Money value={row.claimed} currency={currency} className="font-semibold" />} />)}
             </List>}
             {resource.data && <section>
-                <h2 className="mb-2 px-1 text-xs font-semibold text-[var(--studio-text-muted)]">最近の記録</h2>
+                <h2 className="mb-2 px-1 text-xs font-semibold text-[var(--studio-text-muted)]">{tr('最近の記録', 'Recent records')}</h2>
                 {resource.data.page.items.length ? <div className="divide-y divide-[var(--studio-border)] overflow-hidden rounded-2xl bg-[var(--studio-surface)] shadow-[var(--mobile-shadow)]">
                     {resource.data.page.items.map((transaction) => <TransactionRow key={transaction.id} transaction={transaction} types={resource.data!.types} currency={currency} onOpen={(row) => { onClose(); open(row); }} />)}
-                </div> : <Empty title="記録はありません" />}
+                </div> : <Empty title={tr('記録はありません', 'No records')} />}
             </section>}
         </div>
     </Sheet>;
@@ -62,21 +63,21 @@ export default function Assets() {
     const [opened, setOpened] = useState<Account | null>(null);
     const assets = resource.data?.assets ?? [];
     const liabilities = resource.data?.liabilities ?? [];
-    return <Screen title="資産と口座" back={-1}>
+    return <Screen title={tr('資産と口座', 'Assets and accounts')} back={-1}>
         {resource.error && <ErrorNote message={resource.error} onRetry={resource.reload} />}
         {!resource.data && !resource.error && <Skeleton lines={4} />}
         {resource.data && <>
             <section className="rounded-3xl bg-[image:var(--mobile-hero)] p-5 text-white shadow-[var(--mobile-shadow-raised)]">
-                <p className="text-xs text-white/70">純資産</p>
+                <p className="text-xs text-white/70">{tr('純資産', 'Net worth')}</p>
                 <p className="mt-1 text-3xl font-bold tabular-nums">{formatCurrency(resource.data.sheet.net_worth, currency)}</p>
             </section>
-            <List title={`資産 ${formatCurrency(resource.data.sheet.total_assets, currency)}`}>
+            <List title={`${tr('資産', 'Assets')} ${formatCurrency(resource.data.sheet.total_assets, currency)}`}>
                 {assets.length ? assets.map((row) => <Row key={row.name} title={row.name} onClick={row.account ? () => setOpened({ ...row.account as Account, balance: row.balance }) : undefined}
-                    trailing={<Money value={row.balance} currency={currency} className="font-semibold" />} />) : <Row title="資産の口座はありません" chevron={false} />}
+                    trailing={<Money value={row.balance} currency={currency} className="font-semibold" />} />) : <Row title={tr('資産の口座はありません', 'No asset accounts')} chevron={false} />}
             </List>
-            <List title={`負債 ${formatCurrency(resource.data.sheet.total_liabilities, currency)}`}>
+            <List title={`${tr('負債', 'Liabilities')} ${formatCurrency(resource.data.sheet.total_liabilities, currency)}`}>
                 {liabilities.length ? liabilities.map((row) => <Row key={row.name} title={row.name} onClick={row.account ? () => setOpened({ ...row.account as Account, balance: row.balance }) : undefined}
-                    trailing={<Money value={row.balance} currency={currency} className="font-semibold" />} />) : <Row title="負債の口座はありません" chevron={false} />}
+                    trailing={<Money value={row.balance} currency={currency} className="font-semibold" />} />) : <Row title={tr('負債の口座はありません', 'No liability accounts')} chevron={false} />}
             </List>
         </>}
         {opened && <AccountSheet account={opened} currency={currency} onClose={() => setOpened(null)} />}

@@ -1,5 +1,7 @@
 import type { MonthlyPlanLine, MonthlyPlanLineType, ScheduledTransaction } from '../../../types';
 import type { DatabaseAccount } from '../db/forms';
+import type { PlanRecord, PlanSection } from '../../../api/plan';
+import { tr, labels } from '../../i18n';
 
 // budget_plan_service returns plan_lines and plan_id, not the legacy budget model.
 export interface BudgetSummary {
@@ -14,25 +16,42 @@ export interface BudgetSummary {
 export type AccountKind = DatabaseAccount['account_type'];
 
 /** The six movements and the kind of account each one normally lands on. */
-export const TYPES: Array<{ type: MonthlyPlanLineType; label: string; kind: AccountKind }> = [
-    { type: 'income', label: '収入', kind: 'income' }, { type: 'expense', label: '支出', kind: 'expense' },
-    { type: 'allocation', label: '配分', kind: 'asset' }, { type: 'debt_payment', label: '返済', kind: 'liability' },
-    { type: 'borrowing', label: '借入', kind: 'liability' }, { type: 'drawdown', label: '取り崩し', kind: 'asset' },
-];
-export const TYPE_LABELS = Object.fromEntries(TYPES.map((item) => [item.type, item.label])) as Record<MonthlyPlanLineType, string>;
+export const TYPE_LABELS = labels<MonthlyPlanLineType>({
+    income: ['収入', 'Income'], expense: ['支出', 'Expense'], allocation: ['配分', 'Allocation'],
+    debt_payment: ['返済', 'Repayment'], borrowing: ['借入', 'Borrowing'], drawdown: ['取り崩し', 'Drawdown'],
+});
+export const TYPES: Array<{ type: MonthlyPlanLineType; readonly label: string; kind: AccountKind }> = ([
+    ['income', 'income'], ['expense', 'expense'], ['allocation', 'asset'],
+    ['debt_payment', 'liability'], ['borrowing', 'liability'], ['drawdown', 'asset'],
+] as const).map(([type, kind]) => ({ type, kind, get label() { return TYPE_LABELS[type]; } }));
 // 収益 rather than the database screen's 収入, so the kind never reads as the movement.
-export const KIND_LABELS: Record<AccountKind, string> = { income: '収益', expense: '費用', asset: '資産', liability: '負債' };
+export const KIND_LABELS = labels<AccountKind>({ income: ['収益', 'Revenue'], expense: ['費用', 'Expenses'], asset: ['資産', 'Assets'], liability: ['負債', 'Liabilities'] });
 export const KINDS: AccountKind[] = ['income', 'expense', 'asset', 'liability'];
 
-export const lineName = (line: MonthlyPlanLine) => line.target_name || line.name || line.account_name || '名称未設定';
+// The server sends Japanese labels for plan records; their keys say the same in either language.
+export const ORIGIN_LABELS = labels<PlanRecord['origin']>({
+    goal: ['ゴールによる設定', 'Set by a goal'], registry: ['自動取引による設定', 'Set by an automatic transaction'],
+    card: ['カード請求の見込み', 'Card bill estimate'], manual: ['ユーザーによる追加', 'Added by you'],
+});
+
+/** A section is the account's 予算 unless it is one of the other movements (or does not fit the account). */
+export function sectionLabel(section: PlanSection): string {
+    const key = section.key as keyof typeof TYPE_LABELS;
+    if (!section.mismatch && (key === 'allocation' || key === 'expense' || key === 'income')) return tr('予算', 'Budget');
+    return TYPE_LABELS[key] ?? section.label;
+}
+
+export const lineName = (line: MonthlyPlanLine) => line.target_name || line.name || line.account_name || tr('名称未設定', 'Untitled');
+
+const isGoalLine = (line: MonthlyPlanLine) => line.source_kind === 'goal' || line.source === 'goal';
 
 /** Where a budget row came from, as the overlay names it. */
 export function lineOrigin(line: MonthlyPlanLine): string {
-    if (line.source_kind === 'goal' || line.source === 'goal') return 'ゴール';
-    if (line.target_type === 'capsule') return '取り置き';
-    if (line.source === 'registry' || line.registry_entry_ids?.length) return '自動取引';
-    if (line.source === 'credit_settlement' || line.source_kind === 'credit_settlement') return 'カード請求';
-    return '手入力';
+    if (isGoalLine(line)) return tr('ゴール', 'Goal');
+    if (line.target_type === 'capsule') return tr('取り置き', 'Earmark');
+    if (line.source === 'registry' || line.registry_entry_ids?.length) return tr('自動取引', 'Automatic transaction');
+    if (line.source === 'credit_settlement' || line.source_kind === 'credit_settlement') return tr('カード請求', 'Card bill');
+    return tr('手入力', 'Entered by hand');
 }
 
 /** One account or subject in one of the six movements. */
@@ -143,7 +162,7 @@ export function buildModel(summary: BudgetSummary, accounts: DatabaseAccount[], 
             cell.set = cell.lines.some((line) => line.id != null || (line.budget_amount ?? 0) !== 0);
             cell.mismatch = row.kind != null && !fits(row.kind, cell.type);
         }
-        row.goal = row.cells.some((cell) => cell.lines.some((line) => lineOrigin(line) === 'ゴール'))
+        row.goal = row.cells.some((cell) => cell.lines.some(isGoalLine))
             || (row.accountId != null && goalFunding.has(row.accountId));
         row.cells.sort((a, b) => TYPES.findIndex((item) => item.type === a.type) - TYPES.findIndex((item) => item.type === b.type));
     }
@@ -157,10 +176,9 @@ export function buildModel(summary: BudgetSummary, accounts: DatabaseAccount[], 
 }
 
 export type Scope = 'all' | 'budget' | 'scheduled' | 'goal';
-export const SCOPES: Array<{ value: Scope; label: string }> = [
-    { value: 'all', label: 'すべて' }, { value: 'budget', label: '予算あり' }, { value: 'scheduled', label: '取引予定あり' },
-    { value: 'goal', label: 'ゴール関係' },
-];
+const SCOPE_LABELS = labels<Scope>({ all: ['すべて', 'All'], budget: ['予算あり', 'With a budget'], scheduled: ['取引予定あり', 'With scheduled transactions'], goal: ['ゴール関係', 'Goal-related'] });
+export const SCOPES: Array<{ value: Scope; readonly label: string }> = (['all', 'budget', 'scheduled', 'goal'] as const)
+    .map((value) => ({ value, get label() { return SCOPE_LABELS[value]; } }));
 
 export function rowMatches(row: AccountRow, query: string, scope: Scope) {
     const needle = query.trim().toLowerCase();

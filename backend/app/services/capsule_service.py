@@ -73,7 +73,7 @@ def create_capsule(
     db: Session, client_id: int, payload: schemas.CapsuleCreate, *, commit: bool = True,
 ) -> models.Capsule:
     if payload.account_id is not None and ledger_service.get_account(db, client_id, payload.account_id) is None:
-        raise NotFound("Account not found")
+        raise NotFound("Account not found", ja="口座が見つかりません。")
     capsule = models.Capsule(
         client_id=client_id,
         name=payload.name,
@@ -120,7 +120,7 @@ def sync_goal_capsule(db: Session, client_id: int, capsule_id: int, parts: dict[
     """
     capsule = get_capsule(db, client_id, capsule_id)
     if capsule is None:
-        raise NotFound("Capsule not found")
+        raise NotFound("Capsule not found", ja="取り置きが見つかりません。")
     currency = money_client_currency(db, client_id)
     capsule.target_amount_minor = sum(parts.values())
     held = [source.account_id for source in capsule.funding_sources
@@ -150,7 +150,7 @@ def relink_goal_capsule(db: Session, client_id: int, capsule_id: int, event_id: 
     """Hand a goal earmark to another event (the same event in the new goal), or release it."""
     capsule = get_capsule(db, client_id, capsule_id)
     if capsule is None:
-        raise NotFound("Capsule not found")
+        raise NotFound("Capsule not found", ja="取り置きが見つかりません。")
     capsule.goal_event_id = event_id
     db.flush()
 
@@ -243,7 +243,7 @@ def drawdown_to_dict(drawdown: models.CapsuleDrawdown) -> dict:
 
 def list_drawdowns(db: Session, client_id: int, capsule_id: int) -> list[models.CapsuleDrawdown]:
     if get_capsule(db, client_id, capsule_id) is None:
-        raise Invalid("Capsule not found for this client")
+        raise Invalid("Capsule not found for this client", ja="取り置きが見つかりません。")
     return db.query(models.CapsuleDrawdown).filter(
         models.CapsuleDrawdown.client_id == client_id,
         models.CapsuleDrawdown.capsule_id == capsule_id,
@@ -260,27 +260,31 @@ def record_drawdown(
         models.Capsule.client_id == client_id, models.Capsule.id == capsule_id,
     ).with_for_update().first()
     if capsule is None:
-        raise Invalid("Capsule not found for this client")
+        raise Invalid("Capsule not found for this client", ja="取り置きが見つかりません。")
     accounts = {}
     for account_id in (from_account_id, to_account_id):
         accounts[account_id] = ledger_service.get_account(db, client_id, account_id)
         if accounts[account_id] is None:
-            raise Invalid(f"Account {account_id} not found for this client")
+            raise Invalid(f"Account {account_id} not found for this client", ja=f"口座が見つかりません（#{account_id}）。")
     if kind not in {"as_intended", "diverted"}:
-        raise Invalid("Drawdown kind must be as_intended or diverted")
+        raise Invalid("Drawdown kind must be as_intended or diverted", ja="「意図どおり使った」か「他に回した」を選んでください。")
     currency = get_client_currency(db, client_id)
     try:
         money = Money.from_major(str(amount), currency)
     except (ValueError, ArithmeticError) as exc:
-        raise Invalid("Drawdown amount must be a finite positive amount") from exc
+        raise Invalid("Drawdown amount must be a finite positive amount", ja="使った金額は0より大きい金額を入力してください。") from exc
     if money.minor <= 0:
-        raise Invalid("Drawdown amount must be positive")
+        raise Invalid("Drawdown amount must be positive", ja="使った金額は0より大きい金額を入力してください。")
     if not any(source.account_id == from_account_id for source in capsule.funding_sources):
-        raise Invalid("Source account is not a capsule funding source")
+        raise Invalid("Source account is not a capsule funding source", ja="この口座は取り置きの資金源に紐づいていません。")
     # Another account's earmark cannot fund a release from this account.
     claim = claimed_minor(db, client_id, capsule_id, account_id=from_account_id).get(currency, 0)
     if money.minor > claim:
-        raise Invalid(f"Drawdown exceeds the capsule claim of {Money(claim, currency).to_major()} {currency} on {accounts[from_account_id].name}")
+        held, account_name = f"{Money(claim, currency).to_major()} {currency}", accounts[from_account_id].name
+        raise Invalid(
+            f"Drawdown exceeds the capsule claim of {held} on {account_name}",
+            ja=f"{account_name}で確保している{held}を超えて使うことはできません。",
+        )
     try:
         transaction = ledger_service.create_transaction(
             db, client_id=client_id, date=date, description=description,
@@ -315,17 +319,17 @@ def set_funding_sources(
         models.Capsule.client_id == client_id, models.Capsule.id == capsule_id,
     ).with_for_update().first()
     if capsule is None:
-        raise NotFound("Capsule not found")
+        raise NotFound("Capsule not found", ja="取り置きが見つかりません。")
     account_ids = [payload.account_id for payload in payloads]
     if len(set(account_ids)) != len(account_ids):
-        raise Invalid("Duplicate funding source account")
+        raise Invalid("Duplicate funding source account", ja="同じ口座が資金源に重複しています。")
     # Serialize competing declarations on the same account, in a stable order.
     accounts = db.query(models.Account).filter(
         models.Account.client_id == client_id,
         models.Account.id.in_(account_ids),
     ).order_by(models.Account.id).with_for_update().all()
     if {account.id for account in accounts} != set(account_ids):
-        raise NotFound("Account not found")
+        raise NotFound("Account not found", ja="口座が見つかりません。")
     named_rule = db.query(models.CapsuleRule).filter(
         models.CapsuleRule.client_id == client_id,
         models.CapsuleRule.capsule_id == capsule_id,
@@ -333,7 +337,10 @@ def set_funding_sources(
         models.CapsuleRule.destination_account_id.notin_(account_ids),
     ).order_by(models.CapsuleRule.id).first()
     if named_rule is not None:
-        raise Invalid(f"Cannot remove account {named_rule.destination_account_id}: rule {named_rule.id} names it as its destination")
+        raise Invalid(
+            f"Cannot remove account {named_rule.destination_account_id}: rule {named_rule.id} names it as its destination",
+            ja=f"口座 #{named_rule.destination_account_id} は規則 #{named_rule.id} の入金先なので外せません。",
+        )
     other_shares = dict(db.query(
         models.CapsuleFundingSource.account_id,
         func.coalesce(func.sum(models.CapsuleFundingSource.max_share_bp), 0),
@@ -352,7 +359,9 @@ def set_funding_sources(
             raise Invalid(
                 f"Declared capsule shares for account {payload.account_id} "
                 f"({account_names[payload.account_id]}) total {_percent(total)}%, "
-                f"which is more than the account has"
+                f"which is more than the account has",
+                ja=f"口座 #{payload.account_id}（{account_names[payload.account_id]}）の取り置きの割合が合計 "
+                   f"{_percent(total)}% になり、口座の残高を超えます。",
             )
     currency = money_client_currency(db, client_id)
     # Complete validation/conversion before touching the saved plan.
@@ -412,7 +421,10 @@ def delete_capsule(
         models.Product.funding_capsule_id == capsule.id,
     ).first()
     if linked_products:
-        raise Invalid("Capsules linked to Product/Item reserves cannot be deleted while products use them")
+        raise Invalid(
+            "Capsules linked to Product/Item reserves cannot be deleted while products use them",
+            ja="物品の取り置きに使われている間は、この取り置きを削除できません。",
+        )
     sources = list_funding_sources(db, client_id, capsule_id)
     # Preserve the single-account deletion summary using the first planned
     # account; every funding account stays untouched.
@@ -447,7 +459,7 @@ def create_rule(
         models.Capsule.client_id == client_id, models.Capsule.id == payload.capsule_id,
     ).with_for_update().first()
     if capsule is None:
-        raise NotFound("Capsule not found")
+        raise NotFound("Capsule not found", ja="取り置きが見つかりません。")
     _validate_rule_trigger_account(db, client_id, payload.trigger_account_id)
     _validate_rule_destination(db, client_id, capsule.id, payload.destination_account_id)
     if payload.source_account_id:
@@ -456,7 +468,7 @@ def create_rule(
             models.Account.client_id == client_id,
         ).first()
         if not account:
-            raise NotFound("Source account not found")
+            raise NotFound("Source account not found", ja="資金元の口座が見つかりません。")
     rule = models.CapsuleRule(**rule_data(payload.model_dump(), money_client_currency(db, client_id)), client_id=client_id)
     db.add(rule)
     _finish_write(db, client_id, rule, commit=commit)
@@ -479,7 +491,7 @@ def update_rule(
         models.Capsule.client_id == client_id, models.Capsule.id == capsule_id,
     ).with_for_update().first()
     if capsule is None:
-        raise NotFound("Capsule not found")
+        raise NotFound("Capsule not found", ja="取り置きが見つかりません。")
     _validate_rule_destination(
         db, client_id, capsule_id,
         data.get("destination_account_id", rule.destination_account_id),
@@ -498,7 +510,7 @@ def _validate_rule_trigger_account(db: Session, client_id: int, account_id: int 
     if account_id is not None and db.query(models.Account.id).filter(
         models.Account.client_id == client_id, models.Account.id == account_id,
     ).first() is None:
-        raise NotFound("Trigger account not found")
+        raise NotFound("Trigger account not found", ja="規則のきっかけになる口座が見つかりません。")
 
 
 def _validate_rule_destination(db: Session, client_id: int, capsule_id: int, account_id: int | None) -> None:
@@ -507,7 +519,10 @@ def _validate_rule_destination(db: Session, client_id: int, capsule_id: int, acc
         models.CapsuleFundingSource.capsule_id == capsule_id,
         models.CapsuleFundingSource.account_id == account_id,
     ).first() is None:
-        raise NotFound(f"Destination account {account_id} is not in capsule {capsule_id}'s funding plan")
+        raise NotFound(
+            f"Destination account {account_id} is not in capsule {capsule_id}'s funding plan",
+            ja=f"口座 #{account_id} はこの取り置き（#{capsule_id}）の資金源ではありません。",
+        )
 
 
 def delete_rule(db: Session, client_id: int, rule_id: int, *, commit: bool = True) -> bool:

@@ -23,14 +23,14 @@ def _fetch(currency: str, target: str) -> dict:
             raise ValueError("invalid rate")
         return {"rate": rate, "as_of_date": market_date, "source": fetched["provider"]}
     except Exception as exc:
-        raise Invalid(f"{currency} のレートを取得できませんでした") from exc
+        raise Invalid(f"{currency} のレートを取得できませんでした", en=f"Could not fetch the {currency} rate") from exc
 
 
 def track(db: Session, client_id: int, currency: str):
     code = fx.normalize_currency(currency)
     target = fx.get_client_currency(db, client_id)
     if code == target:
-        raise Invalid("基準通貨は追跡できません")
+        raise Invalid("基準通貨は追跡できません", en="The base currency cannot be tracked")
     fetched = _fetch(code, target)
     try:
         row = fx.add_tracked(db, client_id, code)
@@ -46,13 +46,13 @@ def track(db: Session, client_id: int, currency: str):
 
 def untrack(db: Session, client_id: int, currency: str) -> None:
     if not fx.remove_tracked(db, client_id, currency):
-        raise NotFound("追跡通貨がありません")
+        raise NotFound("追跡通貨がありません", en="This currency is not tracked")
     db.commit()
 
 
 def delete_rate(db: Session, client_id: int, rate_id: int) -> None:
     if not fx.delete_rate(db, client_id, rate_id):
-        raise NotFound("為替レートがありません")
+        raise NotFound("為替レートがありません", en="Exchange rate not found")
     db.commit()
     invalidate_client(client_id)
 

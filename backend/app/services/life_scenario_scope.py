@@ -8,13 +8,13 @@ from ..domain.errors import NotFound
 def lock_client(db: Session, client_id: int) -> None:
     # Goal switching and attaching real money must observe the same goal.
     if db.query(models.Client).filter_by(id=client_id).with_for_update().first() is None:
-        raise NotFound("クライアントが見つかりません。")
+        raise NotFound("クライアントが見つかりません。", en="Client not found.")
 
 
 def get(db: Session, client_id: int, scenario_id: int) -> models.LifeScenario:
     scenario = db.query(models.LifeScenario).filter_by(client_id=client_id, id=scenario_id).first()
     if scenario is None:
-        raise NotFound("シナリオが見つかりません。")
+        raise NotFound("シナリオが見つかりません。", en="Scenario not found.")
     return scenario
 
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Flag } from 'lucide-react';
+import { Target } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
 import * as scenariosApi from '../../../api/lifeScenarios';
 import type { LifeScenario } from '../../../api/lifeScenarios';
@@ -10,6 +10,7 @@ import { buttonClass } from '../db/forms';
 import ScenarioComparison from './ScenarioComparison';
 import { scenarioSelection } from './scenarioSimulation';
 import { useMakeScenarioGoal } from './useMakeScenarioGoal';
+import { tr } from '../../i18n';
 
 function ComparisonPlot({ ids, scenarios, focusedId, currency, busy, onMakeGoal }: {
     ids: string; scenarios: LifeScenario[]; focusedId?: number; currency: string; busy: boolean; onMakeGoal: (scenario: Pick<LifeScenario, 'id' | 'name'>) => void;
@@ -47,20 +48,20 @@ function ComparisonResults({ scenarios, currency, disabled, onChanged }: { scena
         setSearch(next);
     };
     return <>
-        <div role="group" aria-label="比較するシナリオ" className="flex flex-wrap gap-2">
+        <div role="group" aria-label={tr('比較するシナリオ', 'Scenarios to compare')} className="flex flex-wrap gap-2">
             {sorted.map((scenario) => <div key={`scenario-choice-${scenario.id}`} className={`flex items-center gap-2 rounded-lg border border-[var(--studio-border)] px-3 py-2 ${focusedId === scenario.id ? 'bg-[var(--studio-accent-soft)] ring-1 ring-[var(--studio-accent)]' : ''}`}>
-                <input type="checkbox" aria-label={`${scenario.name}を比較する`} checked={ids.includes(scenario.id)} disabled={goal.busy} onChange={(event) => {
+                <input type="checkbox" aria-label={tr(`${scenario.name}を比較する`, `Compare ${scenario.name}`)} checked={ids.includes(scenario.id)} disabled={goal.busy} onChange={(event) => {
                     const next = event.target.checked ? [...ids, scenario.id] : ids.filter((id) => id !== scenario.id);
                     choose(next, next.includes(focusedId ?? -1) ? focusedId : next[0]);
                 }} className="accent-[var(--studio-accent)]" />
                 <button type="button" aria-pressed={focusedId === scenario.id} disabled={goal.busy} onClick={() => choose(ids.includes(scenario.id) ? ids : [...ids, scenario.id], scenario.id)} className="flex items-center gap-1.5 rounded text-sm focus:outline-none focus:ring-2 focus:ring-[var(--studio-accent)]">
-                    {scenario.is_goal && <Flag size={14} aria-label="ゴール" />}{scenario.name}
+                    {scenario.is_goal && <Target size={14} aria-label={tr('ゴール', 'Goal')} />}{scenario.name}
                 </button>
             </div>)}
         </div>
         <Feedback error={goal.error} message={goal.message} />
         {goal.dialog}
-        {ids.length === 0 ? <p className="text-sm text-[var(--studio-text-muted)]">比較するシナリオを選んでください。</p>
+        {ids.length === 0 ? <p className="text-sm text-[var(--studio-text-muted)]">{tr('比較するシナリオを選んでください。', 'Choose scenarios to compare.')}</p>
             // Remount on selection so stale projections and errors cannot describe a new set.
             : <ComparisonPlot key={`${checkedKey}:${revision}`} ids={checkedKey} scenarios={scenarios} focusedId={focusedId} currency={currency} busy={disabled || goal.busy} onMakeGoal={goal.chooseGoal} />}
     </>;
@@ -70,8 +71,8 @@ function ComparisonForClient({ currency, identified }: { currency: string; ident
     const load = useCallback(() => scenariosApi.list(), []);
     const resource = useResource(load);
     return <section className="space-y-5">
-        <Link to="/goals/scenarios" className={`inline-block ${buttonClass}`}>シナリオ一覧に戻る</Link>
-        <h2 className="font-semibold">比較</h2>
+        <Link to="/goals/scenarios" className={`inline-block ${buttonClass}`}>{tr('シナリオ一覧に戻る', 'Back to scenarios')}</Link>
+        <h2 className="font-semibold">{tr('比較', 'Comparison')}</h2>
         <Feedback loading={resource.loading} error={resource.error} />
         {resource.data && !resource.error && <ComparisonResults scenarios={resource.data} currency={currency} disabled={!identified || resource.loading} onChanged={resource.reload} />}
     </section>;

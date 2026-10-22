@@ -13,11 +13,11 @@ from ..domain.errors import Invalid, NotFound
 
 def validate_period(period: str) -> str:
     if not re.fullmatch(r"[0-9]{4}-(0[1-9]|1[0-2])", period):
-        raise Invalid("期間は YYYY-MM 形式で指定してください。")
+        raise Invalid("期間は YYYY-MM 形式で指定してください。", en="Give the period as YYYY-MM.")
     try:
         date(int(period[:4]), int(period[5:]), 1)
     except ValueError as exc:
-        raise Invalid("期間は YYYY-MM 形式の有効な年月で指定してください。") from exc
+        raise Invalid("期間は YYYY-MM 形式の有効な年月で指定してください。", en="Give a valid month as YYYY-MM.") from exc
     return period
 
 
@@ -41,10 +41,10 @@ def close_period(db: Session, client_id: int, period: str, *, note: str | None =
     # Serialize repeated closes on the owner so the unique key remains idempotent.
     client = db.query(models.Client).filter_by(id=client_id).with_for_update().first()
     if client is None:
-        raise NotFound("Client not found")
+        raise NotFound("Client not found", ja="クライアントが見つかりません。")
     if period >= _client_month(client, now):
         # A close confirms a finished month; closing the running one flags every entry made today.
-        raise Invalid("締められるのは終わった月だけです。")
+        raise Invalid("締められるのは終わった月だけです。", en="Only a month that has ended can be closed.")
     row = _get_close(db, client_id, period)
     if row is None:
         row = models.PeriodClose(client_id=client_id, period=period, closed_at=datetime.utcnow(), note=note)

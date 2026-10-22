@@ -3,6 +3,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from ..domain.messages import message_of
 from .. import models
 from ..database import get_db
 from ..dependencies import get_current_client
@@ -35,5 +36,5 @@ def get_period_report(
     try:
         return generate_period_report(db, current_client.id, start_date, end_date)
     except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        raise HTTPException(status_code=400, detail=message_of(exc)) from exc
 

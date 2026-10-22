@@ -4,7 +4,8 @@ from sqlalchemy.orm import Session
 
 from .. import models, schemas
 from ..database import get_db
-from ..dependencies import get_current_client
+from ..dependencies import get_current_client, request_language
+from ..domain.messages import localize
 from ..services.ai_policy_service import assert_direct_ledger_write_allowed
 from ..workflows import depreciation_workflow as workflow
 
@@ -20,9 +21,11 @@ def preview(
     product_id: int,
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
+    language: str | None = Depends(request_language),
 ):
     """The next period, its amount and the product's accounts, for the ledger's form."""
-    return workflow.preview(db, current_client.id, product_id)
+    # blocked_reason is shown on the form, so it follows the screen's language.
+    return localize(workflow.preview(db, current_client.id, product_id), language)
 
 
 @router.post("")

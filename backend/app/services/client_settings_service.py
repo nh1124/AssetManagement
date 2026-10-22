@@ -5,10 +5,22 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from .. import models
 from ..domain.errors import Invalid
+from ..domain.messages import message_of
 from ..domain.money import normalize_currency
 
 
 
+
+
+def client_language(db: Session, client_id: int) -> str:
+    """The UI language the client chose in its settings: "en", or "ja" (the default)."""
+    client = db.get(models.Client, client_id)
+    return "en" if client is not None and (client.general_settings or {}).get("language") == "en" else "ja"
+
+
+def pick(language: str, ja: str, en: str) -> str:
+    """Text the client reads (notifications), in its language."""
+    return en if language == "en" else ja
 
 
 def merge_general_settings(
@@ -23,7 +35,7 @@ def merge_general_settings(
         try:
             settings["currency"] = normalize_currency(settings["currency"])
         except ValueError as exc:
-            raise Invalid(str(exc)) from exc
+            raise Invalid(message_of(exc)) from exc
     client.general_settings = settings
     # SQLAlchemy does not detect mutated JSON columns without an explicit dirty flag.
     flag_modified(client, "general_settings")
@@ -94,7 +106,7 @@ def merge_reflection_settings(
                 continue
             choices = REFLECTION_CHOICES.get((group, key))
             if choices is None or value not in choices:
-                raise Invalid(f"反映の設定 {group}.{key} の値が不正です。")
+                raise Invalid(f"反映の設定 {group}.{key} の値が不正です。", en=f"The plan reflection setting {group}.{key} has an invalid value.")
             current[group][key] = value
     if "enabled" in patch:
         current["enabled"] = bool(patch["enabled"])

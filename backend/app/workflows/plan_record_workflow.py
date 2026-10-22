@@ -48,7 +48,7 @@ def _origin(line: dict) -> str:
 def _account(db: Session, client_id: int, account_id: int):
     account = ledger_service.get_account(db, client_id, account_id)
     if account is None:
-        raise NotFound("口座・科目が見つかりません。")
+        raise NotFound("口座・科目が見つかりません。", en="Account not found.")
     return account
 
 
@@ -110,11 +110,14 @@ AUTOMATIC_KINDS = {"expense": ("expense", True), "income": ("income", False), "a
 def _automatic_entry(db: Session, client_id: int, account, payload: schemas.PlanRecordCreate) -> None:
     automatic = payload.automatic
     if payload.section not in AUTOMATIC_KINDS:
-        raise Refused("この区分は自動扱いにできません。", status_code=422)
+        raise Refused("この区分は自動扱いにできません。", en="This kind cannot be made automatic.", status_code=422)
     if automatic.counter_account_id is None:
-        raise Refused("自動扱いには相手の口座（支払元・入金先・振替元）を選んでください。", status_code=422)
+        raise Refused(
+            "自動扱いには相手の口座（支払元・入金先・振替元）を選んでください。",
+            en="To make it automatic, choose the other account (paid from, deposit to or transfer from).", status_code=422,
+        )
     if automatic.end_period is not None and automatic.end_period < automatic.start_period:
-        raise Refused("終了月は開始月以降にしてください。", status_code=422)
+        raise Refused("終了月は開始月以降にしてください。", en="The end month must be on or after the start month.", status_code=422)
     kind, inbound = AUTOMATIC_KINDS[payload.section]
     counter = automatic.counter_account_id
     year, month = (int(part) for part in automatic.start_period.split("-"))
@@ -135,7 +138,7 @@ def _automatic_entry(db: Session, client_id: int, account, payload: schemas.Plan
 def add_record(db: Session, client_id: int, payload: schemas.PlanRecordCreate) -> dict:
     account = _account(db, client_id, payload.account_id)
     if payload.section not in dict(SECTIONS.get(account.account_type, [])):
-        raise Refused("この口座・科目には追加できない種類です。", status_code=422)
+        raise Refused("この口座・科目には追加できない種類です。", en="This kind cannot be added to this account.", status_code=422)
     if payload.automatic is not None:
         try:
             _automatic_entry(db, client_id, account, payload)
@@ -155,7 +158,10 @@ def add_record(db: Session, client_id: int, payload: schemas.PlanRecordCreate) -
         db.commit()
     except ValueError as error:
         db.rollback()
-        raise Conflict("同じ名前のレコードがあります。名前（理由）を変えるか、そのレコードを編集してください。") from error
+        raise Conflict(
+            "同じ名前のレコードがあります。名前（理由）を変えるか、そのレコードを編集してください。",
+            en="A record with this name already exists. Change the name (reason) or edit that record.",
+        ) from error
     except Exception:
         db.rollback()
         raise
@@ -167,9 +173,12 @@ def _own_record(db: Session, client_id: int, record_id: int):
     line = get_plan_line(db, client_id, record_id)
     # Earmark rows and rows without an account are not an account's records.
     if line is None or not line.is_active or line.account_id is None or line.target_type == "capsule":
-        raise NotFound("レコードが見つかりません。")
+        raise NotFound("レコードが見つかりません。", en="Record not found.")
     if _origin({"source": line.source, "source_kind": line.source_kind}) != "manual":
-        raise Refused("ゴール・自動取引・カード請求のレコードは、それぞれの設定元で変更してください。", status_code=422)
+        raise Refused(
+            "ゴール・自動取引・カード請求のレコードは、それぞれの設定元で変更してください。",
+            en="Change goal, automatic transaction and card bill records where they are set up.", status_code=422,
+        )
     return line
 
 

@@ -1,11 +1,13 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { tr } from '../../i18n';
 
 export type ContextMenuItem = { label: string; onSelect: () => void };
 
-export default function ContextMenu({ x, y, items, onClose, viewport = false, label = '図の操作' }: {
+export default function ContextMenu({ x, y, items, onClose, viewport = false, label }: {
     x: number; y: number; items: ContextMenuItem[]; onClose: () => void; viewport?: boolean; label?: string;
 }) {
+    label ??= tr('図の操作', 'Diagram actions');
     const menu = useRef<HTMLDivElement>(null);
 
     useLayoutEffect(() => {

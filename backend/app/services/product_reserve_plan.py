@@ -28,6 +28,7 @@ from ..domain.errors import Refused
 from ..domain.money import Money
 from .budget_lines import capsule_shares
 from .budget_plan_store import active_lines_for_periods
+from .client_settings_service import client_language, pick
 from .capsule_service import claimed_value_minor
 from .money_storage import money_client_currency, to_minor
 from .product_reserve_service import _add_months, product_reserve_values, should_use_reserve
@@ -50,9 +51,9 @@ def _period(index: int) -> str:
 def _periods(start: str, end: str) -> list[str]:
     first, last = _index(start), _index(end)
     if last < first:
-        raise Refused("終了月は開始月以降にしてください。", status_code=422)
+        raise Refused("終了月は開始月以降にしてください。", en="The end month must be on or after the start month.", status_code=422)
     if last - first + 1 > MAX_MONTHS:
-        raise Refused(f"一度に作れるのは{MAX_MONTHS}か月までです。", status_code=422)
+        raise Refused(f"一度に作れるのは{MAX_MONTHS}か月までです。", en=f"Up to {MAX_MONTHS} months can be made at once.", status_code=422)
     return [_period(index) for index in range(first, last + 1)]
 
 
@@ -99,7 +100,7 @@ def schedule(base_minor: int, held_minor: int, months: int, horizon: int, held: 
 
 def plan(db: Session, client_id: int, start: str, end: str, plan_id: int | None, base: str, held: str) -> dict:
     if base not in BASES or held not in HELD:
-        raise Refused("基準と確保済みの額の引き方を選んでください。", status_code=422)
+        raise Refused("基準と確保済みの額の引き方を選んでください。", en="Choose the basis and how to use what is set aside.", status_code=422)
     periods = _periods(start, end)
     first = _index(periods[0])
     currency = money_client_currency(db, client_id)
@@ -109,9 +110,11 @@ def plan(db: Session, client_id: int, start: str, end: str, plan_id: int | None,
               if line.line_type == "allocation" and line.target_type == "capsule" and line.target_id in earmarks]
     reference = date(first // 12, first % 12 + 1, 1)
     changes, warnings, summaries = [], [], []
+    language = client_language(db, client_id)
     for capsule_id, (capsule, products) in sorted(earmarks.items()):
         if not capsule.funding_sources:
-            warnings.append(f"取り置き「{capsule.name}」は資金元の口座がないため作りません。取り置きの画面で口座を設定してください。")
+            warnings.append(pick(language, f"取り置き「{capsule.name}」は資金元の口座がないため作りません。取り置きの画面で口座を設定してください。",
+                                 f"The earmark “{capsule.name}” has no funding account, so no rows are made for it. Set its accounts on the earmarks screen."))
             continue
         if base == "saved":
             base_minor = capsule.monthly_contribution_minor or 0

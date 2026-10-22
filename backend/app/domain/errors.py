@@ -1,9 +1,18 @@
+from .messages import Message, localize
+
+
 class DomainError(Exception):
     """Something the domain refuses, independent of how it is being asked."""
 
     # Routers already catch ValueError as 400; inheriting it would swallow
     # NotFound and Conflict before the domain handler can preserve their codes.
-    def __init__(self, message: str, *, status_code: int | None = None, payload=None):
+    def __init__(
+        self, message: str, *, ja: str | None = None, en: str | None = None,
+        status_code: int | None = None, payload=None,
+    ):
+        # WP29: the message as written plus its translation; str(error) stays the former.
+        if ja is not None or en is not None:
+            message = Message(message, ja=ja, en=en)
         super().__init__(message)
         # A one-off compatibility code (currently 422) needs no fifth category.
         self.status_code = status_code
@@ -46,6 +55,6 @@ def status_for(error: "DomainError") -> int:
     return 400
 
 
-def detail_for(error: "DomainError"):
-    """What goes in the response body: the structured payload, else the message."""
-    return error.payload if error.payload is not None else str(error)
+def detail_for(error: "DomainError", language: str | None = None):
+    """What goes in the response body: the structured payload, else the message, in that language."""
+    return localize(error.payload if error.payload is not None else error.args[0], language)

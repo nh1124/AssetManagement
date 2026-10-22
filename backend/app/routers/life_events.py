@@ -3,6 +3,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
+from ..domain.messages import Message
 from .. import models, schemas
 from ..database import get_db
 from ..dependencies import get_current_client
@@ -127,7 +128,7 @@ def update_life_event(
 ):
     updated = update_goal(db, current_client.id, event_id, life_event)
     if updated is None:
-        raise HTTPException(status_code=404, detail="Life event not found")
+        raise HTTPException(status_code=404, detail=Message("Life event not found", ja="ライフイベントが見つかりません。"))
     result = updated
     plan_reflection_workflow.after_change(db, current_client.id)
     return result
@@ -140,7 +141,7 @@ def delete_life_event(
     current_client: models.Client = Depends(get_current_client)
 ):
     if not delete_goal(db, current_client.id, event_id):
-        raise HTTPException(status_code=404, detail="Life event not found")
+        raise HTTPException(status_code=404, detail=Message("Life event not found", ja="ライフイベントが見つかりません。"))
     result = {"message": "Deleted"}
     plan_reflection_workflow.after_change(db, current_client.id)
     return result

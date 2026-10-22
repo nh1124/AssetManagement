@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from .. import models
 from ..domain.errors import Invalid
+from ..domain.messages import message_of
 from ..domain.money import normalize_currency as domain_normalize_currency
 
 FRANKFURTER_URL = "https://api.frankfurter.dev/v1/latest"
@@ -25,7 +26,7 @@ def normalize_currency(currency: str | None) -> str:
     try:
         return domain_normalize_currency(currency)
     except ValueError as exc:
-        raise Invalid(str(exc)) from exc
+        raise Invalid(message_of(exc)) from exc
 
 
 def get_client_currency(db: Session, client_id: int | None) -> str:
@@ -289,9 +290,9 @@ def tracked_clients(db: Session) -> list[int]:
 def add_tracked(db: Session, client_id: int, currency: str) -> models.FxTrackedCurrency:
     code = normalize_currency(currency)
     if code == get_client_currency(db, client_id):
-        raise Invalid("基準通貨は追跡できません")
+        raise Invalid("基準通貨は追跡できません", en="The base currency cannot be tracked")
     if db.get(models.FxTrackedCurrency, (client_id, code)):
-        raise Invalid("この通貨は追跡中です")
+        raise Invalid("この通貨は追跡中です", en="This currency is already tracked")
     row = models.FxTrackedCurrency(client_id=client_id, currency=code)
     db.add(row)
     db.flush()

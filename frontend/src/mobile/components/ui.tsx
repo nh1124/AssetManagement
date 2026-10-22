@@ -2,6 +2,7 @@ import { useRef, type KeyboardEvent, type ReactNode } from 'react';
 import { ChevronRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { formatCurrency } from '../../utils/currency';
+import { tr } from '../../studio/i18n';
 
 /** Shared look of the mobile screens: cards on the warm background, amounts in tabular figures. */
 export const primaryButton = 'inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-[var(--studio-accent)] px-4 text-sm font-semibold text-[var(--studio-accent-text)] active:opacity-80 disabled:opacity-40';
@@ -18,7 +19,7 @@ export function Card({ children, className = '' }: { children: ReactNode; classN
 export function CardTitle({ children, to, action }: { children: ReactNode; to?: string; action?: string }) {
     return <div className="mb-3 flex items-center justify-between gap-2">
         <h2 className="text-sm font-semibold text-[var(--studio-text)]">{children}</h2>
-        {to && <Link to={to} className={`-mr-1 flex min-h-11 items-center gap-0.5 rounded px-1 text-xs font-medium text-[var(--studio-accent)] ${focusRing}`}>{action ?? 'すべて'}<ChevronRight size={14} aria-hidden /></Link>}
+        {to && <Link to={to} className={`-mr-1 flex min-h-11 items-center gap-0.5 rounded px-1 text-xs font-medium text-[var(--studio-accent)] ${focusRing}`}>{action ?? tr('すべて', 'All')}<ChevronRight size={14} aria-hidden /></Link>}
     </div>;
 }
 
@@ -39,7 +40,7 @@ export function ProgressBar({ value, max, tone, label }: { value: number; max: n
 }
 
 export function Skeleton({ lines = 3 }: { lines?: number }) {
-    return <div role="status" aria-label="読み込んでいます" className="space-y-3">
+    return <div role="status" aria-label={tr('読み込んでいます', 'Loading')} className="space-y-3">
         {Array.from({ length: lines }, (_, index) => <div key={index} className="h-16 animate-pulse rounded-2xl bg-[var(--studio-surface)] shadow-[var(--mobile-shadow)]" />)}
     </div>;
 }
@@ -56,7 +57,7 @@ export function Empty({ icon, title, body, children }: { icon?: ReactNode; title
 export function ErrorNote({ message, onRetry }: { message: string; onRetry?: () => void }) {
     return <div role="alert" className="flex items-center justify-between gap-3 rounded-2xl bg-red-50 px-4 py-3 text-sm text-[var(--studio-danger)]">
         <span>{message}</span>
-        {onRetry && <button type="button" onClick={onRetry} className={`shrink-0 rounded-lg px-2 py-1 font-medium underline ${focusRing}`}>再読み込み</button>}
+        {onRetry && <button type="button" onClick={onRetry} className={`shrink-0 rounded-lg px-2 py-1 font-medium underline ${focusRing}`}>{tr('再読み込み', 'Reload')}</button>}
     </div>;
 }
 

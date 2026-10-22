@@ -16,6 +16,7 @@ from .money_storage import minor_fields, money_client_currency
 
 from .. import models
 from ..domain.errors import Invalid
+from ..domain.messages import Message
 from .budget_lines import (
     _line_source_kind,
     assign_plan_line_identity,
@@ -153,7 +154,7 @@ def find_budget_plan_id(db: Session, client_id: int, plan_id: int | None = None)
     """
     if plan_id is not None:
         if get_plan(db, client_id, plan_id) is None:
-            raise ValueError("Budget plan not found")
+            raise ValueError(Message("Budget plan not found", ja="予算計画が見つかりません。"))
         return plan_id
     plan = (
         db.query(models.BudgetPlan)
@@ -294,9 +295,15 @@ def _apply_plan_line_data(db: Session, client_id: int, line: models.MonthlyPlanL
             if line.account_id is not None:
                 allowed = funding_accounts
                 if line.account_id not in allowed:
-                    raise Invalid(f"Account {line.account_id} is not a funding account of capsule {capsule.id} ({capsule.name})")
+                    raise Invalid(
+                        f"Account {line.account_id} is not a funding account of capsule {capsule.id} ({capsule.name})",
+                        ja=f"口座 #{line.account_id} は取り置き「{capsule.name}」の資金源ではありません。",
+                    )
             elif len(funding_accounts) > 1:
-                raise Invalid(f"Capsule {capsule.id} ({capsule.name}) has several funding accounts; account_id is required")
+                raise Invalid(
+                    f"Capsule {capsule.id} ({capsule.name}) has several funding accounts; account_id is required",
+                    ja=f"取り置き「{capsule.name}」には資金源の口座が複数あります。口座を選んでください。",
+                )
             elif funding_accounts:
                 line.account_id = next(iter(funding_accounts))
             if line.source in {None, "manual", "capsule"}:
@@ -406,14 +413,20 @@ def create_plan_lines(
         data.pop("id", None)
         data["plan_id"] = resolve_budget_plan_id(db, client_id, data.get("plan_id"))
         if _active_line_with_identity(db, client_id, data):
-            raise ValueError("Monthly plan line already exists for this period and target")
+            raise ValueError(Message(
+                "Monthly plan line already exists for this period and target",
+                ja="この月・この対象の計画の行はすでにあります。",
+            ))
         line = models.MonthlyPlanLine(client_id=client_id)
         db.add(line)
         _apply_plan_line_data(db, client_id, line, data)
         duplicate = _active_duplicate_for_line(db, client_id, line)
         if duplicate:
             db.rollback()
-            raise ValueError("Monthly plan line already exists for this period and source")
+            raise ValueError(Message(
+                "Monthly plan line already exists for this period and source",
+                ja="この月・この設定元の計画の行はすでにあります。",
+            ))
         created.append(line)
     sync_capsule_monthly_contributions(db, client_id, created)
     if not commit:
@@ -437,13 +450,13 @@ def update_plan_lines(
         data = _payload_data(payload)
         line_id = data.pop("id", None)
         if not line_id:
-            raise ValueError("Monthly plan line id is required")
+            raise ValueError(Message("Monthly plan line id is required", ja="計画の行を指定してください。"))
         line = db.query(models.MonthlyPlanLine).filter(
             models.MonthlyPlanLine.id == line_id,
             models.MonthlyPlanLine.client_id == client_id,
         ).first()
         if not line:
-            raise ValueError("Monthly plan line not found")
+            raise ValueError(Message("Monthly plan line not found", ja="計画の行が見つかりません。"))
         if "plan_id" in data:
             data["plan_id"] = resolve_budget_plan_id(db, client_id, data.get("plan_id"))
         elif line.plan_id is None:
@@ -452,7 +465,10 @@ def update_plan_lines(
         duplicate = _active_duplicate_for_line(db, client_id, line)
         if duplicate:
             db.rollback()
-            raise ValueError("Monthly plan line already exists for this period and source")
+            raise ValueError(Message(
+                "Monthly plan line already exists for this period and source",
+                ja="この月・この設定元の計画の行はすでにあります。",
+            ))
         saved.append(line)
     sync_capsule_monthly_contributions(db, client_id, saved)
     if commit:

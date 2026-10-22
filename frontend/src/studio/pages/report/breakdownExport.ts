@@ -4,6 +4,7 @@ import { ACCOUNT_TYPES } from '../db/forms';
 import type { ProfitLoss } from './ReportReading';
 import { KINDS, proposalEffect, reportFigures, reportGoals, reportWarnings, varianceRows } from './reportPresentation';
 import type { VarianceAnalysis } from './useBreakdownData';
+import { tr } from '../../i18n';
 
 interface BreakdownSnapshot {
     report: MonthlyReport;
@@ -27,37 +28,37 @@ export function breakdownMarkdown(data: BreakdownSnapshot, startDate: string, en
     const { report, profitLoss, variance, flows } = data;
     const money = (amount: number) => formatCurrency(amount, currency);
     return [
-        `# ${startDate} 〜 ${endDate} の内訳`,
-        '## 期間の内訳',
-        table(['項目', '値'], reportFigures(report, profitLoss, currency).map((row) => [row.label, row.value])),
-        '## 支出の注意点・ライフイベントの進捗',
-        '### 支出の注意点',
-        list(reportWarnings(report, currency).map((row) => `${row.title}：${row.description}`), 'レポートが挙げる支出の注意点はありません。'),
-        '### ライフイベントの進捗',
-        list(reportGoals(report).map((row) => `${row.title}：${row.description}`), 'この期間のライフイベントはありません。'),
-        '## 予算と実績',
-        ...(variance.plan_id === null ? ['保存した計画の行なし'] : []),
-        table(['項目', '値'], [
-            ['期間の予算合計', money(variance.total_budget)],
-            ['期間の支出合計', money(variance.total_actual)],
-            ['予算 − 支出', money(variance.total_variance)],
+        tr(`# ${startDate} 〜 ${endDate} の内訳`, `# Breakdown for ${startDate} to ${endDate}`),
+        tr('## 期間の内訳', '## The period'),
+        table([tr('項目', 'Item'), tr('値', 'Value')], reportFigures(report, profitLoss, currency).map((row) => [row.label, row.value])),
+        tr('## 支出の注意点・ライフイベントの進捗', '## Spending notes and life event progress'),
+        tr('### 支出の注意点', '### Spending notes'),
+        list(reportWarnings(report, currency).map((row) => `${row.title}${tr('：', ': ')}${row.description}`), tr('レポートが挙げる支出の注意点はありません。', 'The report notes nothing about spending.')),
+        tr('### ライフイベントの進捗', '### Life event progress'),
+        list(reportGoals(report).map((row) => `${row.title}${tr('：', ': ')}${row.description}`), tr('この期間のライフイベントはありません。', 'No life events in this period.')),
+        tr('## 予算と実績', '## Budget and actuals'),
+        ...(variance.plan_id === null ? [tr('保存した計画の行なし', 'No saved plan lines')] : []),
+        table([tr('項目', 'Item'), tr('値', 'Value')], [
+            [tr('期間の予算合計', 'Budget in the period'), money(variance.total_budget)],
+            [tr('期間の支出合計', 'Spending in the period'), money(variance.total_actual)],
+            [tr('予算 − 支出', 'Budget − spending'), money(variance.total_variance)],
         ]),
-        table(['分類', '期間の予算', '期間の支出', '予算 − 支出'], varianceRows(variance).map((row) => [row.category, money(row.budget), money(row.actual), money(row.variance)])),
-        ...(!variance.items.length ? ['この期間の支出計画・実績はありません。'] : []),
-        '## 口座・科目',
-        table(['口座・科目', '種別', '借方', '貸方', '増減', '仕訳数'], flows.accounts.map((row) => [row.account_name, ACCOUNT_TYPES[row.account_type], money(row.total_debit), money(row.total_credit), money(row.normal_balance_delta), row.transaction_count])),
-        ...(!flows.accounts.length ? ['この期間の口座の動きはありません。'] : []),
-        '## 次にできること',
-        list(report.action_proposals.map((proposal) => `${KINDS[proposal.kind]}：${proposalEffect(proposal, report, currency)}`), 'この期間の提案はありません。'),
+        table([tr('分類', 'Category'), tr('期間の予算', 'Budget'), tr('期間の支出', 'Spending'), tr('予算 − 支出', 'Budget − spending')], varianceRows(variance).map((row) => [row.category, money(row.budget), money(row.actual), money(row.variance)])),
+        ...(!variance.items.length ? [tr('この期間の支出計画・実績はありません。', 'No spending plan or actuals in this period.')] : []),
+        tr('## 口座・科目', '## Accounts'),
+        table([tr('口座・科目', 'Account'), tr('種別', 'Type'), tr('借方', 'Debit'), tr('貸方', 'Credit'), tr('増減', 'Change'), tr('仕訳数', 'Entries')], flows.accounts.map((row) => [row.account_name, ACCOUNT_TYPES[row.account_type], money(row.total_debit), money(row.total_credit), money(row.normal_balance_delta), row.transaction_count])),
+        ...(!flows.accounts.length ? [tr('この期間の口座の動きはありません。', 'No account movements in this period.')] : []),
+        tr('## 次にできること', '## What you can do next'),
+        list(report.action_proposals.map((proposal) => `${KINDS[proposal.kind]}${tr('：', ': ')}${proposalEffect(proposal, report, currency)}`), tr('この期間の提案はありません。', 'No suggestions for this period.')),
     ].join('\n\n') + '\n';
 }
 
 export function breakdownCsv(data: BreakdownSnapshot, currency: string) {
     // A common header keeps both tables aligned in one worksheet; amounts stay numeric.
     const rows: Array<Array<string | number>> = [
-        ['セクション', '分類・口座・科目', '種別', '期間の予算', '期間の支出', '予算 − 支出', '借方', '貸方', '増減', '仕訳数', '通貨'],
-        ...varianceRows(data.variance).map((row) => ['予算と実績', row.category, '', row.budget, row.actual, row.variance, '', '', '', '', currency]),
-        ...data.flows.accounts.map((row) => ['口座・科目', row.account_name, ACCOUNT_TYPES[row.account_type], '', '', '', row.total_debit, row.total_credit, row.normal_balance_delta, row.transaction_count, currency]),
+        [tr('セクション', 'Section'), tr('分類・口座・科目', 'Category / account'), tr('種別', 'Type'), tr('期間の予算', 'Budget'), tr('期間の支出', 'Spending'), tr('予算 − 支出', 'Budget − spending'), tr('借方', 'Debit'), tr('貸方', 'Credit'), tr('増減', 'Change'), tr('仕訳数', 'Entries'), tr('通貨', 'Currency')],
+        ...varianceRows(data.variance).map((row) => [tr('予算と実績', 'Budget and actuals'), row.category, '', row.budget, row.actual, row.variance, '', '', '', '', currency]),
+        ...data.flows.accounts.map((row) => [tr('口座・科目', 'Accounts'), row.account_name, ACCOUNT_TYPES[row.account_type], '', '', '', row.total_debit, row.total_credit, row.normal_balance_delta, row.transaction_count, currency]),
     ];
     // Excel needs a UTF-8 BOM for Japanese labels and CRLF for record boundaries.
     // Quote text, leave finite numbers bare: a quoted amount lands in Excel as

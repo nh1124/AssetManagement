@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from .messages import Message
 from .money import Money
 
 
@@ -60,26 +61,31 @@ def validate_legs(legs: list[Leg], amount: int) -> None:
     if type(amount) is not int:
         raise TypeError("Transaction amount must contain integer minor units")
     if len(legs) < 2:
-        raise ValueError("A journal entry needs at least two legs")
+        raise ValueError(Message("A journal entry needs at least two legs", ja="仕訳には2行以上が必要です。"))
 
     for leg in legs:
         if not leg.account_id:
-            raise ValueError("Every journal leg needs an account")
+            raise ValueError(Message("Every journal leg needs an account", ja="仕訳のすべての行に口座・科目を選んでください。"))
         if leg.debit < 0 or leg.credit < 0:
-            raise ValueError("Journal legs cannot be negative")
+            raise ValueError(Message("Journal legs cannot be negative", ja="仕訳の金額は0以上にしてください。"))
         if (leg.debit > 0) == (leg.credit > 0):
-            raise ValueError("A journal leg is either a debit or a credit, not both or neither")
+            raise ValueError(Message(
+                "A journal leg is either a debit or a credit, not both or neither",
+                ja="仕訳の各行には借方か貸方のどちらか一方だけを入力してください。",
+            ))
 
     total_debit = sum(leg.debit for leg in legs)
     total_credit = sum(leg.credit for leg in legs)
     if abs(total_debit - total_credit) > BALANCE_TOLERANCE:
-        raise ValueError(
-            f"Journal entry does not balance: debit {total_debit} vs credit {total_credit}"
-        )
+        raise ValueError(Message(
+            f"Journal entry does not balance: debit {total_debit} vs credit {total_credit}",
+            ja=f"借方と貸方の合計が一致しません（借方 {total_debit}、貸方 {total_credit}）。",
+        ))
     if abs(total_debit - amount) > BALANCE_TOLERANCE:
-        raise ValueError(
-            f"Journal entry total {total_debit} does not match the transaction amount {amount}"
-        )
+        raise ValueError(Message(
+            f"Journal entry total {total_debit} does not match the transaction amount {amount}",
+            ja=f"仕訳の合計 {total_debit} が取引の金額 {amount} と一致しません。",
+        ))
 
 
 def simple_legs(

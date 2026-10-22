@@ -14,6 +14,7 @@ from dateutil.relativedelta import relativedelta
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..domain.messages import Message
 from .budget_plan_service import expense_budget_by_account
 from .budget_plan_store import find_budget_plan_id
 from .fx_service import (
@@ -282,7 +283,10 @@ def get_account_flows_for_range(
     if grain not in {"day", "week", "month", "quarter"}:
         raise ValueError("grain must be one of day, week, month, quarter")
     if start_date > end_date:
-        raise ValueError("start_date must be before or equal to end_date")
+        raise ValueError(Message(
+            "start_date must be before or equal to end_date",
+            ja="開始日は終了日以前にしてください。", en="The start date must be on or before the end date",
+        ))
 
     normalized_types = {item for item in (account_types or []) if item}
     account_query = db.query(models.Account).filter(
@@ -396,7 +400,7 @@ def get_account_transactions_for_range(
         models.Account.client_id == client_id,
     ).first()
     if not account:
-        raise LookupError("Account not found")
+        raise LookupError(Message("Account not found", ja="口座・科目が見つかりません。"))
 
     query = db.query(models.JournalEntry, models.Transaction).join(
         models.Transaction,

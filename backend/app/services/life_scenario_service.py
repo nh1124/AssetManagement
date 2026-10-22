@@ -7,6 +7,7 @@ from typing import NoReturn
 
 from sqlalchemy.orm import Session
 
+from ..domain.messages import Message
 from .. import models
 from ..domain.errors import Conflict, Refused
 from .cache_service import invalidate_client
@@ -51,26 +52,26 @@ def compare(db: Session, client_id: int, ids: str) -> dict:
         if not scenario_ids or any(value <= 0 for value in scenario_ids):
             raise ValueError
     except (ValueError, AttributeError):
-        _refuse("比較するシナリオのIDをカンマ区切りで指定してください。")
+        _refuse(Message("比較するシナリオのIDをカンマ区切りで指定してください。", en="List the scenario IDs to compare, separated by commas."))
     scenarios = [get(db, client_id, scenario_id) for scenario_id in dict.fromkeys(scenario_ids)]
     return {"scenarios": [project(db, client_id, scenario) for scenario in scenarios]}
 
 
 def _name(db, client_id, name, scenario_id=None):
     if not isinstance(name, str) or not name.strip():
-        _refuse("シナリオ名を入力してください。")
+        _refuse(Message("シナリオ名を入力してください。", en="Enter a scenario name."))
     name = name.strip()
     query = db.query(models.LifeScenario).filter_by(client_id=client_id, name=name)
     if scenario_id is not None:
         query = query.filter(models.LifeScenario.id != scenario_id)
     if query.first() is not None:
-        raise Conflict("同じ名前のシナリオが登録されています。")
+        raise Conflict("同じ名前のシナリオが登録されています。", en="A scenario with this name already exists.")
     return name
 
 
 def _rate(rate):
     if isinstance(rate, bool) or not isinstance(rate, (float, int)) or not math.isfinite(rate):
-        _refuse("利率は有限の数値で指定してください。")
+        _refuse(Message("利率は有限の数値で指定してください。", en="The rate must be a finite number."))
     return float(rate)
 
 
@@ -115,7 +116,7 @@ def update(db: Session, client_id: int, scenario_id: int, values: dict) -> model
         if field in values:
             values[field] = _rate(values[field])
     if "horizon_years" in values and (type(values["horizon_years"]) is not int or not 1 <= values["horizon_years"] <= 60):
-        _refuse("試算期間は1〜60年で指定してください。")
+        _refuse(Message("試算期間は1〜60年で指定してください。", en="The horizon must be 1 to 60 years."))
     for field in ("name", "annual_return", "inflation", "horizon_years"):
         if field in values:
             setattr(scenario, field, values[field])
@@ -148,7 +149,10 @@ def delete(db: Session, client_id: int, scenario_id: int) -> None:
     _lock(db, client_id)
     scenario = get(db, client_id, scenario_id)
     if scenario.is_goal:
-        _refuse("ゴールのシナリオは削除できません。先に別のシナリオをゴールにしてください。")
+        _refuse(Message(
+            "ゴールのシナリオは削除できません。先に別のシナリオをゴールにしてください。",
+            en="The goal scenario cannot be deleted. Make another scenario the goal first.",
+        ))
     db.delete(scenario)
     db.commit()
 

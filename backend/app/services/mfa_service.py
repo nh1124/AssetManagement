@@ -8,6 +8,7 @@ import pyotp
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..domain.messages import Message
 from ..security import decrypt_key, encrypt_key
 from ..utils.password import hash_password, verify_password
 
@@ -68,10 +69,10 @@ def start_totp_setup(db: Session, client: models.Client) -> dict:
 def verify_totp_setup(db: Session, client: models.Client, code: str) -> list[str]:
     setting = get_mfa_setting(db, client)
     if not setting or not setting.totp_secret_encrypted:
-        raise ValueError("MFA setup has not been started")
+        raise ValueError(Message("MFA setup has not been started", ja="MFAの設定が始まっていません。最初からやり直してください。"))
 
     if not verify_totp_code(setting, code):
-        raise ValueError("Invalid MFA code")
+        raise ValueError(Message("Invalid MFA code", ja="認証コードが正しくありません。"))
 
     now = datetime.utcnow()
     setting.enabled = True

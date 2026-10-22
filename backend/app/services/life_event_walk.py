@@ -32,7 +32,7 @@ def _offset_date(source: date | None, months: int) -> date | None:
         return None
     year, month = divmod(source.year * 12 + source.month - 1 + months, 12)
     if not 1 <= year <= 9999:
-        raise Refused("接続の月数が日付の範囲を超えています。", status_code=422)
+        raise Refused("接続の月数が日付の範囲を超えています。", en="The link’s months go beyond the supported dates.", status_code=422)
     return date(year, month + 1, min(source.day, monthrange(year, month + 1)[1]))
 
 
@@ -57,7 +57,7 @@ def walk(db: Session, client_id: int, scenario_id: int) -> list[ScenarioEvent]:
             if indegree[link.to_event_id] == 0:
                 heappush(ready, link.to_event_id)
     if len(order) != len(events):
-        raise Refused("イベントの接続が循環しています。", status_code=422)
+        raise Refused("イベントの接続が循環しています。", en="The event links make a loop.", status_code=422)
 
     resolved: dict[int, ScenarioEvent] = {}
     incoming: dict[int, models.LifeEventLink] = {}

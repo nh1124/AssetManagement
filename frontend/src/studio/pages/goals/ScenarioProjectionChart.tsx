@@ -1,6 +1,7 @@
 import { Area, CartesianGrid, ComposedChart, Legend, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { ProjectedLifeScenario } from '../../../api/lifeScenarios';
 import { formatCurrency } from '../../../utils/currency';
+import { tr } from '../../i18n';
 
 const colours = ['accent', 'budget', 'warning', 'positive', 'danger', 'text-muted'];
 
@@ -29,16 +30,16 @@ export default function ScenarioProjectionChart({ scenarios, focusedId, currency
         eventNames.set(year, [...(eventNames.get(year) ?? []), event.name]);
     }
     const axisStyle = { fill: 'var(--studio-text-muted)', fontSize: 11 };
-    return <div role="img" aria-label={`シナリオ別の純資産推移（中央値）と選択中のシナリオのP10〜P90。横軸：年、縦軸：金額（${currency}）`} className="h-96 min-w-0">
+    return <div role="img" aria-label={tr(`シナリオ別の純資産推移（中央値）と選択中のシナリオのP10〜P90。横軸：年、縦軸：金額（${currency}）`, `Net worth by scenario (median) and the selected scenario’s P10 to P90. Horizontal axis: year; vertical axis: amount (${currency})`)} className="h-96 min-w-0">
         <ResponsiveContainer width="100%" height="100%">
             <ComposedChart data={rows} margin={{ top: 40, right: 30, bottom: 28, left: 20 }} accessibilityLayer>
                 <CartesianGrid stroke="var(--studio-border)" vertical={false} />
-                <XAxis type="number" domain={['dataMin', 'dataMax']} dataKey="year" allowDecimals={false} tick={axisStyle} minTickGap={30} label={{ value: '年', position: 'bottom', ...axisStyle }} />
-                <YAxis width={105} tick={axisStyle} tickFormatter={(value: number) => formatCurrency(value, currency)} label={{ value: `金額（${currency}）`, position: 'top', ...axisStyle }} />
-                <Tooltip contentStyle={{ background: 'var(--studio-surface)', border: '1px solid var(--studio-border)', color: 'var(--studio-text)' }} formatter={(value, name) => [Array.isArray(value) ? value.map((amount) => formatCurrency(Number(amount), currency)).join('〜') : formatCurrency(Number(value), currency), name]} />
-                {focused && <Area key={`band-${focused.id}`} type="linear" dataKey="band" name={`${focused.name} P10〜P90`} stroke="none" fill={colour(focused.id)} fillOpacity={0.15} isAnimationActive={false} />}
+                <XAxis type="number" domain={['dataMin', 'dataMax']} dataKey="year" allowDecimals={false} tick={axisStyle} minTickGap={30} label={{ value: tr('年', 'Year'), position: 'bottom', ...axisStyle }} />
+                <YAxis width={105} tick={axisStyle} tickFormatter={(value: number) => formatCurrency(value, currency)} label={{ value: tr(`金額（${currency}）`, `Amount (${currency})`), position: 'top', ...axisStyle }} />
+                <Tooltip contentStyle={{ background: 'var(--studio-surface)', border: '1px solid var(--studio-border)', color: 'var(--studio-text)' }} formatter={(value, name) => [Array.isArray(value) ? value.map((amount) => formatCurrency(Number(amount), currency)).join(tr('〜', ' – ')) : formatCurrency(Number(value), currency), name]} />
+                {focused && <Area key={`band-${focused.id}`} type="linear" dataKey="band" name={tr(`${focused.name} P10〜P90`, `${focused.name} P10–P90`)} stroke="none" fill={colour(focused.id)} fillOpacity={0.15} isAnimationActive={false} />}
                 {scenarios.map((scenario) => <Line key={`line-${scenario.id}`} type="linear" dataKey={`scenario-${scenario.id}`} name={scenario.name} stroke={colour(scenario.id)} strokeDasharray={colourIds.indexOf(scenario.id) < colours.length ? undefined : '5 3'} strokeWidth={2} dot={false} isAnimationActive={false} />)}
-                {[...eventNames].map(([year, names]) => <ReferenceLine key={`event-year-${year}`} x={year} ifOverflow="extendDomain" stroke="var(--studio-border-strong)" label={{ value: names.join('・'), position: 'insideTop', ...axisStyle }} />)}
+                {[...eventNames].map(([year, names]) => <ReferenceLine key={`event-year-${year}`} x={year} ifOverflow="extendDomain" stroke="var(--studio-border-strong)" label={{ value: names.join(tr('・', ', ')), position: 'insideTop', ...axisStyle }} />)}
                 <Legend verticalAlign="top" wrapperStyle={{ maxHeight: 96, overflowY: 'auto' }} />
             </ComposedChart>
         </ResponsiveContainer>
