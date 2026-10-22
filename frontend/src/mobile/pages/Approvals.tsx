@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import { Bot } from 'lucide-react';
-import { applyAiChangeRequest, approveAiChangeRequest, getAiChangeRequests, getMfaStatus, reauth, refreshAiChangeRequestPreview, rejectAiChangeRequest } from '../../api';
+import { applyAiChangeRequest, approveAiChangeRequest, getAiChangeRequests, reauth, refreshAiChangeRequestPreview, rejectAiChangeRequest } from '../../api';
 import { useClient } from '../../context/ClientContext';
 import type { AiChangeRequest } from '../../types';
 import { formatDateTime, useTimezone } from '../../studio/datetime';
@@ -36,7 +36,7 @@ function Changes({ request, currency }: { request: AiChangeRequest; currency: st
 }
 
 /** One status's requests. Mounted per status, so nothing typed or loaded for another status carries over. */
-function RequestList({ status, currency, mfaEnabled }: { status: Status; currency: string; mfaEnabled: boolean | null }) {
+function RequestList({ status, currency }: { status: Status; currency: string }) {
     const timezone = useTimezone();
     const snack = useSnack();
     const load = useCallback(() => getAiChangeRequests({ status }), [status]);
@@ -49,7 +49,7 @@ function RequestList({ status, currency, mfaEnabled }: { status: Status; currenc
         // Critical requests need step-up too; never approve them without a token.
         const needsMfa = request.requires_mfa || request.risk === 'critical';
         const factor = (factors[request.id] ?? '').trim();
-        if (action === 'approve' && (request.status !== 'pending' || (needsMfa && (!factor || mfaEnabled !== true)))) return;
+        if (action === 'approve' && (request.status !== 'pending' || (needsMfa && !factor))) return;
         if (action === 'apply' && request.status !== 'approved') return;
         if (action === 'reject' && !REJECTABLE.includes(request.status)) return;
         if (action === 'rebuild' && request.status !== 'failed') return;
@@ -86,9 +86,8 @@ function RequestList({ status, currency, mfaEnabled }: { status: Status; currenc
     if (!data.length) return <Empty icon={<Bot size={28} aria-hidden />} title={tr(`${STATUS_LABELS[status]}の変更はありません`, `No ${STATUS_LABELS[status].toLowerCase()} changes`)} />;
     return <>{data.map((request) => {
         const needsMfa = request.requires_mfa || request.risk === 'critical';
-        const stepUp = needsMfa && request.status === 'pending' && mfaEnabled === true;
-        const mfaMissing = needsMfa && request.status === 'pending' && mfaEnabled === false;
-        const disabled = loading || busy !== null || (needsMfa && mfaEnabled === null);
+        const stepUp = needsMfa && request.status === 'pending';
+        const disabled = loading || busy !== null;
         const label = (action: Action) => busy?.id === request.id && busy.action === action ? BUSY_LABELS[action] : ACTION_LABELS[action];
         return <article key={request.id} aria-busy={busy?.id === request.id} className="space-y-3 rounded-2xl bg-[var(--studio-surface)] p-4 shadow-[var(--mobile-shadow)]">
             <div className="flex items-start justify-between gap-2">
@@ -101,7 +100,6 @@ function RequestList({ status, currency, mfaEnabled }: { status: Status; currenc
             {request.status === 'failed' && <p className="text-xs text-[var(--studio-danger)]">{tr('失敗の理由：', 'Why it failed: ')}{failureReason(request.result ?? {})}</p>}
             <Changes request={request} currency={currency} />
             {request.status === 'failed' && <p className="text-xs text-[var(--studio-text-muted)]">{rebuildHelp()}</p>}
-            {mfaMissing && <p className="text-xs text-[var(--studio-warning)]">{tr('この承認には MFA が必要です。PC版の設定で MFA を有効にしてください。', 'This approval needs MFA. Turn on MFA in the desktop settings.')}</p>}
             {stepUp && <label className="block space-y-1 text-xs"><span className="text-[var(--studio-warning)]">{tr('認証コード（認証アプリの 6 桁、またはリカバリーコード）', 'Authentication code (6 digits from your authenticator app, or a recovery code)')}</span>
                 <input inputMode="numeric" autoComplete="one-time-code" value={factors[request.id] ?? ''} disabled={disabled} aria-label={tr('認証コード', 'Authentication code')}
                     onChange={(event) => setFactors((previous) => ({ ...previous, [request.id]: event.target.value }))} className={fieldClass} /></label>}
@@ -109,7 +107,7 @@ function RequestList({ status, currency, mfaEnabled }: { status: Status; currenc
                 <button type="button" disabled={disabled} onClick={() => void run(request, 'rebuild')} className={primaryButton}>{label('rebuild')}</button>
                 <button type="button" disabled={disabled} onClick={() => void run(request, 'reject')} className={secondaryButton}>{label('reject')}</button>
             </div> : <div className="grid grid-cols-3 gap-2">
-                <button type="button" disabled={disabled || request.status !== 'pending' || mfaMissing || (stepUp && !(factors[request.id] ?? '').trim())} onClick={() => void run(request, 'approve')} className={primaryButton}>{label('approve')}</button>
+                <button type="button" disabled={disabled || request.status !== 'pending' || (stepUp && !(factors[request.id] ?? '').trim())} onClick={() => void run(request, 'approve')} className={primaryButton}>{label('approve')}</button>
                 <button type="button" disabled={disabled || request.status !== 'approved'} onClick={() => void run(request, 'apply')} className={secondaryButton}>{label('apply')}</button>
                 <button type="button" disabled={disabled || !REJECTABLE.includes(request.status)} onClick={() => void run(request, 'reject')} className={secondaryButton}>{label('reject')}</button>
             </div>}
@@ -122,10 +120,8 @@ export default function Approvals() {
     const { clientId, currentClient } = useClient();
     const currency = currentClient?.general_settings?.currency || 'JPY';
     const [status, setStatus] = useState<Status>('pending');
-    const mfa = useResource(getMfaStatus);
     return <Screen title={tr('AI からの変更', 'Changes from AI')} back={-1}>
         <Segmented label={tr('状態', 'Status')} value={status} onChange={setStatus} options={(['pending', 'approved', 'failed', 'applied', 'rejected'] as Status[]).map((value) => ({ value, label: STATUS_LABELS[value] }))} />
-        {mfa.error && <ErrorNote message={tr('MFA の設定を取得できませんでした。MFA が必要な承認は再読み込みの後で行えます。', 'Could not load the MFA setting. Approvals that need MFA can be done after a reload.')} onRetry={mfa.reload} />}
-        <RequestList key={`${clientId}:${status}`} status={status} currency={currency} mfaEnabled={mfa.data?.enabled ?? null} />
+        <RequestList key={`${clientId}:${status}`} status={status} currency={currency} />
     </Screen>;
 }

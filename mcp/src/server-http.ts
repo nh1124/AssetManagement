@@ -33,7 +33,10 @@ interface BackendUserContext {
   backend_client_id: number;
 }
 
-async function validateUserCredentials(username: string, password: string): Promise<BackendUserContext | null> {
+type CredentialResult = { user: BackendUserContext; error?: never }
+  | { user?: never; error: "setup_required" | "locked" | "invalid" };
+
+async function validateUserCredentials(username: string, password: string, code: string): Promise<CredentialResult> {
   try {
     const res = await fetch(`${BACKEND_URL}/auth/login`, {
       method: "POST",
@@ -41,18 +44,31 @@ async function validateUserCredentials(username: string, password: string): Prom
       body: JSON.stringify({ username, password }),
       signal: AbortSignal.timeout(5000),
     });
-    if (!res.ok) return null;
-    const data = await res.json() as { access_token?: string; mfa_required?: boolean };
-    if (data.mfa_required || !data.access_token) {
-      console.warn("[auth] backend login requires MFA; password-only MCP OAuth login rejected");
-      return null;
+    if (res.status === 429) return { error: "locked" };
+    if (!res.ok) return { error: "invalid" };
+    const data = await res.json() as { next_step?: string; mfa_token?: string };
+    if (data.next_step === "password_change" || data.next_step === "mfa_setup") {
+      return { error: "setup_required" };
     }
-    const loginData = data as { client_id?: number };
-    if (!loginData.client_id) return null;
-    return { username: username.toLowerCase(), backend_client_id: loginData.client_id };
+    if (data.next_step !== "mfa" || !data.mfa_token) return { error: "invalid" };
+    const factor = code.trim();
+    const verified = await fetch(`${BACKEND_URL}/auth/mfa/login/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mfa_token: data.mfa_token,
+        ...(/^\d{6}$/.test(factor) ? { code: factor } : { recovery_code: factor }),
+      }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (verified.status === 429) return { error: "locked" };
+    if (!verified.ok) return { error: "invalid" };
+    const result = await verified.json() as { access_token?: string; client_id?: number };
+    if (!result.access_token || !result.client_id) return { error: "invalid" };
+    return { user: { username: username.toLowerCase(), backend_client_id: result.client_id } };
   } catch (err) {
     console.warn("[auth] backend login error", (err as Error).message);
-    return null;
+    return { error: "invalid" };
   }
 }
 
@@ -206,6 +222,8 @@ function renderLoginForm(params: {
       <input type="text" id="un" name="username" placeholder="username" autofocus required autocomplete="username">
       <label for="pw">パスワード</label>
       <input type="password" id="pw" name="password" placeholder="••••••••" required autocomplete="current-password">
+      <label for="mfa-code">認証コード（6 桁、または回復コード）</label>
+      <input type="text" id="mfa-code" name="code" required autocomplete="one-time-code" inputmode="numeric">
       <button type="submit">ログイン &amp; 許可</button>
     </form>
     <p class="note">スコープ: ${esc(params.scope)}</p>
@@ -243,7 +261,7 @@ app.get("/authorize", async (req, res) => {
 
 app.post("/authorize", async (req, res) => {
   const b = req.body as Record<string, string>;
-  const { response_type, client_id, redirect_uri, code_challenge, code_challenge_method, state, scope, username, password } = b;
+  const { response_type, client_id, redirect_uri, code_challenge, code_challenge_method, state, scope, username, password, code: factorCode } = b;
   const resource = b.resource || buildCanonicalMcpResource(req);
 
   if (response_type !== "code") { res.status(400).json({ error: "unsupported_response_type" }); return; }
@@ -253,9 +271,14 @@ app.post("/authorize", async (req, res) => {
   if (!client) { res.status(400).json({ error: "invalid_client" }); return; }
   if (!client.redirect_uris.includes(redirect_uri)) { res.status(400).json({ error: "invalid_redirect_uri" }); return; }
 
-  const validUser = await validateUserCredentials(username ?? "", password ?? "");
-  if (!validUser) {
-    res.status(401).setHeader("Content-Type", "text/html; charset=utf-8").send(renderLoginForm({
+  const credentials = await validateUserCredentials(username ?? "", password ?? "", factorCode ?? "");
+  if (!credentials.user) {
+    const message = credentials.error === "setup_required"
+      ? "先にアプリでサインインして、パスワードと認証アプリを設定してください。"
+      : credentials.error === "locked"
+        ? "試行が多すぎます。しばらくしてからもう一度お試しください。"
+        : "ユーザー名、パスワードまたは認証コードが正しくありません";
+    res.status(credentials.error === "locked" ? 429 : 401).setHeader("Content-Type", "text/html; charset=utf-8").send(renderLoginForm({
       client_id,
       client_name: client.client_name,
       redirect_uri,
@@ -265,10 +288,11 @@ app.post("/authorize", async (req, res) => {
       scope: scope ?? "mcp",
       resource,
       response_type,
-    }, "ユーザー名またはパスワードが正しくありません"));
+    }, message));
     return;
   }
 
+  const validUser = credentials.user;
   const issuer = buildOAuthIssuer(req);
   console.info("[oauth] authorize POST success", { client_id, username: validUser.username, resource });
 
