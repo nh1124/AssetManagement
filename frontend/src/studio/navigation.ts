@@ -12,7 +12,6 @@ import {
     ArrowRightLeft,
     CalendarRange,
     ChartColumn,
-    FlaskConical,
     History,
     Inbox,
     Landmark,
@@ -45,13 +44,10 @@ export interface StudioGroup {
     screens: StudioScreen[];
     /** Folds under its heading; closed unless opened or holding the current screen. */
     collapsible?: boolean;
-    /** Routed but kept out of the rail's main list (linked small below settings). */
-    offRail?: boolean;
 }
 
 const DATABASE = 'group.database';
 const AUTOMATION = 'group.automation';
-const PROTOTYPE = 'group.prototype';
 
 export const STUDIO_GROUPS: StudioGroup[] = [
     {
@@ -143,22 +139,6 @@ export const STUDIO_GROUPS: StudioGroup[] = [
             { path: 'automation/ai', label: 'screen.ai', icon: Sparkles, section: AUTOMATION },
             { path: 'automation/approvals', label: 'screen.approvals', icon: Inbox, section: AUTOMATION },
             { path: 'automation/audit', label: 'screen.audit', icon: History, section: AUTOMATION },
-        ],
-    },
-    {
-        id: 'prototype',
-        label: 'group.prototype',
-        offRail: true,
-        screens: [
-            {
-                /* Debug surface for data_health. It is deliberately not part of the
-                 * product: the decision was to show health as notifications and
-                 * inline repair prompts, and to delete this page before release. */
-                path: 'debug/data-health',
-                label: 'screen.health',
-                icon: FlaskConical,
-                section: PROTOTYPE,
-            },
         ],
     },
 ];

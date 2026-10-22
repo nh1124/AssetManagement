@@ -10,7 +10,7 @@ from .. import models
 from ..database import get_db
 from ..dependencies import get_current_client
 from ..domain.transfer import EXPORT_VERSION, validate_import_payload
-from ..services.data_health_service import check_data_health, repair_data_health
+from ..services.data_health_service import check_data_health
 from ..services.data_transfer_service import export_client, import_client
 
 router = APIRouter(prefix="/data", tags=["data"])
@@ -64,12 +64,4 @@ def data_health_check(
     db: Session = Depends(get_db),
     current_client: models.Client = Depends(get_current_client),
 ):
-    return check_data_health(db, current_client.id)
-
-
-@router.post("/health/repair")
-def data_health_repair(
-    db: Session = Depends(get_db),
-    current_client: models.Client = Depends(get_current_client),
-):
-    return repair_data_health(db, current_client.id)
+    return check_data_health(db, current_client.id, audience="user")

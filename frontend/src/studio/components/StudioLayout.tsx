@@ -5,7 +5,7 @@ import { useClient } from '../../context/ClientContext';
 import AppMark from './AppMark';
 import NotificationBell from './NotificationBell';
 import NotificationsProvider from './NotificationsProvider';
-import { useLanguage, tr } from '../i18n';
+import { useLanguage } from '../i18n';
 import { useAuth } from '../../context/AuthContext';
 import { SETTINGS_PATH, STUDIO_GROUPS, STUDIO_HOME, STUDIO_SCREENS, type StudioScreen } from '../navigation';
 import ConfirmProvider from './ConfirmProvider';
@@ -92,7 +92,6 @@ function Rail({ current, collapsed, onCollapse }: { current?: StudioScreen; coll
             // The rail still works; it just forgets on reload.
         }
     };
-    const offRail = STUDIO_GROUPS.filter((group) => group.offRail).flatMap((group) => group.screens);
     return (
         // The fixed-width inner column keeps the contents still while the rail slides shut.
         <aside inert={collapsed}
@@ -107,7 +106,7 @@ function Rail({ current, collapsed, onCollapse }: { current?: StudioScreen; coll
                     <NotificationBell buttonClass={railIconClass} />
                 </div>
                 <nav className="flex-1 overflow-y-auto pb-4 pt-1">
-                    {STUDIO_GROUPS.filter((group) => !group.offRail).map((group) => {
+                    {STUDIO_GROUPS.map((group) => {
                         const open = !group.collapsible || openGroups.includes(group.id);
                         // A closed group still shows the screen you are on, so the rail never loses your place.
                         const screens = open ? group.screens : group.screens.filter((screen) => screen === current);
@@ -139,15 +138,6 @@ function Rail({ current, collapsed, onCollapse }: { current?: StudioScreen; coll
                         <SettingsIcon size={17} strokeWidth={ICON_STROKE} />
                         <span className="flex-1 text-left">{t('settings.title')}{user?.name && <span className="mt-0.5 block text-xs opacity-70">{user.name}</span>}</span>
                     </NavLink>
-                    {offRail.map((screen) => (
-                        <NavLink
-                            key={screen.path}
-                            to={screen.path}
-                            className="mx-2 mt-1 block px-3 text-[11px] text-[var(--studio-rail-group)] hover:text-[var(--studio-rail-text)]"
-                        >
-                            {screen.section && `${t(screen.section)}${tr('：', ': ')}`}{t(screen.label)}
-                        </NavLink>
-                    ))}
                 </div>
             </div>
         </aside>
