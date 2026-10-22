@@ -659,6 +659,9 @@ TITLES: dict[str, tuple[str, str]] = {
 
 def check_data_health(db: Session, client_id: int, *, audience: str | None = None) -> dict[str, Any]:
     default_plan = db.query(models.BudgetPlan).filter_by(client_id=client_id, is_default=True).first()
+    # The default plan is created on first use, so a client without plan lines has nothing to link yet.
+    missing_default_plan = default_plan is None and db.query(models.MonthlyPlanLine.id).filter(
+        models.MonthlyPlanLine.client_id == client_id).first() is not None
     null_plan_count = (
         db.query(models.MonthlyPlanLine)
         .filter(
@@ -710,11 +713,11 @@ def check_data_health(db: Session, client_id: int, *, audience: str | None = Non
             "severity": "warning",
             "title": "Default budget plan links",
             "detail": "Active plan lines should be attached to the default Budget Plan.",
-            "count": (0 if default_plan else 1) + null_plan_count,
+            "count": (1 if missing_default_plan else 0) + null_plan_count,
             "repairable": True,
             "items": [
                 {"problem": "missing_default_plan", "repairable": True}
-                for _ in ([] if default_plan else [1])
+                for _ in ([1] if missing_default_plan else [])
             ]
             + [
                 {"problem": "active_line_without_plan", "count": null_plan_count, "repairable": True}
