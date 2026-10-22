@@ -121,7 +121,6 @@ function SettingsForClient() {
         event.preventDefault();
         if (mfaDisabled || !setup || !/^\d{6}$/.test(code.trim())) return;
         void mutation.run(() => verifyMfaReplacement({ code: code.trim() }), () => tr('認証アプリを変更しました。新しい回復コードを保存してください。', 'Authenticator app changed. Save the new recovery codes.'), (result) => {
-            localStorage.setItem('finance_access_token', result.access_token);
             clearCredentials();
             setSetup(null);
             setRecoveryCodes(result.recovery_codes);

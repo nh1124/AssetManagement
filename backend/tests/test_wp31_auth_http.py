@@ -1,5 +1,6 @@
 """HTTP contract for WP31, using ASGI transport (no AnyIO blocking portal)."""
 import asyncio
+from datetime import datetime, timezone
 
 import httpx
 import pyotp
@@ -87,7 +88,7 @@ def test_login_enroll_and_existing_mfa_http(http):
     step = sign_in(request)
     assert step["next_step"] == "mfa" and step["mfa_required"] is True
     assert step["step_token"] == step["mfa_token"]
-    result = request("POST", "/auth/mfa/login/verify", json={"mfa_token": step["mfa_token"], "code": pyotp.TOTP(secret).now()})
+    result = request("POST", "/auth/mfa/login/verify", json={"mfa_token": step["mfa_token"], "recovery_code": result["recovery_codes"][0]})
     assert result.status_code == 200 and result.json()["token_type"] == "bearer"
     assert request("GET", "/me", headers=bearer(result.json()["access_token"])).status_code == 200
 
@@ -162,17 +163,18 @@ def test_replacement_and_profile_return_working_access_tokens_http(http):
     token = completed["access_token"]
     payload = decode_token(token)
     payload["iat"] -= 30
+    payload["iat_ms"] -= 30000
     old_token = jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
     headers = bearer(token)
     assert request("POST", "/auth/mfa/replace/start", headers=headers,
                    json={"current_password": "password123"}).status_code == 401
-    setup = request("POST", "/auth/mfa/replace/start", headers=headers, json={"code": pyotp.TOTP(secret).now()})
+    setup = request("POST", "/auth/mfa/replace/start", headers=headers, json={"recovery_code": completed["recovery_codes"][0]})
     assert setup.status_code == 200
     step = sign_in(request)
     assert request("POST", "/auth/mfa/login/verify", json={"mfa_token": step["mfa_token"],
-                   "code": pyotp.TOTP(secret).now()}).status_code == 200
+                   "recovery_code": completed["recovery_codes"][1]}).status_code == 200
     replaced = request("POST", "/auth/mfa/replace/verify", headers=headers,
-                       json={"code": pyotp.TOTP(setup.json()["manual_entry_key"]).now()})
+                       json={"code": pyotp.TOTP(setup.json()["manual_entry_key"]).at(datetime.now(timezone.utc), counter_offset=1)})
     assert replaced.status_code == 200
     assert set(replaced.json()) == {"recovery_codes", "access_token", "token_type"}
     assert set(replaced.json()["recovery_codes"]).isdisjoint(completed["recovery_codes"])

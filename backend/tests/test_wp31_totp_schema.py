@@ -54,6 +54,10 @@ def test_migration_adds_columns_with_safe_defaults_and_downgrades():
             "SELECT failed_login_count, locked_until, must_change_password FROM clients")).all()
         assert [tuple(row) for row in defaults] == [(0, None, 0)] * 3
         assert connection.execute(sa.text("SELECT pending_totp_secret_encrypted FROM client_mfa_settings")).scalars().all() == [None, None]
+        assert connection.execute(sa.text("SELECT last_totp_step FROM client_mfa_settings")).scalars().all() == [None, None]
+        mfa_columns = {col["name"]: col for col in sa.inspect(connection).get_columns("client_mfa_settings")}
+        assert mfa_columns["last_totp_step"]["nullable"]
+        assert isinstance(mfa_columns["last_totp_step"]["type"], sa.BigInteger)
         columns = {col["name"]: col for col in sa.inspect(connection).get_columns("clients")}
         assert not columns["failed_login_count"]["nullable"] and not columns["must_change_password"]["nullable"]
         with Operations.context(MigrationContext.configure(connection)):

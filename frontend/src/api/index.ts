@@ -111,7 +111,11 @@ export const verifyEnrollment = async (payload: { step_token: string; code: stri
 // Changing the email or the password requires current_password.
 export interface ProfileUpdate { name?: string; email?: string; password?: string; current_password?: string }
 
-export const updateProfile = async (payload: ProfileUpdate): Promise<{ message: string; access_token?: string }> => (await api.patch('/auth/me', payload)).data;
+export const updateProfile = async (payload: ProfileUpdate): Promise<{ message: string; access_token?: string }> => {
+    const response = await api.patch<{ message: string; access_token?: string }>('/auth/me', payload);
+    if (response.data.access_token) localStorage.setItem('finance_access_token', response.data.access_token);
+    return response.data;
+};
 
 export const getMe = async () => {
     const response = await api.get('/me');
@@ -129,7 +133,8 @@ export const startMfaReplacement = async (payload: MfaFactor): Promise<TotpProvi
 };
 
 export const verifyMfaReplacement = async (payload: { code: string }): Promise<MfaReplacementResult> => {
-    const response = await api.post('/auth/mfa/replace/verify', payload);
+    const response = await api.post<MfaReplacementResult>('/auth/mfa/replace/verify', payload);
+    localStorage.setItem('finance_access_token', response.data.access_token);
     return response.data;
 };
 

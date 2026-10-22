@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
-from sqlalchemy import case
+from sqlalchemy import case, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -109,17 +109,21 @@ def record_auth_failure(db: Session, client: models.Client) -> None:
 
 
 def record_auth_success(db: Session, client: models.Client, *, commit: bool = True) -> None:
-    client.failed_login_count = 0
-    client.locked_until = None
+    db.flush()
+    db.query(models.Client).filter(
+        models.Client.id == client.id,
+        or_(models.Client.locked_until.is_(None), models.Client.locked_until <= datetime.utcnow()),
+    ).update({models.Client.failed_login_count: 0, models.Client.locked_until: None}, synchronize_session=False)
     if commit:
         db.commit()
+    db.refresh(client)
 
 
 def change_password(db: Session, client: models.Client, password_hash: str) -> None:
     client.password_hash = password_hash
     client.must_change_password = False
     client.tokens_valid_after = datetime.utcnow()
-    record_auth_success(db, client)
+    db.commit()
 
 
 def revoke_tokens(db: Session, client: models.Client, *, commit: bool = True) -> None:

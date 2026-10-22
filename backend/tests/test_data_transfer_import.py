@@ -260,7 +260,14 @@ def test_round_trip_preserves_every_collection_and_document(db):
         return value
 
     expected["health"] = remap_health(expected["health"])
-    checksums = {key: _checksum(value) for key, value in expected["data"].items()}
+    # An issue's fingerprint hashes the identities of all its items, so like the
+    # checksums it changes with the remapped IDs; the remapped items still compare.
+    for issue in expected["health"]["issues"]:
+        issue["fingerprint"] = next(
+            restored_issue["fingerprint"] for restored_issue in restored["health"]["issues"]
+            if restored_issue["code"] == issue["code"]
+        )
+    checksums ={key: _checksum(value) for key, value in expected["data"].items()}
     expected["manifest"]["checksums"] = checksums
     expected["manifest"]["payload_checksum"] = _checksum({"data": expected["data"], "checksums": checksums})
     assert restored == expected

@@ -1,5 +1,3 @@
-from datetime import timezone
-
 from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
@@ -7,7 +5,7 @@ from typing import Optional
 from . import models
 from .database import get_db
 from .domain.messages import LANGUAGES, Message
-from .utils.jwt import decode_token
+from .utils.jwt import decode_token, token_is_current
 
 bearer_scheme = HTTPBearer(auto_error=False)
 AUTHENTICATION_REQUIRED = Message("Authentication required", ja="サインインしてください。")
@@ -61,11 +59,8 @@ async def get_current_client(
     if client.is_active is False:
         raise HTTPException(status_code=401, detail=AUTHENTICATION_REQUIRED)
 
-    if client.tokens_valid_after is not None:
-        cutoff = int(client.tokens_valid_after.replace(tzinfo=timezone.utc).timestamp())
-        issued_at = payload.get("iat")
-        if not isinstance(issued_at, (int, float)) or issued_at < cutoff:
-            raise HTTPException(status_code=401, detail=AUTHENTICATION_REQUIRED)
+    if not token_is_current(payload, client.tokens_valid_after):
+        raise HTTPException(status_code=401, detail=AUTHENTICATION_REQUIRED)
 
     return client
 

@@ -307,6 +307,7 @@ app.post("/authorize", async (req, res) => {
     allow_refresh_token: client.grant_types.includes("refresh_token"),
     username: validUser.username,
     backend_client_id: validUser.backend_client_id,
+    auth_time_ms: Date.now(),
     issuer,
   });
 

@@ -6,7 +6,7 @@ from typing import Literal, Optional
 from sqlalchemy.exc import IntegrityError
 from .. import models
 from ..database import get_db
-from ..utils.jwt import create_access_token, create_typed_token, decode_token, decode_mcp_access_token
+from ..utils.jwt import create_access_token, create_typed_token, decode_token, decode_mcp_access_token, token_is_current
 from ..utils.password import verify_password, hash_password
 from ..dependencies import get_current_client
 from ..domain.messages import Message, message_of
@@ -132,7 +132,7 @@ def _client_from_typed_token(db: Session, token: str, expected_type: str) -> mod
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=INVALID_TOKEN)
 
     client = client_service.get_active_by_id(db, payload.get("sub"))
-    if not client:
+    if not client or not token_is_current(payload, client.tokens_valid_after):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=INVALID_TOKEN)
     return client
 
@@ -193,7 +193,6 @@ def login(req: LoginRequest, db: Session = Depends(get_db)):
     _ensure_unlocked(client)
     if not verify_password(req.password, client.password_hash or ""):
         _failed(db, client, invalid)
-    client_service.record_auth_success(db, client)
     return _next_step(db, client)
 
 
@@ -212,7 +211,6 @@ def change_password(req: PasswordChangeRequest, db: Session = Depends(get_db)):
 def start_enrollment(req: StepRequest, db: Session = Depends(get_db)):
     client = _step_client(db, req.step_token, "mfa_setup")
     result = mfa_service.start_totp_setup(db, client)
-    client_service.record_auth_success(db, client)
     return result
 
 
@@ -255,6 +253,9 @@ def exchange_mcp_token(req: McpTokenExchangeRequest, db: Session = Depends(get_d
 
     if not client or (username and (client.username or "").lower() != username):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="MCP subject is not a valid user")
+
+    if not token_is_current(payload, client.tokens_valid_after, claim="auth_time_ms", required=True):
+        raise HTTPException(status_code=401, detail=INVALID_TOKEN)
 
     if not mfa_service.mfa_enabled(db, client.id):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=Message("MFA setup required", ja="先にアプリで認証アプリを設定してください。"))
@@ -323,7 +324,6 @@ def start_mfa_replacement(
     if not mfa_service.verify_mfa_factor(db, current_client, code=req.code, recovery_code=req.recovery_code):
         _failed(db, current_client)
     result = mfa_service.start_totp_replacement(db, current_client)
-    client_service.record_auth_success(db, current_client)
     return result
 
 
@@ -353,8 +353,6 @@ def regenerate_recovery_codes(
     _ensure_unlocked(current_client)
     if not mfa_service.verify_mfa_factor(db, current_client, code=req.code, recovery_code=req.recovery_code):
         _failed(db, current_client, REAUTHENTICATION_REQUIRED)
-    client_service.record_auth_success(db, current_client)
-
     return {"recovery_codes": mfa_service.regenerate_recovery_codes(db, current_client)}
 
 
@@ -411,14 +409,19 @@ def update_profile(
         fields["name"] = req.name.strip()
     if req.email and req.email.strip():
         fields["email"] = req.email.strip().lower()
+    needs_password = "email" in fields or bool(req.password)
+    if needs_password:
+        _ensure_unlocked(current_client)
     if req.password:
         if len(req.password) < 8:
             raise HTTPException(status_code=422, detail=Message("パスワードは8文字以上にしてください。", en="Passwords need at least 8 characters."))
         fields["password_hash"] = hash_password(req.password)
-    if ("email" in fields or "password_hash" in fields) and not (
-            req.current_password and verify_password(req.current_password, current_client.password_hash or "")):
-        raise HTTPException(status_code=403, detail=Message("現在のパスワードが正しくありません。", en="The current password is incorrect."))
+    if needs_password:
+        if not (req.current_password and verify_password(req.current_password, current_client.password_hash or "")):
+            _failed(db, current_client, Message("The current password is incorrect.", ja="現在のパスワードが正しくありません。"), status_code=403)
     client_service.update_profile(db, current_client, fields)
+    if needs_password:
+        client_service.record_auth_success(db, current_client)
     response = {"message": "Profile updated successfully"}
     if "password_hash" in fields:
         response["access_token"] = create_access_token(current_client.id, current_client.name)

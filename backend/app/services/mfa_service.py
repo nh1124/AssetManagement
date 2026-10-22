@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 import secrets
 import string
 
 import pyotp
-from sqlalchemy.orm import Session
+from sqlalchemy import or_
+from sqlalchemy.orm import Session, object_session
 
 from .. import models
 from ..domain.messages import Message
@@ -57,6 +58,7 @@ def start_totp_setup(db: Session, client: models.Client) -> dict:
     setting.enabled = False
     setting.enabled_at = None
     setting.last_verified_at = None
+    setting.last_totp_step = None
     db.commit()
     db.refresh(setting)
 
@@ -101,9 +103,36 @@ def regenerate_recovery_codes(db: Session, client: models.Client, commit: bool =
 
 def verify_totp_code(setting: models.ClientMfaSetting, code: str) -> bool:
     secret = decrypt_key(setting.totp_secret_encrypted or "")
-    if not secret:
+    step = _matching_totp_step(secret, code, setting.last_totp_step)
+    if step is None:
         return False
-    return pyotp.TOTP(secret).verify((code or "").strip().replace(" ", ""), valid_window=1)
+    db = object_session(setting)
+    if db is None:
+        return False
+    # A conditional update consumes the step once even with simultaneous requests
+    # or an ORM object loaded before another request consumed the code.
+    consumed = db.query(models.ClientMfaSetting).filter(
+        models.ClientMfaSetting.id == setting.id,
+        models.ClientMfaSetting.totp_secret_encrypted == setting.totp_secret_encrypted,
+        or_(models.ClientMfaSetting.last_totp_step.is_(None), models.ClientMfaSetting.last_totp_step < step),
+    ).update({models.ClientMfaSetting.last_totp_step: step}, synchronize_session=False)
+    db.refresh(setting)
+    return bool(consumed)
+
+
+def _matching_totp_step(secret: str | None, code: str, last_step: int | None = None) -> int | None:
+    if not secret:
+        return None
+    totp = pyotp.TOTP(secret)
+    current_step = totp.timecode(datetime.now(timezone.utc))
+    candidate = (code or "").strip().replace(" ", "")
+    if len(candidate) != totp.digits or not candidate.isascii() or not candidate.isdigit():
+        return None
+    for offset in (-1, 0, 1):
+        step = current_step + offset
+        if (last_step is None or step > last_step) and secrets.compare_digest(totp.generate_otp(step), candidate):
+            return step
+    return None
 
 
 def verify_mfa_factor(db: Session, client: models.Client, code: str | None = None, recovery_code: str | None = None) -> bool:
@@ -163,11 +192,24 @@ def start_totp_replacement(db: Session, client: models.Client) -> dict:
 def verify_totp_replacement(db: Session, client: models.Client, code: str) -> list[str]:
     setting = get_mfa_setting(db, client)
     secret = decrypt_key(setting.pending_totp_secret_encrypted or "") if setting else None
-    if not secret or not pyotp.TOTP(secret).verify((code or "").strip().replace(" ", ""), valid_window=1):
+    # Consume a newer step atomically with the swap, preserving the replay
+    # boundary even when another request verifies the active factor meanwhile.
+    step = _matching_totp_step(secret, code, setting.last_totp_step if setting else None)
+    if step is None:
         raise ValueError(Message("Invalid MFA code", ja="認証コードが正しくありません。"))
-    setting.totp_secret_encrypted = setting.pending_totp_secret_encrypted
-    setting.pending_totp_secret_encrypted = None
-    setting.last_verified_at = datetime.utcnow()
+    swapped = db.query(models.ClientMfaSetting).filter(
+        models.ClientMfaSetting.id == setting.id,
+        models.ClientMfaSetting.pending_totp_secret_encrypted == setting.pending_totp_secret_encrypted,
+        or_(models.ClientMfaSetting.last_totp_step.is_(None), models.ClientMfaSetting.last_totp_step < step),
+    ).update({
+        models.ClientMfaSetting.totp_secret_encrypted: setting.pending_totp_secret_encrypted,
+        models.ClientMfaSetting.pending_totp_secret_encrypted: None,
+        models.ClientMfaSetting.last_totp_step: step,
+        models.ClientMfaSetting.last_verified_at: datetime.utcnow(),
+    }, synchronize_session=False)
+    db.refresh(setting)
+    if not swapped:
+        raise ValueError(Message("Invalid MFA code", ja="認証コードが正しくありません。"))
     # The caller commits the swap, new recovery codes and token revocation together.
     return regenerate_recovery_codes(db, client, commit=False)
 

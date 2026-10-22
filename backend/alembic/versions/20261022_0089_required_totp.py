@@ -3,6 +3,8 @@
 Revision ID: 20261022_0089
 Revises: 20261022_0088
 """
+from datetime import datetime
+
 from alembic import op
 import sqlalchemy as sa
 
@@ -18,19 +20,20 @@ def upgrade():
     op.add_column("clients", sa.Column("tokens_valid_after", sa.DateTime(), nullable=True))
     op.add_column("clients", sa.Column("must_change_password", sa.Boolean(), nullable=False, server_default=sa.false()))
     op.add_column("client_mfa_settings", sa.Column("pending_totp_secret_encrypted", sa.Text(), nullable=True))
-    # Store naive UTC even when the PostgreSQL session uses another time zone.
-    cutoff = "CURRENT_TIMESTAMP AT TIME ZONE 'UTC'" if op.get_bind().dialect.name == "postgresql" else "CURRENT_TIMESTAMP"
-    op.execute(sa.text(f"""
-        UPDATE clients SET tokens_valid_after = {cutoff}
+    op.add_column("client_mfa_settings", sa.Column("last_totp_step", sa.BigInteger(), nullable=True))
+    # Full precision, naive UTC on both PostgreSQL and SQLite.
+    op.execute(sa.text("""
+        UPDATE clients SET tokens_valid_after = :cutoff
         WHERE NOT EXISTS (
             SELECT 1 FROM client_mfa_settings
             WHERE client_mfa_settings.client_id = clients.id
             AND client_mfa_settings.enabled = true
         )
-    """))
+    """).bindparams(sa.bindparam("cutoff", datetime.utcnow(), type_=sa.DateTime())))
 
 
 def downgrade():
+    op.drop_column("client_mfa_settings", "last_totp_step")
     op.drop_column("client_mfa_settings", "pending_totp_secret_encrypted")
     for column in ("must_change_password", "tokens_valid_after", "locked_until", "failed_login_count"):
         op.drop_column("clients", column)

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from fastapi import HTTPException
@@ -42,7 +42,7 @@ def _client(db, client_id: int, username: str, *, mfa_enabled: bool | None = Tru
     return client
 
 
-def _mcp_token(*, username: str, backend_client_id: int, issuer: str = "http://localhost:13000") -> str:
+def _mcp_token(*, username: str, backend_client_id: int, issuer: str = "http://localhost:13000", auth_time_ms="now") -> str:
     now = datetime.utcnow()
     return jwt.encode(
         {
@@ -55,6 +55,7 @@ def _mcp_token(*, username: str, backend_client_id: int, issuer: str = "http://l
             "aud": ["http://localhost:13000/mcp", settings.mcp_token_audience],
             "iss": issuer,
             "iat": now,
+            **({} if auth_time_ms is None else {"auth_time_ms": datetime.now(timezone.utc).timestamp() * 1000 if auth_time_ms == "now" else auth_time_ms}),
             "exp": now + timedelta(minutes=5),
         },
         settings.mcp_jwt_secret,
@@ -76,6 +77,7 @@ def test_mcp_token_exchange_issues_backend_token_for_subject() -> None:
         assert result["mcp_client_id"] == "mcp_test_client"
         assert payload["sub"] == str(client.id)
         assert payload["type"] == "access"
+        assert isinstance(payload["iat_ms"], (int, float))
     finally:
         db.close()
 
@@ -126,5 +128,52 @@ def test_mcp_token_exchange_rejects_wrong_subject_or_issuer() -> None:
         with pytest.raises(HTTPException) as issuer_exc:
             auth.exchange_mcp_token(auth.McpTokenExchangeRequest(mcp_access_token=wrong_issuer), db)
         assert issuer_exc.value.status_code == 401
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("auth_time", [None, "invalid", True, float("inf"), float("nan"), 100])
+def test_exchange_rejects_missing_malformed_or_revoked_authorization(auth_time):
+    db = _session()
+    try:
+        client = _client(db, 1, "alice")
+        client.tokens_valid_after = datetime.utcnow()
+        db.commit()
+        token = _mcp_token(username="alice", backend_client_id=1, auth_time_ms=auth_time)
+        with pytest.raises(HTTPException) as error:
+            auth.exchange_mcp_token(auth.McpTokenExchangeRequest(mcp_access_token=token), db)
+        assert error.value.status_code == 401
+    finally:
+        db.close()
+
+
+def test_exchange_requires_auth_time_even_without_cutoff():
+    db = _session()
+    try:
+        _client(db, 1, "alice")
+        token = _mcp_token(username="alice", backend_client_id=1, auth_time_ms=None)
+        with pytest.raises(HTTPException) as error:
+            auth.exchange_mcp_token(auth.McpTokenExchangeRequest(mcp_access_token=token), db)
+        assert error.value.status_code == 401
+    finally:
+        db.close()
+
+
+def test_exchange_revocation_compares_original_authorization_in_milliseconds():
+    db = _session()
+    try:
+        client = _client(db, 1, "alice")
+        cutoff = datetime(2026, 10, 22, 12, 0, 0, 900000)
+        client.tokens_valid_after = cutoff
+        db.commit()
+        cutoff_ms = cutoff.replace(tzinfo=timezone.utc).timestamp() * 1000
+        # Fresh JWT iat cannot override an authorization made before revocation.
+        old = _mcp_token(username="alice", backend_client_id=1, auth_time_ms=cutoff_ms - 800)
+        with pytest.raises(HTTPException) as error:
+            auth.exchange_mcp_token(auth.McpTokenExchangeRequest(mcp_access_token=old), db)
+        assert error.value.status_code == 401
+        current = _mcp_token(username="alice", backend_client_id=1, auth_time_ms=cutoff_ms)
+        result = auth.exchange_mcp_token(auth.McpTokenExchangeRequest(mcp_access_token=current), db)
+        assert decode_token(result["access_token"])["iat_ms"]
     finally:
         db.close()

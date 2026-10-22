@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, DateTime, JSON, Text
+from sqlalchemy import Column, Integer, BigInteger, String, ForeignKey, Boolean, DateTime, JSON, Text
 from sqlalchemy.orm import relationship
 
 from ..database import Base
@@ -70,6 +70,7 @@ class ClientMfaSetting(Base):
     enabled = Column(Boolean, nullable=False, default=False, server_default="false")
     enabled_at = Column(DateTime, nullable=True)
     last_verified_at = Column(DateTime, nullable=True)
+    last_totp_step = Column(BigInteger, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 

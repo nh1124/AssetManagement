@@ -114,7 +114,7 @@ def test_authentication_state_is_neither_exported_nor_imported():
                                tokens_valid_after=datetime.utcnow(), must_change_password=True)
         db.add(client)
         db.flush()
-        setting = models.ClientMfaSetting(client_id=client.id, pending_totp_secret_encrypted="pending-secret")
+        setting = models.ClientMfaSetting(client_id=client.id, pending_totp_secret_encrypted="pending-secret", last_totp_step=123)
         db.add(setting)
         db.commit()
         fields = ("failed_login_count", "locked_until", "tokens_valid_after", "must_change_password")
@@ -125,10 +125,11 @@ def test_authentication_state_is_neither_exported_nor_imported():
         assert "client_recovery_codes" not in document["data"]
         # A hand-edited client header cannot clear installation security state.
         document["client"].update(failed_login_count=0, locked_until=None, tokens_valid_after=None,
-                                   must_change_password=False, pending_totp_secret_encrypted="injected")
+                                   must_change_password=False, pending_totp_secret_encrypted="injected", last_totp_step=None)
         import_client_data(ImportPayload(**document), db, client)
         db.refresh(client)
         db.refresh(setting)
         assert {field: getattr(client, field) for field in fields} == before
         assert setting.pending_totp_secret_encrypted == "pending-secret"
+        assert setting.last_totp_step == 123
     engine.dispose()

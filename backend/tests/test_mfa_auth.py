@@ -54,6 +54,7 @@ def resolve(db, token):
 def older_token(client, seconds=30):
     payload = decode_token(create_access_token(client.id, client.name))
     payload["iat"] -= seconds
+    payload["iat_ms"] -= seconds * 1000
     return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
 
 
@@ -75,7 +76,7 @@ def test_first_login_enroll_then_mfa_sign_in(db):
     payload = decode_token(step["mfa_token"])
     assert payload["type"] == "mfa" and payload["exp"] - payload["iat"] == 300
     completed = auth.verify_mfa_login(auth.MfaLoginVerifyRequest(
-        mfa_token=step["mfa_token"], code=pyotp.TOTP(secret).now()), db)
+        mfa_token=step["mfa_token"], recovery_code=completed["recovery_codes"][0]), db)
     assert resolve(db, completed["access_token"]).id == 1
 
 
@@ -182,24 +183,35 @@ def test_replacement_preserves_old_factor_until_verified_and_revokes_tokens(db, 
     old_token = older_token(client)
     # Make the old/new code sets distinct across the test's verification window.
     now = datetime.now(timezone.utc)
+    verification_time = now + timedelta(seconds=30)
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return verification_time if tz else verification_time.replace(tzinfo=None)
+    monkeypatch.setattr(mfa_service, "datetime", Clock)
     old_codes = {pyotp.TOTP(old_secret).at(now, counter_offset=offset) for offset in range(-2, 3)}
     candidate = pyotp.random_base32()
     while old_codes & {pyotp.TOTP(candidate).at(now, counter_offset=offset) for offset in range(-2, 3)}:
         candidate = pyotp.random_base32()
     monkeypatch.setattr(mfa_service.pyotp, "random_base32", lambda: candidate)
     proof = (auth.MfaFactorRequest(recovery_code=completed["recovery_codes"][0]) if use_recovery
-             else auth.MfaFactorRequest(code=pyotp.TOTP(old_secret).now()))
+             else auth.MfaFactorRequest(code=pyotp.TOTP(old_secret).at(verification_time)))
     setup = auth.start_mfa_replacement(proof, db, client)
     assert setup["manual_entry_key"] != old_secret
     setting = mfa_service.get_mfa_setting(db, client)
     assert setting.pending_totp_secret_encrypted and decrypt_key(setting.totp_secret_encrypted) == old_secret
-    assert mfa_service.verify_mfa_factor(db, client, code=pyotp.TOTP(old_secret).now())
+    assert not mfa_service.verify_mfa_factor(db, client, code=pyotp.TOTP(old_secret).now())
+    assert mfa_service.verify_mfa_factor(db, client, recovery_code=completed["recovery_codes"][2])
     assert not mfa_service.verify_mfa_factor(db, client, code="invalid")
-    new_code = pyotp.TOTP(setup["manual_entry_key"]).now()
+    with pytest.raises(HTTPException) as replay:
+        auth.verify_mfa_replacement(auth.MfaSetupVerifyRequest(
+            code=pyotp.TOTP(setup["manual_entry_key"]).generate_otp(setting.last_totp_step)), db, client)
+    assert replay.value.status_code == 401
+    new_code = pyotp.TOTP(setup["manual_entry_key"]).at(verification_time, counter_offset=1)
     replaced = auth.verify_mfa_replacement(auth.MfaSetupVerifyRequest(code=new_code), db, client)
     assert setting.pending_totp_secret_encrypted is None
     assert decrypt_key(setting.totp_secret_encrypted) == setup["manual_entry_key"]
-    assert mfa_service.verify_mfa_factor(db, client, code=new_code)
+    assert not mfa_service.verify_mfa_factor(db, client, code=new_code)
     assert not mfa_service.verify_totp_code(setting, pyotp.TOTP(old_secret).now())
     assert set(replaced["recovery_codes"]).isdisjoint(completed["recovery_codes"])
     assert not mfa_service.verify_mfa_factor(db, client, recovery_code=completed["recovery_codes"][1])
@@ -224,7 +236,7 @@ def test_five_password_failures_lock_account_even_for_correct_password(db):
     client.locked_until = datetime.utcnow() - timedelta(seconds=1)
     db.commit()
     login(db)
-    assert client.failed_login_count == 0 and client.locked_until is None
+    assert client.failed_login_count == 5 and client.locked_until is not None
 
 
 def test_success_resets_failures_and_unknown_user_does_not_count(db):
@@ -239,6 +251,8 @@ def test_success_resets_failures_and_unknown_user_does_not_count(db):
         assert error.value.status_code == 401
     assert client.failed_login_count == 2
     login(db)
+    assert client.failed_login_count == 2
+    enroll(db)
     assert client.failed_login_count == 0
     client.failed_login_count = 5
     client.locked_until = datetime.utcnow() - timedelta(seconds=1)
@@ -255,11 +269,11 @@ def test_wrong_factor_counts_and_locked_endpoints_refuse_valid_factor(db, endpoi
         setup = auth.start_enrollment(auth.StepRequest(step_token=step["step_token"]), db)
         secret = setup["manual_entry_key"]
     else:
-        secret, _ = enroll(db)
+        secret, completed = enroll(db)
         step = login(db)
     client = db.get(models.Client, 1)
     if endpoint == "replace_verify":
-        setup = auth.start_mfa_replacement(auth.MfaFactorRequest(code=pyotp.TOTP(secret).now()), db, client)
+        setup = auth.start_mfa_replacement(auth.MfaFactorRequest(recovery_code=completed["recovery_codes"][0]), db, client)
         secret = setup["manual_entry_key"]
     def call(code):
         if endpoint == "enroll":
@@ -281,8 +295,11 @@ def test_wrong_factor_counts_and_locked_endpoints_refuse_valid_factor(db, endpoi
     assert error.value.status_code == 429
     client.locked_until = datetime.utcnow() - timedelta(seconds=1)
     db.commit()
-    call(pyotp.TOTP(secret).now())
-    assert client.failed_login_count == 0 and client.locked_until is None
+    call(pyotp.TOTP(secret).at(datetime.now(timezone.utc), counter_offset=1))
+    if endpoint == "replace_start":
+        assert client.failed_login_count == 5  # No completed authentication yet.
+    else:
+        assert client.failed_login_count == 0 and client.locked_until is None
 
 
 def test_recovery_regeneration_requires_factor_and_returns_new_codes(db):
@@ -296,23 +313,24 @@ def test_recovery_regeneration_requires_factor_and_returns_new_codes(db):
     assert set(new["recovery_codes"]).isdisjoint(completed["recovery_codes"])
 
 
-def test_revocation_truncates_to_seconds_and_profile_password_returns_working_token(db):
+def test_revocation_uses_milliseconds_and_profile_password_returns_working_token(db):
     client = db.get(models.Client, 1)
-    token = older_token(client)
-    now_token = create_access_token(client.id, client.name)
-    issued = decode_token(now_token)["iat"]
-    client.tokens_valid_after = datetime.fromtimestamp(issued, timezone.utc).replace(tzinfo=None, microsecond=999999)
+    payload = decode_token(create_access_token(client.id, client.name))
+    second = datetime.now(timezone.utc).replace(hour=12, minute=0, second=0, microsecond=0)
+    payload["iat_ms"] = second.timestamp() * 1000 + 100
+    payload["exp"] += 86400
+    token = jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+    client.tokens_valid_after = second.replace(tzinfo=None, microsecond=900000)
     db.commit()
-    assert resolve(db, now_token).id == 1
     with pytest.raises(HTTPException) as error:
         resolve(db, token)
     assert error.value.status_code == 401
+    payload["iat_ms"] = second.timestamp() * 1000 + 900
+    assert resolve(db, jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)).id == 1
     result = auth.update_profile(auth.ProfileUpdate(password="changedpassword", current_password="password123"), db, client)
     assert result["message"] == "Profile updated successfully"
     assert resolve(db, result["access_token"]).id == 1
-    with pytest.raises(HTTPException) as error:
-        resolve(db, token)
-    assert error.value.status_code == 401
+    assert client.tokens_valid_after.microsecond != 0
 
 
 def test_step_up_refuses_password_and_requires_mfa_setup(db):
@@ -355,13 +373,173 @@ def test_expired_step_tokens_are_rejected(db, endpoint, kind):
     assert error.value.status_code == 401
 
 
-def test_revocation_rejects_access_token_without_issued_at(db):
+def test_revocation_rejects_access_token_without_millisecond_issued_at(db):
     client = db.get(models.Client, 1)
     payload = decode_token(create_access_token(client.id, client.name))
-    payload.pop("iat")
+    payload.pop("iat_ms")
     token = jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
     client.tokens_valid_after = datetime.utcnow()
     db.commit()
     with pytest.raises(HTTPException) as error:
         resolve(db, token)
+    assert error.value.status_code == 401
+
+
+def test_alternating_correct_password_and_wrong_mfa_locks_account(db):
+    enroll(db)
+    for attempt in range(1, 6):
+        step = login(db)
+        with pytest.raises(HTTPException) as error:
+            auth.verify_mfa_login(auth.MfaLoginVerifyRequest(mfa_token=step["mfa_token"], code="invalid"), db)
+        assert error.value.status_code == (429 if attempt == 5 else 401)
+        assert db.get(models.Client, 1).failed_login_count == attempt
+    with pytest.raises(HTTPException) as error:
+        login(db)
+    assert error.value.status_code == 429
+
+
+def test_partial_enrollment_and_required_password_change_do_not_reset_failures(db):
+    client = db.get(models.Client, 1)
+    client.failed_login_count = 3
+    client.must_change_password = True
+    db.commit()
+    step = login(db)
+    following = auth.change_password(auth.PasswordChangeRequest(
+        step_token=step["step_token"], new_password="newpassword123"), db)
+    assert client.failed_login_count == 3
+    setup = auth.start_enrollment(auth.StepRequest(step_token=following["step_token"]), db)
+    assert client.failed_login_count == 3
+    auth.verify_enrollment(auth.EnrollVerifyRequest(
+        step_token=following["step_token"], code=pyotp.TOTP(setup["manual_entry_key"]).now()), db)
+    assert client.failed_login_count == 0
+
+
+def test_success_cannot_clear_a_concurrently_set_lock(db):
+    client = db.get(models.Client, 1)
+    client.failed_login_count = 4
+    db.commit()
+    with Session(db.get_bind(), expire_on_commit=False) as stale_session:
+        stale_client = stale_session.get(models.Client, 1)
+        assert stale_client.locked_until is None
+        client_service.record_auth_failure(db, client)
+        client_service.record_auth_success(stale_session, stale_client)
+        assert stale_client.failed_login_count == 5
+        assert client_service.is_locked(stale_client)
+    db.refresh(client)
+    assert client.failed_login_count == 5 and client_service.is_locked(client)
+
+
+@pytest.mark.parametrize("fields", [{"password": "changedpassword"}, {"email": "changed@example.com"}])
+def test_profile_wrong_current_password_locks_and_refuses_correct_password(db, fields):
+    client = db.get(models.Client, 1)
+    original_hash = client.password_hash
+    for attempt in range(1, 6):
+        with pytest.raises(HTTPException) as error:
+            auth.update_profile(auth.ProfileUpdate(**fields, current_password="wrong"), db, client)
+        assert error.value.status_code == (429 if attempt == 5 else 403)
+    with pytest.raises(HTTPException) as error:
+        auth.update_profile(auth.ProfileUpdate(**fields, current_password="password123"), db, client)
+    assert error.value.status_code == 429
+    assert client.password_hash == original_hash and client.email is None
+
+
+def test_profile_success_resets_failures(db):
+    client = db.get(models.Client, 1)
+    client.failed_login_count = 3
+    db.commit()
+    auth.update_profile(auth.ProfileUpdate(email="new@example.com", current_password="password123"), db, client)
+    assert client.failed_login_count == 0
+
+
+@pytest.mark.parametrize("kind", ["access", "mfa", "mfa_setup", "password_change", "step_up"])
+def test_all_token_types_have_millisecond_issue_time(kind):
+    payload = decode_token(create_typed_token(1, "Test", kind))
+    assert payload["iat"] * 1000 <= payload["iat_ms"] < (payload["iat"] + 1) * 1000
+
+
+@pytest.mark.parametrize("cutoff_set", [False, True])
+def test_legacy_access_token_compatibility(db, cutoff_set):
+    client = db.get(models.Client, 1)
+    payload = decode_token(create_access_token(client.id, client.name))
+    payload.pop("iat_ms")
+    token = jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+    if cutoff_set:
+        client_service.revoke_tokens(db, client)
+        with pytest.raises(HTTPException) as error:
+            resolve(db, token)
+        assert error.value.status_code == 401
+    else:
+        assert resolve(db, token).id == 1
+
+
+@pytest.mark.parametrize("kind", ["mfa", "mfa_setup", "password_change"])
+@pytest.mark.parametrize("legacy", [False, True])
+def test_step_tokens_are_revoked_after_password_change(db, kind, legacy):
+    if kind == "mfa":
+        secret, _ = enroll(db)
+    client = db.get(models.Client, 1)
+    if kind == "password_change":
+        client.must_change_password = True
+        db.commit()
+    step = login(db)["step_token"]
+    if kind == "mfa_setup":
+        setup = auth.start_enrollment(auth.StepRequest(step_token=step), db)
+        secret = setup["manual_entry_key"]
+    if legacy:
+        payload = decode_token(step)
+        payload.pop("iat_ms")
+        step = jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+    if kind == "password_change":
+        client_service.revoke_tokens(db, client)  # E.g. admin reset; stage still required.
+    else:
+        client_service.change_password(db, client, hash_password("changedpassword"))
+    with pytest.raises(HTTPException) as error:
+        if kind == "mfa":
+            auth.verify_mfa_login(auth.MfaLoginVerifyRequest(
+                mfa_token=step, code=pyotp.TOTP(secret).at(datetime.now(timezone.utc), counter_offset=1)), db)
+        elif kind == "mfa_setup":
+            auth.verify_enrollment(auth.EnrollVerifyRequest(step_token=step, code=pyotp.TOTP(secret).now()), db)
+        else:
+            auth.change_password(auth.PasswordChangeRequest(step_token=step, new_password="anotherpassword"), db)
+    assert error.value.status_code == 401
+    assert client.failed_login_count == 0
+
+
+def test_totp_replay_and_next_window_including_stale_session(db, monkeypatch):
+    from app.security import encrypt_key
+
+    clock = [datetime(2026, 10, 22, 12, 0, 0, tzinfo=timezone.utc)]
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return clock[0] if tz else clock[0].replace(tzinfo=None)
+        @classmethod
+        def utcnow(cls):
+            return clock[0].replace(tzinfo=None)
+    monkeypatch.setattr(mfa_service, "datetime", Clock)
+    client = db.get(models.Client, 1)
+    setting = models.ClientMfaSetting(client_id=1, enabled=True,
+                                    totp_secret_encrypted=encrypt_key("JBSWY3DPEHPK3PXP"))
+    db.add(setting)
+    db.commit()
+    totp = pyotp.TOTP("JBSWY3DPEHPK3PXP")
+    code = totp.at(clock[0])
+    with Session(db.get_bind(), expire_on_commit=False) as stale_session:
+        stale_setting = stale_session.get(models.ClientMfaSetting, setting.id)
+        assert stale_setting.last_totp_step is None
+        assert mfa_service.verify_mfa_factor(db, client, code=code)
+        assert setting.last_totp_step == totp.timecode(clock[0])
+        assert not mfa_service.verify_totp_code(stale_setting, code)
+    assert not mfa_service.verify_mfa_factor(db, client, code=code)
+    clock[0] += timedelta(seconds=30)
+    assert mfa_service.verify_mfa_factor(db, client, code=totp.at(clock[0]))
+    assert setting.last_totp_step == totp.timecode(clock[0])
+    assert not mfa_service.verify_mfa_factor(db, client, code=code)  # Still in allowed time window.
+
+
+def test_enrollment_code_is_consumed(db):
+    secret, _ = enroll(db)
+    step = login(db)
+    with pytest.raises(HTTPException) as error:
+        auth.verify_mfa_login(auth.MfaLoginVerifyRequest(mfa_token=step["mfa_token"], code=pyotp.TOTP(secret).now()), db)
     assert error.value.status_code == 401
